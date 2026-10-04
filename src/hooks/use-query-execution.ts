@@ -709,11 +709,27 @@ export function useQueryExecution({
           });
         }
 
+        // A script that stopped on an error is also written on the tab, so the panel keeps saying so
+        // after the toast has gone (#1385). The rows that stay are the earlier statements' own.
+        let scriptFailure: string | undefined;
+
         // Show multi-statement summary
         if (resultData.multiStatement) {
           const { executedCount, statementCount, hasError } = resultData;
           if (hasError) {
             const errorStmt = resultData.statements?.find((s: { status: string }) => s.status === "error");
+            const stmtText = typeof errorStmt?.sql === "string" ? errorStmt.sql.replace(/\s+/g, " ").trim() : "";
+            // By code points, so an emoji is never cut in half.
+            const stmtChars = Array.from(stmtText);
+            const excerpt = stmtChars.length > 80 ? `${stmtChars.slice(0, 80).join("")}...` : stmtText;
+            scriptFailure =
+              `Statement ${errorStmt?.index + 1} of ${statementCount} failed: ${errorStmt?.error}` +
+              (excerpt === "" ? "" : `\n${excerpt}`) +
+              // Its own line, and without the "Add COMMIT to keep them" advice of the toast: after a
+              // failure there is nothing complete to keep.
+              (resultData.openTransaction === "rolled-back"
+                ? "\nThe open transaction was rolled back, so its changes were discarded."
+                : "");
             toast({
               title: `Executed ${executedCount - 1}/${statementCount} statements`,
               description: `Error in statement ${errorStmt?.index + 1}: ${errorStmt?.error}${transactionNotice}`,
@@ -808,8 +824,9 @@ export function useQueryExecution({
             isLoadingMore: false,
             explainPlan: explainPlanData || t.explainPlan,
             // A run that landed answers the failure before it. An EXPLAIN leaves the
-            // results panel alone, so it leaves that panel's error alone too.
-            runError: isExplain ? t.runError : undefined,
+            // results panel alone, so it leaves that panel's error alone too. A script that
+            // stopped on an error keeps the earlier statements' rows AND says it stopped (#1385).
+            runError: isExplain ? t.runError : scriptFailure,
           };
         });
 

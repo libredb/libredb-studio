@@ -1249,6 +1249,97 @@ describe("useQueryExecution", () => {
     expect(multiCall).toBeDefined();
   });
 
+  // ── a script that stops on an error is written on the tab (#1385) ───────────
+
+  const failedScript = (extra: Record<string, unknown> = {}) => ({
+    multiStatement: true,
+    executedCount: 2,
+    statementCount: 3,
+    hasError: true,
+    rows: [{ a: 1 }],
+    fields: ["a"],
+    rowCount: 1,
+    executionTime: 20,
+    statements: [
+      { index: 0, status: "success", rowCount: 1, sql: "SELECT 1 AS a" },
+      { index: 1, status: "error", error: "unknown catalog item 'nope'", sql: "SELECT *\n  FROM nope" },
+    ],
+    ...extra,
+  });
+
+  test("a multi-statement run that failed leaves the statement and message on the tab", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab()]);
+    mockGlobalFetch({ "/api/db/multi-query": { ok: true, json: failedScript() } });
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1 AS a; SELECT * FROM nope; SELECT 3");
+    });
+
+    expect(tabs[0].runError).toBe("Statement 2 of 3 failed: unknown catalog item 'nope'\nSELECT * FROM nope");
+    // The earlier statement's rows stay.
+    expect(tabs[0].result?.rows).toHaveLength(1);
+  });
+
+  test("a failed script that was rolled back says so, and a long statement is cut", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab()]);
+    // 79 code points then an emoji at the cut, so a split by UTF-16 units would break it.
+    const long = `SELECT ${"x".repeat(72)}\u{1F600}${"y".repeat(20)}`;
+    mockGlobalFetch({
+      "/api/db/multi-query": {
+        ok: true,
+        json: failedScript({
+          openTransaction: "rolled-back",
+          statements: [{ index: 0, status: "error", error: "boom", sql: long }],
+        }),
+      },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("BEGIN; SELECT 1; SELECT 2");
+    });
+
+    expect(tabs[0].runError).toBe(
+      `Statement 1 of 3 failed: boom\n${Array.from(long).slice(0, 80).join("")}...\nThe open transaction was rolled back, so its changes were discarded.`,
+    );
+  });
+
+  test("a failed script whose statement text is missing still names the message", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab()]);
+    mockGlobalFetch({
+      "/api/db/multi-query": {
+        ok: true,
+        json: failedScript({ statements: [{ index: 1, status: "error", error: "boom" }] }),
+      },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1; SELECT 2");
+    });
+
+    expect(tabs[0].runError).toBe("Statement 2 of 3 failed: boom");
+  });
+
+  test("a multi-statement run without an error leaves no run error", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab({ runError: "an earlier failure" })]);
+    mockGlobalFetch({
+      "/api/db/multi-query": { ok: true, json: failedScript({ hasError: false, statements: [] }) },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1; SELECT 2");
+    });
+
+    expect(tabs[0].runError).toBeUndefined();
+  });
+
   // ── the multi-statement decision reads the connection's dialect (S1) ───────
 
   test("executeQuery keeps a PostgreSQL nested-comment buffer on /api/db/query", async () => {
