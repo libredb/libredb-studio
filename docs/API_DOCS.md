@@ -2086,6 +2086,18 @@ from the field's presence alone. `columnTypes` is the declared type of *this* re
 only source for a computed column or an ad-hoc projection — the schema has no catalog entry to
 answer with.
 
+A binary cell (a PostgreSQL `bytea`, a MySQL `BLOB`/`VARBINARY`, a SQL Server `varbinary`, an Oracle
+`RAW`/`BLOB`, a SQLite or libSQL `BLOB`) crosses this response in the form a Node `Buffer`
+serializes to, `{"type":"Buffer","data":[222,173,0,255]}`, and that shape is how the client
+recognises it as binary. Everywhere the client writes the value out it is lowercase hex behind `\x`
+instead (`\xdead00ff`): the grid, Copy Cell, the row detail sheet, the CSV export, the JSON export
+and its Copy as JSON, Copy Row as JSON and the row detail's Copy JSON. The JSON export writes it as
+that plain string and carries no column types, so what tells a reader it is binary is the source
+column's declared type (the schema, or the DDL export), not the file. The SQL INSERT export writes
+the dialect's binary literal built from the same hex (`'\xdead00ff'::bytea`, `X'dead00ff'`,
+`HEXTORAW('dead00ff')`). The graph view's own JSON export (`graphJson`) is not one of these
+surfaces: node and relationship properties keep the form the driver handed them in.
+
 `vectorColumns` names the columns of this result that hold vectors, keyed by their names in `fields`, and is absent when the result has none, never an empty object.
 A declared column's cells render as vector cells: the first 8 elements and the size in the grid (`768 dims`, bits for a binary vector, entries for a sparse one, rows for a multivector), a header line such as `dense float32, 768 dims` over the whole value in the row detail, and the whole value on Copy Cell.
 A cell holds its engine's native form, so a copied cell is search data for its own engine: every element of a float vector and of every multivector is written with a fraction when it is integral (`1.0`), int8, uint8 and binary elements and every sparse index are written as integers, and a sparse cell keeps its encoding (`index-map` is `{"3":0.5}`, `indices-values` is `{"indices":[3],"values":[0.5]}`).

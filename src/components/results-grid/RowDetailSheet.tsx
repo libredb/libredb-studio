@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { type MaskingPattern, maskValueByPattern } from "@/lib/data-masking";
 import { writeToClipboard } from "@/components/copy-button";
+import { binaryCellsAsHex, jsonText } from "@/lib/export/json";
 import type { VectorColumn } from "@/lib/db/vector/types";
 import { classifyValue } from "./renderers/classify";
 import { getRenderer } from "./renderers/registry";
@@ -114,7 +115,9 @@ export function RowDetailSheet({
       }
       copyAndReport("__all__", JSON.stringify(maskedRow, null, 2));
     } else {
-      copyAndReport("__all__", JSON.stringify(row, null, 2));
+      // The masked branch above copies each field's display text, which is already the
+      // hex for a binary field; this one has to say so itself (#1381).
+      copyAndReport("__all__", jsonText(binaryCellsAsHex(row), 2));
     }
   };
 

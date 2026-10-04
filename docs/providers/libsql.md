@@ -416,8 +416,8 @@ columnTypes? }`.
   writes a plain `Uint8Array` as an object keyed by index (`{"0":222,"1":173,...}`): the grid showed
   that object and "Export as SQL INSERT" wrote it back as quoted text, so a replay stored a string
   where the bytes had been. A `Buffer` serializes to `{"type":"Buffer","data":[...]}`, which
-  `asBytes` in [`binary.ts`](../../src/lib/export/binary.ts) reads, so the grid and the CSV show
-  `\xdeadbeef00ff` and the SQL export writes `X'deadbeef00ff'` (and `X''` for an empty blob), the
+  `asBytes` in [`binary.ts`](../../src/lib/export/binary.ts) reads, so the grid, the CSV and the JSON
+  export (#1381) show `\xdeadbeef00ff` and the SQL export writes `X'deadbeef00ff'` (and `X''` for an empty blob), the
   same as the SQLite provider. Measured 2026-10-04 on sqld 0.24.33: the exported INSERTs, run into a
   fresh `BLOB` table, read back with identical `hex()` and `length()`, `0x00` and `0xFF` included.
 

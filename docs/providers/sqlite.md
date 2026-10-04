@@ -571,8 +571,10 @@ Bun 1.4.2 in the tests, node:sqlite on Node 24.11.0 behind `next start`): the ex
 into a fresh `BLOB` table, read back in the `sqlite3` 3.53.4 CLI with identical `hex()`, `length()`
 and `typeof()` = `blob`, `0x00` and `0xFF` included.
 
-The JSON export still writes the `Buffer` form itself rather than hex; that is the same for every
-engine whose driver hands back bytes, and is tracked as X27 in [`BACKLOG.md`](../BACKLOG.md).
+The JSON export, Copy Row as JSON and the row detail's Copy JSON write the same `\xdeadbeef00ff`
+string the CSV does, through `binaryCellsAsHex` in [`json.ts`](../../src/lib/export/json.ts), rather
+than the `Buffer` form the response carries (#1381); that is the same for every engine whose driver
+hands back bytes.
 
 ---
 

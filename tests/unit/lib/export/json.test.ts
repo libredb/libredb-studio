@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { jsonText } from "@/lib/export/json";
+import { binaryCellsAsHex, jsonText } from "@/lib/export/json";
 
 describe("jsonText", () => {
   test("writes an ordinary value the way JSON.stringify does", () => {
@@ -71,5 +71,49 @@ describe("jsonText", () => {
   test("walks what toJSON returns, so a bigint inside it is still written", () => {
     const bson = { toJSON: () => ({ $numberLong: BigInt(42) }) };
     expect(jsonText({ count: bson })).toBe('{"count":{"$numberLong":"42"}}');
+  });
+});
+
+describe("binaryCellsAsHex", () => {
+  // The grid, Copy Cell, the row detail and the CSV show a binary cell as `\x` hex; a
+  // JSON file or a copied row wrote the Buffer form instead, one number per byte (#1381).
+  test("writes a binary cell in the wire form as the hex the grid and the CSV show", () => {
+    const row = { id: 1, payload: { type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] } };
+
+    expect(binaryCellsAsHex(row)).toEqual({ id: 1, payload: "\\xdeadbeef00ff" });
+  });
+
+  test("writes a live Uint8Array the same way, which is how the embeddable shell hands one", () => {
+    expect(binaryCellsAsHex({ payload: Uint8Array.from([0, 1, 255]) })).toEqual({ payload: "\\x0001ff" });
+  });
+
+  test("writes an empty binary value as the bare prefix", () => {
+    expect(binaryCellsAsHex({ payload: { type: "Buffer", data: [] } })).toEqual({ payload: "\\x" });
+  });
+
+  test("leaves every other cell, a lookalike document included, as it was", () => {
+    const doc = { type: "Buffer", data: [1, "two"] };
+    const row = { name: "Ada", meta: { a: 1 }, doc, missing: null };
+
+    const written = binaryCellsAsHex(row);
+
+    expect(written).toEqual(row);
+    expect(written.doc).toBe(doc);
+  });
+
+  // The CSV judges a cell, not what is nested inside one, and the JSON has to write
+  // what the CSV writes: a sub-document's bytes stay as its own JSON spells them.
+  test("judges the cell, not what is nested inside it, as the CSV does", () => {
+    const nested = { file: { type: "Buffer", data: [1] } };
+
+    expect(binaryCellsAsHex({ nested })).toEqual({ nested });
+  });
+
+  test("does not change the row it was handed", () => {
+    const row = { payload: { type: "Buffer", data: [1] } };
+
+    binaryCellsAsHex(row);
+
+    expect(row.payload).toEqual({ type: "Buffer", data: [1] });
   });
 });

@@ -149,9 +149,9 @@ surfaces are live through Phase 1 of #789.
 ### 3.3 BLOB / binary values reach every surface AS BYTES
 
 **The spelling changed on 2026-08-24.** A `BLOB`/`BINARY` value used to reach the grid as the text
-`0x0102ab`; it now reads `\x0102ab`, on every surface — the cell, the row detail sheet and the CSV —
-and that is the whole point of the change: one value must not be spelled two ways depending on which
-engine it came from.
+`0x0102ab`; it now reads `\x0102ab` on every surface (the cell, the row detail sheet, the CSV and,
+since #1381, the JSON export), and that is the whole point of the change: one value must not be
+spelled two ways depending on which engine it came from.
 
 `sanitizeRow()` walked every result row and turned each `Buffer` into a `0x<hex>` string (an empty
 one into `''`). Its reason was real when it was written — the JSON a `Buffer` serializes to,

@@ -441,6 +441,23 @@ describe("results-grid/RowDetailSheet", () => {
     expect(parsed).toEqual(row);
   });
 
+  // The sheet shows a binary field as `\x` hex, and Copy JSON used to copy the Buffer
+  // form beside it, one number per byte (#1381).
+  test("Copy JSON writes a binary field as the hex the sheet shows", () => {
+    const { queryByText } = render(
+      <RowDetailSheet
+        row={{ id: 7, payload: { type: "Buffer", data: [0xde, 0xad, 0x00, 0xff] } }}
+        fields={["id", "payload"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+      />,
+    );
+
+    fireEvent.click(queryByText("Copy JSON")!);
+    expect(JSON.parse(String(writeText.mock.calls[0]?.[0]))).toEqual({ id: 7, payload: "\\xdead00ff" });
+  });
+
   // ── Layout on a wide window (#800) ────────────────────────────────────────
 
   describe("layout", () => {

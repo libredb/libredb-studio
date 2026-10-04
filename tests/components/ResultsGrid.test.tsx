@@ -772,6 +772,77 @@ describe("ResultsGrid", () => {
     await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith(JSON.stringify(row, null, 2)));
   });
 
+  // The cell shows `\x` hex, and the copied row used to carry the Buffer form instead,
+  // one number per byte (#1381). The row copies what the grid and the CSV show.
+  test("copies a binary cell as the hex the grid shows, not as the Buffer form", async () => {
+    const result: QueryResult = {
+      rows: [{ name: "Blob", payload: { type: "Buffer", data: [0xde, 0xad, 0x00, 0xff] } }],
+      fields: ["name", "payload"],
+      rowCount: 1,
+      executionTime: 1,
+    };
+    const { container, getByTestId } = render(React.createElement(ResultsGrid, { result }));
+    fireEvent.click(getByTestId("view-table"));
+    const contextMenu = findContextMenuForMode(container, "Blob", "mobile");
+
+    fireEvent.contextMenu(within(contextMenu).getByText("Blob"));
+    fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Row as JSON" }));
+
+    await waitFor(() =>
+      expect(mockClipboardWriteText).toHaveBeenCalledWith(
+        JSON.stringify({ name: "Blob", payload: "\\xdead00ff" }, null, 2),
+      ),
+    );
+  });
+
+  // `JSON.stringify` throws on a bigint, which took the copy down with no clipboard
+  // write and no toast; the row now goes through `jsonText`, which writes the digits.
+  test("copies a bigint cell as its digits instead of throwing", async () => {
+    const result: QueryResult = {
+      rows: [{ name: "Big", n: BigInt("9007199254740993") }],
+      fields: ["name", "n"],
+      rowCount: 1,
+      executionTime: 1,
+    };
+    const { container, getByTestId } = render(React.createElement(ResultsGrid, { result }));
+    fireEvent.click(getByTestId("view-table"));
+    const contextMenu = findContextMenuForMode(container, "Big", "mobile");
+
+    fireEvent.contextMenu(within(contextMenu).getByText("Big"));
+    expect(() =>
+      fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Row as JSON" })),
+    ).not.toThrow();
+
+    await waitFor(() =>
+      expect(mockClipboardWriteText).toHaveBeenCalledWith(
+        JSON.stringify({ name: "Big", n: "9007199254740993" }, null, 2),
+      ),
+    );
+  });
+
+  test("copies an unmasked binary cell as hex when masking is active", async () => {
+    mockShouldMask.mockReturnValue(true);
+    mockDetectSensitiveColumnsFromConfig.mockReturnValue(new Map([["email", "email"]]));
+    const result: QueryResult = {
+      rows: [{ name: "Blob", email: "a@b.c", payload: { type: "Buffer", data: [0x00, 0xff] } }],
+      fields: ["name", "email", "payload"],
+      rowCount: 1,
+      executionTime: 1,
+    };
+    const { container, getByTestId } = render(React.createElement(ResultsGrid, { result, maskingEnabled: true }));
+    fireEvent.click(getByTestId("view-table"));
+    const contextMenu = findContextMenuForMode(container, "Blob", "mobile");
+
+    fireEvent.contextMenu(within(contextMenu).getByText("Blob"));
+    fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Row as JSON" }));
+
+    await waitFor(() =>
+      expect(mockClipboardWriteText).toHaveBeenCalledWith(
+        JSON.stringify({ name: "Blob", email: "***", payload: "\\x00ff" }, null, 2),
+      ),
+    );
+  });
+
   test("copies masked mobile-table cell and row values when masking is active", async () => {
     mockShouldMask.mockReturnValue(true);
     mockDetectSensitiveColumnsFromConfig.mockReturnValue(new Map([["email", "email"]]));
