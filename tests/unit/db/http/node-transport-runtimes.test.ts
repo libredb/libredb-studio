@@ -1,6 +1,6 @@
 /**
- * The transport's proxy, redirect, cap, encoding, Retry-After, TLS, tunnel, pooling and guard checks on the runtimes
- * production runs (vector-family spec 3.7 and 8.2): in a Bun child and in one Node child per binary that
+ * The transport's proxy, redirect, cap, encoding, truncation, Retry-After, TLS, tunnel, pooling and guard checks on the
+ * runtimes production runs (vector-family spec 3.7 and 8.2): in a Bun child and in one Node child per binary that
  * NODE_TRANSPORT_NODES lists, split on the path delimiter, or else in the `node` on PATH, so CI's Node 24 runs them and
  * NODE_TRANSPORT_NODES=$HOME/.nvm/versions/node/v24.14.0/bin/node:$HOME/.nvm/versions/node/v26.7.0/bin/node runs both
  * Node lines in one pass. Each child must report the version its binary prints, so a listed Node never passes as another.
@@ -16,8 +16,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type * as http from "node:http";
 import type * as https from "node:https";
+import { type AddressInfo, createServer as createTcpServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { TLSSocket } from "node:tls";
 import type { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
 import type { createNodeTransport, nodeTlsMaterial } from "@/lib/db/http/node-transport";
 import {
@@ -55,7 +57,9 @@ type PortName =
   | "holding"
   | "retry"
   | "guarded"
-  | "silent";
+  | "silent"
+  | "cut"
+  | "corrupt";
 
 interface Plan {
   readonly ports: Readonly<Record<PortName, number>>;
@@ -71,6 +75,7 @@ interface Outcome {
   readonly text?: string;
   readonly errorName?: string;
   readonly kind?: string;
+  readonly truncated?: boolean;
   readonly message?: string;
 }
 
@@ -111,8 +116,14 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
         text: response.text.slice(0, 200),
       };
     } catch (error) {
-      const failure = error as { name?: string; kind?: string; message?: string };
-      outcomes[name] = { ok: false, errorName: failure.name, kind: failure.kind, message: failure.message };
+      const failure = error as { name?: string; kind?: string; truncated?: boolean; message?: string };
+      outcomes[name] = {
+        ok: false,
+        errorName: failure.name,
+        kind: failure.kind,
+        truncated: failure.truncated,
+        message: failure.message,
+      };
     }
   };
   const material = (ca: string, identity: string) =>
@@ -175,6 +186,17 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
   });
   await record("a deadline", () =>
     once("http", "127.0.0.1", ports.holding, null, "/deadline", { signal: AbortSignal.timeout(100), keep: true }),
+  );
+  // A body cut before its terminating chunk, by a FIN or an RST, at zero bytes, mid-chunk and at a chunk boundary.
+  for (const cut of ["fin", "rst"]) {
+    for (const at of ["zero", "mid", "line"]) {
+      // oxlint-disable-next-line no-await-in-loop -- one cut at a time, each on its own connection.
+      await record(`cut: ${cut} at ${at}`, () => once("http", "127.0.0.1", ports.cut, null, `/${cut}-${at}`));
+    }
+  }
+  // A TLS failure after the status line stays a TLS failure: the truncation reading is for the network branch only.
+  await record("TLS: a record corrupted after the headers", () =>
+    once("https", "localhost", ports.corrupt, material(plan.ca, "localhost"), "/corrupt"),
   );
   await record("429 with Retry-After 10", () => once("http", "127.0.0.1", ports.retry, null, "/ten"));
   await record("429 with no Retry-After", () => once("http", "127.0.0.1", ports.retry, null, "/none"));
@@ -329,6 +351,68 @@ let bomb: Listener;
 let holding: Listener;
 let guarded: Listener;
 let silent: Listener;
+let cutServer: ReturnType<typeof createTcpServer>;
+const cutSockets = new Set<Socket>();
+let corruptServer: ReturnType<typeof createTcpServer>;
+const corruptSockets = new Set<Socket>();
+
+const CHUNKED = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n";
+/** What the cut listener writes before it cuts, by the path's second half. */
+const CUT_BODIES: Readonly<Record<string, string>> = {
+  zero: CHUNKED,
+  mid: `${CHUNKED}40\r\n0123456789`,
+  line: `${CHUNKED}8\r\n{"a":1}\n\r\n`,
+};
+
+/**
+ * A raw TCP listener that writes a chunked 200 itself and, once the client has read it, cuts the socket with a FIN
+ * (`destroy()`) or an RST (`resetAndDestroy()`), as the request path names: /fin-zero, /rst-mid, /fin-line and so on.
+ */
+async function cutListener(): Promise<number> {
+  cutServer = createTcpServer((socket) => {
+    cutSockets.add(socket);
+    socket.on("close", () => cutSockets.delete(socket));
+    socket.on("error", () => {});
+    let head = "";
+    const onData = (chunk: Buffer): void => {
+      head += chunk.toString("latin1");
+      if (!head.includes("\r\n\r\n")) return;
+      socket.off("data", onData);
+      const [cut, at] = head.split(" ")[1].slice(1).split("-");
+      socket.write(CUT_BODIES[at], () =>
+        setTimeout(() => (cut === "fin" ? socket.destroy() : socket.resetAndDestroy()), 30),
+      );
+    };
+    socket.on("data", onData);
+  });
+  await new Promise<void>((resolve) => cutServer.listen(0, "127.0.0.1", resolve));
+  return (cutServer.address() as AddressInfo).port;
+}
+
+/**
+ * A raw TCP listener that runs TLS itself over each socket, answers a chunked 200 through it and, once the client has
+ * read it, writes bytes that are no TLS record onto the TCP socket underneath, so the client's TLS layer fails after
+ * the status line.
+ */
+async function corruptListener(material: { readonly cert: string; readonly key: string }): Promise<number> {
+  corruptServer = createTcpServer((raw) => {
+    corruptSockets.add(raw);
+    raw.on("close", () => corruptSockets.delete(raw));
+    raw.on("error", () => {});
+    const secured = new TLSSocket(raw, { isServer: true, cert: material.cert, key: material.key });
+    secured.on("error", () => {});
+    let head = "";
+    const onData = (chunk: Buffer): void => {
+      head += chunk.toString("latin1");
+      if (!head.includes("\r\n\r\n")) return;
+      secured.off("data", onData);
+      secured.write(CHUNKED, () => setTimeout(() => raw.write(Buffer.alloc(64, 0x17)), 30));
+    };
+    secured.on("data", onData);
+  });
+  await new Promise<void>((resolve) => corruptServer.listen(0, "127.0.0.1", resolve));
+  return (corruptServer.address() as AddressInfo).port;
+}
 
 beforeAll(async () => {
   const certificates = makeCertificates();
@@ -377,6 +461,8 @@ beforeAll(async () => {
   });
   guarded = await httpListener(jsonAnswer(200, "{}"));
   silent = await silentListener();
+  const cutPort = await cutListener();
+  const corruptPort = await corruptListener(certificates.local);
   const plan: Plan = {
     ports: {
       plain: plain.port,
@@ -392,6 +478,8 @@ beforeAll(async () => {
       retry: retry.port,
       guarded: guarded.port,
       silent: silent.port,
+      cut: cutPort,
+      corrupt: corruptPort,
     },
     ca: certificates.ca,
     rogueCa: certificates.rogueCa,
@@ -422,6 +510,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await closeAll();
+  for (const socket of cutSockets) socket.destroy();
+  await new Promise<void>((resolve) => cutServer.close(() => resolve()));
+  for (const socket of corruptSockets) socket.destroy();
+  await new Promise<void>((resolve) => corruptServer.close(() => resolve()));
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -514,10 +606,23 @@ const BLOCKED = "Invalid host: this HTTP database destination is blocked by DB_H
 
 type Expected =
   | { readonly ok: true; readonly status: number; readonly retryAfter?: string | null }
-  | { readonly ok: false; readonly errorName: string; readonly kind?: string; readonly message: string | RegExp };
+  | {
+      readonly ok: false;
+      readonly errorName: string;
+      readonly kind?: string;
+      readonly truncated?: boolean;
+      readonly message: string | RegExp;
+    };
 
 const OK: Expected = { ok: true, status: 200 };
 const TLS_REFUSED: Expected = { ok: false, errorName: "TransportError", kind: "tls", message: TLS_FAILURE };
+const TRUNCATED: Expected = {
+  ok: false,
+  errorName: "TransportError",
+  kind: "network",
+  truncated: true,
+  message: "The server ended the response before it was complete",
+};
 
 const EXPECTED: Readonly<Record<string, Expected>> = {
   "plaintext request with proxy variables set": OK,
@@ -553,6 +658,14 @@ const EXPECTED: Readonly<Record<string, Expected>> = {
     kind: "timeout",
     message: "The request did not finish within its time limit",
   },
+  "cut: fin at zero": TRUNCATED,
+  "cut: fin at mid": TRUNCATED,
+  "cut: fin at line": TRUNCATED,
+  "cut: rst at zero": TRUNCATED,
+  "cut: rst at mid": TRUNCATED,
+  "cut: rst at line": TRUNCATED,
+  // Bun reports this cut as ECONNRESET with no TLS code on either object, so only the network branch is left for it.
+  "TLS: a record corrupted after the headers": TRUNCATED,
   "429 with Retry-After 10": { ok: true, status: 429, retryAfter: "10" },
   "429 with no Retry-After": { ok: true, status: 429, retryAfter: null },
   "429 with a 200-character Retry-After": { ok: true, status: 429, retryAfter: "7".repeat(64) },
@@ -584,9 +697,18 @@ const EXPECTED: Readonly<Record<string, Expected>> = {
   "open sockets on the stopped listeners": OK,
 };
 
+/**
+ * Where Node differs: its request emits the TLS layer's own code (ERR_SSL_WRONG_VERSION_NUMBER) before the answer's
+ * ECONNRESET, and a TLS code stays kind "tls" with `truncated: false` even after the response callback ran.
+ */
+const EXPECTED_ON_NODE: Readonly<Record<string, Expected>> = {
+  "TLS: a record corrupted after the headers": TLS_REFUSED,
+};
+
 function expectCase(report: Report | undefined, name: string): void {
   const outcome = report?.outcomes[name];
-  const expected = EXPECTED[name];
+  const expected =
+    (report?.runtime.startsWith("node ") === true ? EXPECTED_ON_NODE[name] : undefined) ?? EXPECTED[name];
   if (expected.ok) {
     expect({ name, ok: outcome?.ok, status: outcome?.status, message: outcome?.message }).toEqual({
       name,
@@ -597,11 +719,19 @@ function expectCase(report: Report | undefined, name: string): void {
     if (expected.retryAfter !== undefined) expect(outcome?.retryAfter).toBe(expected.retryAfter);
     return;
   }
-  expect({ name, ok: outcome?.ok, errorName: outcome?.errorName, kind: outcome?.kind }).toEqual({
+  expect({
+    name,
+    ok: outcome?.ok,
+    errorName: outcome?.errorName,
+    kind: outcome?.kind,
+    truncated: outcome?.truncated,
+  }).toEqual({
     name,
     ok: false,
     errorName: expected.errorName,
     kind: expected.kind,
+    // Every TransportError carries the flag, true only for a cut body; a configuration refusal carries none.
+    truncated: expected.truncated ?? (expected.errorName === "TransportError" ? false : undefined),
   });
   if (typeof expected.message === "string") expect(outcome?.message).toBe(expected.message);
   else expect(outcome?.message).toMatch(expected.message);

@@ -410,7 +410,10 @@ describe("bounded, stoppable and never resent", () => {
     const error = await failure(() => transport.request(get(url("/collections"))));
     expect(error).toBeInstanceOf(TransportError);
     expect((error as TransportError).kind).toBe("network");
-    expect(error.message).toMatch(/^The request failed before a complete response arrived \([A-Z][A-Z0-9_]*\)$/);
+    // The status line arrived and the body did not finish: a truncation, which a provider can tell from a
+    // connection that never answered (the InfluxDB providers word it as a failure after the query was accepted).
+    expect((error as TransportError).truncated).toBe(true);
+    expect(error.message).toBe("The server ended the response before it was complete");
     expect(Date.now() - started).toBeLessThan(2000);
     expect(listener.seen).toHaveLength(1);
   });
