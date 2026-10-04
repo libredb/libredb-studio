@@ -196,14 +196,15 @@ export function assertTransport(config: Db2Connection, target: Db2Target): void 
 }
 
 /**
- * The five characters db2-node 1.0.22 cannot carry in a password (K23).
+ * The five characters db2-node 1.0.24 cannot carry in a password (K23, gurungabit/db2-node#25).
  *
  * They are exactly the printable ASCII characters EBCDIC code page 037 places differently from
  * code page 500, so the server reads a different password from the one typed. Measured on Db2
- * 12.1.0.0, with and without TLS: each of the five is rejected as "user id or password invalid",
- * `credentialEncoding: "utf8"` does not change that, the IBM CLP signs in over TCP with the same
- * password, and every other printable ASCII character tried is accepted. The section 4 note in
- * `docs/providers/db2.md` has the full matrix.
+ * 12.1.0.0 through 1.0.22 and again through 1.0.24: each of the five is rejected as "user id or
+ * password invalid" over TLS and without it, under the default mechanism and under the
+ * `userPassword` one the insecure opt-in names, `credentialEncoding: "utf8"` does not change that,
+ * the IBM CLP signs in over TCP with the same password, and every other printable ASCII character
+ * tried is accepted. The section 4 note in `docs/providers/db2.md` has the full matrix.
  */
 const UNSENDABLE_PASSWORD_CHARACTERS = new Set(["!", "[", "]", "^", "|"]);
 
@@ -217,7 +218,7 @@ export function assertPasswordSendable(target: Db2Target): void {
   const found = [...new Set([...target.password].filter((character) => UNSENDABLE_PASSWORD_CHARACTERS.has(character)))];
   if (found.length === 0) return;
   throw new DatabaseConfigError(
-    `This Db2 password contains ${found.join(" and ")}, which db2-node 1.0.22 does not send correctly: the server ` +
+    `This Db2 password contains ${found.join(" and ")}, which db2-node 1.0.24 does not send correctly: the server ` +
       "would reject it as a wrong password even though it is right. Change the password of this Db2 user to one " +
       "without ! [ ] ^ or |, and use the new password here.",
     "db2",

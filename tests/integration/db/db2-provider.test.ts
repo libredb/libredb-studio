@@ -652,14 +652,32 @@ describe("Db2Provider: connect and disconnect", () => {
     expect(provider.isConnected()).toBe(false);
   });
 
-  test("a password db2-node 1.0.22 cannot send is refused before the driver is reached (K23)", async () => {
-    const provider = makeProvider({ password: "Password123!" });
+  // 1.0.24 sends these characters wrongly over TLS and without it, under either mechanism, so the
+  // refusal holds for a TLS connection and for one behind the insecure opt-in alike.
+  test.each([
+    ["over TLS", {}],
+    ["without TLS behind the insecure opt-in", { ssl: undefined, allowInsecureAuth: true }],
+  ] as const)(
+    "a password db2-node 1.0.24 cannot send is refused before the driver is reached, %s (K23)",
+    async (_, overrides) => {
+      const provider = makeProvider({ ...overrides, password: "Password123!" });
+      const error = await provider.connect().catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toContain("contains !");
+      expect((error as Error).message).toContain("db2-node 1.0.24");
+      expect(built).toEqual([]);
+      expect(provider.isConnected()).toBe(false);
+    },
+  );
+
+  test("no TLS without the opt-in is refused for the transport first, whatever the password holds", async () => {
+    const provider = makeProvider({ ssl: undefined, password: "Password123!" });
     const error = await provider.connect().catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(DatabaseConfigError);
-    expect((error as Error).message).toContain("contains !");
+    expect((error as Error).message).toContain("has no TLS");
     expect(built).toEqual([]);
-    expect(provider.isConnected()).toBe(false);
   });
 
   test("a connection with no TLS and the consent connects without TLS", async () => {

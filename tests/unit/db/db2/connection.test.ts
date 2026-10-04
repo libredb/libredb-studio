@@ -202,14 +202,15 @@ describe("resolveTarget", () => {
 });
 
 describe("assertPasswordSendable (K23)", () => {
-  // Measured on Db2 12.1.0.0 with db2-node 1.0.22, with and without TLS: the server rejects each of
-  // these five as a wrong password, while the IBM CLP signs in with the same password.
+  // Measured on Db2 12.1.0.0 with db2-node 1.0.22 and again with 1.0.24, with and without TLS and
+  // under both security mechanisms: the server rejects each of these five as a wrong password, while
+  // the IBM CLP signs in with the same password.
   test.each(["!", "[", "]", "^", "|"])("a password holding %s is refused, naming the character", (character) => {
     const config = connection({ password: `Pass${character}word1` });
     const error = refusal(() => assertPasswordSendable(resolveTarget(config)));
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toContain(`contains ${character}`);
-    expect(error.message).toContain("db2-node 1.0.22");
+    expect(error.message).toContain("db2-node 1.0.24");
     expect(error.message).toContain("Change the password");
   });
 
