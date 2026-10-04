@@ -164,6 +164,20 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
     expect(body.result.rows).toEqual(RESULT.rows);
   });
 
+  // The editor grid this feeds would otherwise show NULL for a stored NaN, as on `/api/db/query`.
+  test("hands back NaN and the infinities as words, not as null", async () => {
+    mockQueryReadOnly.mockResolvedValue({
+      ...RESULT,
+      rows: [{ f: Number.NaN, r: Number.POSITIVE_INFINITY, n: Number.NEGATIVE_INFINITY, z: null }] as never,
+    });
+
+    const res = await POST(request(), params());
+    const body = await parseResponseJSON<{ result: { rows: unknown[] } }>(res);
+
+    expect(res.status).toBe(200);
+    expect(body.result.rows).toEqual([{ f: "NaN", r: "Infinity", n: "-Infinity", z: null }]);
+  });
+
   test("the statement comes from the run, never from the request", async () => {
     // The whole reason this is a run-scoped route rather than a read-only `/query`:
     // a body naming its own SQL is a general "run this without a timeout" endpoint,
