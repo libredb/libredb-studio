@@ -399,11 +399,23 @@
         "kind": "status"
       },
       "messageBytes": [
-        8
+        20
       ],
       "messages": [
         {
           "gets": [
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
             {
               "status": "KEY_NOT_FOUND",
               "version": null
@@ -426,10 +438,25 @@
           {
             "comparison_type": "EQUAL",
             "include_value": false,
+            "key": "/admin///"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/admin////"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
             "key": "/admin/////"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/admin//////"
           }
         ],
-        "shard": "2"
+        "shard": "0"
       },
       "target": "127.0.0.1:6648",
       "tls": {
@@ -445,11 +472,23 @@
         "kind": "status"
       },
       "messageBytes": [
-        8
+        20
       ],
       "messages": [
         {
           "gets": [
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
             {
               "status": "KEY_NOT_FOUND",
               "version": null
@@ -467,7 +506,22 @@
           {
             "comparison_type": "EQUAL",
             "include_value": false,
+            "key": "/admin//"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
             "key": "/admin///"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/admin////"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/admin/////"
           },
           {
             "comparison_type": "EQUAL",
@@ -491,11 +545,27 @@
         "kind": "status"
       },
       "messageBytes": [
-        4
+        20
       ],
       "messages": [
         {
           "gets": [
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
             {
               "status": "KEY_NOT_FOUND",
               "version": null
@@ -509,10 +579,30 @@
           {
             "comparison_type": "EQUAL",
             "include_value": false,
+            "key": "/admin//"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/admin///"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
             "key": "/admin////"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/admin/////"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/admin//////"
           }
         ],
-        "shard": "0"
+        "shard": "2"
       },
       "target": "127.0.0.1:6648",
       "tls": {

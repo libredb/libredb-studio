@@ -2107,3 +2107,125 @@ describe("cancellation and deadlines (SB1-9.4)", () => {
     }
   }, 30_000);
 });
+
+/** A partition key that stores `key` on the shard `on` (default: any shard) other than the one its own hash names. */
+function offHome(snapshot: OxiaSnapshot, key: string, on?: OxiaShard): string {
+  const home = shardFor(snapshot, key);
+  for (let i = 0; i < 10_000; i++) {
+    const shard = shardFor(snapshot, "", `pk-${i}`);
+    if (shard !== home && (on === undefined || shard === on)) return `pk-${i}`;
+  }
+  throw new Error("No partition key routes the key off its own shard");
+}
+
+/** The first of `keys` whose own hash names a shard other than `shard`. */
+const notOn = (snapshot: OxiaSnapshot, shard: OxiaShard, keys: readonly string[]) =>
+  keys.find((key) => shardFor(snapshot, key) !== shard) as string;
+
+describe("a record written with a partition key is read on the shard that holds it (ruling R32)", () => {
+  test("the order probe lists a partition-keyed decisive key on the shard that answered it: natural", async () => {
+    const shell = await fakeOf("natural", []);
+    const first = shell.snapshot.shards[0];
+    // The least key of shard 0, so its CEILING of "/" answers it, and stored there under a partition key.
+    const decisive = notOn(
+      shell.snapshot,
+      first,
+      Array.from({ length: 50 }, (_, i) => `/!${i}`),
+    );
+    const plain = Array.from({ length: 84 }, (_, i) => `/t${i}`);
+    const keys = [{ key: decisive, partitionKey: offHome(shell.snapshot, decisive, first) }, ...plain];
+    const { fake, snapshot } = await fakeOf("natural", keys);
+    expect(await listShard(fake, first)).toContain(decisive);
+    const verdict = await detectKeyOrder(fake, snapshot, callOf());
+    expect(verdict).toEqual({ order: "natural", learnedBy: "decisive-list" });
+    const truth = sortedKeys([decisive, ...plain], "natural");
+    const walked = await walkAll(
+      (cursor) => fullWalkPage(fake, snapshot, verdict.order, { cursor, count: 7 }, callOf()),
+      7,
+    );
+    expect(walked).toEqual([...truth]);
+  });
+
+  for (const order of ORDERS) {
+    test(`rangeScanPage and prefixScanPage without -p return a partition-keyed record (${order})`, async () => {
+      const shell = await fakeOf(order, []);
+      const tenant = ["/pk/a/1", "/pk/a/2", "/pk/a/3"];
+      const partitionKey = offHome(shell.snapshot, "/pk/a/2");
+      const records = [
+        ...tenant.map((key) => ({ key, partitionKey, value: new TextEncoder().encode(key) })),
+        ...["/x/1", "/x/2", "/y"].map((key) => ({ key, value: new TextEncoder().encode(key) })),
+      ];
+      const { fake, snapshot } = await fakeOf(order, records);
+      const truth = sortedKeys(
+        records.map((record) => record.key),
+        order,
+      );
+      const scanned = await rangeScanPage(fake, snapshot, order, { range: ALL, limit: 100 }, callOf());
+      expect(scanned.records.map((record) => [record.key, new TextDecoder().decode(record.value)])).toEqual(
+        truth.map((key) => [key, key]),
+      );
+      expect(scanned.more).toBe(false);
+      const prefixed = await prefixScanPage(fake, snapshot, order, { prefix: "/pk/", limit: 100 }, callOf());
+      expect(prefixed.records.map((record) => record.key)).toEqual([...sortedKeys(tenant, order)]);
+      const held = prefixed.records.find((record) => record.key === "/pk/a/2");
+      expect(held?.shard).toBe(shardFor(snapshot, "", partitionKey).id);
+    });
+  }
+
+  test("a partition-keyed node key ending in / is found by the children page and the prefix walks", async () => {
+    const shell = await fakeOf("hierarchical", []);
+    const records = [
+      { key: "a//", partitionKey: offHome(shell.snapshot, "a//"), value: new TextEncoder().encode("node") },
+      ...["a/", "a/b", "a//c"].map((key) => ({ key, value: new TextEncoder().encode(key) })),
+    ];
+    const { fake, snapshot } = await fakeOf("hierarchical", records);
+    const children = await childrenPage(fake, snapshot, "hierarchical", { parent: "a/", count: 7 }, callOf());
+    expect(children.keys).toEqual([...sortedKeys(["a//", "a//c"], "hierarchical")]);
+    const walked = await prefixWalkPage(fake, snapshot, "hierarchical", { prefix: "a/", count: 7 }, callOf());
+    expect(walked.keys).toContain("a//");
+    const scanned = await prefixScanPage(fake, snapshot, "hierarchical", { prefix: "a/", limit: 10 }, callOf());
+    const node = scanned.records.find((record) => record.key === "a//");
+    expect(node === undefined ? undefined : new TextDecoder().decode(node.value)).toBe("node");
+  });
+
+  test("a floor get whose winner is partition-keyed reads it on the winner's shard (HASIM-B M11)", async () => {
+    const shell = await fakeOf("natural", []);
+    const records = [
+      { key: "b", partitionKey: offHome(shell.snapshot, "b"), value: Uint8Array.of(7) },
+      { key: "a", value: Uint8Array.of(1) },
+      { key: "c", value: Uint8Array.of(3) },
+    ];
+    const { fake, snapshot } = await fakeOf("natural", records);
+    const answer = await comparisonGet(
+      fake,
+      snapshot,
+      "natural",
+      { key: "bz", comparison: "FLOOR", includeValue: true },
+      callOf(),
+    );
+    expect(answer?.key).toBe("b");
+    expect(answer?.value).toEqual(Uint8Array.of(7));
+  });
+
+  test("an index get whose winner is partition-keyed reads it on the winner's shard (HASIM-B M11)", async () => {
+    const shell = await fakeOf("natural", []);
+    const records = [
+      {
+        key: "p1",
+        partitionKey: offHome(shell.snapshot, "p1"),
+        value: Uint8Array.of(9),
+        secondaryIndexes: { i: "s1" },
+      },
+    ];
+    const { fake, snapshot } = await fakeOf("natural", records);
+    const answer = await comparisonGet(
+      fake,
+      snapshot,
+      "natural",
+      { key: "s1", comparison: "EQUAL", index: "i", includeValue: true },
+      callOf(),
+    );
+    expect(answer?.key).toBe("p1");
+    expect(answer?.value).toEqual(Uint8Array.of(9));
+  });
+});

@@ -63,8 +63,8 @@ No file here is written by hand: the harness writes every capture and this READM
 | 0.16.10/list-children-a-b.json | 70290ab9d431b72e039cf0f010abd3e204ac79abb3cdcb62b7858908bbba2448 |
 | 0.16.10/list-children-trail.json | 18cc2f14552b2a10ac826adb0bbc03b99ff635a2f7f2317227e2b9490f943271 |
 | 0.16.10/list-first-pages.json | b727908a28c1065005506c9d78d733a30b9c6de03f5a61e13ddc7f1e1186467c |
-| 0.16.10/list-nul-keys.json | 7b170f9f59285e9647951916abfc94d1146081ac3083cc8373f53550deb101be |
-| 0.16.10/list-prefix-admin.json | 96fbe7d5818b307fd66b750ed2d9e876fc99c5619e682da0b95b669d73852209 |
+| 0.16.10/list-nul-keys.json | 72b7ae7c7885248dea5a5e9d9eccfc07f6997f0bc1e7518f9f209ebc6d6f9298 |
+| 0.16.10/list-prefix-admin.json | 7114c91b77a84f5b101e921d5130d9dbdd38fb63e501e229b0cc93f0cba436b0 |
 | 0.16.10/list-root-level.json | 7c875dccd1861c041eaa8b4c7cd0901d3b0ab4630735159056c2f572fb54b9be |
 | 0.16.10/probe-order.json | ef0dc39bd76b80dc3a19fd0fbb65a79e15d5786741be90ee2384fada7c7046a7 |
 | 0.16.10/range-scan-budget.json | 8cada4d6841adecaac067b7890f330ec58755f0e25f216a5586515c30976124d |
@@ -82,7 +82,7 @@ No file here is written by hand: the harness writes every capture and this READM
 | 0.17.1/get-text-utf8.json | 6bfdd4f20e381b9a90474c0ca666b630473d7a03feba81d78589238d24fb0e83 |
 | 0.17.1/health-serving.json | 65c517ba21d19aed3090dd6972b8b4ca6eb4c9758c440cad12b00dd6db218070 |
 | 0.17.1/list-full-walk.json | dfbbad04f178a72d8c2e918adbe4f6e242296f885fe0cba1649f5a7ca4908ad6 |
-| 0.17.1/list-prefix-admin.json | c177b9c2cf3654d37ba85d6e2ad7426b8b3b30dd23b1ce2cd2f0bb359c8d12ab |
+| 0.17.1/list-prefix-admin.json | e271cb3e65a6fd3708a8642a168feed7f4d2fe9fa4e9374ea70e03e0cb28414f |
 | 0.17.1/probe-order.json | e97020ac1adabf42f3f0cb62d73308899275bc4c5fa31ee48aaf699f5f0691f9 |
 | 0.17.1/range-scan-budget.json | 5072e0cc26fe33f5c2fc32608eb9f4cbf6a2b900bb43d75d95286ae27dd2cc5d |
 | 0.17.1/range-scan-over-cap.json | 45176996b52b24b2cf12e12dd83bb334f5ce12234e76a13cb81d714ee1cebd63 |

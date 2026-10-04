@@ -465,6 +465,8 @@ A value larger than the receive cap is withheld: its row keeps its version, its 
 
 A walk page keeps its share of the page's kept bytes for each shard, and at least one key, so a shard cut by its share is read on the next page and the page stays exact.
 A comparison get asks every shard without values, picks the winner, then reads the winner's value with one exact get on its shard; if that read misses, the run says the record changed while the command ran (section 10).
+A record written with a partition key lives on that key's shard, not on the shard its own hash names, so a key a walk has listed or found is read on the shard that listed or answered it: the order probe's decisive List, the values of a `range-scan` without `-p`, and the winner of a comparison get.
+The extra get of a key ending in `/`, which no List range holds, asks every shard of the walk without a value.
 Every shard call takes one limiter permit, the shard map read and the health check included, and gives it back when the call ends.
 The worst case in flight across the process is 16 permits x (the largest per-stream limit, 8 MiB, plus one message under the 16 MiB receive cap) = 16 x 24 MiB = 384 MiB of received messages across every Oxia provider of the process; plus what runs keep for their answers: 8 MiB per console run and 16 MiB per Keys panel page, each plus one key per shard of the round.
 

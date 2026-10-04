@@ -399,11 +399,23 @@
         "kind": "status"
       },
       "messageBytes": [
-        8
+        20
       ],
       "messages": [
         {
           "gets": [
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
             {
               "status": "KEY_NOT_FOUND",
               "version": null
@@ -426,48 +438,17 @@
           {
             "comparison_type": "EQUAL",
             "include_value": false,
-            "key": "/nul////"
-          }
-        ],
-        "shard": "2"
-      },
-      "target": "127.0.0.1:6648",
-      "tls": {
-        "mode": "disable"
-      },
-      "token": false
-    },
-    {
-      "authority": "127.0.0.1:6648",
-      "end": {
-        "code": 0,
-        "details": "",
-        "kind": "status"
-      },
-      "messageBytes": [
-        8
-      ],
-      "messages": [
-        {
-          "gets": [
-            {
-              "status": "KEY_NOT_FOUND",
-              "version": null
-            },
-            {
-              "status": "KEY_NOT_FOUND",
-              "version": null
-            }
-          ]
-        }
-      ],
-      "method": "io.oxia.proto.v1.OxiaClient/Read",
-      "request": {
-        "gets": [
+            "key": "/nul///"
+          },
           {
             "comparison_type": "EQUAL",
             "include_value": false,
-            "key": "/nul///"
+            "key": "/nul////"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/nul/////"
           },
           {
             "comparison_type": "EQUAL",
@@ -491,11 +472,27 @@
         "kind": "status"
       },
       "messageBytes": [
-        4
+        20
       ],
       "messages": [
         {
           "gets": [
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
             {
               "status": "KEY_NOT_FOUND",
               "version": null
@@ -509,10 +506,103 @@
           {
             "comparison_type": "EQUAL",
             "include_value": false,
+            "key": "/nul//"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/nul///"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/nul////"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
             "key": "/nul/////"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/nul//////"
           }
         ],
         "shard": "1"
+      },
+      "target": "127.0.0.1:6648",
+      "tls": {
+        "mode": "disable"
+      },
+      "token": false
+    },
+    {
+      "authority": "127.0.0.1:6648",
+      "end": {
+        "code": 0,
+        "details": "",
+        "kind": "status"
+      },
+      "messageBytes": [
+        20
+      ],
+      "messages": [
+        {
+          "gets": [
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            },
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            }
+          ]
+        }
+      ],
+      "method": "io.oxia.proto.v1.OxiaClient/Read",
+      "request": {
+        "gets": [
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/nul//"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/nul///"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/nul////"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/nul/////"
+          },
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/nul//////"
+          }
+        ],
+        "shard": "2"
       },
       "target": "127.0.0.1:6648",
       "tls": {

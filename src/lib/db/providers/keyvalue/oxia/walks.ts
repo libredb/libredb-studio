@@ -206,8 +206,6 @@ interface KeyWalk extends Walk<string> {
 /** The second phase of a console walk over records (ruling R23): the values of its kept keys, in key order. */
 interface Values {
   readonly client: OxiaClient;
-  readonly snapshot: OxiaSnapshot;
-  readonly partitionKey?: string;
   readonly call: OxiaCallOptions;
   /** The records answered; the key walk asks one key more, to know whether more exist. */
   readonly limit: number;
@@ -216,19 +214,27 @@ interface Values {
   next: number;
 }
 
+/** A key the walk found with a get, and the shard that answered it (ruling R32). */
+interface Found {
+  readonly key: string;
+  readonly shard: OxiaShard;
+}
+
 /** One round: every shard reads one range, plus a shard that holds the round's extra keys, complete. */
 interface Round {
   readonly shards: readonly OxiaShard[];
   readonly range: OxiaRange;
   readonly cursor?: string;
   readonly keep: (key: string) => boolean;
-  readonly extra: readonly string[];
+  readonly extra: readonly Found[];
   readonly count: number;
 }
 
 /** A walk's answer as it grows, round by round. */
 interface Run<T> {
   readonly items: T[];
+  /** A key walk's shard that listed or answered each kept key, by position (ruling R32). */
+  readonly homes: OxiaShard[];
   spent: number;
   more: boolean;
   /** The run budget, or a console stall, ended it. */
@@ -236,8 +242,16 @@ interface Run<T> {
   receiveCap: boolean;
 }
 
+/** One shard's answers to the order probe's two gets. */
+interface ProbeAnswer {
+  readonly shard: OxiaShard;
+  readonly ceiling?: string;
+  readonly floor?: string;
+}
+
 /** One shard's first message of the order probe's pair sample. */
 interface ShardSample {
+  readonly shard: OxiaShard;
   readonly keys: readonly string[];
   readonly slashed?: string;
   readonly last?: string;
@@ -246,6 +260,7 @@ interface ShardSample {
 
 /** One shard's reading on past its sample (SB1-7.2 step 6). */
 interface ReadOn {
+  readonly shard: OxiaShard;
   readonly slashed?: string;
   readonly ended: boolean;
 }
@@ -416,7 +431,7 @@ function recordSource(client: OxiaClient, call: OxiaCallOptions): Source<OxiaRec
   };
 }
 
-const newRun = <T>(): Run<T> => ({ items: [], spent: 0, more: false, stopped: false, receiveCap: false });
+const newRun = <T>(): Run<T> => ({ items: [], homes: [], spent: 0, more: false, stopped: false, receiveCap: false });
 
 /** Ends a run that the run budget or a console stall stopped: more may exist. */
 function stop<T>(run: Run<T>): false {
@@ -492,22 +507,56 @@ async function round(walk: KeyWalk, ask: Round, run: Run<string>, frontiers: Fro
   run.receiveCap ||= reads.some((read) => read.receiveCap);
   let read = 0;
   const shards = ask.shards.map((_, i) => held[i] ?? reads[read++]);
-  const merged = walk.source.merge([...shards, { items: ask.extra, complete: true, receiveCap: false }], remaining);
+  const extra = ask.extra.map((found) => found.key);
+  const merged = walk.source.merge([...shards, { items: extra, complete: true, receiveCap: false }], remaining);
   if (!("stalled" in merged)) {
     frontiers.splice(0, frontiers.length, ...standing(shards, merged.items));
-    return absorb(run, merged, walk);
+    const homes = homesOf(
+      [...shards.map((shard) => shard.items), extra],
+      (input, at) => ask.shards[input] ?? ask.extra[at].shard,
+      merged.items,
+    );
+    const before = run.items.length;
+    const goes = absorb(run, merged, walk);
+    for (let i = 0; i < run.items.length - before; i++) run.homes.push(homes[i]);
+    return goes;
   }
   if (walk.mode.stallThrows) throw new QueryError(OXIA_STALLED_PAGE_SENTENCE, OXIA_TYPE);
   return stop(run);
 }
 
-/** The kept keys from `values.next` up to `end` that lie on one shard, at most `most` gets: the next group. */
-function nextGroup(values: Values, keys: readonly string[], end: number, most: number): readonly string[] {
-  const shardOf = (key: string) => shardFor(values.snapshot, key, values.partitionKey);
-  const shard = shardOf(keys[values.next]);
+/**
+ * The shard each merged key came from (ruling R32). The merge answers each input's least keys in order, ties by input
+ * index, so a key answered is the next one of the first input whose answered keys still hold it.
+ */
+function homesOf(
+  inputs: readonly (readonly string[])[],
+  home: (input: number, at: number) => OxiaShard,
+  answered: readonly string[],
+): OxiaShard[] {
+  const emitted = new Set(answered);
+  const holders = new Map<string, number[]>();
+  inputs.forEach((items, input) => {
+    for (const key of items) {
+      if (!emitted.has(key)) break;
+      const at = holders.get(key);
+      if (at === undefined) holders.set(key, [input]);
+      else at.push(input);
+    }
+  });
+  const next = inputs.map(() => 0);
+  return answered.map((key) => {
+    const input = (holders.get(key) as number[]).shift() as number;
+    return home(input, next[input]++);
+  });
+}
+
+/** The kept keys from `values.next` up to `end` that the same shard listed, at most `most` gets: the next group. */
+function nextGroup(values: Values, run: Run<string>, end: number, most: number): readonly string[] {
+  const shard = run.homes[values.next];
   let to = values.next + 1;
-  while (to < end && to - values.next < most && shardOf(keys[to]) === shard) to++;
-  return keys.slice(values.next, to);
+  while (to < end && to - values.next < most && run.homes[to] === shard) to++;
+  return run.items.slice(values.next, to);
 }
 
 /**
@@ -516,8 +565,12 @@ function nextGroup(values: Values, keys: readonly string[], end: number, most: n
  * the run budget before reading on; a single get takes `readBatch`, which answers it withheld when it alone passes the
  * cap.
  */
-async function readGroup(values: Values, group: readonly string[], call: OxiaCallOptions): Promise<GroupRead> {
-  const shard = shardFor(values.snapshot, group[0], values.partitionKey);
+async function readGroup(
+  values: Values,
+  shard: OxiaShard,
+  group: readonly string[],
+  call: OxiaCallOptions,
+): Promise<GroupRead> {
   if (group.length === 1) return readBatch(values.client, shard, [{ key: group[0], includeValue: true }], call);
   try {
     const answers = await values.client.read(
@@ -556,9 +609,9 @@ async function readValues(values: Values, run: Run<string>): Promise<boolean> {
   const end = Math.min(run.items.length, values.limit);
   let most = OXIA_READ_BATCH_GETS;
   while (values.next < end) {
-    const group = nextGroup(values, run.items, end, most);
+    const group = nextGroup(values, run, end, most);
     // oxlint-disable-next-line no-await-in-loop -- one group at a time, so a run holds one Read's answer at once.
-    const views = await readGroup(values, group, valuesCall(values, run));
+    const views = await readGroup(values, run.homes[values.next], group, valuesCall(values, run));
     if (typeof views === "number") {
       most = views;
       continue;
@@ -596,7 +649,8 @@ async function rounds(walk: KeyWalk, ask: Round, run: Run<string>): Promise<bool
     if (!walk.mode.readsOn || run.stopped || run.items.length >= ask.count) return false;
     const cursor = run.items[run.items.length - 1];
     const range = { ...ask.range, startInclusive: startAt(walk.order, cursor, ask.range.startInclusive) };
-    at = { ...ask, range, cursor, extra: ask.extra.filter(afterCursor(walk.order, cursor)) };
+    const after = afterCursor(walk.order, cursor);
+    at = { ...ask, range, cursor, extra: ask.extra.filter((found) => after(found.key)) };
   }
 }
 
@@ -676,13 +730,8 @@ async function bandWalk(
   }
   const bands = prefixBands(ask.prefix, await readDepth(client, { ...snapshot, shards }, call));
   const gets = bands.flatMap((band) => band.extraGets);
-  const views = await readKeys(
-    client,
-    snapshot,
-    gets.map((key) => ({ key, partitionKey: ask.partitionKey, includeValue: false })),
-    call,
-  );
-  const found = new Map(gets.map((key, i) => [key, views[i]]));
+  const holders = await holdersOf(client, shards, gets, call);
+  const found = new Map(gets.map((key, i) => [key, holders[i][0]]));
   const after = afterCursor(order, ask.cursor);
   const level = ask.cursor === undefined ? 0 : hierarchicalLevel(ask.cursor);
   for (const band of bands) {
@@ -691,9 +740,10 @@ async function bandWalk(
       run.more = true;
       break;
     }
-    const extra = band.extraGets.filter(
-      (key) => found.get(key) !== undefined && key.startsWith(ask.prefix) && after(key),
-    );
+    const extra = band.extraGets.flatMap((key) => {
+      const held = found.get(key);
+      return held !== undefined && key.startsWith(ask.prefix) && after(key) ? [held] : [];
+    });
     const keep = (key: string) => key.startsWith(ask.prefix) && hierarchicalLevel(key) === band.level && after(key);
     const range = { startInclusive: startAt(order, ask.cursor, band.start), endExclusive: band.end };
     // oxlint-disable-next-line no-await-in-loop -- bands one after another: a deeper band holds only keys above the last.
@@ -809,13 +859,13 @@ export function limitedOxiaClient(client: OxiaClient, limiter: ProviderLimiter):
 /** The decisive List of a key holding "/" (SB1-7.2 step 3): its first message only, on the key's shard. */
 async function listStep(
   client: OxiaClient,
-  snapshot: OxiaSnapshot,
+  shard: OxiaShard,
   key: string,
   call: OxiaCallOptions,
 ): Promise<OrderVerdict> {
   // A one-key sample tells no pair, so order.ts answers that key's decisive range.
   const { range } = decideFromPairs([[key]]) as { readonly range: OxiaRange };
-  const stream = client.list(shardFor(snapshot, key), range, { ...call, maxReceivedBytes: OXIA_PAGE_STREAM_BYTES });
+  const stream = client.list(shard, range, { ...call, maxReceivedBytes: OXIA_PAGE_STREAM_BYTES });
   try {
     return decideFromList(key, (await stream.next()) ?? []);
   } finally {
@@ -830,8 +880,9 @@ async function sampleShard(client: OxiaClient, shard: OxiaShard, call: OxiaCallO
   try {
     const message = await stream.next();
     probe.received += stream.receivedBytes;
-    if (message === undefined) return { keys: [], ended: true };
+    if (message === undefined) return { shard, keys: [], ended: true };
     return {
+      shard,
       keys: message.slice(0, OXIA_ORDER_SAMPLE_KEYS),
       slashed: message.find((key) => key.includes("/")),
       last: message[message.length - 1],
@@ -862,14 +913,14 @@ async function readOn(
       const message = await stream.next();
       probe.received += stream.receivedBytes - counted;
       counted = stream.receivedBytes;
-      if (message === undefined) return { ended: !stream.truncated };
+      if (message === undefined) return { shard, ended: !stream.truncated };
       const slashed = message.find((key) => key.includes("/"));
       if (slashed !== undefined) {
         probe.found = true;
-        return { slashed, ended: false };
+        return { shard, slashed, ended: false };
       }
     }
-    return { ended: false };
+    return { shard, ended: false };
   } finally {
     stream.cancel();
   }
@@ -881,28 +932,35 @@ export async function detectKeyOrder(
   snapshot: OxiaSnapshot,
   call: OxiaCallOptions,
 ): Promise<OrderVerdict> {
-  const answers = await pool(snapshot.shards, async (shard) => {
+  const answers = await pool(snapshot.shards, async (shard): Promise<ProbeAnswer> => {
     const [ceiling, floor] = await client.read(shard, ORDER_PROBE_GETS, call);
-    return { ceiling: okKey(ceiling), floor: okKey(floor) };
+    return { shard, ceiling: okKey(ceiling), floor: okKey(floor) };
   });
   const step = decideFromProbe(answers);
   if (step.kind === "verdict") return step.verdict;
-  if (step.kind === "list") return listStep(client, snapshot, step.key, call);
+  // Every read of a key the probe saw goes to the shard that answered it: a partition key may store it off its hash's.
+  if (step.kind === "list") {
+    const answered = answers.find((answer) => answer.ceiling === step.key || answer.floor === step.key);
+    return listStep(client, (answered as ProbeAnswer).shard, step.key, call);
+  }
   const probe: OrderProbe = { received: 0, found: false };
   const samples: readonly ShardSample[] = await pool(snapshot.shards, (shard) =>
     sampleShard(client, shard, call, probe),
   );
   const decided = decideFromPairs(samples.map((sample) => sample.keys));
-  if ("kind" in decided) return listStep(client, snapshot, decided.key, call);
+  if ("kind" in decided) {
+    const sampled = samples.find((sample) => sample.keys.includes(decided.key)) as ShardSample;
+    return listStep(client, sampled.shard, decided.key, call);
+  }
   if (decided.learnedBy === "pair-sample") return decided;
   const seen = samples.find((sample) => sample.slashed !== undefined);
-  if (seen !== undefined) return listStep(client, snapshot, seen.slashed as string, call);
+  if (seen !== undefined) return listStep(client, seen.shard, seen.slashed as string, call);
   const open = snapshot.shards.flatMap((shard, i) =>
     samples[i].ended ? [] : [{ shard, last: samples[i].last as string }],
   );
   const outcomes = await pool(open, ({ shard, last }) => readOn(client, shard, last, call, probe));
   const found = outcomes.find((outcome) => outcome.slashed !== undefined);
-  if (found !== undefined) return listStep(client, snapshot, found.slashed as string, call);
+  if (found !== undefined) return listStep(client, found.shard, found.slashed as string, call);
   if (outcomes.every((outcome) => outcome.ended)) return { order: "hierarchical", learnedBy: "assumed" };
   return { order: "hierarchical", learnedBy: "assumed", exhausted: true };
 }
@@ -969,13 +1027,8 @@ export async function childrenPage(
       ? { ...childrenRange(ask.parent), keep: always }
       : { ...naturalChildrenRange(ask.parent), extraGets: [] };
   const after = afterCursor(order, ask.cursor);
-  const views = await readKeys(
-    client,
-    snapshot,
-    children.extraGets.map((key) => ({ key, includeValue: false })),
-    call,
-  );
-  const extra = views.flatMap((view) => (view !== undefined && after(view.key) ? [view.key] : []));
+  const holders = await holdersOf(client, snapshot.shards, children.extraGets, call);
+  const extra = holders.flatMap(([held]) => (held !== undefined && after(held.key) ? [held] : []));
   const range = { startInclusive: startAt(order, ask.cursor, children.start), endExclusive: children.end };
   const run = newRun<string>();
   const shards = snapshot.shards;
@@ -1072,6 +1125,41 @@ export async function readKeys(
   return answers;
 }
 
+/**
+ * EQUAL gets asking no value of keys whose shard is not known, each sent to every shard of `shards` (ruling R32): a
+ * key written with a partition key lives on that key's shard, not on its own hash's. Answers each key's holders in
+ * shard order, none for a key no shard holds; no call when there is no key.
+ */
+async function holdersOf(
+  client: OxiaClient,
+  shards: readonly OxiaShard[],
+  keys: readonly string[],
+  call: OxiaCallOptions,
+): Promise<Found[][]> {
+  const holders = keys.map((): Found[] => []);
+  if (keys.length === 0) return holders;
+  const batches = shards.flatMap((shard) =>
+    Array.from({ length: Math.ceil(keys.length / OXIA_READ_BATCH_GETS) }, (_, c) => ({
+      shard,
+      from: c * OXIA_READ_BATCH_GETS,
+    })),
+  );
+  const answers = await pool(batches, ({ shard, from }) =>
+    readBatch(
+      client,
+      shard,
+      keys.slice(from, from + OXIA_READ_BATCH_GETS).map((key) => ({ key, includeValue: false })),
+      call,
+    ),
+  );
+  batches.forEach(({ shard, from }, b) => {
+    answers[b].forEach((view, j) => {
+      if (view !== undefined) holders[from + j].push({ key: view.key, shard });
+    });
+  });
+  return holders;
+}
+
 /** SB1-7.6: fan-out without values, selection, then one EQUAL get on the winner's shard. Also every `--index` get, EQUAL included. */
 export async function comparisonGet(
   client: OxiaClient,
@@ -1113,13 +1201,8 @@ const consoleWalk = (client: OxiaClient, order: KeyOrder, call: OxiaCallOptions,
   ...(values === undefined ? {} : { values }),
 });
 
-function newValues(
-  client: OxiaClient,
-  snapshot: OxiaSnapshot,
-  ask: { readonly partitionKey?: string; readonly limit: number },
-  call: OxiaCallOptions,
-): Values {
-  return { client, snapshot, partitionKey: ask.partitionKey, call, limit: ask.limit, records: [], next: 0 };
+function newValues(client: OxiaClient, limit: number, call: OxiaCallOptions): Values {
+  return { client, call, limit, records: [], next: 0 };
 }
 
 /** A two-phase run's answer: its records, with `more` true when its key walk read a key past the limit. */
@@ -1146,7 +1229,7 @@ export async function rangeScanPage(
     const shardsRead = await concatenated(walk, shards, indexRange(ask, ask.index), ask.limit, run);
     return recordsAnswer(run, shardsRead, shardsRead > 1);
   }
-  const values = newValues(client, snapshot, ask, call);
+  const values = newValues(client, ask.limit, call);
   const run = newRun<string>();
   const range = { shards, range: ask.range, keep: always, extra: [], count: ask.limit + 1 };
   await rounds(consoleWalk(client, order, call, values), range, run);
@@ -1194,7 +1277,7 @@ export async function prefixScanPage(
   ask: PrefixConsoleAsk,
   call: OxiaCallOptions,
 ): Promise<OxiaRecordsAnswer> {
-  const values = newValues(client, snapshot, ask, call);
+  const values = newValues(client, ask.limit, call);
   const run = newRun<string>();
   const walk = consoleWalk(client, order, call, values);
   const shardsRead = await bandWalk(walk, client, snapshot, { ...ask, count: ask.limit + 1 }, call, run);
