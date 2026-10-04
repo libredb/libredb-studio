@@ -215,7 +215,10 @@ export async function POST(req: NextRequest) {
 
         // Several statements run one by one (#1390). Comment-only fragments are dropped first, so
         // a statement with a trailing `-- note` stays one statement on the path below. Never with
-        // bound values: they belong to one statement's placeholders.
+        // bound values: they belong to one statement's placeholders. One statement is sent as the
+        // splitter read it, as `/api/db/multi-query` sends it: without the comment-only fragment
+        // after it and without a script separator line (Oracle's `/`), which the engine refuses.
+        let statementSql: string = sql;
         if (bound.params === undefined) {
           const grammar = resolveSqlGrammar(connection.type);
           const units = splitExecutionUnits(sql, grammar).filter((unit) => countCodeStatements(unit.sql, grammar) > 0);
@@ -226,10 +229,11 @@ export async function POST(req: NextRequest) {
             else releaseTransaction(connection.id);
             return NextResponse.json({ ...script, inTransaction: stillOpen });
           }
+          if (units.length === 1) statementSql = units[0].sql;
         }
 
         // Apply limit for SELECT queries within transaction
-        const prepared = provider.prepareQuery(sql, options);
+        const prepared = provider.prepareQuery(statementSql, options);
         const result = await provider.queryInTransaction(prepared.query, bound.params);
 
         // The provider ends its session when the SERVER says the statement ended the

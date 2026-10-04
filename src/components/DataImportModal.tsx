@@ -31,9 +31,11 @@ interface DataImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   /**
-   * Runs the import. `false` says it did not land, and the dialog then stays open with the file,
-   * the target and the mapping as they were, showing the message `onFailure` was handed (#1396).
-   * Anything else closes it, which is what a host that does not report an outcome gets.
+   * Runs the import. `false` together with a message handed to `onFailure` says the database or
+   * the editor refused it, and the dialog then stays open with the file, the target and the mapping
+   * as they were, showing that message (#1396). Anything else closes it: success, a host that
+   * reports no outcome, and a `false` with no message, which is a run handed to the safety dialog
+   * (it runs the statement on Proceed) or cancelled, as before.
    */
   onImport: (sql: string, onFailure: (message: string) => void) => Promise<boolean | void> | void;
   tables: readonly DetailedObject[];
@@ -325,6 +327,9 @@ export function DataImportModal({
   const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  // Bumped on every close, so an outcome that arrives after the dialog was closed is dropped
+  // rather than written into the next opening.
+  const openingRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const csvTextRef = useRef("");
   const [csvDelimiter, setCsvDelimiter] = useState<CsvDelimiter>(",");
@@ -352,6 +357,7 @@ export function DataImportModal({
   }, []);
 
   const handleClose = () => {
+    openingRef.current += 1;
     resetState();
     onClose();
   };
@@ -448,11 +454,13 @@ export function DataImportModal({
     if (!generatedSQL) return;
     setIsImporting(true);
     setImportError(null);
-    let failure = "The import did not run.";
+    const opening = openingRef.current;
+    let failure: string | undefined;
     const outcome = await onImport(generatedSQL, (message) => {
       failure = message;
     });
-    if (outcome === false) {
+    if (opening !== openingRef.current) return;
+    if (outcome === false && failure !== undefined) {
       setIsImporting(false);
       setImportError(failure);
       return;

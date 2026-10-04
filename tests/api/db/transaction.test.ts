@@ -404,6 +404,27 @@ describe("POST /api/db/transaction", () => {
       expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(1);
       expect(data.multiStatement).toBeUndefined();
       expect(data.pagination).toBeDefined();
+      // Sent as the splitter read it, without the comment fragment, as the script route sends it.
+      expect(String((mockTxProvider.queryInTransaction.mock.calls[0] as unknown[])[0])).toBe(
+        "SELECT * FROM t LIMIT 50",
+      );
+    });
+
+    test("an Oracle block followed by its `/` line is sent without the separator", async () => {
+      const req = createMockRequest("/api/db/transaction", {
+        method: "POST",
+        body: {
+          connection: { ...validConnection, type: "oracle" },
+          action: "query",
+          sql: "BEGIN\n  UPDATE t SET a = 1;\nEND;\n/",
+        },
+      });
+      const res = await POST(req as never);
+
+      expect(res.status).toBe(200);
+      const sent = String((mockTxProvider.queryInTransaction.mock.calls[0] as unknown[])[0]);
+      expect(sent).toContain("END;");
+      expect(sent).not.toContain("/");
     });
 
     test("a statement that ended the transaction is reported and the connection handed back", async () => {

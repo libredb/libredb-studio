@@ -36,11 +36,16 @@ export interface QueryExecutionOptions {
    */
   params?: unknown[];
   /**
-   * Handed the message of a run that failed: the refusal, the engine's error, or the statement a
-   * script stopped at, the same text the tab shows. A dialog that ran a statement for the user
-   * keeps itself open and shows it there (#1396), where the toast fades and the results panel sits
-   * under the dialog. Not called for a run that did not fail, nor for one the safety dialog took
-   * over or a cancel stopped, which have no engine message to give.
+   * Handed the message of a run that failed: the refusal, the engine's error, the statement a
+   * script stopped at, or the SANDBOX transaction that could not be opened, the same text the tab
+   * or the toast shows. A dialog that ran a statement for the user keeps itself open and shows it
+   * there (#1396), where the toast fades and the results panel sits under the dialog.
+   *
+   * Not called for a run that did not fail, nor for one that did not fail AT ALL: a run handed to
+   * the safety dialog (which runs it on Proceed, through `forceExecuteQuery`), a cancel, or a run a
+   * newer one superseded. Those resolve `false` with no message, and a caller that keeps a dialog
+   * open on a failure must tell them apart by that: the import dialog closes for them, so the
+   * statement the safety dialog runs is never offered a second time.
    */
   onFailure?: (message: string) => void;
 }
@@ -574,6 +579,7 @@ export function useQueryExecution({
               description: `${/[.!?]$/.test(description) ? description : `${description}.`} Nothing was run.`,
               variant: "destructive",
             });
+            executionOptions?.onFailure?.(description);
             return false;
           }
         }

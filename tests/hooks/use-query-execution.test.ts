@@ -332,11 +332,17 @@ describe("useQueryExecution", () => {
 
     const { result } = renderHook(() => useQueryExecution(params));
 
+    const onFailure = mock((_message: string) => {});
+    let ran: boolean | undefined;
     await act(async () => {
-      await result.current.executeQuery("DROP TABLE users");
+      ran = await result.current.executeQuery("DROP TABLE users", undefined, false, { onFailure });
     });
 
     expect(result.current.safetyCheckQuery).toBe("DROP TABLE users");
+    // Handed to the safety dialog, not failed: no message, so the import dialog closes and the
+    // statement the safety dialog runs on Proceed is not offered a second time (#1396).
+    expect(ran).toBe(false);
+    expect(onFailure).not.toHaveBeenCalled();
   });
 
   /**
@@ -3304,11 +3310,15 @@ describe("useQueryExecution", () => {
     const { result } = renderHook(() => useQueryExecution(params));
 
     let returned: boolean | undefined;
+    const onFailure = mock((_message: string) => {});
     await act(async () => {
-      returned = await result.current.executeQuery("UPDATE users SET active = false");
+      returned = await result.current.executeQuery("UPDATE users SET active = false", undefined, false, {
+        onFailure,
+      });
     });
 
     expect(returned).toBe(false);
+    expect(onFailure).toHaveBeenCalledWith("begin failed");
     expect(sent).toEqual(["begin"]);
     expect(mockToastError).toHaveBeenCalledWith("Sandbox Unavailable", {
       description: "begin failed. Nothing was run.",

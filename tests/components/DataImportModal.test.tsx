@@ -175,12 +175,54 @@ describe("DataImportModal", () => {
       expect((body.getByLabelText("Target column for when") as HTMLInputElement).value).toBe("happened_at");
     });
 
-    test("a failure with no message still says the import did not run", async () => {
-      const body = toReview(mock(async () => false));
+    /**
+     * `false` with no message is a run the safety dialog took over (a PostgreSQL value ending in a
+     * backslash reads as an unterminated span there) or one that was cancelled. The safety dialog
+     * runs it on Proceed, so the import dialog closes as it always did: kept open, a second click
+     * imported the rows twice.
+     */
+    test("a run handed to the safety dialog closes the dialog", async () => {
+      const onClose = mock(() => {});
+      const body = toReview(
+        mock(async () => false),
+        onClose,
+      );
       await act(async () => {
         fireEvent.click(body.getByText("Execute Import"));
       });
-      expect(body.getByRole("alert").textContent).toBe("The import did not run.");
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(body.queryByRole("alert")).toBeNull();
+    });
+
+    test("an outcome that arrives after the dialog was closed is dropped", async () => {
+      let settle: (ran: boolean) => void = () => {};
+      const onImport = mock(
+        (_sql: string, onFailure: (message: string) => void) =>
+          new Promise<boolean>((resolve) => {
+            settle = (ran) => {
+              if (!ran) onFailure("late failure");
+              resolve(ran);
+            };
+          }),
+      );
+      const onClose = mock(() => {});
+      const body = toReview(onImport, onClose);
+      act(() => {
+        fireEvent.click(body.getByText("Execute Import"));
+      });
+      // Closed while the run is still out: the dialog is back at its first step.
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+      expect(onClose).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        settle(false);
+      });
+      // The next import starts clean: no stale error, and its button is not stuck on "Importing".
+      act(() => simulateFileUpload(document.body, "id,when\n1,today", "data.csv"));
+      fireEvent.click(body.getByText("Configure Import"));
+      fireEvent.click(body.getByText("New Table"));
+      fireEvent.click(body.getByText("Review SQL"));
+      expect(body.queryByText("late failure")).toBeNull();
+      expect(body.getByText("Execute Import")).toBeDefined();
     });
 
     test("an import that landed closes the dialog", async () => {
