@@ -32,6 +32,7 @@ import {
 } from "../../object-kinds";
 import { EDIT_CHARACTER_LIMIT, userPositionOf } from "../../object-edit";
 import { connectionFingerprint } from "../../connection-fingerprint";
+import { readRedisCommandText } from "./redis-command-text";
 import { comparePaths } from "../../object-path";
 import {
   type DatabaseConnection,
@@ -1112,9 +1113,10 @@ export class RedisProvider extends BaseDatabaseProvider {
       //   1) KEYS session:*
       //   2) GET session:1
       //
-      // `executeRedisCommand` reads the whole body as one command, so the server
-      // answered `ERR unknown command '1)'`. The list numbering and the second
-      // command are what made it unrunnable, so those are what this names. The
+      // `executeRedisCommand` then read the whole body as one command, so the server
+      // answered `ERR unknown command '1)'`; it now refuses the second line as a
+      // second command instead. The list numbering and the second command are what
+      // make it unrunnable either way, so those are what this names. The
       // prefix-group sentence is here for the same reason `tablesAreDerivedGroupings`
       // exists: the inventory's rows are named `session:*`, which reads as something
       // addressable and is not (#427).
@@ -1413,109 +1415,35 @@ export class RedisProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * Advance the plain tokenizer's quote state across one line of text, using the
-   * SAME rule `executePlainCommand` uses: outside a quote any `"` or `'` opens
-   * one, inside a quote only the matching character closes it, and there is no
-   * escape handling. Returns the open quote character, or '' when none is open.
-   */
-  private static quoteStateAfter(text: string, quoteChar: string): string {
-    let open = quoteChar;
-    for (const ch of text) {
-      if (open === "") {
-        if (ch === '"' || ch === "'") open = ch;
-      } else if (ch === open) {
-        open = "";
-      }
-    }
-    return open;
-  }
-
-  /**
-   * Reduce a buffer to the ONE command it should run: drop every `#` comment
-   * line, then take the first blank-line-delimited block and join its lines back
-   * with a NEWLINE. A line is a comment only when it *starts* with `#` (after
-   * trimming) AND no quoted argument is open across it, so a `#` inside a key or
-   * value is never mistaken for one. Returns '' when nothing runnable remains
-   * (#427).
+   * Run the ONE command an editor text holds, read by `readRedisCommandText()`, the reading the
+   * confirmation gate and the editor's refusal share (docs/providers/redis.md 3.4a): each
+   * non-empty line is its own command, a line continues only inside an open quoted argument or
+   * an unfinished JSON command, `#` lines are dropped, the first blank line ends the read, and a
+   * second command before it is refused here too, so a caller that skipped the editor (the agent,
+   * the HTTP route) cannot run the text as one command.
    *
-   * Why a block rather than a line: outside quotes the tokenizer treats a
-   * newline as ordinary whitespace, so a single command wrapped across several
-   * lines (`HSET k a 1` / `b 2`) has always run whole, and a pretty-printed JSON
-   * command is legitimately multi-line — picking only line 1 would silently
-   * half-execute both. Why not the whole buffer: the schema-explorer "Generate
-   * Command" cheatsheet is a list of alternatives separated by blank lines, and
-   * running the buffer must run only its first command, not all of them.
-   *
-   * Why the join character is a newline and not a space: the tokenizer's
-   * whitespace branch is guarded by `!inQuote`, so a newline INSIDE a quoted
-   * argument is data. `SET note "line1\nline2"` stores a two-line value, and
-   * joining with a space silently rewrote it to `line1 line2`. A newline join
-   * keeps both behaviours exactly, and lines are appended verbatim so
-   * indentation inside a quoted value survives too.
+   * The form is the first character of the first command line: `{` is the JSON command, the
+   * lossless form the Redis generators fall back to and what `JSON.stringify(cmd, null, 2)`
+   * emits, and anything else is a plain command.
    */
-  /**
-   * What a buffer line is to `commandBody`. Both chrome kinds require that no
-   * quoted argument is open across the line: inside one, a line-leading `#` and
-   * an empty line are data, not structure (#427).
-   */
-  private static lineKind(raw: string, quoteChar: string): "comment" | "blank" | "content" {
-    if (quoteChar !== "") return "content";
-    const line = raw.trim();
-    if (line.startsWith("#")) return "comment";
-    return line === "" ? "blank" : "content";
-  }
-
-  private commandBody(input: string): string {
-    const block: string[] = [];
-    let quoteChar = "";
-    let isJsonBlock = false;
-    for (const raw of input.split("\n")) {
-      const kind = RedisProvider.lineKind(raw, quoteChar);
-      if (kind === "comment") continue;
-      if (kind === "blank") {
-        // A blank line ends the first block; blank lines before it are leading padding.
-        if (block.length > 0) break;
-        continue;
-      }
-      // The block's kind is fixed by its first content line, using the SAME test
-      // `executeRedisCommand` uses to pick a parser. Quote tracking exists only to
-      // protect a `#` inside a quoted argument of a PLAIN command, and its rules
-      // are the plain tokenizer's — no escape handling. Applying them to a JSON
-      // body counted `\"` inside a string as a real quote, so a key named `say"hi`
-      // left a phantom quote open, every later comment line stopped being dropped,
-      // and the buffer reached `JSON.parse` with comments in it (#427). A JSON
-      // body cannot hide a line-leading `#` inside a string — JSON strings carry
-      // no literal newline — so it needs no tracking at all.
-      if (block.length === 0) isJsonBlock = raw.trimStart().startsWith("{");
-      block.push(raw);
-      if (!isJsonBlock) quoteChar = RedisProvider.quoteStateAfter(raw, quoteChar);
-    }
-    return block.join("\n");
-  }
-
   private async executeRedisCommand(input: string): Promise<Omit<QueryResult, "executionTime">> {
-    const body = this.commandBody(input);
-    if (body.trim() === "") {
+    const read = readRedisCommandText(input);
+    if (read.kind === "empty") {
       throw new QueryError("No command to run (only comments or blank lines)", "redis");
     }
+    if (read.kind === "refused") throw new QueryError(read.refusal, "redis");
 
-    // Try JSON format first — over the whole block, because `JSON.stringify(cmd,
-    // null, 2)` is what the MongoDB-shaped generator emits and what users paste.
-    // It is also the lossless form the Redis generators fall back to for any
-    // argument the plain tokenizer cannot round-trip. Trailing `#` comment lines
-    // are dropped with every other comment; trailing non-comment text is not —
-    // it joins the block and fails JSON.parse (#427).
-    if (body.trimStart().startsWith("{")) {
+    if (read.kind === "json") {
       try {
-        const parsed = JSON.parse(body);
+        const parsed = JSON.parse(read.body);
         return this.executeJsonCommand(parsed);
       } catch {
         throw new QueryError("Invalid JSON command format", "redis");
       }
     }
 
-    // Plain text command format: COMMAND arg1 arg2 ...
-    return this.executePlainCommand(body);
+    // A plain command line always holds a word: it is not blank, and a quote opens one.
+    return this.runCommand(read.words[0].toUpperCase(), read.words.slice(1));
   }
 
   private async executeJsonCommand(cmd: RedisJsonCommand): Promise<Omit<QueryResult, "executionTime">> {
@@ -1525,41 +1453,6 @@ export class RedisProvider extends BaseDatabaseProvider {
 
     const command = cmd.command.toUpperCase();
     const args = cmd.args || [];
-
-    return this.runCommand(command, args);
-  }
-
-  private async executePlainCommand(input: string): Promise<Omit<QueryResult, "executionTime">> {
-    // Parse plain text command, respecting quoted strings
-    const parts: string[] = [];
-    let current = "";
-    let inQuote = false;
-    let quoteChar = "";
-
-    for (let i = 0; i < input.length; i++) {
-      const ch = input[i];
-      if (!inQuote && (ch === '"' || ch === "'")) {
-        inQuote = true;
-        quoteChar = ch;
-      } else if (inQuote && ch === quoteChar) {
-        inQuote = false;
-      } else if (!inQuote && /\s/.test(ch)) {
-        if (current) {
-          parts.push(current);
-          current = "";
-        }
-      } else {
-        current += ch;
-      }
-    }
-    if (current) parts.push(current);
-
-    if (parts.length === 0) {
-      throw new QueryError("Empty command", "redis");
-    }
-
-    const command = parts[0].toUpperCase();
-    const args = parts.slice(1);
 
     return this.runCommand(command, args);
   }

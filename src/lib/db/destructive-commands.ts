@@ -7,6 +7,7 @@ import {
 } from "@/lib/db/providers/keyvalue/etcd/guard";
 import { OXIA_MAX_TEXT_BYTES } from "@/lib/db/providers/keyvalue/oxia/constants";
 import { OXIA_DESTRUCTIVE_OPERATIONS, oxiaRefusal, readOxiaOperations } from "@/lib/db/providers/keyvalue/oxia/guard";
+import { readRedisCommandText, redisRefusal } from "@/lib/db/providers/keyvalue/redis-command-text";
 import {
   INFLUXQL_DESTRUCTIVE_OPERATIONS,
   INFLUXQL_MAX_TEXT_BYTES,
@@ -368,33 +369,6 @@ const readMongodbOperations: OperationReader = (query) => {
 };
 
 /**
- * The ONE command a Redis buffer would run, reduced the way `commandBody` reduces it:
- * `#` comment lines dropped, then the first blank-line-delimited block. The
- * schema explorer's "Generate Command" output is a list of alternatives separated by
- * blank lines and only its first block runs, so reading the whole buffer would prompt
- * about commands nobody asked for.
- *
- * The provider also tracks open quotes across lines, so that a line-leading `#`
- * inside a quoted argument stays data. That is deliberately not modelled here,
- * because it cannot change the answer: a quote can only be opened on an earlier line,
- * and the command NAME is on the block's first line, which no quote precedes.
- */
-function redisCommandBody(query: string): string {
-  const block: string[] = [];
-  for (const raw of query.split("\n")) {
-    const line = raw.trim();
-    if (line.startsWith("#")) continue;
-    if (line === "") {
-      // A blank line ends the first block; blank lines before it are padding.
-      if (block.length > 0) break;
-      continue;
-    }
-    block.push(raw);
-  }
-  return block.join("\n").trim();
-}
-
-/**
  * One token as the plain tokenizer would produce it: quote characters are structure
  * to that parser, not part of the argument, and both parsers uppercase the command
  * before calling it - so `del`, `DEL` and `"DEL"` are the same command.
@@ -417,15 +391,24 @@ function redisNames(command: string, next: string | undefined): string[] {
  * MongoDB-shaped generator emits - and the plain form `DEL k`. A body that starts
  * with `{` takes the JSON path in the provider too, so a broken JSON body never
  * falls back to the plain reading; it is unreadable, and unreadable asks.
+ *
+ * The text is read by the provider's own `readRedisCommandText()`, so the command
+ * this names is the one that runs: each line is a command, `#` lines are dropped,
+ * and the first blank line ends the read, which keeps the schema explorer's
+ * cheatsheet of blank-line-separated alternatives from prompting about commands
+ * nobody asked for. A text holding a second command names nothing, the way etcd's
+ * refused text does: the row's `refuse` stops it in the editor before anything is
+ * sent, and the provider refuses it too, so a prompt would ask about a command that
+ * cannot run.
  */
 const readRedisOperations: OperationReader = (query) => {
-  const body = redisCommandBody(query);
-  if (body === "") return [];
+  const read = readRedisCommandText(query);
+  if (read.kind === "empty" || read.kind === "refused") return [];
 
-  if (body.startsWith("{")) {
+  if (read.kind === "json") {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(body);
+      parsed = JSON.parse(read.body);
     } catch {
       return undefined;
     }
@@ -437,8 +420,7 @@ const readRedisOperations: OperationReader = (query) => {
     return redisNames(command, typeof first === "string" ? first : undefined);
   }
 
-  const tokens = body.split(/\s+/);
-  return redisNames(tokens[0], tokens[1]);
+  return redisNames(read.words[0], read.words[1]);
 };
 
 /**
@@ -543,7 +525,14 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
     refuse: qdrantRefusal,
     maxTextBytes: QDRANT_CONSOLE.maxTextBytes,
   },
-  redis: { operations: REDIS_DESTRUCTIVE_COMMANDS, read: readRedisOperations, decidesAlone: false },
+  // Redis: each line of the text is one command (docs/providers/redis.md 3.4a), and a second command is refused in
+  // the editor with the provider's own reading, before anything is sent, rather than run as one merged command.
+  redis: {
+    operations: REDIS_DESTRUCTIVE_COMMANDS,
+    read: readRedisOperations,
+    decidesAlone: false,
+    refuse: redisRefusal,
+  },
 };
 
 /**
