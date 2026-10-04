@@ -777,8 +777,13 @@ const STORAGE_STATS_SQL = `
  */
 const SYSTEM_SCHEMAS = ["information_schema", "mysql", "performance_schema", "sys"] as const;
 
-/** Rendered once. Interpolated into the `NOT IN (...)` clause below. */
-const SYSTEM_SCHEMA_LIST = SYSTEM_SCHEMAS.map((schema) => `'${schema}'`).join(", ");
+/**
+ * Looked up by EXACT name, which is the comparison the former `NOT IN (...)` over
+ * `SCHEMATA` made on MySQL (`utf8mb3_bin`) and TiDB (`utf8mb4_bin`), so the tree on both is
+ * what it was. TiDB's upper-case `INFORMATION_SCHEMA` was never hidden by that clause and is
+ * not hidden by this one.
+ */
+const SYSTEM_SCHEMA_SET: ReadonlySet<string> = new Set(SYSTEM_SCHEMAS);
 
 /**
  * The containers this connection has, which on MySQL is one level: databases.
@@ -790,16 +795,47 @@ const SYSTEM_SCHEMA_LIST = SYSTEM_SCHEMAS.map((schema) => `'${schema}'`).join(",
  * is pinned to one database and a second would need a second connection - so every database
  * the server holds is genuinely browsable from this session.
  *
- * `SCHEMA_NAME = DATABASE()` is the SERVER's own answer for which container the session is
- * in, rather than `config.database`, for the reason Oracle reads `SYS_CONTEXT` instead of
- * `connection.user`: the configured value is what a person typed into a form. It is NULL
- * rather than 0 when no database was selected, which `listContainers` reads as false.
+ * `SHOW DATABASES` and not `information_schema.SCHEMATA`, because the two disagree on Vitess
+ * and only this one names something a statement can address. Measured 2026-10-04 through
+ * vtgate on Vitess 24.0.4 (`vitess/vttestserver:v24.0.4-mysql84`, keyspace `e2e`): SCHEMATA
+ * answers `_vt` and `vt_e2e_0`, the sidecar and the physical shard database, and never the
+ * keyspace, while `SHOW DATABASES` answers `e2e`. vtgate refuses the shard name everywhere
+ * else (`VT05003: unknown database 'vt_e2e_0' in vschema`), so a tree built from SCHEMATA
+ * could open nothing. Off Vitess, measured the same day, `SHOW DATABASES` answers the same
+ * set as SCHEMATA on MySQL 26.7.0, MariaDB 13.0.2, Percona Server 8.4.11-11, TiDB 8.5.8,
+ * Apache Doris 4.1.3, StarRocks and Databend 1.2.925; OceanBase was not measured. The
+ * provider doc's section 7.1 has the table.
+ *
+ * The reserved schemas are dropped by `listContainers` rather than by a WHERE clause,
+ * because vtgate ignores a WHERE on `SHOW DATABASES` and answers all five rows anyway. The
+ * name is read from the FIRST column by position, not by the label `Database`, because the
+ * label is not shared: Databend 1.2.925 calls it `databases_in_default`.
  */
-const CONTAINERS_SQL = `
-        SELECT SCHEMA_NAME AS name, SCHEMA_NAME = DATABASE() AS is_session_default
-        FROM information_schema.SCHEMATA
-        WHERE SCHEMA_NAME NOT IN (${SYSTEM_SCHEMA_LIST})
-        ORDER BY SCHEMA_NAME ASC`;
+const CONTAINERS_SQL = "SHOW DATABASES";
+
+/**
+ * The same question asked of the catalog, for a caller `SHOW DATABASES` refuses.
+ *
+ * A server started with `--skip-show-database` answers `SHOW DATABASES` only to a holder of
+ * the global `SHOW DATABASES` privilege; anyone else gets errno 1227
+ * (`ER_SPECIFIC_ACCESS_DENIED_ERROR`), while `information_schema.SCHEMATA` still lists the
+ * databases that caller holds a grant on. Measured 2026-10-04 on MySQL 26.7.0 and MariaDB
+ * 13.0.2, both started with `--skip-show-database`, as a user granted only `e2e.*`: the
+ * statement above is refused and this one answers `e2e`. So on that refusal, and only on it,
+ * `listContainers` falls back to the read this provider made before Vitess forced the change.
+ */
+const CONTAINERS_FALLBACK_SQL = "SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA";
+
+/** `ER_SPECIFIC_ACCESS_DENIED_ERROR`: what `SHOW DATABASES` answers under `--skip-show-database`. */
+const SHOW_DATABASES_DENIED_ERRNO = 1227;
+
+/**
+ * Which database the session is in, by the SERVER's own answer rather than
+ * `config.database`, for the reason Oracle reads `SYS_CONTEXT` instead of
+ * `connection.user`: the configured value is what a person typed into a form. NULL when no
+ * database was selected, which matches no container.
+ */
+const SESSION_DATABASE_SQL = "SELECT DATABASE() AS name";
 
 /**
  * The catalog and EVERY spelling each declared kind is addressed by, written once.
@@ -919,17 +955,25 @@ function kindCase(catalog: "tables" | "routines", column: string): string {
  * `SEQUENCE` row and no `PACKAGE` row, so those CASE arms simply never fire there. The data
  * decides, which is one fewer place the two branches can disagree.
  *
- * `kind IS NULL` drops what the CASE has no name for rather than counting it under a folder
- * that does not exist: `SYSTEM VIEW` on both servers, plus `PACKAGE BODY` and `TEMPORARY` on
- * MariaDB. All three are deliberate and `MYSQL_OBJECT_TYPES` says why each one is. The
- * package body is not a second package - measured, `CREATE PACKAGE BODY` with no
+ * A NULL kind is what the CASE has no name for, and it is dropped rather than counted under
+ * a folder that does not exist: `SYSTEM VIEW` on both servers, plus `PACKAGE BODY` and
+ * `TEMPORARY` on MariaDB. All three are deliberate and `MYSQL_OBJECT_TYPES` says why each
+ * one is. The package body is not a second package - measured, `CREATE PACKAGE BODY` with no
  * specification answers ER_SP_DOES_NOT_EXIST - so counting it would double the Packages
  * badge exactly as it would on Oracle.
  *
- * Anything NOT on that list reaching `kind IS NULL` is a defect and not a design: an object
+ * Anything NOT on that list reaching a NULL kind is a defect and not a design: an object
  * dropped here is dropped from the listing too, so the count and the listing agree while the
  * object is invisible in the tree. That is why `MYSQL_OBJECT_TYPES` enumerates the engine
  * rather than a fixture.
+ *
+ * The NULL group is dropped AFTER the read, by `applyKindCounts`, and not by an outer
+ * `WHERE kind IS NOT NULL`, because vtgate cannot plan that filter. Measured 2026-10-04 on
+ * Vitess 24.0.4 (`vitess/vttestserver:v24.0.4-mysql84`): with the outer WHERE this statement
+ * is `VT13001: [BUG] could not find the column 'TABLE_TYPE' on the UNION`, which put that
+ * sentence on every folder of the tree, and without it vtgate answers the same counts MySQL
+ * does. It is the filter pushed through three or more arms: the same WHERE over two arms is
+ * answered. One extra GROUP BY row is the whole cost.
  *
  * The schema is bound four times rather than once because a prepared statement takes
  * positional parameters and each arm needs its own.
@@ -946,7 +990,6 @@ const COUNTS_SQL = `
           UNION ALL
           SELECT 'event' FROM information_schema.EVENTS WHERE EVENT_SCHEMA = ?
         ) s
-        WHERE kind IS NOT NULL
         GROUP BY kind`;
 
 /**
@@ -1408,15 +1451,25 @@ const probeUtf8UnderUtf8mb3 = async (queryable: MySQLQueryable): Promise<boolean
 // Object surface shapes and derivations
 // ----------------------------------------------------------------------------
 
-/** One row of `CONTAINERS_SQL`. `is_session_default` is 1, 0 or NULL. */
-interface ContainerRow extends RowDataPacket {
-  name: string;
-  is_session_default: number | null;
+/**
+ * One row of `CONTAINERS_SQL` or `CONTAINERS_FALLBACK_SQL`. One column whose LABEL differs by
+ * engine (`Database`, Databend's `databases_in_default`, the fallback's `name`), so it is read
+ * by position.
+ */
+type ContainerRow = RowDataPacket;
+
+/** One row of `SESSION_DATABASE_SQL`. NULL when the session selected no database. */
+interface SessionDatabaseRow extends RowDataPacket {
+  name: string | null;
 }
 
-/** One row of `COUNTS_SQL`: a kind id and how many of it the database holds. */
+/**
+ * One row of `COUNTS_SQL`: a kind id and how many of it the database holds. The kind is NULL
+ * for the group of catalog spellings the CASE arms do not name, which `applyKindCounts`
+ * skips because no declared kind is called that.
+ */
 interface KindCountRow extends RowDataPacket {
-  kind: string;
+  kind: string | null;
   n: number;
 }
 
@@ -1529,7 +1582,7 @@ function seedZeroCounts(kinds: readonly ObjectKindSpec[]): Record<string, KindCo
  */
 function applyKindCounts(counts: Record<string, KindCount>, rows: readonly KindCountRow[]): void {
   for (const row of rows) {
-    if (Object.hasOwn(counts, row.kind)) counts[row.kind] = { count: Number(row.n) };
+    if (row.kind !== null && Object.hasOwn(counts, row.kind)) counts[row.kind] = { count: Number(row.n) };
   }
 }
 
@@ -1787,6 +1840,25 @@ const SOURCE_ABSENCE_ERRNOS: ReadonlySet<number> = new Set([1146, 1305, 1347, 13
 function sourceErrno(error: unknown): number | undefined {
   const errno = (error as { errno?: unknown } | null)?.errno;
   return typeof errno === "number" ? errno : undefined;
+}
+
+/**
+ * The database a monitoring row names: the server's own spelling when it is the database the
+ * read was filtered on, and the filter otherwise.
+ *
+ * The echo is kept when it matches without regard to case, because on a server with
+ * `lower_case_table_names=1` a connection configured as `App` reads rows whose `TABLE_SCHEMA`
+ * is `app`, and `app` is the spelling the tree's containers carry, which the Operations tab
+ * matches a row against. The echo is REPLACED when it names something else, which is Vitess:
+ * there it is the physical shard (`vt_e2e_0` for the keyspace `e2e`, measured 2026-10-04 on
+ * 24.0.4), this field is the container `runMaintenance` qualifies with, and vtgate refuses the
+ * shard name (`VT05003: unknown database 'vt_e2e_0' in vschema`).
+ */
+function reportedSchema(echoed: unknown, filter: string | undefined): string {
+  if (typeof echoed === "string" && filter !== undefined && echoed.toLowerCase() === filter.toLowerCase()) {
+    return echoed;
+  }
+  return filter ?? "";
 }
 
 /**
@@ -2625,14 +2697,22 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await runStatement<ContainerRow[]>(conn, CONTAINERS_SQL);
-      return rows.map((row) => ({
-        path: [row.name],
-        name: row.name,
-        level: 0,
-        // 1, 0 or NULL, and only 1 is the session's own database.
-        isSessionDefault: Number(row.is_session_default) === 1,
-      }));
+      let rows: ContainerRow[];
+      try {
+        [rows] = await runStatement<ContainerRow[]>(conn, CONTAINERS_SQL);
+      } catch (error) {
+        if (sourceErrno(error) !== SHOW_DATABASES_DENIED_ERRNO) throw error;
+        [rows] = await runStatement<ContainerRow[]>(conn, CONTAINERS_FALLBACK_SQL);
+      }
+      const [[session]] = await runStatement<SessionDatabaseRow[]>(conn, SESSION_DATABASE_SQL);
+      return (
+        rows
+          .map((row) => String(Object.values(row)[0]))
+          .filter((name) => !SYSTEM_SCHEMA_SET.has(name))
+          .map((name) => ({ path: [name], name, level: 0, isSessionDefault: name === session?.name }))
+          // By path, the rule `listObjects` orders by: vtgate answers SHOW DATABASES unsorted.
+          .sort((left, right) => comparePaths(left.path, right.path))
+      );
     } finally {
       conn.release();
     }
@@ -3457,7 +3537,7 @@ export class MySQLProvider extends SQLBaseProvider {
         const bloatRatio = totalSizeBytes > 0 ? (freeSpaceBytes / totalSizeBytes) * 100 : 0;
 
         return {
-          schemaName: r.schema_name || schema || "",
+          schemaName: reportedSchema(r.schema_name, schema),
           tableName: r.table_name || "",
           rowCount: parseInt(r.row_count || "0"),
           tableSize: formatBytes(tableSizeBytes),
@@ -3508,7 +3588,8 @@ export class MySQLProvider extends SQLBaseProvider {
         const indexSizeBytes = indexSizes[`${r.schema_name}/${r.table_name}/${r.index_name}`];
 
         return {
-          schemaName: r.schema_name || schema || "",
+          // As in `getTableStats`; the shard name is only a size key here.
+          schemaName: reportedSchema(r.schema_name, schema),
           tableName: r.table_name || "",
           indexName: r.index_name || "",
           indexType: r.index_type || "BTREE",

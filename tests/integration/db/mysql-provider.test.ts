@@ -2224,6 +2224,61 @@ describe("MySQLProvider", () => {
       expect(typeof first.schemaName).toBe("string");
       expect(typeof first.bloatRatio).toBe("number");
     });
+
+    test("names each row's database as the one it asked for, not the physical shard Vitess reports", async () => {
+      // Measured 2026-10-04 on Vitess 24.0.4 (`vitess/vttestserver:v24.0.4-mysql84`, keyspace `e2e`):
+      // `SELECT TABLE_SCHEMA ... FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'e2e'`
+      // answers `vt_e2e_0` on every row. That name is what Monitoring > Tables hands back to
+      // `runMaintenance` as the row's container, and vtgate refuses it there:
+      // `ANALYZE TABLE vt_e2e_0.customers` is `VT05003: unknown database 'vt_e2e_0' in vschema`.
+      mockExecuteFn = (sql) => {
+        const normalized = sql.toLowerCase();
+        if (normalized.includes("information_schema.tables") && normalized.includes("free_space_bytes")) {
+          return Promise.resolve([
+            [
+              {
+                schema_name: "vt_testdb_0",
+                table_name: "customers",
+                row_count: "2",
+                table_size_bytes: "16384",
+                index_size_bytes: "16384",
+                total_size_bytes: "32768",
+                free_space_bytes: "0",
+              },
+            ],
+            [],
+          ]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const stats = await provider.getTableStats();
+
+      expect(stats.map((row) => [row.schemaName, row.tableName])).toEqual([["testdb", "customers"]]);
+      // An explicit schema is the one reported, for the same reason: it is the filter.
+      expect((await provider.getTableStats({ schema: "reporting" }))[0].schemaName).toBe("reporting");
+    });
+
+    test("keeps the server's spelling of the database when it is the filter in another case", async () => {
+      // `lower_case_table_names=1`: a connection configured as `App` reads rows whose
+      // TABLE_SCHEMA is `app`, and `app` is what the tree's container carries, which the
+      // Operations tab matches the row against. Reporting the configured `App` would match
+      // nothing there.
+      mockExecuteFn = (sql) => {
+        const normalized = sql.toLowerCase();
+        if (normalized.includes("information_schema.tables") && normalized.includes("free_space_bytes")) {
+          return Promise.resolve([[{ schema_name: "app", table_name: "orders", row_count: "1" }], []]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig({ database: "App" }));
+      await provider.connect();
+
+      expect((await provider.getTableStats())[0].schemaName).toBe("app");
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -2330,6 +2385,9 @@ describe("MySQLProvider", () => {
       expect(sizeParams).toEqual([["vt_testdb_0"]]);
       expect(stats[0].indexSizeBytes).toBe(16384);
       expect(stats[0].indexSize).toBe("16 KB");
+      // The shard name is a lookup key and nothing more: the row names the database the
+      // read was filtered on, which is the one a statement through vtgate can address.
+      expect(stats[0].schemaName).toBe("testdb");
     });
   });
 
@@ -3822,15 +3880,17 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
     // Before every catalog arm: a `SHOW CREATE` statement names no information_schema view and
     // would otherwise fall through to the empty default, which reads as an absence.
     if (normalized.startsWith("show create")) return [sourceReply(sql, options.mariadb), []];
-    if (normalized.includes("information_schema.schemata")) {
+    // `SHOW DATABASES` answers one column named `Database`, the reserved four included, in
+    // the order MySQL 26.7.0 and MariaDB 13.0.2 print it (measured 2026-10-04).
+    if (normalized === "show databases") {
       return [
-        [
-          { name: "app", is_session_default: 1 },
-          { name: "reporting", is_session_default: 0 },
-        ],
+        ["app", "information_schema", "mysql", "performance_schema", "reporting", "sys"].map((name) => ({
+          Database: name,
+        })),
         [],
       ];
     }
+    if (normalized.startsWith("select database()")) return [[{ name: "app" }], []];
     // Before `information_schema.tables`, which the counting statement also names.
     if (normalized.includes("group by kind")) return [counts, []];
 
@@ -4267,14 +4327,154 @@ describe("object surface", () => {
       { path: ["app"], name: "app", level: 0, isSessionDefault: true },
       { path: ["reporting"], name: "reporting", level: 0, isSessionDefault: false },
     ]);
-    // The statement excludes the four schemas both servers reserve, and it is bound to
-    // nothing: the container list is the SERVER's databases, not the one the pool opened
-    // against, which is what makes `reporting` reachable at all.
-    const read = protocolCalls.find((c) => c.sql.includes("information_schema.SCHEMATA"));
+    // The read is bound to nothing: the container list is the SERVER's databases, not the
+    // one the pool opened against, which is what makes `reporting` reachable at all. The
+    // four reserved schemas the server answered are dropped here rather than in the
+    // statement, because `SHOW DATABASES` takes no filter vtgate honours (next test).
+    const read = protocolCalls.find((c) => c.sql.trim() === "SHOW DATABASES");
     expect(read?.params).toBeUndefined();
-    for (const schema of ["information_schema", "mysql", "performance_schema", "sys"]) {
-      expect(read?.sql).toContain(`'${schema}'`);
-    }
+    expect(protocolCalls.some((c) => c.sql.includes("information_schema.SCHEMATA"))).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("on Vitess the containers are the keyspaces, not the shard databases information_schema holds", async () => {
+    // Measured 2026-10-04 on Vitess 24.0.4 (`vitess/vttestserver:v24.0.4-mysql84`, keyspace `e2e`,
+    // one shard), through vtgate:
+    //   information_schema.SCHEMATA -> mysql, information_schema, performance_schema, sys,
+    //                                  _vt, vt_e2e_0
+    //   SHOW DATABASES              -> e2e, information_schema, mysql, sys, performance_schema
+    //   SELECT DATABASE()           -> e2e
+    // So SCHEMATA drew the sidecar `_vt` and the physical shard `vt_e2e_0` and never the
+    // keyspace a statement can address. vtgate also ignores a WHERE on SHOW DATABASES (the
+    // same five rows come back), and it answers them unsorted, so the provider filters and
+    // orders the answer itself.
+    mockExecuteFn = async (sql: string) => {
+      const normalized = sql.trim().toLowerCase();
+      if (normalized.includes("version()")) return [[{ version: "8.4.6-Vitess" }], []];
+      if (normalized === "show databases") {
+        return [
+          ["e2e", "information_schema", "mysql", "sys", "performance_schema"].map((name) => ({ Database: name })),
+          [],
+        ];
+      }
+      if (normalized.startsWith("select database()")) return [[{ name: "e2e" }], []];
+      return [[], []];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "e2e" }));
+    await provider.connect();
+
+    expect(await provider.listContainers()).toEqual([{ path: ["e2e"], name: "e2e", level: 0, isSessionDefault: true }]);
+    await provider.disconnect();
+  });
+
+  test("a caller SHOW DATABASES refuses under --skip-show-database reads the catalog instead", async () => {
+    // Measured 2026-10-04 on MySQL 26.7.0 and MariaDB 13.0.2, each started with
+    // `--skip-show-database`, as a user granted only `e2e.*`: SHOW DATABASES is errno 1227 and
+    // information_schema.SCHEMATA lists `information_schema` and `e2e`.
+    const sent: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      const normalized = sql.trim().toLowerCase();
+      sent.push(normalized);
+      if (normalized.includes("version()")) return [[{ version: MYSQL_VERSION_STRING }], []];
+      if (normalized === "show databases") {
+        throw Object.assign(
+          new Error("Access denied; you need (at least one of) the SHOW DATABASES privilege(s) for this operation"),
+          {
+            errno: 1227,
+            code: "ER_SPECIFIC_ACCESS_DENIED_ERROR",
+          },
+        );
+      }
+      if (normalized.includes("information_schema.schemata")) {
+        return [[{ name: "information_schema" }, { name: "e2e" }], []];
+      }
+      if (normalized.startsWith("select database()")) return [[{ name: "e2e" }], []];
+      return [[], []];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "e2e" }));
+    await provider.connect();
+
+    expect(await provider.listContainers()).toEqual([{ path: ["e2e"], name: "e2e", level: 0, isSessionDefault: true }]);
+    expect(sent.filter((sql) => sql.includes("schemata"))).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("any other refusal of SHOW DATABASES is raised, with no fallback", async () => {
+    const sent: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      const normalized = sql.trim().toLowerCase();
+      sent.push(normalized);
+      if (normalized.includes("version()")) return [[{ version: MYSQL_VERSION_STRING }], []];
+      if (normalized === "show databases") {
+        throw Object.assign(new Error("Lost connection to MySQL server during query"), { errno: 2013 });
+      }
+      return [[], []];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "e2e" }));
+    await provider.connect();
+
+    await expect(provider.listContainers()).rejects.toThrow("Lost connection to MySQL server during query");
+    expect(sent.some((sql) => sql.includes("schemata"))).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("the database name is read from the first column, whatever the engine calls it", async () => {
+    // Databend 1.2.925 (`datafuselabs/databend:v1.2.925-patch-13`), measured 2026-10-04: SHOW
+    // DATABASES labels its one column `databases_in_default`, not `Database`. Reading the label
+    // drew nameless containers there.
+    mockExecuteFn = async (sql: string) => {
+      const normalized = sql.trim().toLowerCase();
+      if (normalized.includes("version()")) return [[{ version: "8.0.90-v1.2.925-patch-13" }], []];
+      if (normalized === "show databases") {
+        return [["default", "information_schema", "system"].map((name) => ({ databases_in_default: name })), []];
+      }
+      if (normalized.startsWith("select database()")) return [[{ name: "default" }], []];
+      return [[], []];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "default" }));
+    await provider.connect();
+
+    expect(await provider.listContainers()).toEqual([
+      { path: ["default"], name: "default", level: 0, isSessionDefault: true },
+      { path: ["system"], name: "system", level: 0, isSessionDefault: false },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("the containers are ordered by code point, and TiDB's upper-case schemas are kept as before", async () => {
+    // TiDB 8.5.8 (`pingcap/tidb:v8.5.8`), measured 2026-10-04: SHOW DATABASES answers its own
+    // schemas in upper case, and SCHEMATA's `SCHEMA_NAME` is `utf8mb4_bin` there, so the
+    // former `NOT IN ('information_schema', ...)` never matched them and the tree showed
+    // INFORMATION_SCHEMA, METRICS_SCHEMA and PERFORMANCE_SCHEMA. The filter here is the same
+    // exact-case comparison, so that tree is unchanged, and so is the order: a binary
+    // collation and a code-point sort put upper case first.
+    mockExecuteFn = async (sql: string) => {
+      const normalized = sql.trim().toLowerCase();
+      if (normalized.includes("version()")) return [[{ version: "8.0.11-TiDB-v8.5.8" }], []];
+      if (normalized === "show databases") {
+        return [
+          ["test", "INFORMATION_SCHEMA", "METRICS_SCHEMA", "PERFORMANCE_SCHEMA", "e2e", "mysql", "sys"].map((name) => ({
+            Database: name,
+          })),
+          [],
+        ];
+      }
+      if (normalized.startsWith("select database()")) return [[{ name: "e2e" }], []];
+      return [[], []];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "e2e" }));
+    await provider.connect();
+
+    const containers = await provider.listContainers();
+
+    expect(containers.map((c) => c.name)).toEqual([
+      "INFORMATION_SCHEMA",
+      "METRICS_SCHEMA",
+      "PERFORMANCE_SCHEMA",
+      "e2e",
+      "test",
+    ]);
+    expect(containers.filter((c) => c.isSessionDefault).map((c) => c.name)).toEqual(["e2e"]);
     await provider.disconnect();
   });
 
@@ -4537,10 +4737,13 @@ describe("MySQL object listing and detail", () => {
 
     // PACKAGE BODY is a second ROUTINES row for one node, exactly as on Oracle, so counting
     // it would double the Packages badge. SYSTEM VIEW is what information_schema's own
-    // tables are. Both fall out of `kind IS NOT NULL` rather than being filtered by name.
+    // tables are. Both reach the GROUP BY as a NULL kind, which no declared folder is named,
+    // rather than being filtered by name.
     expect(counted).not.toContain("PACKAGE BODY");
     expect(counted).not.toContain("SYSTEM VIEW");
-    expect(counted).toContain("WHERE kind IS NOT NULL");
+    // And no filter on the derived `kind` column either: vtgate cannot plan one over this
+    // UNION (see the next test), so the NULL kind is dropped after the read instead.
+    expect(counted).not.toMatch(/WHERE\s+kind/i);
     // The four views the four arms read, so "one statement" is a measurement rather than a
     // claim about a statement that only reads one of them.
     for (const view of [
@@ -4571,6 +4774,46 @@ describe("MySQL object listing and detail", () => {
     // per call. SYSTEM VERSIONED above is the control that makes this negative mean
     // something: both are MariaDB-only TABLE_TYPEs and only one of them is excluded.
     expect(counted).not.toContain("TEMPORARY");
+    await provider.disconnect();
+  });
+
+  test("a kind the CASE has no name for is dropped after the read, so vtgate can plan the count", async () => {
+    // A regression pin rather than a fail-first test: `applyKindCounts` already skipped a kind
+    // nobody declared, so this held before the outer WHERE was removed and must keep holding.
+    // Measured 2026-10-04 on Vitess 24.0.4 (`vitess/vttestserver:v24.0.4-mysql84`): the four-arm
+    // count with an outer `WHERE kind IS NOT NULL` is refused by vtgate's planner with
+    // `VT13001: [BUG] could not find the column 'TABLE_TYPE' on the UNION`, which put that
+    // sentence on every folder of the tree. The same statement without the outer WHERE is
+    // answered (`table 3`, `view 2` for the e2e keyspace), and so is the WHERE over two arms,
+    // so it is the filter pushed through three or more arms that the planner cannot resolve.
+    // The NULL group is therefore one more row of the answer, and it must count for nothing.
+    mockExecuteFn = async (sql: string) => {
+      if (sql.toLowerCase().includes("version()")) return [[{ version: MYSQL_VERSION_STRING }], []];
+      if (sql.includes("GROUP BY kind")) {
+        return [
+          [
+            { kind: null, n: 79 },
+            { kind: "table", n: 3 },
+            { kind: "view", n: 2 },
+          ],
+          [],
+        ];
+      }
+      return [[], []];
+    };
+    const provider = new MySQLProvider(makeMySQLConfig({ database: "app" }));
+    await provider.connect();
+
+    const counts = await provider.countObjects(["app"]);
+
+    expect(counts).toEqual({
+      table: { count: 3 },
+      view: { count: 2 },
+      procedure: { count: 0 },
+      function: { count: 0 },
+      trigger: { count: 0 },
+      event: { count: 0 },
+    });
     await provider.disconnect();
   });
 

@@ -641,6 +641,8 @@ Measured 2026-09-06 through `mysql2` 3.24.2 over the text protocol, one connecti
 | SingleStore (`ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82`) | errno 1064 | ok, one column `EXPLAIN` | `mysql-text` |
 | Apache Doris 4.1.3 (`apache/doris:all-in-one-4.1.3`) | errno 1105 `mismatched input '=' expecting {<EOF>, ';'}(line 1, pos 14)` | ok, one column `Explain String(Nereids Planner)` | `mysql-text` |
 | Vitess 24.0.2 (`vitess/vttestserver:v24.0.2-mysql80`) | ok, one column `EXPLAIN` (the QUOTED `EXPLAIN FORMAT='json'` is errno 1105 there; the unquoted form the probe sends is accepted) | ok, 12 tabular columns | `mysql-json` |
+| Vitess 24.0.4 (`vitess/vttestserver:v24.0.4-mysql84`), re-measured 2026-10-04 | ok | ok | `mysql-json` |
+| Vitess 25.0.0-SNAPSHOT (`vitess/vttestserver:mysql84`, the floating tag, built 2026-10-02), measured 2026-10-04 | errno 1105 `VT03031: EXPLAIN is only supported for single keyspace`, because `SELECT 1` names no table; `EXPLAIN FORMAT=JSON SELECT * FROM customers` is answered | the same `VT03031` | none, so the Explain panel is unavailable on that build (an open defect in the probe's statement, not fixed here) |
 | OceanBase CE 4.4.2 (`oceanbase/oceanbase-ce:4.4.2-lts`, tenant `test`) | ok, 8 rows in one column `Query Plan`, an ASCII plan | ok, 9 rows in the same column | `mysql-json` |
 | Databend 1.2.925 (`datafuselabs/databend:v1.2.925-patch-11`) | errno 1105, SyntaxException | ok, one column `explain`, 5 rows | `mysql-text` |
 
@@ -934,7 +936,7 @@ table, NOT because the name needs the table to be unique: measured, a trigger na
 DATABASE and not per table, and a second `CREATE TRIGGER app.foo` on a different table answers
 `ER_TRG_ALREADY_EXISTS`.
 
-#### `listContainers()` reads `information_schema.SCHEMATA`, bound to nothing
+#### `listContainers()` reads `SHOW DATABASES`, bound to nothing
 
 That is what ends the single-database confinement. MySQL resolves a qualified name across databases
 on one connection, unlike PostgreSQL where a `pg` pool is pinned to one database, so every
@@ -949,10 +951,65 @@ user's own on both servers. They are hidden from the BROWSER and stay fully reac
 editor, the same treatment `pg_catalog` gets on PostgreSQL, and this provider itself reads two of
 them.
 
-`Container.isSessionDefault` comes from `SCHEMA_NAME = DATABASE()`, the server's own answer for which
+**`SHOW DATABASES` and not `information_schema.SCHEMATA`, because of Vitess.** Through vtgate the two
+disagree, and only `SHOW DATABASES` names something a statement can address. Measured 2026-10-04 on
+Vitess 24.0.4 (`vitess/vttestserver:v24.0.4-mysql84`, keyspace `e2e`, one shard):
+
+| Read through vtgate | Answer |
+|---|---|
+| `SELECT SCHEMA_NAME FROM information_schema.SCHEMATA` | `mysql`, `information_schema`, `performance_schema`, `sys`, `_vt`, `vt_e2e_0` |
+| `SHOW DATABASES` | `e2e`, `information_schema`, `mysql`, `sys`, `performance_schema` |
+| `SELECT DATABASE()` | `e2e` |
+
+The 25.0.0-SNAPSHOT the floating `vitess/vttestserver:mysql84` tag pointed at the same day answers all
+three identically.
+
+While the containers came from `SCHEMATA`, the tree drew the sidecar `_vt` and the physical shard
+`vt_e2e_0` instead of the keyspace, and vtgate refuses the shard name in a statement
+(`VT05003: unknown database 'vt_e2e_0' in vschema`).
+
+Off Vitess, the engines below were measured on 2026-10-04 and nothing else is claimed. On each,
+`SHOW DATABASES` answers the same set as `SCHEMATA`, and on the ones marked "compared" the provider's
+containers, counts and listings were read before and after the change and are identical:
+
+| Engine | First column of `SHOW DATABASES` | Containers before and after |
+|---|---|---|
+| MySQL 26.7.0 (`mysql:latest`) | `Database` | compared, identical |
+| MariaDB 13.0.2 (`mariadb:latest`) | `Database` | compared, identical |
+| Percona Server 8.4.11-11 | `Database` | compared, identical |
+| TiDB 8.5.8 (`pingcap/tidb:v8.5.8`) | `Database` | compared, identical |
+| Apache Doris 4.1.3 (`apache/doris:all-in-one-4.1.3`) | `Database` | compared, identical |
+| StarRocks (`starrocks/allin1-ubuntu:latest`) | `Database` | same set, not compared through the provider |
+| Databend 1.2.925 (`datafuselabs/databend:v1.2.925-patch-13`) | **`databases_in_default`** | compared, identical (`default`, `system`) |
+
+OceanBase was not measured: the `oceanbase-ce:latest` container did not boot on the test host.
+
+Because Databend labels the column `databases_in_default`, the name is read from the FIRST column by
+position rather than by the label `Database`.
+
+**`--skip-show-database` falls back to `SCHEMATA`.** A server started with that option answers
+`SHOW DATABASES` only to a holder of the global `SHOW DATABASES` privilege, and refuses anyone else
+with errno 1227 (`ER_SPECIFIC_ACCESS_DENIED_ERROR`), while `information_schema.SCHEMATA` still lists
+the databases the caller holds a grant on. Measured 2026-10-04 on MySQL 26.7.0 and MariaDB 13.0.2, both
+started with `--skip-show-database`, as a user granted only `e2e.*`: `SHOW DATABASES` was refused and
+`SCHEMATA` listed `e2e` (plus `information_schema`, and `performance_schema` on MySQL, both hidden). On
+errno 1227, and only on it, `listContainers()` reads `SCHEMATA` instead, so that user's tree shows `e2e`
+exactly as it did before. Any other failure is raised as it is.
+
+Three consequences of reading a `SHOW` statement. The reserved four are dropped by the provider after
+the read rather than by a `WHERE`, because vtgate ignores a `WHERE` on `SHOW DATABASES` and answers all
+five rows anyway; the comparison is by exact name, which is what the former `NOT IN (...)` did on
+MySQL (`utf8mb3_bin`) and TiDB (`utf8mb4_bin`), so TiDB's upper-case `INFORMATION_SCHEMA`,
+`METRICS_SCHEMA` and `PERFORMANCE_SCHEMA` are listed exactly as before. On MariaDB, whose `SCHEMATA`
+collates `utf8mb3_general_ci`, the former clause compared without regard to case, so a user database
+named `SYS` or `Mysql` (possible with `lower_case_table_names=0`) was hidden before and is listed now.
+And the order is the provider's code-point order over the path, the rule `listObjects` already uses,
+because vtgate answers unsorted; on MariaDB that differs from the former SQL order only for database
+names that differ in case.
+
+`Container.isSessionDefault` comes from `SELECT DATABASE()`, the server's own answer for which
 database the session is in, rather than from `config.database`, because the configured value is what a
-person typed into a form. It is SQL NULL rather than 0 when no database was selected, which reads as
-false.
+person typed into a form. It is SQL NULL when no database was selected, which matches no container.
 
 #### `countObjects()` is one statement over four views
 
@@ -961,7 +1018,7 @@ column of any table. The SAME statement text goes to both servers and nothing in
 flavour: MySQL holds no `SEQUENCE` row and no `PACKAGE` row, so those `CASE` arms never fire there.
 The data decides, which is one fewer place the two branches can disagree.
 
-`WHERE kind IS NOT NULL` drops what the `CASE` has no name for rather than counting it under a folder
+A NULL kind is what the `CASE` has no name for, and it is dropped rather than counted under a folder
 that does not exist. Two things fall out that way:
 
 - **`SYSTEM VIEW`**, which is what `information_schema`'s own tables are on both servers.
@@ -969,6 +1026,14 @@ that does not exist. Two things fall out that way:
   counting it would double the Packages badge. The body cannot exist alone: measured,
   `CREATE PACKAGE BODY` with no specification answers `ERROR 1305 PACKAGE app.orphan_pkg does not
   exist`, so the `PACKAGE` row is present for every package and counting that row alone is complete.
+
+**The NULL group is dropped after the read, not by a `WHERE kind IS NOT NULL`.** vtgate cannot plan
+that filter: measured 2026-10-04 on Vitess 24.0.4 and on the 25.0.0-SNAPSHOT, the four-arm statement with the outer `WHERE` is
+refused with `VT13001: [BUG] could not find the column 'TABLE_TYPE' on the UNION`, which put that
+sentence on every folder of the tree. Without it vtgate answers the counts MySQL does (`table 3`,
+`view 2` for the probe keyspace). The same `WHERE` over two arms is answered, so it is the filter
+pushed through three or more arms that the planner cannot resolve. The NULL group comes back as one
+more row and is skipped exactly like an undeclared kind, below.
 
 **A catalog row cannot create a folder.** A kind that was not declared is skipped rather than
 answered for, and on this provider that is a live case rather than defensive programming: a MariaDB
@@ -1627,6 +1692,15 @@ are backtick-quoted via `escapeIdentifier()`. A `container` is the DATABASE the 
 `schemaName` (#772), and it qualifies the target only when it names a database OTHER than the
 connected one: a MySQL statement already resolves a bare table inside the connected database, so
 the same name as a prefix adds nothing.
+
+`getTableStats()` and `getIndexStats()` report as `schemaName` the `TABLE_SCHEMA` the server echoes
+only when it is the database the read was FILTERED on, compared without regard to case, and the filter
+otherwise. The case rule is for `lower_case_table_names=1`: a connection configured as `App` reads rows
+named `app`, which is the spelling the tree's containers carry and the Operations tab matches against.
+On Vitess the echo is the physical shard (`vt_e2e_0` for the keyspace `e2e`, measured 2026-10-04 on 24.0.4), and while it was
+reported, Analyze Table from Monitoring > Tables sent `ANALYZE TABLE vt_e2e_0.customers`, which vtgate
+refuses with `VT05003: unknown database 'vt_e2e_0' in vschema`. The shard name is still what the
+per-index size lookup reads (section 8), because that is how InnoDB names the table there.
 
 | Type | With target | Without target |
 |------|-------------|----------------|
