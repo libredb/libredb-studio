@@ -6,8 +6,10 @@
  * fingerprinted, mapped and validated alone, and managed, roles, mcp and the TLS mode are forced in
  * discovery-fingerprint.ts, never read from the file. The file is re-read at most once per
  * SEED_CACHE_TTL_MS, by one recompute shared between concurrent callers, while staleness is
- * evaluated on every call against the cached export, so a stopped companion withdraws its
- * connections after SEED_DISCOVERY_MAX_AGE_MS without waiting for a re-read.
+ * evaluated on every call against the cached export. A cached copy is already up to one scan old
+ * when it is read, so it can turn stale inside the TTL while the exporter keeps writing: a stale copy
+ * is re-read, at most every STALE_REREAD_MS, and the connections are withdrawn only once the file
+ * itself is older than SEED_DISCOVERY_MAX_AGE_MS, without waiting for the TTL.
  *
  * Never throws. A failure here would otherwise turn into the 500 of GET /api/connections/managed
  * and hide the seed-file connections and the samples along with the discovered ones.
@@ -28,6 +30,8 @@ import type { SeedConnection } from "./types";
 const ROUTE = "seed/discovery-loader";
 const DEFAULT_CACHE_TTL_MS = 60_000;
 const DEFAULT_MAX_AGE_MS = 60_000;
+/** How often a cached export that has turned stale may be re-read, whatever SEED_CACHE_TTL_MS says. */
+const STALE_REREAD_MS = 5_000;
 const ID_TAKEN = "id taken by the seed file";
 const ID_DUPLICATE = "id taken by another discovered service";
 const EXCLUDED_REASON = "listed in Apps to skip";
@@ -143,7 +147,13 @@ async function current(deps: DiscoveryDeps): Promise<Evaluation | null> {
 
 function snapshotFor(path: string, at: number, deps: DiscoveryDeps): Promise<Snapshot> {
   // readAt comes from this same clock, so a negative age can only mean the clock stepped back: the cache has expired.
-  if (cache !== null && at >= cache.readAt && at - cache.readAt < cacheTtlMs()) return Promise.resolve(cache);
+  // A copy is already up to one scan interval old when it is read, so it can turn stale inside the TTL while
+  // the exporter keeps writing fresh files: a stale copy is re-read, at most every STALE_REREAD_MS.
+  const ttl =
+    cache !== null && cache.file.kind === "parsed" && !isFresh(cache.file.data.generatedAt, at)
+      ? Math.min(cacheTtlMs(), STALE_REREAD_MS)
+      : cacheTtlMs();
+  if (cache !== null && at >= cache.readAt && at - cache.readAt < ttl) return Promise.resolve(cache);
   if (inflight !== null) return inflight;
   const previous = cache;
   const pending: Promise<Snapshot> = recompute(path, at, previous, deps).then((next) => {

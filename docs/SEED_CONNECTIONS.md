@@ -551,7 +551,7 @@ SEED_CACHE_TTL_MS=300000
 
 In Kubernetes, ConfigMap updates propagate in ~60-120s (kubelet sync period). Combined with the cache TTL, expect ~2-3 minutes for changes to take effect.
 
-The same TTL governs the [Platform discovery (CapRover)](#platform-discovery-caprover) export: Studio re-reads that file at most once per `SEED_CACHE_TTL_MS`, which the CapRover template sets to 5 seconds.
+The same TTL governs the [Platform discovery (CapRover)](#platform-discovery-caprover) export: Studio re-reads that file at most once per `SEED_CACHE_TTL_MS` while its copy is fresh, and at most every 5 seconds once that copy has turned stale; the CapRover template sets the TTL to 5 seconds.
 An open tab refetches the managed list every `max(SEED_CACHE_TTL_MS, 5000)` milliseconds, at most 60 seconds, while it is visible, and on focus, so a change to the seed file or to the export reaches it without a reload.
 With the default of 60000 an open tab refreshes once a minute; the auto-connect template sets 5000, so its tabs refresh every 5 seconds.
 
@@ -786,7 +786,9 @@ The marker that does this is set by the discovery source, not derived from the i
 ### Freshness and state
 
 Studio re-reads the export at most once per `SEED_CACHE_TTL_MS`, and concurrent requests share one read.
-The age of `generatedAt` is checked on every request against the cached export, so a withdrawal does not wait for the next read.
+The age of `generatedAt` is checked on every request against the cached export.
+A cached copy that has turned stale is re-read, at most every 5 seconds, so the discovered connections are withdrawn once the file itself is older than `SEED_DISCOVERY_MAX_AGE_MS`, without waiting for the TTL, and a long `SEED_CACHE_TTL_MS` never withdraws the connections of an exporter that keeps writing.
+For that, the exporter's `DISCOVERY_INTERVAL_MS` must stay well below `SEED_DISCOVERY_MAX_AGE_MS`; the defaults are 10 and 60 seconds.
 A `generatedAt` ahead of Studio's own clock counts as fresh.
 
 | Condition | State | Discovered connections |
@@ -894,7 +896,7 @@ This is the standard application logger (`src/lib/logger.ts`), not a persisted a
 | `SEED_CONFIG_PATH` | `/app/config/seed-connections.yaml` | Path to config file |
 | `SEED_CACHE_TTL_MS` | `60000` | Cache TTL in milliseconds |
 | `SEED_DISCOVERY_PATH` | unset (off) | Path of the discovery export file inside the Studio container; see [Platform discovery (CapRover)](#platform-discovery-caprover) |
-| `SEED_DISCOVERY_MAX_AGE_MS` | `60000` | Age of the export's `generatedAt` after which discovered connections are withdrawn |
+| `SEED_DISCOVERY_MAX_AGE_MS` | `60000` | Age of the export's `generatedAt` after which discovered connections are withdrawn; keep it well above the exporter's `DISCOVERY_INTERVAL_MS` (10000 by default) |
 | `NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS` | `5000` | Shortest interval of an open tab's managed-list refresh, inlined at build time, so it only affects source builds and tests, not packaged artifacts |
 
 The `VAULT_*` variables that back `${vault:...}` references are listed under [Vault Environment Variables](#vault-environment-variables).

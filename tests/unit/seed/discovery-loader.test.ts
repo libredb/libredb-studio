@@ -369,7 +369,7 @@ describe("discovery-loader", () => {
       expect(stale.skipped).toEqual([]);
     });
 
-    it("evaluates staleness on every call against the cached export, without a re-read", async () => {
+    it("re-reads a cached export once it turns stale, then at most every 5 seconds while it stays stale", async () => {
       process.env.SEED_CACHE_TTL_MS = "600000";
       write(exportFile());
       const { reads, readFile: read } = countingRead();
@@ -377,10 +377,60 @@ describe("discovery-loader", () => {
       expect((await statusNow({ readFile: read })).state).toBe("ok");
       clock = T0 + MAX_AGE_MS;
       expect((await statusNow({ readFile: read })).state).toBe("ok");
+      expect(reads).toHaveLength(1);
+
       clock = T0 + MAX_AGE_MS + 1;
       expect((await statusNow({ readFile: read })).state).toBe("stale");
       expect(await getDiscoveredConnections(deps({ readFile: read }))).toEqual([]);
+      expect(reads).toHaveLength(2);
+
+      clock = T0 + MAX_AGE_MS + 1 + 4_999;
+      expect((await statusNow({ readFile: read })).state).toBe("stale");
+      expect(reads).toHaveLength(2);
+
+      clock = T0 + MAX_AGE_MS + 1 + 5_000;
+      expect((await statusNow({ readFile: read })).state).toBe("stale");
+      expect(reads).toHaveLength(3);
+    });
+
+    it("keeps a healthy exporter listed when its cached copy turns stale before SEED_CACHE_TTL_MS runs out", async () => {
+      // SEED_CACHE_TTL_MS unset: its 60000 default equals the default max age, and the exporter rescans
+      // every 10 seconds, so the copy Studio caches is already up to one scan interval old when it is read.
+      write(exportFile({ generatedAt: iso(T0 - 9_000) }));
+      expect((await statusNow()).state).toBe("ok");
+
+      clock = T0 + 52_000;
+      write(exportFile({ generatedAt: iso(T0 + 50_000) }));
+
+      const status = await statusNow();
+      expect(status.state).toBe("ok");
+      expect(status.connected).toEqual([PG_CONNECTED]);
+      expect((await getDiscoveredConnections(deps())).map((c) => c.id)).toEqual(["caprover-pgtest"]);
+    });
+
+    it("re-reads an export from before the first successful scan every 5 seconds, not once per SEED_CACHE_TTL_MS", async () => {
+      write(
+        exportFile({
+          generatedAt: null,
+          status: {
+            ok: false,
+            code: "swarm_unavailable",
+            httpStatus: 503,
+            message: "This node is not a swarm manager.",
+          },
+        }),
+      );
+      const { reads, readFile: read } = countingRead();
+      expect((await statusNow({ readFile: read })).state).toBe("error");
+
+      clock = T0 + 4_999;
+      write(exportFile());
+      expect((await statusNow({ readFile: read })).state).toBe("error");
       expect(reads).toHaveLength(1);
+
+      clock = T0 + 5_000;
+      expect((await statusNow({ readFile: read })).state).toBe("ok");
+      expect(reads).toHaveLength(2);
     });
 
     it.each([
