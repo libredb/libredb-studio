@@ -4359,6 +4359,8 @@ export class PostgresProvider extends SQLBaseProvider {
 
     return {
       total: this.pool.totalCount,
+      // The configured ceiling, kept apart from `total` (the clients open right now).
+      max: this.poolConfig.max,
       idle: this.pool.idleCount,
       active: this.pool.totalCount - this.pool.idleCount,
       waiting: this.pool.waitingCount,
@@ -4511,7 +4513,7 @@ export class PostgresProvider extends SQLBaseProvider {
         // `|| "100"` was two bugs in one operator: it invented a perfect cache for a
         // NULL, and it also discarded a measured 0 - a cold cache reading 0% is a
         // measurement, and the one the panel most needs to show.
-        ...(cacheHitRatio === undefined ? {} : { cacheHitRatio }),
+        ...(cacheHitRatio === undefined ? {} : { cacheHitRatio, cacheHitAdvice: "Increase shared_buffers" }),
         // transactionsPerSecond / queriesPerSecond would need time-based sampling,
         // which this call does not do, so they stay absent.
         //

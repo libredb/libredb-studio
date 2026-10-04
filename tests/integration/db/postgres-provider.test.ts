@@ -2674,6 +2674,8 @@ describe("PostgresProvider", () => {
       const metrics = await provider.getPerformanceMetrics();
 
       expect(metrics.cacheHitRatio).toBe(98.75);
+      // The tuning sentence is PostgreSQL's own and is declared beside the ratio.
+      expect(metrics.cacheHitAdvice).toBe("Increase shared_buffers");
       // Not a metric PostgreSQL publishes; see the note in getPerformanceMetrics().
       expect("bufferPoolUsage" in metrics).toBe(false);
       expect(typeof metrics.deadlocks).toBe("number");
@@ -2782,6 +2784,7 @@ describe("PostgresProvider", () => {
 
       const metrics = await provider.getPerformanceMetrics();
       expect("cacheHitRatio" in metrics).toBe(false);
+      expect("cacheHitAdvice" in metrics).toBe(false);
       mockQueryFn = originalMock;
     });
 
@@ -3104,9 +3107,20 @@ describe("PostgresProvider", () => {
       const stats = provider.getPoolStats();
 
       expect(stats.total).toBe(10);
+      // The configured ceiling, apart from the clients open right now.
+      expect(stats.max).toBe(10);
       expect(stats.idle).toBe(7);
       expect(stats.active).toBe(3); // total - idle
       expect(stats.waiting).toBe(0);
+    });
+
+    test("max is the configured ceiling, not the open client count", async () => {
+      provider = new PostgresProvider(makePgConfig(), { pool: { max: 25 } });
+      await provider.connect();
+      const stats = provider.getPoolStats();
+
+      expect(stats.total).toBe(10);
+      expect(stats.max).toBe(25);
     });
 
     test("not connected returns zeros", () => {

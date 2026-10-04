@@ -120,6 +120,18 @@ describe("AuditTab", () => {
     restoreGlobalFetch();
   });
 
+  test("renders the events in the order the server answered them", async () => {
+    await act(async () => {
+      render(<AuditTab />);
+    });
+    await waitFor(() => {
+      const rows = Array.from(document.querySelectorAll("tbody tr"));
+      expect(rows.length).toBeGreaterThan(1);
+      expect(rows[0].textContent).toContain("VACUUM");
+      expect(rows[1].textContent).toContain("KILL");
+    });
+  });
+
   test("renders 3 tabs (Operations, Queries, Stats)", async () => {
     let renderResult: ReturnType<typeof render>;
     await act(async () => {

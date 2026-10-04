@@ -1939,6 +1939,13 @@ export interface PerformanceMetrics {
    * to a healthy 100 when it is absent.
    */
   cacheHitRatio?: number;
+  /**
+   * What to do about a low `cacheHitRatio`, declared by a provider whose engine has a
+   * setting to point at ("Increase shared_buffers" on PostgreSQL). Absent where the engine
+   * has no such knob, so the Performance tab falls back to a line that names no setting
+   * rather than advising a ClickHouse or MySQL server to tune PostgreSQL.
+   */
+  cacheHitAdvice?: string;
   /** Transactions per second */
   transactionsPerSecond?: number;
   /** Queries per second */
