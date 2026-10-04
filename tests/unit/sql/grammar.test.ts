@@ -433,6 +433,12 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   milvus: "default",
   // A Qdrant console request, not SQL (vector-family spec 6.4): no SQL grammar is established for it, and none is read.
   qdrant: "default",
+  // InfluxQL, not SQL: the provider's own lexer reads it, so no SQL grammar is established for it, and none is read.
+  influxdb: "default",
+  // Five facts probed on InfluxDB 3.12.0 Core through `POST /api/v3/query_sql`, the route the provider
+  // sends on; see the influxdb3 block below and DATAFUSION_GRAMMAR in `grammar.ts` for the statement
+  // behind each one.
+  influxdb3: "established",
 };
 
 /**
@@ -466,6 +472,46 @@ describe("db2", () => {
     // `SELECT 1 AS [a] FROM SYSIBM.SYSDUMMY1` is SQLCODE -104, so it is no name quote, but SQL PL
     // writes an array element as `a[1]` and no subscript reading was established for plain SQL.
     expect(grammar.bracket).toBe(DEFAULT_SQL_GRAMMAR.bracket);
+  });
+});
+
+/**
+ * Apache DataFusion as InfluxDB 3.12.0 Core parses it, every fact probed through
+ * `POST /api/v3/query_sql` with `{"db":"home","q":<text>,"format":"jsonl"}`, the body the provider
+ * sends, and re-run 2026-10-04. Each statement below answered as quoted.
+ */
+describe("influxdb3", () => {
+  const grammar = resolveSqlGrammar("influxdb3");
+
+  test("`#` is code: the rest of the line is not hidden", () => {
+    // `SELECT 1 AS x # c` is HTTP 400, `ParserError("Expected: end of statement, found: # at Line: 1,
+    // Column: 15")`.
+    expect(grammar.hash).toBe("code");
+  });
+
+  test("`[…]` is a subscript and an array literal, never a name quote", () => {
+    // `SELECT [1,2][1] AS x` answers `{"x":1}`; `SELECT [[1,2],[3,4]][2][1] AS x` answers `{"x":3}`,
+    // so the run nests; `SELECT ['a]b'][1] AS x` answers `{"x":"a]b"}`, so a literal inside it is a
+    // literal; `SELECT [room] FROM home` answers an array column named `make_array(home.room)`, so
+    // the brackets were read through to an expression.
+    expect(grammar.bracket).toBe("subscript");
+  });
+
+  test("block comments nest", () => {
+    // `SELECT 1 /* a /* b */ c */ AS x` answers `{"x":1}`: the inner `*/` did not close the run.
+    expect(grammar.blockComment).toBe("nesting");
+  });
+
+  test("`q'…'` is not in the grammar", () => {
+    // `SELECT q'[x]' AS x` is HTTP 400, `ParserError("Expected: end of statement, found: AS at Line: 1,
+    // Column: 15")`.
+    expect(grammar.alternateQuoting).toBe(false);
+  });
+
+  test("`//` is not a comment", () => {
+    // `SELECT 1 AS x // c` is HTTP 400, `ParserError("Expected: end of statement, found: // at Line: 1,
+    // Column: 15")`.
+    expect(grammar.doubleSlashComment).toBe(false);
   });
 });
 
