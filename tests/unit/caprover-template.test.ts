@@ -18,7 +18,8 @@
  * owners. The first is what upstream's validator actually enforces, read from its source.
  * The second is ours, and a single describe claiming upstream enforced all of it was itself
  * a false statement. A third describe holds what only the auto-connect variant carries: the
- * Docker socket, and the companion app that is the only thing allowed to mount it.
+ * Docker socket, the companion app that is the only thing allowed to mount it, and the
+ * README steps that rebuild that companion by hand.
  */
 import { describe, expect, test } from "bun:test";
 import * as fs from "fs";
@@ -57,17 +58,24 @@ interface Template {
   };
 }
 
-/** Every template this folder submits, each with the logo upstream looks for beside it, as
- *  public/v4/logos/<app>.png. A mutable array: bun's describe.each takes a readonly table
- *  only when its rows are tuples. */
-const TEMPLATES: { name: string; file: string; logo: string }[] = [
-  { name: "libredb-studio", file: "libredb-studio.yml", logo: "libredb-studio.png" },
-  {
-    name: "libredb-studio-autoconnect",
-    file: "libredb-studio-autoconnect.yml",
-    logo: "libredb-studio-autoconnect.png",
-  },
-];
+/** Every template this folder submits, found by listing the folder so that a template added
+ *  later is held to every rule below without anyone remembering to add it to a list. Each is
+ *  submitted with the logo upstream looks for beside it, as public/v4/logos/<app>.png. A
+ *  mutable array: bun's describe.each takes a readonly table only when its rows are tuples. */
+const TEMPLATES: { name: string; file: string; logo: string }[] = fs
+  .readdirSync(CAPROVER_DIR)
+  .filter((file) => file.endsWith(".yml"))
+  .sort()
+  .map((file) => {
+    const name = path.basename(file, ".yml");
+    return { name, file, logo: `${name}.png` };
+  });
+
+/** The one service that may bind a host path, and the one template it is in: the discovery
+ *  companion, which reads the Docker socket. Named by both, so a copy of it in another
+ *  template is not waved through. */
+const AUTOCONNECT_FILE = "libredb-studio-autoconnect.yml";
+const COMPANION = "$$cap_appname-discovery";
 
 /** Read as text too: some rules below are about the submitted artifact rather than the
  *  parsed document, including the YAML comments, which no parsed read returns at all.
@@ -91,6 +99,13 @@ function loadTemplate(file: string) {
     variables: template.caproverOneClickApp?.variables ?? [],
     versionVariable: template.caproverOneClickApp?.variables?.find((variable) => variable.id === "$$cap_version"),
   };
+}
+
+/** What CapRover turns into a bind mount of a host path: a volume whose source, the part before
+ *  the first ":", starts with "/" (OneClickAppDeploymentHelper.createConfigurationPromise in
+ *  caprover/caprover). Every other volume becomes a named volume. */
+function hostBinds(service?: TemplateService): string[] {
+  return (service?.volumes ?? []).filter((volume) => volume.startsWith("/"));
 }
 
 describe.each(TEMPLATES)("$name: what caprover/one-click-apps validate_apps.js enforces", ({ file, logo }) => {
@@ -130,7 +145,7 @@ describe.each(TEMPLATES)("$name: what caprover/one-click-apps validate_apps.js e
 });
 
 describe.each(TEMPLATES)("$name: what this repository requires of the template", ({ file }) => {
-  const { raw: RAW, environment, instructionsEnd, versionVariable } = loadTemplate(file);
+  const { raw: RAW, template, environment, instructionsEnd, versionVariable } = loadTemplate(file);
 
   test("the version variable offers a pinned tag, never latest", () => {
     expect(versionVariable?.defaultValue).toMatch(/^\d+\.\d+\.\d+$/);
@@ -296,6 +311,19 @@ describe.each(TEMPLATES)("$name: what this repository requires of the template",
     const nonAscii = [...RAW].filter((character) => character.codePointAt(0)! > 0x7f);
     expect(nonAscii).toEqual([]);
   });
+
+  test("no service binds a host path, except the discovery companion's Docker socket", () => {
+    // CapRover turns a volume whose source starts with "/" into a bind mount of that host
+    // path, so this reads the source and never the socket's file name: "/var/run:/var/run"
+    // puts the socket in the container just as well, and a name check let it through. The one
+    // exception is named by template and by service, so a copy of the companion in another
+    // template is not waved through, and what the exception may bind is pinned in the
+    // auto-connect describe below.
+    const binds = Object.entries(template.services ?? {})
+      .filter(([name]) => file !== AUTOCONNECT_FILE || name !== COMPANION)
+      .flatMap(([name, service]) => hostBinds(service).map((volume) => `${name}: ${volume}`));
+    expect(binds).toEqual([]);
+  });
 });
 
 describe("what only the auto-connect variant carries", () => {
@@ -308,9 +336,9 @@ describe("what only the auto-connect variant carries", () => {
     instructionsEnd,
     variables,
     versionVariable,
-  } = loadTemplate("libredb-studio-autoconnect.yml");
+  } = loadTemplate(AUTOCONNECT_FILE);
   const plain = loadTemplate("libredb-studio.yml");
-  const companion = template.services?.["$$cap_appname-discovery"];
+  const companion = template.services?.[COMPANION];
   const companionEnvironment = companion?.environment ?? {};
   const skipApps = variables.find((variable) => variable.id === "$$cap_skip_apps");
 
@@ -350,11 +378,32 @@ describe("what only the auto-connect variant carries", () => {
     expect(companion?.command).toEqual(["node", "/usr/local/lib/libredb-studio/discover.mjs"]);
   });
 
-  test("only the companion mounts the Docker socket, and the plain entry never does", () => {
-    expect(companion?.volumes).toContain(SOCKET);
-    expect((service?.volumes ?? []).filter((volume) => volume.includes("docker.sock"))).toEqual([]);
-    expect(plain.raw).not.toContain("docker.sock");
+  test("the companion's host binds are exactly the Docker socket, and the plain entry stays one service", () => {
+    // Every other service in every template is kept off the host filesystem by the shared
+    // describe above. The whole list is pinned here and not just "contains the socket": a
+    // second bind next to it, "/" or "/var/run", would be the same access.
+    expect(hostBinds(companion)).toEqual([SOCKET]);
     expect(Object.keys(plain.template.services ?? {})).toEqual(["$$cap_appname"]);
+  });
+
+  test("the companion carries only the keys it was reviewed with", () => {
+    // It runs as root next to the Docker socket, so every key on it is a privilege. CapRover
+    // turns cap_add into CapabilityAdd (DockerComposeToServiceOverride.parseCapAdd) and ports
+    // into published ports (OneClickAppDeploymentHelper.createConfigurationPromise), and none
+    // of the checks around this one looks at what else the companion has. Listed by key, so a
+    // new one fails here and has to be argued for.
+    const allowed = ["image", "restart", "command", "environment", "volumes", "caproverExtra"];
+    expect(Object.keys(companion ?? {}).filter((key) => !allowed.includes(key))).toEqual([]);
+  });
+
+  test("the companion's environment is the three settings the exporter is given", () => {
+    // Exactly these names. Anything else is a value handed to a root process, and a copy of
+    // one of Studio's own (ADMIN_PASSWORD, JWT_SECRET) would be a secret handed to it.
+    expect(Object.keys(companionEnvironment).sort()).toEqual([
+      "DISCOVERY_EXCLUDE",
+      "DISCOVERY_NETWORK",
+      "DISCOVERY_OUTPUT",
+    ]);
   });
 
   test("the companion has no port and is not exposed as a web app", () => {
@@ -450,5 +499,36 @@ describe("what only the auto-connect variant carries", () => {
     expect(end).toContain(
       "Both apps must run on the same node, and that node must be a swarm manager. On a single-server CapRover this is always the case. On a cluster, pin both apps to the manager in their App Configs.",
     );
+  });
+
+  test("the README's manual steps use the template's own command, settings, network and volume label", () => {
+    // "Adding discovery to an existing install" has the reader rebuild the companion by hand in
+    // the dashboard, and no other test reads that text, so a rename in the template would leave
+    // the steps telling the reader to type something that no longer exists. The values come
+    // from the parsed template, never from a second list; what is written out here is only the
+    // section's heading, which Studio settings step 1 names, and the stand-in app name the
+    // README itself uses. Only that section is searched, because the description of the variant
+    // above it repeats some of the same words, and it is searched by whole tokens, because a
+    // substring match finds "captain-overlay" inside a stale "captain-overlay-network".
+    const heading = "### Adding discovery to an existing install";
+    const readme = fs.readFileSync(path.join(CAPROVER_DIR, "README.md"), "utf8");
+    expect(readme).toContain(heading);
+    const steps = readme.slice(readme.indexOf(heading)).split(/^## /m)[0];
+    const tokens = new Set(steps.split(/[\s`'",;()[\]]+/));
+
+    // The settings step 1 has the reader add to Studio, with the values the template gives
+    // them. A value that is a template variable (the apps to skip) is typed by the reader, so
+    // only its name is repeated.
+    const studioSettings = ["SEED_DISCOVERY_PATH", "SEED_CACHE_TTL_MS", "TRUSTED_PROXY_HOPS"];
+    const setting = (name: string, value: unknown) => (String(value).startsWith("$$cap_") ? name : `${name}=${value}`);
+    // The volume both apps mount: the steps have the reader give it the same label in each.
+    const sharedVolume = (service?.volumes ?? []).find((volume) => companion?.volumes?.includes(volume))!;
+    const literals = [
+      ...[companion?.command].flat().map(String),
+      ...studioSettings.map((name) => setting(name, environment[name])),
+      ...Object.entries(companionEnvironment).map(([name, value]) => setting(name, value)),
+      sharedVolume.split(":")[0].replace("$$cap_appname", "studio"),
+    ];
+    expect(literals.filter((literal) => !tokens.has(literal))).toEqual([]);
   });
 });
