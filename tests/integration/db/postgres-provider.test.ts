@@ -1031,6 +1031,48 @@ describe("PostgresProvider", () => {
       ]);
     });
 
+    // `pg-types` builds a `postgres-interval` out of an interval and an `{x, y}` out of a point,
+    // and the grid, Copy and every export then showed `{"days":1,"hours":2}` where psql shows
+    // `1 day 02:00:00` (#1432). PostgreSQL's own text is the form its input reads back.
+    test("interval, point and circle arrive as the engine's own text", async () => {
+      const getTypeParser = await parserFor();
+      expect(getTypeParser(1186, "text")("1 day 02:00:00")).toBe("1 day 02:00:00");
+      expect(getTypeParser(1186, "text")("-3 years")).toBe("-3 years");
+      expect(getTypeParser(600, "text")("(1,2)")).toBe("(1,2)");
+      expect(getTypeParser(718, "text")("<(1,2),3>")).toBe("<(1,2),3>");
+    });
+
+    test("interval[] and point[] arrive as arrays of the engine's text, NULL kept", async () => {
+      const getTypeParser = await parserFor();
+      expect(getTypeParser(1187, "text")('{"1 day 02:00:00","-3 years"}')).toEqual(["1 day 02:00:00", "-3 years"]);
+      expect(getTypeParser(1187, "text")('{"1 day 02:00:00",NULL}')).toEqual(["1 day 02:00:00", null]);
+      expect(getTypeParser(1017, "text")('{"(1,2)","(3,4)"}')).toEqual(["(1,2)", "(3,4)"]);
+    });
+
+    // `lseg`, `box`, `path`, `polygon`, `line` and every geometric array but `point[]` have no
+    // `pg-types` parser, so they were already the engine's text and are delegated untouched.
+    test("the geometric types pg-types does not parse are left to it", async () => {
+      const getTypeParser = await parserFor();
+      for (const oid of [601, 602, 603, 604, 628, 719]) {
+        expect(getTypeParser(oid, "text")).toBe(realPgTypes.getTypeParser(oid, "text"));
+      }
+    });
+
+    // `pg-types` `JSON.parse`s a json document, so the document `null` became JavaScript null and
+    // the grid drew it as the same italic NULL a SQL NULL gets (#1432). Its text tells them apart,
+    // and is what a SQL INSERT export replays into a json column as the document again.
+    test("a top-level json null arrives as its text, every other document parsed", async () => {
+      const getTypeParser = await parserFor();
+      expect(getTypeParser(114, "text")("null")).toBe("null");
+      expect(getTypeParser(3802, "text")("null")).toBe("null");
+      expect(getTypeParser(114, "text")(" null ")).toBe(" null ");
+      expect(getTypeParser(114, "text")('{"a":1}')).toEqual({ a: 1 });
+      expect(getTypeParser(3802, "text")("[null]")).toEqual([null]);
+      expect(getTypeParser(114, "text")("true")).toBe(true);
+      // A `json[]`/`jsonb[]` element keeps the parse `pg` gives it, this one included.
+      expect(getTypeParser(199, "text")("{null}")).toEqual([null]);
+    });
+
     // Controls: without these, a parser that answered every OID with the raw text would pass
     // the two tests above.
     test("every other type is delegated to pg-types unchanged", async () => {

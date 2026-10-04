@@ -118,14 +118,30 @@ const DATE_ARRAY_OID = 1182;
 const TIMESTAMP_ARRAY_OID = 1115;
 const TIMESTAMPTZ_OID = 1184;
 const TIMESTAMPTZ_ARRAY_OID = 1185;
+const INTERVAL_OID = 1186;
+const INTERVAL_ARRAY_OID = 1187;
+const POINT_OID = 600;
+const POINT_ARRAY_OID = 1017;
+const CIRCLE_OID = 718;
+const JSON_OID = 114;
+const JSONB_OID = 3802;
 // Widened to `number`: `pg-types` types the OID as an enum of scalar types, and 1009 is not one.
 const TEXT_ARRAY_OID: number = 1009;
+
+/** The types read as the engine's own text, and the arrays of them, which are read as `text[]` is. */
+const AS_TEXT: ReadonlySet<number> = new Set([DATE_OID, TIMESTAMP_OID, INTERVAL_OID, POINT_OID, CIRCLE_OID]);
+const AS_TEXT_ARRAY: ReadonlySet<number> = new Set([
+  DATE_ARRAY_OID,
+  TIMESTAMP_ARRAY_OID,
+  INTERVAL_ARRAY_OID,
+  POINT_ARRAY_OID,
+]);
 
 type TypeFormat = Parameters<typeof types.getTypeParser>[1];
 
 /**
- * The per-pool parsers: `date` and `timestamp` (and their arrays) arrive as the engine's own
- * text, and every other type is whatever `pg-types` makes of it.
+ * The per-pool parsers: the types in `AS_TEXT` arrive as the engine's own text, and every
+ * other type is whatever `pg-types` makes of it.
  *
  * `pg-types` builds a `date` as a Date at LOCAL midnight of the Node process and reads a
  * `timestamp` as local wall-clock time, and every row path then serialises that Date as ISO
@@ -140,20 +156,26 @@ type TypeFormat = Parameters<typeof types.getTypeParser>[1];
  * `infinity` as the NUMBER Infinity, which `JSON.stringify` writes as null, so measured on
  * PostgreSQL 18.6 a stored `'-infinity'::timestamptz` reached the grid as NULL.
  *
+ * `interval`, `point` and `circle` are objects to `pg-types` (`{days: 1, hours: 2}`,
+ * `{x, y}`, `{x, y, radius}`), so the grid, Copy and every export showed that shape where
+ * psql shows `1 day 02:00:00`, `(1,2)` and `<(1,2),3>` (#1432). The other geometric types,
+ * and every geometric array but `point[]`, have no `pg-types` parser and were already text.
+ *
  * Per pool, never `types.setTypeParser`: that registry is process-wide, and a host that embeds
  * `@libredb/studio` has its own `pg` users. Only the text format is intercepted, because the
  * binary one has no text to hand back. The arrays are parsed as `text[]` is, which keeps
  * NULL elements as null.
  */
-const ZONELESS_AS_TEXT: NonNullable<PgPoolConfig["types"]> = {
+const POOL_TYPE_PARSERS: NonNullable<PgPoolConfig["types"]> = {
   getTypeParser: (oid: number, format: TypeFormat = "text") => {
     if (format === "text") {
-      if (oid === DATE_OID || oid === TIMESTAMP_OID) return (value: string) => value;
-      if (oid === DATE_ARRAY_OID || oid === TIMESTAMP_ARRAY_OID) return types.getTypeParser(TEXT_ARRAY_OID, "text");
+      if (AS_TEXT.has(oid)) return (value: string) => value;
+      if (AS_TEXT_ARRAY.has(oid)) return types.getTypeParser(TEXT_ARRAY_OID, "text");
       if (oid === TIMESTAMPTZ_OID) return instantOrInfinity;
       if (oid === TIMESTAMPTZ_ARRAY_OID) {
         return (value: string) => instantsOrInfinities(types.getTypeParser(TEXT_ARRAY_OID, "text")(value));
       }
+      if (oid === JSON_OID || oid === JSONB_OID) return (value: string) => jsonDocument(value, oid);
     }
     return types.getTypeParser(oid, format);
   },
@@ -170,6 +192,18 @@ function instantOrInfinity(value: string): unknown {
 function instantsOrInfinities(element: unknown): unknown {
   if (Array.isArray(element)) return element.map(instantsOrInfinities);
   return typeof element === "string" ? instantOrInfinity(element) : element;
+}
+
+const JSON_NULL_DOCUMENT = /^\s*null\s*$/;
+
+/**
+ * A `json`/`jsonb` document as `pg-types` parses it, except the top-level `null`, which arrives
+ * as its text: its parse is JavaScript null, which the grid draws as the same italic NULL a SQL
+ * NULL gets and an export writes as NULL, so the document became one on replay. The four
+ * characters are what a json column reads back as the document again.
+ */
+function jsonDocument(value: string, oid: number): unknown {
+  return JSON_NULL_DOCUMENT.test(value) ? value : types.getTypeParser(oid, "text")(value);
 }
 
 /** The fields of a `NoticeResponse` this provider reads; `pg` hands over the parsed message. */
@@ -2651,7 +2685,7 @@ export class PostgresProvider extends SQLBaseProvider {
       statement_timeout: this.queryTimeout,
       ssl: sslConfig,
       // In the base so both connection forms below carry it.
-      types: ZONELESS_AS_TEXT,
+      types: POOL_TYPE_PARSERS,
       Client: NoticeKeepingClient,
     };
 

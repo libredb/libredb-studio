@@ -1552,9 +1552,23 @@ schema tree shows — answers for the same column, and the modifier is not on th
 reconstructing. `columnTypes` is consumed by the results grid's column labels, by the SQL-DDL export
 (which prefers a declared type over its value-shaped guess) and by the agent's state summary.
 
-### 5.5 Date and timestamp values
+### 5.5 The types read as the engine's text
 
-The pool carries its own type parsers (`ZONELESS_AS_TEXT` in [`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)), passed as the `types` option in `buildPoolConfig()`, so the structured form and a pasted connection string both get them.
+The pool carries its own type parsers (`POOL_TYPE_PARSERS` in [`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)), passed as the `types` option in `buildPoolConfig()`, so the structured form and a pasted connection string both get them.
+These types arrive as the engine's own text, which is the form PostgreSQL's own input function reads back:
+
+| Type | Arrives as | Why not `pg-types`' form |
+|---|---|---|
+| `date`, `timestamp`, and their arrays | `'2026-09-01'`, `'2026-09-01 10:30:00'` | a `Date` at the Node process's local midnight, which moved the value with the TZ (below) |
+| `timestamptz`, `timestamptz[]` — the two infinities only | `'infinity'`, `'-infinity'` | the number `Infinity`, which no `Date` holds and `JSON.stringify` writes as `null` |
+| `interval`, `interval[]` | `'1 day 02:00:00'`, `'-3 years'` | `{days: 1, hours: 2}` (`postgres-interval`, zero parts dropped) |
+| `point`, `point[]`, `circle` | `'(1,2)'`, `'<(1,2),3>'` | `{x, y}` and `{x, y, radius}` |
+| `json`, `jsonb` — the top-level `null` document only | `'null'` | JavaScript `null`, which nothing can tell from a SQL NULL |
+
+`lseg`, `box`, `path`, `polygon`, `line`, and every geometric array but `point[]`, have no `pg-types` parser at all, so they were already the engine's text and are delegated to it untouched.
+`time` and `timetz` were already its text too, and are unchanged.
+Every other type is what `pg-types` makes of it.
+
 `date`, `date[]`, `timestamp` (without time zone) and `timestamp[]` arrive as the engine's own text, `'2026-09-01'` and `'2026-09-01 10:30:00'`, whatever the TZ of the Node process.
 `timestamptz` and `timestamptz[]` still arrive as a JavaScript `Date`, which is an instant, so the JSON the routes answer with carries its ISO UTC form, `'2026-09-01T10:30:00.000Z'`, in every TZ.
 Their two infinities are the exception and arrive as the engine's text, `'infinity'` and `'-infinity'`, alone and as array elements: `pg-types` reads them as the number `Infinity`, which no `Date` holds and `JSON.stringify` writes as `null`, so measured 2026-10-04 on PostgreSQL 18.6 a stored `'-infinity'::timestamptz` reached the grid as NULL.
@@ -1577,10 +1591,28 @@ Under Europe/Istanbul the SQL INSERT export of that row, replayed into a copy of
 `'infinity'::date` used to arrive as `Infinity` and leave as `null`, and `DATE '0044-03-15 BC'` moved by the zone's local mean time offset.
 `timestamptz` answered `2026-09-01T10:30:00.000Z` under all three zones, before and after.
 
+`interval`, `point` and `circle` were objects for the same reason: `pg-types` parses each into one, and the grid, Copy and every export then carried that shape, so a replayed export did not store the same interval.
+Measured 2026-10-04 on PostgreSQL 18.6 through this provider:
+
+| Value | psql | grid before | grid after |
+|---|---|---|---|
+| `'1 day 2 hours'::interval` | `1 day 02:00:00` | `{"days":1,"hours":2}` | `1 day 02:00:00` |
+| `'-3 years'::interval` | `-3 years` | `{"years":-3}` | `-3 years` |
+| `point(1,2)` | `(1,2)` | `{"x":1,"y":2}` | `(1,2)` |
+| `'<(1,2),3>'::circle` | `<(1,2),3>` | `{"x":1,"y":2,"radius":3}` | `<(1,2),3>` |
+| `ARRAY['1 day'::interval, NULL]` | `{1 day,NULL}` | `[{"days":1},null]` | `["1 day",null]` |
+
+A `json`/`jsonb` document keeps the parse `pg-types` gives it, with the top-level `null` as the one exception: its parse is JavaScript `null`, so the grid drew it as the same italic NULL a SQL NULL gets and the export wrote it as `NULL`, which made the document into a SQL NULL on replay.
+Measured on the same server, `SELECT 'null'::json, NULL::json` showed two identical italic NULL cells before and `null` beside an italic NULL after, which is what psql shows.
+A `json[]`/`jsonb[]` element is unaffected: `pg` parses each one, a `null` element included.
+The document `"null"` — the JSON *string* — reaches a row as the same four characters, because `pg-types` already parsed it to the JavaScript string `null` before this change; the two are told apart by the column's declared type, not by the value.
+
+A round trip over a table of `interval`, `point`, `circle`, `interval[]`, `point[]`, `json` and `jsonb`, exported as SQL INSERT and replayed into a `CREATE TABLE … (LIKE src)` copy, measured `SELECT src::text FROM src EXCEPT SELECT copy::text FROM copy` at **zero** rows, the `null` document included — the one cell [§5.7](#57-what-the-sql-insert-and-ddl-exports-write) used to record as unable to survive the export.
+
 The parsers are per pool on purpose: `pg.types.setTypeParser` is process-wide, and a host that embeds `@libredb/studio` has its own `pg` users.
 Only the text format is intercepted, since the binary one has no text to return.
-An in-process consumer of the library surface now receives strings, not `Date` objects, for these four types.
-Every relative that goes through `PostgresProvider` (the `via: "postgres"` entries in [`compatibility.ts`](../../src/lib/db/compatibility.ts)) shares the change.
+An in-process consumer of the library surface now receives strings, not `Date`, `postgres-interval` or `{x, y}` objects, for the types in the table above.
+Every relative that goes through `PostgresProvider` (the `via: "postgres"` entries in [`compatibility.ts`](../../src/lib/db/compatibility.ts)) shares the change, so RisingWave intervals are text too.
 
 ### 5.6 NaN and the float infinities
 
@@ -1598,14 +1630,15 @@ The result export reads each cell's declared type ([§5.4](#54-declared-column-t
 | Declared | Arrives as | Written as |
 |---|---|---|
 | any `…[]` | a JS array, nested per dimension | `'{"1","2",NULL}'`, every element double-quoted and backslash-escaped; a `json`/`jsonb` element is written as JSON, so an array stays one document and a string keeps its quotes (`pg` `JSON.parse`s each element, so the document `"hello"` arrives as `hello`) |
-| `interval` | `{days: 1, hours: 2}` (`postgres-interval`, zero parts dropped) | `'1 days 2 hours'`; `{}` is `'0 seconds'` |
-| `point` / `circle` | `{x, y}` / `{x, y, radius}` | `'(1,2)'` / `'<(1,2),3>'` |
+| `interval`, `point`, `circle` | the engine's text ([§5.5](#55-the-types-read-as-the-engines-text)) | that text, quoted, by the generic writer |
+
+An `interval` or a geometric value that reaches the export as an object — `{days: 1, hours: 2}`, `{x, y}`, `{x, y, radius}` — is still written as `'1 days 2 hours'`, `'(1,2)'` and `'<(1,2),3>'` (`{}` is `'0 seconds'`), which is the form a host that embeds the library surface with its own `pg` pool and `pg-types`' defaults hands over.
 
 An array or an object in a `json`/`jsonb` column, or in a result with no declared type, is still the quoted JSON text.
 The DDL keeps an array type (`integer[]`) instead of writing `TEXT`, and writes a bare `bit` as `bit varying` (and `bit[]` as `bit varying[]`), because `pg` returns a bit string such as `1010` that `bit(1)` refuses.
 
 Measured 2026-10-04 on PostgreSQL 18.6: a `SELECT *` over a table with `integer[]`, two-dimensional `integer[]`, `text[]` holding quotes, commas, braces, backslashes and the word `NULL`, `boolean[]`, `jsonb[]`, `timestamptz[]`, `interval`, `point`, `bit(4)`, `varbit`, `money`, `inet`, `int4range` and the scalar types was exported and replayed with `psql`, once into a `CREATE TABLE … (LIKE src)` copy and once into the exported DDL's own table, and `SELECT s::text FROM src s EXCEPT SELECT c::text FROM copy c` answered one row.
-That row differs in one cell that never reaches the export as itself: the JSON document `null` in a `json` column, which JSON cannot tell from SQL NULL.
+That row differed in one cell that never reached the export as itself, the JSON document `null` in a `json` column; it now arrives as its text and replays as the document, so the same comparison answers no rows ([§5.5](#55-the-types-read-as-the-engines-text)).
 Before this, the same file stopped at its first row with `ERROR: malformed array literal: "[1,2,3]"`.
 
 ---
