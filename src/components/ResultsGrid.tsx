@@ -9,9 +9,11 @@ import {
   columnResizingFeature,
   columnSizingFeature,
   columnVisibilityFeature,
+  constructSortFn,
   createSortedRowModel,
   flexRender,
   rowSortingFeature,
+  sortFn_alphanumeric,
   tableFeatures,
   useTable,
 } from "@tanstack/react-table";
@@ -511,6 +513,29 @@ export function ResultsGrid({
     return sortFns;
   }, [result.fields, result.columnTypes, result.rows]);
 
+  /**
+   * One comparator per masked column while masking is in force, ordering by the masked text
+   * the grid displays (#1491). Sorting on the clear value under the mask let anyone who may
+   * not lift masking read the rank of the hidden values off the row order, the same leak the
+   * column filter had (#1477). It replaces the numeric comparison too, since that one orders
+   * the very numbers the mask hides; identical masks tie and keep the source order. A
+   * per-cell reveal does not change this: it shows one cell, while the sort ranks every row.
+   */
+  const maskedSortFns = useMemo(() => {
+    const sortFns = new Map<string, SortFn<typeof tableFeatureSet, Record<string, unknown>>>();
+    if (!effectiveMaskingEnabled) return sortFns;
+    for (const [field, pattern] of sensitiveColumns) {
+      sortFns.set(
+        field,
+        constructSortFn({
+          ...sortFn_alphanumeric,
+          resolveDataValue: (value) => maskValueByPattern(value, pattern).toLowerCase(),
+        }),
+      );
+    }
+    return sortFns;
+  }, [effectiveMaskingEnabled, sensitiveColumns]);
+
   const columns = useMemo<ColumnDef<typeof tableFeatureSet, Record<string, unknown>>[]>(() => {
     // `truncate` carries its own `white-space: nowrap`, so wrapping has to replace it here,
     // on the element holding the value, not only on the cell around it.
@@ -565,9 +590,14 @@ export function ResultsGrid({
       // something off the prototype chain.
       id: field,
       accessorFn: (row: Record<string, unknown>) => (Object.hasOwn(row, field) ? row[field] : undefined),
-      // A numeric column sorts as numbers, not as the strings it travels as (#1384).
-      // Every other column keeps the table's own comparison.
-      ...(numericSortFns.has(field) ? { sortFn: numericSortFns.get(field) } : {}),
+      // A masked column sorts by its masked text (#1491). Otherwise a numeric column sorts
+      // as numbers, not as the strings it travels as (#1384), and every other column keeps
+      // the table's own comparison.
+      ...(maskedSortFns.has(field)
+        ? { sortFn: maskedSortFns.get(field) }
+        : numericSortFns.has(field)
+          ? { sortFn: numericSortFns.get(field) }
+          : {}),
       header: ({ column }) => {
         const hasFilter = columnFilters.has(field) && !!columnFilters.get(field);
         const isSensitive = effectiveMaskingEnabled && sensitiveColumns.has(field);
@@ -802,6 +832,7 @@ export function ResultsGrid({
     detailColumnId,
     wrapText,
     result.fields,
+    maskedSortFns,
     numericSortFns,
     result.columnTypes,
     result.vectorColumns,
@@ -851,9 +882,19 @@ export function ResultsGrid({
     setColumnVisibility((current) => ({ ...current, [field]: current[field] === false }));
   }, []);
 
+  /**
+   * The rows handed to the table, a fresh array whenever the masked comparators change.
+   * TanStack caches the sorted rows on the sorting state and the rows it was given, never on
+   * a column's sort function, so turning masking on under an active sort kept the clear-value
+   * order on screen (#1491). Same row objects in the same order, so `row.index` and
+   * `row.original` mean what they did.
+   */
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- maskedSortFns is the invalidation key, not an input.
+  const tableData = useMemo(() => filteredRows.slice(), [filteredRows, maskedSortFns]);
+
   const table = useTable({
     features: tableFeatureSet,
-    data: filteredRows,
+    data: tableData,
     columns,
     state: {
       sorting,

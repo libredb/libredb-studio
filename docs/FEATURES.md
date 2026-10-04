@@ -35,16 +35,17 @@
 *   **Copy Cell on binary values:** Copy Cell on a binary value (`bytea`, `BLOB`, `varbinary`) copies the whole value as `\x` hex, the form the row detail and the export write.
     It used to copy the cell's shortened preview: the first 32 bytes and the size.
 *   **Column Management:** Resizable columns and advanced sorting.
+    While masking is in force, a masked column sorts by the masked text the grid shows, numeric columns included, so the row order cannot rank the clear values under the mask; rows whose masks are identical keep their original order, and a NULL there sorts as the text `NULL` it shows rather than first or last.
     A result column opens at a width that fits its header.
     Double-clicking a column's resize handle restores that width.
 *   **Row Detail:** A control at the left edge of every row opens that row field by field, values beside field names, with per-field copy and the same masking the grid applies.
-*   **Column Filter:** Each column header's funnel filters the rows by a case-insensitive substring of that column.
-    While masking is in force, a masked column is matched against the masked text the grid shows, so typing parts of a clear value cannot narrow the rows to reveal it.
     It is how a result with more columns than fit the window stays readable, so it is on the desktop grid and not only on the small-screen card and table views, where it shipped first (#800).
     The control is pinned to the left edge rather than scrolling away with the first column, and no breakpoint hides it.
     The field list flows into as many columns as the window fits, asked for by column width rather than by a breakpoint, and the panel is capped at a share of the window rather than always filling it, so a six field row no longer hides the grid it came from.
     Measured on a 40 field row: one column at 390px and 768px, two at 834px and 1024px, three at 1280px and 1440px, four at 1920px and eight at 3840px.
     How many of them carry fields depends on how many fields the row has, so a short row fills fewer than the window could hold.
+*   **Column Filter:** Each column header's funnel filters the rows by a case-insensitive substring of that column.
+    While masking is in force, a masked column is matched against the masked text the grid shows, so typing parts of a clear value cannot narrow the rows to reveal it.
 
 ### 4. Visual EXPLAIN (Query Analyzer)
 *   **Performance Visualization:** Visual execution plan to identify performance bottlenecks.
@@ -198,7 +199,7 @@ Two components are described below and a claim true of one can be false of the o
 *   **CSV Delimiters:** Choose comma (default), semicolon or tab in the import preview or result export menu. Changing the import delimiter reparses the preview and retains the header setting and column mappings. Export quoting, formula neutralization and UTF-8 encoding apply to every separator.
 *   **Import into a new table:** the table name and every column name are quoted in the connection's own style in both the `CREATE TABLE` and the `INSERT`, so a header that is a reserved word (`when`, `order`, `user`), has mixed case or holds a space creates that column as written. A name typed with a dot (`sales.imported`) is a table in that schema.
     In the standalone app, an import the database refuses keeps the dialog open on the review step with the database's message, and the file, target and column mapping stay as they were; the dialog closes once the import ran, or when the confirmation dialog takes it over. The embedded workspace of the npm package still closes the dialog whatever the outcome, because its query adapter reports none.
-*   **Masked Results:** While data masking applies to a result, every export and copy writes the masked text, so the export menu names the masked columns and says so. SQL `INSERT` is not offered in that state, because it would store the mask as the column's value; CSV, JSON and DDL stay. When the result carries no declared column types, the DDL export infers a column's type from the masked text, so a masked column can come out as a text type.
+*   **Masked Results:** While data masking applies to a result, every export and copy writes the masked text, so the export menu names the masked columns and says so. The grid's column filter and sort read the masked text too. SQL `INSERT` is not offered in that state, because it would store the mask as the column's value; CSV, JSON and DDL stay. When the result carries no declared column types, the DDL export infers a column's type from the masked text, so a masked column can come out as a text type.
 *   **Developer-Ready:** Clean data output optimized for external analysis, reporting, or database migrations.
 *   **Binary Values:** A `bytea`, `BLOB`, `RAW` or `varbinary` value is written as the `\x` hex the grid shows (`\xdeadbeef00ff`) in the CSV and the JSON export and by Copy Row as JSON, and as the dialect's own binary literal in a SQL `INSERT`.
 *   **Replayable SQL:** The SQL `INSERT` form reads each column's declared type and writes arrays, maps, structs, tuples, intervals, wide integers and typed scalars in the literal the connected engine reads back (`src/lib/export/typed-literals.ts`). A row holding a value the engine has no literal for is replaced by a `-- Row N skipped: column "c" ...` comment instead of a statement that would stop the whole file. Masking turns a value into text, so with masking on a masked array, map, row or tuple cell is skipped this way on Trino and Cassandra, and on the other engines is written as the masked text, which the engine refuses on replay. The statement targets the one table the producing `SELECT` read, when it read exactly one, and otherwise the tab's title.

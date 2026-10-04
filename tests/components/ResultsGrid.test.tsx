@@ -2184,6 +2184,127 @@ describe("ResultsGrid", () => {
         expect(countText(container)).toContain("1 filtered");
       });
     });
+
+    /**
+     * Sorting reads what the grid shows too (#1491). It ordered a masked column by the clear
+     * value under each cell, so a user who may not lift masking could read the rank of the
+     * hidden values off the row order: whose email sorts first, which salary is the highest.
+     */
+    describe("sorting a masked column (#1491)", () => {
+      /** The first name in each rendered desktop row, in the order the table iterates them. */
+      const nameOrder = (container: HTMLElement) =>
+        Array.from(container.querySelectorAll("[data-index]:not([data-testid]):not(button)")).map(
+          (row) => /Alice|Bob|Charlie/.exec(row.textContent ?? "")?.[0],
+        );
+      const sortBy = (utils: ReturnType<typeof render>, name: string) =>
+        fireEvent.click(utils.getAllByRole("button", { name })[0]);
+      /** A mask whose order is not the clear order: clear alice < bob < charlie, masked b < c < a. */
+      const scrambledMask = (value: unknown) =>
+        ({ "alice@example.com": "c***", "bob@example.com": "a***", "charlie@example.com": "b***" })[String(value)] ??
+        "***";
+
+      test("orders the rows by the masked text the grid displays, not by the clear value", () => {
+        setupMasking();
+        mockMaskValueByPattern.mockImplementation(scrambledMask);
+        const utils = render(React.createElement(ResultsGrid, maskingProps));
+        fireEvent.click(utils.getByTestId("view-table"));
+
+        sortBy(utils, "email");
+        expect(nameOrder(utils.container)).toEqual(["Bob", "Charlie", "Alice"]);
+        sortBy(utils, "email, sorted ascending");
+        expect(nameOrder(utils.container)).toEqual(["Alice", "Charlie", "Bob"]);
+        expect(utils.container.textContent).not.toContain("alice@example.com");
+      });
+
+      test("identical masks keep the source order both ways, so the rank of the hidden values stays hidden", () => {
+        setupMasking();
+        const utils = render(React.createElement(ResultsGrid, maskingProps));
+        fireEvent.click(utils.getByTestId("view-table"));
+
+        sortBy(utils, "email");
+        sortBy(utils, "email, sorted ascending");
+        expect(nameOrder(utils.container)).toEqual(["Alice", "Bob", "Charlie"]);
+      });
+
+      test("a masked numeric column does not sort by the numbers under the mask", () => {
+        setupMasking();
+        mockDetectSensitiveColumnsFromConfig.mockReturnValue(
+          new Map([["id", { name: "id", maskType: "full" as const, columnPatterns: ["id"], enabled: true, id: "n1" }]]),
+        );
+        const result: QueryResult = { ...mockResult, columnTypes: { id: "bigint" } };
+        const utils = render(React.createElement(ResultsGrid, { ...maskingProps, result }));
+        fireEvent.click(utils.getByTestId("view-table"));
+
+        sortBy(utils, "id, bigint");
+        sortBy(utils, "id, bigint, sorted ascending");
+        expect(nameOrder(utils.container)).toEqual(["Alice", "Bob", "Charlie"]);
+      });
+
+      test("a per-cell reveal does not bring the clear value back into the sort", () => {
+        setupMasking();
+        mockMaskValueByPattern.mockImplementation(scrambledMask);
+        const utils = render(React.createElement(ResultsGrid, maskingProps));
+        fireEvent.click(utils.getByTestId("view-table"));
+
+        fireEvent.click(utils.container.querySelectorAll('button[title="Reveal value (10s)"]')[0]);
+        expect(utils.container.textContent).toContain("alice@example.com");
+
+        sortBy(utils, "email");
+        expect(nameOrder(utils.container)).toEqual(["Bob", "Charlie", "Alice"]);
+      });
+
+      test("turning masking on or off under an active sort re-sorts the rows", () => {
+        // The table caches its sorted rows on the sorting state and the rows it is given, so a
+        // new comparator alone left the clear-value order on screen after masking came on.
+        setupMasking();
+        mockMaskValueByPattern.mockImplementation(scrambledMask);
+        const utils = render(React.createElement(ResultsGrid, { ...maskingProps, maskingEnabled: false }));
+        fireEvent.click(utils.getByTestId("view-table"));
+
+        sortBy(utils, "email");
+        expect(nameOrder(utils.container)).toEqual(["Alice", "Bob", "Charlie"]);
+
+        utils.rerender(React.createElement(ResultsGrid, maskingProps));
+        expect(nameOrder(utils.container)).toEqual(["Bob", "Charlie", "Alice"]);
+
+        utils.rerender(React.createElement(ResultsGrid, { ...maskingProps, maskingEnabled: false }));
+        expect(nameOrder(utils.container)).toEqual(["Alice", "Bob", "Charlie"]);
+      });
+
+      test("with masking off the column sorts by the clear value", () => {
+        setupMasking();
+        mockShouldMask.mockReturnValue(false);
+        mockMaskValueByPattern.mockImplementation(scrambledMask);
+        const utils = render(React.createElement(ResultsGrid, { ...maskingProps, maskingEnabled: false }));
+        fireEvent.click(utils.getByTestId("view-table"));
+
+        sortBy(utils, "email");
+        sortBy(utils, "email, sorted ascending");
+        expect(nameOrder(utils.container)).toEqual(["Charlie", "Bob", "Alice"]);
+      });
+
+      test("with masking off a numeric column still sorts as numbers", () => {
+        setupMasking();
+        mockShouldMask.mockReturnValue(false);
+        mockDetectSensitiveColumnsFromConfig.mockReturnValue(
+          new Map([["id", { name: "id", maskType: "full" as const, columnPatterns: ["id"], enabled: true, id: "n1" }]]),
+        );
+        const result: QueryResult = {
+          ...mockResult,
+          rows: [
+            { id: "10", name: "Alice", email: "alice@example.com" },
+            { id: "9", name: "Bob", email: "bob@example.com" },
+            { id: "100", name: "Charlie", email: "charlie@example.com" },
+          ],
+          columnTypes: { id: "bigint" },
+        };
+        const utils = render(React.createElement(ResultsGrid, { ...maskingProps, maskingEnabled: false, result }));
+        fireEvent.click(utils.getByTestId("view-table"));
+
+        sortBy(utils, "id, bigint");
+        expect(nameOrder(utils.container)).toEqual(["Bob", "Alice", "Charlie"]);
+      });
+    });
   });
 
   // ── Declared column types (#273) ──────────────────────────────────────────
