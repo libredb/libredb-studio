@@ -31,7 +31,15 @@ function hostDeclaring(dialect: string): ProviderCapabilities {
 
 describe("QUERY_DIALECTS", () => {
   test("holds one record per member of the queryDialect union, and nothing else", () => {
-    expect(Object.keys(QUERY_DIALECTS).sort()).toEqual(["etcd", "kafka", "libredb", "milvus", "qdrant", "redis"]);
+    expect(Object.keys(QUERY_DIALECTS).sort()).toEqual([
+      "etcd",
+      "kafka",
+      "libredb",
+      "milvus",
+      "oxia",
+      "qdrant",
+      "redis",
+    ]);
   });
 
   test("each record holds the answers the per-dialect arms gave before the registry", () => {
@@ -60,6 +68,14 @@ describe("QUERY_DIALECTS", () => {
         offersCountQuery: false,
         offersSqlExport: false,
       },
+      // Oxia (SB2-4.4): records of a fixed shape, no profile, model or count statement, and no SQL export.
+      oxia: {
+        tabType: "oxia",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+        offersSqlExport: false,
+      },
     });
   });
 
@@ -73,7 +89,7 @@ describe("QUERY_DIALECTS", () => {
     }
   });
 
-  test("a record may decline the SQL export formats, and only milvus's and qdrant's do, so every other shipped engine keeps both", () => {
+  test("a record may decline the SQL export formats, and only milvus's, qdrant's and oxia's do, so every other shipped engine keeps both", () => {
     // `bun run typecheck` is the assertion for the field: this literal compiles only while `DialectSpec` declares
     // `offersSqlExport`, and bun strips types, so no runtime expect on it could fail. What a declining record does
     // to the menus is pinned by the export gate's own tests.
@@ -86,17 +102,18 @@ describe("QUERY_DIALECTS", () => {
     };
     void declining;
     for (const [dialect, spec] of Object.entries(QUERY_DIALECTS)) {
-      if (dialect === "milvus" || dialect === "qdrant") continue;
+      if (dialect === "milvus" || dialect === "qdrant" || dialect === "oxia") continue;
       expect(Object.hasOwn(spec, "offersSqlExport"), `the ${dialect} record declares offersSqlExport`).toBe(false);
     }
     expect(QUERY_DIALECTS.milvus.offersSqlExport).toBe(false);
     expect(QUERY_DIALECTS.qdrant.offersSqlExport).toBe(false);
+    expect(QUERY_DIALECTS.oxia.offersSqlExport).toBe(false);
   });
 });
 
 describe("registeredDialect, dialectSpec and declaresDialect", () => {
   test("a declared, registered dialect is found, with its record", () => {
-    for (const dialect of ["libredb", "redis", "kafka", "etcd", "milvus", "qdrant"] as const) {
+    for (const dialect of ["libredb", "redis", "kafka", "etcd", "milvus", "qdrant", "oxia"] as const) {
       const caps = makeCaps({ queryDialect: dialect });
       expect(registeredDialect(caps)).toBe(dialect);
       expect(dialectSpec(caps)).toBe(QUERY_DIALECTS[dialect]);

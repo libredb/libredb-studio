@@ -107,7 +107,7 @@ export function resolveTarget(config: Db2Connection): Db2Target {
   const ssl = config.ssl;
   if (ssl?.clientCert || ssl?.clientKey) {
     throw new DatabaseConfigError(
-      "db2-node 1.0.24 has no client-certificate authentication; remove the client certificate and key from this " +
+      "db2-node 1.0.25 has no client-certificate authentication; remove the client certificate and key from this " +
         "Db2 connection.",
       "db2",
     );
@@ -165,7 +165,7 @@ const CHECKS_HOST_NAME = new Set<SSLMode>(["verify-system", "verify-full"]);
  *
  * No TLS without the explicit opt-in. A tunnel the factory did not open is refused rather
  * than dialled around. And through a tunnel, a mode that checks the server's NAME is refused:
- * db2-node 1.0.24 has no option for the name to check, so it checks the certificate against the
+ * db2-node 1.0.25 has no option for the name to check, so it checks the certificate against the
  * address it dials, which is the tunnel's local end and not the server's own name.
  */
 export function assertTransport(config: Db2Connection, target: Db2Target): void {
@@ -187,7 +187,7 @@ export function assertTransport(config: Db2Connection, target: Db2Target): void 
   }
   if (farEnd !== undefined && target.tls !== undefined && CHECKS_HOST_NAME.has(target.tls)) {
     throw new DatabaseConfigError(
-      `TLS mode "${target.tls}" checks the server's name, and through an SSH tunnel db2-node 1.0.24 can only check ` +
+      `TLS mode "${target.tls}" checks the server's name, and through an SSH tunnel db2-node 1.0.25 can only check ` +
         `the tunnel's local address rather than ${farEnd.host}. Use verify-ca with the server's CA certificate ` +
         "through a tunnel.",
       "db2",
@@ -196,40 +196,10 @@ export function assertTransport(config: Db2Connection, target: Db2Target): void 
 }
 
 /**
- * The five characters db2-node 1.0.24 cannot carry in a password (K23, gurungabit/db2-node#25).
- *
- * They are exactly the printable ASCII characters EBCDIC code page 037 places differently from
- * code page 500, so the server reads a different password from the one typed. Measured on Db2
- * 12.1.0.0 through 1.0.22 and again through 1.0.24: each of the five is rejected as "user id or
- * password invalid" over TLS and without it, under the default mechanism and under the
- * `userPassword` one the insecure opt-in names, `credentialEncoding: "utf8"` does not change that,
- * the IBM CLP signs in over TCP with the same password, and every other printable ASCII character
- * tried is accepted. The section 4 note in `docs/providers/db2.md` has the full matrix.
- */
-const UNSENDABLE_PASSWORD_CHARACTERS = new Set(["!", "[", "]", "^", "|"]);
-
-/**
- * Refuses a password the driver would send wrongly, before any socket opens.
- *
- * Without this the server's answer is "user id or password invalid", which sends a person to
- * check a password that is right. The refusal names the characters and never the password.
- */
-export function assertPasswordSendable(target: Db2Target): void {
-  const found = [...new Set([...target.password].filter((character) => UNSENDABLE_PASSWORD_CHARACTERS.has(character)))];
-  if (found.length === 0) return;
-  throw new DatabaseConfigError(
-    `This Db2 password contains ${found.join(" and ")}, which db2-node 1.0.24 does not send correctly: the server ` +
-      "would reject it as a wrong password even though it is right. Change the password of this Db2 user to one " +
-      "without ! [ ] ^ or |, and use the new password here.",
-    "db2",
-  );
-}
-
-/**
  * The driver options for one target, per the TLS table in `docs/providers/db2.md`. Neither
  * `queryTimeout` nor `currentSchema` is ever set (M6, M4). Without TLS, which `assertTransport`
  * lets through only behind the insecure opt-in, the plaintext mechanism is named, because
- * db2-node 1.0.24 refuses it otherwise; over TLS the driver's encrypted default is kept.
+ * db2-node 1.0.24 and later refuse it otherwise; over TLS the driver's encrypted default is kept.
  */
 export function clientOptions(target: Db2Target, caFile?: string): Db2ClientOptions {
   const base = {
@@ -303,7 +273,6 @@ export async function openClient(
 ): Promise<OpenedClient> {
   const target = resolveTarget(config);
   assertTransport(config, target);
-  assertPasswordSendable(target);
   const driver = await load();
   const ca = target.caPem === undefined ? undefined : await writeCaFile(target.caPem, fs);
   try {

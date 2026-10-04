@@ -66,6 +66,10 @@ describe("resolveTabType", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "json" }))).toBe("mongodb");
   });
 
+  test("Oxia gets an oxia tab, not the MongoDB one its queryLanguage json would give (SB2-4.4)", () => {
+    expect(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "oxia" }))).toBe("oxia");
+  });
+
   test("Neo4j (queryLanguage cypher, no dialect) gets a cypher tab, not the SQL fallback (Neo4j spec 6.5)", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "cypher" }))).toBe("cypher");
   });
@@ -118,6 +122,13 @@ describe("editorLanguageForTabType", () => {
     expect(editorLanguageForTabType("qdrant")).toBe("qdrant");
     expect(editorLanguageForTabType(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "qdrant" })))).toBe(
       "qdrant",
+    );
+  });
+
+  test("an oxia tab renders in the oxia language, restored with no capabilities (SB2-4.6)", () => {
+    expect(editorLanguageForTabType("oxia")).toBe("oxia");
+    expect(editorLanguageForTabType(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "oxia" })))).toBe(
+      "oxia",
     );
   });
 });

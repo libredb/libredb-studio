@@ -594,9 +594,10 @@ export interface KeyScanCapability {
   readonly pattern?: "glob" | "prefix";
   /**
    * What `KeyScanPage.total` counts. Absent reads `"database"`, the engine's own count of the database
-   * walked; `"walk"` is the exact count of the keys this walk covers at its pinned revision.
+   * walked; `"walk"` is the exact count of the keys this walk covers at its pinned revision. `"none"` is
+   * an engine that publishes no count and pins no revision: `total` is not read, and a provider answers 0.
    */
-  readonly totalScope?: "database" | "walk";
+  readonly totalScope?: "database" | "walk" | "none";
 }
 
 /**
@@ -610,7 +611,7 @@ export interface KeyScanShape {
   readonly separator: string;
   readonly cursor: "decimal" | "opaque";
   readonly pattern: "glob" | "prefix";
-  readonly totalScope: "database" | "walk";
+  readonly totalScope: "database" | "walk" | "none";
 }
 
 /**
@@ -684,6 +685,9 @@ export interface KeyScanPage {
    * pinned to: the pattern's prefix range, or the whole key space, and for a caller whose grants are
    * narrower, the keys of the ranges it may read (spec 4.7). Every page answers it, and a panel replaces
    * its total with each page's.
+   *
+   * UNDER `"none"` IT IS NOT READ. `"none"` is an engine that publishes no count and pins no revision:
+   * `total` is not read, and a provider answers 0.
    */
   readonly total: number;
   /**
@@ -761,12 +765,14 @@ export interface ProviderCapabilities {
    * line and one JSON body, the closed console the provider re-serialises from its own parse. It landed through
    * one record in each registry and no arm anywhere else.
    *
+   * `"oxia"` is the Oxia provider's: one `oxia client` read command per run (O10).
+   *
    * Those arms are now records: a member added here does not compile until it has one in each of
    * `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`)
    * and `DIALECT_GENERATORS` (`src/lib/query-generators.ts`), and every other reader of this field and of
    * `queryLanguage` is held to a closed list by `tests/unit/lib/dialect-reader-allowlist.test.ts`.
    */
-  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant";
+  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant" | "oxia";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).
@@ -791,6 +797,24 @@ export interface ProviderCapabilities {
    * permissive default.
    */
   supportsInlineRowEdit?: boolean;
+  /**
+   * The result columns the inline editor must not write, where the engine accepts the editor's
+   * `UPDATE` for other columns but not for these.
+   *
+   * `type` is a regular expression source matched against the type the result itself declares for
+   * the column (`QueryResult.columnTypes`), because that is the only per-column fact a grid holds;
+   * a column that declares no type is never matched. `reason` is shown on each such cell, which
+   * opens no editor. A string pattern rather than a `RegExp` because capabilities travel to the
+   * client as JSON.
+   *
+   * Db2 is the case: db2-node writes nothing, and reports no error, for a value bound to a CLOB,
+   * DBCLOB or BLOB column declared 32768 bytes or longer (K24 in `docs/providers/db2.md`), and a
+   * result declares those columns without their length.
+   *
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`; absent refuses no
+   * column.
+   */
+  inlineEditRefusedColumns?: { readonly type: string; readonly reason: string };
   /**
    * Whether this provider can be asked for the page AFTER the first one — whether
    * `prepareQuery(sql, { limit, offset })` with a positive `offset` really applies it.

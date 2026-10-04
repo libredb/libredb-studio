@@ -10,9 +10,9 @@ It is off by default.
   It speaks revision 2026-07-28 and, without sessions, the 2025 revisions 2025-11-25 and 2025-06-18 that most clients still use.
 - Three tools, each annotated read-only and closed-world:
   - `list_connections` lists the connections opted in for MCP that your token's role may use, without credentials.
-    It works for every engine but etcd, whose connections the seed file cannot opt in.
+    It works for every engine but etcd and Oxia, whose connections the seed file cannot opt in.
   - `inspect_schema` lists one connection's tables with their columns and, on request, their indexes.
-    It works on every engine but etcd: it lists every object kind the engine reads rows from, such as views beside tables, MongoDB collections, Redis keyspaces and search indexes, and `kind` names which one each entry is.
+    It works on every engine but etcd and Oxia: it lists every object kind the engine reads rows from, such as views beside tables, MongoDB collections, Redis keyspaces and search indexes, and `kind` names which one each entry is.
     A column an engine only inferred from sampled data, rather than read from a declaration, is never listed, so a table may hold fields the answer does not show; `columns_omitted` counts only the columns beyond the 50-column cap, and agent grounding and the AI panels never receive such a column either.
     On Milvus it lists the collection's declared fields, with the dynamic field as one `$meta` column and never a key inside it.
     On Qdrant it lists payload-index fields and vectors only, and says that other payload keys may exist: the keys Studio samples from points never reach an MCP client.

@@ -22,12 +22,12 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.17.0
-    createdAt: "2026-10-04T05:00:50Z"
-    description: Open-source web-based SQL IDE for twenty-five engines - PostgreSQL,
+    createdAt: "2026-10-04T08:28:20Z"
+    description: Open-source web-based SQL IDE for twenty-six engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
       ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra,
-      libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB and
-      InfluxDB 3 - with AI-powered query assistance.
+      libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB
+      3 and Oxia - with AI-powered query assistance.
     olm.skipRange: '>=0.0.0 <0.17.0'
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: helm.sdk.operatorframework.io/v1
@@ -53,7 +53,8 @@ spec:
     LibreDB Studio is an open-source, web-based SQL IDE. Query PostgreSQL,
     MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
     ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache
-    Cassandra, Prometheus, Apache Kafka, etcd and Neo4j from the browser,
+    Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB,
+    InfluxDB 3 and Oxia from the browser,
     with AI-powered query assistance (natural-language-to-SQL, explain, fix),
     an ERD viewer, schema diff and a data profiler. No desktop client required.
 
@@ -371,6 +372,7 @@ spec:
   - influxdb
   - influxql
   - influxdb3
+  - oxia
   links:
   - name: Website
     url: https://libredb.org

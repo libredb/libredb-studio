@@ -1,0 +1,14 @@
+version: "1"
+
+# The read-only seed of docs/providers/oxia.md (SB3-5.6): one oxia standalone server on this machine, read-only and
+# managed, with no token and no data-server list. Oxia's connections are read-only whatever readOnly says, and
+# managed: true is written out because the load refuses readOnly: true on a connection that is not managed.
+connections:
+  - id: "oxia-read-only"
+    name: "Oxia (read-only)"
+    type: oxia
+    host: localhost
+    port: 6648
+    roles: ["user"]
+    managed: true
+    readOnly: true

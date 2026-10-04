@@ -91,6 +91,7 @@ const NUMERAL_WORDS: Record<string, number> = {
   "twenty-four": 24,
   "twenty-five": 25,
   "twenty-six": 26,
+  "twenty-seven": 27,
 };
 
 /**

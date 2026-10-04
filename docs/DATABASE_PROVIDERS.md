@@ -85,7 +85,8 @@ src/lib/db/
 │   │       └── introspect.ts   #   system:* catalogs + INFER
 │   ├── keyvalue/               # Key-Value Providers
 │   │   ├── redis.ts            # Redis Strategy
-│   │   └── etcd/               # etcd Strategy (client.ts, grpc-client.ts, lexer.ts, commands.ts, objects.ts, ... index.ts)
+│   │   ├── etcd/               # etcd Strategy (client.ts, grpc-client.ts, lexer.ts, commands.ts, objects.ts, ... index.ts)
+│   │   └── oxia/               # Oxia Strategy (client.ts, grpc-client.ts, routing.ts, walks.ts, commands.ts, ... index.ts)
 │   ├── timeseries/             # Time-Series Providers
 │   │   ├── prometheus/         # Prometheus Strategy (PromQL over the Prometheus HTTP API, no driver)
 │   │       ├── index.ts        #   PrometheusProvider: lifecycle and composition only
@@ -174,6 +175,7 @@ BaseDatabaseProvider (abstract)
 ├── InfluxDBProvider ───────────────────────┤ Time series (InfluxQL over HTTP, read-only)
 ├── KafkaProvider ──────────────────────────┤ Stream (JSON read requests over the Kafka protocol)
 ├── EtcdProvider ───────────────────────────┤ Key-Value Store (etcdctl commands over gRPC)
+├── OxiaProvider ───────────────────────────┤ Key-Value Store (oxia client read commands over gRPC)
 ├── GraphBaseProvider (abstract)
 │   └── Neo4jProvider ──────────────────────┤ Graph (read-only Cypher over Bolt)
 ├── MilvusProvider ─────────────────────────┤ Vector (Milvus REST v2 requests over gRPC)
@@ -237,7 +239,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Twenty-six type-ids are supported by twenty-four provider modules: two pairs share one, `elasticsearch` and `opensearch` in `providers/sql/search/`, and `influxdb` and `influxdb3` in `providers/timeseries/influxdb/`.
+Twenty-seven type-ids are supported by twenty-five provider modules: two pairs share one, `elasticsearch` and `opensearch` in `providers/sql/search/`, and `influxdb` and `influxdb3` in `providers/timeseries/influxdb/`.
 The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice. For
 the per-provider reference (driver, pooling, query format,
@@ -270,6 +272,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | Neo4j | `neo4j` | Graph (Cypher over Bolt, read-only) | [providers/neo4j.md](./providers/neo4j.md) |
 | Milvus | `milvus` | Vector (Milvus REST v2 requests over gRPC) | [providers/milvus.md](./providers/milvus.md) |
 | Qdrant | `qdrant` | Vector (Qdrant REST requests, read-only) | [providers/qdrant.md](./providers/qdrant.md) |
+| Oxia | `oxia` | Key-Value (oxia client read commands over gRPC, read-only) | [providers/oxia.md](./providers/oxia.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface
@@ -380,6 +383,7 @@ examples live in their prime docs:
 - **Neo4j** (one read-only Cypher statement): [providers/neo4j.md](./providers/neo4j.md).
 - **Milvus** (one Milvus REST v2 request): [providers/milvus.md](./providers/milvus.md).
 - **Qdrant** (one Qdrant REST request): [providers/qdrant.md](./providers/qdrant.md).
+- **Oxia** (one oxia client read command): [providers/oxia.md](./providers/oxia.md).
 
 Couchbase is deliberately **not** in that list: SQL++ is a SQL dialect, so a Couchbase connection
 takes ordinary SQL in the `sql` field and inherits the SQL editor and the shared limiter.
@@ -458,7 +462,7 @@ maintenance operations, and known limitations — is documented per provider und
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
 Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid,
 Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL),
-Apache Kafka, etcd, Neo4j, Milvus, Qdrant, or LibreDB.
+Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, or LibreDB.
 
 Not every provider has every feature, and the docs record the absences rather than glossing over
 them. Druid is the sharpest case: its SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, no

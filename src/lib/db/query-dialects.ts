@@ -4,7 +4,7 @@ import type { QueryTab } from "@/lib/types";
 /**
  * The dialect registry: what each query dialect a provider may declare means for the editor's readers.
  *
- * A dialect is JSON or a command line that is not MongoDB's JSON (Redis, LibreDB, Kafka, etcd, Milvus, Qdrant), so every reader
+ * A dialect is JSON or a command line that is not MongoDB's JSON (Redis, LibreDB, Kafka, etcd, Milvus, Qdrant, Oxia), so every reader
  * keyed on the language alone would treat its text as a MongoDB document, which is the #427 class. Before this
  * module each reader carried an arm per dialect, about twenty of them, and a missed arm made a tree click
  * auto-run a MongoDB `find`. Each dialect is now one record here, one in `DIALECT_EDITORS`
@@ -82,6 +82,15 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
   // neither SQL export format applies to its rows (`offersSqlExport`, vector-family spec 3.10).
   qdrant: Object.freeze({
     tabType: "qdrant",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+    offersSqlExport: false,
+  }),
+  // Oxia (O10): a command line of the oxia client read verbs. Its rows are records of a fixed shape, so no
+  // profile, model or count statement of its grammar applies, and neither SQL export format applies.
+  oxia: Object.freeze({
+    tabType: "oxia",
     offersColumnProfiling: false,
     offersCodeGeneration: false,
     offersCountQuery: false,

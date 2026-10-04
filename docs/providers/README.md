@@ -26,6 +26,7 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Prometheus | `prometheus` | Time series | none (HTTP: the Prometheus HTTP API, `/api/v1/*`) | PromQL | [prometheus.md](./prometheus.md) |
 | Apache Kafka | `kafka` | Stream | `@platformatic/kafka` (pure TypeScript) | JSON (a read request) | [kafka.md](./kafka.md) |
 | etcd | `etcd` | Key-Value | `@grpc/grpc-js` (pure JavaScript, gRPC) | etcdctl commands (a subset) | [etcd.md](./etcd.md) |
+| Oxia | `oxia` | Key-Value | `@grpc/grpc-js` (pure JavaScript, gRPC, the shared gRPC transport) | `oxia client` read commands (read-only) | [oxia.md](./oxia.md) |
 | Neo4j | `neo4j` | Graph | `neo4j-driver-lite` (pure JavaScript, Bolt) | Cypher (read-only) | [neo4j.md](./neo4j.md) |
 | Milvus | `milvus` | Vector | `@grpc/grpc-js` (pure JavaScript, gRPC) | Milvus REST v2 requests (read routes) | [milvus.md](./milvus.md) |
 | Qdrant | `qdrant` | Vector | none, REST over the shared `node:http(s)` transport | Qdrant REST requests (read routes) | [qdrant.md](./qdrant.md) |
@@ -37,7 +38,7 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
-  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd, Neo4j, Milvus, Qdrant and InfluxDB are). The official product name (e.g.
+  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB and Oxia are). The official product name (e.g.
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch`, and `providers/timeseries/influxdb/` is
   `influxdb` and `influxdb3`, two classes on two base classes sharing one connection layer — and each type-id still gets its own
@@ -147,7 +148,7 @@ tier and no version column for it - the number is the finding:
   `pg_statio_user_tables`, `pg_stat_user_tables` or `pg_tablespace`, so health, performance
   metrics, table statistics and storage cannot run; the slow-query and session reads fail earlier
   still, on `NULLS LAST`. A plain `EXPLAIN` works through the provider and shows QuestDB's own plan
-  (`PageFrame`, `Row forward scan`) while the editor's background `EXPLAIN (ANALYZE, BUFFERS,
+  (`PageFrame`, `Row forward scan`) while PostgreSQL's `EXPLAIN (ANALYZE, BUFFERS,
   FORMAT JSON)` is rejected outright. Neither `ANALYZE` nor `VACUUM` is a QuestDB statement. Errors
   are classified correctly with QuestDB's own text. The version panel would read PostgreSQL 12.3 -
   `version()` names QuestDB only at the end of its string, and the real build is in `build()`,
@@ -265,9 +266,10 @@ The Db2 LUW row is read off `database-compose.yml`: its image, capabilities and 
 The Neo4j row was verified against the running container on 2026-10-03, by the capture `tests/fixtures/neo4j/5.26.31/README.md` records.
 The InfluxDB rows were verified against the running containers on 2026-10-04, by the capture `tests/fixtures/influxdb/README.md` records.
 InfluxDB (InfluxQL) has a row per server line it reads, because each line is a service of its own with its own principal.
+The Oxia row was verified against the running container on 2026-10-04, by the capture `tests/fixtures/oxia/README.md` records.
 
-Start the thirty always-on services with a plain `docker compose -f database-compose.yml up -d`:
-twenty-three engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `etcd-seed`, `milvus-seed`, `qdrant-seed` and `influxdb-seed` seed sidecars; the `Profile` column names
+Start the thirty-two always-on services with a plain `docker compose -f database-compose.yml up -d`:
+twenty-four engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `etcd-seed`, `oxia-seed`, `milvus-seed`, `qdrant-seed` and `influxdb-seed` seed sidecars; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider, so a plain `up -d` can reproduce that
 provider's integration pass.
@@ -295,6 +297,7 @@ provider's integration pass.
 | InfluxDB 3 (SQL), file-limit fixture | `influxdb3-filelimit` | localhost | 8182 | *none* | `apiv3_libredb-influxdb3-admin-token` | `home` | `influxdb-filelimit` |
 | Apache Kafka | `kafka` | localhost | 9092 | *none* | *none* | *none* | *none* |
 | etcd | `etcd` | localhost | 2379 | *none* | *none* | *none* (one connection is one cluster) | *none* |
+| Oxia | `oxia` | localhost | 6648 | *none* | *none* | `default` (namespace) | *none* |
 | Neo4j | `neo4j` | localhost | 7687 | `neo4j` | `password123` | `neo4j`, or empty for the home database | *none* |
 | Milvus | `milvus` | localhost | 19530 | `root` | the documented default ([milvus.md, section 4.2](./milvus.md#42-authentication)) | `default` | *none* |
 | Qdrant | `qdrant` | localhost | 6333 | *none* | *none* | *none* | *none* |
@@ -304,7 +307,7 @@ provider's integration pass.
 *none* means leave the field empty. It is never a default that happens to be blank: Druid loads no
 security extension in a default install, both search services run with their security plugin off, the
 `trino` service runs with authentication disabled, and the `redis` service sets no `requirepass`
-(verified: `CONFIG GET requirepass` answers empty), and the `etcd` service runs with RBAC off. **Never put a password on a plain-HTTP Trino
+(verified: `CONFIG GET requirepass` answers empty), and the `etcd` service runs with RBAC off, and the `oxia` service runs with no authentication. **Never put a password on a plain-HTTP Trino
 connection**: the coordinator answers `401 Password not allowed for insecure authentication` even
 with authentication off, so a password breaks a connection that works without one
 ([trino.md §4.3](./trino.md#43-tls-and-the-password-rule)).
@@ -323,6 +326,10 @@ The plain `prometheus` service on 9090 takes no credential at all ([prometheus.m
 `etcd` is seeded by its `etcd-seed` one-shot; `etcd-cluster` is three members on `127.0.0.2`, `127.0.0.3` and `127.0.0.4`, port 2379 (profile `etcd-cluster`), and `etcd-auth` (port 12379, TLS with client certificates) and `etcd-auth-password` (port 12479, TLS with a password) run with RBAC on (profile `etcd-auth`).
 Their certificates and passwords are generated into a volume at first start and never committed; [`docker/etcd/README.md`](../../docker/etcd/README.md) says how to start and seed each, how to copy the certificates out, and what every seeded key is for.
 The user `reader` may read the prefix `/app/` and the key `/config/a` only, which is what the auth fixtures are for ([etcd.md, section 4.7](./etcd.md#47-a-user-who-is-not-root)).
+
+**Oxia has four more fixtures behind profiles of their own, and the plain `oxia` service takes no token and no TLS.**
+`oxia` is seeded by its `oxia-seed` one-shot; `oxia-natural` (ports 6658 and 6659), `oxia-017` (port 6668, Oxia 0.17.1), `oxia-auth` (port 6678, TLS and an OIDC token) and `oxia-cluster` (three data servers on ports 6671 to 6673) each sit behind the profile of the same name.
+The auth fixture's certificates and tokens are generated into a volume at first start and never committed; [`docker/oxia/README.md`](../../docker/oxia/README.md) says how to start and seed each and what every seeded key is for.
 
 **The `neo4j` service starts empty, and its graph is loaded by hand.**
 Once it is healthy, load the seed with `docker exec -i libredb-neo4j cypher-shell -u neo4j -p password123 < docker/neo4j/seed.cypher`; [`docker/neo4j/README.md`](../../docker/neo4j/README.md) says what the graph holds and why.

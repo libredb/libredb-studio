@@ -694,6 +694,8 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * escape with a backslash, `/.../` is a regex where the parser asks for one, and a `--` comment ends at a lone
  * `\r`, so a SQL span reader misreads where a literal ends. The provider reads the text with its own lexer
  * (`src/lib/db/providers/timeseries/influxdb/influxql-lexer.ts`) and refuses every write before sending it.
+ * `oxia` takes one `oxia client` read command, words split by POSIX shell rules, which is not SQL text: a SQL span
+ * reader would report its quoting as unreadable and prompt on every run.
  *
  * `trino` is deliberately absent for the same reason as the two search ids: the editor
  * text is the exact bytes `POST /v1/statement` receives, and the provider extends
@@ -732,6 +734,7 @@ const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "milvus",
   "qdrant",
   "influxdb",
+  "oxia",
 ]);
 
 /**

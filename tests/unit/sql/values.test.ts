@@ -100,6 +100,8 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("a\\b", "milvus")).toBe("'a\\b'");
     // Nor for a Qdrant request (vector-family spec 6.4): its body is JSON, and no SQL statement is built for it.
     expect(quoteLiteral("a\\b", "qdrant")).toBe("'a\\b'");
+    // Nor for an `oxia client` command (SB2-4.3): the command table's own quoting writes every word.
+    expect(quoteLiteral("a\\b", "oxia")).toBe("'a\\b'");
     expect(quoteLiteral("O'Brien", "kafka")).toBe("'O''Brien'");
   });
 

@@ -55,6 +55,8 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   readOnly: "public",
   // Db2's acceptance of a cleartext password (#786). A choice about the transport, not a credential.
   allowInsecureAuth: "public",
+  // Addresses, as `host` is. The token they receive is the secret, classified above.
+  dataServers: "public",
   managed: "public",
   seedId: "public",
   agentUser: "public",

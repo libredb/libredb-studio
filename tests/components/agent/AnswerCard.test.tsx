@@ -85,7 +85,7 @@ const STATEMENT = "SELECT count(*) FROM orders";
 
 const capabilitiesFor = (
   queryLanguage: ProviderCapabilities["queryLanguage"],
-  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant",
+  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant" | "oxia",
 ): ProviderCapabilities => ({
   queryLanguage,
   supportsExplain: false,
@@ -141,7 +141,8 @@ function draftEvent(options: {
     | "graph-cypher"
     | "milvus"
     | "qdrant"
-    | "influxql";
+    | "influxql"
+    | "oxia";
 }): AgentLedgerEntry {
   return event({
     kind: "plan-statement-drafted",
@@ -429,7 +430,9 @@ describe("AnswerCard — a plan run's statement", () => {
     // No guard here reads InfluxQL (`validatePlanStatement` declines it), so the draft always stands beside the amber
     // "not checked" chip and never beside emerald's `checked` one, which is why green, emerald's neighbour, is safe.
     // Read from the language the server recorded, as the rail renders the card with no capabilities.
-    const influxqlDraft = (language: "influxql" | "sql" | "promql" | "graph-cypher" | "etcd" | "milvus" | "qdrant") =>
+    const influxqlDraft = (
+      language: "influxql" | "sql" | "promql" | "graph-cypher" | "etcd" | "milvus" | "qdrant" | "oxia",
+    ) =>
       planTimeline({
         sql: 'SELECT "temp" FROM "home" WHERE time > now() - 1h ORDER BY time DESC',
         readOnly: false,
@@ -444,9 +447,57 @@ describe("AnswerCard — a plan run's statement", () => {
     cleanup();
 
     // The controls: every other recorded language's accent is not it, so the class above is InfluxQL's own.
-    for (const language of ["sql", "promql", "graph-cypher", "etcd", "milvus", "qdrant"] as const) {
+    for (const language of ["sql", "promql", "graph-cypher", "etcd", "milvus", "qdrant", "oxia"] as const) {
       const other = render(<AnswerCard timeline={influxqlDraft(language)} />);
       expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-green/40");
+      cleanup();
+    }
+  });
+
+  test("tints an Oxia command in the oxia language its tab renders in, in purple's -alt step (SB3-3.3)", () => {
+    // No guard here reads an Oxia command, so the draft is shown beside the "not checked" chip, as a Qdrant one is.
+    const oxiaDraft = planTimeline({
+      sql: "list --prefix /admin/policies/ --limit 50",
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const oxia = render(<AnswerCard timeline={oxiaDraft} capabilities={capabilitiesFor("json", "oxia")} />);
+    const block = oxia.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("oxia");
+    expect(block.className).toContain("border-hue-purple-alt/40");
+    cleanup();
+
+    // The ledger's own record of the language tints it the same way when no capabilities are at hand.
+    const recorded = render(
+      <AnswerCard
+        timeline={planTimeline({
+          sql: "get /admin/policies/public",
+          readOnly: false,
+          guardApplicable: false,
+          identifiers: { kind: "not-applicable" },
+          language: "oxia",
+        })}
+      />,
+    );
+    expect(recorded.getByTestId("agent-answer-statement").className).toContain("border-hue-purple-alt/40");
+    cleanup();
+
+    // The controls: no other language's block carries it, Cypher's purple base and InfluxQL's green included.
+    for (const [language, dialect] of [
+      ["sql", undefined],
+      ["json", undefined],
+      ["promql", undefined],
+      ["cypher", undefined],
+      ["json", "redis"],
+      ["json", "libredb"],
+      ["json", "etcd"],
+      ["json", "milvus"],
+      ["json", "qdrant"],
+      ["influxql", undefined],
+    ] as const) {
+      const other = render(<AnswerCard timeline={oxiaDraft} capabilities={capabilitiesFor(language, dialect)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-purple-alt/40");
       cleanup();
     }
   });

@@ -10,8 +10,9 @@ import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { consoleTextByteLimit, statementRefusal } from "@/lib/db/destructive-commands";
-import { isMultiStatement } from "@/lib/sql/statement-splitter";
+import { countCodeStatements, isMultiStatement } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { hasUnterminatedSpan } from "@/lib/sql/spans";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -87,11 +88,12 @@ const SANDBOX_NOT_ROLLED_BACK = {
  * "not loaded yet", not "unsupported" — blaming the database type there would be
  * misleading.
  */
-function explainRefusal(metadata: ProviderMetadata | null, hasStrategy: boolean) {
+function explainRefusal(metadata: ProviderMetadata | null, hasStrategy: boolean, oneStatement: boolean) {
   if (!metadata) {
     return { title: "Not Ready", description: "Connection metadata is still loading. Try again in a moment." };
   }
   if (hasStrategy && metadata.capabilities.supportsExplain) {
+    if (!oneStatement) return { title: "Not Supported", description: "Only a single statement can be explained." };
     return { title: "Not Supported", description: "Only SELECT statements can be explained." };
   }
   return { title: "Not Supported", description: "EXPLAIN is not available for this database type." };
@@ -182,7 +184,9 @@ export function useQueryExecution({
    * and raised no toast: tab A sat on "Executing…" forever, with no result and
    * no error. Keying the map by tab is what keeps one tab's Run out of another's.
    */
-  const runsRef = useRef(new Map<string, { controller: AbortController; queryId: string }>());
+  const runsRef = useRef(
+    new Map<string, { controller: AbortController; queryId: string; planQueryId: string | undefined }>(),
+  );
 
   /**
    * The id of the LAST run started on each tab — which run owns the tab's results.
@@ -392,11 +396,28 @@ export function useQueryExecution({
       // The refusal stays here even though the statement itself is now built on the
       // server (#574): a statement nothing can explain must not become a request at
       // all, so the user gets this toast rather than a 400.
+      //
+      // And only of ONE statement. An EXPLAIN prefixes one, so `EXPLAIN SELECT 1; INSERT
+      // ...` explains the SELECT and then RUNS the INSERT: measured on Materialize 26.44.1,
+      // AlloyDB Omni 17.9 and Cloudberry 2.1.0, a RUN of that text applied the INSERT twice
+      // through its background plan request (#1311). Read under the connection's own
+      // dialect, the same reading that sends a run to `/api/db/multi-query` below, and the
+      // same count `POST /api/db/query` refuses an explain by. A fragment of comments only
+      // is not counted: `SELECT 1; -- note` is one statement to explain, though the run
+      // route below still splits it in two. A text with a run the grammar cannot close
+      // is not one statement either: the splitter finds no boundary in it, yet
+      // `SELECT E'\''; INSERT ...` is two statements to PostgreSQL.
+      const grammar = resolveSqlGrammar(activeConnection.type);
+      const oneStatement =
+        countCodeStatements(queryToExecute, grammar) <= 1 && !hasUnterminatedSpan(queryToExecute, grammar);
       const explainSupported = !metadata || metadata.capabilities.supportsExplain;
       const explainAccepted =
-        isExplain && explainSupported && (explainStrategy?.buildSql(queryToExecute, "analyze") ?? null) !== null;
+        isExplain &&
+        explainSupported &&
+        oneStatement &&
+        (explainStrategy?.buildSql(queryToExecute, "analyze") ?? null) !== null;
       if (isExplain && !explainAccepted) {
-        toast({ ...explainRefusal(metadata, Boolean(explainStrategy)), variant: "destructive" });
+        toast({ ...explainRefusal(metadata, Boolean(explainStrategy), oneStatement), variant: "destructive" });
         setTabs((prev) =>
           prev.map((t) => (t.id === targetTabId ? { ...t, isExecuting: false, isLoadingMore: false } : t)),
         );
@@ -413,7 +434,25 @@ export function useQueryExecution({
       runsRef.current.get(targetTabId)?.controller.abort();
       const abortController = new AbortController();
       const queryId = `q-${Date.now()}-${newLocalId()}`;
-      runsRef.current.set(targetTabId, { controller: abortController, queryId });
+
+      // Whether this run also asks for a plan in the background (SELECT only, one
+      // statement only). Asked of the STATIC strategy, which is all this side has before
+      // a response: whether a statement is explainable at all is a question about the
+      // statement, and every strategy answers it the same way. The statement the engine
+      // sees is built on the server (#574).
+      //
+      // The plan request gets an id of its own so Cancel can reach it on the server:
+      // without one, measured on PostgreSQL 18.6, Cancel left the plan statement
+      // `active` after the run's own backend went idle (#1311). Its own rather than the
+      // run's, because a provider tracks one statement per id.
+      const sendsPlan =
+        !isExplain &&
+        !isLoadMore &&
+        oneStatement &&
+        explainStrategy !== null &&
+        explainStrategy.buildSql(queryToExecute, "estimate") !== null;
+      const planQueryId = sendsPlan ? `${queryId}-plan` : undefined;
+      runsRef.current.set(targetTabId, { controller: abortController, queryId, planQueryId });
       lastRunRef.current.set(targetTabId, queryId);
 
       /**
@@ -497,7 +536,7 @@ export function useQueryExecution({
           // reads the statement with: whether a `;` is code depends on the
           // engine's comment, quoting and bracket rules, and a fragment this
           // disagrees about is a fragment the route RUNS (S1).
-          isMultiStatement(queryToExecute, resolveSqlGrammar(activeConnection.type));
+          isMultiStatement(queryToExecute, grammar);
 
         // Use transaction endpoint if a transaction is active or in playground mode
         const useTransaction = (transactionActive || isPlaygroundRun) && !isExplain;
@@ -532,49 +571,46 @@ export function useQueryExecution({
           signal: abortController.signal,
         });
 
-        // Run EXPLAIN in background for non-explain queries (SELECT only)
+        // Run EXPLAIN in background for non-explain queries (one SELECT only, see
+        // `sendsPlan`). It asks for the `estimate`, which plans without executing: the
+        // run itself is the execution, and a second one is a second write (#1311).
         //
         // Typed as `Response | null` because its rejection is handled at creation
         // (below), not where it is consumed: the consumer only runs after the main
         // query settles, and a plan request that fails first — or is aborted with
         // its run — would be an unhandled rejection until then.
         let explainPromise: Promise<Response | null> | null = null;
-        if (!isExplain && !isLoadMore && explainStrategy) {
-          // Asked of the STATIC strategy, which is all this side has before a
-          // response: whether a statement is explainable at all is a question about
-          // the statement, and every strategy answers it the same way. The
-          // statement the engine sees is built on the server (#574).
-          if (explainStrategy.buildSql(queryToExecute, "estimate") !== null) {
-            explainPromise = appFetch("/api/db/query", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                ...runPayload,
-                sql: queryToExecute,
-                options: {},
-                explain: { mode: "estimate" },
-                // The server prefixes the statement to build the EXPLAIN, so its
-                // placeholders are the same ones in the same order and the same
-                // values bind them. Without this the plan request would run
-                // unbound and the panel would keep the previous plan (PR #304).
-                ...(params && { params }),
-              }),
-              // The plan belongs to this run, so it dies with it. Without the
-              // signal, cancelling the query — or unmounting the studio — leaves
-              // a request nobody can stop, which lands a plan on a tab that has
-              // moved on.
-              signal: abortController.signal,
-            }).catch((err) => {
-              // Aborting is this hook's own doing, not a failure worth reporting.
-              if (!(err instanceof DOMException && err.name === "AbortError")) {
-                logger.warn("Background EXPLAIN fetch failed", {
-                  route: "use-query-execution",
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              }
-              return null;
-            });
-          }
+        if (sendsPlan) {
+          explainPromise = appFetch("/api/db/query", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...runPayload,
+              sql: queryToExecute,
+              options: {},
+              explain: { mode: "estimate" },
+              queryId: planQueryId,
+              // The server prefixes the statement to build the EXPLAIN, so its
+              // placeholders are the same ones in the same order and the same
+              // values bind them. Without this the plan request would run
+              // unbound and the panel would keep the previous plan (PR #304).
+              ...(params && { params }),
+            }),
+            // The plan belongs to this run, so it dies with it. Without the
+            // signal, cancelling the query (or unmounting the studio) leaves
+            // a request nobody can stop, which lands a plan on a tab that has
+            // moved on.
+            signal: abortController.signal,
+          }).catch((err) => {
+            // Aborting is this hook's own doing, not a failure worth reporting.
+            if (!(err instanceof DOMException && err.name === "AbortError")) {
+              logger.warn("Background EXPLAIN fetch failed", {
+                route: "use-query-execution",
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+            return null;
+          });
         }
 
         const response = await mainQueryPromise;
@@ -1058,17 +1094,22 @@ export function useQueryExecution({
       run.controller.abort();
 
       // Also cancel on the server side: aborting the fetch drops the response,
-      // it does not stop the statement the engine is still executing.
+      // it does not stop the statement the engine is still executing. That holds for
+      // the run's background plan request as much as for the run, so both are named
+      // (#1311).
       if (activeConnection) {
+        const connection = buildConnectionPayload(activeConnection);
+        const ids = run.planQueryId === undefined ? [run.queryId] : [run.queryId, run.planQueryId];
         try {
-          await appFetch("/api/db/cancel", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ...buildConnectionPayload(activeConnection),
-              queryId: run.queryId,
-            }),
-          });
+          await Promise.all(
+            ids.map((queryId) =>
+              appFetch("/api/db/cancel", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...connection, queryId }),
+              }),
+            ),
+          );
         } catch {
           logger.warn("Query cancellation request failed", { route: "use-query-execution" });
         }

@@ -3,6 +3,7 @@ import { quoteCypherName } from "@/lib/db/graph/cypher/quote";
 import { declaredLevels } from "@/lib/db/object-kinds";
 import { type QueryDialect, registeredDialect } from "@/lib/db/query-dialects";
 import { encodeKey } from "@/lib/db/providers/keyvalue/etcd/keys";
+import { oxiaSelectQuery, oxiaTableQuery } from "@/lib/db/providers/keyvalue/oxia/generators";
 import { quoteGoString, quoteTxnWord, quoteWord } from "@/lib/db/providers/keyvalue/etcd/lexer";
 import { influxqlSelectQuery, influxqlTableQuery } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
 import { influxqlSource, quoteInfluxqlIdentifier } from "@/lib/db/providers/timeseries/influxdb/influxql-quote";
@@ -705,6 +706,14 @@ const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Ob
   qdrant: {
     table: (path) => qdrantTableQuery(path),
     select: (path, columns) => qdrantSelectQuery(path, columns),
+  },
+  // Oxia reads a key through an oxia client command (SB2-4.5), written by the provider's browser-safe generators.ts:
+  // the click is `get <key>`, and "Generate Command" that get with the `list --prefix` and `range-scan --prefix` forms
+  // as comments. No shipped click reaches them in v1 (a key row opens its Source tab, SB2-12 D2). Neither reads the
+  // columns or the scope.
+  oxia: {
+    table: (path) => oxiaTableQuery(path),
+    select: (path) => oxiaSelectQuery(path),
   },
 });
 

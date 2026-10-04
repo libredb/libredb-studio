@@ -71,9 +71,9 @@ describe("useInlineEditing", () => {
       const body = JSON.parse(String(init?.body ?? "{}"));
       void body;
       // The shape the product actually answers with: `/api/db/query` returns rows as
-      // OBJECTS, and PostgreSQL reports a bare `COUNT(*)` as the string "1" under a column
-      // it names `count`. A mock returning `[[1]]` would exercise a branch the product
-      // never takes, and line coverage would not notice.
+      // OBJECTS, the count comes back under the name the statement gives it, and PostgreSQL
+      // reports it as the string "1". A mock returning `[[1]]` would exercise a branch the
+      // product never takes, and line coverage would not notice.
       //
       // One group per key, each holding one row, which is the shape that passes. Pass
       // `matched` to answer a single group of that many rows instead — the key that does
@@ -85,13 +85,13 @@ describe("useInlineEditing", () => {
       const bound = (body2.params ?? [1]) as unknown[];
       const answer =
         matched === undefined
-          ? bound.map((key) => ({ id: key, count: "1" }))
+          ? bound.map((key) => ({ id: key, key_rows: "1" }))
           : matched === 0
             ? []
-            : [{ id: bound[0], count: String(matched) }];
+            : [{ id: bound[0], key_rows: String(matched) }];
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ rows: answer, fields: ["id", "count"], rowCount: answer.length }),
+        json: () => Promise.resolve({ rows: answer, fields: ["id", "key_rows"], rowCount: answer.length }),
       });
     }) as unknown as typeof fetch;
   }
@@ -1454,7 +1454,7 @@ describe("useInlineEditing", () => {
       return Promise.resolve({
         ok: true,
         json: () =>
-          Promise.resolve({ rows: [{ order_id: 87, count: "3" }], fields: ["order_id", "count"], rowCount: 1 }),
+          Promise.resolve({ rows: [{ order_id: 87, key_rows: "3" }], fields: ["order_id", "key_rows"], rowCount: 1 }),
       });
     }) as unknown as typeof fetch;
 
@@ -1510,7 +1510,7 @@ describe("useInlineEditing", () => {
       seen.push(init);
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ rows: [{ id: 1, count: "1" }], fields: ["id", "count"], rowCount: 1 }),
+        json: () => Promise.resolve({ rows: [{ id: 1, key_rows: "1" }], fields: ["id", "key_rows"], rowCount: 1 }),
       });
     }) as unknown as typeof fetch;
 
@@ -1561,10 +1561,10 @@ describe("useInlineEditing", () => {
         json: () =>
           Promise.resolve({
             rows: [
-              { id: "1", count: "2" },
-              { id: 1, count: "1" },
+              { id: "1", key_rows: "2" },
+              { id: 1, key_rows: "1" },
             ],
-            fields: ["id", "count"],
+            fields: ["id", "key_rows"],
             rowCount: 2,
           }),
       });
@@ -1615,7 +1615,7 @@ describe("useInlineEditing", () => {
       seen.push({ url: String(url), body: JSON.parse(String(init?.body ?? "{}")) });
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ rows: [{ id: 1, count: "1" }], fields: ["id", "count"], rowCount: 1 }),
+        json: () => Promise.resolve({ rows: [{ id: 1, key_rows: "1" }], fields: ["id", "key_rows"], rowCount: 1 }),
       });
     }) as unknown as typeof fetch;
 
@@ -1653,10 +1653,10 @@ describe("useInlineEditing", () => {
         json: () =>
           Promise.resolve({
             rows: [
-              { id: 1, count: "1" },
-              { id: 2, count: "1" },
+              { id: 1, key_rows: "1" },
+              { id: 2, key_rows: "1" },
             ],
-            fields: ["id", "count"],
+            fields: ["id", "key_rows"],
             rowCount: 2,
           }),
       });
@@ -1681,35 +1681,138 @@ describe("useInlineEditing", () => {
     expect((seen[0].options as { limit: number }).limit).toBe(3);
   });
 
-  test("reads the count by POSITION, because no two engines name it the same", async () => {
-    // PostgreSQL calls it `count`, MySQL and SQLite both call it `COUNT(*)`. Reading it by
-    // name would work on whichever one the test happened to imitate and refuse every apply
-    // on the others, so the mock here answers with MySQL's name.
-    globalThis.fetch = mock(() =>
-      Promise.resolve({
+  test("names the count in each dialect's own quotes and reads it by that name", async () => {
+    // A bare `COUNT(*)` is named by the engine: `count` on PostgreSQL, `COUNT(*)` on MySQL
+    // and SQLite, `2` on Db2. The statement names it instead, quoted so an engine that folds
+    // an unquoted name (Oracle, Db2) keeps its case, and the answer is read by that name.
+    const cases: Array<[DatabaseConnection["type"], string]> = [
+      ["postgres", '"key_rows"'],
+      ["mysql", "`key_rows`"],
+      ["sqlite", '"key_rows"'],
+      ["oracle", '"key_rows"'],
+      ["mssql", "[key_rows]"],
+    ];
+    for (const [type, quoted] of cases) {
+      const seen: string[] = [];
+      globalThis.fetch = mock((_url: string, init?: RequestInit) => {
+        seen.push(String(JSON.parse(String(init?.body ?? "{}")).sql));
+        return Promise.resolve({
+          ok: true,
+          // A stray column named like the engine's own name for a bare count, ahead of the
+          // aliased one, which a read by position would take.
+          json: () =>
+            Promise.resolve({ rows: [{ "2": 5, id: 1, key_rows: 1 }], fields: ["id", "key_rows"], rowCount: 1 }),
+        });
+      }) as unknown as typeof fetch;
+      mockExecuteQuery.mockClear();
+      mockToastError.mockClear();
+
+      const { result } = renderHook(() =>
+        useInlineEditing({
+          activeConnection: makeConnection({ type }),
+          currentTab: makeTab(),
+          executeQuery: mockExecuteQuery,
+        }),
+      );
+      act(() => {
+        result.current.handleCellChange(makeChange());
+      });
+      await act(async () => {
+        await result.current.handleApplyChanges();
+      });
+
+      expect(seen[0]).toContain(`COUNT(*) AS ${quoted} FROM`);
+      expect(mockToastError).not.toHaveBeenCalled();
+      expect(updateCalls()).toHaveLength(1);
+    }
+  });
+
+  /**
+   * An engine that answers the key check the way Db2 does. MEASURED 2026-10-04 on
+   * Db2 12.1.0.0 through `db2-node` 1.0.25: `SELECT ID, COUNT(*) FROM T GROUP BY ID` answers
+   * `[{"2":1,"ID":1}]`, because Db2 names an unnamed result column by its position. A
+   * JavaScript object lists an integer-like key before every other key, so the count comes
+   * FIRST in `Object.values`. A count given a name of its own is answered under that name.
+   */
+  function answerLikeDb2(countsByKey: Record<string, number>) {
+    const seen: string[] = [];
+    globalThis.fetch = mock((_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      const sql = String(body.sql);
+      seen.push(sql);
+      const alias = /COUNT\(\*\) AS "((?:[^"]|"")+)"/.exec(sql)?.[1]?.replace(/""/g, '"') ?? "2";
+      const rows = (body.params as unknown[]).map((key) => ({ ID: key, [alias]: countsByKey[String(key)] }));
+      return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ rows: [{ id: 1, "COUNT(*)": 1 }], fields: ["id", "COUNT(*)"], rowCount: 1 }),
+        json: () => Promise.resolve({ rows, fields: ["ID", alias], rowCount: rows.length }),
+      });
+    }) as unknown as typeof fetch;
+    return seen;
+  }
+
+  const db2Tab = () =>
+    makeTab({
+      result: makeResult({
+        rows: [
+          { ID: 1, NOTE: "one" },
+          { ID: 2, NOTE: "two" },
+        ],
+        fields: ["ID", "NOTE"],
       }),
-    ) as unknown as typeof fetch;
+    });
+
+  test("saves a Db2 edit of the row keyed 2, whose count column the engine names `2`", async () => {
+    answerLikeDb2({ "2": 1 });
 
     const { result } = renderHook(() =>
       useInlineEditing({
-        activeConnection: makeConnection({ type: "mysql" }),
-        currentTab: makeTab(),
+        activeConnection: makeConnection({ type: "db2" }),
+        currentTab: db2Tab(),
         executeQuery: mockExecuteQuery,
       }),
     );
 
     act(() => {
-      result.current.handleCellChange(makeChange());
+      result.current.handleCellChange(
+        makeChange({ rowIndex: 1, columnId: "NOTE", originalValue: "two", newValue: "zwei" }),
+      );
     });
     await act(async () => {
       await result.current.handleApplyChanges();
     });
 
-    // It passed, which it could only do by reading the second value rather than a name.
-    expect(updateCalls()).toHaveLength(1);
+    // Read by position, the row `{"2":1,"ID":2}` gave the key 2 as the count, and the edit
+    // was refused as one row writing to two.
     expect(mockToastError).not.toHaveBeenCalled();
+    expect(updateCalls()).toHaveLength(1);
+  });
+
+  test("refuses a Db2 edit of the row keyed 1 when two rows carry that key", async () => {
+    answerLikeDb2({ "1": 2 });
+
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection({ type: "db2" }),
+        currentTab: db2Tab(),
+        executeQuery: mockExecuteQuery,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(
+        makeChange({ rowIndex: 0, columnId: "NOTE", originalValue: "one", newValue: "eins" }),
+      );
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    // Read by position, the row `{"2":2,"ID":1}` gave the key 1 as the count, and the check
+    // passed without the count ever being read.
+    expect(updateCalls()).toHaveLength(0);
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining("would write to 2 rows"),
+    });
   });
 
   test("refuses two keys the ENGINE treats as one, which this side cannot see", async () => {
@@ -1722,7 +1825,7 @@ describe("useInlineEditing", () => {
       Promise.resolve({
         ok: true,
         json: () =>
-          Promise.resolve({ rows: [{ user_id: "abc", count: "2" }], fields: ["user_id", "count"], rowCount: 1 }),
+          Promise.resolve({ rows: [{ user_id: "abc", key_rows: "2" }], fields: ["user_id", "key_rows"], rowCount: 1 }),
       }),
     ) as unknown as typeof fetch;
 
@@ -1832,10 +1935,10 @@ describe("useInlineEditing", () => {
         json: () =>
           Promise.resolve({
             rows: [
-              { product_id: 1, count: "1" },
-              { product_id: 2, count: "1" },
+              { product_id: 1, key_rows: "1" },
+              { product_id: 2, key_rows: "1" },
             ],
-            fields: ["product_id", "count"],
+            fields: ["product_id", "key_rows"],
             rowCount: 2,
           }),
       });
@@ -1996,7 +2099,7 @@ describe("useInlineEditing", () => {
       seen.push({ sql: body.sql, params: body.params ?? [] });
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ rows: [{ id: 1, count: "1" }], fields: ["id", "count"], rowCount: 1 }),
+        json: () => Promise.resolve({ rows: [{ id: 1, key_rows: "1" }], fields: ["id", "key_rows"], rowCount: 1 }),
       });
     }) as unknown as typeof fetch;
 
@@ -2018,7 +2121,7 @@ describe("useInlineEditing", () => {
     expect(seen).toHaveLength(1);
     // The table the STATEMENT names, the same one the UPDATE will use.
     expect(seen[0].sql).toContain("FROM public.users");
-    expect(seen[0].sql).toContain('"id", COUNT(*) FROM public.users WHERE "id" IN ($1) GROUP BY "id"');
+    expect(seen[0].sql).toContain('"id", COUNT(*) AS "key_rows" FROM public.users WHERE "id" IN ($1) GROUP BY "id"');
     // The value travels beside the statement, not inside it.
     expect(seen[0].sql).not.toContain("IN (1)");
     expect(seen[0].params).toEqual([1]);
@@ -2037,7 +2140,7 @@ describe("useInlineEditing", () => {
       seen.push(init);
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ rows: [{ id: 1, count: "1" }], fields: ["id", "count"], rowCount: 1 }),
+        json: () => Promise.resolve({ rows: [{ id: 1, key_rows: "1" }], fields: ["id", "key_rows"], rowCount: 1 }),
       });
     }) as unknown as typeof fetch;
     return seen;
@@ -2252,10 +2355,10 @@ describe("useInlineEditing", () => {
         json: () =>
           Promise.resolve({
             rows: [
-              { id: 7, count: "1" },
-              { id: "SKU-1", count: "1" },
+              { id: 7, key_rows: "1" },
+              { id: "SKU-1", key_rows: "1" },
             ],
-            fields: ["id", "count"],
+            fields: ["id", "key_rows"],
             rowCount: 2,
           }),
       });
@@ -2304,7 +2407,7 @@ describe("useInlineEditing", () => {
     globalThis.fetch = mock(() =>
       Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ rows: [{ k_id: 1, count: "2" }], fields: ["k_id", "count"], rowCount: 1 }),
+        json: () => Promise.resolve({ rows: [{ k_id: 1, key_rows: "2" }], fields: ["k_id", "key_rows"], rowCount: 1 }),
       }),
     ) as unknown as typeof fetch;
 
@@ -2352,7 +2455,7 @@ describe("useInlineEditing", () => {
     globalThis.fetch = mock(() =>
       Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ rows: [{ id: 1, count: "2" }], fields: ["id", "count"], rowCount: 1 }),
+        json: () => Promise.resolve({ rows: [{ id: 1, key_rows: "2" }], fields: ["id", "key_rows"], rowCount: 1 }),
       }),
     ) as unknown as typeof fetch;
 
@@ -2409,7 +2512,7 @@ describe("useInlineEditing", () => {
       seen.push(JSON.parse(String(init?.body ?? "{}")));
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ rows: [], fields: ["id", "count"], rowCount: 0 }),
+        json: () => Promise.resolve({ rows: [], fields: ["id", "key_rows"], rowCount: 0 }),
       });
     }) as unknown as typeof fetch;
     return seen;
@@ -2904,7 +3007,8 @@ describe("useInlineEditing", () => {
       const bound = (body.params ?? []) as unknown[];
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ rows: [{ id: bound[0], count: "2" }], fields: ["id", "count"], rowCount: 1 }),
+        json: () =>
+          Promise.resolve({ rows: [{ id: bound[0], key_rows: "2" }], fields: ["id", "key_rows"], rowCount: 1 }),
       });
     }) as unknown as typeof fetch;
 
@@ -2965,8 +3069,8 @@ describe("useInlineEditing", () => {
         ok: true,
         json: () =>
           Promise.resolve({
-            rows: bound.map((key) => ({ id: key, count: "1" })),
-            fields: ["id", "count"],
+            rows: bound.map((key) => ({ id: key, key_rows: "1" })),
+            fields: ["id", "key_rows"],
             rowCount: bound.length,
           }),
       });

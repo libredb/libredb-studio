@@ -1,0 +1,12 @@
+# The oxia-auth profile: one namespace over the one data server that runs beside its coordinator. A cluster
+# advertises its configured public address to clients, so the public port is the published host port and the
+# container port. The host is localhost, the name the server certificate is issued for, so a client that dials
+# localhost with verify-full is sent to the leader it dialled; a client dialling 127.0.0.1 lists localhost:6678
+# under its data servers.
+namespaces:
+  - name: default
+    initialShardCount: 3
+    replicationFactor: 1
+servers:
+  - public: localhost:6678
+    internal: localhost:6649

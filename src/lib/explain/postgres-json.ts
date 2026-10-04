@@ -32,8 +32,9 @@ const POSTGRES_GRAMMAR = resolveSqlGrammar("postgres");
  * off queries that merely mention a keyword, such as `SELECT 'insert'`, which explains
  * fine today.
  *
- * The narrower question of ANALYZE executing an ordinary SELECT twice - once for the
- * user, once for the background pre-warm - is issue #194's remaining work, not this.
+ * The screen holds for both modes even though only `analyze` executes: the estimate
+ * and the Explain button must refuse the same statements, or the background plan would
+ * appear for a statement the button then refuses.
  *
  * The classification is read under PostgreSQL's own grammar, and that is load-bearing
  * rather than tidiness: block comments NEST here, so read flat,
@@ -55,9 +56,20 @@ export function isExplainableUnderPostgresGrammar(sql: string): boolean {
 
 export const postgresJsonStrategy: ExplainStrategy = {
   format: "postgres-json",
-  buildSql(sql) {
+  /**
+   * The mode decides whether the statement RUNS. `estimate` is what the editor sends in
+   * the background beside every run of a SELECT, so it must only plan: without
+   * `ANALYZE`, PostgreSQL plans and executes nothing. It used to build the ANALYZE form
+   * for both modes, and every SELECT ran twice. Measured on PostgreSQL 18.6, one RUN of
+   * `SELECT nextval('my_seq')` left `last_value` at 2; on Citus 14.2 and TimescaleDB
+   * 2.30 the hidden request ran `create_distributed_table` / `create_hypertable` before
+   * the user's own call, which then failed as "already distributed" (#1311).
+   *
+   * `BUFFERS` goes with `ANALYZE`: a plan that ran nothing has no buffer counts.
+   */
+  buildSql(sql, mode) {
     if (!isExplainableUnderPostgresGrammar(sql)) return null;
-    return `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`;
+    return mode === "analyze" ? `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}` : `EXPLAIN (FORMAT JSON) ${sql}`;
   },
   extractPlan(result) {
     return result.rows?.[0]?.["QUERY PLAN"] || result.rows;

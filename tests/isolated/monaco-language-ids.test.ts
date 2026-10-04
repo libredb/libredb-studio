@@ -20,15 +20,15 @@
  *   basic contribution, and `json` IS THE ONE THAT IS NOT: measured on 0.57.0, of the 89 basic ids
  *   `css`, `html` and `typescript` are present and `json` is absent. That single absence is the
  *   whole reason the rich half of this guard is load-bearing, because `json` is the declared
- *   language of twenty-one source-bearing kinds across the two search products, MongoDB, Prometheus,
- *   Kafka, etcd, Milvus and Qdrant, and a guard that extracted only the 89 would report all twenty-one as
+ *   language of twenty-three source-bearing kinds across the two search products, MongoDB, Prometheus,
+ *   Kafka, etcd, Milvus, Qdrant and Oxia, and a guard that extracted only the 89 would report all twenty-three as
  *   unregistered.
  *
  *   CORRECTED IN FIX ROUND 1 AND THE OLD WORDING IS RECORDED HERE ON PURPOSE. This paragraph
  *   previously said all four rich ids were absent from the 89, which is false for three of them.
  *   A maintainer who checked that sentence, found `css` in `basic`, and concluded the paragraph
  *   was wrong about the mechanism could delete the `readdirSync` half, which silently unregisters
- *   `json` and un-guards those twenty-one kinds. The four `basic.has(...)` assertions in the first test
+ *   `json` and un-guards those twenty-three kinds. The four `basic.has(...)` assertions in the first test
  *   below now pin each of the four ids individually, so the sentence cannot go stale again in
  *   silence: a monaco bump that moves any of them fails here rather than in prose.
  *
@@ -318,10 +318,11 @@ describe("the installed editor's language ids", () => {
     expect(basic.has("sql")).toBe(true);
   });
 
-  test("no id the installed editor registers is named milvus or qdrant, so each console's tokens provider is the one in charge (vector-family spec 3.5)", () => {
-    // registerConsoleLanguage returns early when its id is already registered, as registerEtcdLanguage does,
-    // so a built-in id of either name would leave the console lexer out of the editor.
-    for (const id of ["milvus", "qdrant"]) {
+  test("no id the installed editor registers is named milvus, qdrant or oxia, so each console's tokens provider is the one in charge (vector-family spec 3.5, SB2-4.5)", () => {
+    // registerConsoleLanguage and registerOxiaLanguage return early when their id is already registered, as
+    // registerEtcdLanguage does, so a built-in id of any of these names would leave the console lexer out of the
+    // editor.
+    for (const id of ["milvus", "qdrant", "oxia"]) {
       expect(basic.has(id)).toBe(false);
       expect(rich).not.toContain(id);
       expect(core.has(id)).toBe(false);
@@ -344,8 +345,9 @@ describe("the installed editor's language ids", () => {
     expect(declared.map((entry) => entry.where)).toContain("mysql/sequence");
     // 69 before etcd (#1089), whose five kinds with a source each declare `json` (object-source-declarations),
     // 74 before Db2 (#786), whose five kinds with a source each declare `sql`, 79 before Qdrant, whose
-    // collection declares `json`, and 80 before Milvus, whose collection declares `json` too.
-    expect(declared).toHaveLength(81);
+    // collection declares `json`, 80 before Milvus, whose collection declares `json` too, and 81 before Oxia,
+    // whose shard and key each declare `json`.
+    expect(declared).toHaveLength(83);
 
     const unregistered = declared.filter((entry) => !registered.has(entry.language));
     // Named, so a failure says which kind on which engine declared what, rather than false. This

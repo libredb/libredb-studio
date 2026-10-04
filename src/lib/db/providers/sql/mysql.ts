@@ -150,10 +150,72 @@ const runStatement = <T extends RowDataPacket[] = RowDataPacket[]>(
   queryable: MySQLQueryable,
   sql: string,
   params?: unknown[],
-): Promise<[T, FieldPacket[]]> =>
-  params === undefined || params.length === 0
+): Promise<[T, FieldPacket[]]> => {
+  const core = (queryable as { connection?: object }).connection;
+  if (core !== undefined && UTF8_UNDER_UTF8MB3.has(core)) {
+    return runReadingUtf8mb3AsUtf8<T>(core as CoreConnection, sql, params);
+  }
+  return params === undefined || params.length === 0
     ? queryable.query<T>(sql)
     : queryable.execute<T>(sql, asExecuteParams(params));
+};
+
+/**
+ * The core (callback) connections of a pool whose server sends UTF-8 under a utf8mb3
+ * label, see `probeUtf8UnderUtf8mb3()`. Filled from that pool's `acquire` event, so
+ * membership is per connection of the one pool that was measured, and nothing else in
+ * the process (another provider's pool, a host application's own mysql2) is touched.
+ */
+const UTF8_UNDER_UTF8MB3 = new WeakSet<object>();
+
+/** The slice of mysql2's callback API that `runReadingUtf8mb3AsUtf8` drives. */
+type CoreCallback = (error: Error | null, rows: unknown, fields: FieldPacket[]) => void;
+interface CoreCommand {
+  on(event: "fields", listener: (fields: FieldPacket[]) => void): unknown;
+}
+interface CoreConnection {
+  query(sql: string, callback: CoreCallback): CoreCommand;
+  execute(sql: string, values: unknown[], callback: CoreCallback): CoreCommand;
+}
+
+/**
+ * Decode this statement's utf8mb3 columns as UTF-8.
+ *
+ * mysql2 picks a column's decoder from its collation id and ships the whole utf8mb3
+ * family (33, 76, 83, 192-215, 223 and MariaDB's utf8mb3 ids) as `cesu8`, which has no
+ * 4-byte form. The command emits `fields` once the column definitions are read and
+ * before the row parser is built, and both parsers read `field.encoding` when a row
+ * arrives, so relabelling the definitions here changes how THIS statement's values
+ * decode and nothing else: mysql2's shared `CharsetToEncoding` table is not touched.
+ *
+ * A `typeCast` cannot do this: mysql2 3.24 hands it the type and column name but not
+ * the collation, so it cannot tell a utf8mb3 VARCHAR from a latin1 one or a VARBINARY.
+ * A column NAME is decoded while its definition is parsed, before `fields` fires, so an
+ * alias outside the BMP still reads as U+FFFD on these servers.
+ */
+const readUtf8mb3AsUtf8 = (fields: FieldPacket[]): void => {
+  for (const field of fields) {
+    if (field.encoding === "cesu8") field.encoding = "utf8";
+  }
+};
+
+/**
+ * `runStatement` over the core connection, with `readUtf8mb3AsUtf8` on the command. The
+ * protocol choice is the same as `runStatement`'s; the promise wrapper hides the
+ * command object, which is the only thing the `fields` event is on.
+ */
+function runReadingUtf8mb3AsUtf8<T extends RowDataPacket[]>(
+  core: CoreConnection,
+  sql: string,
+  params?: unknown[],
+): Promise<[T, FieldPacket[]]> {
+  return new Promise((resolve, reject) => {
+    const done: CoreCallback = (error, rows, fields) => (error ? reject(error) : resolve([rows as T, fields]));
+    const command =
+      params === undefined || params.length === 0 ? core.query(sql, done) : core.execute(sql, params, done);
+    command.on("fields", readUtf8mb3AsUtf8);
+  });
+}
 
 /**
  * The leading keywords of the statements MySQL commits implicitly inside a transaction,
@@ -1313,6 +1375,35 @@ const probeServerVersion = async (queryable: MySQLQueryable): Promise<string | u
   }
 };
 
+/** U+1F600, which only a 4-byte UTF-8 sequence (or a 6-byte CESU-8 pair) can carry. */
+const UTF8MB3_LABEL_PROBE = "SELECT '\u{1F600}' AS probe";
+
+/**
+ * Whether this server sends 4-byte UTF-8 in a column it labels utf8mb3.
+ *
+ * mysql2 asks for a utf8mb4 session, and a MySQL-family server then converts every text
+ * result to utf8mb4 and labels it so. Databend, StarRocks and Apache Doris label EVERY
+ * text column 33 (utf8mb3_general_ci) whatever the session asked for, while the bytes are
+ * plain UTF-8. Measured 2026-10-04 on Databend 1.2.881, StarRocks 4.1.6 and Doris 4.1.3:
+ * this literal came back labelled 33 and, through mysql2's `cesu8` decoder, as four
+ * U+FFFD; `hex()` of a stored value held `f09f9880`. Neither `charset:
+ * 'UTF8MB4_UNICODE_CI'` (mysql2's default), `UTF8MB4_GENERAL_CI`, `UTF8MB4_0900_AI_CI` nor
+ * `SET NAMES utf8mb4` changed the label.
+ *
+ * Measured, not derived from the type id: the same probe on MySQL 26.7.0, MariaDB 13.0.2
+ * and TiDB v7.5.1 answers a utf8mb4 label and the character itself, so those connections
+ * decode exactly as mysql2 decides. A refusal reads as "no", the decoding mysql2 already
+ * does.
+ */
+const probeUtf8UnderUtf8mb3 = async (queryable: MySQLQueryable): Promise<boolean> => {
+  try {
+    const [rows, fields] = await runStatement(queryable, UTF8MB3_LABEL_PROBE);
+    return fields[0]?.encoding === "cesu8" && String(rows[0]?.probe).includes("�");
+  } catch {
+    return false;
+  }
+};
+
 // ----------------------------------------------------------------------------
 // Object surface shapes and derivations
 // ----------------------------------------------------------------------------
@@ -2158,6 +2249,11 @@ export class MySQLProvider extends SQLBaseProvider {
       // Measured rather than derived from the type id, because there is no `mariadb` type
       // id to derive from.
       this.measuredFlavour = flavourFor(await probeServerVersion(conn));
+      // Every later acquisition, this probe connection's included, then reads utf8mb3
+      // columns as UTF-8 through `runStatement`. Only this pool's connections are marked.
+      if (await probeUtf8UnderUtf8mb3(conn)) {
+        this.pool.on("acquire", (core: object) => UTF8_UNDER_UTF8MB3.add(core));
+      }
       conn.release();
 
       this.setConnected(true);
