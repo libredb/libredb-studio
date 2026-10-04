@@ -21,8 +21,8 @@ export default function AdminOverviewPage() {
       });
   }, []);
 
-  // The discovery card sits outside OverviewTab: OverviewTab returns its empty state early when
-  // there are no connections, which is exactly when discovery has failed.
+  // The discovery card sits above OverviewTab, not inside it, so it shows on both of OverviewTab's
+  // branches: the empty state it returns early when there is no connection at all, and the full overview.
   return (
     <div data-testid="admin-content-overview" className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
       <PlatformDiscoveryCard />

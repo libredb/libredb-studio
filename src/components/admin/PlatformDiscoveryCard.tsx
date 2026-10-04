@@ -29,8 +29,9 @@ const STATE_BADGES: Record<DiscoveryState, { label: string; className: string }>
 
 /**
  * The CapRover discovery status (GET /api/admin/discovery). Mounted on the Overview page above
- * OverviewTab, because OverviewTab returns its empty state early when there are no connections,
- * which is exactly when discovery has failed. Renders nothing on a non-OK answer or when discovery is off.
+ * OverviewTab, not inside it, so it shows both when OverviewTab returns its early empty state (no
+ * connection at all) and when it renders the full overview. Renders nothing on a non-OK answer or when
+ * discovery is off.
  */
 export function PlatformDiscoveryCard() {
   const [data, setData] = useState<DiscoveryResponse | null>(null);
