@@ -29,15 +29,18 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Neo4j | `neo4j` | Graph | `neo4j-driver-lite` (pure JavaScript, Bolt) | Cypher (read-only) | [neo4j.md](./neo4j.md) |
 | Milvus | `milvus` | Vector | `@grpc/grpc-js` (pure JavaScript, gRPC) | Milvus REST v2 requests (read routes) | [milvus.md](./milvus.md) |
 | Qdrant | `qdrant` | Vector | none, REST over the shared `node:http(s)` transport | Qdrant REST requests (read routes) | [qdrant.md](./qdrant.md) |
+| InfluxDB (InfluxQL) | `influxdb` | Time series | none, HTTP over the shared `node:http(s)` transport | InfluxQL (read-only) | [influxdb.md](./influxdb.md) |
+| InfluxDB 3 (SQL) | `influxdb3` | Time series | none, HTTP over the shared `node:http(s)` transport | SQL (Apache DataFusion, read-only) | [influxdb3.md](./influxdb3.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
-  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd, Neo4j, Milvus and Qdrant are). The official product name (e.g.
+  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd, Neo4j, Milvus, Qdrant and InfluxDB are). The official product name (e.g.
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
-  — `providers/sql/search/` is `elasticsearch` and `opensearch` — and each type-id still gets its own
+  — `providers/sql/search/` is `elasticsearch` and `opensearch`, and `providers/timeseries/influxdb/` is
+  `influxdb` and `influxdb3`, two classes on two base classes sharing one connection layer — and each type-id still gets its own
   document, because the tri-sync invariant is per type-id and each doc is the prime reference for its
   own product's measured behaviour.
 - **Each doc mirrors the code.** Every `file:line` citation is verified, and the per-provider triad
@@ -260,9 +263,11 @@ The Apache Kafka row and the `kafka-auth` and `kafka-cluster` notes below were v
 The etcd row and the etcd fixtures note below were verified against the running containers on 2026-09-30, by the capture `tests/fixtures/etcd/README.md` records.
 The Db2 LUW row is read off `database-compose.yml`: its image, capabilities and fixture were measured on 2026-10-03 on a container started the same way, not on the compose service itself, whose first boot creates the instance and the database and takes several minutes.
 The Neo4j row was verified against the running container on 2026-10-03, by the capture `tests/fixtures/neo4j/5.26.31/README.md` records.
+The InfluxDB rows were verified against the running containers on 2026-10-04, by the capture `tests/fixtures/influxdb/README.md` records.
+InfluxDB (InfluxQL) has a row per server line it reads, because each line is a service of its own with its own principal.
 
-Start the twenty-six always-on services with a plain `docker compose -f database-compose.yml up -d`:
-twenty engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `etcd-seed`, `milvus-seed` and `qdrant-seed` seed sidecars; the `Profile` column names
+Start the thirty always-on services with a plain `docker compose -f database-compose.yml up -d`:
+twenty-three engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `etcd-seed`, `milvus-seed`, `qdrant-seed` and `influxdb-seed` seed sidecars; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider, so a plain `up -d` can reproduce that
 provider's integration pass.
@@ -284,6 +289,10 @@ provider's integration pass.
 | Trino | `trino` | localhost | 8080 | *none* | *none* | `tpch` (catalog) | — |
 | Apache Cassandra | `cassandra` | localhost | 9042 | *none* | *none* | `probe` (keyspace) | — |
 | Prometheus | `prometheus` | localhost | 9090 | *none* | *none* | *none* | *none* |
+| InfluxDB (InfluxQL), 1.x | `influxdb1` | localhost | 8087 | `reader` | `readonly123` | `home` | *none* |
+| InfluxDB (InfluxQL), 2.x | `influxdb2` | localhost | 8086 | *none* | the read-only token for bucket `home` ([`docker/influxdb/README.md`](../../docker/influxdb/README.md) says how to read it out) | `home` | *none* |
+| InfluxDB 3 (SQL) | `influxdb3` | localhost | 8181 | *none* | `apiv3_libredb-influxdb3-admin-token` | `home` | *none* |
+| InfluxDB 3 (SQL), file-limit fixture | `influxdb3-filelimit` | localhost | 8182 | *none* | `apiv3_libredb-influxdb3-admin-token` | `home` | `influxdb-filelimit` |
 | Apache Kafka | `kafka` | localhost | 9092 | *none* | *none* | *none* | *none* |
 | etcd | `etcd` | localhost | 2379 | *none* | *none* | *none* (one connection is one cluster) | *none* |
 | Neo4j | `neo4j` | localhost | 7687 | `neo4j` | `password123` | `neo4j`, or empty for the home database | *none* |
@@ -326,6 +335,11 @@ Their certificates are generated into a volume by the `milvus-certs` one-shot an
 **Qdrant has three more fixtures behind two profiles, and the plain `qdrant` service takes no key and no TLS.**
 `qdrant` is seeded by its `qdrant-seed` one-shot; `qdrant-auth` (port 6343, an admin key, a read-only key and JWT RBAC) sits behind the profile `qdrant-auth`, and `qdrant-tls` (port 6353, one-way TLS) and `qdrant-mtls` (port 6363, TLS that verifies a client certificate) behind `qdrant-tls`.
 Their keys and certificates are generated into a volume by the `qdrant-keys` one-shot and never committed; [`docker/qdrant/README.md`](../../docker/qdrant/README.md) says how to start and seed each, how to copy the keys out, and what every seeded collection is for.
+
+**InfluxDB has one more fixture behind a profile of its own, and the three plain services take no TLS.**
+`influxdb1`, `influxdb2` and `influxdb3` are seeded by the `influxdb-seed` one-shot, which writes the `home` sample with timestamps in the last 25 hours, the fixed `edge` measurements, the 1.x user `reader` and the 2.x read-only token; `influxdb3-filelimit` (port 8182, `--query-file-limit 1`) sits behind the profile `influxdb-filelimit` and is seeded from the host.
+The 1.x admin is `admin` / `password123` and the 2.x operator token is `libredb-influxdb2-operator-token`; connect with the read principals in the table, because on 1.x and 2.x the server keeps a read-only mode only for a READ user or a read bucket token.
+An InfluxDB (InfluxQL) connection reads the 3.x server too, on port 8181 with the same token; [`docker/influxdb/README.md`](../../docker/influxdb/README.md) says how to start and reseed each, and what every seeded measurement is for.
 
 **Cassandra needs one field this table has no column for, and will not connect without it.** `Local
 Data Center` must be `datacenter1` - a stock single node names its own data centre that, and the

@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D180, U17 · 110
+- [Drivers and connections](#drivers-and-connections) — D1-D204, U17 · 119
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U78 · 72
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U81 · 75
 - [Dependencies](#dependencies) — P1-P9 · 8
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B93 · 34
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B94 · 35
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246)
 
@@ -2280,6 +2280,82 @@ Found 2026-10-04 while running the live check over the shared gRPC transport.
 
 **Done when:** the script takes the repository root from its own location and the compose project from a flag, `--idempotence` passes from any worktree, and the `etcd-auth` snapshot under Node goes through `node:https` with the client pair.
 
+### D196. A Flux console would be a server-side code surface, so v1 has none
+
+The InfluxDB providers send InfluxQL and SQL only: the route tables in `src/lib/db/providers/timeseries/influxdb/routes.ts` hold no Flux route, and the InfluxQL policy (`influxql-policy.ts`) refuses Flux text before any request.
+Flux is a programming language the server runs, not a query text a lexical policy can bound: from a read-only token it reaches HTTP, TCP and the server's metadata store, so a policy in front of it would promise a boundary it cannot keep.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** a design for Flux that does not rely on a lexical policy is decided by the owner, or the entry is closed as declined.
+
+### D197. InfluxDB 3 reads JSON, so types are lossy and the server never sees a cancel
+
+The `influxdb3` provider reads `/api/v3/query_sql` as `format=jsonl` (`src/lib/db/providers/timeseries/influxdb/sql-results.ts`), so a column's Arrow type reaches the grid only as JSON allows, and a cancel closes the socket while the server finishes the query.
+Arrow Flight over gRPC carries the exact types and a server-side cancel, and needs its own path inside the HTTP egress guard.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** an Arrow Flight path inside the egress guard returns exact 3.x types and cancels server-side, with a live measurement.
+
+### D198. No EXPLAIN strategy for InfluxQL or DataFusion text plans
+
+Both InfluxDB providers declare `supportsExplain: false` (`influxql-provider.ts`, `sql-provider.ts` in `src/lib/db/providers/timeseries/influxdb/`), so the Explain button is hidden, although a typed `EXPLAIN` already returns its plan as rows in the grid.
+No `explainFormat` and no strategy in `src/lib/explain/` reads an InfluxQL or a DataFusion text plan.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** an `explainFormat` and a strategy for each exist, measured on 1.13.1, 2.9.1 and 3.12.
+
+### D199. Retention policies are not a tree level
+
+The `influxdb` tree lists databases and their measurements, and a tree read goes through the database's default retention policy (`"db".."m"`, `src/lib/db/providers/timeseries/influxdb/influxql-objects.ts`), so a measurement written only into a non-default policy previews empty.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** the tree lists policies under a 1.x or 2.x database, and a measurement written only into a non-default policy previews non-empty.
+
+### D200. InfluxDB monitoring shows the overview only
+
+The monitoring page of both InfluxDB types reads `/ping` and `/health` and nothing else (`src/lib/db/providers/timeseries/influxdb/monitoring.ts`): no running queries, performance or storage figures, and `/metrics` is never read.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** running queries, performance and storage come from `/metrics` or the system tables, without exposing other users' query text to non-admins.
+
+### D201. Enterprise resource tokens are handled from documentation, not measured
+
+An InfluxDB 3 Enterprise database token answers `/ping` with 403, and the providers handle it from InfluxData's documentation: the only capture of that answer is synthetic (`tests/fixtures/influxdb/3.12.0-core/ping-forbidden-synthetic.json`), because the pinned Core image cannot produce it.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** a live Enterprise server with a `db:<name>:read` token passes the 403 `/ping` path.
+
+### D202. The InfluxDB cloud products are documented as untested
+
+The providers were measured against InfluxDB 1.13.1, 2.9.1 and 3.12.0 Core only (`tests/fixtures/influxdb/README.md`); InfluxDB Cloud (TSM), Cloud Serverless, Cloud Dedicated and Clustered are claimed nowhere (`src/lib/db/compatibility.ts`).
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** each of Cloud (TSM), Serverless, Dedicated and Clustered passes the live evidence gate or is recorded as not served.
+
+### D203. Qdrant words a truncated answer as an unreachable server
+
+The shared transport marks an answer the server ended after accepting the request with `TransportError.truncated` beside kind `network` (`src/lib/db/http/node-transport.ts`), and the InfluxDB providers word it as a server failure; Qdrant's `src/lib/db/providers/vector/qdrant/errors.ts` reads only the kind, so the same cut reads as a server it could not reach.
+
+Found 2026-10-04 while designing the InfluxDB provider (ruling R3: no file under `src/lib/db/providers/` outside the InfluxDB directory changes in that work).
+
+**Done when:** Qdrant's `errors.ts` reads `TransportError.truncated` and says the server failed after accepting the request, with a test over a truncation.
+
+### D204. The plaintext consent survives a Host or Port change, for Db2 and both InfluxDB types
+
+`src/hooks/use-connection-form.ts:342,490,707` keeps `allowInsecureAuth` when Host or Port is edited and sends it whenever SSL mode is `disable`, so a consent given for one host carries the password or token to the next one typed, while the InfluxDB hint says the secret crosses the network to this host.
+This is existing Db2 behaviour (#786).
+
+Found 2026-10-04 by the security review of the InfluxDB provider design (finding SR1 F8), filed by the review-round rulings rather than fixed there, because the shared form change alters Db2's behaviour inside a provider PR.
+
+**Done when:** the connection form clears `allowInsecureAuth` when Host or Port changes, for every type that takes the field, with a hook test; decided as a shared change outside a provider PR.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -3565,6 +3641,31 @@ The tab runs fcose and only fcose (`fcoseLayout` in `src/components/results-grap
 Deferred when the Graph tab was added, as outside its first version's scope; the Known limitations section of `docs/providers/neo4j.md` lists it.
 
 **Done when:** the toolbar offers at least a hierarchical (breadth-first or dagre-style) layout beside fcose, with an accessible name on the control, any new layout package pinned with its licence checked as cytoscape's were, and a test that switching layouts reruns the chosen one.
+
+### U79. The Charts tab draws a time series over its first tag, not its time column
+
+The default x axis is the first categorical field before any date field (`defaultX` in `src/components/DataCharts.tsx:534`), so a tagged time series, such as an InfluxDB result with a `room` tag beside `time`, is drawn over its tag values; this affects Prometheus today.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25); the InfluxDB provider docs say to pick `time` as the x axis.
+
+**Done when:** with a date field and a "line" suggestion the default x axis is the date field, with a unit test.
+
+### U80. Charts "Group by hour" reads a `Z` timestamp in local time
+
+`groupByDate` (`src/components/DataCharts.tsx:434`) reads a timestamp ending in `Z` through local-time getters, so on a machine outside UTC the grouped ticks disagree with the ungrouped ones; every InfluxDB and Prometheus timestamp is UTC with a `Z`.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** `groupByDate` reads a `Z` value in UTC and the grouped tick agrees with the ungrouped one, with a test under a non-UTC `TZ`.
+
+### U81. An InfluxDB 3 connection reads one database, so a server with several needs one connection each
+
+An `influxdb3` connection lists and runs exactly one database, its session database: the connection's `database` field, else the only non-system database the token can list (`src/lib/db/providers/timeseries/influxdb/sql-provider.ts`).
+A server with several databases therefore needs a connection per database, because the query route, the tab model and the editor toolbar carry no database of their own.
+
+Found 2026-10-04 while designing the InfluxDB provider (rulings R1 and R16).
+
+**Done when:** a session-addressed multi-database feature lands: a database level in the tree, a run-body field for the database, a tab field set from the tree, and an editor-toolbar database selector, accepted by the query route only for a type declaring a capability that entry designs, with tests on the route, the tab model and the toolbar.
 
 ## Dependencies
 
@@ -5109,6 +5210,15 @@ Both execution paths guard a statement with SQL readers (`src/lib/db/operations/
 Found 2026-10-03 while designing the Neo4j provider (spec 6.4).
 
 **Done when:** `Neo4jProvider` implements `queryReadOnly` through the same policy, gate and READ session as the editor, `AGENT_EXECUTION_ENGINES` and `RUN_READ_QUERY_ENGINES` name Neo4j, and an agent run and an MCP call each drive a `LOAD CSV` and a write to their refusal in a test.
+
+### B94. InfluxDB has no agent execution and no MCP `run_read_query`
+
+Neither the `influxdb` nor the `influxdb3` provider implements `queryReadOnly`, so `AGENT_EXECUTION_ENGINES` names neither, agent auto mode refuses both, and MCP `run_read_query` answers that the engine is not served; plan mode and the MCP metadata tools work (`MCP_EXPOSABLE` in `src/lib/db/compatibility.ts`).
+Both execution paths guard a statement with SQL readers (`src/lib/db/operations/statement-guard.ts`), and each type needs a statement contract of its own: the InfluxQL read policy for `influxdb`, the DataFusion policy for `influxdb3`.
+
+Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
+
+**Done when:** each type implements `queryReadOnly` under a statement contract of its own (the InfluxQL policy for `influxdb`, the DataFusion policy for `influxdb3`), and agent execution and `run_read_query` serve it, with tests.
 
 ## Passkey deferrals (#785)
 

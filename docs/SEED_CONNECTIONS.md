@@ -58,7 +58,7 @@ defaults:                    # Optional — merges managed/environment/ssl only
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus|kafka|etcd|neo4j|milvus|qdrant
+    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus|kafka|etcd|neo4j|milvus|qdrant|influxdb|influxdb3
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -150,6 +150,41 @@ connections:
     # HTTP either one is readable on the wire, so set `ssl` for a server across a
     # network you do not control.
 
+  - id: "metrics-influx"
+    name: "InfluxDB Metrics"
+    type: influxdb
+    host: "${INFLUX_HOST}"
+    port: 8086                # The v1 /query API of 1.x and 2.x; a 3.x server answers it on 8181
+    database: telegraf        # Optional: a statement that names its database reads that one
+    user: "reader"            # A 1.x user granted READ on the database
+    password: "${INFLUX_READER_PASSWORD}"
+    ssl:
+      mode: verify-full
+    roles: ["*"]
+    environment: production
+    managed: true
+    readOnly: true
+    # On 2.x leave `user` out and put a read token for the bucket in `password`:
+    # a password with no user is sent as a token. Without TLS to a host that is not
+    # loopback the connection is refused unless it sets `allowInsecureAuth: true`.
+    # No `connectionString`: http:// and https:// already parse as ClickHouse.
+
+  - id: "metrics-influx3"
+    name: "InfluxDB 3 Metrics"
+    type: influxdb3
+    host: "${INFLUXDB3_HOST}"
+    port: 8181
+    database: telegraf        # One connection reads one database
+    password: "${INFLUXDB3_TOKEN}"   # Sent as a bearer token; this type takes no `user`
+    ssl:
+      mode: verify-full
+    roles: ["*"]
+    environment: production
+    managed: true
+    readOnly: true
+    # On InfluxDB 3 Core every token is an admin token, so read-only is a property
+    # of what Studio sends, never of the token.
+
   - id: "events-kafka"
     name: "Kafka Events"
     type: kafka
@@ -180,7 +215,7 @@ connections:
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd`, `neo4j`, `milvus`, `qdrant` |
+| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd`, `neo4j`, `milvus`, `qdrant`, `influxdb`, `influxdb3` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**) |
@@ -195,7 +230,7 @@ connections:
 | `connections[].connectionString` | No | — | Full connection string (use `${ENV_VAR}`). Druid and Trino have no URI form this build parses — those connections need `host` and are addressed by host and port only |
 | `connections[].roles` | Yes | — | Access control: `["*"]`, `["admin"]`, `["user"]`, `["admin", "user"]` |
 | `connections[].managed` | No | from defaults | `true` = admin-controlled: not editable in the UI, its secrets stay on the server; `false` = an editable copy for the user |
-| `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd, Neo4j, Milvus and Qdrant); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
+| `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL) and InfluxDB 3 (SQL)); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
 | `connections[].environment` | No | from defaults | Environment badge |
 | `connections[].group` | No | — | Group label |
 | `connections[].color` | No | — | Hex color for badge (e.g., `#10B981`) |
@@ -204,7 +239,7 @@ connections:
 | `connections[].instanceName` | No | — | SQL Server instance name |
 | `connections[].localDataCenter` | No¹ | — | Cassandra local data centre (`datacenter1`). ¹Optional in the schema because no other engine has it, and **required by the Cassandra provider**: the driver refuses to connect without one |
 | `connections[].saslMechanism` | No | - | Kafka: `PLAIN`, `SCRAM-SHA-256` or `SCRAM-SHA-512`, absent meaning none; `user` and `password` are sent only with a mechanism, and only over TLS. It takes a literal name: it is neither a credential nor an address, so a `${ENV}` or `${vault:...}` reference in it is refused when the file loads, naming the field, because the file is validated before any reference is resolved |
-| `connections[].allowInsecureAuth` | No | absent | Db2 only (#786): `true` accepts that a connection with no TLS sends its password to the server in cleartext, which the Db2 provider otherwise refuses when the connection opens ([providers/db2.md](providers/db2.md)). Set `ssl` instead wherever the server offers TLS. Every other engine ignores it. A literal boolean: a `${ENV}` reference fails the whole file |
+| `connections[].allowInsecureAuth` | No | absent | Db2 (#786) and both InfluxDB types: `true` accepts that a connection with no TLS sends its password to the server in cleartext, which the Db2 provider otherwise refuses when the connection opens ([providers/db2.md](providers/db2.md)), and that an InfluxDB connection sends its password or token without TLS to a host that is not loopback, which both InfluxDB providers otherwise refuse before any socket ([providers/influxdb.md](providers/influxdb.md), [providers/influxdb3.md](providers/influxdb3.md)). Set `ssl` instead wherever the server offers TLS. Every other engine ignores it. A literal boolean: a `${ENV}` reference fails the whole file |
 | `connections[].authSource` | No | — | MongoDB: the database its credentials live in (`admin` in the ordinary deployment). Without it the driver checks the user against the database being opened, which reports a credentials error |
 | `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An etcd connection refuses `mcp: true` when the file loads: MCP is not offered for it |
 
@@ -219,7 +254,7 @@ With no seed file, or with no entry that opts in for the token's role, `list_con
 ### A read-only cluster for everyone
 
 `readOnly: true` makes a connection refuse every write, value edit and maintenance operation before any request, on an engine whose provider keeps the mode.
-etcd's, Neo4j's, Milvus's and Qdrant's do today ([providers/etcd.md](providers/etcd.md), section 3.4, the Neo4j recipe below, and [providers/milvus.md](providers/milvus.md) and [providers/qdrant.md](providers/qdrant.md), section 3.4 of each), and on every other engine the file is refused at load, with a sentence naming the type and the field.
+etcd's, Neo4j's, Milvus's, Qdrant's and both InfluxDB types' do today ([providers/etcd.md](providers/etcd.md), section 3.4, the Neo4j recipe below, [providers/milvus.md](providers/milvus.md) and [providers/qdrant.md](providers/qdrant.md), section 3.4 of each, and the InfluxDB recipes above), and on every other engine the file is refused at load, with a sentence naming the type and the field.
 The recipe is two seeds of one cluster: one every role reaches, read-only, and one for the people who may write.
 
 ```yaml
@@ -263,6 +298,8 @@ Milvus declares both: its documented default `root` pair, and no password ([prov
 A Milvus seed's read-only mode is a boundary only when the server has authorization enabled, which is not Milvus's default.
 Qdrant declares the second: a read-only Qdrant seed with no key is refused, because a Qdrant server without a key accepts any key or none ([providers/qdrant.md](providers/qdrant.md), section 4.2).
 Give a read-only Qdrant seed the server's read-only key or a read-scoped JWT, through a reference such as `password: "${QDRANT_READ_ONLY_KEY}"`.
+Both InfluxDB types declare the second too: an InfluxDB 1.x server with authentication off, its default, and an InfluxDB 3 server started with `--without-auth` accept any credential or none, so a read-only InfluxDB seed with no password or token is refused.
+Give a read-only `influxdb` seed a 1.x user granted READ, or a 2.x read token for the bucket, through a reference such as `password: "${INFLUX_READER_PASSWORD}"`, and a read-only `influxdb3` seed a token through a reference such as `password: "${INFLUXDB3_TOKEN}"`.
 On a type that does, the seed loader refuses a `readOnly: true` connection whose credential matches, in two stages: load refuses what the file shows; resolution refuses the rest.
 At load, a literal `user` and `password` that match, or an absent or empty `password`, fail the whole file with an error that names the connection and the `password` field and never repeats the value.
 An absent or empty `password` fails the file whatever the `user` holds, a reference included.

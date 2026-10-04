@@ -16,6 +16,7 @@ It is off by default.
     A column an engine only inferred from sampled data, rather than read from a declaration, is never listed, so a table may hold fields the answer does not show; `columns_omitted` counts only the columns beyond the 50-column cap, and agent grounding and the AI panels never receive such a column either.
     On Milvus it lists the collection's declared fields, with the dynamic field as one `$meta` column and never a key inside it.
     On Qdrant it lists payload-index fields and vectors only, and says that other payload keys may exist: the keys Studio samples from points never reach an MCP client.
+    On InfluxDB (InfluxQL) it lists measurements with their tag and field keys, and on InfluxDB 3 (SQL) tables with their columns; the `_internal` database and the `system.*` tables of a 3.x server are never returned.
   - `run_read_query` runs one read-only statement: a `SELECT` (a `WITH` is fine), `VALUES`, `TABLE`, or `EXPLAIN` without `ANALYZE`.
     Runs on PostgreSQL, SQLite, DuckDB and SQL Server; other engines refuse it, so use inspect_schema there.
 - Read-only is the database's own enforcement, not a filter over SQL text: `run_read_query` takes the connection under Studio's agent read-only execution profile and runs through the provider's read-only statement path, which PostgreSQL enforces with a read-only transaction, SQLite and DuckDB with a read-only open, and SQL Server by verifying the principal cannot write.

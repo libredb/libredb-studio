@@ -4,7 +4,9 @@ This document outlines the architectural patterns, tech stack, and system design
 
 ## System Overview
 
-LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **24 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Trino, Apache Cassandra, Elasticsearch, OpenSearch, Redis, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, LibreDB. The count is the `SHIPPED` record in [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts), which is exhaustive over `DatabaseType`; `elasticsearch` and `opensearch` are two ids served by one provider module.
+LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser.
+It supports **26 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Trino, Apache Cassandra, Elasticsearch, OpenSearch, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, LibreDB.
+The count is the `SHIPPED` record in [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts), which is exhaustive over `DatabaseType`; `elasticsearch` and `opensearch` are two ids served by one provider module, and `influxdb` and `influxdb3` are two ids served by one provider directory with a class each.
 
 It runs in two modes: as a **standalone Next.js app** and as an **embedded npm package** (`@libredb/studio`) consumed by libredb-platform. See [§4.6](#46-workspace-abstraction-npm-package-embedding).
 
@@ -64,6 +66,7 @@ graph TD
         KeyValue --> Redis[(Redis)]
         KeyValue --> Etcd[(etcd)]
         TimeSeries --> Prometheus[(Prometheus)]
+        TimeSeries --> InfluxDB[(InfluxDB / InfluxDB 3)]
         Stream --> Kafka[(Apache Kafka)]
         Graph --> Neo4j[(Neo4j)]
         Vector --> Milvus[(Milvus)]
@@ -125,6 +128,7 @@ classDiagram
     BaseDatabaseProvider <|-- CouchbaseProvider
     BaseDatabaseProvider <|-- RedisProvider
     BaseDatabaseProvider <|-- PrometheusProvider
+    BaseDatabaseProvider <|-- InfluxDBProvider
     BaseDatabaseProvider <|-- KafkaProvider
     BaseDatabaseProvider <|-- EtcdProvider
     BaseDatabaseProvider <|-- GraphBaseProvider
@@ -145,6 +149,7 @@ classDiagram
     SQLBaseProvider <|-- CassandraProvider
     SQLBaseProvider <|-- LibSQLProvider
     SQLBaseProvider <|-- DuckDBProvider
+    SQLBaseProvider <|-- InfluxDB3Provider
 
     GraphBaseProvider <|-- Neo4jProvider
 ```
@@ -339,7 +344,9 @@ src/
     │   │   ├── sql/         # postgres, mysql, sqlite (+ sqlite-driver runtime adapter), oracle, db2/ (driver seam + SYSCAT catalog over db2-node), mssql, clickhouse/ (transport seam + SQL over HTTP), druid/ (transport seam + SQL over POST /druid/v2/sql), search/ (transport seam + SQL over HTTP; elasticsearch and opensearch, two ids one module), trino/ (transport seam + SQL over the Trino client protocol), cassandra/ (transport seam + CQL over the native protocol via cassandra-driver), libsql/ (transport seam + SQLite's dialect over the Hrana protocol), duckdb/ (driver seam + an embedded analytical engine over @duckdb/node-api)
     │   │   ├── document/    # mongodb, couchbase/ (transport seam + SQL++ over REST)
     │   │   ├── keyvalue/    # redis, etcd/ (gRPC client seam + an etcdctl subset over etcd's gRPC API via the shared gRPC transport)
-    │   │   ├── timeseries/  # prometheus/ (transport seam + PromQL over the Prometheus HTTP API)
+    │   │   ├── timeseries/  # prometheus/ (transport seam + PromQL over the Prometheus HTTP API); influxdb/ (influxdb and influxdb3, two classes on two bases
+    │   │   │                #   sharing one connection layer over the shared node transport: InfluxQL over the v1 /query API, and SQL over
+    │   │   │                #   InfluxDB 3's /api/v3/query_sql; the InfluxQL lexer, read policy, quoter and generators are browser-safe)
     │   │   ├── stream/      # kafka/ (read-client seam + JSON read requests over the Kafka protocol via @platformatic/kafka)
     │   │   ├── graph/       # neo4j/ (an engine profile, catalog, statement gate and monitoring on the graph layer below)
     │   │   ├── vector/      # milvus/ (a gRPC client of its own via the shared gRPC transport, Milvus's REST v2 requests as the console, run over gRPC); qdrant/ (a REST client of its own over the shared node transport, the closed console, the payload sample)
@@ -359,7 +366,7 @@ src/
     │                        #   cookie, WebAuthn wrapper, management and sign-in services, browser client
     ├── llm/                 # LLM provider module
     ├── editor/              # Monaco completions (SQL + MongoDB), the tab-type/language ladder, the
-    │                       # editor registry (dialect-editors.ts), the LibreDB, Redis and etcd command languages, Cypher, and the Milvus and Qdrant console languages
+    │                       # editor registry (dialect-editors.ts), the LibreDB, Redis and etcd command languages, Cypher, InfluxQL, and the Milvus and Qdrant console languages
     ├── schema-diff/         # Diff engine + migration SQL generator
     ├── export/              # The writers behind every "save this to disk": RFC 4180 CSV,
     │                        #   the SQL INSERT/DDL forms, and the one blob-download path
