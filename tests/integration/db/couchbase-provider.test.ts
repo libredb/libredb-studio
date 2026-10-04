@@ -506,7 +506,7 @@ describe("CouchbaseProvider query", () => {
 
   test("wraps SELECT RAW scalars so the grid gets one honest column", async () => {
     // SELECT RAW / SELECT VALUE return bare scalars, not objects. Handing those
-    // through unchanged makes deriveFields call Object.keys on a string, which
+    // through unchanged makes the column union call Object.keys on a string, which
     // yields one column per character index.
     const provider = await connectProvider();
     queryHandler = () => queryPayload(["Grand Plaza", "Seaside Inn"] as unknown as Record<string, unknown>[]);

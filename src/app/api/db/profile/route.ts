@@ -13,7 +13,13 @@ import { type DatabaseProvider, offersColumnProfiling } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
-import { jsonCommandAddress, objectSegment, quoteIdentifier, quoteObjectPath } from "@/lib/query-generators";
+import {
+  jsonCommandAddress,
+  objectSegment,
+  outermostFieldPaths,
+  quoteIdentifier,
+  quoteObjectPath,
+} from "@/lib/query-generators";
 import type { ColumnProfile } from "@/lib/export/data-profile";
 import { renderValue } from "@/lib/export/csv";
 
@@ -32,6 +38,21 @@ function field(row: Record<string, unknown> | undefined, name: string): unknown 
   if (Object.hasOwn(row, name)) return row[name];
   const folded = Object.keys(row).find((key) => key.toLowerCase() === name.toLowerCase());
   return folded === undefined ? undefined : row[folded];
+}
+
+/**
+ * A MongoDB field's value in a sampled document, `address.geo.lat` read by walking the nested
+ * document: a projected document stays nested, so a dotted column is never a key of the row,
+ * and reading it as one profiled every nested field as 100 % null. A path that crosses a
+ * scalar, an array or a missing field is absent, as the field is in that document.
+ */
+function valueAtPath(row: Record<string, unknown>, path: string): unknown {
+  let value: unknown = row;
+  for (const segment of path.split(".")) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+    value = (value as Record<string, unknown>)[segment];
+  }
+  return value;
 }
 
 /** A MIN or MAX as the text the profiler shows, through the export's own spelling of a value. */
@@ -211,6 +232,13 @@ export async function POST(req: NextRequest) {
 
       const isSQL = capabilities.queryLanguage === "sql";
 
+      // Refused for both branches: SQL has no statement to write without a column, and
+      // MongoDB refuses the empty `$project` an empty list would build.
+      const colList = (columns || []) as string[];
+      if (colList.length === 0) {
+        return NextResponse.json({ error: "No columns to profile" }, { status: 400 });
+      }
+
       if (!isSQL) {
         // MongoDB profiling. The database rides as its own key: the connected database is
         // not the collection's database in general, and without the key both reads went to
@@ -221,7 +249,9 @@ export async function POST(req: NextRequest) {
           operation: "aggregate",
           pipeline: [
             { $sample: { size: 1000 } },
-            { $project: Object.fromEntries((columns || []).map((c: string) => [c, 1])) },
+            // The outermost paths only: the column list names a subdocument beside its own
+            // dotted children, and a `$project` naming both is refused as a path collision.
+            { $project: Object.fromEntries(outermostFieldPaths(colList).map((c) => [c, 1])) },
           ],
         });
         const sampleResult = await provider.query(profileQuery);
@@ -239,8 +269,8 @@ export async function POST(req: NextRequest) {
         );
 
         const totalRows = totalCountResult.rows[0]?.count || sampleResult.rows.length;
-        const columnProfiles = (columns || []).map((col: string) => {
-          const values = sampleResult.rows.map((r) => r[col]).filter((v) => v !== undefined);
+        const columnProfiles = colList.map((col) => {
+          const values = sampleResult.rows.map((r) => valueAtPath(r, col)).filter((v) => v !== undefined);
           const nullCount = sampleResult.rows.length - values.length;
           const distinctValues = new Set(values.map((v) => JSON.stringify(v)));
 
@@ -251,7 +281,9 @@ export async function POST(req: NextRequest) {
             nullCount,
             nullPercent: sampleResult.rows.length > 0 ? Math.round((nullCount / sampleResult.rows.length) * 100) : 0,
             distinctCount: distinctValues.size,
-            sampleValues: values.slice(0, 5).map((v) => String(v)),
+            // Spelled as the SQL branch spells them: a subdocument or an array as its JSON
+            // (`String` answered `[object Object]`), and a null as `NULL`.
+            sampleValues: values.slice(0, 5).map((v) => (v === null ? "NULL" : renderValue(v))),
           };
         });
 
@@ -259,11 +291,6 @@ export async function POST(req: NextRequest) {
       }
 
       // SQL profiling
-      const colList = (columns || []) as string[];
-      if (colList.length === 0) {
-        return NextResponse.json({ error: "No columns to profile" }, { status: 400 });
-      }
-
       // Quote the ADDRESS once for the target dialect, per segment and never by splitting a
       // string: two containers may hold one label, and a name may itself contain a dot.
       const safeTable = quoteObjectPath(path, capabilities);

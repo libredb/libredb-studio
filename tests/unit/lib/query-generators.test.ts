@@ -2,6 +2,7 @@ import { beforeAll, describe, test, expect } from "bun:test";
 import {
   generateTableQuery,
   generateSelectQuery,
+  outermostFieldPaths,
   shouldRefreshSchema,
   quoteIdentifier,
   quoteObjectPath,
@@ -337,6 +338,27 @@ describe("generateSelectQuery — LibreDB dialect", () => {
   });
 });
 
+describe("outermostFieldPaths", () => {
+  test("drops every path whose ancestor is listed, at any depth and in any order", () => {
+    expect(outermostFieldPaths(["address.geo.lat", "address.city", "_id", "address", "address.geo"])).toEqual([
+      "_id",
+      "address",
+    ]);
+  });
+
+  test("a shared prefix that is not a whole segment is not an ancestor", () => {
+    expect(outermostFieldPaths(["address", "addressBook", "address2.city"])).toEqual([
+      "address",
+      "addressBook",
+      "address2.city",
+    ]);
+  });
+
+  test("children whose subdocument is not listed are kept, and duplicates collapse", () => {
+    expect(outermostFieldPaths(["geo.lat", "geo.lng", "name", "name"])).toEqual(["geo.lat", "geo.lng", "name"]);
+  });
+});
+
 // ============================================================================
 // generateSelectQuery
 // ============================================================================
@@ -361,6 +383,19 @@ describe("generateSelectQuery", () => {
     expect(parsed.options.projection.id).toBe(1);
     expect(parsed.options.projection.name).toBe(1);
     expect(parsed.options.limit).toBe(100);
+  });
+
+  test("JSON (MongoDB) never projects a subdocument beside one of its own paths", () => {
+    // Inference lists a subdocument and its dotted children side by side, and MongoDB refuses
+    // a projection that names both: `Path collision at address.city remaining portion city`
+    // (measured on mongo:8.2.12). The subdocument already returns every child.
+    const nested = ["_id", "address", "address.city", "address.geo", "address.geo.lat", "addressBook", "name"].map(
+      (name) => ({ name, type: "string", nullable: true, isPrimary: name === "_id" }),
+    );
+    const parsed = JSON.parse(
+      generateSelectQuery(["people"], nested, makeCaps({ queryLanguage: "json", defaultPort: null })),
+    );
+    expect(parsed.options.projection).toEqual({ _id: 1, address: 1, addressBook: 1, name: 1 });
   });
 
   test("Oracle uses FETCH FIRST 100 ROWS ONLY", () => {
@@ -2115,7 +2150,9 @@ describe("PromQL Generate Query (#1085)", () => {
  * tests/unit/components/object-tree-row-actions.test.ts), which Prometheus does not: its whole
  * capability object is pinned in tests/unit/db/prometheus/provider.test.ts. `jsonCommandAddress` is
  * read only inside a `queryLanguage === "json"` arm: the three generators' own, the profiler's after
- * the language refusal above, and Generate Test Data's, which no metric row offers. An export added later has
+ * the language refusal above, and Generate Test Data's, which no metric row offers. `outermostFieldPaths`
+ * reduces MongoDB field paths for a projection and is read in the same two `json` places: the select
+ * generator's arm and the profiler's MongoDB branch. An export added later has
  * no classification, so this list fails until somebody writes one for it.
  */
 describe("the module's exports, for a PromQL connection (#1085)", () => {
@@ -2127,6 +2164,7 @@ describe("the module's exports, for a PromQL connection (#1085)", () => {
       "generateTableQuery",
       "jsonCommandAddress",
       "objectSegment",
+      "outermostFieldPaths",
       "quoteIdentifier",
       "quoteObjectPath",
       "shouldRefreshSchema",

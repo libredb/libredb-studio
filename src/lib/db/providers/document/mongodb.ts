@@ -60,6 +60,7 @@ import {
 import { comparePaths } from "@/lib/db/object-path";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
+import { unionFields } from "../../utils/result-fields";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
 /**
@@ -1163,7 +1164,9 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
           return {
             rows: serializedRows,
-            fields: serializedRows.length > 0 ? Object.keys(serializedRows[0]) : [],
+            // Documents of one collection need not share keys, so the columns are every
+            // document's keys, not the first one's (see result-fields.ts).
+            fields: unionFields(serializedRows),
             affectedCount,
           };
         } catch (error) {

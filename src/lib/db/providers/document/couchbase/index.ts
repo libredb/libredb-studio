@@ -61,6 +61,7 @@ import {
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { applyQueryLimit, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
+import { unionFields } from "@/lib/db/utils/result-fields";
 import { CouchbaseHttpTransport } from "./http-transport";
 import { CATALOG_TIMEOUT_MS, inferColumns, inferColumnsEach } from "./introspect";
 import { COUCHBASE_DEFAULT_SCOPE, keyspaceFromDisplayName, keyspacePath, quoteIdentifier } from "./keyspace";
@@ -270,19 +271,6 @@ function round2(value: number): number {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * Column names for a wildcard projection. `SELECT *` nests whole documents
- * under the keyspace name and advertises only a wildcard signature, so the
- * columns are the union of the keys the rows actually carry, first seen first.
- */
-function deriveFields(rows: CouchbaseRow[]): string[] {
-  const fields = new Set<string>();
-  for (const row of rows) {
-    for (const key of Object.keys(row)) fields.add(key);
-  }
-  return [...fields];
 }
 
 /**
@@ -545,7 +533,9 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     const rows = result.rows.map(normalizeRow);
     return {
       rows,
-      fields: result.fieldNames ?? deriveFields(rows),
+      // `SELECT *` nests whole documents under the keyspace name and advertises only a
+      // wildcard signature (`fieldNames` null), so the columns are the keys the rows carry.
+      fields: result.fieldNames ?? unionFields(rows),
       // A mutation returns no rows; its row count is what it changed.
       rowCount: rows.length > 0 ? rows.length : result.mutationCount,
       executionTime: reportedMs > 0 ? reportedMs : measuredMs,

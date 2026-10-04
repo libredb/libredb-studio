@@ -268,7 +268,6 @@ const NAMED_CITATIONS = [
       "disconnect",
       "query",
       "endOpenQueryTransaction",
-      "commandBody",
       "executeRedisCommand",
       "runCommand",
       "formatResult",
