@@ -1,7 +1,7 @@
 import "../../setup-dom";
 import "../../helpers/mock-navigation";
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import React from "react";
 import { mockGlobalFetch, restoreGlobalFetch, type MockFetchResponse } from "../../helpers/mock-fetch";
@@ -136,6 +136,28 @@ describe("PlatformDiscoveryCard", () => {
     expect(getByText("host does not match the allowed pattern")).not.toBeNull();
     expect(queryByTestId("platform-discovery-error")).toBeNull();
     expect(queryByRole("alert")).toBeNull();
+  });
+
+  // The exporter strips srv-captain-- from a service name and does not dedupe on the result, so a
+  // legacy srv-captain--foo and a bare foo both arrive as "foo" and can be skipped for the same
+  // reason. Two rows then have the same app name and reason, and must not share a React key.
+  test("renders two identical skipped entries as two rows without a duplicate-key warning", async () => {
+    const twin = { appName: "foo", reason: "id taken by the seed file" };
+    mockGlobalFetch({ "/api/admin/discovery": answer(status({ skipped: [twin, { ...twin }] })) });
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const { findByTestId, getByText, getAllByText } = await renderCard();
+      await findByTestId("platform-discovery-card");
+
+      expect(getByText("Skipped (2)")).not.toBeNull();
+      expect(getAllByText("foo")).toHaveLength(2);
+      expect(getAllByText("id taken by the seed file")).toHaveLength(2);
+      // React reports a duplicate key through console.error; any other error fails this as well.
+      expect(errors.mock.calls.map((call) => call.map(String).join(" "))).toEqual([]);
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   test("shows the waiting state with Never and empty lists", async () => {

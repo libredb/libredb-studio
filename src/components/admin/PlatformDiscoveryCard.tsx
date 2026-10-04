@@ -130,8 +130,12 @@ export function PlatformDiscoveryCard() {
             <p className="text-xs text-fg-muted">{NONE_LABEL}</p>
           ) : (
             <ul className="space-y-1">
-              {discovery.skipped.map((entry) => (
-                <li key={`${entry.appName}:${entry.reason}`} className="flex items-start justify-between gap-4">
+              {discovery.skipped.map((entry, index) => (
+                <li
+                  // oxlint-disable-next-line react/no-array-index-key -- srv-captain--foo and a bare foo are both "foo", so two entries can share a name and a reason; the list is read-only and rebuilt whole on every answer.
+                  key={`${index}:${entry.appName}:${entry.reason}`}
+                  className="flex items-start justify-between gap-4"
+                >
                   <span className="text-fg-secondary">{entry.appName}</span>
                   <span className="text-xs text-fg-muted text-right">{entry.reason}</span>
                 </li>
