@@ -13,6 +13,10 @@ import { join } from "node:path";
 import { TLSSocket } from "node:tls";
 import { cancelRequestMessage, sendPgCancelRequest, sslRequestMessage } from "@/lib/db/providers/sql/pg-wire-cancel";
 import { loadTlsFixtures } from "../../helpers/tls-fixtures";
+import { testIf } from "../../helpers/posix-tools";
+
+const NO_POSIX_SOCKET_DIRECTORY: string | null =
+  process.platform === "win32" ? "a socket directory is a POSIX path starting with /" : null;
 
 const TLS = loadTlsFixtures();
 
@@ -78,7 +82,9 @@ describe("sendPgCancelRequest", () => {
     expect(Buffer.concat(received).equals(cancelRequestMessage(42, 7))).toBe(true);
   });
 
-  test("reaches a server listening in a Unix socket directory", async () => {
+  // `pg` takes a host starting with "/" as a socket directory, a POSIX path; a Windows
+  // temporary directory starts with a drive letter, so the case does not exist there.
+  testIf(NO_POSIX_SOCKET_DIRECTORY, "reaches a server listening in a Unix socket directory", async () => {
     socketDir = mkdtempSync(join(tmpdir(), "pgcancel-"));
     const { received } = await listen((socket) => socket.end(), join(socketDir, ".s.PGSQL.5432"));
 
