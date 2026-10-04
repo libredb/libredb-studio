@@ -542,6 +542,46 @@ describe("discovery-loader", () => {
       expect(reads).toHaveLength(2);
     });
 
+    it("starts a new read for a caller after resetDiscoveryCache, and caches and logs only its result", async () => {
+      const release: ((content: string) => void)[] = [];
+      const gated = deps({
+        readFile: () =>
+          new Promise<string>((resolve) => {
+            release.push(resolve);
+          }),
+      });
+
+      const beforeReset = getDiscoveryStatus(gated);
+      resetDiscoveryCache();
+      const afterReset = getDiscoveryStatus(gated);
+      // The caller after the reset started its own read instead of joining the pending one.
+      expect(release).toHaveLength(2);
+
+      // The read from before the reset settles first, with a file that would be logged as a source error.
+      release[0]("not json");
+      expect((await beforeReset)?.state).toBe("error");
+      expect(warn).not.toHaveBeenCalled();
+      // Nothing of it was cached either: a caller arriving now joins the recompute still pending.
+      const joined = getDiscoveryStatus(gated);
+      expect(release).toHaveLength(2);
+
+      release[1](exportFile({ services: [NO_PASSWORD, POSTGRES] }));
+      expect((await afterReset)?.state).toBe("ok");
+      expect((await joined)?.state).toBe("ok");
+
+      const { reads, readFile: read } = countingRead();
+      const cached = await statusNow({ readFile: read });
+      expect(reads).toEqual([]);
+      expect(cached.state).toBe("ok");
+      expect(cached.connected).toEqual([PG_CONNECTED]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith("Discovered service skipped", {
+        route: ROUTE,
+        appName: "nopass",
+        reason: expect.any(String),
+      });
+    });
+
     it("shares one read and one probe per host between concurrent callers, also after expiry", async () => {
       write(exportFile({ services: [POSTGRES, MARIADB] }));
       const { reads, readFile: read } = countingRead();
