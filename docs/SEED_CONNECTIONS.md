@@ -973,8 +973,8 @@ This is expected: deleting a `managed: false` connection adds its seed ID to `li
    If the exporter's log says `refusing to start: /app/discovery is owned by uid 0, not by this process (uid 1001)`, it was started through the image entrypoint, which a Compose `command:` alone does: set `entrypoint:` as in the fragment under [The exporter](#the-exporter).
 4. `error` with `socket_unavailable`: the exporter cannot open the Docker socket.
    It must run as root with `/var/run/docker.sock` mounted.
-5. `error` with `swarm_unavailable`: the exporter runs on a worker node.
-   Pin the `-discovery` app to the manager.
+5. `error` with `swarm_unavailable`: the exporter runs on a worker node, and so does Studio, because it reads that node's volume.
+   Pin both apps to the same manager node under **App Configs**.
 6. `error` with `network_not_found`: no Docker network has exactly the name `DISCOVERY_NETWORK` gives, or the exporter runs where that network does not exist, for example outside a swarm.
    Check the variable against `docker network ls` on the manager; CapRover's own network is `captain-overlay-network`.
 7. `error` with one of these codes:
