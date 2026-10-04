@@ -143,7 +143,7 @@ const SERVER_WIDE_STATEMENTS: readonly (readonly string[])[] = [
 const SERVER_WIDE_WORDS = Math.max(...SERVER_WIDE_STATEMENTS.map((statement) => statement.length));
 const INSIGNIFICANT: ReadonlySet<string> = new Set(["whitespace", "line-comment", "block-comment"]);
 
-const CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+const INFLUXQL_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
   code: INFLUXDB,
   label: "An InfluxDB",
   shapeNames: "label",
@@ -463,7 +463,7 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
 
   /** The one database a container path names, refused unless it is `[database]` (the Cassandra declaration). */
   private containerDatabase(container: readonly string[]): string {
-    assertContainerPathShape(this.getCapabilities(), container, CONTAINER_PATH_ENGINE);
+    assertContainerPathShape(this.getCapabilities(), container, INFLUXQL_CONTAINER_PATH_ENGINE);
     return container[0];
   }
 

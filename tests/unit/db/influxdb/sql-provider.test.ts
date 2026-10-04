@@ -775,7 +775,7 @@ describe("the object surface (spec 4, R16)", () => {
       // oxlint-disable-next-line no-await-in-loop -- each refusal is checked in turn.
       const error = await rejection(call());
       expect(error).toBeInstanceOf(QueryError);
-      expect(error.message).toBe('An InfluxDB 3 container path is empty, received ["home"]');
+      expect(error.message).toBe('An InfluxDB 3 connection has no container level; received ["home"]');
     }
     for (const call of [
       () => provider.listObjects([], "measurement"),

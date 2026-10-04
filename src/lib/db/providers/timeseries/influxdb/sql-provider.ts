@@ -165,7 +165,10 @@ const RESOURCE_TOKEN_VERSION: InfluxServerVersion = Object.freeze({ generation: 
  */
 function requireRoot(container: readonly string[]): void {
   if (container.length !== 0) {
-    throw new QueryError(`An InfluxDB 3 container path is empty, received ${JSON.stringify(container)}`, INFLUXDB3);
+    throw new QueryError(
+      `An InfluxDB 3 connection has no container level; received ${JSON.stringify(container)}`,
+      INFLUXDB3,
+    );
   }
 }
 
