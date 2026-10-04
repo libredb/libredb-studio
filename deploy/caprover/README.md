@@ -95,9 +95,10 @@ Below, `studio` stands for its app name.
 
 1. In the `studio` app, under **App Configs**, add a persistent directory with **Path in App** `/app/discovery` and **Label** `studio-discovered`.
    Add the environment variables `SEED_DISCOVERY_PATH=/app/discovery/services.json` and `SEED_CACHE_TTL_MS=5000`, and `TRUSTED_PROXY_HOPS=1` if it is not set yet.
+   To list only the CapRover databases, as the template does, also add `LIBREDB_EMBEDDED_SAMPLE=false` and `SQLITE_EMBEDDED_SAMPLE=false`; without them the two built-in sample connections stay listed.
    Click **Save & Restart**.
 2. Create an app named `studio-discovery` with **Has Persistent Data** checked.
-3. In `studio-discovery`, under **HTTP Settings**, check **Do not expose as web-app externally** and save.
+3. In `studio-discovery`, under **HTTP Settings**, check **Do not expose as web-app externally** and click **Save & Restart**.
 4. In `studio-discovery`, under **App Configs**:
    - add a persistent directory with **Path in App** `/app/discovery` and **Label** `studio-discovered`, the same label as in step 1;
    - add a persistent directory with **Path in App** `/var/run/docker.sock`, choose **Set specific host path**, and enter `/var/run/docker.sock` as **Path on Host**;
@@ -110,6 +111,8 @@ Below, `studio` stands for its app name.
      ContainerSpec:
        Command: ['node', '/usr/local/lib/libredb-studio/discover.mjs']
    ```
+
+   Until step 5 deploys the Studio image, this app still runs CapRover's placeholder image, so its tasks fail with `exec: "node": executable file not found in $PATH`; that is expected.
 
 5. In `studio-discovery`, under **Deployment**, deploy the image `ghcr.io/libredb/libredb-studio:<version>` with the same `<version>` the `studio` app runs.
 6. Sign in to Studio as the admin and open the Overview page under Admin.
