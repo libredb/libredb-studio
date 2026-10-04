@@ -437,15 +437,21 @@ export function useConnectionManager(storageReady = false) {
     let refreshInFlight = false;
 
     /*
-      The active connection keeps its object identity while its id is still listed: a new
-      object for the same connection resets the transaction, discards edits and re-reads the
-      schema (Studio's connection-change effect). When its id is gone, the first remaining
-      connection becomes active and the user is told, once, because the next refresh finds
-      the new active connection listed.
+      The active connection keeps its object identity while its id is still listed, and the
+      refreshed list carries that same object in place of its fresh copy: every way of picking a
+      connection (sidebar, mobile list and header, command palette) hands the list's object to
+      setActiveConnection, and a new object for the same connection resets the transaction,
+      discards edits and re-reads the schema (Studio's connection-change effect). When its id is
+      gone, the first remaining connection becomes active and the user is told, once, because
+      the next refresh finds the new active connection listed.
     */
     const applyManagedRefresh = (next: DatabaseConnection[]) => {
-      setConnections(next);
       const active = activeConnectionRef.current;
+      setConnections(
+        active !== null && next.some((c) => c.id === active.id)
+          ? next.map((c) => (c.id === active.id ? active : c))
+          : next,
+      );
       if (active === null) {
         setActiveConnection((prev) => prev ?? next[0] ?? null);
         return;

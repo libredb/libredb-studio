@@ -1562,7 +1562,38 @@ describe("useConnectionManager", () => {
       // A new object for the same id would reset the transaction, discard edits and re-read
       // the schema in Studio's connection-change effect.
       expect(result.current.activeConnection).toBe(activeBefore);
+      // The list carries that same object: every way of picking a connection passes the list's entry to
+      // setActiveConnection, so a fresh copy there would re-run Studio's effect on a click on the open one.
+      expect(result.current.connections.find((c) => c.id === "managed-1")).toBe(
+        result.current.activeConnection ?? undefined,
+      );
       expect(mockToastSuccess).not.toHaveBeenCalled();
+    });
+
+    test("the user's own active connection stays the list's entry after a refresh with no managed connection", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      storage.saveConnection(makeConnection({ id: "plain-1", name: "Plain" }));
+      const fetchMock = mockGlobalFetch({
+        "/api/connections/managed": { ok: true, json: { connections: [] } },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+      const activeBefore = result.current.activeConnection;
+      const listBefore = result.current.connections;
+
+      focusWindow();
+      await waitFor(() => {
+        expect(result.current.connections).not.toBe(listBefore);
+      });
+      expect(managedCallCount(fetchMock)).toBe(2);
+      expect(result.current.activeConnection).toBe(activeBefore);
+      expect(result.current.connections.find((c) => c.id === "plain-1")).toBe(
+        result.current.activeConnection ?? undefined,
+      );
     });
 
     test("a withdrawn active connection falls back to the first remaining one with exactly one notice", async () => {
@@ -1602,6 +1633,76 @@ describe("useConnectionManager", () => {
       });
       await sleep(50);
       expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+    });
+
+    test("withdrawing the last connection leaves none active, with exactly one notice", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      let managedCalls = 0;
+      const fetchMock = mockGlobalFetch({
+        "/api/connections/managed": () => {
+          managedCalls += 1;
+          return { ok: true, json: { connections: managedCalls === 1 ? [firstManaged()] : [] } };
+        },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("managed-1");
+      });
+
+      focusWindow();
+      await waitFor(() => {
+        expect(result.current.connections).toEqual([]);
+      });
+      expect(result.current.activeConnection).toBeNull();
+      expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+      expect(mockToastSuccess).toHaveBeenCalledWith("Connection removed", {
+        description: "First DB is no longer available.",
+      });
+
+      // Two more refreshes find nothing to withdraw and say nothing more.
+      focusWindow();
+      await waitFor(() => {
+        expect(managedCallCount(fetchMock)).toBe(3);
+      });
+      focusWindow();
+      await waitFor(() => {
+        expect(managedCallCount(fetchMock)).toBe(4);
+      });
+      await sleep(50);
+      expect(result.current.activeConnection).toBeNull();
+      expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+    });
+
+    test("withdrawing another connection keeps the active one, wherever it sits in the list, with no notice", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      storage.saveConnection(makeConnection({ id: "plain-1", name: "Plain" }));
+      storage.setActiveConnectionId("plain-1");
+      let managedCalls = 0;
+      mockGlobalFetch({
+        "/api/connections/managed": () => {
+          managedCalls += 1;
+          return {
+            ok: true,
+            json: { connections: managedCalls === 1 ? [firstManaged(), secondManaged()] : [firstManaged()] },
+          };
+        },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+      const activeBefore = result.current.activeConnection;
+
+      focusWindow();
+      await waitFor(() => {
+        expect(result.current.connections.map((c) => c.id)).toEqual(["managed-1", "plain-1"]);
+      });
+      expect(result.current.activeConnection).toBe(activeBefore);
+      expect(mockToastSuccess).not.toHaveBeenCalled();
     });
   });
 });
