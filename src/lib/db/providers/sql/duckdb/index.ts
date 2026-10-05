@@ -214,15 +214,20 @@ const LOCK_CONFLICT_MARKER = "conflicting lock is held";
 const PERMISSION_REFUSAL_PREFIX = "Permission Error:";
 
 /**
- * The reason put in front of such a refusal on an editor handle opened with file access denied
- * (B1 / K1). The engine says only that file system operations are "disabled by configuration",
- * which reads like a server fault to the user and tells the operator nothing about the role, so
- * the policy is named the way the read-only reason is for an unwritable file (#1405). It names
- * both cases the posture covers: a non-admin role, and every role on a seed a non-admin role can
- * use.
+ * The reason put in front of such a refusal on an editor handle opened with file access denied (the
+ * non-admin DuckDB file-access change). The engine says only that file system operations are "disabled
+ * by configuration", which reads like a server fault to the user and tells the operator nothing about
+ * why, so the handle's posture is named the way the read-only reason is for an unwritable file
+ * (#1405).
+ *
+ * It is worded around the HANDLE, not Studio's roles alone, because the handle opens denied in three
+ * cases: a non-admin role, every role on a connection a non-admin role can use, and a library embedder
+ * of `@libredb/studio/providers` that built the provider without passing
+ * `{ allowExternalFileAccess: true }` (fail closed). The last caller has no admin/non-admin model, so
+ * the opt-in is named rather than a role policy it cannot act on.
  */
 const FILE_ACCESS_DENIED_REASON =
-  "File and network access is off on this DuckDB connection, because Studio allows it only to an admin on a connection no non-admin role can use";
+  "File and network access is off on this DuckDB connection: the handle was opened with external access denied, which Studio does for every role but admin and for any connection a non-admin role can use, and which an embedder overrides by passing { allowExternalFileAccess: true }";
 
 export function mapDuckDBError(error: unknown, sql?: string): Error {
   if (error instanceof DatabaseError || error instanceof ExecutionProfileError) return error;
@@ -455,6 +460,11 @@ export class DuckDBProvider extends SQLBaseProvider {
       // so a second Studio handle on it is not a lesser handle - it is no handle at
       // all. See `findOpenSingleWriterProvider` (BACKLOG D3, B49).
       singleWriterFile: true,
+      // This provider reads `ProviderExecutionContext.allowExternalFileAccess` and opens its editor
+      // handle under that posture (the non-admin DuckDB file-access change). The cache key and the
+      // single-writer borrow split DuckDB handles by posture because of it, through
+      // `READS_FILE_ACCESS_POSTURE`, never a `connection.type` branch.
+      readsFileAccessPosture: true,
       // Declared explicitly rather than left to `query-generators.ts`'s port
       // heuristics: `defaultPort: null` is shared with sqlite, and two engines behind
       // one null port is the collision that forced this field for the search engines.

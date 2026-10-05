@@ -40,6 +40,8 @@
 
 import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import * as fs from "fs";
+import * as os from "os";
+import { join } from "path";
 import { ConnectionError } from "../../../errors";
 
 // ============================================================================
@@ -341,10 +343,16 @@ const EXTENSION_POLICY = {
  *
  * So: agent read-only = both; full-reach editor = neither; denied editor = external access off,
  * database still writable; denied editor on an unwritable file = both.
+ *
+ * `privateTempDir` is passed for a handle whose external access is off, and it goes into the map
+ * BEFORE `enable_external_access` on purpose: the engine refuses a `temp_directory` set after that
+ * ("Failed to set config", measured). See `openDuckDBClient` for why the handle needs a private one.
  */
-function openConfig(options: DuckDBOpenOptions): Record<string, string> {
+function openConfig(options: DuckDBOpenOptions, privateTempDir: string | null): Record<string, string> {
   const config: Record<string, string> = { ...EXTENSION_POLICY };
   if (options.readOnly || options.unwritableFile) config.access_mode = "READ_ONLY";
+  // Must precede `enable_external_access` below: once that is off the engine refuses a temp_directory.
+  if (privateTempDir !== null) config.temp_directory = privateTempDir;
   if (options.readOnly || options.denyExternalAccess) config.enable_external_access = "false";
   return config;
 }
@@ -393,6 +401,14 @@ function openConfig(options: DuckDBOpenOptions): Record<string, string> {
  * property that lets the postures rely on them - `SET memory_limit` IS allowed on a
  * read-only handle, so "the engine refuses to be reconfigured" is not a given.
  *
+ * A handle with external access off also gets a PRIVATE temp directory, created here with
+ * `mkdtemp` (mode 0700) and removed in `close()`. DuckDB still allow-lists a denied handle's own
+ * temp directory, and the default for every `:memory:` database in the process is the shared
+ * `<cwd>/.tmp`: without a private one, a denied `:memory:` handle could `glob`, `read_blob` and
+ * `COPY ... TO` another session's spill files there (measured). A private per-handle directory makes
+ * `allowed_directories` that directory alone. The full-reach editor keeps the engine default, since
+ * it can reach any file regardless.
+ *
  * So the handle has three editor postures and the agent one:
  *
  * - AGENT READ-ONLY (`readOnly`): both options. The database is read-only and no statement
@@ -412,12 +428,22 @@ export async function openDuckDBClient(path: string, options: DuckDBOpenOptions)
 
   assertDuckDBFile(path);
 
+  // A handle with external access off gets a private temp directory, so its spill files and its
+  // `allowed_directories` allow-list are its own rather than the process-wide `<cwd>/.tmp` a
+  // `:memory:` handle would otherwise share. The full-reach editor keeps the engine default.
+  const privateTempDir =
+    options.readOnly === true || options.denyExternalAccess === true
+      ? await fs.promises.mkdtemp(join(os.tmpdir(), "libredb-duckdb-"))
+      : null;
+
   let instance: DuckDBInstance;
   let connection: DuckDBConnection;
   try {
-    instance = await Instance.create(path, openConfig(options));
+    instance = await Instance.create(path, openConfig(options, privateTempDir));
     connection = await instance.connect();
   } catch (error) {
+    // The open failed, so nothing will ever close this handle: remove its private temp directory here.
+    if (privateTempDir !== null) fs.rmSync(privateTempDir, { recursive: true, force: true });
     throw describeOpenFailure(error, path, options.readOnly);
   }
 
@@ -458,6 +484,9 @@ export async function openDuckDBClient(path: string, options: DuckDBOpenOptions)
     close(): void {
       connection.disconnectSync();
       instance.closeSync();
+      // Remove the private temp directory this handle opened with (if any). `force` makes an
+      // already-gone directory a no-op; anything else is raised rather than swallowed.
+      if (privateTempDir !== null) fs.rmSync(privateTempDir, { recursive: true, force: true });
     },
   };
 }
