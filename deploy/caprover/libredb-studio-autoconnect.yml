@@ -43,6 +43,12 @@ services:
         caproverExtra:
             containerHttpPort: '3000'
     $$cap_appname-discovery:
+        # CapRover creates the apps one at a time and removes nothing when a
+        # step fails, so this app, the one that holds the Docker socket, is
+        # created after Studio: an install that stops early never leaves it
+        # running on its own.
+        depends_on:
+            - $$cap_appname
         image: ghcr.io/libredb/libredb-studio:$$cap_version
         restart: always
         # A one-click command replaces the image entrypoint, so the exporter
@@ -135,6 +141,9 @@ caproverOneClickApp:
             follows them as you add or remove them.
 
             What you can set below (defaults are sensible - you can usually just click Deploy):
+              - App name: at most 39 characters, starting with a letter. The
+                second app is named after it with -discovery appended, and the
+                project CapRover puts both apps in takes the same name.
               - Version: the image tag to deploy (a tested fixed version by default).
               - Admin login: full access, including maintenance/admin tools. The
                 connected databases are listed for this login only.

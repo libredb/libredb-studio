@@ -32,6 +32,7 @@ const DESCRIPTION_LIMIT = 200;
 const CAPROVER_DIR = path.join(__dirname, "../../deploy/caprover");
 
 interface TemplateService {
+  depends_on?: string[];
   image?: string;
   command?: unknown;
   environment?: Record<string, unknown>;
@@ -106,6 +107,47 @@ function loadTemplate(file: string) {
  *  caprover/caprover). Every other volume becomes a named volume. */
 function hostBinds(service?: TemplateService): string[] {
   return (service?.volumes ?? []).filter((volume) => volume.startsWith("/"));
+}
+
+/** The longest name CapRover creates an app or a project under: isNameAllowed requires
+ *  name.length < 50 in src/datastore/AppsDataStore.ts of caprover/caprover, and so does the one in
+ *  src/datastore/ProjectsDataStore.ts for the project an install of more than one service creates
+ *  first. */
+const CAPROVER_NAME_MAX = 49;
+
+/** The order CapRover creates a template's apps in, read the way
+ *  OneClickAppDeployManager.createAppsArrayInOrder in caprover/caprover reads it: pass after pass
+ *  over the services as the file lists them, taking each one whose depends_on entries, read by
+ *  index, are all taken already, a service taken earlier in the same pass included. When they
+ *  cannot all be taken CapRover refuses the template ("Dependency tree cannot be resolved"), and
+ *  this returns undefined. Each app is registered, configured and deployed before the next one is
+ *  registered, and nothing is removed when a step fails. */
+function registrationOrder(services: Record<string, TemplateService>): string[] | undefined {
+  const names = Object.keys(services);
+  const order: string[] = [];
+  for (let pass = 0; order.length < names.length && pass <= names.length; pass++) {
+    for (const name of names) {
+      const dependsOn = services[name].depends_on ?? [];
+      let ready = !order.includes(name);
+      for (let index = 0; ready && index < dependsOn.length; index++) {
+        ready = order.includes(dependsOn[index]);
+      }
+      if (ready) order.push(name);
+    }
+  }
+  return order.length === names.length ? order : undefined;
+}
+
+/** The longest app name every service of a template can be created under, each service being
+ *  named by CapRover's plain substitution of that name for $$cap_appname. */
+function longestAppName(services: Record<string, TemplateService>): number {
+  const fits = (length: number) =>
+    Object.keys(services).every(
+      (name) => name.split("$$cap_appname").join("a".repeat(length)).length <= CAPROVER_NAME_MAX,
+    );
+  let length = 0;
+  while (length < CAPROVER_NAME_MAX && fits(length + 1)) length++;
+  return length;
 }
 
 describe.each(TEMPLATES)("$name: what caprover/one-click-apps validate_apps.js enforces", ({ file, logo }) => {
@@ -353,10 +395,61 @@ describe("what only the auto-connect variant carries", () => {
 
   const flat = (text: string) => text.replace(/\s+/g, " ").trim();
   const paragraphs = (text: string) => text.split(/\n\s*\n/);
+  const README = fs.readFileSync(path.join(CAPROVER_DIR, "README.md"), "utf8");
+  /** One README section, from its heading to the next heading of level two or three, so a
+   *  sentence moved to another section no longer counts. */
+  const readmeSection = (heading: string) => {
+    expect(README).toContain(heading);
+    return flat(README.slice(README.indexOf(heading) + heading.length).split(/^#{2,3} /m)[0]);
+  };
 
   test("it deploys exactly two services, Studio and its discovery companion", () => {
     expect(Object.keys(template.services ?? {}).sort()).toEqual(["$$cap_appname", "$$cap_appname-discovery"]);
     expect(template.caproverOneClickApp?.displayName).toBe("LibreDB Studio (auto-connect)");
+  });
+
+  test("registrationOrder follows depends_on over the key order, and refuses what CapRover refuses", () => {
+    // The order test below trusts this helper, and Studio is also the first key, so the
+    // template alone would not notice a helper that ignores depends_on.
+    expect(registrationOrder({ b: { depends_on: ["a"] }, a: {} })).toEqual(["a", "b"]);
+    expect(registrationOrder({ a: { depends_on: ["b"] }, b: { depends_on: ["a"] } })).toBeUndefined();
+    expect(registrationOrder({ a: { depends_on: ["missing"] } })).toBeUndefined();
+  });
+
+  test("CapRover creates Studio first and the socket app last, so an install that stops early never leaves the socket app on its own", () => {
+    // CapRover creates the apps one at a time and removes nothing when a step fails
+    // (OneClickAppDeployManager.startDeployProcess in caprover/caprover). Measured on CapRover
+    // 1.15.4 with Studio naming the companion in depends_on, so that the companion was created
+    // first, and an app name already in use: the install failed at Studio and left the companion
+    // running with the Docker socket. With Studio first it left only the empty project. The
+    // companion names Studio in depends_on, so the order does not rest on the order of the keys.
+    expect(registrationOrder(template.services ?? {})).toEqual(["$$cap_appname", COMPANION]);
+    expect(companion?.depends_on).toEqual(["$$cap_appname"]);
+    expect(readmeSection("## Auto-connect variant")).toContain(
+      "For the same reason the template has CapRover create the Studio app first, so an install that stops early never leaves the app that holds the Docker socket running on its own.",
+    );
+  });
+
+  test("instructions.start and the README give the longest app name the install accepts, and what a longer one leaves", () => {
+    // CapRover's App Name field checks the characters and not the length (caprover-frontend,
+    // OneClickAppConfigPage.tsx), and the install first creates a project of the same name,
+    // whose rule also wants a leading letter (ProjectsDataStore.ts). The numbers come from the
+    // template and the CapRover limit, so a longer service name cannot leave a stale one in
+    // these texts.
+    const limit = longestAppName(template.services ?? {});
+    expect(flat(instructionsStart)).toContain(
+      `- App name: at most ${limit} characters, starting with a letter. The second app is named after it with -discovery appended, and the project CapRover puts both apps in takes the same name.`,
+    );
+    const variant = readmeSection("## Auto-connect variant");
+    expect(variant).toContain(
+      `Pick an app name of at most ${limit} characters that starts with a letter: the second app is named \`<app>-discovery\`, CapRover refuses an app name of ${CAPROVER_NAME_MAX + 1} characters or more,`,
+    );
+    expect(variant).toContain(
+      `A name of ${limit + 1} to ${CAPROVER_NAME_MAX} characters therefore stops the install at \`<app>-discovery\` with "App Name is not allowed" and leaves the project and a Studio app without discovery; delete both before you install again under a shorter name.`,
+    );
+    expect(readmeSection("### Adding discovery to an existing install")).toContain(
+      `If \`studio-discovery\` would have ${CAPROVER_NAME_MAX + 1} characters or more, any shorter name works: nothing reads this app's name.`,
+    );
   });
 
   test("both services run the same Studio image and version", () => {
@@ -391,8 +484,10 @@ describe("what only the auto-connect variant carries", () => {
     // turns cap_add into CapabilityAdd (DockerComposeToServiceOverride.parseCapAdd) and ports
     // into published ports (OneClickAppDeploymentHelper.createConfigurationPromise), and none
     // of the checks around this one looks at what else the companion has. Listed by key, so a
-    // new one fails here and has to be argued for.
-    const allowed = ["image", "restart", "command", "environment", "volumes", "caproverExtra"];
+    // new one fails here and has to be argued for. depends_on is not a privilege: it only orders
+    // the install (OneClickAppDeployManager.createAppsArrayInOrder), and createConfigurationPromise
+    // keeps nothing of it on the app.
+    const allowed = ["depends_on", "image", "restart", "command", "environment", "volumes", "caproverExtra"];
     expect(Object.keys(companion ?? {}).filter((key) => !allowed.includes(key))).toEqual([]);
   });
 
