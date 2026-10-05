@@ -2031,10 +2031,11 @@ export interface ProviderExecutionContext {
    * `editorExecutionContext(guard.session, connection)`, which answers `true` only for an
    * admin, and never on a seed a non-admin role can use, because that record is one handle
    * for every role. ONLY DuckDB reads it, and only on its writable (editor) open: `false`
-   * opens the handle with `enable_external_access: 'false'`, so no statement reaches a file
-   * or the network outside the database the connection names, while that database stays
-   * read-write; `true` keeps the full editor reach. It closes statement-level reach only: the
-   * database path itself is the connection's. Every other engine ignores it.
+   * opens the handle with `enable_external_access: 'false'`, so no statement reaches the
+   * network, or a file other than the database's own and the handle's private temp directory,
+   * while that database stays read-write; `true` keeps the full editor reach. It closes
+   * statement-level reach only: the database path itself is the connection's. Every other
+   * engine ignores it.
    *
    * ABSENT MEANS DENY (fail closed): a caller that forgets to pass it gets the denied handle,
    * never the open one, so a forged or missing context cannot widen file access. That

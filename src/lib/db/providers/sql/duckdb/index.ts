@@ -27,7 +27,8 @@
  *   statement guard below is the layer above it, not the boundary.
  * - **File access is decided per requester and per connection on the editor handle,
  *   independently of `access_mode` (non-admin DuckDB file access).** `enable_external_access: 'false'` closes every
- *   statement-level file route on a WRITABLE handle too, with the database still writable
+ *   statement-level file route on a WRITABLE handle too, but for the database's own files and the
+ *   handle's private temp directory (`client.ts`), with the database still writable
  *   (measured). Every non-admin role opens that denied posture and keeps its writes, and so does
  *   every role on a seed a non-admin role can use, because that record is one handle for all of
  *   them; an admin on an inline connection or an admin-only seed keeps full reach. The posture

@@ -1629,13 +1629,13 @@ describe("queryReadOnly()", () => {
 });
 
 // ============================================================================
-// The non-admin editor file-access posture (non-admin DuckDB file access)
+// The non-admin editor file-access posture (the non-admin DuckDB file-access change)
 //
 // A signed-in non-admin opening an ordinary (writable) DuckDB connection gets a handle
-// opened with `enable_external_access: 'false'`, so every statement that reaches a file or
-// the network outside the database is refused by the engine while that database stays
-// read-write. It is statement-level only: the database path itself is still the
-// connection's. The posture is carried by `ProviderExecutionContext.allowExternalFileAccess`,
+// opened with `enable_external_access: 'false'`, so every statement that reaches the network,
+// or a file other than the database's own and the handle's private temp directory, is refused
+// by the engine while that database stays read-write. It is statement-level only: the database
+// path itself is still the connection's. The posture is carried by `ProviderExecutionContext.allowExternalFileAccess`,
 // which the route derives from the verified session and the resolved connection; absent
 // means deny (fail closed). An admin keeps full reach, except on a seed a non-admin role can
 // use, which is one handle for every role.

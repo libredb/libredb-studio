@@ -31,9 +31,10 @@ function openToNonAdminRoles(connection: DatabaseConnection): boolean {
  * which hands it to the provider and folds it into the handle cache key.
  *
  * Only DuckDB reads the one field it sets. `false` opens the handle with
- * `enable_external_access: 'false'`, so no statement reaches a file or the network outside the
- * database the connection names, while that database stays writable; `true` keeps the full editor
- * reach. It closes statement-level reach only: the database path itself is still the connection's.
+ * `enable_external_access: 'false'`, so no statement reaches the network, or a file other than the
+ * database's own and the handle's private temp directory, while that database stays writable; `true`
+ * keeps the full editor reach. It closes statement-level reach only: the database path itself is
+ * still the connection's.
  *
  * The rule, decided here and nowhere else:
  *

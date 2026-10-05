@@ -111,9 +111,10 @@ export interface DuckDBOpenOptions {
   unwritableFile?: boolean;
   /**
    * The denied editor posture (non-admin DuckDB file access): open a WRITABLE editor handle, but with
-   * `enable_external_access: 'false'` so no statement reaches a file or the network outside
-   * the database. It is what every non-admin role gets, and every role on a seed a non-admin
-   * role can use (`editorExecutionContext`). Distinct from `readOnly`, which also closes file
+   * `enable_external_access: 'false'` so no statement reaches the network, or a file other than
+   * the database's own and the handle's private temp directory (see `openDuckDBClient`). It is
+   * what every non-admin role gets, and every role on a seed a non-admin role can use
+   * (`editorExecutionContext`). Distinct from `readOnly`, which also closes file
    * access but makes the database itself read-only; this keeps the editor's writes and takes
    * only the statement-level file reach away, never the choice of the database file itself.
    * Composes with `unwritableFile` (`READ_ONLY` plus external access off). An admin editor
@@ -330,25 +331,6 @@ const EXTENSION_POLICY = {
 };
 
 /**
- * The engine options for one open; `openDuckDBClient` says why each is there.
- *
- * Composed from the posture rather than enumerated per profile, so the four handles the
- * provider opens are the four combinations of two independent facts:
- *
- * - `access_mode: 'READ_ONLY'` when the database itself must not be written: the agent
- *   read-only profile (`readOnly`) or an editor on a file this process cannot write
- *   (`unwritableFile`).
- * - `enable_external_access: 'false'` when no statement may reach a file or the network outside
- *   the database: the agent profile (`readOnly`) or the denied editor (`denyExternalAccess`).
- *
- * So: agent read-only = both; full-reach editor = neither; denied editor = external access off,
- * database still writable; denied editor on an unwritable file = both.
- *
- * `privateTempDir` is passed for a handle whose external access is off, and it goes into the map
- * BEFORE `enable_external_access` on purpose: the engine refuses a `temp_directory` set after that
- * ("Failed to set config", measured). See `openDuckDBClient` for why the handle needs a private one.
- */
-/**
  * The private temp directory a handle with external access off opens with: made under the operating
  * system's temp directory with `mkdtemp` (mode 0700), and removed when the handle closes.
  *
@@ -370,6 +352,26 @@ async function makePrivateTempDirectory(path: string): Promise<string> {
   }
 }
 
+/**
+ * The engine options for one open; `openDuckDBClient` says why each is there.
+ *
+ * Composed from the posture rather than enumerated per profile, so the four handles the
+ * provider opens are the four combinations of two independent facts:
+ *
+ * - `access_mode: 'READ_ONLY'` when the database itself must not be written: the agent
+ *   read-only profile (`readOnly`) or an editor on a file this process cannot write
+ *   (`unwritableFile`).
+ * - `enable_external_access: 'false'` when no statement may reach the network, or a file other than
+ *   the database's own and the handle's private temp directory: the agent profile (`readOnly`) or
+ *   the denied editor (`denyExternalAccess`).
+ *
+ * So: agent read-only = both; full-reach editor = neither; denied editor = external access off,
+ * database still writable; denied editor on an unwritable file = both.
+ *
+ * `privateTempDir` is passed for a handle whose external access is off, and it goes into the map
+ * BEFORE `enable_external_access` on purpose: the engine refuses a `temp_directory` set after that
+ * ("Failed to set config", measured). See `openDuckDBClient` for why the handle needs a private one.
+ */
 function openConfig(options: DuckDBOpenOptions, privateTempDir: string | null): Record<string, string> {
   const config: Record<string, string> = { ...EXTENSION_POLICY };
   if (options.readOnly || options.unwritableFile) config.access_mode = "READ_ONLY";
@@ -406,7 +408,8 @@ function openConfig(options: DuckDBOpenOptions, privateTempDir: string | null): 
  *   read-only profile (`readOnly`) and on an editor file this process cannot write
  *   (`unwritableFile`).
  * - `enable_external_access: 'false'` - no statement reaches the filesystem AROUND the
- *   database. Passed on the agent profile (`readOnly`) AND on the denied editor
+ *   database, except the two places the engine still allow-lists (see the private temp
+ *   directory below). Passed on the agent profile (`readOnly`) AND on the denied editor
  *   (`denyExternalAccess`, non-admin DuckDB file access). It is drawn here rather than in the statement guard
  *   because a name denylist cannot see a quoted function name (`"read_text"(...)`), a bare
  *   path in `FROM` (DuckDB's replacement scan makes `FROM '/tmp/x.csv'` a `read_csv_auto`),
@@ -429,19 +432,25 @@ function openConfig(options: DuckDBOpenOptions, privateTempDir: string | null): 
  * `<cwd>/.tmp`: without a private one, a denied `:memory:` handle could `glob`, `read_blob` and
  * `COPY ... TO` another session's spill files there (measured). A private per-handle directory makes
  * `allowed_directories` that directory alone. The full-reach editor keeps the engine default, since
- * it can reach any file regardless.
+ * it can reach any file regardless. What such a handle still reaches is exactly what the engine
+ * allow-lists, measured on v1.5.5-r.5: that private directory (a `COPY ... TO`, a `read_csv` or an
+ * `ATTACH` of a new file inside it succeeds, and it goes with the handle), and the database's own file
+ * names, the file and its `.wal`, `.wal.checkpoint` and `.wal.recovery` siblings, which for `:memory:`
+ * are four fixed names in the process directory. When the operating system's temp directory cannot be
+ * used, the open is refused (`makePrivateTempDirectory`) rather than given the shared default.
  *
  * So the handle has three editor postures and the agent one:
  *
  * - AGENT READ-ONLY (`readOnly`): both options. The database is read-only and no statement
- *   reaches a file outside it.
+ *   reaches a file beyond the two allow-listed places above.
  * - FULL-REACH EDITOR (neither extra option): an admin's editor connection, where `COPY ... TO`
  *   and `read_csv_auto('...')` are features rather than escapes; measured unaffected. On a
  *   file it cannot write it adds `access_mode` alone (`unwritableFile`).
  * - DENIED EDITOR (`denyExternalAccess`): writable, but `enable_external_access: 'false'`, so
- *   the database is editable and no statement reaches a file or the network outside it. Every
- *   non-admin role gets it, and every role on a seed a non-admin role can use. On a file it
- *   cannot write it also carries `access_mode` (`unwritableFile`).
+ *   the database is editable and no statement reaches the network or a file beyond the two
+ *   allow-listed places above. Every non-admin role gets it, and every role on a seed a
+ *   non-admin role can use. On a file it cannot write it also carries `access_mode`
+ *   (`unwritableFile`).
  */
 export async function openDuckDBClient(path: string, options: DuckDBOpenOptions): Promise<DuckDBClient> {
   // Inside the function, never at module scope - see the file header. Through
