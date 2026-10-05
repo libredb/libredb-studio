@@ -525,6 +525,14 @@ mock.module("@/components/ui/resizable", () => {
 // poisoning coverage with zero-hit phantom lines for modules that never execute.
 // The dynamic import resolves against the mock registry instead.
 
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const mockBuildXlsxExport = mock(async () => ({
+  content: new Blob(["x"], { type: XLSX_MIME }),
+  mimeType: XLSX_MIME,
+  extension: "xlsx",
+}));
+mock.module("@/lib/export/xlsx", () => ({ buildXlsxExport: mockBuildXlsxExport }));
+
 const { default: Studio } = await import("@/components/Studio");
 import type { DatabaseConnection } from "@/lib/types";
 import type { DatabaseObject } from "@/lib/db/types";
@@ -1493,6 +1501,49 @@ describe("Studio", () => {
   });
 
   // --- exportResults ---
+  test("XLSX export downloads a spreadsheet blob", async () => {
+    tabMgrOverride = {
+      currentTab: {
+        id: "tab-1",
+        name: "Users",
+        query: "SELECT 1",
+        result: testResult,
+        isExecuting: false,
+        type: "sql",
+      },
+    };
+    render(<Studio />);
+    const exportFn = capturedBottomPanelProps.onExportResults as (format: string) => void;
+    await act(async () => {
+      exportFn("xlsx");
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockCreateObjectURL).toHaveBeenCalledTimes(1));
+    const blob = (mockCreateObjectURL.mock.calls[0] as unknown[])[0] as Blob;
+    expect(blob.type).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  });
+
+  test("XLSX export failure reports a toast", async () => {
+    mockBuildXlsxExport.mockRejectedValueOnce(new Error("boom"));
+    tabMgrOverride = {
+      currentTab: {
+        id: "tab-1",
+        name: "Users",
+        query: "SELECT 1",
+        result: testResult,
+        isExecuting: false,
+        type: "sql",
+      },
+    };
+    render(<Studio />);
+    const exportFn = capturedBottomPanelProps.onExportResults as (format: string) => void;
+    await act(async () => {
+      exportFn("xlsx");
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockToast).toHaveBeenCalled());
+  });
+
   test.each([";", "\t"])("CSV export forwards the chosen delimiter (%s)", async (delimiter) => {
     tabMgrOverride = {
       currentTab: {

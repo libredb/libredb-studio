@@ -318,7 +318,7 @@ mock.module("@/components/ui/resizable", () => {
 // that no real heavy child module evaluates in this process.
 
 import { describe, test, expect, afterEach, beforeEach } from "bun:test";
-import { render, cleanup, act } from "@testing-library/react";
+import { render, cleanup, act, waitFor } from "@testing-library/react";
 import React from "react";
 import type { SavedQueryInput, StudioWorkspaceProps } from "@/workspace/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
@@ -326,6 +326,14 @@ import type { DatabaseObject } from "@/lib/db/types";
 import type { QueryTab } from "@/lib/types";
 import { generateTableQuery } from "@/lib/query-generators";
 import { DEFAULT_MASKING_CONFIG } from "@/lib/data-masking";
+
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const mockBuildXlsxExport = mock(async () => ({
+  content: new Blob(["x"], { type: XLSX_MIME }),
+  mimeType: XLSX_MIME,
+  extension: "xlsx",
+}));
+mock.module("@/lib/export/xlsx", () => ({ buildXlsxExport: mockBuildXlsxExport }));
 
 const { StudioWorkspace } = await import("@/workspace/StudioWorkspace");
 
@@ -627,6 +635,29 @@ describe("StudioWorkspace", () => {
       tabs: [{ ...baseTab, name: "Query: users", result: exportResult }],
     };
   }
+
+  test("exportResults xlsx downloads a spreadsheet blob", async () => {
+    withExportResult();
+    renderWorkspace();
+    await act(async () => {
+      (capturedBottomPanelProps.onExportResults as (f: string) => void)("xlsx");
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockCreateObjectURL).toHaveBeenCalledTimes(1));
+    const blob = mockCreateObjectURL.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  });
+
+  test("exportResults xlsx failure reports a toast", async () => {
+    mockBuildXlsxExport.mockRejectedValueOnce(new Error("boom"));
+    withExportResult();
+    renderWorkspace();
+    await act(async () => {
+      (capturedBottomPanelProps.onExportResults as (f: string) => void)("xlsx");
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockToast).toHaveBeenCalled());
+  });
 
   test("exportResults csv creates a text/csv blob", async () => {
     withExportResult();
