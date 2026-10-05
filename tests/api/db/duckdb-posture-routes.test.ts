@@ -258,6 +258,24 @@ describe("POST /api/admin/fleet-health passes the same posture for each connecti
     });
   });
 
+  test("an unmanaged copy of a seed that no longer exists is an error row, and no handle is opened", async () => {
+    role = "admin";
+    const response = await fleetHealth(
+      createMockRequest("/api/admin/fleet-health", {
+        method: "POST",
+        body: {
+          connections: [{ id: "seed:duck-gone", name: "Gone", type: "duckdb", database: join(workDir, "gone.duckdb") }],
+        },
+      }) as never,
+    );
+    expect(response.status).toBe(200);
+    const { results } = (await response.json()) as { results: Array<{ status: string; error?: string }> };
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe("error");
+    expect(results[0].error).toMatch(/not found/i);
+    expect(mockGetOrCreateProvider.mock.calls.length).toBe(0);
+  });
+
   test("a forged posture on the request or on a managed seed is ignored", async () => {
     const managedShared = {
       id: "seed:duck-shared",
