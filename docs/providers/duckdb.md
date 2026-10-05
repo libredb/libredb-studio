@@ -502,14 +502,10 @@ profile's):
    SET autoload_known_extensions=1;
    ```
 
-   **Opting in** is therefore per session and explicit, in the admin editor (the denied posture
-   refuses `INSTALL` and `LOAD` outright, §3.16): run `INSTALL <name>; LOAD <name>;` (measured
-   working with both options off), or `SET` the two options back on for that
-   session (measured accepted). There is no server-wide switch: an extension is native code the
-   server runs, and installing one is a decision to make in the open. On an air-gapped host,
-   `INSTALL` needs the extension file already under the server user's extension directory.
-   Extensions statically linked into `@duckdb/node-api` 1.5.5-r.4 are loaded anyway and unaffected:
-   `core_functions`, `icu`, `json`, `parquet` and `autocomplete`.
+   **Opting in** is therefore per session and explicit, in the admin editor (the denied posture refuses `INSTALL` and `LOAD` outright, §3.16): run `INSTALL <name>; LOAD <name>;` (measured working with both options off), or `SET` the two options back on for that session (measured accepted).
+   There is no server-wide switch: an extension is native code the server runs, and installing one is a decision to make in the open.
+   On an air-gapped host, `INSTALL` needs the extension file already under the server user's extension directory.
+   Extensions statically linked into `@duckdb/node-api` 1.5.5-r.4 are loaded anyway and unaffected: `core_functions`, `icu`, `json`, `parquet` and `autocomplete`.
 2. **The file's header is read before the engine opens it** (`assertDuckDBFile`). Every DuckDB file,
    an encrypted one included, carries `DUCK` at byte 8 (measured); a SQLite file starts with
    `SQLite format 3\0`. A file that is not a DuckDB database is refused without being opened, so it
@@ -528,8 +524,7 @@ profile's):
    database is running` (measured). `allow_unsigned_extensions` is off by default and fixed at open
    the same way, so **only DuckDB's own signed extensions can be loaded on any handle**.
 
-What this does **not** close is the admin editor's own reach, which is the admin editor's by design
-and is recorded in §14.4 (the denied posture closes it, §3.16).
+What this does **not** close is the admin editor's own reach, which is the admin editor's by design and is recorded in §14.4 (the denied posture closes it, §3.16).
 
 ### 3.15 A file this process cannot write opens read-only in the editor
 
@@ -1489,12 +1484,8 @@ sandbox: the engine itself refuses every filesystem reach with
 Permission Error: Cannot access file "…" - file system operations are disabled by configuration
 ```
 
-and a session cannot climb back out — `SET enable_external_access = true` and its `SET GLOBAL` form
-both answer `Invalid Input Error: Cannot enable external access while database is running`
-(measured; `SET memory_limit` in the same session is accepted, so this refusal is a property of the
-option rather than of read-only mode). The **admin's full-reach editor connection passes neither
-option** (the denied posture passes `enable_external_access: 'false'`, §3.16): there `COPY … TO` and
-`read_csv_auto('…')` are features, and they were measured unaffected.
+and a session cannot climb back out: `SET enable_external_access = true` and its `SET GLOBAL` form both answer `Invalid Input Error: Cannot enable external access while database is running` (measured; `SET memory_limit` in the same session is accepted, so this refusal is a property of the option rather than of read-only mode).
+The **admin's full-reach editor connection passes neither option** (the denied posture passes `enable_external_access: 'false'`, §3.16): there `COPY … TO` and `read_csv_auto('…')` are features, and they were measured unaffected.
 
 The SQL denylist in `index.ts` still runs first, and it is **defence in depth, not the boundary**: a
 refusal naming the construct and the reason is worth more to a reader than the engine's sentence, it
@@ -1544,16 +1535,10 @@ v1.5.5, from an editor session:
   request any URL a user names, internal addresses included: a server-side request forgery
   surface, with the server's own network position.
 
-Both were open before this change as well, with a lower bar (an implicit autoinstall needed no
-`INSTALL` at all). They are the admin editor's features, the same way `COPY ... TO` and local
-`read_csv` are, and they are why §14.3 says an admin DuckDB connection is **closer to a shell on the
-Studio host than to a database login**: grant admin only to people you would trust with
-outbound network access from the server. `enable_external_access` and `lock_configuration` are not
-set on the admin's full-reach editor handle because they would also break those documented reads and
-writes, and the per-session opt-in in §3.14. Restricting that handle further is an operator policy
-decision that this provider does not make on its own; the denied posture already sets
-`enable_external_access: 'false'` for every non-admin role and for every role on a seed a non-admin
-role can use (§3.16).
+Both were open before this change as well, with a lower bar (an implicit autoinstall needed no `INSTALL` at all).
+They are the admin editor's features, the same way `COPY ... TO` and local `read_csv` are, and they are why §14.3 says an admin DuckDB connection is **closer to a shell on the Studio host than to a database login**: grant admin only to people you would trust with outbound network access from the server.
+`enable_external_access` and `lock_configuration` are not set on the admin's full-reach editor handle because they would also break those documented reads and writes, and the per-session opt-in in §3.14.
+Restricting that handle further is an operator policy decision that this provider does not make on its own; the denied posture already sets `enable_external_access: 'false'` for every non-admin role and for every role on a seed a non-admin role can use (§3.16).
 
 The agent read-only profile has none of this reach: `enable_external_access` is off there and its denylist refuses `INSTALL` and `LOAD` (§3.10).
 The editor's denied posture has none of it either, for the same reason: `enable_external_access` is off on its handle (§3.16), so the `custom_extension_repository` + `INSTALL` and the `httpfs` + `read_csv('http://...')` routes above both answer `Permission Error`.
