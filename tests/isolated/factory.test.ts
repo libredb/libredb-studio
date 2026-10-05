@@ -2175,6 +2175,30 @@ describe("single-writer file reuse", () => {
     await removeProvider(conn.id);
   });
 
+  test("a file-backed DuckDB record reopened under a flipped posture closes the stale handle first", async () => {
+    // Two :memory: postures are two independent databases and may both stay open, but one FILE
+    // under two postures would be two read-write handles on one file (the operator-edits-roles case
+    // the api test reproduces end to end). The second open must close the first, leaving one writer.
+    const file = join(dir, "posture-flip-close.duckdb");
+    const conn = makeConnection("duckdb", { id: "duck-flip-close", database: file });
+    const admin = await getOrCreateProvider(conn, {}, { allowExternalFileAccess: true });
+    // The stale handle's disconnect rejects, so the warn-and-continue path runs; it still closes the
+    // real handle first, so the file lock is released for the reopen below.
+    const realDisconnect = admin.disconnect.bind(admin);
+    admin.disconnect = async () => {
+      await realDisconnect();
+      throw new Error("disconnect failed");
+    };
+
+    const nonAdmin = await getOrCreateProvider(conn, {}, { allowExternalFileAccess: false });
+
+    expect(nonAdmin).not.toBe(admin);
+    // One record, one entry: the stale full-reach handle was closed rather than left beside the new
+    // one. On the base before the fix this was two entries on one file.
+    expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["duck-flip-close"] });
+    await removeProvider(conn.id);
+  });
+
   test("findOpenSingleWriterProvider does not hand an admin DuckDB handle to a non-admin caller, nor the reverse", async () => {
     const file = join(dir, "posture-borrow.duckdb");
     const conn = makeConnection("duckdb", { id: "duck-borrow-admin", database: file });

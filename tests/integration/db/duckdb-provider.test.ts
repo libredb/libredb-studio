@@ -56,7 +56,7 @@ import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { comparePaths } from "@/lib/db/object-path";
 import { logger } from "@/lib/logger";
-import { MISSING_POSIX_FILE_MODES, describeIf } from "../../helpers/posix-tools";
+import { MISSING_POSIX_FILE_MODES, describeIf, testIf } from "../../helpers/posix-tools";
 import {
   WAREHOUSE_PLACEHOLDER,
   readFixtureStatements,
@@ -509,12 +509,25 @@ describe("no extension is installed or loaded behind the user's back (#1404)", (
 
   const POLICY = { install: false, load: false, community: false, unsigned: false };
 
-  test("the editor handle opens with autoinstall, autoload, community and unsigned extensions off", async () => {
-    provider = new DuckDBProvider(makeConfig());
-    await provider.connect();
+  // Run the extension policy under BOTH editor postures. On the denied handle
+  // `enable_external_access: 'false'` would refuse an INSTALL or LOAD on its own, so the
+  // admin (full-reach) handle is the one where this policy is the only thing holding the
+  // #1404 line: every assertion below must exercise it too, or a drop of EXTENSION_POLICY
+  // on the full-reach branch would pass CI.
+  const EDITOR_POSTURES = [
+    { label: "a full-reach editor handle (admin)", execution: { allowExternalFileAccess: true } as const },
+    { label: "a denied editor handle (non-admin)", execution: { allowExternalFileAccess: false } as const },
+  ];
 
-    expect((await provider.query(EXTENSION_SETTINGS)).rows).toEqual([POLICY]);
-  });
+  test.each(EDITOR_POSTURES)(
+    "$label opens with autoinstall, autoload, community and unsigned extensions off",
+    async ({ execution }) => {
+      provider = new DuckDBProvider(makeConfig(), {}, execution);
+      await provider.connect();
+
+      expect((await provider.query(EXTENSION_SETTINGS)).rows).toEqual([POLICY]);
+    },
+  );
 
   test("the read-only handle opens with all four off as well", async () => {
     const client = await openDuckDBClient(await seededFile("ext-ro.duckdb"), { readOnly: true });
@@ -525,31 +538,45 @@ describe("no extension is installed or loaded behind the user's back (#1404)", (
     }
   });
 
-  test("a function from an extension that is not loaded is refused with the engine's LOAD hint, not fetched", async () => {
-    // Deterministic whether or not this machine has the extension installed: with autoload
-    // off, an installed extension is not loaded either.
-    provider = new DuckDBProvider(makeConfig());
-    await provider.connect();
+  test.each(EDITOR_POSTURES)(
+    "a function from an extension that is not loaded is refused with the engine's LOAD hint, not fetched, on $label",
+    async ({ execution }) => {
+      // Deterministic whether or not this machine has the extension installed: with autoload
+      // off, an installed extension is not loaded either.
+      provider = new DuckDBProvider(makeConfig(), {}, execution);
+      await provider.connect();
 
-    await expect(provider.query(`SELECT * FROM sqlite_scan('${join(workDir, "x.sqlite")}', 't')`)).rejects.toThrow(
-      /LOAD sqlite_scanner/,
-    );
-  });
+      await expect(provider.query(`SELECT * FROM sqlite_scan('${join(workDir, "x.sqlite")}', 't')`)).rejects.toThrow(
+        /LOAD sqlite_scanner/,
+      );
+    },
+  );
 
-  test("a session can still opt in with SET, which is the documented way back", async () => {
-    provider = new DuckDBProvider(makeConfig());
-    await provider.connect();
+  test.each(EDITOR_POSTURES)(
+    "a session can still opt in with SET, which is the documented way back, on $label",
+    async ({ execution }) => {
+      provider = new DuckDBProvider(makeConfig(), {}, execution);
+      await provider.connect();
 
-    await provider.query("SET autoload_known_extensions = true");
-    await provider.query("SET autoinstall_known_extensions = true");
+      await provider.query("SET autoload_known_extensions = true");
+      await provider.query("SET autoinstall_known_extensions = true");
 
-    expect((await provider.query(EXTENSION_SETTINGS)).rows).toEqual([{ ...POLICY, install: true, load: true }]);
-  });
+      expect((await provider.query(EXTENSION_SETTINGS)).rows).toEqual([{ ...POLICY, install: true, load: true }]);
+    },
+  );
 
-  test.each([["SET allow_community_extensions = true"], ["SET GLOBAL allow_community_extensions = true"]])(
-    "community extensions cannot be turned back on inside a session: %s",
-    async (statement) => {
-      provider = new DuckDBProvider(makeConfig());
+  test.each(
+    EDITOR_POSTURES.flatMap(({ label, execution }) =>
+      ["SET allow_community_extensions = true", "SET GLOBAL allow_community_extensions = true"].map((statement) => ({
+        label,
+        execution,
+        statement,
+      })),
+    ),
+  )(
+    "community extensions cannot be turned back on inside a session on $label: $statement",
+    async ({ execution, statement }) => {
+      provider = new DuckDBProvider(makeConfig(), {}, execution);
       await provider.connect();
 
       await expect(provider.query(statement)).rejects.toThrow(
@@ -1643,9 +1670,12 @@ describe("a non-admin editor handle has no statement-level file or network reach
   }
 
   // Every form measured reaching a file on a full handle, each refused on the sandboxed
-  // one. The list mirrors `tests/unit/db/duckdb/read-only-guard.test.ts` and the design's
-  // finding 1, and includes the forms a name denylist cannot see (quoted name, bare path,
-  // a statement inside a literal), because the engine option is the boundary, not a guard.
+  // one. The list covers the design's finding 1 in full (the file functions, the Parquet and
+  // JSON readers, the replacement scans, DESCRIBE/SUMMARIZE of a path, the query()/query_table
+  // wrappers, IMPORT/EXPORT/ATTACH, CREATE VIEW/MACRO/PERSISTENT SECRET over a file) and
+  // includes the forms a name denylist cannot see (quoted name, bare path, a statement inside a
+  // literal), because the engine option is the boundary, not a guard. A new DuckDB reader added to
+  // the engine is held against this list by `the read-only denylist against duckdb_functions()`.
   const fileRoutes = (secret: string, csv: string): ReadonlyArray<[label: string, sql: string]> => [
     ["read_text", `SELECT * FROM read_text('${secret}')`],
     ["read_blob", `SELECT * FROM read_blob('${secret}')`],
@@ -1655,10 +1685,17 @@ describe("a non-admin editor handle has no statement-level file or network reach
     ["read_json_auto", `SELECT * FROM read_json_auto('${secret}')`],
     ["read_json_objects", `SELECT * FROM read_json_objects('${secret}')`],
     ["read_ndjson_objects", `SELECT * FROM read_ndjson_objects('${secret}')`],
+    ["read_parquet", `SELECT * FROM read_parquet('${join(workDir, "na.parquet")}')`],
+    ["parquet_metadata", `SELECT * FROM parquet_metadata('${join(workDir, "na.parquet")}')`],
     ["sniff_csv", `SELECT * FROM sniff_csv('${csv}')`],
     ["glob", `SELECT * FROM glob('${workDir}/*')`],
-    ["the replacement scan on a bare path", `SELECT * FROM '${csv}'`],
+    ["the replacement scan on a bare CSV path", `SELECT * FROM '${csv}'`],
+    ["the replacement scan on a bare JSON path", `SELECT * FROM '${secret}'`],
+    ["the replacement scan on a bare Parquet path", `SELECT * FROM '${join(workDir, "na.parquet")}'`],
     ["SUMMARIZE of a path", `SUMMARIZE '${csv}'`],
+    ["DESCRIBE of a path", `DESCRIBE SELECT * FROM '${csv}'`],
+    ["query() wrapping read_text", `SELECT * FROM query('SELECT * FROM read_text(''${secret}'')')`],
+    ["query_table of a file", `SELECT * FROM query_table('${csv}')`],
     ["a quoted read_text, which a name denylist cannot see", `SELECT * FROM "read_text"('${secret}')`],
     ["a schema-qualified quoted read_text", `SELECT * FROM main."read_text"('${secret}')`],
     [
@@ -1668,8 +1705,12 @@ describe("a non-admin editor handle has no statement-level file or network reach
     ["COPY ... TO a file", `COPY (SELECT 1 AS a) TO '${join(workDir, "na-copy.csv")}' (FORMAT CSV)`],
     ["COPY ... FROM a file", `COPY users FROM '${csv}'`],
     ["EXPORT DATABASE", `EXPORT DATABASE '${join(workDir, "na-export")}'`],
+    ["IMPORT DATABASE", `IMPORT DATABASE '${join(workDir, "na-import")}'`],
     ["ATTACH another database file", `ATTACH '${join(workDir, "na-attach.duckdb")}' AS side`],
     ["read_duckdb of another database file", `SELECT * FROM read_duckdb('${join(workDir, "na-attach.duckdb")}')`],
+    ["CREATE VIEW over a file read", `CREATE VIEW na_view AS SELECT * FROM read_text('${secret}')`],
+    ["CREATE MACRO over a file read", `CREATE MACRO na_macro() AS TABLE SELECT * FROM read_text('${secret}')`],
+    ["CREATE PERSISTENT SECRET", "CREATE PERSISTENT SECRET na_persist (TYPE s3, KEY_ID 'x', SECRET 'y')"],
     ["read_text of /proc/self/environ", "SELECT * FROM read_text('/proc/self/environ')"],
   ];
 
@@ -1691,6 +1732,24 @@ describe("a non-admin editor handle has no statement-level file or network reach
       (error: unknown) => (error instanceof Error ? error.message : String(error)),
     );
     expect(refusal).not.toContain(SECRET_PLACEHOLDER);
+  });
+
+  test("a :memory: handle's only allowed directory is its own, not the process-wide <cwd>/.tmp", async () => {
+    // A handle opened with external access off still allow-lists its default temp directory, and for
+    // every :memory: database in the process that default is the shared <cwd>/.tmp. Without a private
+    // one, a denied :memory: handle could list, read and write another session's spill files there.
+    // The handle gets a private per-handle temp directory instead (non-admin DuckDB file access).
+    provider = await nonAdmin(":memory:");
+
+    const allowed = (await provider.query("SELECT current_setting('allowed_directories') AS d")).rows[0].d as string[];
+    expect(Array.isArray(allowed)).toBe(true);
+    // The one allowed directory is the handle's own, not the process-wide <cwd>/.tmp.
+    expect(allowed).toHaveLength(1);
+    expect(resolve(allowed[0])).not.toBe(resolve(join(process.cwd(), ".tmp")));
+    // And that shared directory cannot be listed at all: the cross-session spill leak is closed.
+    await expect(provider.query(`SELECT * FROM glob('${join(process.cwd(), ".tmp")}/*')`)).rejects.toThrow(
+      /file system operations are disabled by configuration/,
+    );
   });
 
   test("the vector is independent of the main target: a :memory: handle refuses read_text too", async () => {
@@ -1751,32 +1810,94 @@ describe("a non-admin editor handle has no statement-level file or network reach
     expect((await provider.query("SELECT 1 AS one")).rows).toEqual([{ one: 1 }]);
   });
 
-  test("a non-admin on an unwritable file opens READ_ONLY and external-access-off, reads, and keeps the #1486 reason", async () => {
-    // The unwritable-file path (#1476, #1486, #1494) composed with the new posture: a 0444
-    // file gets access_mode READ_ONLY (so the engine refuses the write) AND
-    // enable_external_access: 'false' (so no file is reachable), and the read-only-reason
-    // wrapping still fronts the engine's refusal of the editor's own catalog.
-    if (MISSING_POSIX_FILE_MODES !== null || process.getuid?.() === 0) return;
-    const secret = scratchSecret("na-unwritable-secret.json");
-    const file = await seededFile("non-admin-unwritable.duckdb");
-    chmodSync(file, 0o444);
-    try {
-      provider = await nonAdmin(file);
-
-      expect((await provider.query("SELECT current_setting('access_mode') AS m")).rows).toEqual([{ m: "read_only" }]);
-      expect((await provider.query("SELECT current_setting('enable_external_access') AS v")).rows).toEqual([
-        { v: false },
-      ]);
-      expect((await provider.query("SELECT count(*) AS n FROM users")).rows).toEqual([{ n: "2" }]);
-      await expect(provider.query(`SELECT * FROM read_text('${secret}')`)).rejects.toThrow(/disabled by configuration/);
-      await expect(provider.query("INSERT INTO users VALUES (3, 'x')")).rejects.toThrow(
-        `DuckDB database ${file} is open read-only because this process cannot write the file or its directory: Invalid Input Error: Cannot execute statement of type "INSERT" on database "non-admin-unwritable" which is attached in read-only mode!`,
-      );
-    } finally {
-      if (provider?.isConnected()) await provider.disconnect();
-      chmodSync(file, 0o644);
+  test("the engine's own re-widening settings are refused, and external access stays off", async () => {
+    // allowed_directories and allowed_paths are DuckDB's documented exceptions to
+    // enable_external_access=false, and PRAGMA/RESET are the other re-open routes. A @duckdb/node-api
+    // bump that let a running session set any of them would re-open the file vector, so each is pinned
+    // refused and the setting is checked to stay off; glob of a real directory stays refused.
+    provider = await nonAdmin(":memory:");
+    const refused: ReadonlyArray<[sql: string, pattern: RegExp]> = [
+      [
+        `SET allowed_directories=['${workDir}']`,
+        /Cannot change allowed_directories when enable_external_access is disabled/,
+      ],
+      [`SET allowed_paths=['${workDir}']`, /Cannot change allowed_paths when enable_external_access is disabled/],
+      [`SET temp_directory='${workDir}'`, /disabled by configuration/],
+      ["PRAGMA enable_external_access=true", /Cannot enable external access while database is running/],
+      ["RESET enable_external_access", /Cannot enable external access while database is running/],
+    ];
+    for (const [sql, pattern] of refused) {
+      await expect(provider.query(sql)).rejects.toThrow(pattern);
     }
+    expect((await provider.query("SELECT current_setting('enable_external_access') AS v")).rows).toEqual([
+      { v: false },
+    ]);
+    await expect(provider.query(`SELECT * FROM glob('${workDir}/*')`)).rejects.toThrow(/disabled by configuration/);
   });
+
+  test("a view and a table macro an admin persisted over a file read are refused from a denied handle", async () => {
+    // An admin can CREATE a view or macro whose body reads a file; the read happens when it is USED.
+    // A non-admin opening the same file sees the object in the catalog but cannot run its body, so a
+    // persisted object is not a way around the posture.
+    const secret = scratchSecret("na-persisted-secret.json");
+    const file = join(workDir, "na-persisted-objects.duckdb");
+    // The admin full-reach handle persists the objects and closes (checkpoint), so the denied handle
+    // below is the only handle on the file.
+    const admin = new DuckDBProvider(makeConfig({ database: file }), {}, { allowExternalFileAccess: true });
+    await admin.connect();
+    try {
+      await admin.query(`CREATE VIEW admin_view AS SELECT * FROM read_text('${secret}')`);
+      await admin.query(`CREATE MACRO admin_macro() AS TABLE SELECT * FROM read_text('${secret}')`);
+      await admin.query("CHECKPOINT");
+    } finally {
+      await admin.disconnect();
+    }
+
+    provider = await nonAdmin(file);
+    expect((await provider.query("SELECT view_name FROM duckdb_views() WHERE view_name = 'admin_view'")).rows).toEqual([
+      { view_name: "admin_view" },
+    ]);
+    await expect(provider.query("SELECT * FROM admin_view")).rejects.toThrow(/disabled by configuration/);
+    await expect(provider.query("SELECT * FROM admin_macro()")).rejects.toThrow(/disabled by configuration/);
+    const refusal = await provider.query("SELECT * FROM admin_view").then(
+      () => "no refusal",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+    expect(refusal).not.toContain(SECRET_PLACEHOLDER);
+  });
+
+  testIf(
+    MISSING_POSIX_FILE_MODES ??
+      (process.getuid?.() === 0 ? "running as root: file modes do not restrict root, so nothing is unwritable" : null),
+    "a non-admin on an unwritable file opens READ_ONLY and external-access-off, reads, and keeps the #1486 reason",
+    async () => {
+      // The unwritable-file path (#1476, #1486, #1494) composed with the new posture: a 0444
+      // file gets access_mode READ_ONLY (so the engine refuses the write) AND
+      // enable_external_access: 'false' (so no file is reachable), and the read-only-reason
+      // wrapping still fronts the engine's refusal of the editor's own catalog.
+      const secret = scratchSecret("na-unwritable-secret.json");
+      const file = await seededFile("non-admin-unwritable.duckdb");
+      chmodSync(file, 0o444);
+      try {
+        provider = await nonAdmin(file);
+
+        expect((await provider.query("SELECT current_setting('access_mode') AS m")).rows).toEqual([{ m: "read_only" }]);
+        expect((await provider.query("SELECT current_setting('enable_external_access') AS v")).rows).toEqual([
+          { v: false },
+        ]);
+        expect((await provider.query("SELECT count(*) AS n FROM users")).rows).toEqual([{ n: "2" }]);
+        await expect(provider.query(`SELECT * FROM read_text('${secret}')`)).rejects.toThrow(
+          /disabled by configuration/,
+        );
+        await expect(provider.query("INSERT INTO users VALUES (3, 'x')")).rejects.toThrow(
+          `DuckDB database ${file} is open read-only because this process cannot write the file or its directory: Invalid Input Error: Cannot execute statement of type "INSERT" on database "non-admin-unwritable" which is attached in read-only mode!`,
+        );
+      } finally {
+        if (provider?.isConnected()) await provider.disconnect();
+        chmodSync(file, 0o644);
+      }
+    },
+  );
 
   test("a refusal says it is Studio's file-access posture, in front of the engine's own sentence", async () => {
     // The engine says only "disabled by configuration", which reads like a server fault to the
@@ -1790,7 +1911,7 @@ describe("a non-admin editor handle has no statement-level file or network reach
         (error: unknown) => (error instanceof Error ? error.message : String(error)),
       );
     const REASON =
-      "File and network access is off on this DuckDB connection, because Studio allows it only to an admin on a connection no non-admin role can use: Permission Error: ";
+      "File and network access is off on this DuckDB connection: the handle was opened with external access denied, which Studio does for every role but admin and for any connection a non-admin role can use, and which an embedder overrides by passing { allowExternalFileAccess: true }: Permission Error: ";
 
     const read = await refusalOf(`SELECT * FROM read_text('${secret}')`);
     expect(read.startsWith(REASON)).toBe(true);

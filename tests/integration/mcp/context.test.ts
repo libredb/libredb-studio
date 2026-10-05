@@ -32,6 +32,7 @@ pinMcpTestEnvironment();
 const ROOT = resolve(import.meta.dir, "../../..");
 const dir = mkdtempSync(join(tmpdir(), "libredb-mcp-context-"));
 const alice = { username: "alice", role: "admin" } as const;
+const bob = { username: "bob", role: "user" } as const;
 
 beforeAll(() => {
   createSqliteFile(join(dir, "shop.db"), ["CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"]);
@@ -223,6 +224,40 @@ describe("acquire", () => {
     const editor = await getOrCreateProvider(connection, {}, { allowExternalFileAccess: true });
 
     expect(await context.acquire(connection, "agent-operations")).toBe(editor);
+  });
+
+  test("a user's operations acquisition is never lent an admin's full-reach handle on the same file", async () => {
+    // The MCP context must pass the CALLER'S own editor posture to the acquisition, not a constant.
+    // A user on a roles ["*"] mcp seed gets the denied posture, so even with an admin's full-reach
+    // handle open on the same file (an admin-only record naming it), the user's agent-operations
+    // borrow must not reach it. If the context passed a constant allow posture instead, the user
+    // would borrow the admin's handle: a wider handle than its own.
+    const file = join(dir, "shared-by-roles.duckdb");
+    await createDuckdbFile(file, ["CREATE TABLE t (id INTEGER)"]);
+    writeSeedFile(dir, [
+      { id: "warehouse", type: "duckdb", database: file, roles: ["*"], mcp: true },
+      { id: "warehouse-admin", type: "duckdb", database: file, roles: ["admin"], mcp: true },
+    ]);
+    // An admin's full-reach handle holds the file, opened under the admin-only record.
+    const adminContext = new McpConnectionContext(alice);
+    const adminConnection = await adminContext.resolve("seed:warehouse-admin");
+    if (adminConnection === null || adminConnection === MCP_CONNECTIONS_UNREADABLE)
+      throw new Error("seed:warehouse-admin did not resolve");
+    const adminEditor = await getOrCreateProvider(adminConnection, {}, { allowExternalFileAccess: true });
+
+    const context = new McpConnectionContext(bob);
+    const connection = await context.resolve("seed:warehouse");
+    if (connection === null || connection === MCP_CONNECTIONS_UNREADABLE)
+      throw new Error("seed:warehouse did not resolve");
+
+    if (process.platform === "win32") {
+      // Windows refuses any second handle on a file this process holds, and the user must not borrow
+      // the admin's, so the acquisition is refused rather than served the wider handle.
+      await expect(context.acquire(connection, "agent-operations")).rejects.toThrow();
+    } else {
+      const acquired = await context.acquire(connection, "agent-operations");
+      expect(acquired).not.toBe(adminEditor);
+    }
   });
 });
 

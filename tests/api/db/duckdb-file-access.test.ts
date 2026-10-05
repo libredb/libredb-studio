@@ -23,13 +23,9 @@ import { resetCache as resetSeedCache } from "@/lib/seed/config-loader";
  */
 
 let role = "user";
-mock.module("@/lib/auth", () => ({
-  getSession: mock(async () => ({ role, username: role })),
-  signJWT: mock(async () => "mock-token"),
-  verifyJWT: mock(async () => null),
-  login: mock(async () => {}),
-  logout: mock(async () => {}),
-}));
+// The spread form, not a hand-written stub: only getSession is replaced (BACKLOG D85).
+const realAuth = await import("@/lib/auth");
+mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mock(async () => ({ role, username: role })) }));
 
 const { POST: queryPost } = await import("@/app/api/db/query/route");
 const { POST: multiQueryPost } = await import("@/app/api/db/multi-query/route");
@@ -128,7 +124,7 @@ describe("POST /api/db/query reads no file for a standard user on DuckDB (K1/B1)
     const { body } = await postQuery(`SELECT * FROM read_text('${secretFile}')`);
 
     expect(String(body.error)).toStartWith(
-      "File and network access is off on this DuckDB connection, because Studio allows it only to an admin on a connection no non-admin role can use: Permission Error: Cannot access file",
+      "File and network access is off on this DuckDB connection: the handle was opened with external access denied, which Studio does for every role but admin and for any connection a non-admin role can use, and which an embedder overrides by passing { allowExternalFileAccess: true }: Permission Error: Cannot access file",
     );
   });
 
@@ -242,6 +238,74 @@ describe("one DuckDB seed a non-admin role can use is one handle for every role 
 
     expect(status).toBe(200);
     expect(JSON.stringify(body.rows)).toContain(SECRET_PLACEHOLDER);
+  });
+});
+
+describe("a DuckDB seed whose roles change while Studio runs keeps one handle (non-admin DuckDB file access)", () => {
+  // The seed file reloads live (docs/SEED_CONNECTIONS.md "Hot Reload"), so an operator can widen or
+  // narrow a seed's roles without a restart. That flips the file-access posture of the one record,
+  // which moves it to a different cache key. A second read-write handle on the same file must not be
+  // the result: DuckDB serves one file through one read-write handle per process, and the stale one
+  // checkpoints its own catalog over the file when it finally closes, losing rows the routes already
+  // acknowledged. Opening the new posture's handle must close the stale one first.
+  const FLIP = { connectionId: "seed:duck-flip" };
+  const flipFile = join(workDir, "flip-seed.duckdb");
+
+  function writeSeedConfig(flipRoles: string[]): void {
+    writeFileSync(
+      seedConfigFile,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          { id: "duck-shared", name: "Shared DuckDB", type: "duckdb", database: sharedSeedFile, roles: ["*"] },
+          { id: "duck-admin", name: "Admin DuckDB", type: "duckdb", database: adminSeedFile, roles: ["admin"] },
+          { id: "duck-flip", name: "Flip DuckDB", type: "duckdb", database: flipFile, roles: flipRoles },
+        ],
+      }),
+    );
+    resetSeedCache();
+  }
+
+  afterEach(() => {
+    // Restore the two-seed base the rest of the file resolves against.
+    writeFileSync(
+      seedConfigFile,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          { id: "duck-shared", name: "Shared DuckDB", type: "duckdb", database: sharedSeedFile, roles: ["*"] },
+          { id: "duck-admin", name: "Admin DuckDB", type: "duckdb", database: adminSeedFile, roles: ["admin"] },
+        ],
+      }),
+    );
+    resetSeedCache();
+  });
+
+  test("widening the seed from admin-only to shared mid-run keeps one entry and loses no acknowledged row", async () => {
+    // Admin-only first: the admin opens the full-reach handle and commits a row to it.
+    writeSeedConfig(["admin"]);
+    role = "admin";
+    expect((await queryWith({ ...FLIP, sql: "CREATE TABLE t (id INTEGER)" })).status).toBe(200);
+    expect((await queryWith({ ...FLIP, sql: "INSERT INTO t VALUES (1)" })).status).toBe(200);
+
+    // The operator offers the seed to every role; the seed cache reloads. Now every role, admin
+    // included, resolves the denied posture, so the record moves to the other cache key.
+    writeSeedConfig(["*"]);
+    role = "user";
+    expect((await queryWith({ ...FLIP, sql: "INSERT INTO t VALUES (2)" })).status).toBe(200);
+    role = "admin";
+    expect((await queryWith({ ...FLIP, sql: "INSERT INTO t VALUES (3)" })).status).toBe(200);
+
+    // One record, one entry: the full-reach handle was closed when the posture flipped, so there
+    // is a single writer on the file. On HEAD before the fix there were two entries here.
+    expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["seed:duck-flip"] });
+
+    // Close every handle, then read the file back fresh: every acknowledged row is on disk.
+    await clearProviderCache();
+    role = "user";
+    const read = await queryWith({ ...FLIP, sql: "SELECT id FROM t ORDER BY id" });
+    expect(read.status).toBe(200);
+    expect(ids(read.body)).toEqual([1, 2, 3]);
   });
 });
 
