@@ -1967,7 +1967,7 @@ describe("acquireExecutionProfileProvider", () => {
 
     test("nor can an execution context: a readOnly in it is refused, so no read-only handle enters the writable cache", async () => {
       // The execution context is server-injected, and getOrCreateProvider takes the file-access
-      // posture on it (B1/K1). A readOnly riding along used to reach the provider while the key
+      // posture on it (non-admin DuckDB file access). A readOnly riding along used to reach the provider while the key
       // ignored it: the read-only provider was then served to every later editor request, or a
       // read-only caller was handed the writable one. Refused before the cache is touched.
       const conn = await seedFileConnection();
@@ -2152,7 +2152,7 @@ describe("single-writer file reuse", () => {
     expect(findOpenSingleWriterProvider(makeConnection("mongodb", { database: undefined }))).toBeNull();
   });
 
-  // DuckDB file-access posture in the cache and the borrow (B1/K1). This is the
+  // DuckDB file-access posture in the cache and the borrow (non-admin DuckDB file access). This is the
   // critical ruling: an admin's full handle must never be shared with, nor borrowed
   // by, a non-admin, and the reverse. Run against the real @duckdb/node-api driver.
 

@@ -9,7 +9,7 @@ const mockProvider = createMockProvider();
 const mockCreateDatabaseProvider = mock(async (connection?: unknown, options?: unknown, execution?: unknown) => {
   // The parameters are declared so `mock.calls` carries what the route built the provider from:
   // the connection proves the SSH tunnel endpoint was used (#457), and the execution context
-  // proves which file-access posture the handle opens under (B1/K1).
+  // proves which file-access posture the handle opens under (non-admin DuckDB file access).
   void connection;
   void options;
   void execution;
@@ -26,7 +26,7 @@ const mockFindOpenSingleWriterProvider = mock((connection?: unknown, allowExtern
   void allowExternalFileAccess;
   return null;
 });
-/** Whether a handle of ANY file-access posture holds the file (B1/K1). False by default. */
+/** Whether a handle of ANY file-access posture holds the file (non-admin DuckDB file access). False by default. */
 const mockIsSingleWriterFileOpen = mock((): boolean => false);
 
 const mockGetSession = mock(
@@ -518,7 +518,7 @@ describe("POST /api/db/test-connection", () => {
     expect(mockProvider.disconnect).toHaveBeenCalledTimes(1);
   });
 
-  // B1/K1: a DuckDB handle is borrowed only under the caller's own file-access posture, so a
+  // non-admin DuckDB file access: a DuckDB handle is borrowed only under the caller's own file-access posture, so a
   // file can be open under the OTHER posture with nothing to borrow. A second read-write handle
   // there checkpoints its own view over the file when it closes; the test handle opens read-only.
 

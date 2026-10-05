@@ -189,7 +189,7 @@ describe("driveAgentRun", () => {
     // execution profile, which is the only seam the tool layer is allowed to use.
     mockAcquireExecutionProfileProvider.mockClear();
     await resources.acquireProvider(CONNECTION, "agent-operations");
-    // With the editor posture the run's persisted actor gets on this connection (B1/K1): it decides
+    // With the editor posture the run's persisted actor gets on this connection (non-admin DuckDB file access): it decides
     // only which open single-writer handle an operations acquisition may borrow. A user is denied.
     expect(mockAcquireExecutionProfileProvider).toHaveBeenCalledWith(
       CONNECTION,

@@ -26,7 +26,7 @@
  *   passed beside `access_mode` when the read-only handle is opened (`client.ts`); the
  *   statement guard below is the layer above it, not the boundary.
  * - **File access is decided per requester and per connection on the editor handle,
- *   independently of `access_mode` (B1 / K1).** `enable_external_access: 'false'` closes every
+ *   independently of `access_mode` (non-admin DuckDB file access).** `enable_external_access: 'false'` closes every
  *   statement-level file route on a WRITABLE handle too, with the database still writable
  *   (measured). Every non-admin role opens that denied posture and keeps its writes, and so does
  *   every role on a seed a non-admin role can use, because that record is one handle for all of
@@ -405,7 +405,7 @@ export class DuckDBProvider extends SQLBaseProvider {
   private readonly readOnlyProfile: boolean;
 
   /**
-   * True when the editor handle must open with `enable_external_access: 'false'` (B1 / K1):
+   * True when the editor handle must open with `enable_external_access: 'false'` (non-admin DuckDB file access):
    * the posture for every role but admin. Derived once in the constructor from the
    * server-injected execution context and NEVER from `config` or `ProviderOptions`, both of
    * which are caller-supplied. Absent means deny (fail closed). The agent read-only profile
@@ -674,7 +674,7 @@ export class DuckDBProvider extends SQLBaseProvider {
       const unwritableFile = isUnwritableExistingFile(dbPath);
       // The denied editor posture rides on `denyExternalAccess`: a writable handle with
       // `enable_external_access: 'false'`, composed with `access_mode: 'READ_ONLY'` when the
-      // file is also unwritable. A full-reach editor passes neither (B1/K1).
+      // file is also unwritable. A full-reach editor passes neither (non-admin DuckDB file access).
       this.client = await openDuckDBClient(dbPath, {
         readOnly: false,
         unwritableFile,
@@ -766,7 +766,7 @@ export class DuckDBProvider extends SQLBaseProvider {
                 sql,
               );
             }
-            // The same for the file-access posture (B1/K1): only on a handle opened with file
+            // The same for the file-access posture (non-admin DuckDB file access): only on a handle opened with file
             // access denied, and only for the engine's permission refusals.
             if (this.denyExternalAccess && mapped.message.startsWith(PERMISSION_REFUSAL_PREFIX)) {
               throw new QueryError(`${FILE_ACCESS_DENIED_REASON}: ${mapped.message}`, "duckdb", sql);

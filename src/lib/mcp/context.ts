@@ -72,7 +72,7 @@ export class McpConnectionContext {
     const key = await profiledCacheKey(connection, profile);
     const pending = pendingAcquisitions.get(key);
     if (pending !== undefined) return pending;
-    // The caller's editor posture on this connection (B1/K1) decides only which open single-writer
+    // The caller's editor posture on this connection (non-admin DuckDB file access) decides only which open single-writer
     // handle an operations acquisition may borrow; every caller that can resolve one seed shares it.
     const requester = editorExecutionContext(this.caller, connection);
     const acquisition = acquireExecutionProfileProvider(connection, profile, {}, requester).finally(() => {

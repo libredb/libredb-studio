@@ -1,6 +1,6 @@
 /**
  * Every route that opens a provider hands it the DuckDB file-access posture the session and the
- * resolved connection decide (B1 / K1), never a constant and never nothing.
+ * resolved connection decide (non-admin DuckDB file access), never a constant and never nothing.
  *
  * `tests/api/db/duckdb-file-access.test.ts` proves the posture end to end on the routes that run a
  * caller's statement. This file holds the other half: each handle-opening route passes
@@ -148,7 +148,7 @@ afterAll(() => {
 const ROUTES = Object.keys(handlers);
 const OPEN_TO_EVERY_ROLE = ROUTES.filter((route) => !ADMIN_ONLY.has(route));
 
-describe("each handle-opening route passes the posture the session and the connection decide (B1/K1)", () => {
+describe("each handle-opening route passes the posture the session and the connection decide (non-admin DuckDB file access)", () => {
   test.each(OPEN_TO_EVERY_ROLE)("%s: a user's inline DuckDB connection is denied file access", async (route) => {
     role = "user";
     expect(await postureFrom(route, INLINE)).toEqual({ allowExternalFileAccess: false });
@@ -182,7 +182,7 @@ describe("each handle-opening route passes the posture the session and the conne
   });
 });
 
-describe("POST /api/admin/fleet-health passes the same posture for each connection it checks (B1/K1)", () => {
+describe("POST /api/admin/fleet-health passes the same posture for each connection it checks (non-admin DuckDB file access)", () => {
   async function fleetPosture(connection: Record<string, unknown>): Promise<unknown> {
     role = "admin";
     await fleetHealth(

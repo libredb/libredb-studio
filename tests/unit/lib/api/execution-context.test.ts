@@ -3,7 +3,7 @@ import { editorExecutionContext } from "@/lib/api/execution-context";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
- * The one place the DuckDB editor file-access posture is decided (B1 / K1).
+ * The one place the DuckDB editor file-access posture is decided (non-admin DuckDB file access).
  *
  * The requester decides it on a connection only its requester uses: an admin keeps the full editor
  * reach and every other role is denied. A seed record is different, because every role the operator's

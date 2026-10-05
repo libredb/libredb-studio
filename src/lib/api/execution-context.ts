@@ -23,7 +23,7 @@ function openToNonAdminRoles(connection: DatabaseConnection): boolean {
 }
 
 /**
- * The server-derived execution context for an ordinary (editor) database request (B1 / K1).
+ * The server-derived execution context for an ordinary (editor) database request (non-admin DuckDB file access).
  *
  * Built from the VERIFIED session role and the RESOLVED connection, never from the request body, so a
  * caller cannot widen what the provider is allowed to do. The db routes pass the result to

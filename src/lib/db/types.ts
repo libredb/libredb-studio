@@ -1993,7 +1993,7 @@ export interface ProviderOptions {
 }
 
 /**
- * Server-injected construction context for a provider (#328, B1 / K1).
+ * Server-injected construction context for a provider (#328, non-admin DuckDB file access).
  * Deliberately NOT a member of `ProviderOptions`: that object is caller-supplied
  * and flows all the way into `getOrCreateProvider`, so a flag living there could
  * be set, or cleared, by whoever builds the options for a request.
@@ -2025,7 +2025,7 @@ export interface ProviderExecutionContext {
    */
   readOnly?: boolean;
   /**
-   * Whether an ordinary (editor) DuckDB handle may reach files and the network (B1 / K1).
+   * Whether an ordinary (editor) DuckDB handle may reach files and the network (non-admin DuckDB file access).
    *
    * Server-derived and never taken from the request body: the db routes set it with
    * `editorExecutionContext(guard.session, connection)`, which answers `true` only for an
@@ -2047,7 +2047,7 @@ export interface ProviderExecutionContext {
 }
 
 /**
- * The DuckDB editor file-access posture on its own (B1 / K1): what `editorExecutionContext`
+ * The DuckDB editor file-access posture on its own (non-admin DuckDB file access): what `editorExecutionContext`
  * derives from the verified session and the resolved connection, what `getOrCreateProvider`
  * takes, and what an execution-profile acquisition is told about the requester it serves, so it
  * borrows only a handle opened under that requester's own posture. Absent means deny.

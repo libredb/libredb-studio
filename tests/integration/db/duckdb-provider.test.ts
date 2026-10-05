@@ -683,8 +683,8 @@ describeIf(
       const file = await seededFile("writable-main.duckdb");
       const other = await seededFile("attached-other.duckdb");
       // An admin editor: ATTACH of a second FILE needs filesystem reach, which is admin-only
-      // since B1/K1. The #1486/#1494 read-only-reason wrapping it pins keys on the catalog
-      // name, not the posture, so it is the same for a non-admin (covered in the B1/K1 block).
+      // since non-admin DuckDB file access. The #1486/#1494 read-only-reason wrapping it pins keys on the catalog
+      // name, not the posture, so it is the same for a non-admin (covered in the non-admin DuckDB file access block).
       provider = new DuckDBProvider(makeConfig({ database: file }), {}, { allowExternalFileAccess: true });
       await provider.connect();
 
@@ -706,7 +706,7 @@ describeIf(
       chmodSync(file, 0o444);
       chmodSync(dir, 0o555);
       // An admin editor: the later ATTACH of a second FILE needs filesystem reach (admin-only
-      // since B1/K1); the read-only-reason this pins is the same for either role.
+      // since non-admin DuckDB file access); the read-only-reason this pins is the same for either role.
       provider = new DuckDBProvider(makeConfig({ database: file }), {}, { allowExternalFileAccess: true });
       try {
         await provider.connect();
@@ -738,7 +738,7 @@ describeIf(
       chmodSync(file, 0o444);
       chmodSync(dir, 0o555);
       // An admin editor: the ATTACH of a second FILE below needs filesystem reach (admin-only
-      // since B1/K1); the scoped read-only-reason this pins is the same for either role.
+      // since non-admin DuckDB file access); the scoped read-only-reason this pins is the same for either role.
       provider = new DuckDBProvider(makeConfig({ database: file }), {}, { allowExternalFileAccess: true });
       const refusalOf = (sql: string) =>
         provider.query(sql).then(
@@ -1513,7 +1513,7 @@ describe("queryReadOnly()", () => {
     // The control that makes the assertion above mean something: the ADMIN editor
     // handle on the SAME file keeps its filesystem reach, because COPY and read_csv are
     // features there rather than escapes. A non-admin editor opens external access off too
-    // (the B1/K1 block asserts that); this control is the admin editor, unchanged.
+    // (the non-admin DuckDB file access block asserts that); this control is the admin editor, unchanged.
     //
     // One at a time, and the read-only handle goes first: Windows admits a single handle
     // per DuckDB file per process (see the connect/disconnect block), so holding both
@@ -1609,7 +1609,7 @@ describe("queryReadOnly()", () => {
   test("the admin editor handle keeps the filesystem reach the read-only profile gives up", async () => {
     // The engine option is the POSTURE's, not the provider type's: the admin editor connection
     // is measured unaffected, so COPY and read_csv_auto still work for an admin at the keyboard.
-    // A non-admin editor gives this reach up (the B1/K1 block). Without this control, disabling
+    // A non-admin editor gives this reach up (the non-admin DuckDB file access block). Without this control, disabling
     // external access everywhere would look exactly the same in every other test.
     const target = join(workDir, "writable-reach.csv");
     provider = new DuckDBProvider(
@@ -1628,7 +1628,7 @@ describe("queryReadOnly()", () => {
 });
 
 // ============================================================================
-// The non-admin editor file-access posture (B1 / K1)
+// The non-admin editor file-access posture (non-admin DuckDB file access)
 //
 // A signed-in non-admin opening an ordinary (writable) DuckDB connection gets a handle
 // opened with `enable_external_access: 'false'`, so every statement that reaches a file or
@@ -1639,7 +1639,7 @@ describe("queryReadOnly()", () => {
 // means deny (fail closed). An admin keeps full reach, except on a seed a non-admin role can
 // use, which is one handle for every role.
 //
-// This closes the CapRover K1 exposure for the standard login: it can no longer read
+// This closes the CapRover discovery-export exposure for the standard login: it can no longer read
 // `/app/discovery/services.json` through DuckDB.
 //
 // Each refusal is the engine's own `Permission Error`, and each block carries a live
@@ -1647,7 +1647,7 @@ describe("queryReadOnly()", () => {
 // every scratch "secret" is PROBE-DUMMY-NOT-A-SECRET, never a real credential.
 // ============================================================================
 
-describe("a non-admin editor handle has no statement-level file or network reach (B1/K1)", () => {
+describe("a non-admin editor handle has no statement-level file or network reach (non-admin DuckDB file access)", () => {
   let provider: DuckDBProvider;
   const SECRET_PLACEHOLDER = "PROBE-DUMMY-NOT-A-SECRET";
 

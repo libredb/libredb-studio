@@ -31,7 +31,7 @@ import * as path from "path";
  *
  * @param connection - Database connection configuration
  * @param options - Optional provider options (pooling, timeout, etc.)
- * @param execution - Server-injected execution context (#328, B1/K1). Never built
+ * @param execution - Server-injected execution context (#328, non-admin DuckDB file access). Never built
  *   from caller-supplied options. `acquireExecutionProfileProvider` passes the agent
  *   profile's context, and `getOrCreateProvider` and the routes that build their own
  *   provider pass the editor file-access posture `editorExecutionContext` derived from
@@ -448,7 +448,7 @@ interface CachedProvider {
    */
   singleWriterFile?: string | null;
   /**
-   * Whether this entry's DuckDB handle was opened with file access allowed (B1 / K1): the
+   * Whether this entry's DuckDB handle was opened with file access allowed (non-admin DuckDB file access): the
    * derived posture `getOrCreateProvider` opened it under. Only the single-writer borrow for
    * DuckDB reads it, so a handle is lent only to a caller of the same posture and nobody is
    * handed a handle wider than its own. It is the derived boolean, so it is `true`/`false`
@@ -514,7 +514,7 @@ function fileIdentity(connection: DatabaseConnection): string | null {
  * editor request a provider opened under an execution profile - stays forbidden, so
  * profiled entries are not offered here.
  *
- * POSTURE-AWARE FOR DUCKDB (B1 / K1). A DuckDB entry records the file-access posture it was
+ * POSTURE-AWARE FOR DUCKDB (non-admin DuckDB file access). A DuckDB entry records the file-access posture it was
  * opened under, and a borrow matches only an entry opened under the caller's own posture, so a
  * caller is never lent a handle wider than its own. Both sides are normalised to `=== true`, so
  * an absent caller posture (no argument) reads as deny, matching the default
@@ -558,7 +558,7 @@ export function findOpenSingleWriterProvider(
 
 /**
  * Whether a connected handle in the writable cache holds this connection's file, whatever
- * file-access posture it was opened under (B1 / K1).
+ * file-access posture it was opened under (non-admin DuckDB file access).
  *
  * `findOpenSingleWriterProvider` answers only with a handle of the caller's own posture, so when it
  * answers null and this answers true, the file is held by a DuckDB handle of the OTHER posture. A
@@ -708,7 +708,7 @@ function startIdleSweep(): void {
  *
  * @param connection - Database connection configuration
  * @param options - Optional provider options
- * @param execution - The DuckDB editor file-access posture (B1/K1), and nothing else. Studio's
+ * @param execution - The DuckDB editor file-access posture (non-admin DuckDB file access), and nothing else. Studio's
  *   routes derive it with `editorExecutionContext` from the verified session and the resolved
  *   connection. ABSENT MEANS DENY: called without it, as an embedder that predates the posture
  *   calls it, a DuckDB handle opens with `enable_external_access: 'false'`, so `read_csv`,
@@ -735,7 +735,7 @@ export async function getOrCreateProvider(
       connection.type,
     );
   }
-  // The DuckDB editor file-access posture, server-derived (B1/K1). A definite boolean, so the
+  // The DuckDB editor file-access posture, server-derived (non-admin DuckDB file access). A definite boolean, so the
   // handle it opens and the key it is cached under agree, and absent reads as deny (fail closed).
   // Only DuckDB reads it; the cache key and the single-writer borrow ignore it for other engines.
   const allowExternalFileAccess = execution.allowExternalFileAccess === true;
@@ -808,7 +808,7 @@ export async function getOrCreateProvider(
 
   // Create new provider (async - dynamically loads the provider module). Only the derived posture
   // is handed on, so the handle opens under exactly the posture its key frames; every provider but
-  // DuckDB ignores it (B1/K1).
+  // DuckDB ignores it (non-admin DuckDB file access).
   const provider = await createDatabaseProvider(effectiveConnection, options, { allowExternalFileAccess });
   try {
     await provider.connect();
@@ -829,7 +829,7 @@ export async function getOrCreateProvider(
     lastUsed: Date.now(),
     singleWriterFile,
     // Recorded so the single-writer borrow lends a DuckDB handle only to a caller of the same
-    // posture (B1/K1); ignored for every engine but DuckDB.
+    // posture (non-admin DuckDB file access); ignored for every engine but DuckDB.
     allowExternalFileAccess,
   });
 
@@ -945,7 +945,7 @@ function resolveAgentCredential(connection: DatabaseConnection): { user: string;
  * bound. See `PROFILE_ACQUISITION` for the whole of that argument.
  *
  * `requester` is the editor posture of the caller this acquisition serves, as
- * `editorExecutionContext` derives it (B1 / K1). It never changes how a profiled handle
+ * `editorExecutionContext` derives it (non-admin DuckDB file access). It never changes how a profiled handle
  * opens - every profile opens read-only with external access off - and is read only to
  * decide which open single-writer handle an `agent-operations` acquisition may borrow:
  * one opened under that same posture, so an admin's agent is grounded from the admin's
@@ -1007,7 +1007,7 @@ export async function acquireExecutionProfileProvider(
     session that opened it.
   */
   if (!acquisition.requiresReadOnlyStatements && credential === null) {
-    // Posture-aware for DuckDB (B1/K1): only a handle opened under the requester's own editor
+    // Posture-aware for DuckDB (non-admin DuckDB file access): only a handle opened under the requester's own editor
     // posture is borrowed, so an admin's agent on a connection only admins use is grounded from
     // the admin's editor handle, and nobody is lent a handle wider than their own. Where none
     // matches it opens its own read-only handle, which is safe beside a writer. The posture is

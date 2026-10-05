@@ -32,7 +32,7 @@ export type {
 } from "../lib/db/types";
 
 /**
- * The server-side execution context the provider factories take (B1 / K1).
+ * The server-side execution context the provider factories take (non-admin DuckDB file access).
  *
  * Exported because an ABSENT context denies DuckDB's file access: `createDatabaseProvider` and
  * `getOrCreateProvider` called without one open a DuckDB handle with `enable_external_access: 'false'`.

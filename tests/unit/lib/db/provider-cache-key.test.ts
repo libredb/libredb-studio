@@ -51,7 +51,7 @@ describe("providerCacheKey frames the read-only mode (#1089)", () => {
   });
 });
 
-describe("providerCacheKey frames the DuckDB file-access posture, and only DuckDB's (B1/K1)", () => {
+describe("providerCacheKey frames the DuckDB file-access posture, and only DuckDB's (non-admin DuckDB file access)", () => {
   const duck: DatabaseConnection = {
     id: "warehouse",
     name: "Warehouse",

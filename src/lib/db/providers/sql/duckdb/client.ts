@@ -30,7 +30,7 @@
  *   `INSERT` was refused in the same session. `enable_external_access: 'false'` is what
  *   closes that, independently of `access_mode`: a WRITABLE handle with it set refuses every
  *   file route while `CREATE`/`INSERT` on the database still run (measured on v1.5.5-r.5),
- *   which is the editor's denied posture (B1 / K1). It is passed alongside - see
+ *   which is the editor's denied posture (non-admin DuckDB file access). It is passed alongside - see
  *   `openDuckDBClient`.
  * - With `autoinstall_known_extensions` and `autoload_known_extensions` at their defaults,
  *   opening a SQLite file made the engine fetch the ~34 MB `sqlite_scanner` extension from
@@ -110,7 +110,7 @@ export interface DuckDBOpenOptions {
    */
   unwritableFile?: boolean;
   /**
-   * The denied editor posture (B1 / K1): open a WRITABLE editor handle, but with
+   * The denied editor posture (non-admin DuckDB file access): open a WRITABLE editor handle, but with
    * `enable_external_access: 'false'` so no statement reaches a file or the network outside
    * the database. It is what every non-admin role gets, and every role on a seed a non-admin
    * role can use (`editorExecutionContext`). Distinct from `readOnly`, which also closes file
@@ -385,7 +385,7 @@ function openConfig(options: DuckDBOpenOptions, privateTempDir: string | null): 
  *   (`unwritableFile`).
  * - `enable_external_access: 'false'` - no statement reaches the filesystem AROUND the
  *   database. Passed on the agent profile (`readOnly`) AND on the denied editor
- *   (`denyExternalAccess`, B1 / K1). It is drawn here rather than in the statement guard
+ *   (`denyExternalAccess`, non-admin DuckDB file access). It is drawn here rather than in the statement guard
  *   because a name denylist cannot see a quoted function name (`"read_text"(...)`), a bare
  *   path in `FROM` (DuckDB's replacement scan makes `FROM '/tmp/x.csv'` a `read_csv_auto`),
  *   or a statement smuggled through a string literal. Measured on v1.5.5: every one of those

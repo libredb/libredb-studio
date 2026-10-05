@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     // tunnel's whole lifetime because nothing here is cached, so no eviction would
     // ever close a pooled one - and every failed test click would strand it.
     // The DuckDB editor file-access posture, server-derived from the session role and the resolved
-    // connection (B1/K1): it opens any handle this route builds with the right posture and keeps
+    // connection (non-admin DuckDB file access): it opens any handle this route builds with the right posture and keeps
     // this route from borrowing a handle of the other posture below.
     const execution = editorExecutionContext(guard.session, connection);
     return await withOneShotTunnel(connection, async (effective) => {
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
       const borrowed = findOpenSingleWriterProvider(effective, execution.allowExternalFileAccess);
       /*
         Nothing to borrow, yet the file is open: a DuckDB handle of the OTHER file-access posture
-        holds it (B1/K1). A second read-write handle here would be the one thing this route must
+        holds it (non-admin DuckDB file access). A second read-write handle here would be the one thing this route must
         not open, because closing it checkpoints its own view over the file and removes the
         write-ahead log under the open handle. So the test handle opens read-only, with external
         access off, which is the agent profile's handle: it reads the file beside the writer and

@@ -201,7 +201,7 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
         // returned, so a resumed drive is bounded by what the run was opened as.
         deadline: new AgentRunDeadline(ceilings.deadlineMs),
         repairs: new AgentRepairLedger(),
-        // Told the editor posture the run's persisted actor gets on this connection (B1/K1), which
+        // Told the editor posture the run's persisted actor gets on this connection (non-admin DuckDB file access), which
         // decides only which open single-writer handle an operations acquisition may borrow.
         acquireProvider: (target, profile) =>
           acquireExecutionProfileProvider(target, profile, {}, editorExecutionContext(actor, target)),

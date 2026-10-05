@@ -4,7 +4,7 @@ import { createDatabaseProvider, getOrCreateProvider, clearProviderCache } from 
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
- * What an embedder of `@libredb/studio/providers` needs to keep DuckDB's file access (B1 / K1).
+ * What an embedder of `@libredb/studio/providers` needs to keep DuckDB's file access (non-admin DuckDB file access).
  *
  * The factories take a server-side execution context, and an ABSENT one denies DuckDB's file access:
  * a handle opens with `enable_external_access: 'false'`, so `read_csv`, `COPY`, `ATTACH` of a file and
@@ -24,7 +24,7 @@ afterEach(async () => {
   await clearProviderCache();
 });
 
-describe("the DuckDB file-access opt-in a package consumer can name (B1/K1)", () => {
+describe("the DuckDB file-access opt-in a package consumer can name (non-admin DuckDB file access)", () => {
   test("createDatabaseProvider denies file access without a context and keeps it with the opt-in", async () => {
     const full: ProviderExecutionContext = { allowExternalFileAccess: true };
     const denied = await createDatabaseProvider(duckdb("embedder-default"));

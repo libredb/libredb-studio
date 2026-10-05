@@ -7,7 +7,7 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { resetCache as resetSeedCache } from "@/lib/seed/config-loader";
 
 /**
- * The end-to-end B1 / K1 reproduction, through the real route and the real DuckDB engine.
+ * The end-to-end non-admin DuckDB file access reproduction, through the real route and the real DuckDB engine.
  *
  * Unlike the other api/db tests, this file does NOT mock `@/lib/db`: the whole point is that a
  * `user`-role request reaches the real factory, which opens the DuckDB handle with the posture the
@@ -109,7 +109,7 @@ afterAll(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-describe("POST /api/db/query reads no file for a standard user on DuckDB (K1/B1)", () => {
+describe("POST /api/db/query reads no file for a standard user on DuckDB (non-admin DuckDB file access)", () => {
   test("a user running read_text of the discovery-style file is refused, and the file never surfaces", async () => {
     role = "user";
     const { status, body } = await postQuery(`SELECT * FROM read_text('${secretFile}')`);
@@ -157,7 +157,7 @@ describe("POST /api/db/query reads no file for a standard user on DuckDB (K1/B1)
   });
 });
 
-describe("POST /api/db/multi-query carries the same per-role split (K1/B1)", () => {
+describe("POST /api/db/multi-query carries the same per-role split (non-admin DuckDB file access)", () => {
   test("a user running read_text through multi-query is refused and the file never surfaces", async () => {
     role = "user";
     const { status, body } = await postMultiQuery(`SELECT * FROM read_text('${secretFile}')`);
@@ -177,7 +177,7 @@ describe("POST /api/db/multi-query carries the same per-role split (K1/B1)", () 
   });
 });
 
-describe("one DuckDB seed a non-admin role can use is one handle for every role (B1/K1)", () => {
+describe("one DuckDB seed a non-admin role can use is one handle for every role (non-admin DuckDB file access)", () => {
   // DuckDB serves one file through one read-write handle per process. A second read-write handle
   // on the same file opens on Linux and macOS, keeps its own copy of the catalog, and whichever
   // closes last checkpoints over the other's committed rows; Windows refuses it. So the record
@@ -309,7 +309,7 @@ describe("a DuckDB seed whose roles change while Studio runs keeps one handle (n
   });
 });
 
-describe("POST /api/db/test-connection beside a writer of the other posture (B1/K1)", () => {
+describe("POST /api/db/test-connection beside a writer of the other posture (non-admin DuckDB file access)", () => {
   test("a user's test of a file an admin holds open opens no second read-write handle, and the WAL stays", async () => {
     const file = join(workDir, "held-by-admin.duckdb");
     const adminConnection = { id: "admin-held", name: "Admin held", type: "duckdb", database: file };
@@ -349,7 +349,7 @@ describe("POST /api/db/test-connection beside a writer of the other posture (B1/
   });
 });
 
-describe("POST /api/db/profile reads no file for a standard user on DuckDB (K1/B1)", () => {
+describe("POST /api/db/profile reads no file for a standard user on DuckDB (non-admin DuckDB file access)", () => {
   // The route writes its own profiling statements, but the table address is the caller's, and a
   // quoted path in it is DuckDB's replacement scan: `SELECT COUNT(*) FROM "<file>"` reads the file.
   async function profile(): Promise<{ status: number; body: Record<string, unknown> }> {
