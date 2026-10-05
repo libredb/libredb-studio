@@ -428,9 +428,9 @@ function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
 
   // information_schema.STATISTICS (indexes)
   if (normalized.includes("information_schema.statistics")) {
-    // Count query for overview
+    // Count query for overview (#1441: index_count only, table_count was unread)
     if (normalized.includes("count(distinct")) {
-      return Promise.resolve([[{ table_count: "2", index_count: "3" }], []]);
+      return Promise.resolve([[{ index_count: "3" }], []]);
     }
     // Index stats query
     if (normalized.includes("index_type") || normalized.includes("group_concat")) {
@@ -2013,6 +2013,32 @@ describe("MySQLProvider", () => {
       expect(typeof overview.indexCount).toBe("number");
       expect(overview.indexCount).toBe(3);
       expect(overview.startTime).toBeInstanceOf(Date);
+    });
+
+    // #1441: INDEX_NAME is unique per table only, so a database-wide
+    // COUNT(DISTINCT INDEX_NAME) collapses every table's PRIMARY (and any other
+    // index name two tables share) into one. The query must count distinct
+    // (TABLE_NAME, INDEX_NAME) pairs instead, so two tables each with a PRIMARY
+    // count as two indexes, not one.
+    test("the index count query counts per-table index names, not index names alone", async () => {
+      const executedStatements: string[] = [];
+      mockExecuteFn = (sql: string) => {
+        executedStatements.push(sql);
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      executedStatements.length = 0;
+      await provider.getOverview();
+
+      const indexCountSql = executedStatements.find(
+        (s) => s.toLowerCase().includes("information_schema.statistics") && s.toLowerCase().includes("index_count"),
+      );
+      expect(indexCountSql).toBeDefined();
+      expect(indexCountSql).toContain("COUNT(DISTINCT TABLE_NAME, INDEX_NAME)");
+      // The unused table_count column (#1441) is gone, not just unread.
+      expect(indexCountSql).not.toContain("table_count");
     });
 
     test("a size result without the expected column leaves overview size absent", async () => {

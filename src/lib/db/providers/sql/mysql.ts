@@ -947,10 +947,12 @@ const OVERVIEW_DATABASE_SIZE_SQL = `
         WHERE TABLE_SCHEMA = ?;
       `;
 
-const OVERVIEW_OBJECT_COUNTS_SQL = `
-        SELECT
-          COUNT(DISTINCT TABLE_NAME) as table_count,
-          COUNT(DISTINCT INDEX_NAME) as index_count
+// INDEX_NAME is unique per table only, so a database-wide COUNT(DISTINCT INDEX_NAME)
+// collapses every table's PRIMARY (and any other index name two tables share) into
+// one. Counting distinct (TABLE_NAME, INDEX_NAME) pairs instead counts each table's
+// indexes separately, which is what "N indexes" in the overview means.
+const OVERVIEW_INDEX_COUNT_SQL = `
+        SELECT COUNT(DISTINCT TABLE_NAME, INDEX_NAME) as index_count
         FROM information_schema.STATISTICS
         WHERE TABLE_SCHEMA = ?;
       `;
@@ -4046,7 +4048,7 @@ export class MySQLProvider extends SQLBaseProvider {
       const databaseSize = databaseSizeBytes === undefined ? "N/A" : formatBytes(databaseSizeBytes);
 
       // Get table and index count
-      const [countRows] = await runStatement(conn, OVERVIEW_OBJECT_COUNTS_SQL, [this.config.database]);
+      const [countRows] = await runStatement(conn, OVERVIEW_INDEX_COUNT_SQL, [this.config.database]);
 
       const [tableCountRows] = await runStatement(conn, OVERVIEW_TABLE_COUNT_SQL, [this.config.database]);
 
