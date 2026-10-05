@@ -136,6 +136,20 @@ describe("ConnectionsList", () => {
     expect(queryByText("Add Connection")).not.toBeNull();
   });
 
+  test("an empty list draws no Add Connection button when the shell offers none", () => {
+    const { queryByText } = render(
+      <ConnectionsList
+        connections={[]}
+        activeConnection={null}
+        onSelectConnection={defaultOnSelect}
+        onDeleteConnection={defaultOnDelete}
+      />,
+    );
+
+    expect(queryByText("No database connections established yet.")).not.toBeNull();
+    expect(queryByText("Add Connection")).toBeNull();
+  });
+
   test("renders ConnectionItem for each connection", () => {
     const connections = [mockPostgresConnection, mockMySQLConnection];
 

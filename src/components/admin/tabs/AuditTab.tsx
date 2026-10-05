@@ -500,6 +500,8 @@ function QueryAudit() {
 function AuditStats() {
   // Read once, at mount — see QueryAudit above.
   const [history] = useState<QueryHistoryItem[]>(() => storage.getHistory());
+  // The clock is read once, at mount, alongside the history it measures.
+  const [now] = useState(() => new Date());
   const tooltipStyle = chartTooltipStyle(useEffectiveTheme());
 
   const stats = useMemo(() => {
@@ -508,7 +510,6 @@ function AuditStats() {
     const successRate = total > 0 ? Math.round((successful / total) * 100) : 0;
     const avgTime = total > 0 ? Math.round(history.reduce((sum, h) => sum + h.executionTime, 0) / total) : 0;
 
-    const now = new Date();
     const byDay: { day: string; count: number }[] = [];
     for (let i = 6; i >= 0; i--) {
       const dayStart = startOfDay(subDays(now, i));
@@ -534,7 +535,7 @@ function AuditStats() {
       .slice(0, 5);
 
     return { total, successful, successRate, avgTime, byDay, topConnections };
-  }, [history]);
+  }, [history, now]);
 
   return (
     <div className="space-y-6">

@@ -274,6 +274,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 - **Auto Role Mapping**: Configurable claim-based role mapping with dot-notation for nested claims (e.g., `realm_access.roles`).
 - **Provider Logout**: Logout clears both the local JWT session and identity provider session.
 - **Passkeys**: Local accounts in the server store (`STORAGE_PROVIDER=sqlite` or `postgres`) can sign in with a passkey instead of a password and code once `PASSKEY_ORIGIN` names the address people open Studio at ([guide](docs/PASSKEYS.md)).
+- **Launch sign-in**: A platform that hosts Studio can sign its users in with a short-lived signed link and open a seeded connection, once `LAUNCH_TOKEN_SECRET`, `LAUNCH_TOKEN_AUDIENCE` and `LAUNCH_TOKEN_ISSUER` are set ([guide](docs/LAUNCH.md)).
 
 ### DBA Maintenance Toolkit (Admin Only)
 - **Live Monitoring Dashboard**: 7-tab monitoring with Overview, Performance, Queries, Sessions, Tables, Storage, and Connection Pool views.
@@ -1011,6 +1012,7 @@ Open **http://localhost:3000** and log in with the admin credentials the first r
 | [OIDC SSO](docs/OIDC.md) | SSO setup (Auth0, Keycloak, Okta, Azure AD, Zitadel, Google) + subsystem internals & security model |
 | [Two-Factor Auth](docs/MFA.md) | TOTP on the local provider — generating a secret, enrolling an app, Docker/Helm wiring, and what it does not cover |
 | [Passkeys](docs/PASSKEYS.md) | Passkey sign-in for local accounts in the server store: enabling it, managing passkeys, admin recovery, troubleshooting, and what it does not cover |
+| [Launch sign-in](docs/LAUNCH.md) | Signing people in from a hosting platform with a short-lived launch link: the three variables, the token, accounts in the server store, troubleshooting, and what it does not cover |
 | [Theming Guide](docs/ui/theming.md) | CSS theming, dark mode, and styling customization |
 | [Login Page](docs/ui/login-page.md) | Login page layout, OIDC/local modes, and design system |
 | [Editor Docs](docs/editor/) | SQL editor internals — completion, performance, query optimization |

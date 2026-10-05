@@ -111,9 +111,17 @@ const AUTH_STATUSES = new Set([400, 401, 403]);
  * Turso serves every database over HTTPS on 443, and a self-hosted plaintext
  * server is reached through the host/port fields with TLS off. Inventing a
  * `libsql+http://` scheme no libSQL tool emits would be worse than that gap.
+ *
+ * A URL authenticates with a TOKEN, `?authToken=` or the password in its
+ * authority, so `user` is dropped on this path: the transport sends HTTP Basic
+ * for any connection that names a user, and a seed or a stored record carrying
+ * both a URL and a user must still send `Bearer <token>`. The URL's own user
+ * name is not read either.
  */
 function resolveConnection(config: DatabaseConnection): DatabaseConnection {
   if (!config.connectionString) return config;
+
+  const tokenOnly: DatabaseConnection = { ...config, user: undefined };
 
   let url: URL;
   try {
@@ -122,13 +130,13 @@ function resolveConnection(config: DatabaseConnection): DatabaseConnection {
     // Left to `validate()` and to the transport to report: a string that is not a
     // URL is a configuration error, and swallowing it here would send the request
     // to whatever the form fields happened to hold.
-    return config;
+    return tokenOnly;
   }
 
   const token = url.searchParams.get(AUTH_TOKEN_PARAM);
 
   return {
-    ...config,
+    ...tokenOnly,
     host: url.hostname || config.host,
     port: url.port === "" ? config.port : Number(url.port),
     password: token ?? (url.password === "" ? config.password : decodeURIComponent(url.password)),

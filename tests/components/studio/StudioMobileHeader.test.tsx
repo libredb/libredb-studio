@@ -363,6 +363,19 @@ describe("StudioMobileHeader", () => {
     expect(onAddConnection).toHaveBeenCalledTimes(1);
   });
 
+  test("draws neither Add item when the shell offers no add handler", () => {
+    const listed = render(<StudioMobileHeader {...defaults} />);
+    expect(listed.queryByText("Add New")).not.toBeNull();
+
+    listed.rerender(<StudioMobileHeader {...defaults} onAddConnection={undefined} />);
+    expect(listed.queryByText("Add New")).toBeNull();
+
+    listed.rerender(
+      <StudioMobileHeader {...defaults} connections={[]} activeConnection={null} onAddConnection={undefined} />,
+    );
+    expect(listed.queryByText("Add Connection")).toBeNull();
+  });
+
   test("Copy Query click writes the editor query to the clipboard", () => {
     const writeText = mock(async () => {});
     Object.defineProperty(globalThis.navigator, "clipboard", {

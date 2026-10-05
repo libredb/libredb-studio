@@ -1,0 +1,8 @@
+{
+  "version": "1",
+  "defaults": { "managed": true },
+  "connections": [
+    { "id": "launch-default", "name": "Launch Default", "type": "sqlite", "database": ":memory:", "roles": ["*"] },
+    { "id": "launch-target", "name": "Launch Target", "type": "sqlite", "database": ":memory:", "roles": ["*"] }
+  ]
+}

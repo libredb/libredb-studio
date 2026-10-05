@@ -47,7 +47,12 @@ interface CommandPaletteProps {
   capabilities?: ProviderCapabilities;
   onSelectConnection: (conn: DatabaseConnection) => void;
   onTableClick: (path: readonly string[]) => void;
-  onAddConnection: () => void;
+  /**
+   * Opens the connection dialog. Optional, and the item is not rendered without it: the
+   * standalone shell withholds it while the server refuses custom connections
+   * (`ALLOW_CUSTOM_CONNECTIONS`), the same rule `onAskAgent` below follows.
+   */
+  onAddConnection?: () => void;
   onExecuteQuery: () => void;
   onLoadSavedQuery: (query: string) => void;
   onLoadHistoryQuery: (query: string) => void;
@@ -162,10 +167,12 @@ export function CommandPalette({
               <span>Ask the agent about this query</span>
             </CommandItem>
           )}
-          <CommandItem onSelect={() => runAction(onAddConnection)}>
-            <Plus strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-emerald" />
-            <span>New Connection</span>
-          </CommandItem>
+          {onAddConnection && (
+            <CommandItem onSelect={() => runAction(onAddConnection)}>
+              <Plus strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-emerald" />
+              <span>New Connection</span>
+            </CommandItem>
+          )}
           <CommandItem onSelect={() => runAction(onNavigateHealth)}>
             <Activity strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-emerald" />
             <span>Health Dashboard</span>

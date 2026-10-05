@@ -40,7 +40,8 @@ interface ConnectionsListProps {
   onToggleGroupCollapsed?: (id: string) => void;
   /** Files a connection under a group; null means Ungrouped. */
   onMoveConnectionToGroup?: (connectionId: string, groupId: string | null) => void;
-  onAddConnection: () => void;
+  /** Absent means the shell offers no new connection, and the empty list draws no Add Connection button. */
+  onAddConnection?: () => void;
 }
 
 type NameDialog = { mode: "create"; moveConnectionId?: string } | { mode: "rename"; groupId: string; name: string };
@@ -248,9 +249,11 @@ export const ConnectionsList = React.memo(function ConnectionsList({
                   <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
                     No database connections established yet.
                   </p>
-                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onAddConnection}>
-                    Add Connection
-                  </Button>
+                  {onAddConnection && (
+                    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onAddConnection}>
+                      Add Connection
+                    </Button>
+                  )}
                 </div>
               ) : (
                 section.connections.map((conn) => renderItem(conn, section))

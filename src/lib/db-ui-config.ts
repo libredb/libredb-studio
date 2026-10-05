@@ -188,12 +188,17 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // `libsql://<database>-<org>.turso.io?authToken=<jwt>` is the URL Turso's CLI
     // prints, so there IS a canonical form to paste - unlike Trino's JDBC URL.
     showConnectionStringToggle: true,
-    // No `user`: libSQL has no user names at all, and the credential is a token the
-    // server mints. No `database` either - the database IS the host on Turso Cloud,
-    // and a self-hosted server serves one per namespace hostname. The form labels
-    // `password` "Auth Token" (see ConnectionModal.tsx), because a field labelled
-    // Password invites a password that no libSQL server has.
-    connectionFields: ["host", "port", "password", "connectionString"],
+    // `user` is for a self-hosted server started with SQLD_HTTP_AUTH, which checks a
+    // user name and password as HTTP Basic: the transport sends Basic whenever a
+    // connection names a user and the bearer token otherwise. The form still labels
+    // `password` "Auth Token" (see ConnectionModal.tsx), the credential Turso Cloud and
+    // a JWT-checking server take, and the hint below says when that box is a password.
+    // No `database`: the database IS the host on Turso Cloud, and a self-hosted server
+    // serves one per namespace hostname.
+    connectionFields: ["host", "port", "user", "password", "connectionString"],
+    fieldHints: {
+      user: "Only for a self-hosted libSQL server started with SQLD_HTTP_AUTH, which checks a user name and password as HTTP Basic: the Auth Token box then takes the password. Leave it empty for Turso Cloud and for a server that checks tokens.",
+    },
   },
   mongodb: {
     icon: MongoDBIcon,

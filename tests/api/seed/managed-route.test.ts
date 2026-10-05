@@ -383,4 +383,33 @@ describe("GET /api/connections/managed", () => {
       expect(data.pendingSeeds).toEqual([]);
     });
   });
+
+  // SEED_LITERAL_VALUES through the real list: every file seed is marked, and the route still answers
+  // its usual shape. The marker is removed, a managed seed keeps its password on the server, and an
+  // editable seed is handed its `${NAME}` value as written, never the variable's value.
+  it("lists a literal seed file without the marker, and an editable ${NAME} value as written", async () => {
+    const origPath = process.env.SEED_CONFIG_PATH;
+    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "vault-config.yaml");
+    process.env.VAULT_FIXTURE_ENV_PASSWORD = "env-secret";
+    process.env.SEED_LITERAL_VALUES = "true";
+    resetCache();
+
+    try {
+      const res = await GET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      const locked = data.connections.find((c: { seedId: string }) => c.seedId === "vault-postgres");
+      const fromEnv = data.connections.find((c: { seedId: string }) => c.seedId === "env-postgres");
+
+      expect("password" in locked).toBe(false);
+      expect(fromEnv.password).toBe("${VAULT_FIXTURE_ENV_PASSWORD}");
+      expect(data.connections.filter((c: object) => "literal" in c)).toEqual([]);
+      expect(JSON.stringify(data)).not.toContain("env-secret");
+    } finally {
+      process.env.SEED_CONFIG_PATH = origPath;
+      delete process.env.VAULT_FIXTURE_ENV_PASSWORD;
+      delete process.env.SEED_LITERAL_VALUES;
+      resetCache();
+    }
+  });
 });

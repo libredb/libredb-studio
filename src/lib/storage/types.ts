@@ -288,7 +288,9 @@ export class LastAdminError extends Error {
 
 /**
  * One local email/password account on the server store.
- * `passwordHash` is the scrypt encoding from src/lib/password-hash.ts, never the password.
+ * `passwordHash` is the scrypt encoding from src/lib/password-hash.ts, never the password; for an account
+ * a launch created it is `launch-identity$<issuer>$<subject>` instead, each part base64url, which no password
+ * matches (provisionLaunchAccount in src/lib/local-accounts.ts).
  * `totpPending` is an enrolment that has not been confirmed; login ignores it.
  */
 export interface StoredAccount {

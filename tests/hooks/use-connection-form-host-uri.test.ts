@@ -381,10 +381,10 @@ describe("useConnectionForm: the declared credential warning", () => {
   });
 
   test("a user left from another engine does not count where this engine takes no user", () => {
-    restores.push(declareCredentialWarnings("libsql", [SYNTHETIC_PAIR]));
+    restores.push(declareCredentialWarnings("duckdb", [SYNTHETIC_PAIR]));
     const { result } = renderForm();
     act(() => result.current.setUser("root"));
-    act(() => result.current.setType("libsql"));
+    act(() => result.current.setType("duckdb"));
     act(() => result.current.setPassword(SYNTHETIC_PASSWORD));
     expect(result.current.credentialWarning).toBeUndefined();
   });

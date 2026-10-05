@@ -24,6 +24,7 @@ import {
   LLMStreamError,
 } from "@/lib/llm/types";
 import { VaultError } from "@/lib/seed/vault-client";
+import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 
 describe("createErrorResponse", () => {
   // Suppress logger output during tests
@@ -247,6 +248,30 @@ describe("createErrorResponse", () => {
     const body = await res.json();
     expect(body.code).toBe("CONFIG_ERROR");
     expect(body.error).toContain("Vault");
+  });
+
+  // ALLOW_CUSTOM_CONNECTIONS off: the refusal names its own code, so a client tells the operator's
+  // policy apart from the role filter's refusal, which is the same 403 with AUTH_ERROR.
+  test("a SeedConnectionError carrying CUSTOM_CONNECTIONS_DISABLED answers 403 with that code", async () => {
+    const res = createErrorResponse(
+      new SeedConnectionError("Custom connections are disabled on this server", 403, "CUSTOM_CONNECTIONS_DISABLED"),
+    );
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      error: "Custom connections are disabled on this server",
+      code: "CUSTOM_CONNECTIONS_DISABLED",
+      statusCode: 403,
+    });
+  });
+
+  test("a SeedConnectionError without a code of its own keeps the code its status implies", async () => {
+    const res = createErrorResponse(
+      new SeedConnectionError('Access denied: connection "admin-only" not available for role "user"', 403),
+    );
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("AUTH_ERROR");
   });
 
   // ─── Generic Errors ───────────────────────────────────────────────────────

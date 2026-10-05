@@ -462,8 +462,8 @@ describe("db-ui-config", () => {
     */
     describe("takesConnectionField", () => {
       test("answers for the engines whose field set is not the networked default", () => {
-        // libSQL: a token, not a user name; and the database IS the host.
-        expect(takesConnectionField("libsql", "user")).toBe(false);
+        // libSQL: a user for sqld's HTTP Basic auth beside the token box; and the database IS the host.
+        expect(takesConnectionField("libsql", "user")).toBe(true);
         expect(takesConnectionField("libsql", "database")).toBe(false);
         expect(takesConnectionField("libsql", "host")).toBe(true);
         expect(takesConnectionField("libsql", "password")).toBe(true);
@@ -508,6 +508,28 @@ describe("db-ui-config", () => {
       // case it existed to catch.
       expect(getDBConfig("redis").connectionFields).toContain("user");
     });
+
+    test("libsql names the user, because its transport sends one as HTTP Basic", () => {
+      // Pinned by name for the same reason: the transport reads `config.user` for a server started with
+      // SQLD_HTTP_AUTH, and a list without it would leave that server reachable from the form only through
+      // sqld's lenient header parsing, which is the Redis ACL user again.
+      expect(getDBConfig("libsql").connectionFields).toContain("user");
+    });
+  });
+
+  test("libsql declares when its Username box is filled, and keeps the token box's own label", () => {
+    const libsql = getDBConfig("libsql");
+    expect(libsql).toMatchObject({
+      label: "libSQL",
+      defaultPort: "8080",
+      showConnectionStringToggle: true,
+      connectionFields: ["host", "port", "user", "password", "connectionString"],
+    });
+    expect(libsql.fieldHints).toEqual({
+      user: "Only for a self-hosted libSQL server started with SQLD_HTTP_AUTH, which checks a user name and password as HTTP Basic: the Auth Token box then takes the password. Leave it empty for Turso Cloud and for a server that checks tokens.",
+    });
+    // "Auth Token" stays the per-type word in ConnectionModal.tsx, so nothing relabels the password box here.
+    expect(libsql.fieldLabels).toBeUndefined();
   });
 
   test("db2 declares its label, DRDA port and fields, the consent box's hint and no password hint (#786)", () => {
@@ -795,11 +817,12 @@ describe("declared connection-field copy (#1085)", () => {
     }
   });
 
-  test("only db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types and oxia declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types and oxia declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
     expect(declared).toEqual([
+      "libsql",
       "db2",
       "prometheus",
       "kafka",

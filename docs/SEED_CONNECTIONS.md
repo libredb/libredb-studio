@@ -201,6 +201,21 @@ connections:
     # No `database`: one connection is one cluster, so there is nothing to select.
     # No `connectionString` and no `sshTunnel`: a Kafka client reaches every broker at
     # the address the broker advertises, which a tunnel to one address does not carry.
+
+  - id: "edge-libsql"
+    name: "Edge libSQL"
+    type: libsql
+    host: "${LIBSQL_HOST}"
+    port: 8080                # sqld's HTTP port
+    user: "${LIBSQL_USER}"
+    password: "${LIBSQL_PASSWORD}"
+    roles: ["*"]
+    environment: production
+    # A `user` sends `user` and `password` as HTTP Basic, the pair a self-hosted sqld
+    # started with SQLD_HTTP_AUTH="basic:<base64(user:password)>" checks. Leave `user`
+    # out to send `password` as a bearer token, which Turso Cloud and a sqld checking
+    # JWTs read. No `database`: the database is the host. No `connectionString`: a
+    # libsql:// URL means TLS and a token, and a `user` beside it is ignored.
 ```
 
 ### Field Reference
@@ -340,7 +355,8 @@ Leave `database` out to read the user's home database; another database is anoth
 
 ## Credential Management
 
-Credentials are never stored in the config file directly. Use `${ENV_VAR}` syntax to reference environment variables:
+Keep the credentials of a config file you write by hand out of the file.
+Use `${ENV_VAR}` syntax to reference environment variables:
 
 ```yaml
 connections:
@@ -355,8 +371,29 @@ connections:
 2. `${VARIABLE_NAME}` patterns are resolved from `process.env`
 3. If an env var is undefined, that connection is **skipped** (others continue working)
 4. Plaintext passwords trigger a warning log (but still work)
+5. With `SEED_LITERAL_VALUES=true`, steps 2 to 4 do not happen: every value is used as written (see [Literal values written by a platform](#literal-values-written-by-a-platform))
 
 **Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`, `apiKeyId`, `apiKeySecret`, and the TLS material under `ssl`: `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey`.
+
+### Literal values written by a platform
+
+`SEED_LITERAL_VALUES=true` makes every value of the seed file a literal.
+Studio then resolves no `${ENV_VAR}` and no `${vault:...}` reference in the file, neither when it lists connections nor when it opens one.
+A value that looks like a reference is used as written: `user: "${DB_USER}"` connects as a user literally named `${DB_USER}`, an unset variable skips no connection, and Vault is never asked for a seed value.
+The plaintext-password warning is not logged either, because every value in such a file is a literal on purpose.
+At the first load in literal mode, one `info` line says so: `Seed config read in literal mode (SEED_LITERAL_VALUES): no ${ENV} or ${vault:...} reference is resolved`.
+`true`, `1`, `on` and `yes` turn the mode on, trimmed and in any case.
+`false`, `0`, `off`, `no` and an empty value leave it off.
+Any other value leaves it off as well and logs one warning per process that names the value, so a typo shows in the log instead of passing silently.
+
+The mode exists for a seed file that a platform writes from data its users control, such as the database names, user names and passwords they choose when they create a database.
+Resolving a reference in such a file would hand Studio's own environment to whoever controls the field.
+A platform user who names a database user `${JWT_SECRET}` would have Studio send its session signing secret, as that user name, to a database the platform user runs, and read it back from that database's log.
+With the secret, that user could sign a Studio admin session.
+Literal mode removes the resolution itself, so no value a platform user controls can make Studio read its environment or its Vault, including a value the platform failed to filter out.
+
+Turn the mode on only for a file in which every value is meant literally: a file written by hand that relies on `${ENV_VAR}` or `${vault:...}` references stops resolving them.
+Keep such a file `managed: true`, the default, so its passwords stay on the server, and mount it read-only from a directory other users on the host cannot enter.
 
 ### Vault References
 
@@ -527,6 +564,37 @@ Deleting a `managed: false` connection from the sidebar does not simply remove i
 
 ---
 
+## Custom Connections
+
+`ALLOW_CUSTOM_CONNECTIONS` decides whether a signed-in user may open a connection of their own, one that is not in this file.
+It is on when unset.
+`false`, `0`, `off` or `no`, trimmed and in any letter case, switch it off; `true`, `1`, `on` and `yes` keep it on.
+One pair of matching surrounding quotes, single or double, is stripped first, since an env file can keep them, so `"false"` switches it off.
+Any other value fails closed: it switches custom connections off and logs one error naming the value and the accepted values, so a typo never leaves them open.
+
+Switch it off where Studio shares a network with services its users must not reach, such as a platform's overlay network or a cluster namespace: with custom connections on, any account that can sign in can connect to any host and port that network reaches.
+The switch limits the connections Studio itself opens, not what a seeded engine can reach on its own, for example through Postgres `dblink` or `postgres_fdw`, ClickHouse `remote()` or `url()`, MySQL `FEDERATED` tables or the brokers a Kafka cluster advertises, so grant a seed's account only what its users may reach from that engine.
+
+Switched off, every route that builds a database provider refuses a connection the request supplies, before any provider is built, with `403` and `{ "error": "Custom connections are disabled on this server", "code": "CUSTOM_CONNECTIONS_DISABLED", "statusCode": 403 }`.
+The code tells this refusal apart from the role check's, which is also a `403` and carries `AUTH_ERROR`.
+The refusal is made in `resolveConnection()` (`src/lib/seed/resolve-connection.ts`), which every database route resolves its connection through, and `POST /api/admin/fleet-health` resolves each item through it too and reports a refused one as that item's error.
+The agent runtime and the MCP endpoint only ever open a seed by its id, so nothing changes there.
+
+| Connection | With custom connections off |
+|------------|-----------------------------|
+| `managed: true` seed, a connection [Platform discovery (CapRover)](#platform-discovery-caprover) found included | Listed, and opened by its id as before |
+| `managed: false` seed | Listed and opened. Its editable copy keeps the id `seed:<id>`, and the server resolves that id from this file and ignores the copy's own fields, exactly as it does with the switch on |
+| Built-in samples | Unmanaged seeds, so the row above applies |
+| A connection the user created, or a duplicate of any connection | Hidden in the editor and refused by the server |
+
+The editor reads the switch once per page load from `GET /api/connections/policy` and withholds every control that creates or repoints a connection of the user's own: New connection, Add Connection, the command palette's New Connection, Edit and Duplicate.
+Delete stays; on an unmanaged seed's copy it dismisses the seed, as it always does, and deleting the open connection selects the first connection listed.
+An open tab's refresh of the managed list (see [In an open tab](#in-an-open-tab)) follows the same rule: when it withdraws the open connection, or none is open, the connection it makes active is the first one listed, never a hidden one.
+The admin pages, the monitoring page and the schema diff list connections under the same rule.
+The user's own connections stay in their storage while hidden, and reappear when the switch is turned back on, each in the place it held in the saved order, even if the seeds around it were reordered meanwhile.
+
+---
+
 ## Hot Reload
 
 The config file is **cached in memory** with a TTL (default 60 seconds). When the file changes:
@@ -555,6 +623,23 @@ The same TTL governs the [Platform discovery (CapRover)](#platform-discovery-cap
 An open tab refetches the managed list every `max(SEED_CACHE_TTL_MS, 5000)` milliseconds, at most 60 seconds, while it is visible, and on focus, so a change to the seed file or to the export reaches it without a reload.
 With the default of 60000 an open tab refreshes once a minute; the auto-connect template sets 5000, so its tabs refresh every 5 seconds.
 A change to the seed file therefore reaches an open tab after at most `SEED_CACHE_TTL_MS` plus one refresh interval, about two minutes with the defaults; with a TTL above 60000 the tab still asks every 60 seconds, and the server answers most of those reads from its cache.
+A refresh merges the answer exactly as a page load does: a `managed: false` seed keeps the editable copy the browser already holds, an unmanaged seed the user deleted stays deleted, and an answer that lists no connections withdraws every managed one; [In an open tab](#in-an-open-tab) says which connection stays open.
+A refresh that fails changes nothing and shows nothing, and the next one tries again; the one exception is a session that has ended, which the server answers with `401` and the code `AUTH_REQUIRED`, and which sends the tab to the sign-in page, as any other request of the editor does.
+
+---
+
+## Linking to a Connection
+
+A link can open the editor on one connection: `/?connection=<id>`, under `BASE_PATH` when one is set, where `<id>` is the connection's full id in the browser, `seed:<seed id>` for a seed connection.
+The colon may be URL-encoded, as in `/?connection=seed%3Aprod-db`.
+The editor reads the parameter once its connection list has loaded, opens that connection instead of the one it would open by default, and removes the parameter from the address bar, so a reload or a copied address does not repeat it.
+Opened without a session, the link goes to the sign-in page, which returns to it after the user signs in.
+When the list the user sees does not hold that id yet, the editor keeps its default selection and opens the connection at the first refresh of the managed list that lists it (see [Hot Reload](#hot-reload)), because a seed the server has not re-read yet is listed a little later.
+A connection the user chooses while the link is pending cancels it, so a later refresh never switches away from it.
+If the first refresh one seed-cache lifetime (`SEED_CACHE_TTL_MS`) after the load does not list it either, the editor shows a notice that reads the same whatever the cause: an id that does not exist, a seed whose `roles` leave the user out, or a connection of the user's own while [Custom Connections](#custom-connections) are switched off.
+The notice therefore does not reveal which seed ids exist for other roles.
+When the managed list cannot be loaded at all, the notice says so instead, and the link opens only a connection the browser holds itself.
+The parameter belongs to the standalone editor page: the embeddable `StudioWorkspace` component takes its connections and its selection from its host and ignores the address bar.
 
 ---
 
@@ -780,7 +865,7 @@ Credentials are a snapshot of the environment CapRover set: a password changed l
 The values are used as literal text.
 A discovered value that looks like a reference, `${NAME}` or `${vault:...}`, is sent to the database as written, and Studio never resolves it from its own environment or from Vault, neither when listing connections nor when one is opened.
 Any app on the CapRover network can carry these keys, and resolving a reference in them would hand Studio's own secrets to that app as a password.
-The marker that does this is set by the discovery source, not derived from the id, so a seed-file connection whose id starts with `caprover-` keeps the usual resolution.
+The marker that does this is set by the discovery source, not derived from the id, so a seed-file connection whose id starts with `caprover-` keeps the usual resolution, unless `SEED_LITERAL_VALUES` makes every seed-file value a literal too ([Literal values written by a platform](#literal-values-written-by-a-platform)).
 `GET /api/connections/managed` strips the marker, so its response shape is unchanged.
 
 ### Precedence
@@ -837,7 +922,8 @@ The 5000 is the floor `NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS`, which is inlined a
 An install that keeps the default `SEED_CACHE_TTL_MS` of 60000 therefore refreshes an open tab once a minute, while the auto-connect template sets 5000, so its tabs refresh every 5 seconds.
 With the template's values a database appears or disappears in an open tab within about 20 seconds of the change in CapRover: the exporter scans every 10 seconds, Studio re-reads the export at most every 5, and the tab refreshes every 5.
 The template's end text says about 30 seconds, which also covers a database that is still starting: an image CapRover built itself, as the MariaDB and KeyDB templates produce, is listed only once its database accepts connections.
-The active connection stays open while its id is still listed; when it is withdrawn, the first remaining connection becomes active and Studio says so once.
+The active connection stays open while its id is still listed; when it is withdrawn, the first remaining connection the sidebar lists becomes active and Studio says so once.
+With `ALLOW_CUSTOM_CONNECTIONS` off that is never one of the user's own connections, which stay hidden (see [Custom Connections](#custom-connections)).
 Pages that use the lighter connection list (the admin Overview and Operations tabs, Schema Diff and Monitoring) load it once and need a reload.
 
 ---
@@ -846,7 +932,7 @@ Pages that use the lighter connection list (the admin Overview and Operations ta
 
 | Scenario | Behavior |
 |----------|----------|
-| Config file not found | App runs normally, no seed connections. Warning logged. |
+| Config file not found | App runs normally, no seed connections. The warning is logged once for that path, and again only after the file has appeared and gone, so a short `SEED_CACHE_TTL_MS` does not repeat it on every re-read. |
 | Invalid YAML/JSON | Endpoint returns 500. Error logged with details. |
 | Invalid config (Zod validation fails) | Endpoint returns a generic 500. Validation errors are logged server-side, not returned in the response body. |
 | `mcp` that is not a boolean, or `mcp` in `defaults` | The whole file fails like any invalid config; every MCP tool answers that the connection configuration could not be read |
@@ -858,6 +944,8 @@ Pages that use the lighter connection list (the admin Overview and Operations ta
 | `${vault:...}` reference, Vault unreachable / path or key missing / token refused | The connection fails with an explicit error **when it is opened**. Listing connections is unaffected, and so is every other connection. |
 | `${vault:...}` reference with no `#key`, or a v1-shaped path | Fails with an error naming the expected KV v2 shape. The value is never treated as a literal. |
 | `${vault:...}` reference with `VAULT_ADDR` unset | Fails with a message naming the missing variable. |
+| A value written as `${ENV_VAR}` or `${vault:...}` while `SEED_LITERAL_VALUES=true` | Used as written: no variable is read, the connection is not skipped and Vault is not asked, so a value that is not the real credential fails like any wrong credential when the connection is opened. |
+| `SEED_LITERAL_VALUES` set to a value it does not recognize | References stay resolved, as with the mode off, and one warning per process names the value. |
 | User role doesn't match any connection | Empty list returned. Normal behavior. |
 | Seed connection not found at query time | 404 response. |
 | User doesn't have access to seed connection | 403 response. |
@@ -881,13 +969,16 @@ Pages that use the lighter connection list (the admin Overview and Operations ta
 - `managed: true` connections: credentials **never reach the client**. The API strips every field `src/lib/storage/connection-secrets.ts` classifies as secret, which on a seed means `password`, `connectionString`, the Elasticsearch `apiKeyId` and `apiKeySecret` pair, and `ssl.clientKey`. Certificates (`ssl.caCert`, `ssl.clientCert`) are public and still reach it. Server resolves credentials at query execution time.
 - That covers what the API returns, not what an engine answers a statement with. A managed Redis seed that authenticates with `requirepass` answers `CONFIG GET requirepass` with the password, so give a managed seed a least-privilege credential, for Redis an ACL user without `+config`.
 - Config file should be mounted **read-only** (`:ro` in Docker, `readOnly: true` in Kubernetes).
-- Use `${ENV_VAR}` for all secrets. Plaintext passwords trigger a warning log.
+- Use `${ENV_VAR}` for the secrets of a file you write by hand.
+  Plaintext passwords trigger a warning log.
+- Read a file that a platform writes from data its users control with `SEED_LITERAL_VALUES=true`, so that no value in it is resolved from Studio's environment or from Vault ([Literal values written by a platform](#literal-values-written-by-a-platform)).
 
 ### Role Enforcement
 
 - User role is extracted from the JWT session **server-side** — never from client headers or request params.
 - Every database operation (query, schema, health check, etc.) goes through `resolveConnection()` which verifies role access before returning credentials.
 - Role check failures return 403 with no credential information.
+- While `ALLOW_CUSTOM_CONNECTIONS` is off, `resolveConnection()` also refuses a connection supplied in the request with 403, so only seeds reach a provider (see [Custom Connections](#custom-connections)).
 
 ### Audit Trail
 
@@ -906,6 +997,8 @@ This is the standard application logger (`src/lib/logger.ts`), not a persisted a
 |----------|---------|-------------|
 | `SEED_CONFIG_PATH` | `/app/config/seed-connections.yaml` | Path to config file |
 | `SEED_CACHE_TTL_MS` | `60000` | Cache TTL in milliseconds |
+| `ALLOW_CUSTOM_CONNECTIONS` | `true` | `false`, `0`, `off` or `no` refuses every connection that is not a seed, and so does any unrecognised value; see [Custom Connections](#custom-connections) |
+| `SEED_LITERAL_VALUES` | unset | `true`, `1`, `on` or `yes` (trimmed, any case) reads every seed value as written: no `${ENV_VAR}` or `${vault:...}` reference is resolved and the plaintext-password warning is not logged. `false`, `0`, `off`, `no` or empty keep references resolved, and so does any other value, with one warning ([Literal values written by a platform](#literal-values-written-by-a-platform)) |
 | `SEED_DISCOVERY_PATH` | unset (off) | Path of the discovery export file inside the Studio container; see [Platform discovery (CapRover)](#platform-discovery-caprover) |
 | `SEED_DISCOVERY_MAX_AGE_MS` | `60000` | Age of the export's `generatedAt` after which discovered connections are withdrawn; keep it well above the exporter's `DISCOVERY_INTERVAL_MS` (10000 by default) |
 | `NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS` | `5000` | Shortest interval of an open tab's managed-list refresh, inlined at build time, so it only affects source builds and tests, not packaged artifacts |
@@ -1043,7 +1136,7 @@ seed-connections.yaml (volume mount)
         │
   ┌─────▼────────────────────────────┐
   │ resolveConnection() (all routes) │  seed: prefix → server-side credential resolution
-  └─────┬────────────────────────────┘  a literal (discovered) connection skips Vault
+  └─────┬────────────────────────────┘  a literal connection (discovered, or a file seed with SEED_LITERAL_VALUES on) skips Vault
         │
   ┌─────▼────────────────────┐
   │ VaultClient (lazy)       │  ${vault:...} → KV v2 read + per-path TTL cache

@@ -1,9 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
+import { LAUNCH_E2E_ENV } from "./e2e/helpers/launch-token";
 
 // Ports of every Playwright configuration, so none collides with another: this file's main server
-// 3000 (E2E_PORT), offline server 3010 (E2E_OFFLINE_PORT) and passkey server 3011 (E2E_PASSKEY_PORT);
-// playwright.base-path.config.ts's app 3020 and proxy 3021. Override one with its variable when
-// that port is occupied by another instance.
+// 3000 (E2E_PORT), offline server 3010 (E2E_OFFLINE_PORT), passkey server 3011 (E2E_PASSKEY_PORT) and
+// launch server 3012 (E2E_LAUNCH_PORT); playwright.base-path.config.ts's app 3020 and proxy 3021.
+// Override one with its variable when that port is occupied by another instance.
 const port = Number(process.env.E2E_PORT ?? 3000);
 
 // offline-editor.spec.ts, the kafka, etcd, neo4j, milvus and qdrant provider specs, the influxdb
@@ -14,6 +15,9 @@ const offlinePort = Number(process.env.E2E_OFFLINE_PORT ?? 3010);
 
 // passkey.spec.ts gets a third server process: see the chromium-passkey project for why.
 const passkeyPort = Number(process.env.E2E_PASSKEY_PORT ?? 3011);
+
+// launch.spec.ts gets a fourth server process: see the chromium-launch project for why.
+const launchPort = Number(process.env.E2E_LAUNCH_PORT ?? 3012);
 
 const testCredentials = {
   JWT_SECRET: "test-jwt-secret-for-e2e-tests-32ch",
@@ -53,10 +57,10 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
       // offline-editor.spec.ts, the kafka, etcd, neo4j, milvus and qdrant provider specs, the influxdb providers
-      // spec and the oxia provider spec run under their own projects below, against the second server, and
-      // passkey.spec.ts against the third.
+      // spec and the oxia provider spec run under their own projects below, against the second server,
+      // passkey.spec.ts against the third and launch.spec.ts against the fourth.
       testIgnore:
-        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|influxdb-providers|oxia-provider|passkey)\.spec\.ts/,
+        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|influxdb-providers|oxia-provider|passkey|launch)\.spec\.ts/,
     },
     {
       // Every other spec in this suite signs in as the same shared user@libredb.org account
@@ -137,6 +141,14 @@ export default defineConfig({
       testMatch: /(^|\/)passkey\.spec\.ts$/,
     },
     {
+      // Launch sign-in needs the LAUNCH_TOKEN_* variables, an account registry for the launched person, and
+      // seeded connections for the link to open, so this server runs in store mode with a seed file of its
+      // own; no other server gets the launch variables, so every other spec keeps launch sign-in off.
+      name: "chromium-launch",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${launchPort}` },
+      testMatch: /(^|\/)launch\.spec\.ts$/,
+    },
+    {
       // Scoped to the CSP spec only. The desktop shell renders under WebKitGTK, and this is the
       // nearest engine available in CI; the release-time desktop smoke test remains the final
       // check on the webview.eval handoff and is listed in the Phase 1 pull request description.
@@ -205,6 +217,28 @@ export default defineConfig({
         // cases of passkey.spec.ts share one client budget; the defaults (5 and 10) would refuse them.
         RATE_LIMIT_LOGIN_MAX: "100",
         RATE_LIMIT_PASSKEY_MAX: "100",
+        ...testCredentials,
+      },
+    },
+    {
+      // The same shared build as the server above. rm -rf first: a store left by an earlier run would keep
+      // the accounts earlier launches created.
+      command: "rm -rf data-e2e-launch && until [ -f .next/BUILD_ID ]; do sleep 1; done; bun start",
+      url: `http://localhost:${launchPort}`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+      env: {
+        PORT: String(launchPort),
+        STORAGE_PROVIDER: "sqlite",
+        STORAGE_SQLITE_PATH: "./data-e2e-launch/libredb-storage.db",
+        SEED_CONFIG_PATH: "./e2e/fixtures/launch-seed-connections.json",
+        // Both embedded samples off: the seed file's two connections are the whole list the spec reads.
+        LIBREDB_EMBEDDED_SAMPLE: "false",
+        SQLITE_EMBEDDED_SAMPLE: "false",
+        // Every request comes from the address "unknown" without a trusted proxy, so the refusal the spec
+        // provokes shares one client budget with every retry.
+        RATE_LIMIT_LOGIN_MAX: "100",
+        ...LAUNCH_E2E_ENV,
         ...testCredentials,
       },
     },

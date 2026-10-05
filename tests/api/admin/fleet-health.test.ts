@@ -268,6 +268,35 @@ describe("POST /api/admin/fleet-health", () => {
     expect(data.code).toBe("INTERNAL_ERROR");
   });
 
+  // ALLOW_CUSTOM_CONNECTIONS off: a connection the caller supplied is refused by resolveConnection
+  // before the factory is reached, and the refusal is reported as that item's error.
+  test("reports a connection of the caller's own as refused, and builds nothing, while custom connections are off", async () => {
+    process.env.ALLOW_CUSTOM_CONNECTIONS = "false";
+    try {
+      const req = createMockRequest("/api/admin/fleet-health", {
+        method: "POST",
+        body: { connections: [connections[0]] },
+      });
+
+      const res = await POST(req);
+      const data = await parseResponseJSON<{
+        results: { connectionId: string; status: string; error?: string }[];
+      }>(res);
+
+      expect(res.status).toBe(200);
+      expect(data.results).toEqual([
+        expect.objectContaining({
+          connectionId: "conn-1",
+          status: "error",
+          error: "Custom connections are disabled on this server",
+        }),
+      ]);
+      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.ALLOW_CUSTOM_CONNECTIONS;
+    }
+  });
+
   test("empty connections array returns empty results", async () => {
     const req = createMockRequest("/api/admin/fleet-health", {
       method: "POST",

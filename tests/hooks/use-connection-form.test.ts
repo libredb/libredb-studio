@@ -36,7 +36,7 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   sqlite: ["database"],
   libredb: ["database"],
   duckdb: ["database"],
-  libsql: ["host", "port", "password", "connectionString"],
+  libsql: ["host", "port", "user", "password", "connectionString"],
   // Named explicitly even though it matches the default: it is the one this table exists
   // for, and `user` being present here is a statement about the real config, not a
   // convenience.
@@ -3406,11 +3406,11 @@ describe("useConnectionForm", () => {
     expect(saved.password).toBe("probepw");
   });
 
-  test("a user name and database typed for libSQL are not saved, because it takes neither", async () => {
-    // The modal renders no box for either now, so this is the write half of the same
-    // rule: were a value to arrive anyway - a stale form state, a future edit to the
-    // modal - nothing carries it onto a libSQL connection. The engine authenticates with
-    // a token the server minted and is addressed entirely by URL.
+  test("a user name typed for libSQL is saved and a database is not, matching what it takes", async () => {
+    // The user is the half of sqld's HTTP Basic pair the transport sends beside the token
+    // box's value, so it is written; the database is not, because a libSQL connection is
+    // addressed by its host, and were a value to arrive anyway - a stale form state, a
+    // future edit to the modal - nothing carries it onto the connection.
     mockGlobalFetch({
       "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
     });
@@ -3420,8 +3420,8 @@ describe("useConnectionForm", () => {
 
     act(() => {
       result.current.setType("libsql");
-      result.current.setUser("ignored");
-      result.current.setDatabase("also-ignored");
+      result.current.setUser("libsql");
+      result.current.setDatabase("ignored");
       result.current.setHost("db.turso.io");
     });
 
@@ -3430,7 +3430,7 @@ describe("useConnectionForm", () => {
     });
 
     const saved = (onConnect.mock.calls as unknown[][])[0][0] as DatabaseConnection;
-    expect(saved.user).toBeUndefined();
+    expect(saved.user).toBe("libsql");
     expect(saved.database).toBeUndefined();
     // Non-vacuous: the connection WAS built, and the fields libSQL does take survived.
     expect(saved.host).toBe("db.turso.io");

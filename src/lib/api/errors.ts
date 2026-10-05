@@ -52,12 +52,15 @@ export function createErrorResponse(error: unknown, context?: { route?: string }
   // --- Seed Connection Error ---
   if (error instanceof SeedConnectionError) {
     logger.warn("Seed connection error", { route, statusCode: error.statusCode });
+    // A refusal that names its own code keeps it (the custom-connections switch); every other one
+    // takes the code its status implies, as before.
     const code =
-      error.statusCode === 403 || error.statusCode === 401
+      error.code ??
+      (error.statusCode === 403 || error.statusCode === 401
         ? ApiErrorCode.AUTH_ERROR
         : error.statusCode === 400
           ? ApiErrorCode.CONFIG_ERROR
-          : undefined;
+          : undefined);
     return NextResponse.json(
       { error: error.message, ...(code ? { code } : {}), statusCode: error.statusCode },
       { status: error.statusCode },

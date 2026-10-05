@@ -101,7 +101,8 @@ function readRole(value: unknown): Role {
   return value;
 }
 
-function sameEmail(a: string, b: string): boolean {
+/** An account's email, its username, is matched without regard to case on every sign-in path. */
+export function sameEmail(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
@@ -444,6 +445,149 @@ export async function rehashStoredPassword(email: string, password: string): Pro
   } catch (error) {
     logger.error("Failed to rehash account password", error, { route: "POST /api/auth/login" });
   }
+}
+
+/** The actor an account change made by a launch is recorded under, as "environment" is for the reset. */
+const LAUNCH_ACTOR = "launch";
+const LAUNCH_NOT_LINKED =
+  "This email belongs to a Studio account that a launch link cannot sign in to. Sign in with that account's password, or ask a Studio admin.";
+const LAUNCH_DISABLED = "This account is disabled in Studio. Ask a Studio admin to enable it.";
+const LAUNCH_LAST_ADMIN =
+  "Studio did not make this account a user, because it is the last enabled admin. Ask a Studio admin to make another account an admin first.";
+
+/** What a verified launch token asks for: an account, a role, and the platform identity it speaks for. */
+export interface LaunchIdentity {
+  email: string;
+  role: Role;
+  /** The token's `iss`, which the verifier matched to LAUNCH_TOKEN_ISSUER. */
+  issuer: string;
+  /** The token's `sub`, the person's id on that platform. */
+  subject: string;
+}
+
+/** Who a verified launch token signs in as. `sessionVersion` is set only for an account in the server store. */
+export interface LaunchAccount {
+  role: Role;
+  username: string;
+  sessionVersion?: number;
+}
+
+/**
+ * What the password_hash of an account a launch created holds: not a scrypt encoding, so no password ever
+ * matches it (passwordMatchesHash runs its placeholder KDF and answers false), but the issuer and subject the
+ * account is bound to, base64url-encoded so that neither can write the separator. The binding lives in that
+ * column because it means exactly "this account has no password": an admin who sets a password replaces it,
+ * and the account is from then on a password account that no launch reaches. Adding an authenticator or a
+ * passkey asks for the current password (confirmOwner), so a bound account gains neither while it is bound.
+ */
+function launchIdentityHash(issuer: string, subject: string): string {
+  const encode = (value: string) => Buffer.from(value).toString("base64url");
+  return `launch-identity$${encode(issuer)}$${encode(subject)}`;
+}
+
+/**
+ * A new account for a launched email, bound to the token's issuer and subject, with the token's role. Two
+ * launches racing to create the same email leave one row, and the loser goes on with the winner's, which
+ * provisionLaunchAccount then checks like any stored account.
+ */
+async function insertLaunchAccount(provider: ServerStorageProvider, launch: LaunchIdentity): Promise<StoredAccount> {
+  const now = new Date().toISOString();
+  const account: StoredAccount = {
+    email: launch.email,
+    passwordHash: launchIdentityHash(launch.issuer, launch.subject),
+    role: launch.role,
+    totpSecret: null,
+    totpPending: null,
+    disabled: false,
+    sessionVersion: initialSessionVersion(),
+    createdAt: now,
+    updatedAt: now,
+  };
+  try {
+    await provider.insertAccount(account);
+  } catch (error) {
+    const winner = isUniqueViolation(error) ? await provider.getAccount(launch.email) : null;
+    if (!winner) throw error;
+    return winner;
+  }
+  auditAccountChange(LAUNCH_ACTOR, "create", launch.email);
+  return account;
+}
+
+/**
+ * The account a verified launch token signs in (docs/LAUNCH.md).
+ *
+ * The ADMIN_EMAIL address is refused in both storage modes, even while its row is missing, so a launch never
+ * takes the break-glass address (contract A3.2). With STORAGE_PROVIDER=local there is no row to consult, as
+ * storedAccountAllows says, and the accounts getAuthUsers() lists are the ones that sign in with a password,
+ * so every one of their emails is refused: a launch session under one would share that account's transactions,
+ * agent runs and audit trail. Any other email gets a session that carries the token's email and role, and
+ * nothing is stored. OIDC is refused, as every account path refuses it, before the store is opened: the
+ * launch route already answers 503 in that mode (src/lib/launch/config.ts).
+ *
+ * In the server store every session must match a stored account, so the launch provides one, and it reaches
+ * only an account a launch created for the same platform identity. An email with no account gets one, bound
+ * to the token's issuer and subject. An existing account is matched without regard to case, as password login
+ * matches it, and is refused unless it carries that same binding and holds no authenticator and no passkey:
+ * matching by email alone would hand a launch any password account with that address, the seeded ADMIN_EMAIL
+ * included, and an email the platform reassigned would reach the previous owner's account. The binding is
+ * checked before the disabled flag, so a refusal tells nobody but the bound person whether an account is
+ * disabled. A bound account takes the token's role when it differs, which moves the session version on and
+ * ends its other sessions, exactly as an admin's role change does, and the store still refuses to remove the
+ * last enabled admin. A disabled account is refused and never revived: the platform says who the person is,
+ * and disabling is Studio's own decision about them.
+ *
+ * The registry is reconciled and seeded first, as on every other sign-in path, so a launch into an empty
+ * store can never take the place of the environment admin.
+ *
+ * @throws {AccountError} 403 for an account a launch cannot sign in to, 401 for a disabled account, 409 when
+ * the role change would leave no enabled admin or the account changed while it was read, and 409 under OIDC.
+ */
+export async function provisionLaunchAccount(launch: LaunchIdentity): Promise<LaunchAccount> {
+  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc") throw new AccountError(409, OIDC_MODE);
+  const environmentAccounts = getAuthUsers();
+  // The break-glass address (contract A3.2) is never a launch account, in either mode, even while its row is missing.
+  if (sameEmail(environmentAccounts[0].email, launch.email)) throw new AccountError(403, LAUNCH_NOT_LINKED);
+  const provider = await getStorageProvider();
+  if (!provider) {
+    if (environmentAccounts.some((account) => sameEmail(account.email, launch.email))) {
+      throw new AccountError(403, LAUNCH_NOT_LINKED);
+    }
+    return { role: launch.role, username: launch.email };
+  }
+  await reconcileOnce(provider);
+  await seedAccountsIfEmpty(provider);
+  const stored = (await provider.listAccounts()).find((account) => sameEmail(account.email, launch.email));
+  const current = stored ?? (await insertLaunchAccount(provider, launch));
+  const passkeys = (await provider.countPasskeys()).get(current.email) ?? 0;
+  if (
+    current.passwordHash !== launchIdentityHash(launch.issuer, launch.subject) ||
+    current.totpSecret !== null ||
+    passkeys > 0
+  ) {
+    throw new AccountError(403, LAUNCH_NOT_LINKED);
+  }
+  if (current.disabled) throw new AccountError(401, LAUNCH_DISABLED);
+  if (current.role === launch.role) {
+    return { role: current.role, username: current.email, sessionVersion: current.sessionVersion };
+  }
+  const next: StoredAccount = {
+    ...current,
+    role: launch.role,
+    sessionVersion: current.sessionVersion + 1,
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    await writeAccount(provider, next, {
+      expected: current,
+      keepEnabledAdmin: isEnabledAdmin(current) && !isEnabledAdmin(next),
+    });
+  } catch (error) {
+    if (error instanceof LastAdminError) throw new AccountError(409, LAUNCH_LAST_ADMIN);
+    throw error;
+  }
+  auditAccountChange(LAUNCH_ACTOR, "role", current.email);
+  return { role: next.role, username: current.email, sessionVersion: next.sessionVersion };
 }
 
 export async function listPublicAccounts(): Promise<PublicAccount[]> {

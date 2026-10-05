@@ -29,8 +29,8 @@ const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "ut
 const lockfile = fs.readFileSync(path.join(ROOT, "bun.lock"), "utf8");
 
 const RATIFIED_SDK: Readonly<Record<string, string>> = {
-  "@modelcontextprotocol/server": "2.1.0",
-  "@modelcontextprotocol/client": "2.1.0",
+  "@modelcontextprotocol/server": "2.2.0",
+  "@modelcontextprotocol/client": "2.2.0",
 };
 /** Every field npm installs on a consumer of the published package. */
 const PUBLISHED_FIELDS = ["dependencies", "optionalDependencies", "peerDependencies"] as const;
@@ -62,10 +62,10 @@ describe("no MCP package reaches a consumer of the published package", () => {
 });
 
 describe("bun.lock resolves the SDK onto one core and the root zod", () => {
-  test("@modelcontextprotocol/core resolves only at 2.1.0", () => {
+  test("@modelcontextprotocol/core resolves only at 2.2.0", () => {
     const versions = [...lockfile.matchAll(/\["@modelcontextprotocol\/core@([^"]+)"/g)].map((match) => match[1]);
     expect(versions.length).toBeGreaterThan(0);
-    expect([...new Set(versions)]).toEqual(["2.1.0"]);
+    expect([...new Set(versions)]).toEqual(["2.2.0"]);
   });
 
   test.each(["server", "client", "core"])("no nested zod copy sits under @modelcontextprotocol/%s", (name) => {

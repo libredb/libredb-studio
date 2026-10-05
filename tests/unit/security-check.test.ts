@@ -70,7 +70,7 @@ describe("parseTables and findControlTable", () => {
 
   test("the programme ends with the two InfluxDB controls, one per type-id, the two Oxia controls, then the DuckDB open control", () => {
     expect(PROGRAMME_CONTROL_IDS.slice(-6)).toEqual(["3.11", "3.12", "3.13", "3.14", "3.15", "3.16"]);
-    expect(PROGRAMME_CONTROL_IDS).toHaveLength(33);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(35);
   });
 
   test("ignores a table that is not the control table", () => {

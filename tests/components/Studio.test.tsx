@@ -143,6 +143,7 @@ mock.module("@/hooks/use-connection-manager", () => ({
     fetchSchema: mockFetchSchema,
     objectScanDeferred: false,
     loadObjects: mockLoadObjects,
+    customConnections: true,
     ...connMgrOverride,
   })),
 }));
@@ -2475,6 +2476,103 @@ describe("Studio", () => {
     act(() => selectFn(pgConn));
     expect(mockSetActiveConnection).toHaveBeenCalledWith(pgConn);
     expect(queryByTestId("connections-list")).toBeNull();
+  });
+
+  /*
+    ALLOW_CUSTOM_CONNECTIONS off: every control that creates or repoints a connection of the user's own
+    is withheld, on the desktop sidebar, the mobile header, the mobile database tab and the command
+    palette, so no surface offers what the server answers with 403. Delete stays: on an unmanaged
+    seed's copy it dismisses the seed and makes no connection.
+  */
+  test("with custom connections off, no surface offers to add, edit or duplicate a connection", () => {
+    connMgrOverride = { customConnections: false, activeConnection: pgConn, connections: [pgConn] };
+    const { queryByText } = render(<Studio />);
+
+    expect(capturedSidebarProps.onAddConnection).toBeUndefined();
+    expect(capturedSidebarProps.onEditConnection).toBeUndefined();
+    expect(capturedSidebarProps.onDuplicateConnection).toBeUndefined();
+    expect(capturedSidebarProps.onDeleteConnection).toBeDefined();
+    expect(capturedMobileHeaderProps.onAddConnection).toBeUndefined();
+    expect(capturedCommandPaletteProps.onAddConnection).toBeUndefined();
+
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("database"));
+
+    expect(capturedConnectionsListProps.onAddConnection).toBeUndefined();
+    expect(capturedConnectionsListProps.onDuplicateConnection).toBeUndefined();
+    expect(capturedConnectionsListProps.onDeleteConnection).toBeDefined();
+    expect(queryByText(/Add/)).toBeNull();
+  });
+
+  /*
+    ALLOW_CUSTOM_CONNECTIONS off: the lists show the seeds alone, so a drag hands back their order
+    only. The user's own connections, hidden meanwhile, keep their places in the saved order: the
+    full order [own-a, seed:b, own-c, seed:d] with the two seeds reordered gives
+    [own-a, seed:d, own-c, seed:b], and not the seeds alone, which would move both hidden
+    connections to the bottom once the switch is on again. seed:b is an unmanaged seed whose
+    editable copy is in storage too, and it is counted once.
+  */
+  test.each(["desktop", "mobile"] as const)(
+    "with custom connections off, a reorder (%s) keeps every hidden connection where it was",
+    (surface) => {
+      const seedB = { id: "seed:b", seedId: "b", type: "postgres", name: "B", managed: false };
+      const seedD = { id: "seed:d", seedId: "d", type: "postgres", name: "D", managed: true };
+      mockStorageGetConnections.mockReturnValue([
+        { id: "own-a", type: "postgres", name: "Own A" },
+        seedB,
+        { id: "own-c", type: "postgres", name: "Own C" },
+      ]);
+      mockStorageGetConnectionOrder.mockReturnValue(["own-a", "seed:b", "own-c", "seed:d"]);
+      connMgrOverride = { customConnections: false, activeConnection: seedB, connections: [seedB, seedD] };
+      render(<Studio />);
+      if (surface === "mobile") {
+        act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("database"));
+      }
+      const props = surface === "mobile" ? capturedConnectionsListProps : capturedSidebarProps;
+
+      act(() => (props.onReorderConnections as (order: string[]) => void)(["seed:d", "seed:b"]));
+
+      expect(mockStorageSetConnectionOrder).toHaveBeenCalledWith(["own-a", "seed:d", "own-c", "seed:b"]);
+    },
+  );
+
+  // The saved order predates seed:d and own-c, so the lists would show [seed:b, own-a, seed:d, own-c]
+  // with every connection: that is the full order the hidden connections keep their places in.
+  test("with custom connections off, a reorder keeps in place a hidden connection the saved order never named", () => {
+    const seedB = { id: "seed:b", seedId: "b", type: "postgres", name: "B", managed: true };
+    const seedD = { id: "seed:d", seedId: "d", type: "postgres", name: "D", managed: true };
+    mockStorageGetConnections.mockReturnValue([
+      { id: "own-a", type: "postgres", name: "Own A" },
+      { id: "own-c", type: "postgres", name: "Own C" },
+    ]);
+    mockStorageGetConnectionOrder.mockReturnValue(["seed:b", "own-a"]);
+    connMgrOverride = { customConnections: false, activeConnection: seedB, connections: [seedB, seedD] };
+    render(<Studio />);
+
+    act(() => (capturedSidebarProps.onReorderConnections as (order: string[]) => void)(["seed:d", "seed:b"]));
+
+    expect(mockStorageSetConnectionOrder).toHaveBeenCalledWith(["seed:d", "own-a", "seed:b", "own-c"]);
+  });
+
+  /*
+    ALLOW_CUSTOM_CONNECTIONS off: the list the shell rebuilds after a delete comes from storage,
+    which still holds the user's own connections. The next selection is the first connection the
+    lists show, never a hidden one, which the hook would report as no connection at all.
+  */
+  test("with custom connections off, deleting the open connection selects the first one listed, never a hidden one", () => {
+    const own = { id: "own-1", type: "postgres", name: "My own" };
+    const sandbox = { id: "seed:sandbox", seedId: "sandbox", type: "postgres", name: "Sandbox", managed: false };
+    const reports = { id: "seed:reports", seedId: "reports", type: "postgres", name: "Reports", managed: false };
+    mockStorageGetConnections.mockReturnValue([own, reports]);
+    connMgrOverride = { customConnections: false, activeConnection: sandbox, connections: [sandbox, reports] };
+    render(<Studio />);
+
+    act(() => (capturedSidebarProps.onDeleteConnection as (id: string) => void)("seed:sandbox"));
+    fireEvent.click(within(document.body as HTMLElement).getByText("Delete"));
+
+    expect(mockStorageDeleteConnection).toHaveBeenCalledWith("seed:sandbox");
+    expect(mockSetConnections).toHaveBeenCalledWith([own, reports]);
+    expect(mockSetActiveConnection).toHaveBeenCalledWith(reports);
+    expect(mockSetActiveConnection).not.toHaveBeenCalledWith(own);
   });
 
   test("mobile database tab Add button opens connection modal", () => {

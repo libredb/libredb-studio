@@ -140,6 +140,38 @@ export type AuditReason =
   | "passkey_account_unavailable"
   /** A registration presented a credential ID already registered to an account. */
   | "passkey_duplicate"
+  // Launch-token sign-in (docs/LAUNCH.md), each a `login_failure` reason on POST /api/auth/launch.
+  // One code per refusal, so an operator can tell a launch secret the platform and Studio no longer
+  // share from a slow click or a replay without the export. The token itself is never recorded.
+  /** Not a compact JWS, unparseable, or a claim missing or of the wrong shape. */
+  | "launch_token_malformed"
+  /** A header typ other than exactly libredb-launch+jwt, or none: another kind of JWT, such as a Studio session. */
+  | "launch_token_type"
+  /** Signed with an algorithm other than HS256, with none, or with a key other than LAUNCH_TOKEN_SECRET. */
+  | "launch_token_signature"
+  /** Issued by an issuer other than LAUNCH_TOKEN_ISSUER. */
+  | "launch_token_issuer"
+  /** Issued for an audience other than LAUNCH_TOKEN_AUDIENCE. */
+  | "launch_token_audience"
+  /** Past its expiry by more than the clock tolerance. */
+  | "launch_token_expired"
+  /** Issued, or valid from, further in the future than the clock tolerance allows: the two clocks disagree. */
+  | "launch_token_premature"
+  /** Issued for longer than the 60 seconds a launch token may live. */
+  | "launch_token_lifetime"
+  /** A token whose jti this process has already accepted. */
+  | "launch_token_replayed"
+  /** A valid token refused while this process remembers as many unexpired launch tokens as it holds. */
+  | "launch_capacity_exceeded"
+  /** A valid launch token for an account that is disabled in the server store. */
+  | "launch_account_disabled"
+  /**
+   * A valid launch token for an account a launch cannot sign in to: one with a password, an authenticator or
+   * a passkey, or one a launch created for another platform identity (issuer and subject).
+   */
+  | "launch_identity_mismatch"
+  /** A valid launch token for another account than the one this browser is signed in as; the session stays. */
+  | "launch_session_conflict"
   // Agent execution path (#328). The thirteen `agent_*` codes below mirror
   // `PolicyDenyCode` one-for-one, plus the two outcomes that are not policy
   // denials: an operation that may only ever require approval, and a provider

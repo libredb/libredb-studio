@@ -271,7 +271,7 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   sqlite: ["database"],
   libredb: ["database"],
   duckdb: ["database"],
-  libsql: ["host", "port", "password", "connectionString"],
+  libsql: ["host", "port", "user", "password", "connectionString"],
   druid: ["host", "port", "user", "password"],
   elasticsearch: ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
   opensearch: ["host", "port", "user", "password"],
@@ -312,6 +312,12 @@ interface MockFieldCopy {
  * that declare any, which tests/unit/lib/db-ui-config.test.ts pins against the real table.
  */
 const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
+  // Mirrored from the real entry; tests/unit/lib/db-ui-config.test.ts pins the real one.
+  libsql: {
+    fieldHints: {
+      user: "Only for a self-hosted libSQL server started with SQLD_HTTP_AUTH, which checks a user name and password as HTTP Basic: the Auth Token box then takes the password. Leave it empty for Turso Cloud and for a server that checks tokens.",
+    },
+  },
   prometheus: {
     fieldLabels: { user: "User", password: "Password or token" },
     fieldHints: { password: "Leave User empty to send this as a bearer token." },
@@ -1170,15 +1176,16 @@ describe("ConnectionModal", () => {
   // for a value that was then discarded on save - a box that collects nothing is the UI
   // form of reporting an absence as a measurement.
 
-  test("libSQL renders neither a Username nor a Database box, because it takes neither", () => {
-    // libSQL authenticates with a token the server minted - it has no user names at all -
-    // and addresses the whole database by URL. Its `connectionFields` say so, and nothing
-    // carried either box's value before this.
+  test("libSQL renders a Username box and no Database box, matching what it takes", () => {
+    // The user is the half of sqld's HTTP Basic pair (SQLD_HTTP_AUTH) the transport sends
+    // beside the token box's value, and the whole database is addressed by its host. Its
+    // `connectionFields` say so, and the declared hint under Username says when to fill it.
     mockFormOverrides = { type: "libsql" };
     const props = createDefaultProps();
-    const { container } = render(React.createElement(ConnectionModal, props));
+    const { container, getByTestId } = render(React.createElement(ConnectionModal, props));
 
-    expect(container.querySelector("#user")).toBeNull();
+    expect(container.querySelector("#user")).not.toBeNull();
+    expect(getByTestId("user-hint").textContent).toContain("SQLD_HTTP_AUTH");
     expect(container.querySelector("#database")).toBeNull();
     // Not a blanket removal: the engine is still addressed, and still takes a credential.
     expect(container.querySelector("#host")).not.toBeNull();
@@ -1271,11 +1278,11 @@ describe("ConnectionModal", () => {
 
   // ── 34b-bis. libSQL asks for a TOKEN, and says where one comes from ───────
   //
-  // libSQL has no user names at all: the credential a server checks is a JWT it
-  // minted, so the shared `password` field holds a token here. A field labelled
-  // Password invites a password no libSQL server has, and a self-hosted server
-  // started without authentication takes none at all - both measured on sqld 0.24.33
-  // and on Turso Cloud, 2026-08-27.
+  // libSQL's usual credential is a JWT its server minted, so the shared `password`
+  // field holds a token here, and a self-hosted server started without authentication
+  // takes none at all - both measured on sqld 0.24.33 and on Turso Cloud, 2026-08-27.
+  // A server started with SQLD_HTTP_AUTH checks a user and a password instead, which
+  // the Username box's declared hint covers; the token box keeps its word.
 
   test("libSQL type labels the password field Auth Token and says where one comes from", () => {
     mockFormOverrides = { type: "libsql" };
@@ -1665,7 +1672,13 @@ describe("ConnectionModal", () => {
         { ...NETWORKED, database: "Keyspace Name", localDataCenter: "Local Data Center" },
         {},
       ],
-      ["libsql", "libsql", {}, { host: "Host & Instance", password: "Auth Token" }, {}],
+      [
+        "libsql",
+        "libsql",
+        {},
+        { host: "Host & Instance", user: "Username", password: "Auth Token" },
+        MOCK_FIELD_COPY.libsql.fieldHints ?? {},
+      ],
       ["druid", "druid", {}, CREDENTIALS_ONLY, {}],
       [
         "elasticsearch",
@@ -1798,7 +1811,7 @@ describe("ConnectionModal", () => {
         labelsFor("host", "user", "password", "database", "localDataCenter"),
         ["host", "port", "user", "password", "database", "localDataCenter"],
       ],
-      ["libsql", "libsql", {}, labelsFor("host", "password"), ["host", "port", "password"]],
+      ["libsql", "libsql", {}, labelsFor("host", "user", "password"), ["host", "port", "user", "password"]],
       [
         "elasticsearch",
         "elasticsearch",

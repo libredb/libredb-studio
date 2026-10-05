@@ -3,6 +3,7 @@ import { getOrCreateProvider } from "@/lib/db";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
 import { logger } from "@/lib/logger";
 
@@ -68,11 +69,16 @@ export async function POST(request: Request) {
       connections.map(async (conn): Promise<FleetHealthItem> => {
         const start = Date.now();
         try {
-          // Resolve managed seed connections (server-side credential injection)
-          const resolved =
-            conn.managed && conn.seedId
-              ? await resolveConnection({ connectionId: `seed:${conn.seedId}` }, guard.session)
-              : conn;
+          /*
+           * Every item goes through `resolveConnection`, the caller's own connections included: a
+           * managed seed by its id, which injects the operator's credentials on the server, and
+           * anything else as the inline record it is, which `resolveConnection` refuses while
+           * ALLOW_CUSTOM_CONNECTIONS is off and resolves from the seed file when its id claims the
+           * `seed:` namespace. This line used to hand an inline record straight to the factory, the
+           * one path in the product that opened a caller's connection without passing that gate. A
+           * refused item is reported as that item's error, beside the health of the rest.
+           */
+          const resolved = await resolveConnection(buildConnectionPayload(conn), guard.session);
           const provider = await getOrCreateProvider(resolved);
           const health = await provider.getHealth();
           const latencyMs = Date.now() - start;

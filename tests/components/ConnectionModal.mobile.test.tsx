@@ -205,7 +205,7 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   sqlite: ["database"],
   libredb: ["database"],
   duckdb: ["database"],
-  libsql: ["host", "port", "password", "connectionString"],
+  libsql: ["host", "port", "user", "password", "connectionString"],
   druid: ["host", "port", "user", "password"],
   elasticsearch: ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
   opensearch: ["host", "port", "user", "password"],

@@ -36,7 +36,12 @@ interface SidebarProps {
   onDeleteGroup?: (id: string) => void;
   onToggleGroupCollapsed?: (id: string) => void;
   onMoveConnectionToGroup?: (connectionId: string, groupId: string | null) => void;
-  onAddConnection: () => void;
+  /**
+   * Opens the connection dialog. Absent means the shell offers no new connection, and neither
+   * the header's New connection nor the empty list's Add Connection is drawn: the standalone shell
+   * withholds it while the server refuses custom connections (`ALLOW_CUSTOM_CONNECTIONS`).
+   */
+  onAddConnection?: () => void;
   /** A row the reader activated, handed over whole: path, kind and the fields the tree loaded. */
   onObjectClick?: (object: DatabaseObject) => void;
   onShowDiagram?: () => void;
@@ -267,14 +272,16 @@ export const Sidebar = React.memo(function Sidebar({
               <Layers strokeWidth={1.5} className="w-3.5 h-3.5" />
             </button>
           )}
-          <button
-            className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="New connection"
-            title="New connection"
-            onClick={onAddConnection}
-          >
-            <Plus strokeWidth={1.5} className="w-3.5 h-3.5" />
-          </button>
+          {onAddConnection && (
+            <button
+              className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="New connection"
+              title="New connection"
+              onClick={onAddConnection}
+            >
+              <Plus strokeWidth={1.5} className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 

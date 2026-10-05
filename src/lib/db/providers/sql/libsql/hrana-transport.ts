@@ -385,6 +385,33 @@ function httpError(status: number, text: string): LibSQLTransportError {
   return new LibSQLTransportError(`libSQL request failed: ${message}`, status, code);
 }
 
+/**
+ * The `Authorization` header a connection's credential makes, or undefined when it has none.
+ *
+ * The scheme follows the connection, never the deployment:
+ *
+ * - A non-empty `user` sends `Basic base64(user:password)`, with an empty password when the connection has
+ *   none. That is the pair sqld checks when it is started with `SQLD_HTTP_AUTH="basic:<base64(user:password)>"`,
+ *   which sqld calls legacy HTTP basic authentication and chooses ahead of any JWT key it was also given.
+ * - Otherwise the password is a TOKEN and goes as `Bearer <password>`: Turso Cloud mints a JWT per database, and
+ *   sqld started with a JWT key checks the same header.
+ * - With neither, no header at all, which is what an unauthenticated local sqld expects: an empty bearer is a
+ *   400 there rather than an anonymous connection.
+ *
+ * A basic-auth sqld would also accept `Bearer <base64(user:password)>`, but only through leniency: its HttpBasic
+ * strategy splits the header at the first space, discards the scheme and accepts any token that CONTAINS the
+ * configured credential. Read from the sqld source (`libsql-server/src/auth/user_auth_strategies/http_basic.rs`,
+ * identical at libsql-server-v0.24.32, v0.24.33 and main), not measured against a live server here. Sending the
+ * scheme the server is configured for keeps that leniency out of the contract.
+ *
+ * The pair is encoded as UTF-8, the charset RFC 7617 names for Basic. Base64 has no character that ends a header
+ * line, so a user or password holding one cannot reach `fetch` as a header it refuses.
+ */
+function authorizationFor(config: DatabaseConnection): string | undefined {
+  if (config.user) return `Basic ${Buffer.from(`${config.user}:${config.password ?? ""}`, "utf8").toString("base64")}`;
+  return config.password ? `Bearer ${config.password}` : undefined;
+}
+
 // ============================================================================
 // Transport
 // ============================================================================
@@ -399,11 +426,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
     const secure = config.ssl !== undefined && config.ssl.mode !== "disable";
     const port = config.port ?? (secure ? DEFAULT_TLS_PORT : DEFAULT_PORT);
     this.origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, port);
-    // The credential is a token, not a password: libSQL has no user names, and
-    // Turso mints a JWT per database. A connection with no token sends no header,
-    // which is what an unauthenticated local sqld expects - sending an empty
-    // bearer to it is a 400 rather than an anonymous connection.
-    this.authorization = config.password ? `Bearer ${config.password}` : undefined;
+    this.authorization = authorizationFor(config);
   }
 
   public async execute(sql: string, options: LibSQLExecuteOptions = {}): Promise<LibSQLStatementResult> {

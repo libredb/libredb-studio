@@ -105,7 +105,7 @@ When using LibreDB Studio, please follow these security best practices:
 - Connection pooling is used to prevent connection exhaustion
 
 #### API Security
-- All API endpoints require authentication except `POST /api/auth/login`, `POST /api/auth/logout`,
+- All API endpoints require authentication except `POST /api/auth/login`, `POST /api/auth/launch`, `POST /api/auth/logout`,
   `GET /api/auth/oidc/login`, `GET /api/auth/oidc/callback`, `GET /health`, `GET /api/health` and
   `GET /api/db/health` (the three liveness paths, for load balancer probes; they depend on nothing
   and return a fixed body), and `GET /api/storage/config` (which returns the storage mode only).

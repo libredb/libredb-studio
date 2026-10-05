@@ -2,11 +2,15 @@ import type { DatabaseConnection } from "@/lib/types";
 import { getSeedConnectionById, getSeedConnectionByIdUnfiltered } from "./index";
 import { resolveVaultCredentials } from "./credential-resolver";
 import { logger } from "@/lib/logger";
+import { ApiErrorCode } from "@/lib/api/error-codes";
+import { CUSTOM_CONNECTIONS_DISABLED_MESSAGE, customConnectionsAllowed } from "@/lib/config/custom-connections";
 
 export class SeedConnectionError extends Error {
   constructor(
     message: string,
     public statusCode: number,
+    /** A response code of this refusal's own; without one, createErrorResponse derives it from the status. */
+    public code?: ApiErrorCode,
   ) {
     super(message);
     this.name = "SeedConnectionError";
@@ -37,6 +41,29 @@ export async function resolveConnection(
   const effectiveId = connectionId ?? claimedSeedId;
 
   if (connection && !effectiveId) {
+    /*
+     * A CONNECTION THE CALLER SUPPLIED, WHICH THE OPERATOR MAY FORBID (ALLOW_CUSTOM_CONNECTIONS).
+     *
+     * This branch is the one place an inline connection becomes a provider's input: every route
+     * under src/app/api/db reaches its provider through this function, directly or through
+     * `handleObjectRequest`, and so does the admin fleet health check. Refusing here, before the
+     * record is handed back, is what makes the switch a server rule rather than a hidden button:
+     * a Studio that shares an overlay network with other services would otherwise let any
+     * signed-in account open a connection to any host that network reaches.
+     *
+     * Only the caller's own connections are refused. A `seed:` id, arriving as `connectionId` or
+     * as the id of an inline record, is resolved from the operator's file below and is untouched
+     * by the switch. That is what keeps an unmanaged seed's editable copy working: it keeps its
+     * `seed:<id>` id, and the server never used the copy's fields in the first place.
+     */
+    if (!customConnectionsAllowed()) {
+      logger.warn("Custom connection refused", {
+        route: "seed/resolve-connection",
+        user: session.username,
+        role: session.role,
+      });
+      throw new SeedConnectionError(CUSTOM_CONNECTIONS_DISABLED_MESSAGE, 403, ApiErrorCode.CUSTOM_CONNECTIONS_DISABLED);
+    }
     return connection;
   }
 
@@ -71,11 +98,12 @@ export async function resolveConnection(
       user: session.username,
     });
 
-    // A discovered connection (CapRover auto-connect spec 9.5) carries the literal text another app on the platform
-    // network set, so a `${vault:...}` in it is that app's text and never a reference to Studio's Vault: it is
-    // returned unresolved, and the VaultError that would quote the value is never built. The marker is set in code
-    // by the discovery source after the role filter and never read from a file, so a seed-file connection whose id
-    // happens to start with caprover- is resolved below as before.
+    // A literal connection carries text as it was written: a discovered connection (CapRover auto-connect spec 9.5)
+    // the text another app on the platform network set, and, with SEED_LITERAL_VALUES on, a seed-file connection the
+    // text of a file a platform wrote. A `${vault:...}` in it is that text and never a reference to Studio's Vault: it
+    // is returned unresolved, and the VaultError that would quote the value is never built. The marker is set in code
+    // after the role filter, by the discovery source or by SEED_LITERAL_VALUES, and never read from a file, so with
+    // the mode off a seed-file connection, even one whose id starts with caprover-, is resolved below as before.
     if (seedConn.literal) return seedConn;
 
     // After the access decision, never before it: a `${vault:...}` reference is read here,

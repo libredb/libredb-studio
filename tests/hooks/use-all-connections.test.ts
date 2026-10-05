@@ -263,3 +263,51 @@ describe("useAllConnections", () => {
     expect(result.current.connections).toEqual([]);
   });
 });
+
+describe("useAllConnections under the custom connections policy", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  test("leaves out the user's own connections when the server refuses custom connections", async () => {
+    storage.saveConnection(makeConnection({ id: "own-1", name: "Own" }));
+    storage.saveConnection(
+      makeConnection({ id: "seed:sandbox", seedId: "sandbox", name: "Sandbox copy", managed: false }),
+    );
+    mockGlobalFetch({
+      "/api/connections/policy": { json: { customConnections: false } },
+      "/api/connections/managed": {
+        json: { connections: [makeManagedConnection({ id: "seed:orders", seedId: "orders" })] },
+      },
+    });
+
+    const { result } = renderHook(() => useAllConnections());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+    expect(result.current.connections.map((c) => c.id)).toEqual(["seed:orders", "seed:sandbox"]);
+  });
+
+  test("leaves them out of the list it falls back to when the managed list cannot be read", async () => {
+    storage.saveConnection(makeConnection({ id: "own-1", name: "Own" }));
+    storage.saveConnection(
+      makeConnection({ id: "seed:sandbox", seedId: "sandbox", name: "Sandbox copy", managed: false }),
+    );
+    mockGlobalFetch({
+      "/api/connections/policy": { json: { customConnections: false } },
+      "/api/connections/managed": { status: 500, json: { error: "Internal error" } },
+    });
+
+    const { result } = renderHook(() => useAllConnections());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+    expect(result.current.connections.map((c) => c.id)).toEqual(["seed:sandbox"]);
+  });
+});

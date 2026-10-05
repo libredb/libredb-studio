@@ -11,8 +11,9 @@ import { test, expect } from "@playwright/test";
  * those surfaces are not type-enforced, which is exactly why this runs in a browser.
  *
  * The assertion specific to THIS engine, and that no other spec here makes, is the
- * credential's NAME: libSQL has no user names, the server checks a token it minted,
- * and a field labelled Password invites a password no libSQL server has.
+ * credential's NAME: the box is labelled Auth Token, because Turso Cloud and a
+ * JWT-checking server read a token they minted, and the Username box beside it is
+ * only for a self-hosted server started with SQLD_HTTP_AUTH, as its hint says.
  */
 test.describe("libSQL in the connection dialog", () => {
   test.beforeEach(async ({ page }) => {
@@ -65,14 +66,12 @@ test.describe("libSQL in the connection dialog", () => {
     await expect(dialog.locator('input[placeholder*="turso.io"]')).toBeVisible();
   });
 
-  test("renders neither a Username nor a Database input, because libSQL takes neither", async ({ page }) => {
-    // This assertion is the inverse of the one it replaces, and the inversion is the fix.
+  test("renders a Username input with its hint and no Database input, matching what libSQL takes", async ({ page }) => {
     // `connectionFields` in `db-ui-config.ts` decides what a save WRITES, and the modal
-    // now gates its Username and Database inputs on the same list, so a box exists
-    // exactly where a value is carried. Before, libSQL showed a Username box for an
-    // engine that has no user names at all - it authenticates with a token the server
-    // minted - and a Database box for one addressed entirely by URL, and a save silently
-    // dropped both.
+    // gates its Username and Database inputs on the same list, so a box exists exactly
+    // where a value is carried. The user is the half of sqld's HTTP Basic pair
+    // (SQLD_HTTP_AUTH) the transport sends beside the Auth Token box's value, and the
+    // database is addressed by its host, so there is a Username box and no Database box.
     //
     // Host and Password are asserted present in the same breath so this cannot pass by
     // the dialog having failed to render its addressing section at all.
@@ -81,7 +80,8 @@ test.describe("libSQL in the connection dialog", () => {
 
     await expect(dialog.locator("#host")).toHaveCount(1);
     await expect(dialog.locator("#password")).toHaveCount(1);
-    await expect(dialog.locator("#user")).toHaveCount(0);
+    await expect(dialog.locator("#user")).toHaveCount(1);
+    await expect(dialog.getByTestId("user-hint")).toContainText("SQLD_HTTP_AUTH");
     await expect(dialog.locator("#database")).toHaveCount(0);
   });
 

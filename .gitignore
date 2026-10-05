@@ -122,6 +122,8 @@ data/
 data-e2e-offline/
 # e2e/passkey.spec.ts's store-mode server (playwright.config.ts) keeps its account registry here.
 data-e2e-passkey/
+# e2e/launch.spec.ts's store-mode server (playwright.config.ts) keeps the accounts its launches create here.
+data-e2e-launch/
 # Local Docker test volumes and any stray embedded-db files
 .docker-data*/
 # The agent runtime's durable ledger: with WORKFLOW_LOCAL_DATA_DIR unset it resolves

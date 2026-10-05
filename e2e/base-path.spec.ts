@@ -30,7 +30,7 @@ test("production deployment behind a path-preserving reverse proxy", async ({ pa
   const rootRedirect = await request.get(prefix, { maxRedirects: 0 });
   expect(new URL(rootRedirect.headers().location, baseURL).href).toBe(`${baseURL}${prefix}/login`);
   const redirect = await request.get(`${prefix}/admin`, { maxRedirects: 0 });
-  expect(new URL(redirect.headers().location, baseURL).href).toBe(`${baseURL}${prefix}/login`);
+  expect(new URL(redirect.headers().location, baseURL).href).toBe(`${baseURL}${prefix}/login?next=%2Fadmin`);
   const oidcError = await request.get(`${prefix}/api/auth/oidc/login`, { maxRedirects: 0 });
   expect(new URL(oidcError.headers().location, baseURL).href).toBe(`${baseURL}${prefix}/login?error=oidc_config`);
 

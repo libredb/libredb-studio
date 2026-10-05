@@ -23,6 +23,12 @@ process.env.NEXT_PUBLIC_AUTH_PROVIDER = "local";
   the operator feature Studio ships would block committing to Studio.
 */
 delete process.env.AGENT_MODEL_TUNING_PATH;
+/*
+  The same rule for literal seed values. A developer's `.env` that sets SEED_LITERAL_VALUES would stop
+  every `${ENV}` and `${vault:...}` reference in the seed suites from resolving, and those suites would
+  fail on a machine whose code is fine. The tests that need the mode set it themselves.
+*/
+delete process.env.SEED_LITERAL_VALUES;
 
 // ─── In-memory localStorage mock (SSR/test environment) ────────────────────
 if (typeof globalThis.localStorage === "undefined") {

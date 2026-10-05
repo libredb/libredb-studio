@@ -82,12 +82,13 @@ LibreDB Studio uses JWT (JSON Web Tokens) for authentication. Tokens are stored 
 
 The middleware (`src/proxy.ts`) gates every route: all of them require a valid `auth-token` cookie **except** the routes below. It is an optimisation rather than the authorization boundary, though — every handler that reaches a database or a model provider verifies the session again itself, through `guardRoute` (`src/lib/api/require-session.ts`), which is also where the rate-limit bucket and the audit line come from.
 
-- `/api/auth/*`: login, logout, me, OIDC login/callback, and `POST /api/auth/passkey/sign-in`, which creates the session and so cannot need one; the other auth routes that act on an account (`/api/auth/totp`, `/api/auth/passkey`) check the session themselves
+- `/api/auth/*`: login, logout, me, OIDC login/callback, `POST /api/auth/passkey/sign-in` and `POST /api/auth/launch`, which create the session and so cannot need one; the other auth routes that act on an account (`/api/auth/totp`, `/api/auth/passkey`) check the session themselves
+- `/launch`: the page a platform's launch link opens; it posts the token from its URL fragment to `POST /api/auth/launch`, after a Continue click when the browser has no session ([LAUNCH.md](./LAUNCH.md))
 - `/health` and `/api/health` — liveness, fully public, no dependencies
 - `/api/db/health` — excluded from the middleware for **both** methods; `GET` is fully public and answers the same as the two above, while `POST` performs its own session check and returns JSON `401` if unauthenticated
 - `GET /api/storage/config` — storage-mode discovery (returns `{ provider, serverMode }`, no user data)
 
-Without a session, or with one that no longer verifies (expired, signed with a rotated `JWT_SECRET`, tampered), the middleware answers any other API route with `401 { "error": "Authentication required" | "Session expired. Sign in again.", "code": "AUTH_REQUIRED" }`, and any other page with a redirect to `/login`. API routes used to get the redirect too, which a `fetch` follows to the sign-in page's HTML (#1420). Every route-level session check answers the same `AUTH_REQUIRED` code, which is distinct from `AUTH_ERROR` (a database refused its credentials) and `LLM_AUTH` (a model provider refused its key): those two are `401` as well, with the Studio session intact. A few allowlisted handlers self-check instead and return JSON, for example `POST /api/db/health` (`401`) and `GET /api/auth/me` (`{ "authenticated": false }`).
+Without a session, or with one that no longer verifies (expired, signed with a rotated `JWT_SECRET`, tampered), the middleware answers any other API route with `401 { "error": "Authentication required" | "Session expired. Sign in again.", "code": "AUTH_REQUIRED" }`, and any other page with a redirect to `/login?next=<the page's path and query>`, or to a bare `/login` from the bare root `/`, so signing in returns to the page asked for, a `/?connection=<id>` link included; a visitor who already holds a valid session and opens such a sign-in address goes straight to its `next` page, judged by the rules below. API routes used to get the redirect too, which a `fetch` follows to the sign-in page's HTML (#1420). Every route-level session check answers the same `AUTH_REQUIRED` code, which is distinct from `AUTH_ERROR` (a database refused its credentials) and `LLM_AUTH` (a model provider refused its key): those two are `401` as well, with the Studio session intact. A few allowlisted handlers self-check instead and return JSON, for example `POST /api/db/health` (`401`) and `GET /api/auth/me` (`{ "authenticated": false }`).
 
 The standalone app's browser code reacts to `AUTH_REQUIRED`, and only to it, by sending the tab to `/login?next=<the page it was on>`; signing in again, with a password, a passkey or OIDC, returns there. `next` is honoured only as an app-relative path, judged on the path it resolves to rather than the string as written (so `/..//host` and `/%2e%2e//host`, which resolve to `//host`, are refused): it must stay on this origin, must not resolve to a path starting `//` or to `/login`, holds no backslash or control character, and is at most 1024 UTF-8 bytes. The resolved form is what is used; anything else falls back to the role's landing page. One redirect per ten seconds per tab: a second refusal inside that window stays on the page as an error, so a session the server refuses while its cookie still verifies cannot loop between the editor and `/login`. An application that embeds the published `@libredb/studio` components gets no such redirect: the 401 reaches its own code unchanged, and handling sign-in stays with the host.
 `/api/mcp` is the exception: without a valid bearer token it answers 401 with `WWW-Authenticate`, never a redirect (see the [MCP API](#mcp-api) below).
@@ -273,6 +274,33 @@ Every refusal answers the same `401 { "success": false, "message": "That passkey
 A malformed body is `400 { "success": false, "message": "Invalid request body" }`, an unknown action the same `400`, and a body over 65536 bytes `413 { "success": false, "message": "Request body is too large" }`.
 `409 { "success": false, "message": "<reason>" }` under OIDC, with `STORAGE_PROVIDER=local` or while `PASSKEY_ORIGIN` is unset, and `503` with the problem while it is invalid.
 Each refusal and each malformed body spends one unit of the `passkey_client` budget, which is checked before the body is read, so `429` follows once it is spent; see [Rate Limiting](#rate-limiting).
+
+#### POST /api/auth/launch
+
+Exchanges a platform launch token for a session; no session is needed ([LAUNCH.md](./LAUNCH.md)).
+The `/launch` page posts it with the token from its URL fragment: at once when the browser holds a session, and otherwise only after the person clicks Continue on a page that names the account the token signs into.
+With local sign-in the route exists only while `LAUNCH_TOKEN_SECRET` is set; under `NEXT_PUBLIC_AUTH_PROVIDER=oidc` it answers `503`.
+
+**Request:**
+```json
+{ "token": "<compact JWS>" }
+```
+
+| Status | Body | When |
+|---|---|---|
+| `200` | `{ "success": true, "redirect": "/" }` or `{ "success": true, "redirect": "/?connection=seed%3A<conn>" }` | The token verified; the session cookie is set |
+| `400` | `{ "success": false, "message": "Invalid request body" }` | The body is not JSON or carries no non-empty string `token` |
+| `401` | `{ "success": false, "message": "<reason>" }` | The token is refused, or its account is disabled |
+| `403` | `{ "success": false, "message": "<reason>" }` | The email is `ADMIN_EMAIL`, or with `STORAGE_PROVIDER=local` `USER_EMAIL` while `USER_PASSWORD` is set; in the server store, the account has a password, an authenticator or a passkey, or a launch created it for another `iss` or `sub` |
+| `404` | `{ "success": false, "message": "Launch sign-in is not enabled on this server." }` | `LAUNCH_TOKEN_SECRET` is unset or empty and `NEXT_PUBLIC_AUTH_PROVIDER` is not `oidc` |
+| `409` | `{ "success": false, "message": "<reason>", "signedInAs": "<current username>", "launchFor": "<token email>" }` | The browser holds a valid session for another account; that session stays and the token is spent |
+| `409` | `{ "success": false, "message": "<reason>" }` | The role change would demote the last enabled admin, or crossed another change to the account |
+| `413` | `{ "success": false, "message": "Request body is too large" }` | The body is over 8192 bytes |
+| `503` | `{ "success": false, "message": "<problem>" }` | `NEXT_PUBLIC_AUTH_PROVIDER=oidc` (`Launch sign-in is not available when NEXT_PUBLIC_AUTH_PROVIDER=oidc.`), the launch variables are misconfigured, the server cannot sign sessions, or more launches arrived in the last minute than the process can remember |
+
+Every answer carries `Cache-Control: no-store`.
+The `401` messages name the refusal (expired, already used, issued for a different Studio, not signed for this Studio, and the rest), and the audit log records one reason per refusal; [LAUNCH.md](./LAUNCH.md#audit) lists them.
+Each refusal and each malformed body spends one unit of the `login_client` budget, which is checked before the body is read, so `429` follows once it is spent; see [Rate Limiting](#rate-limiting).
 
 ---
 
@@ -1916,6 +1944,21 @@ that file. The browser holds the second as an unread seed list rather than an em
 what stops the agent rail reporting a connection's settings as browser-local when the server's own
 configuration is what failed.
 
+#### GET /api/connections/policy
+
+Auth required; without a session it answers `401 { "error": "Authentication required", "code": "AUTH_REQUIRED" }`.
+It answers what this server lets a session do with connections of its own:
+
+```json
+{ "customConnections": true }
+```
+
+`customConnections` is `false` when `ALLOW_CUSTOM_CONNECTIONS` is `false`, `0`, `off` or `no`, or any value that is not one of those or `true`, `1`, `on` or `yes` (the switch fails closed; one pair of surrounding quotes is stripped first).
+Every database route then refuses a connection supplied in the request body, as `connection` or as the whole body, with `403 { "error": "Custom connections are disabled on this server", "code": "CUSTOM_CONNECTIONS_DISABLED", "statusCode": 403 }`, before any provider is built.
+A seed named by `connectionId`, or by an inline record whose `id` is `seed:<id>`, is unaffected.
+`POST /api/admin/fleet-health` reports such an item as `{ "status": "error", "error": "Custom connections are disabled on this server" }` beside the others.
+See [`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#custom-connections).
+
 ---
 
 ### Admin API
@@ -2208,6 +2251,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `QUERY_CANCELLED` | Query cancelled by the client (499) |
 | `CONFIG_ERROR` | Invalid database configuration (400) |
 | `AUTH_ERROR` | Authentication failed (401) |
+| `CUSTOM_CONNECTIONS_DISABLED` | `ALLOW_CUSTOM_CONNECTIONS` is off and the request supplied a connection that is not a seed (403); see `GET /api/connections/policy`. A seed the caller's role may not open is refused with `AUTH_ERROR` (403) instead |
 | `AUTH_REQUIRED` | No Studio session, or one that no longer verifies (401). Answered by the middleware and the route-level session checks rather than `createErrorResponse`; the only 401 the browser answers by sending the user to sign in |
 | `TIMEOUT_ERROR` | Query exceeded time limit (408); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |
 | `CONNECTION_ERROR` | Database connection failed (503) |
@@ -2268,6 +2312,12 @@ A wrong password or code on `POST /api/auth/totp`, and on the `register-options`
 It is checked before the body is read, for both actions, and every refused assertion, malformed body or unknown action spends one unit; a success clears nothing.
 Passkey sign-in never spends the login budgets, so failed passkeys cannot lock an address out of password sign-in.
 A signature cannot be guessed, so this budget bounds CPU, database reads and audit volume rather than guessing.
+
+### Launch sign-in
+
+`POST /api/auth/launch` spends the password sign-in's per-address budget, `login_client` (`RATE_LIMIT_LOGIN_MAX`, `RATE_LIMIT_LOGIN_WINDOW_SEC`).
+It is checked before the body is read, every refused token, refused account, refused session swap or malformed body spends one unit, and a successful launch clears the address's failures.
+A launch never spends or clears the per-account budget, because it is not a password guess.
 
 ### Every session-guarded route
 
@@ -2495,6 +2545,7 @@ async function streamAIExplanation(query: string, explainPlan: string) {
 | `USER_PASSWORD` | No | Optional lower-privilege account password; the `user` account exists only when this is set |
 | `USER_EMAIL` | No | Regular-user login email (default `user@libredb.org`, only used when `USER_PASSWORD` is set) |
 | `DB_HTTP_BLOCK_PRIVATE_HOSTS` | No | Off when unset. `true`, `on`, or `1` blocks HTTP database requests to loopback, private, link-local, unique-local and selected special-use addresses; `false`, `off`, or `0` allows them. DNS answers are checked at socket connection time. Invalid values fail closed for HTTP databases. Non-HTTP drivers and SSH tunnel hosts are outside this guard; HTTP connections through an SSH tunnel are refused while it is enabled. |
+| `ALLOW_CUSTOM_CONNECTIONS` | No | On when unset. `false`, `0`, `off` or `no`, or any unrecognised value (it fails closed and logs an error), refuses, with 403, every connection a request supplies that is not a seed, on every route that builds a database provider; see `GET /api/connections/policy` |
 | `LLM_PROVIDER` | No | AI provider: gemini, openai, ollama, custom |
 | `LLM_API_KEY` | No | AI provider API key |
 | `LLM_MODEL` | No | AI model name |

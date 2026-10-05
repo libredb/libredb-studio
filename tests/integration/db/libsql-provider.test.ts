@@ -363,6 +363,101 @@ describe("LibSQLProvider configuration", () => {
   });
 });
 
+/**
+ * Which credential a connection sends, through the real provider: `connect()` builds the transport from the
+ * resolved connection, so this is where a `user` either reaches the header or is lost on the way.
+ *
+ * sqld's legacy HTTP Basic auth (`SQLD_HTTP_AUTH="basic:<base64(user:password)>"`) pairs a user with a password,
+ * so a connection that names a user sends the pair as Basic. A `libsql://` URL authenticates with the token it
+ * carries, so a `user` beside it is ignored and the URL path keeps sending a bearer token.
+ */
+describe("LibSQLProvider credentials", () => {
+  /**
+   * The Authorization header of every request from here on, in order, null where none was sent. It wraps the
+   * fake server `installFetch` put in place rather than replacing it, so the provider still gets real answers,
+   * and `afterEach` puts the real `fetch` back underneath both.
+   */
+  function authorizationHeaders(): (string | null)[] {
+    const seen: (string | null)[] = [];
+    const answering = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers).get("authorization"));
+      return answering(input, init);
+    }) as unknown as typeof fetch;
+    return seen;
+  }
+
+  test("sends a user and password as HTTP Basic on the connect probe and on every query after it", async () => {
+    const seen = authorizationHeaders();
+    const provider = await connected({ user: "libsql", password: "libsql-pass" });
+    await provider.query("SELECT 1");
+
+    expect(seen).toEqual(["Basic bGlic3FsOmxpYnNxbC1wYXNz", "Basic bGlic3FsOmxpYnNxbC1wYXNz"]);
+    await provider.disconnect();
+  });
+
+  test("keeps the bearer token when the connection names no user", async () => {
+    const seen = authorizationHeaders();
+    const provider = await connected({ password: "tok-123" });
+
+    expect(seen).toEqual(["Bearer tok-123"]);
+    await provider.disconnect();
+  });
+
+  test("keeps a libsql:// URL's token as the bearer credential when the connection also names a user", async () => {
+    const seen = authorizationHeaders();
+    const provider = await connected({
+      host: undefined,
+      port: undefined,
+      user: "ignored",
+      connectionString: "libsql://libredb-probe-424-cevheri.aws-eu-west-1.turso.io?authToken=jwt-123",
+    });
+
+    expect(seen).toEqual(["Bearer jwt-123"]);
+    await provider.disconnect();
+  });
+
+  test("keeps a libsql:// URL's own password as the bearer credential, its user name ignored", async () => {
+    const seen = authorizationHeaders();
+    const provider = await connected({
+      host: undefined,
+      port: undefined,
+      user: "also-ignored",
+      connectionString: "libsql://url-user:p%40ss@db.turso.io",
+    });
+
+    expect(seen).toEqual(["Bearer p@ss"]);
+    await provider.disconnect();
+  });
+
+  test("drops the user of a connection whose connection string does not parse, so it sends no Basic header", async () => {
+    // The string is ignored and the host and port fields are used (docs/BACKLOG.md D232), but the user is dropped
+    // as on every connection-string path, so the password still goes out as a bearer token.
+    const seen = authorizationHeaders();
+    const provider = await connected({ user: "dropped", password: "tok-456", connectionString: "not a url" });
+
+    expect(seen).toEqual(["Bearer tok-456"]);
+    await provider.disconnect();
+  });
+
+  test("reports a Basic credential the server refused as an authentication failure", async () => {
+    // The body sqld's source builds for a refused Basic credential, AuthError::BasicRejected inside
+    // Error::AuthError, answered 401 (`libsql-server/src/error.rs` and `src/auth/errors.rs` at
+    // libsql-server-v0.24.32). Read from the source rather than captured live; the provider keys on the status.
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ error: "Unauthorized: `The `Basic` HTTP authentication credentials were rejected`" }),
+          { status: 401 },
+        ),
+      )) as unknown as typeof fetch;
+
+    await expect(
+      new LibSQLProvider(connection({ user: "libsql", password: "wrong" })).connect(),
+    ).rejects.toBeInstanceOf(AuthenticationError);
+  });
+});
+
 // ============================================================================
 // Capabilities
 // ============================================================================

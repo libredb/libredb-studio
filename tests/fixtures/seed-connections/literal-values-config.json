@@ -1,0 +1,46 @@
+{
+  "version": "1",
+  "defaults": {
+    "managed": true,
+    "ssl": {
+      "mode": "disable"
+    }
+  },
+  "connections": [
+    {
+      "id": "orders",
+      "name": "Orders",
+      "type": "postgres",
+      "host": "orders-db",
+      "port": 5432,
+      "database": "orders",
+      "user": "${LITERAL_MODE_PROBE}",
+      "password": "orders-pw",
+      "roles": [
+        "*"
+      ]
+    },
+    {
+      "id": "cache",
+      "name": "Cache",
+      "type": "redis",
+      "host": "cache",
+      "port": 6379,
+      "password": "${vault:secret/data/platform/cache#password}",
+      "roles": [
+        "*"
+      ]
+    },
+    {
+      "id": "admin-only",
+      "name": "Admin only",
+      "type": "postgres",
+      "host": "admin-db",
+      "port": 5432,
+      "user": "${JWT_SECRET}",
+      "roles": [
+        "admin"
+      ]
+    }
+  ]
+}

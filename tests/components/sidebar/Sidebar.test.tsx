@@ -545,6 +545,15 @@ describe("Sidebar", () => {
     expect(props.onAddConnection).toHaveBeenCalledTimes(1);
   });
 
+  // ALLOW_CUSTOM_CONNECTIONS off: the standalone shell hands no add handler, and the header then
+  // draws no control at all rather than one that does nothing.
+  test("draws no new-connection control when the shell offers none", () => {
+    const { queryByRole } = render(<Sidebar {...createDefaultProps({ onAddConnection: undefined })} />);
+
+    expect(queryByRole("button", { name: "New connection" })).toBeNull();
+    expect(capturedGroupProps.onAddConnection).toBeUndefined();
+  });
+
   /**
    * The key browser is a SECOND READING of the same connection, offered where the engine declares
    * one and absent everywhere else.

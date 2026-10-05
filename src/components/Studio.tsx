@@ -58,6 +58,8 @@ import { useInlineEditing } from "@/hooks/use-inline-editing";
 import { useStorageSync } from "@/hooks/use-storage-sync";
 import { useFavoriteConnections } from "@/hooks/use-favorite-connections";
 import { storage } from "@/lib/storage";
+import { applyConnectionOrder } from "@/lib/connection-order";
+import { connectionAllowed, connectionsUnderPolicy, mergeVisibleOrder } from "@/lib/connection-policy";
 import {
   type MaskingConfig,
   loadMaskingConfig,
@@ -523,6 +525,37 @@ export default function Studio() {
     setIsConnectionModalOpen(false);
     setEditingConnection(null);
   }, []);
+
+  /*
+    The three controls that create or repoint a connection of the user's own, withheld together
+    while the server refuses custom connections (`ALLOW_CUSTOM_CONNECTIONS`, read once by
+    `useConnectionManager`). Undefined rather than a no-op: every surface below draws such a
+    control only when it is handed one, so a withheld handler is an absent control and not a
+    button that does nothing. The server refuses the connection either way; this stops the editor
+    offering what the server would answer with 403.
+  */
+  const addConnectionAction = conn.customConnections ? handleAddConnection : undefined;
+  const editConnectionAction = conn.customConnections ? handleEditConnection : undefined;
+  const duplicateConnectionAction = conn.customConnections ? handleDuplicateConnection : undefined;
+
+  /*
+    A drag hands back the order of the connections the list shows. While the server refuses
+    custom connections that is the seeds alone, and saved as it is the order would lose every
+    hidden connection, which would come back at the bottom once custom connections are allowed
+    again (`applyConnectionOrder` sorts an id the order does not name after every id it does).
+    So the saved order is rebuilt from the order the lists would show with every connection: each
+    hidden connection keeps its index there and the reordered ones fill the indices they held.
+    With nothing hidden that is the list's own order.
+  */
+  const handleReorderConnections = useCallback(
+    (visibleIds: string[]) => {
+      const policy = { customConnections: conn.customConnections };
+      const hidden = storage.getConnections().filter((stored) => !connectionAllowed(stored, policy));
+      const previous = applyConnectionOrder([...conn.connections, ...hidden], connectionOrder).map((c) => c.id);
+      setConnectionOrder(mergeVisibleOrder(previous, visibleIds));
+    },
+    [conn.customConnections, conn.connections, connectionOrder, setConnectionOrder],
+  );
 
   const [pendingDeleteConnectionId, setPendingDeleteConnectionId] = useState<string | null>(null);
   const deleteConnectionReturnFocus = useReturnFocus();
@@ -1087,7 +1120,10 @@ export default function Studio() {
     const managedConns = conn.connections.filter((c) => c.managed && !userConns.some((uc) => uc.id === c.id));
     const updated = [...managedConns, ...userConns];
     conn.setConnections(updated);
-    if (conn.activeConnection?.id === id) conn.setActiveConnection(updated[0] || null);
+    // Rebuilt from storage, `updated` still holds the connections the server refuses while custom
+    // connections are off, so the next selection is the first connection the lists show.
+    const listed = connectionsUnderPolicy(updated, { customConnections: conn.customConnections });
+    if (conn.activeConnection?.id === id) conn.setActiveConnection(listed[0] ?? null);
   };
 
   const confirmDeleteConnection = () => {
@@ -1183,14 +1219,14 @@ export default function Studio() {
                 activeConnection={conn.activeConnection}
                 onSelectConnection={conn.setActiveConnection}
                 onDeleteConnection={requestDeleteConnection}
-                onEditConnection={handleEditConnection}
-                onDuplicateConnection={handleDuplicateConnection}
+                onEditConnection={editConnectionAction}
+                onDuplicateConnection={duplicateConnectionAction}
                 favoriteConnectionIds={favoriteIds}
                 onToggleFavoriteConnection={toggleFavorite}
                 connectionOrder={connectionOrder}
-                onReorderConnections={setConnectionOrder}
+                onReorderConnections={handleReorderConnections}
                 {...connectionGroupProps}
-                onAddConnection={handleAddConnection}
+                onAddConnection={addConnectionAction}
                 onObjectClick={onObjectClick}
                 onOpenKey={onOpenKey}
                 objectActions={objectActions}
@@ -1221,7 +1257,7 @@ export default function Studio() {
               playgroundMode={txn.playgroundMode}
               editingEnabled={editingEnabled}
               onSelectConnection={conn.setActiveConnection}
-              onAddConnection={handleAddConnection}
+              onAddConnection={addConnectionAction}
               onLogout={handleLogout}
               onSaveQuery={openSaveQuery}
               onClearQuery={handleClearQuery}
@@ -1286,14 +1322,16 @@ export default function Studio() {
                 <div className="md:hidden h-full bg-sunken overflow-auto p-4">
                   <div className="mb-4 flex items-center justify-between">
                     <h2 className="text-xs font-medium text-fg-secondary">Connections</h2>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 text-xs border-hairline-strong hover:bg-fill"
-                      onClick={() => setIsConnectionModalOpen(true)}
-                    >
-                      <Plus strokeWidth={1.5} className="w-3 h-3 mr-1" /> Add
-                    </Button>
+                    {addConnectionAction && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs border-hairline-strong hover:bg-fill"
+                        onClick={addConnectionAction}
+                      >
+                        <Plus strokeWidth={1.5} className="w-3 h-3 mr-1" /> Add
+                      </Button>
+                    )}
                   </div>
                   <ConnectionsList
                     connections={conn.connections}
@@ -1303,13 +1341,13 @@ export default function Studio() {
                       setActiveMobileTab("editor");
                     }}
                     onDeleteConnection={requestDeleteConnection}
-                    onDuplicateConnection={handleDuplicateConnection}
+                    onDuplicateConnection={duplicateConnectionAction}
                     favoriteConnectionIds={favoriteIds}
                     onToggleFavoriteConnection={toggleFavorite}
                     connectionOrder={connectionOrder}
-                    onReorderConnections={setConnectionOrder}
+                    onReorderConnections={handleReorderConnections}
                     {...connectionGroupProps}
-                    onAddConnection={() => setIsConnectionModalOpen(true)}
+                    onAddConnection={addConnectionAction}
                   />
                 </div>
               )}
@@ -1617,7 +1655,7 @@ export default function Studio() {
         onConfirmDelete={confirmDeleteConnection}
         onSelectConnection={conn.setActiveConnection}
         onTableClick={onTableClick}
-        onAddConnection={handleAddConnection}
+        onAddConnection={addConnectionAction}
         onExecuteQuery={handleMobileExecuteQuery}
         onLoadSavedQuery={handleLoadSavedQuery}
         onLoadHistoryQuery={handleLoadHistoryQuery}

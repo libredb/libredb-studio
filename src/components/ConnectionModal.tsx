@@ -294,10 +294,11 @@ export function ConnectionModal({
   // So the ordinary deployment - users in `admin`, data elsewhere - had no way through
   // the discrete fields at all, and failed as a credentials error.
   const isMongoDB = type === "mongodb";
-  // libSQL has no user names at all: the credential a server checks is a TOKEN it
-  // minted (Turso prints one per database), so the shared `password` field holds a
-  // JWT here. A field labelled Password invites a password no libSQL server has,
-  // which is why this one is relabelled rather than left to be guessed at.
+  // libSQL's usual credential is a TOKEN its server minted (Turso prints one per
+  // database), so the shared `password` field holds a JWT here and is relabelled
+  // rather than left to be guessed at. A self-hosted server started with
+  // SQLD_HTTP_AUTH checks a user name and password instead, and the Username box's
+  // declared hint (db-ui-config.ts) says when this box takes the password.
   const isLibSQL = type === "libsql";
   const passwordFieldLabel = isLibSQL ? "Auth Token" : "Password";
   const databaseFieldLabel = isCouchbase ? "Bucket" : isTrino ? "Catalog" : isCassandra ? "Keyspace" : "Database";
@@ -690,9 +691,8 @@ export function ConnectionModal({
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/*
-                      Only when the engine takes it. libSQL authenticates with a token the
-                      server minted and has no user names at all, so a Username box there
-                      collected a value `buildConnection` then discarded.
+                      Only when the engine takes it, so no box collects a value
+                      `buildConnection` would then discard.
                     */}
                     {takesConnectionField(type, "user") && (
                       <div className="space-y-2">

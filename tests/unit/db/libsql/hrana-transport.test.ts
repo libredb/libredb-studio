@@ -169,6 +169,37 @@ describe("LibSQLHranaTransport endpoint", () => {
     expect(headers.has("authorization")).toBe(false);
   });
 
+  // sqld started with SQLD_HTTP_AUTH="basic:<base64(user:password)>" checks a user AND a password, so a
+  // connection that names a user sends the pair as Basic. The encodings are spelled out rather than computed,
+  // so the tests do not share the code they check.
+  test("sends a user and password as HTTP Basic", async () => {
+    await transport({ user: "libsql", password: "libsql-pass" }).execute("SELECT 1");
+
+    const headers = new Headers(calls[0]?.init?.headers);
+    expect(headers.get("authorization")).toBe("Basic bGlic3FsOmxpYnNxbC1wYXNz");
+  });
+
+  test("keeps the bearer token when the user is empty, because an empty user is no user", async () => {
+    await transport({ user: "", password: "tok-123" }).execute("SELECT 1");
+
+    const headers = new Headers(calls[0]?.init?.headers);
+    expect(headers.get("authorization")).toBe("Bearer tok-123");
+  });
+
+  test("sends Basic with an empty password when the user has none, rather than no header", async () => {
+    await transport({ user: "libsql", password: "" }).execute("SELECT 1");
+
+    const headers = new Headers(calls[0]?.init?.headers);
+    expect(headers.get("authorization")).toBe("Basic bGlic3FsOg==");
+  });
+
+  test("encodes a user and password outside ASCII as UTF-8 before base64", async () => {
+    await transport({ user: "kullanıcı", password: "şifre" }).execute("SELECT 1");
+
+    const headers = new Headers(calls[0]?.init?.headers);
+    expect(headers.get("authorization")).toBe("Basic a3VsbGFuxLFjxLE6xZ9pZnJl");
+  });
+
   // A host is spliced into nothing: one that would rewrite the URL around it is
   // refused before the transport exists, so no request can carry the token.
   test.each(["evil.example/steal?", "user@evil.example", "db#x", "db\\evil", "db%2f", "db evil"])(
@@ -883,6 +914,15 @@ describe("LibSQLHranaTransport tolerances", () => {
 
     const headers = new Headers(calls[0]?.init?.headers);
     expect(headers.get("authorization")).toBe("Bearer tok-123");
+  });
+
+  test("sends the Basic credential on the version route as well", async () => {
+    handler = (url) => (url.endsWith("/version") ? new Response("sqld 0.24.33", { status: 200 }) : respond(pipeline()));
+
+    await transport({ user: "libsql", password: "libsql-pass" }).serverVersion();
+
+    const headers = new Headers(calls[0]?.init?.headers);
+    expect(headers.get("authorization")).toBe("Basic bGlic3FsOmxpYnNxbC1wYXNz");
   });
 });
 

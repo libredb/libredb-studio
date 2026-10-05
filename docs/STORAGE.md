@@ -885,7 +885,8 @@ CREATE TABLE IF NOT EXISTS user_storage (
 
 CREATE TABLE IF NOT EXISTS accounts (
   email         TEXT PRIMARY KEY,  -- local login email; also the user_storage user_id
-  password_hash TEXT NOT NULL,     -- scrypt encoding, never the password
+  password_hash TEXT NOT NULL,     -- scrypt encoding, never the password; for an account a launch created,
+                                   --   launch-identity$<iss>$<sub> (base64url), which no password matches (LAUNCH.md)
   role          TEXT NOT NULL,     -- 'admin' or 'user'
   totp_secret   TEXT,              -- confirmed TOTP secret, sealed like a connection password, or NULL
   totp_pending  TEXT,              -- enrolment not yet confirmed, sealed; login ignores it

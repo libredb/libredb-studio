@@ -28,17 +28,17 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D231, U17 · 141
+- [Drivers and connections](#drivers-and-connections) — D1-D233, U17 · 143
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U89 · 81
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U92 · 84
 - [Dependencies](#dependencies) — P1-P9 · 7
-- [Documentation](#documentation) — DOC3-DOC13 · 10
-- [Release pipeline](#release-pipeline) — REL1-REL7 · 7
+- [Documentation](#documentation) — DOC3-DOC18 · 15
+- [Release pipeline](#release-pipeline) — REL1-REL8 · 8
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
-- [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
+- [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B100 · 36
@@ -1161,7 +1161,7 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 44 hits, re-measured 2026-10-04. Twelve of
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 46 hits, re-measured 2026-10-05. Fourteen of
 them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`,
 the agent routes' pattern). Thirty write out the same five-key object - `getSession`, `signJWT`,
 `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token
@@ -2095,6 +2095,11 @@ The same eight keys took 14 to 88 ms each on a development machine the same day,
 Found on #1246, whose change does not touch etcd.
 Not fixed there: the test is etcd's, and that PR touched no other provider.
 
+Amended 2026-10-04: the same default bounds each test of `tests/unit/db/etcd/seam-guard.test.ts`, and `descriptor readers: exactly the files spec E11 names` ran out of it in one full coverage run on `main` at `6dcc67fd6` at a load average of about 40.
+That file's `beforeAll` already parses the repository once under a 60-second budget, so what ran out was the rule's own walk over the parsed files.
+The file passed alone (59 tests in 6.3 s there, and 60 tests in 3.9 s on `main` at `d994ad72f`), in every full run after that one, and in three runs beside 40 busy loops on a 20-core machine (7 to 10 s each, on `main` at `6dcc67fd6`), so it needs more load than that to fail again.
+This entry is done only when that test also passes repeated runs at the CI job's concurrency, through a timeout of its own or a cheaper walk.
+
 **Done when:** the hook carries a timeout sized for a busy runner (bun's `beforeAll` takes one as its second argument), or makes RSA keys only where a test needs RSA, and the file passes repeated runs at the CI job's concurrency.
 
 ### D154. Qdrant Cloud is not claimed
@@ -2543,6 +2548,32 @@ Today the template's closing text tells the operator to pin both apps to the man
 Deferred by the CapRover auto-connect work.
 
 **Done when:** both apps land on the same manager node without a manual pin, or the export reaches Studio across nodes, measured on a two-node CapRover cluster.
+
+### D232. A libSQL `connectionString` that does not parse is ignored, while the comment says it is reported
+
+`resolveConnection` in `src/lib/db/providers/sql/libsql/index.ts` returns the configuration, changed only by dropping `user`, when `new URL(config.connectionString)` throws, and the comment in its `catch` says the string is left to `validate()` and to the transport to report.
+Neither reports it: `validate()` refuses only a connection that has neither a host nor a `connectionString`, and `LibSQLHranaTransport` builds its origin from `host` and `port` alone, with `localhost` when no host is set.
+So the request goes to whatever the form fields hold, without TLS when they set none although a `libsql://` URL implies it, which is the outcome the comment says swallowing the error would cause.
+
+Found 2026-10-04 while planning libSQL HTTP Basic auth for the platform integration.
+Not fixed there: that change touches the transport's `Authorization` header, not connection resolution.
+
+**Done when:** a `connectionString` that does not parse is refused with a `DatabaseConfigError` that names the field before any request is sent, and a test pins it.
+
+### D233. Six test files leave their temporary directories in `TMPDIR`
+
+Six test files make directories under `os.tmpdir()` with `mkdtempSync` and leave them there.
+`tests/unit/lib/agent/model-tuning.test.ts` (line 83) and `tests/unit/lib/agent/model-profiles.test.ts` (line 52) make `libredb-tuning-*`, and `tests/api/agent/config.test.ts` (line 344) makes `libredb-tuning-route-*`.
+`tests/unit/lib/agent/ledger-compatibility.test.ts` (line 36) makes `agent-ledger-compat-*`, `tests/unit/build-azure-package.test.ts` (lines 243 and 353) makes `azure-package-*` and `azure-package-cli-*`, and `tests/unit/check-appimage-perms.test.ts` (line 28) makes `appdir-perms-*`.
+`ledger-compatibility.test.ts` registers a removal on the process's `exit` event (line 100), and its directories stay all the same when the file runs through `bun tests/run-tests.ts`; the other five remove nothing.
+Measured 2026-10-05 on `main` at `d994ad72f`, each file run alone through `bun tests/run-tests.ts` with `TMPDIR` pointed at an empty directory: they left 14, 1, 2, 7, 7 and 5 directories, in that order, 36 in all.
+One passing run of the whole suite on `main` at `6dcc67fd6`, measured 2026-10-04 the same way, left the same 36 and none from any other file.
+Nothing removes them, so every run on a developer machine or a self-hosted runner adds as many again.
+
+Found 2026-10-04 while planning the platform integration, whose local gates kept `TMPDIR` in a scratch directory.
+Not fixed there: none of the six files is part of that work.
+
+**Done when:** each of the six files removes the directories it makes, for example with `rmSync(path, { recursive: true, force: true })` in an `afterEach` or `afterAll`, and a run of `bun run test` with `TMPDIR` pointed at an empty directory leaves it empty.
 
 ## Value interpolation
 
@@ -3923,6 +3954,37 @@ Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
 
 **Done when:** a Source tab title can use a provider-supplied display form of the path (for a rule group, `e2e_group (rules.yml)`), still unique per path, without a type-id branch in the tab manager, and a test pins the Prometheus rule group's title.
 
+### U90. The custom connections switch loads with a flash and an extra round trip
+
+`useConnectionManager` (`src/hooks/use-connection-manager.ts`) starts with the policy that allows custom connections until `GET /api/connections/policy` answers, so the editor draws New, Edit and Duplicate for that moment on a server that has custom connections off; the server still refuses them.
+The policy read is awaited before the managed list is fetched instead of beside it, one extra round trip on every editor load.
+`src/app/api/admin/fleet-health/route.ts` imports `logger` without using it, a lint warning left alone because a concurrent fix edits the same import block.
+
+Found 2026-10-05 by the final review of the platform integration branch.
+Not fixed there: the flash needs a "policy unknown" state, and the import block was kept unchanged to avoid a merge conflict.
+
+**Done when:** a policy-unknown state withholds the controls, the policy and managed reads run in parallel while no connection is made active before the policy is known, and the unused import is gone.
+
+### U91. A user typed for another engine rides along to libSQL
+
+The connection form keeps its `user` when the type changes (the type buttons in `src/components/ConnectionModal.tsx` call `setType` and reset only the port).
+libSQL now takes a user and sends HTTP Basic when one is set, so a name typed for another engine is saved on a libSQL connection, and a server that expects a bearer token answers `401`.
+
+Found 2026-10-05 by the final review of the platform integration branch.
+Not fixed there: it needs a form-state change outside that work.
+
+**Done when:** switching to a type that newly takes a user starts that field empty, or the form asks, with a test.
+
+### U92. The remembered active connection outlives its connection
+
+`useConnectionManager` writes `libredb_active_connection_id` only while a connection is active, so when the last connection is closed or withdrawn the key keeps the last id.
+The behaviour is on `main` from before the platform integration branch.
+
+Found 2026-10-05 by the final review of the platform integration branch.
+Not fixed there: it predates that work.
+
+**Done when:** the id is cleared when the last connection closes or is withdrawn, with a test.
+
 ## Dependencies
 
 ### P1. The desktop shell's `glib` advisory has no reachable fix while Tauri v2 targets GTK 3
@@ -4259,6 +4321,61 @@ Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
 
 **Done when:** both section 13 bullets are removed or rewritten to what the tree shows, the cited `transport.ts` comment is checked for the same stale claim, and the provider-doc tests still pass.
 
+### DOC14. The seed reference calls `group` a sidebar label, and no UI reads it
+
+`docs/SEED_CONNECTIONS.md` annotates the example's `group: "Data Team"` with `# Group label in sidebar`, and its field table describes `connections[].group` as a group label.
+`src/lib/seed/connection-filter.ts` copies the value onto the connection and `DatabaseConnection` in `src/lib/types.ts` declares `group?: string`, but no component or hook reads `connection.group`: the sidebar's groups are the user's own, kept by `src/hooks/use-connection-groups.ts` under ids (#1170).
+A seeded `group` is therefore validated and carried, and never shown, and so is the group `CapRover` that the CapRover discovery source sets on every connection it discovers (`DISCOVERY_GROUP` in `src/lib/seed/discovery-fingerprint.ts`, #1502).
+
+Found 2026-10-04 while planning the platform integration, whose seed files set `group`.
+Not fixed there: whether Studio shows the label or the reference stops promising it is a product decision outside that work.
+
+**Done when:** a seeded `group` is shown where `docs/SEED_CONNECTIONS.md` says it is, or the reference says the field is validated and carried but not displayed.
+
+### DOC15. DOCKERHUB.md says `latest` and version tags are pushed from `main`
+
+The "Image tags" table of `DOCKERHUB.md`, which `.github/workflows/docker-build-push.yml` pushes to the Docker Hub listing, gives `latest` the source `main` and `X.Y.Z` the source "`main` / release", and it has no row for the `main` tag.
+The workflow publishes version tags and moves `latest` only on a published release or on the release chain's dispatch with `publish_latest`, and a push to `main` publishes the mutable `main` tag instead, as the comment at the top of the workflow says.
+A reader who pulls `latest` expecting what `main` holds gets the last release.
+
+Found 2026-10-04 while planning the platform integration, which pins a released image tag.
+Not fixed there: the listing text is outside that work.
+
+**Done when:** the table says that `latest` and `X.Y.Z` come from a release, lists the `main` tag, and matches the tags `docker-build-push.yml` publishes.
+
+### DOC16. The drive-token docblock counts the proxy's public paths as four
+
+The header of `src/lib/agent/drive-token.ts` says that `src/proxy.ts` exempts exactly four things: the auth paths, static assets, the health GET and the storage-config GET.
+The proxy's public list names eight paths beside its static-asset test, `/api/auth`, `/_next`, `/favicon.ico`, `/health`, `/api/health`, `/api/db/health`, `/api/storage/config` and `/launch`, and `tests/api/proxy.test.ts` pins them in `the public-path list is exactly the eight it names`.
+The docblock's point, that the drive path is not on that list, still holds; its count and its list do not.
+
+Found 2026-10-04 while adding `/launch` to that list for launch sign-in.
+Not fixed there: the agent module is outside that work.
+
+**Done when:** the docblock points at the proxy's list and the test that pins it instead of counting the list, or states the list as it is.
+
+### DOC17. SECURITY.md leaves passkey sign-in off its list of routes that need no session
+
+The API Security list of `SECURITY.md` names the routes that answer without a session: the password login, launch sign-in and logout, the two OIDC routes, the three liveness paths and `GET /api/storage/config`.
+`POST /api/auth/passkey/sign-in` creates a session without needing one as well, and `docs/API_DOCS.md` names it among the public auth routes, but `SECURITY.md` does not.
+
+Found 2026-10-04 while adding `POST /api/auth/launch` to that list for launch sign-in.
+Not fixed there: that change adds only its own route to the list.
+
+**Done when:** the `SECURITY.md` list names `POST /api/auth/passkey/sign-in`, as `docs/API_DOCS.md` does.
+
+### DOC18. The documented secret scan passes without scanning anything when it runs in a git worktree
+
+The local form of the required `Secret Scan` check in `CONTRIBUTING.md` (Security Scanning) mounts `"$PWD:/repo:ro"` and scans `origin/main..HEAD` with gitleaks.
+In a git worktree `.git` is a file that points into the main checkout's `.git/worktrees/`, a path the container does not have, so git inside the container cannot open the repository.
+gitleaks then reports `0 commits scanned.` and `no leaks found` and exits 0, which reads as a pass although nothing was scanned.
+Measured 2026-10-04 in a libredb-studio worktree; the same command scanned the branch's commits once the worktree and the main checkout's `.git` were mounted at their own absolute paths.
+
+Found 2026-10-04 while planning the platform integration, whose gates run in a git worktree.
+Not fixed there: that work runs the scan with those two mounts and counts `0 commits scanned.` as a failure, and `CONTRIBUTING.md` is outside it.
+
+**Done when:** `CONTRIBUTING.md` gives a command that scans the branch from a git worktree as well as from a clone, for example by mounting the worktree and the main checkout's `.git` at their own absolute paths, and says that a scan reporting `0 commits scanned.` checked nothing.
+
 ## Release pipeline
 
 ### REL1. No CI job installs the released chart artifact with a Helm 3 client
@@ -4368,6 +4485,10 @@ gitignored at `.gitignore:162`, written by the Rancher E2E run skill - holds the
 anywhere` and one in `hands no working password to a login example`, all from paths CI never checks
 out. Its floor assertion needs the same treatment as the citation scan's.
 
+Amended 2026-10-04: the citation scan has read the git index since #980 (`gitTrackedFiles` in `tests/unit/backlog-structure.test.ts`), so `tests/unit/published-credentials.test.ts` is the scan left, and it fails on the `docs/superpowers/` drafts as well.
+Measured in a maintainer's checkout on `main` at `fc28ef73e` and `6dcc67fd6` while planning the platform integration, with that work's planning documents in that directory: `assigns no admin or user password anywhere`, `hands no working password to a login example` and `assigns no secret the server would accept` fail on credential examples quoted in those drafts, while the same tree without them passes all ten tests, as a git worktree of `main` at `d994ad72f`, which holds no ignored file, does.
+That work therefore ran its gates in such a worktree, and each gate still ran the suite without this file and ran the file alone, keeping only its findings outside `docs/superpowers/`, so a draft copied into the worktree later could not fail it for a file CI never sees.
+
 **Done when:** both scans enumerate tracked files, for example by driving the glob through
 `git ls-files` and intersecting, so a working tree with local drafts under `docs/` or `deploy/`
 gives the same verdict as a clean checkout. Each scan's own floor assertion stays, so a broken
@@ -4406,7 +4527,25 @@ The comments in `playwright.config.ts` and `e2e/offline-editor.spec.ts` record t
 Found while running every local gate for the etcd provider (#1089).
 Not fixed there: the E2E harness is not part of the etcd work, and the fix is a choice about the limiter's test configuration.
 
+Amended 2026-10-05: a functional smoke run without retries on 2026-10-05 failed `object-edit.spec.ts:621` on the same budget, and the wait it failed in has a cause of its own.
+`waitForTheObjectTree` in `e2e/object-edit.spec.ts` (around line 258) clicks only `tree-retry`, while a rate-limited metadata read draws the sidebar's `sidebar-provider-retry` (`src/components/sidebar/Sidebar.tsx`) instead, so a rate-limited run presses no retry and waits out the helper's 120 s before the test fails.
+The same test passed on a retry with CI's `--retries=2`.
+
 **Done when:** the E2E servers get a query budget sized for the suite, through `RATE_LIMIT_QUERY_MAX` in their `webServer` env as the passkey server sets `RATE_LIMIT_LOGIN_MAX`, or each spec signs in as an account of its own, and the repeated command above passes all 40 of its runs locally.
+
+### REL8. Local drafts fail typecheck, lint and build, because two configs read every file on disk
+
+`tsconfig.json` includes `**/*.ts`, `**/*.tsx` and `**/*.mts` and excludes only `node_modules`, so `bun run typecheck` (`tsc --noEmit`) and the type check of `bun run build` read every TypeScript file in the working tree, git-ignored or not.
+The rules object of `eslint.config.mjs` that sets `react/no-unescaped-entities` and the `react-hooks/*` rules has no `files`, while `eslint-config-next` registers those plugins only for `**/*.{js,jsx,mjs,ts,tsx,mts,cts}`.
+So `eslint .` stops on any `.cjs` file, tracked or not, with `A configuration object specifies rule "react/no-unescaped-entities", but could not find plugin "react".`
+Measured 2026-10-04 with the research drafts of two provider studies under `docs/superpowers/` of a maintainer's checkout, 62 `.ts` files and 3 `.cjs` files, on a branch of `main` at `6dcc67fd6` that changes neither config: `bun run typecheck` and `bun run build` failed on the drafts' unresolved imports and implicit `any` types, `bun run lint` stopped at a `.cjs` draft, and the same tree without the drafts passed all three.
+`eslint` stopped the same way on one of those `.cjs` files in a checkout of `main` at `6dcc67fd6`.
+CI checks out only tracked files and the repository tracks no `.cjs` file, so CI is green while a maintainer's gate is red over files that are not in the repository.
+
+Found 2026-10-04 while planning the platform integration in a checkout that holds such drafts; that work then ran its gates in a separate git worktree, which holds none because git checks out no ignored file.
+Not fixed there: neither config is part of that work.
+
+**Done when:** `tsc --noEmit`, `next build` and `eslint .` leave the git-ignored draft directories alone, for example through an `exclude` in `tsconfig.json` and `files` on the rules object that names the React rules, and a working tree holding a `.ts` and a `.cjs` draft under `docs/superpowers/` passes all three as a clean checkout does.
 
 ## Chart configuration surface
 
@@ -4655,6 +4794,50 @@ user deliberately cleared. A worse bug than the one it fixes.
 
 **Done when:** a design distinguishes "the client never had this value" from "the client cleared this
 value" without adding a field to the stored shape.
+
+### K5. Stored accounts are keyed by the exact email, while sign-in matches it in any letter case
+
+The `accounts` table of both server stores declares `email TEXT PRIMARY KEY`, and the account lookups read `WHERE email = ?` in `src/lib/storage/providers/sqlite.ts` and `WHERE email = $1` in `src/lib/storage/providers/postgres.ts`, so a row is found only by its exact spelling.
+Password sign-in matches the submitted email in any letter case (`src/app/api/auth/login/route.ts`), and account creation refuses a case variant through `sameEmail` in `src/lib/local-accounts.ts`, but the schema does not: a writer that skips `sameEmail` can store `Alice@example.com` beside `alice@example.com`, and an exact lookup then reads one row while sign-in can match the other.
+Launch sign-in matches the email in any letter case as well, so of its writes only two launches that create case variants of one new email at the same moment could store both.
+
+Found 2026-10-04 by the review of the launch sign-in design, whose own account lookup matches emails in any letter case and binds a launched account to the token's issuer and subject.
+Not fixed there: the store schema is outside that work.
+
+**Done when:** both stores refuse a second account whose email differs from an existing one only in letter case, for example through a unique index on `lower(email)` with a migration that reports existing case-variant rows, and a test on each store pins the refusal.
+
+### K6. Launch sign-in leaves two outcomes out of the audit log
+
+`POST /api/auth/launch` (`src/app/api/auth/launch/route.ts`) audits and charges every refusal through its `refuse` helper, which records `login_failure` and spends the address's `login_client` budget.
+An error raised after the token verified does not go through it: an `AuthConfigError` from `getAuthUsers` or session signing is answered `503`, and a store error `500`, with a log line only, so the jti is spent while the admin audit log and the budget show nothing.
+The `launch_session_conflict` refusal records only the launch's email as its user; the account whose session the browser kept goes into the response body (`signedInAs`) but not into the audit record, so the target of a link-swap attempt is invisible to an admin.
+
+Found 2026-10-05 by the final review of the platform integration branch.
+Not fixed there: both are audit enrichments that need their own reasons and tests, and the refusals themselves are correct.
+
+**Done when:** an error after verification and a session conflict each emit an audit record with a reason and the account they protect, with tests on the route.
+
+### K7. Orphan per-user storage attaches to the first launch for its email
+
+In store mode, `user_storage` rows are keyed by the email (`user_id` in `src/lib/storage/providers/sqlite.ts` and `postgres.ts`), and an admin's deletion of an account removes its rows in the same transaction.
+Rows with no account row can still exist, for example left by an earlier deployment that signed in with OIDC, and `provisionLaunchAccount` in `src/lib/local-accounts.ts` creates an account for a new email without looking at them.
+So whoever a launch first provisions for that email inherits that storage, saved connections included.
+
+Found 2026-10-05 by the final review of the platform integration branch.
+Not fixed there: only a change of authentication mode leaves such rows, and the choice between refusing, clearing and documenting is a product decision.
+
+**Done when:** provisioning refuses or clears orphan storage for an email it creates, or `docs/LAUNCH.md` states the rule, with a test either way.
+
+### K8. A custom-connection refusal leaves no audit record
+
+With `ALLOW_CUSTOM_CONNECTIONS=false`, `resolveConnection` in `src/lib/seed/resolve-connection.ts` refuses a connection the request supplies with `403` and only logs it with `logger.warn`.
+A role refusal emits `permission_denied` through `auditRoleDenial` in `src/lib/api/require-session.ts`, rate limited per user, so it reaches the admin audit log.
+A user who probes hosts through custom connections therefore leaves nothing an admin can see in Studio.
+
+Found 2026-10-05 by the final review of the platform integration branch.
+Not fixed there: it needs a new audit reason, a security control count change and tests of its own.
+
+**Done when:** the refusal emits `permission_denied` with the reason `custom_connections_disabled`, rate limited like `auditRoleDenial`, with tests and the `security:check` count that follows.
 
 ---
 

@@ -57,7 +57,8 @@ interface StudioOverlaysProps {
   onConfirmDelete: () => void;
   onSelectConnection: (connection: DatabaseConnection) => void;
   onTableClick: (path: readonly string[]) => void;
-  onAddConnection: () => void;
+  /** Absent while the server refuses custom connections; the palette then offers no New Connection. */
+  onAddConnection?: () => void;
   onExecuteQuery: () => void;
   onLoadSavedQuery: (query: string) => void;
   onLoadHistoryQuery: (query: string) => void;
