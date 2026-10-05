@@ -34,10 +34,7 @@ export function markdownCell(value: unknown): string {
  * The separator row is always plain `---`; column alignment (`:---`, `---:`) is
  * intentionally not emitted.
  */
-export function markdownTable(
-  rows: readonly Record<string, unknown>[],
-  columns?: readonly string[],
-): string {
+export function markdownTable(rows: readonly Record<string, unknown>[], columns?: readonly string[]): string {
   const header = resolveColumns(rows, columns);
   // A table with no columns has no cells to escape and no separator to write; the empty
   // string is the same answer `toCsv` gives for this shape.

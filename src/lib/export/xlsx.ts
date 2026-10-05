@@ -26,10 +26,7 @@ const SHEET_NAME = "Results";
 export async function buildXlsxExport(source: ResultExportSource): Promise<ResultXlsxFile> {
   const XLSX = await import("@e965/xlsx");
   const columns = resolveColumns(source.rows, source.fields);
-  const aoa = [
-    columns.slice(),
-    ...source.rows.map((row) => columns.map((column) => renderValue(cellOf(row, column)))),
-  ];
+  const aoa = [columns.slice(), ...source.rows.map((row) => columns.map((column) => renderValue(cellOf(row, column))))];
   const sheet = XLSX.utils.aoa_to_sheet(aoa);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, SHEET_NAME);

@@ -37,7 +37,23 @@ describe("htmlCell", () => {
   test("escapes the quotes inside a Buffer-shaped document, as part of the HTML text", () => {
     const cell = htmlCell({ type: "Buffer", data: [1, "two"] });
     expect(cell).toBe(
-      "{" + quot + "type" + quot + ":" + quot + "Buffer" + quot + "," + quot + "data" + quot + ":[1," + quot + "two" + quot + "]}",
+      "{" +
+        quot +
+        "type" +
+        quot +
+        ":" +
+        quot +
+        "Buffer" +
+        quot +
+        "," +
+        quot +
+        "data" +
+        quot +
+        ":[1," +
+        quot +
+        "two" +
+        quot +
+        "]}",
     );
     expect(cell).not.toContain('"');
   });

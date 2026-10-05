@@ -127,7 +127,10 @@ test.describe("Functional smoke: XLSX export", () => {
 
     // Scoped to the results panel: the connection card's own name ("Export E2E PG")
     // also matches a bare /Export/ role-name query.
-    await page.getByTestId("studio-editor-bottom").getByRole("button", { name: /Export/ }).click();
+    await page
+      .getByTestId("studio-editor-bottom")
+      .getByRole("button", { name: /Export/ })
+      .click();
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       page.getByRole("menuitem", { name: "Export as XLSX" }).click(),

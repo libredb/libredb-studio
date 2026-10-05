@@ -32,10 +32,7 @@ export function htmlCell(value: unknown): string {
 }
 
 /** `rows` as a complete standalone HTML document holding one table. */
-export function htmlTable(
-  rows: readonly Record<string, unknown>[],
-  columns?: readonly string[],
-): string {
+export function htmlTable(rows: readonly Record<string, unknown>[], columns?: readonly string[]): string {
   const header = resolveColumns(rows, columns);
   if (header.length === 0) return "";
   const head = header.map((column) => `<th>${htmlCell(column)}</th>`).join("");

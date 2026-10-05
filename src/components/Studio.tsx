@@ -895,7 +895,7 @@ export default function Studio() {
   );
 
   const exportResults = useCallback(
-    async (format: ResultExportFormat, hydrated: AgentArtifactHydration | null = null, csvDelimiter?: CsvDelimiter) => {
+    (format: ResultExportFormat, hydrated: AgentArtifactHydration | null = null, csvDelimiter?: CsvDelimiter) => {
       const fileName = (extension: string) => resultExportFileName(extension, hydrated?.runId);
       if (format === "xlsx") {
         const source = buildExportSource(hydrated);
@@ -903,16 +903,18 @@ export default function Studio() {
         // The library arrives through a dynamic import, so its chunk can fail to load
         // where a text export has nothing to fail on. The outcome is reported rather
         // than left as an unhandled rejection, matching the clipboard refusal below.
-        try {
-          const file = await buildXlsxExport(source);
-          downloadBlob(file.content, fileName(file.extension));
-        } catch {
-          toast({
-            title: "Could not export XLSX",
-            description: "The spreadsheet library could not be loaded. Try again, or export as CSV.",
-            variant: "destructive",
-          });
-        }
+        void (async () => {
+          try {
+            const file = await buildXlsxExport(source);
+            downloadBlob(file.content, fileName(file.extension));
+          } catch {
+            toast({
+              title: "Could not export XLSX",
+              description: "The spreadsheet library could not be loaded. Try again, or export as CSV.",
+              variant: "destructive",
+            });
+          }
+        })();
         return;
       }
       const file = buildResultFile(format, hydrated, csvDelimiter);
