@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "b
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import { acquireExecutionProfileProvider, getOrCreateProvider } from "@/lib/db/factory";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
@@ -146,7 +147,7 @@ describe("acquire", () => {
     const gate = gateMethod(SQLiteProvider.prototype, "connect");
     try {
       const acquisitions = Array.from({ length: 12 }, () =>
-        acquireExecutionProfileProvider(connection, "agent-read-only"),
+        acquireExecutionProfileProvider(connection, "agent-read-only", {}, editorExecutionContext(alice, connection)),
       );
       await gate.entered;
       await holdGate();
@@ -207,6 +208,20 @@ describe("acquire", () => {
       expect(failing.calls).toBe(2);
     } finally {
       failing.restore();
+    }
+  });
+
+  test("a SQLite seed another role can use opens for no caller, admin included", async () => {
+    // SQLite's drivers cannot confine a statement's file access, so the caller's posture reaches the
+    // profiled handle (#1523): on a seed a non-admin role can use that posture is denied for every
+    // caller, and the acquisition is refused at connect rather than served read-only.
+    writeSeedFile(dir, [{ id: "shop", type: "sqlite", database: join(dir, "shop.db"), roles: ["*"] }]);
+    for (const caller of [alice, bob]) {
+      const context = new McpConnectionContext(caller);
+      // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next caller asks.
+      const connection = await shopConnection(context);
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      await expect(context.acquire(connection, "agent-read-only")).rejects.toThrow("require an administrator");
     }
   });
 

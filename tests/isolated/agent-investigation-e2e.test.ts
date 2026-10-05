@@ -13,6 +13,7 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
 import type { AgentRunActor, AgentRunEvent } from "@/lib/agent/types";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -74,7 +75,9 @@ import { chatToolCallStream, type FetchDouble } from "./fixtures/agent-transport
  * process-wide.
  */
 
-const ACTOR: AgentRunActor = { sessionId: "sess_e2e", role: "user" };
+// An admin, because the SQLite arc opens on an inline connection and SQLite opens only for a trusted
+// requester (#1523); the PostgreSQL arc reads no file-access posture, so the role changes nothing there.
+const ACTOR: AgentRunActor = { sessionId: "sess_e2e", role: "admin" };
 
 const OBJECTIVE = "Which order statuses dominate the orders table?";
 
@@ -398,7 +401,7 @@ async function driveArc(fixture: Fixture): Promise<Arc> {
     // read-only profile, so the run really is bounded by the profile's own controls.
     acquireProvider: async (connection, profile) => {
       profiles.push(profile);
-      return acquireExecutionProfileProvider(connection, profile);
+      return acquireExecutionProfileProvider(connection, profile, {}, editorExecutionContext(ACTOR, connection));
     },
   };
 
@@ -690,7 +693,12 @@ describe("the whole investigation, against a real SQLite database file", () => {
     };
     // Read from the provider the run itself will use, rather than declaring a
     // capability set by hand that could drift from the one the engine has.
-    const provider: DatabaseProvider = await acquireExecutionProfileProvider(connection, "agent-read-only");
+    const provider: DatabaseProvider = await acquireExecutionProfileProvider(
+      connection,
+      "agent-read-only",
+      {},
+      editorExecutionContext(ACTOR, connection),
+    );
     return {
       connection,
       capabilities: provider.getCapabilities(),
@@ -731,7 +739,12 @@ describe("the whole investigation, against a real SQLite database file", () => {
     // silently stopped seeding — or a read that reached a different database — fails
     // here rather than passing with an empty result.
     const fixture = await sqliteFixture();
-    const provider = await acquireExecutionProfileProvider(fixture.connection, "agent-read-only");
+    const provider = await acquireExecutionProfileProvider(
+      fixture.connection,
+      "agent-read-only",
+      {},
+      editorExecutionContext(ACTOR, fixture.connection),
+    );
     // The profile seam guarantees this method exists — it refuses a provider without
     // one — so its absence here is a wiring fault worth failing loudly on.
     if (typeof provider.queryReadOnly !== "function") throw new Error("the profiled provider has no read-only path");
@@ -758,7 +771,12 @@ describe("the whole investigation, against the PostgreSQL suite's engine fixture
       password: "secret",
       createdAt: TIME,
     };
-    const provider: DatabaseProvider = await acquireExecutionProfileProvider(connection, "agent-read-only");
+    const provider: DatabaseProvider = await acquireExecutionProfileProvider(
+      connection,
+      "agent-read-only",
+      {},
+      editorExecutionContext(ACTOR, connection),
+    );
     return {
       connection,
       capabilities: provider.getCapabilities(),

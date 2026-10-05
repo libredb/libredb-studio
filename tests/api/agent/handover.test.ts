@@ -93,7 +93,12 @@ const mockResolveConnection = mock(
 const mockQueryReadOnly = mock(async (_sql: string, _budget: ReadOnlyStatementBudget) => RESULT);
 const mockQuery = mock(async (_sql: string) => RESULT);
 const mockAcquire = mock(
-  async (_connection: unknown, _profile: string): Promise<ProfiledProvider> => ({
+  async (
+    _connection: unknown,
+    _profile: string,
+    _options?: unknown,
+    _requester?: unknown,
+  ): Promise<ProfiledProvider> => ({
     queryReadOnly: mockQueryReadOnly,
     query: mockQuery,
   }),
@@ -217,6 +222,19 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
       { role: "user", username: "ada" },
     );
     expect(mockAcquire.mock.calls[0][0]).toEqual(SEED_CONNECTION);
+  });
+
+  test("the run's persisted actor decides the file-access posture of the hand-over handle", async () => {
+    // As it decides the connection above: SQLite opens only for a trusted requester, on this
+    // profile as in the editor, so the route passes the posture the editor would derive for the
+    // run's own actor, never a constant and never the replaying browser's.
+    await POST(request(), params());
+    expect(mockAcquire.mock.calls[0][3]).toEqual({ allowExternalFileAccess: false });
+
+    mockAcquire.mockClear();
+    runs.set("arun_1", { ...fakeRun(), actor: { sessionId: "ada", role: "admin" } });
+    await POST(request(), params());
+    expect(mockAcquire.mock.calls[0][3]).toEqual({ allowExternalFileAccess: true });
   });
 
   test("a run whose gate declined is refused, and told so", async () => {

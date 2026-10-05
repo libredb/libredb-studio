@@ -48,6 +48,9 @@ export interface SeedEntry {
  * Writes a JSON seed file and points the loader at it. Every entry carries mcp: true unless it
  * says otherwise, and null writes no mcp key at all. Until the seed schema declares the field
  * it strips the key silently, so these files already carry the opt-in the product requires.
+ * Every entry is offered to admins only unless it names its roles: SQLite, the engine these suites
+ * run on, opens for MCP only on a seed no other role can use (#1523), so a test about another role
+ * says so.
  */
 export function writeSeedFile(
   dir: string,
@@ -55,7 +58,7 @@ export function writeSeedFile(
   defaults?: Record<string, unknown>,
 ): string {
   const path = join(dir, "seed-connections.json");
-  const entries = connections.map(({ mcp = true, roles = ["*"], name, ...rest }) => ({
+  const entries = connections.map(({ mcp = true, roles = ["admin"], name, ...rest }) => ({
     ...rest,
     name: name ?? rest.id,
     roles,

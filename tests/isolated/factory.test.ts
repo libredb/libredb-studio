@@ -359,7 +359,8 @@ const {
   getProviderCacheStats,
   evictIdleProviders,
   registerShutdownHandlers,
-  acquireExecutionProfileProvider,
+  acquireExecutionProfileProvider: rawAcquireExecutionProfileProvider,
+  profiledCacheKey,
   findOpenSingleWriterProvider,
   isSingleWriterFileOpen,
   getExecutionProfileCacheStats,
@@ -374,6 +375,17 @@ function getOrCreateProvider(...args: Parameters<typeof rawGetOrCreateProvider>)
     connection,
     options,
     execution ?? (connection.type === "sqlite" ? { allowExternalFileAccess: true } : {}),
+  );
+}
+// The same for the profiled path: existing SQLite agent tests exercise trusted requesters, and the
+// denied ones are tested against the unwrapped acquisition below.
+function acquireExecutionProfileProvider(...args: Parameters<typeof rawAcquireExecutionProfileProvider>) {
+  const [connection, profile, options, requester] = args;
+  return rawAcquireExecutionProfileProvider(
+    connection,
+    profile,
+    options,
+    requester ?? (connection.type === "sqlite" ? { allowExternalFileAccess: true } : {}),
   );
 }
 if (nodeEnvBefore === undefined) {
@@ -2006,6 +2018,63 @@ describe("acquireExecutionProfileProvider", () => {
       expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
       expect(getExecutionProfileCacheStats().size).toBe(0);
     });
+
+    test("every profile opens a sqlite handle only under a trusted posture, as the editor does", async () => {
+      // SQLite's drivers cannot confine what a statement reads, read-only included, so a denied
+      // requester is refused at connect on the profiled path too, and an absent one reads as denied.
+      const conn = await seedFileConnection();
+
+      for (const profile of ["agent-read-only", "agent-operations", "agent-handover"] as const) {
+        for (const requester of [{ allowExternalFileAccess: false }, {}]) {
+          // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next call, and none may reach the cache.
+          const refusal: unknown = await rawAcquireExecutionProfileProvider(conn, profile, {}, requester).catch(
+            (e: unknown) => e,
+          );
+          expect(refusal).toBeInstanceOf(DatabaseConfigError);
+          expect((refusal as Error).message).toContain("require an administrator");
+        }
+      }
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+
+      const agent = await rawAcquireExecutionProfileProvider(
+        conn,
+        "agent-read-only",
+        {},
+        { allowExternalFileAccess: true },
+      );
+      expect(await agent.queryReadOnly!("SELECT v FROM t", { ...AGENT_BUDGET })).toMatchObject({
+        rows: [{ v: "seeded" }],
+      });
+    });
+
+    test("a profiled sqlite handle a trusted requester opened is never served to a denied one", async () => {
+      // The profiled cache splits by posture for an engine that reads it, as the writable cache does;
+      // without that, the denied request below would be handed the trusted handle cached first.
+      const conn = await seedFileConnection();
+      await rawAcquireExecutionProfileProvider(conn, "agent-read-only", {}, { allowExternalFileAccess: true });
+
+      const refusal: unknown = await rawAcquireExecutionProfileProvider(
+        conn,
+        "agent-read-only",
+        {},
+        { allowExternalFileAccess: false },
+      ).catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect(getExecutionProfileCacheStats()).toEqual({ size: 1, connections: [conn.id] });
+    });
+  });
+
+  test("the profiled key carries the requester's posture only for an engine that reads it", async () => {
+    const sqlite = makeConnection("sqlite", { id: "sqlite-profiled-key", database: "/data/profiled-key.db" });
+    const denied = await profiledCacheKey(sqlite, "agent-read-only", { allowExternalFileAccess: false });
+
+    expect(await profiledCacheKey(sqlite, "agent-read-only", { allowExternalFileAccess: true })).not.toBe(denied);
+    // Absent reads as denied, as it does for the writable key.
+    expect(await profiledCacheKey(sqlite, "agent-read-only")).toBe(denied);
+    expect(await profiledCacheKey(pgConn(), "agent-read-only", { allowExternalFileAccess: false })).toBe(
+      await profiledCacheKey(pgConn(), "agent-read-only", { allowExternalFileAccess: true }),
+    );
   });
 });
 

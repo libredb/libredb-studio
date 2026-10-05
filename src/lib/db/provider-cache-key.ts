@@ -43,7 +43,7 @@ import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
  *   which server it reaches, and the mode changes neither.
  * - The file-access posture (the non-admin DuckDB file-access change), for an engine that opens its
  *   editor handle under one: `READS_FILE_ACCESS_POSTURE` in `./compatibility.ts` answers which, so
- *   this is not a `connection.type` branch (CLAUDE.md), and today only DuckDB answers true. A denied
+ *   this is not a `connection.type` branch (CLAUDE.md), and today DuckDB and SQLite answer true. A denied
  *   editor handle opens with `enable_external_access: 'false'` and a full-reach one without it, so the
  *   two must never share a cached handle: a caller of one posture would otherwise be handed the
  *   other's handle. (A seed a non-admin role can use gets one posture for every role in

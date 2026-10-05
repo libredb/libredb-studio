@@ -69,12 +69,14 @@ export class McpConnectionContext {
   }
 
   async acquire(connection: ManagedConnection, profile: ExecutionProfile): Promise<DatabaseProvider> {
-    const key = await profiledCacheKey(connection, profile);
+    // The caller's editor posture on this connection (non-admin DuckDB file access): it decides whether a
+    // SQLite handle opens at all and which open single-writer handle an operations acquisition may
+    // borrow, and it is part of the key, so it is derived first; every caller that can resolve one seed
+    // shares it.
+    const requester = editorExecutionContext(this.caller, connection);
+    const key = await profiledCacheKey(connection, profile, requester);
     const pending = pendingAcquisitions.get(key);
     if (pending !== undefined) return pending;
-    // The caller's editor posture on this connection (non-admin DuckDB file access) decides only which open single-writer
-    // handle an operations acquisition may borrow; every caller that can resolve one seed shares it.
-    const requester = editorExecutionContext(this.caller, connection);
     const acquisition = acquireExecutionProfileProvider(connection, profile, {}, requester).finally(() => {
       pendingAcquisitions.delete(key);
     });

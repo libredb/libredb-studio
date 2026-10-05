@@ -67,7 +67,7 @@ beforeEach(() => {
   cookieStore = {};
   restoreChannel = useMcpChannel();
   fixtures.writeSeedFile(dir, [
-    { id: "everyone", type: "sqlite", database: join(dir, "shop.db") },
+    { id: "everyone", type: "sqlite", database: join(dir, "shop.db"), roles: ["*"] },
     { id: "admins", type: "sqlite", database: join(dir, "shop.db"), roles: ["admin"] },
     { id: "silent", type: "sqlite", database: join(dir, "shop.db"), mcp: null },
   ]);

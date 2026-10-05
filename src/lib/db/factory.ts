@@ -37,8 +37,8 @@ import * as path from "path";
  *   provider pass the editor file-access posture `editorExecutionContext` derived from
  *   the verified session and the resolved connection. Providers whose read-only boundary
  *   is established at OPEN time read `readOnly` (SQLite); DuckDB additionally reads
- *   `allowExternalFileAccess` on its editor handle; the rest establish theirs per
- *   statement and ignore both. ABSENT MEANS DENY: called without a context, as an
+ *   `allowExternalFileAccess` on its editor handle, and SQLite refuses to open at all when it is
+ *   `false`, a profiled handle included; the rest establish theirs per statement and ignore both. ABSENT MEANS DENY: called without a context, as an
  *   embedder that predates the posture calls it, a DuckDB handle opens with
  *   `enable_external_access: 'false'`, so `read_csv`, `COPY`, `ATTACH` of a file and
  *   `INSTALL` are refused outside its private temp directory and its database's own file
@@ -548,7 +548,8 @@ export function findOpenSingleWriterProvider(
     if (entry.singleWriterFile !== identity || !entry.provider.isConnected()) continue;
     // A handle of an engine that opens under a file-access posture is borrowable only by a caller of
     // its own posture (the non-admin DuckDB file-access change). `READS_FILE_ACCESS_POSTURE` answers
-    // which engines, so this is not a `connection.type` branch (CLAUDE.md); today only DuckDB does.
+    // which engines, so this is not a `connection.type` branch (CLAUDE.md); today DuckDB and SQLite do, and
+    // of the two only DuckDB is a single-writer engine.
     if (READS_FILE_ACCESS_POSTURE[connection.type] && (entry.allowExternalFileAccess === true) !== wantAccess) {
       continue;
     }
@@ -598,11 +599,19 @@ const profiledProviderCache = new Map<string, ProfiledCachedProvider>();
  * The profile stays in the key because the two caches' isolation is per profile: an
  * `agent-read-only` acquisition may never be served what `agent-operations` opened.
  *
+ * The requester's file-access posture is in it too, for an engine that reads one, exactly as in
+ * the writable key: SQLite refuses a denied requester at connect, so a handle a trusted requester
+ * opened must never answer a denied requester's key. Absent reads as denied.
+ *
  * Exported for one caller that must join concurrent first acquisitions on exactly this key
  * without deriving a second one: src/lib/mcp/context.ts.
  */
-export async function profiledCacheKey(connection: DatabaseConnection, profile: ExecutionProfile): Promise<string> {
-  const key = await providerCacheKey(connection);
+export async function profiledCacheKey(
+  connection: DatabaseConnection,
+  profile: ExecutionProfile,
+  requester: EditorExecutionContext = {},
+): Promise<string> {
+  const key = await providerCacheKey(connection, requester.allowExternalFileAccess === true);
   return `${profile.length}:${profile}${key}`;
 }
 
@@ -716,7 +725,8 @@ function startIdleSweep(): void {
  *   `COPY`, `ATTACH` of a file and `INSTALL` are refused outside its private temp directory and
  *   its database's own file names (docs/providers/duckdb.md section 3.16) while the database
  *   stays writable. Pass
- *   `{ allowExternalFileAccess: true }` for the full editor reach. Every other engine ignores it.
+ *   `{ allowExternalFileAccess: true }` for the full editor reach. SQLite refuses a denied handle at
+ *   connect, since its drivers cannot confine a statement's file access; every other engine ignores it.
  *   A `readOnly` in it is refused (`DatabaseConfigError`): this cache holds writable providers,
  *   and a read-only one comes from `createDatabaseProvider` or an execution profile.
  * @returns Cached or new DatabaseProvider instance
@@ -959,9 +969,11 @@ function resolveAgentCredential(connection: DatabaseConnection): { user: string;
  * bound. See `PROFILE_ACQUISITION` for the whole of that argument.
  *
  * `requester` is the editor posture of the caller this acquisition serves, as
- * `editorExecutionContext` derives it (non-admin DuckDB file access). It never changes how a profiled handle
- * opens - every profile opens read-only with external access off - and is read only to
- * decide which open single-writer handle an `agent-operations` acquisition may borrow:
+ * `editorExecutionContext` derives it (non-admin DuckDB file access). It reaches the profiled
+ * handle and its cache key, as the editor's posture does: SQLite's drivers cannot confine a
+ * statement's file access even on a read-only handle, so a denied requester is refused at connect
+ * here too, while DuckDB's read-only profile already closes file access whatever the posture. It
+ * also decides which open single-writer handle an `agent-operations` acquisition may borrow:
  * one opened under that same posture, so an admin's agent is grounded from the admin's
  * own editor handle as before, and a requester is never lent a handle wider than its own.
  * Absent means deny, like everywhere else on this channel.
@@ -978,7 +990,7 @@ export async function acquireExecutionProfileProvider(
     throw new ExecutionProfileError(`Unknown execution profile: ${String(profile)}`, "UNSUPPORTED_PROFILE");
   }
 
-  const cacheKey = await profiledCacheKey(connection, profile);
+  const cacheKey = await profiledCacheKey(connection, profile, requester);
   const cached = profiledProviderCache.get(cacheKey);
   if (cached && cached.provider.config.queryTimeout !== connection.queryTimeout) {
     try {
@@ -1052,7 +1064,10 @@ export async function acquireExecutionProfileProvider(
     if (tunnel && !tunnelPreexisted) await tunnel.close().catch(() => {});
   };
 
-  const provider = await createDatabaseProvider(effectiveConnection, options, acquisition.context);
+  const provider = await createDatabaseProvider(effectiveConnection, options, {
+    ...acquisition.context,
+    allowExternalFileAccess: requester.allowExternalFileAccess === true,
+  });
   if (acquisition.requiresReadOnlyStatements && typeof provider.queryReadOnly !== "function") {
     await closeFreshTunnel();
     throw new ExecutionProfileError(

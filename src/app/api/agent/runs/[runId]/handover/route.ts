@@ -3,6 +3,7 @@ import { AGENT_HANDOVER_BUDGET, AGENT_HANDOVER_PROFILE } from "@/lib/agent/execu
 import type { AgentRunEvent } from "@/lib/agent/types";
 import { accessAgentRun } from "@/lib/api/agent-run-access";
 import { createErrorResponse } from "@/lib/api/errors";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
 import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
@@ -91,7 +92,14 @@ export async function POST(req: Request, context?: HandoverParams) {
       { connectionId: record.connectionId },
       { role: record.actor.role, username: record.actor.sessionId },
     );
-    const provider = await acquireExecutionProfileProvider(connection, AGENT_HANDOVER_PROFILE);
+    // The run's own actor decides the file-access posture, as it decided the connection above: SQLite
+    // opens only for a trusted requester, on this profile as in the editor.
+    const provider = await acquireExecutionProfileProvider(
+      connection,
+      AGENT_HANDOVER_PROFILE,
+      {},
+      editorExecutionContext({ role: record.actor.role }, connection),
+    );
     if (typeof provider.queryReadOnly !== "function") {
       // Never a fallback to `query()`. `acquireExecutionProfileProvider` already
       // refuses a provider without the database-native path under this profile, so
