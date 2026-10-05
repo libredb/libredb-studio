@@ -155,6 +155,27 @@ describe("POST /api/db/query reads no file for a standard user on DuckDB (non-ad
     expect(String(body.error)).toContain("file system operations are disabled by configuration");
     expect(JSON.stringify(body)).not.toContain(SECRET_PLACEHOLDER);
   });
+
+  test("a user's body that claims the full reach still opens a handle with external access off", async () => {
+    // The posture is the session's and the resolved connection's, never the body's: every spelling of
+    // the admin posture a body could carry, at its top level and inside the connection, is ignored.
+    role = "user";
+    const forged = { allowExternalFileAccess: true, execution: { allowExternalFileAccess: true }, role: "admin" };
+    const forgedBody = (sql: string) => ({
+      ...duckdbBody(sql),
+      ...forged,
+      connection: { ...(duckdbBody(sql).connection as Record<string, unknown>), ...forged, roles: ["admin"] },
+    });
+
+    const setting = await queryWith(forgedBody("SELECT current_setting('enable_external_access') AS v"));
+    expect(setting.status).toBe(200);
+    expect(setting.body.rows).toEqual([{ v: false }]);
+
+    const read = await queryWith(forgedBody(`SELECT * FROM read_text('${secretFile}')`));
+    expect(read.status).toBe(400);
+    expect(String(read.body.error)).toContain("file system operations are disabled by configuration");
+    expect(JSON.stringify(read.body)).not.toContain(SECRET_PLACEHOLDER);
+  });
 });
 
 describe("POST /api/db/multi-query carries the same per-role split (non-admin DuckDB file access)", () => {

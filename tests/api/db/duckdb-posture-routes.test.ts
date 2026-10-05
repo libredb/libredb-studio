@@ -5,7 +5,8 @@
  * `tests/api/db/duckdb-file-access.test.ts` proves the posture end to end on the routes that run a
  * caller's statement. This file holds the other half: each handle-opening route passes
  * `editorExecutionContext(session, connection)` to the factory, so a route that forged the admin
- * posture, or dropped the argument and so took the admin's file access away, fails here by name.
+ * posture, took it from the request body, or dropped the argument and so took the admin's file access
+ * away, fails here by name.
  *
  * The factory is replaced, so what each route hands it is read back from the mock; the session,
  * the seed loader and `resolveConnection` are the real ones, so a seed resolves to the record the
@@ -182,11 +183,52 @@ describe("each handle-opening route passes the posture the session and the conne
   });
 });
 
+/**
+ * Every spelling of the admin posture a request body could carry: the execution context's own field,
+ * a nested execution object, and a role beside the session's. A route that read any of them would hand
+ * a standard user full file access, the discovery export included, so none may reach the factory.
+ */
+const FORGED_POSTURE = { allowExternalFileAccess: true, execution: { allowExternalFileAccess: true }, role: "admin" };
+
+/** The request with the forged posture at its top level and inside its connection, which also claims `roles: [admin]`. */
+function forged(target: Record<string, unknown>): Record<string, unknown> {
+  const connection = target.connection as Record<string, unknown>;
+  return { ...target, ...FORGED_POSTURE, connection: { ...connection, ...FORGED_POSTURE, roles: ["admin"] } };
+}
+
+/** The shared seed claimed inline, the way a browser copy of a `managed: false` seed arrives. */
+const SHARED_SEED_CLAIM = {
+  connection: { id: "seed:duck-shared", name: "Shared", type: "duckdb", database: join(workDir, "shared.duckdb") },
+};
+
+describe("no route takes the posture from the request body (non-admin DuckDB file access)", () => {
+  test.each(OPEN_TO_EVERY_ROLE)(
+    "%s: a user's body claiming the full reach still gets the denied posture",
+    async (route) => {
+      role = "user";
+      expect(await postureFrom(route, forged(INLINE))).toEqual({ allowExternalFileAccess: false });
+    },
+  );
+
+  test.each(ROUTES)("%s: an admin's body cannot narrow a shared seed's audience to admins", async (route) => {
+    // The body claims the seed id with `roles: [admin]`, which would give the admin the full reach if it
+    // were believed; the operator's record, offered to every role, decides instead.
+    role = "admin";
+    expect(await postureFrom(route, forged(SHARED_SEED_CLAIM))).toEqual({ allowExternalFileAccess: false });
+  });
+});
+
 describe("POST /api/admin/fleet-health passes the same posture for each connection it checks (non-admin DuckDB file access)", () => {
-  async function fleetPosture(connection: Record<string, unknown>): Promise<unknown> {
+  async function fleetPosture(
+    connection: Record<string, unknown>,
+    body: Record<string, unknown> = {},
+  ): Promise<unknown> {
     role = "admin";
     await fleetHealth(
-      createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections: [connection] } }) as never,
+      createMockRequest("/api/admin/fleet-health", {
+        method: "POST",
+        body: { ...body, connections: [connection] },
+      }) as never,
     );
     expect(mockGetOrCreateProvider.mock.calls.length).toBe(1);
     return mockGetOrCreateProvider.mock.calls[0]?.[2];
@@ -206,5 +248,18 @@ describe("POST /api/admin/fleet-health passes the same posture for each connecti
         seedId: "duck-shared",
       }),
     ).toEqual({ allowExternalFileAccess: false });
+  });
+
+  test("a forged posture on the request or on a managed seed is ignored", async () => {
+    const managedShared = {
+      id: "seed:duck-shared",
+      name: "Shared",
+      type: "duckdb",
+      managed: true,
+      seedId: "duck-shared",
+    };
+    expect(await fleetPosture({ ...managedShared, ...FORGED_POSTURE, roles: ["admin"] }, FORGED_POSTURE)).toEqual({
+      allowExternalFileAccess: false,
+    });
   });
 });
