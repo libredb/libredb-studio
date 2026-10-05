@@ -2243,6 +2243,22 @@ describe("single-writer file reuse", () => {
     await removeProvider(first.id);
   });
 
+  test("a LibreDB record reopened under a new key on the same file closes its stale handle first", async () => {
+    // LibreDB is the other engine that declares `singleWriterFile`. An edit that moves the key and keeps
+    // the file (here a credential) used to leave the old handle open, and the reopen was refused by the
+    // file lock; the stale handle is now closed first, so the reopen succeeds as the file's only handle.
+    const conn = libredbConn();
+    const before = await getOrCreateProvider(conn);
+
+    const after = await getOrCreateProvider({ ...conn, password: "edited" });
+
+    expect(after).not.toBe(before);
+    expect(before.isConnected()).toBe(false);
+    expect(after.isConnected()).toBe(true);
+    expect(getProviderCacheStats()).toEqual({ size: 1, connections: [conn.id] });
+    await removeProvider(conn.id);
+  });
+
   test("findOpenSingleWriterProvider does not hand an admin DuckDB handle to a non-admin caller, nor the reverse", async () => {
     const file = join(dir, "posture-borrow.duckdb");
     const conn = makeConnection("duckdb", { id: "duck-borrow-admin", database: file });
