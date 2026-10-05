@@ -49,8 +49,8 @@ export interface ResultExportSource {
   csvDelimiter?: CsvDelimiter;
 }
 
-export type ResultTextFile = { content: string; mimeType: string; extension: string; binary?: undefined };
-export type ResultXlsxFile = { content: Blob; mimeType: string; extension: string; binary: true };
+export type ResultTextFile = { content: string; mimeType: string; extension: string };
+export type ResultXlsxFile = { content: Blob; mimeType: string; extension: string };
 
 /** The table name used when the tab's own name cannot safely be one. */
 export const FALLBACK_TABLE_NAME = "table_name";

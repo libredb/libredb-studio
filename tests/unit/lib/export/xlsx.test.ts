@@ -11,7 +11,6 @@ const source = (rows: readonly Record<string, unknown>[], fields: readonly strin
 type Cell = { t?: string; v?: unknown; f?: unknown };
 
 async function readWorkbook(file: Awaited<ReturnType<typeof buildXlsxExport>>) {
-  expect(file.binary).toBe(true);
   expect(file.mimeType).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   expect(file.extension).toBe("xlsx");
   expect(file.content).toBeInstanceOf(Blob);
@@ -95,6 +94,13 @@ describe("buildXlsxExport", () => {
     expect((sheet.A1 as Cell).t).toBe("s");
     expect((sheet.A1 as Cell).v).toBe("a");
     expect((sheet.B1 as Cell).v).toBe("b");
+  });
+
+  test("writes a formula-lead column name in the header as a string cell, never a formula", async () => {
+    const { sheet } = await readWorkbook(await buildXlsxExport(source([{ "=1+1": "x" }], ["=1+1"])));
+    expect((sheet.A1 as Cell).t).toBe("s");
+    expect((sheet.A1 as Cell).v).toBe("=1+1");
+    expect((sheet.A1 as Cell).f).toBeUndefined();
   });
 
   test("writes a header with no rows under it when the columns are known but empty", async () => {

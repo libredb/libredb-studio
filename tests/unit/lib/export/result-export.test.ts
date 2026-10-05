@@ -1684,8 +1684,8 @@ describe("buildResultExport — markdown and html", () => {
     expect(html.content).toContain("<tr><td>1</td><td>Ada</td></tr>");
   });
 
-  test("returns a text file, never a binary one", () => {
-    expect(buildResultExport("markdown", source()).binary).toBeUndefined();
-    expect(buildResultExport("html", source()).binary).toBeUndefined();
+  test("returns text content, never a binary blob", () => {
+    expect(typeof buildResultExport("markdown", source()).content).toBe("string");
+    expect(typeof buildResultExport("html", source()).content).toBe("string");
   });
 });

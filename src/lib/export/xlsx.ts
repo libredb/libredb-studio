@@ -34,5 +34,5 @@ export async function buildXlsxExport(source: ResultExportSource): Promise<Resul
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, SHEET_NAME);
   const bytes = XLSX.write(workbook, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
-  return { content: new Blob([bytes], { type: XLSX_MIME }), mimeType: XLSX_MIME, extension: "xlsx", binary: true };
+  return { content: new Blob([bytes], { type: XLSX_MIME }), mimeType: XLSX_MIME, extension: "xlsx" };
 }

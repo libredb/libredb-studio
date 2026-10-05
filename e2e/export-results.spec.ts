@@ -12,6 +12,12 @@
  *    (`t: "s"`) with no formula field, so `=1+1` stays data on the machine of whoever
  *    opens the file.
  *
+ * The RUN and Export buttons are pinned with the internal `studio-editor-top` and
+ * `studio-editor-bottom` scopes rather than matched by accessible name alone, which
+ * otherwise collides with the agent panel's "Run history" toggle and the connection
+ * card's own name. The test ids are internal but stable, as the rest of this suite
+ * relies on them too.
+ *
  * THE FIXTURE IS PART OF THE DELIVERABLE, on the precedent of e2e/object-edit.spec.ts:
  * this spec owns a throwaway PostgreSQL container and, without a Docker daemon, SKIPS,
  * annotated. THE DESCRIBE TITLE BELOW IS LOAD-BEARING FOR CI SELECTION: the

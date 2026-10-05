@@ -28,7 +28,12 @@ export function markdownCell(value: unknown): string {
     .replace(/[\r\n]+/g, "<br>");
 }
 
-/** `rows` as a Markdown table: a header row, a separator row, then one row per record. */
+/**
+ * `rows` as a Markdown table: a header row, a separator row, then one row per record.
+ *
+ * The separator row is always plain `---`; column alignment (`:---`, `---:`) is
+ * intentionally not emitted.
+ */
 export function markdownTable(
   rows: readonly Record<string, unknown>[],
   columns?: readonly string[],

@@ -900,15 +900,26 @@ export default function Studio() {
       if (format === "xlsx") {
         const source = buildExportSource(hydrated);
         if (source === null) return;
-        const file = await buildXlsxExport(source);
-        downloadBlob(file.content, fileName(file.extension));
+        // The library arrives through a dynamic import, so its chunk can fail to load
+        // where a text export has nothing to fail on. The outcome is reported rather
+        // than left as an unhandled rejection, matching the clipboard refusal below.
+        try {
+          const file = await buildXlsxExport(source);
+          downloadBlob(file.content, fileName(file.extension));
+        } catch {
+          toast({
+            title: "Could not export XLSX",
+            description: "The spreadsheet library could not be loaded. Try again, or export as CSV.",
+            variant: "destructive",
+          });
+        }
         return;
       }
       const file = buildResultFile(format, hydrated, csvDelimiter);
       if (file === null) return;
       downloadText(file.content, file.mimeType, fileName(file.extension));
     },
-    [buildExportSource, buildResultFile],
+    [buildExportSource, buildResultFile, toast],
   );
 
   /**
