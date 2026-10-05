@@ -1192,7 +1192,7 @@ process boundary cannot do is make the stub the right SHAPE.
 **Done when:** one factory in `tests/helpers/`, typed `(): typeof import("@/lib/auth")`, replaces the
 hand-written stubs, so adding an export to `src/lib/auth.ts` fails `typecheck` in every file that
 mocks it instead of at run time in one of them. The same shape then covers the other layer-wide
-mocks, `@/lib/db` in twenty-one files and `@/lib/audit` in six.
+mocks, `@/lib/db` in twenty-two files and `@/lib/audit` in six.
 
 ### D86. `bun test --isolate` has not been re-probed, and the runner pays a process per test file
 
