@@ -1100,6 +1100,27 @@ export interface ProviderCapabilities {
    * is refused here", the answer for every engine whose provider does not refuse writes itself.
    */
   readonly enforcesReadOnly?: true;
+  /**
+   * True when this engine's provider reads `ProviderExecutionContext.allowExternalFileAccess` and
+   * opens its editor handle under that file-access posture: `false` closes every statement-level file
+   * and network route while the database stays writable, `true` keeps the full reach (DuckDB, the
+   * non-admin DuckDB file-access change). Only DuckDB does this today.
+   *
+   * It is what tells `src/lib/db` that an editor handle of this engine must be split by posture: the
+   * writable cache key carries the deny posture as a segment, and the single-writer borrow lends a
+   * handle only to a caller of its own posture. Both read `READS_FILE_ACCESS_POSTURE` in
+   * `src/lib/db/compatibility.ts` rather than this field, because each decides before a provider
+   * exists (the cache key is computed to find or open one), and
+   * `tests/unit/db/reads-file-access-posture-capability.test.ts` holds that map equal to this
+   * declaration for every shipped type-id, so the two cannot drift and no `connection.type` branch is
+   * needed in `src/lib/db` (forbidden by `CLAUDE.md`).
+   *
+   * Optional for the same published-interface reason as `enforcesReadOnly`: a required field added
+   * after the fact stops every external implementer compiling. Only the literal `true` is declared, so
+   * an absent flag reads as "this engine has no file-access posture", the answer for every engine but
+   * DuckDB.
+   */
+  readonly readsFileAccessPosture?: true;
   supportsMaintenance: boolean;
   maintenanceOperations: MaintenanceOperation[];
   /**

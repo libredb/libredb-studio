@@ -16,7 +16,7 @@ import { createSSHTunnel, closeSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
 import { providerCacheKey } from "./provider-cache-key";
-import { READ_ONLY_ENFORCED } from "./compatibility";
+import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
 import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
 import * as path from "path";
@@ -545,8 +545,12 @@ export function findOpenSingleWriterProvider(
   const wantAccess = allowExternalFileAccess === true;
   for (const entry of providerCache.values()) {
     if (entry.singleWriterFile !== identity || !entry.provider.isConnected()) continue;
-    // B1/K1: a DuckDB handle is borrowable only by a caller of its own file-access posture.
-    if (connection.type === "duckdb" && (entry.allowExternalFileAccess === true) !== wantAccess) continue;
+    // A handle of an engine that opens under a file-access posture is borrowable only by a caller of
+    // its own posture (the non-admin DuckDB file-access change). `READS_FILE_ACCESS_POSTURE` answers
+    // which engines, so this is not a `connection.type` branch (CLAUDE.md); today only DuckDB does.
+    if (READS_FILE_ACCESS_POSTURE[connection.type] && (entry.allowExternalFileAccess === true) !== wantAccess) {
+      continue;
+    }
     return entry.provider;
   }
   return null;
@@ -754,6 +758,35 @@ export async function getOrCreateProvider(
   } else if (cached?.provider.isConnected()) {
     cached.lastUsed = Date.now();
     return cached.provider;
+  }
+
+  // A single-writer engine (DuckDB) keeps ONE writable handle per file per process. We are about to
+  // open a new one under `cacheKey`; a handle of THIS connection on the SAME file under a DIFFERENT
+  // key would make a second read-write handle on one file. The one way that arises for a single
+  // record is a file-access posture flip: an operator edits a seed's roles while Studio runs (the
+  // seed file hot-reloads), which moves the record between the allow key and the deny key. A second
+  // handle keeps its own copy of the catalog and checkpoints it over the file when it closes, losing
+  // the first handle's committed rows on Linux and macOS and corrupting the file after a bulk write;
+  // Windows refuses the second open. So close any such stale handle first, exactly as the
+  // query-timeout change above does, leaving this open as the file's only writer. Entries of a
+  // DIFFERENT connection id on the same file are the separate, pre-existing D240 case and are left
+  // alone here. `singleWriterFile` is set only for single-writer engines, so this is a no-op for the
+  // rest without a type-id branch.
+  const openFileIdentity = fileIdentity(connection);
+  if (openFileIdentity !== null) {
+    for (const [key, entry] of providerCache) {
+      if (key === cacheKey) continue;
+      if (entry.connectionId !== connection.id || entry.singleWriterFile !== openFileIdentity) continue;
+      try {
+        await entry.provider.disconnect();
+      } catch (error) {
+        logger.warn(`[DB] Error disconnecting a stale single-writer handle before reopening`, {
+          connectionId: connection.id,
+          error: String(error),
+        });
+      }
+      providerCache.delete(key);
+    }
   }
 
   // If SSH tunnel is configured, create tunnel first and rewrite connection.

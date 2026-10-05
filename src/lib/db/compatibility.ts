@@ -251,6 +251,55 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
 });
 
 /**
+ * Which shipped engines open their editor handle under a file-access posture: their provider reads
+ * `ProviderExecutionContext.allowExternalFileAccess` and opens with external access off when it is
+ * denied, while the database stays writable (the non-admin DuckDB file-access change). Only DuckDB
+ * does, and the static answer is `ProviderCapabilities.readsFileAccessPosture`.
+ *
+ * Static because its readers decide before a provider exists: `providerCacheKey` carries the deny
+ * posture as a key segment so a denied and a full-reach handle of one connection never share an
+ * entry, and `findOpenSingleWriterProvider` lends a handle only to a caller of its own posture. Both
+ * run while computing the key to find or open a provider, so neither can ask one. Reading
+ * `connection.type` at those two call sites was the alternative and is forbidden by `CLAUDE.md`; this
+ * map is how the behaviour stays capability-driven, exactly as `READ_ONLY_ENFORCED` is.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
+ * answering, and `tests/unit/db/reads-file-access-posture-capability.test.ts` holds every entry equal
+ * to what that engine's provider declares. Frozen like the records above it.
+ */
+export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  // The one engine whose editor handle opens under the posture: external access off for every role
+  // but admin, and for every role on a seed a non-admin role can use.
+  duckdb: true,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  libredb: false,
+});
+
+/**
  * Which shipped engines a seed connection may expose to MCP clients (#246): the seed schema refuses
  * `mcp: true` at load on an engine where this answers false, naming the engine, so an opt-in the
  * product does not honour fails the file instead of listing a connection. Static for the reason
