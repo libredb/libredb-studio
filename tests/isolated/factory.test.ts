@@ -2217,6 +2217,32 @@ describe("single-writer file reuse", () => {
     await removeProvider(conn.id);
   });
 
+  test("a reopen under a new key closes only the stale handle of its own record, not another record on the file", async () => {
+    // The stale close is bounded to one connection id. A different record naming the same file is
+    // the separate, pre-existing D240 case, and opening it must not tear down the first record's
+    // handle: otherwise anyone naming the path would close every handle on it.
+    const file = join(dir, "posture-flip-other-id.duckdb");
+    const first = makeConnection("duckdb", { id: "duck-flip-first", database: file });
+    const second = makeConnection("duckdb", { id: "duck-flip-second", database: file });
+    const held = await getOrCreateProvider(first, {}, { allowExternalFileAccess: true });
+
+    const opened = await getOrCreateProvider(second, {}, { allowExternalFileAccess: false }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    // Windows refuses a second read-write handle on a file this process holds; Linux and macOS open it.
+    if (process.platform === "win32") {
+      expect(opened).toBeInstanceOf(Error);
+    } else {
+      expect(opened).toBeNull();
+    }
+    expect(held.isConnected()).toBe(true);
+    expect(getProviderCacheStats().connections).toContain("duck-flip-first");
+    await removeProvider(second.id);
+    await removeProvider(first.id);
+  });
+
   test("findOpenSingleWriterProvider does not hand an admin DuckDB handle to a non-admin caller, nor the reverse", async () => {
     const file = join(dir, "posture-borrow.duckdb");
     const conn = makeConnection("duckdb", { id: "duck-borrow-admin", database: file });
