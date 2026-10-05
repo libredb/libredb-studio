@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
+import ts from "typescript";
 
 /**
  * Threat: a new route that opens a provider WITHOUT the server-derived file-access posture. A handle
@@ -42,62 +44,40 @@ function listSources(rootDir: string): string[] {
   return files;
 }
 
-/**
- * Remove block and line comments so a doc example (`* const provider = await getOrCreateProvider(...)`
- * in a JSDoc block) is never counted as a call site. Replaces each comment with same-length spaces so
- * the "function " lookbehind that excludes the definitions keeps working.
- */
-function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => " ".repeat(m.length))
-    .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
+interface FactoryCall {
+  fn: (typeof FACTORIES)[number];
+  /** The number of arguments the call passes; the third is the execution context. */
+  args: number;
 }
 
 /**
- * The top-level arguments of the call that opens at `openParen` (the index of its `(`). Splits on
- * commas that are not nested inside parentheses, brackets, braces or a string, so a three-argument
- * call that spans lines is still three arguments.
+ * Every call of a factory in `source`, read by the TypeScript parser rather than by text: a comment
+ * or a string is not code to the parser, so a doc example (`* const provider = await
+ * getOrCreateProvider(...)` in a JSDoc block) or a quoted name is never counted, and a `//` or `/*`
+ * inside a string (a URL) cannot hide a real call after it on the same line. The definition is a
+ * function declaration, not a call, and a longer name that ends in a factory's is another identifier.
+ * A call through a module object (`factory.getOrCreateProvider(...)`) is counted like a bare one.
  */
-function callArguments(source: string, openParen: number): string[] {
-  let depth = 0;
-  let quote: string | null = null;
-  let current = "";
-  const args: string[] = [];
-  for (let i = openParen; i < source.length; i++) {
-    const ch = source[i];
-    if (quote !== null) {
-      current += ch;
-      if (ch === quote && source[i - 1] !== "\\") quote = null;
-      continue;
+function factoryCalls(file: string, source: string): FactoryCall[] {
+  // By extension: a `.ts` file parsed as TSX would misread an angle-bracket cast (`<T>value`).
+  const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, false, kind);
+  const calls: FactoryCall[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const name = ts.isIdentifier(callee)
+        ? callee.text
+        : ts.isPropertyAccessExpression(callee)
+          ? callee.name.text
+          : null;
+      const fn = FACTORIES.find((factory) => factory === name);
+      if (fn !== undefined) calls.push({ fn, args: node.arguments.length });
     }
-    if (ch === '"' || ch === "'" || ch === "`") {
-      quote = ch;
-      current += ch;
-      continue;
-    }
-    if (ch === "(" || ch === "[" || ch === "{") {
-      depth++;
-      if (depth === 1 && ch === "(") continue; // the call's own opening paren
-      current += ch;
-      continue;
-    }
-    if (ch === ")" || ch === "]" || ch === "}") {
-      depth--;
-      if (depth === 0) {
-        if (current.trim() !== "") args.push(current.trim());
-        return args;
-      }
-      current += ch;
-      continue;
-    }
-    if (ch === "," && depth === 1) {
-      args.push(current.trim());
-      current = "";
-      continue;
-    }
-    current += ch;
-  }
-  throw new Error(`unbalanced call starting at index ${openParen}`);
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return calls;
 }
 
 interface UnposturedCall {
@@ -105,26 +85,13 @@ interface UnposturedCall {
   fn: (typeof FACTORIES)[number];
 }
 
-/** Every call of a factory, outside its own definition, that passes fewer than three arguments. */
+/** Every call of a factory that passes fewer than three arguments, in every source under `rootDir`. */
 function findUnposturedCalls(rootDir: string): UnposturedCall[] {
-  const found: UnposturedCall[] = [];
-  for (const file of listSources(rootDir)) {
-    const source = stripComments(readFileSync(join(rootDir, file), "utf8"));
-    for (const fn of FACTORIES) {
-      const pattern = new RegExp(`${fn}\\s*\\(`, "g");
-      for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
-        const openParen = source.indexOf("(", match.index);
-        // The function DEFINITION, not a call: `export async function getOrCreateProvider(`.
-        const before = source.slice(Math.max(0, match.index - 20), match.index);
-        if (/function\s+$/.test(before)) continue;
-        // A longer identifier that merely ends in the name is not this function.
-        const prev = source[match.index - 1] ?? "";
-        if (/[A-Za-z0-9_$]/.test(prev)) continue;
-        if (callArguments(source, openParen).length < 3) found.push({ file, fn });
-      }
-    }
-  }
-  return found;
+  return listSources(rootDir).flatMap((file) =>
+    factoryCalls(file, readFileSync(join(rootDir, file), "utf8"))
+      .filter((call) => call.args < 3)
+      .map((call) => ({ file, fn: call.fn })),
+  );
 }
 
 /**
@@ -136,7 +103,7 @@ const UNPOSTURED_ALLOWLIST: Record<string, { calls: number; reason: string }> = 
   "app/api/db/query/route.ts": {
     calls: 1,
     reason:
-      "a capability-only read for the EXPLAIN path: it builds the provider to ask prepareQuery for the statement and never connects, so no handle opens",
+      "a capability-only read for the key-walk database field: it builds the provider to read its keyScan declaration and containerDepth before any socket, and never connects, so no handle opens",
   },
   "lib/agent/runtime.ts": {
     calls: 1,
@@ -149,13 +116,12 @@ const UNPOSTURED = findUnposturedCalls(SRC_DIR);
 
 describe("every provider factory call opens under the server-derived file-access posture", () => {
   test("the scan found the real call sites, so it is not vacuously green", () => {
-    // A path or regex bug that found nothing would pass every assertion below. The routes do call
+    // A path or parse bug that found nothing would pass every assertion below. The routes do call
     // the factories, so the total number of calls (postured and not) must be well above zero.
-    let total = 0;
-    for (const file of listSources(SRC_DIR)) {
-      const source = stripComments(readFileSync(join(SRC_DIR, file), "utf8"));
-      for (const fn of FACTORIES) total += source.split(new RegExp(`\\b${fn}\\s*\\(`)).length - 1;
-    }
+    const total = listSources(SRC_DIR).reduce(
+      (sum, file) => sum + factoryCalls(file, readFileSync(join(SRC_DIR, file), "utf8")).length,
+      0,
+    );
     expect(total).toBeGreaterThan(10);
   });
 
@@ -174,5 +140,51 @@ describe("every provider factory call opens under the server-derived file-access
       const actual = UNPOSTURED.filter((call) => call.file === file).length;
       expect([file, actual]).toEqual([file, calls]);
     }
+  });
+});
+
+describe("the census detector, proven in both directions on scratch sources", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "libredb-posture-census-"));
+  afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+
+  /** The unpostured calls the detector finds in one scratch file holding `source`. */
+  function detect(source: string): UnposturedCall[] {
+    const dir = mkdtempSync(join(scratch, "case-"));
+    writeFileSync(join(dir, "route.ts"), source);
+    return findUnposturedCalls(dir);
+  }
+
+  test.each([
+    ["a bare call", "const p = await getOrCreateProvider(connection);"],
+    [
+      "a call with two arguments over several lines",
+      "const p = await createDatabaseProvider(\n  connection,\n  {},\n);",
+    ],
+    ["a call through a module object", "const p = await factory.getOrCreateProvider(connection, {});"],
+    [
+      "a call after a URL string on the same line",
+      'const docs = "https://example.test/x"; const p = await getOrCreateProvider(connection);',
+    ],
+    [
+      "a call between strings that hold a block-comment opener and closer",
+      'const open = "src/*"; getOrCreateProvider(connection); const close = "*/";',
+    ],
+  ])("%s is found", (_label, source) => {
+    expect(detect(source)).toHaveLength(1);
+  });
+
+  test.each([
+    [
+      "a call with the posture",
+      "const p = await getOrCreateProvider(connection, {}, editorExecutionContext(s, connection));",
+    ],
+    ["a call in a line comment", "// const p = await getOrCreateProvider(connection);"],
+    ["a call in a doc comment", "/**\n * const p = await getOrCreateProvider(connection);\n */"],
+    ["a call named inside a string", 'const hint = "getOrCreateProvider(connection)";'],
+    ["a call named inside a template literal", "const hint = `use getOrCreateProvider(connection)`;"],
+    ["the definition", "export async function getOrCreateProvider(connection: unknown) { return connection; }"],
+    ["a longer name that ends in the factory's", "const p = await myGetOrCreateProvider(connection);"],
+  ])("%s is not found", (_label, source) => {
+    expect(detect(source)).toEqual([]);
   });
 });
