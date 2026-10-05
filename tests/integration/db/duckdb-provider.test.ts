@@ -28,12 +28,13 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { DuckDBProvider, assertReadOnlyStatementIsBounded } from "@/lib/db/providers/sql/duckdb";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ObjectKindSpec, ObjectSourceForm, ProviderCapabilities, ReadOnlyStatementBudget } from "@/lib/db/types";
@@ -1966,6 +1967,160 @@ describe("a non-admin editor handle has no statement-level file or network reach
       expect(existsSync(target)).toBe(true);
     } finally {
       await admin.disconnect();
+    }
+  });
+});
+
+// ============================================================================
+// The private temp directory of a handle with external access off
+//
+// The denied editor and the agent read-only handle each open with a private temp directory under
+// the operating system's temp directory, which the engine then allow-lists in place of the shared
+// default (docs/providers/duckdb.md section 3.16). These pin where it is made, that it is removed
+// when the handle closes or fails to open, what an unusable temp directory does, and what the
+// handle can still reach because of it.
+// ============================================================================
+
+describe("the private temp directory of a handle with external access off", () => {
+  /**
+   * Runs `body` with the operating system's temp directory pointed at `dir`, so the private directory a
+   * handle makes lands where this test can list it, apart from every other process using the real one.
+   * TMPDIR is what Linux and macOS read, TEMP and TMP what Windows reads.
+   */
+  async function withOsTempDirectory<T>(dir: string, body: () => Promise<T>): Promise<T> {
+    const saved = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
+    process.env.TMPDIR = dir;
+    process.env.TEMP = dir;
+    process.env.TMP = dir;
+    try {
+      // The redirect took, so an empty listing below means "removed" rather than "never made here".
+      expect(tmpdir()).toBe(dir);
+      return await body();
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  }
+
+  /** The temp directory the engine reports for this handle. */
+  async function tempDirectoryOf(handle: DuckDBProvider, readOnly = false): Promise<string> {
+    const sql = "SELECT current_setting('temp_directory') AS t";
+    const result = readOnly ? await handle.queryReadOnly(sql, GENEROUS_BUDGET) : await handle.query(sql);
+    return String(result.rows[0].t);
+  }
+
+  /**
+   * A path with its existing directory made canonical, so the comparison survives a symlinked temp
+   * directory (macOS) and a short-name one (Windows); the last segment may not exist yet.
+   */
+  function canonical(path: string): string {
+    return join(realpathSync.native(dirname(path)), basename(path));
+  }
+
+  test.each([
+    ["the denied editor on :memory:", null, { allowExternalFileAccess: false }],
+    ["the denied editor on a file", "private-temp-denied.duckdb", { allowExternalFileAccess: false }],
+    ["the agent read-only handle", "private-temp-agent.duckdb", { readOnly: true }],
+  ] as const)(
+    "%s keeps its temp files in a private directory and removes it on disconnect",
+    async (_label, file, execution) => {
+      const osTemp = mkdtempSync(join(workDir, "os-temp-"));
+      const database = file === null ? ":memory:" : await seededFile(file);
+      await withOsTempDirectory(osTemp, async () => {
+        const handle = new DuckDBProvider(makeConfig({ database }), {}, execution);
+        await handle.connect();
+        try {
+          const temp = await tempDirectoryOf(handle, "readOnly" in execution);
+          // One directory of its own under the operating system's temp directory, and it exists.
+          expect(readdirSync(osTemp)).toHaveLength(1);
+          expect(readdirSync(osTemp)[0]).toStartWith("libredb-duckdb-");
+          expect(canonical(temp)).toBe(canonical(join(osTemp, readdirSync(osTemp)[0])));
+          await handle.disconnect();
+          // Gone with the handle: nothing is left behind under the temp directory.
+          expect(existsSync(temp)).toBe(false);
+          expect(readdirSync(osTemp)).toEqual([]);
+        } finally {
+          if (handle.isConnected()) await handle.disconnect();
+        }
+      });
+    },
+  );
+
+  test("the full-reach editor keeps the engine's default temp directory and makes no private one", async () => {
+    const osTemp = mkdtempSync(join(workDir, "os-temp-"));
+    const database = join(workDir, "full-reach-temp.duckdb");
+    await withOsTempDirectory(osTemp, async () => {
+      const admin = new DuckDBProvider(makeConfig({ database }), {}, { allowExternalFileAccess: true });
+      await admin.connect();
+      try {
+        expect(canonical(await tempDirectoryOf(admin))).toBe(canonical(`${database}.tmp`));
+        expect(readdirSync(osTemp)).toEqual([]);
+      } finally {
+        await admin.disconnect();
+      }
+    });
+  });
+
+  test("an open that fails removes the private temp directory it made", async () => {
+    // A read-only open of a missing file is refused by the engine after the directory was made, so
+    // nothing would ever close a handle that could remove it.
+    const osTemp = mkdtempSync(join(workDir, "os-temp-"));
+    await withOsTempDirectory(osTemp, async () => {
+      await expect(openDuckDBClient(join(workDir, "absent-for-temp.duckdb"), { readOnly: true })).rejects.toThrow(
+        /does not exist and a read-only handle will not create one/,
+      );
+      expect(readdirSync(osTemp)).toEqual([]);
+    });
+  });
+
+  test("the denied handle still reaches its own private directory and its database's own file names, and nothing else", async () => {
+    // What the docs state as the posture's residue: the engine allow-lists the handle's temp directory
+    // and the database file with its write-ahead-log siblings. A file inside the private directory can
+    // be written, read and attached; it is the handle's own and goes when the handle closes.
+    const database = join(workDir, "denied-residue.duckdb");
+    const handle = new DuckDBProvider(makeConfig({ database }), {}, { allowExternalFileAccess: false });
+    await handle.connect();
+    try {
+      const temp = await tempDirectoryOf(handle);
+      const setting = async (name: string) =>
+        ((await handle.query(`SELECT current_setting('${name}') AS v`)).rows[0].v as string[]).map(canonical).sort();
+      expect(await setting("allowed_directories")).toEqual([canonical(temp)]);
+      expect(await setting("allowed_paths")).toEqual(
+        [database, `${database}.wal`, `${database}.wal.checkpoint`, `${database}.wal.recovery`].map(canonical).sort(),
+      );
+
+      const inside = join(temp, "inside.csv");
+      await handle.query(`COPY (SELECT 42 AS a) TO '${inside}' (FORMAT CSV)`);
+      // read_csv types the column BIGINT, which the row reader answers as a decimal string.
+      expect((await handle.query(`SELECT * FROM read_csv('${inside}')`)).rows).toEqual([{ a: "42" }]);
+      await handle.query(`ATTACH '${join(temp, "side.duckdb")}' AS side`);
+      await handle.query("CREATE TABLE side.t AS SELECT 1 AS a");
+
+      // Beside the database, but not one of its own names: refused like any other file.
+      await expect(
+        handle.query(`COPY (SELECT 1 AS a) TO '${join(workDir, "denied-residue-beside.csv")}' (FORMAT CSV)`),
+      ).rejects.toThrow(/file system operations are disabled by configuration/);
+      expect(existsSync(join(workDir, "denied-residue-beside.csv"))).toBe(false);
+    } finally {
+      await handle.disconnect();
+    }
+  });
+
+  test("a denied :memory: handle's database file names are four fixed names in the working directory", async () => {
+    // An in-memory database writes no file, but the engine still allow-lists the names a file-backed
+    // one would use, resolved against the process directory. The docs say so rather than "nothing".
+    const handle = new DuckDBProvider(makeConfig(), {}, { allowExternalFileAccess: false });
+    await handle.connect();
+    try {
+      const paths = (await handle.query("SELECT current_setting('allowed_paths') AS v")).rows[0].v as string[];
+      const base = join(process.cwd(), ":memory:");
+      expect(paths.map(canonical).sort()).toEqual(
+        [base, `${base}.wal`, `${base}.wal.checkpoint`, `${base}.wal.recovery`].map(canonical).sort(),
+      );
+    } finally {
+      await handle.disconnect();
     }
   });
 });
