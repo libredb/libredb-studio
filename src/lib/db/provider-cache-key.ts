@@ -90,7 +90,7 @@ export async function providerCacheKey(
   // connection, so its key carries this extra segment (the non-admin DuckDB file-access change). The
   // engine is read from `READS_FILE_ACCESS_POSTURE`, not a `connection.type` branch (CLAUDE.md).
   if (READS_FILE_ACCESS_POSTURE[connection.type] && allowExternalFileAccess === false) {
-    parts.push("duckdb-deny-file-access");
+    parts.push(`${connection.type}-deny-file-access`);
   }
   // Length-framed like the two digests it joins: an id ending in a digit must not be able to
   // answer the same key as a shorter id followed by a longer fingerprint.

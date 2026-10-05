@@ -63,6 +63,7 @@ import { formatBytes } from "../../utils/pool-manager";
 import { carriesLossyNumber } from "../../utils/json-integers";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
+import { isReservedStoragePath } from "@/lib/data-dir";
 import * as path from "path";
 
 /**
@@ -480,6 +481,12 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     const resolved = path.resolve(configured);
     if (resolved !== path.normalize(resolved) || configured.includes("\0")) {
       throw new DatabaseConfigError("Invalid database path: path traversal is not allowed", "libredb");
+    }
+    if (isReservedStoragePath(resolved)) {
+      throw new DatabaseConfigError(
+        "This path is reserved for the server's own storage and cannot be opened as a connection",
+        "libredb",
+      );
     }
     return resolved;
   }

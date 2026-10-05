@@ -50,6 +50,7 @@
  * panels are honest empties carrying a DuckDB-specific label.
  */
 
+import { isReservedStoragePath } from "@/lib/data-dir";
 import { SQLBaseProvider } from "../sql-base";
 import {
   type ActiveSessionDetails,
@@ -649,7 +650,14 @@ export class DuckDBProvider extends SQLBaseProvider {
       throw new DatabaseConfigError("Invalid database path: NUL bytes are not allowed", "duckdb");
     }
 
-    return path.resolve(configured);
+    const resolved = path.resolve(configured);
+    if (isReservedStoragePath(resolved)) {
+      throw new DatabaseConfigError(
+        "This path is reserved for the server's own storage and cannot be opened as a connection",
+        "duckdb",
+      );
+    }
+    return resolved;
   }
 
   public async connect(): Promise<void> {

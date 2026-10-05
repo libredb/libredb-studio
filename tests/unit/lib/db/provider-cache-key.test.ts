@@ -233,3 +233,15 @@ describe("providerCacheKey frames every public field that decides who a connecti
     expect(await providerCacheKey({ ...base, authSource: "admin" })).not.toBe(await providerCacheKey(base));
   });
 });
+
+test("SQLite denied callers cannot reuse an administrator's handle", async () => {
+  const connection: DatabaseConnection = {
+    id: "sqlite-posture",
+    name: "SQLite",
+    type: "sqlite",
+    database: ":memory:",
+    createdAt: new Date(0),
+  };
+  expect(await providerCacheKey(connection, false)).not.toBe(await providerCacheKey(connection, true));
+  expect((await providerCacheKey(connection, false)).endsWith("23:sqlite-deny-file-access")).toBe(true);
+});

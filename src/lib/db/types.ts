@@ -1105,7 +1105,8 @@ export interface ProviderCapabilities {
    * opens its editor handle under that file-access posture: `false` closes every statement-level file
    * and network route outside the handle's private temp directory and its database's own file names
    * while the database stays writable, `true` keeps the full reach (DuckDB, the
-   * non-admin DuckDB file-access change). Only DuckDB does this today.
+   * non-admin DuckDB file-access change). SQLite also reads this posture and refuses to open a
+   * denied handle, since its drivers cannot confine statement-level file access.
    *
    * It is what tells `src/lib/db` that an editor handle of this engine must be split by posture: the
    * writable cache key carries the deny posture as a segment, and the single-writer borrow lends a

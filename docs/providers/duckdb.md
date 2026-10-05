@@ -1578,3 +1578,9 @@ The reach described in this section is an admin editor's on an inline connection
 - [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) — the registration checklist this provider followed
 - [`docs/providers/sqlite.md`](sqlite.md) — the other embedded, file-based engine, and the same deployment constraint
 - [`docs/providers/postgres.md`](postgres.md) — the canonical SQL-family walkthrough
+
+
+Connection targets reserve Studio's storage database, its WAL/SHM files and bootstrap
+credentials (including backups and temporary files). This applies to every role.
+Checks normalize paths, resolve symbolic links and compare existing file identities
+so hard links cannot alias reserved files. Other user database files beside them remain usable.

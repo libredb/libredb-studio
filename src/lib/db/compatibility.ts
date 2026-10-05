@@ -253,8 +253,9 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
 /**
  * Which shipped engines open their editor handle under a file-access posture: their provider reads
  * `ProviderExecutionContext.allowExternalFileAccess` and opens with external access off when it is
- * denied, while the database stays writable (the non-admin DuckDB file-access change). Only DuckDB
- * does, and the static answer is `ProviderCapabilities.readsFileAccessPosture`.
+ * denied, while the database stays writable for DuckDB. SQLite refuses denied access entirely
+ * because its drivers cannot confine statement-level file access. The static answer is
+ * `ProviderCapabilities.readsFileAccessPosture`.
  *
  * Static because its readers decide before a provider exists: `providerCacheKey` carries the deny
  * posture as a key segment so a denied and a full-reach handle of one connection never share an
@@ -270,7 +271,7 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
 export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
   mysql: false,
-  sqlite: false,
+  sqlite: true,
   libsql: false,
   // The one engine whose editor handle opens under the posture: external access off for every role
   // but admin, and for every role on a seed a non-admin role can use.

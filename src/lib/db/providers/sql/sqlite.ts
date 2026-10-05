@@ -67,6 +67,7 @@ import { logger } from "@/lib/logger";
 import * as fs from "fs";
 import * as path from "path";
 import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
+import { isReservedStoragePath } from "@/lib/data-dir";
 
 /**
  * SQLite's identity for the shared container-path renderer.
@@ -1043,6 +1044,7 @@ export class SQLiteProvider extends SQLBaseProvider {
   private db: SQLiteDatabase | null = null;
   /** True when this instance was opened under the agent read-only profile. */
   private readonly readOnlyProfile: boolean;
+  private readonly denyExternalAccess: boolean;
   /** The file's path when the editor opened it read-only because this process cannot write it; else null. */
   private unwritableFilePath: string | null = null;
 
@@ -1052,6 +1054,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     // path builds providers from caller-supplied ProviderOptions, which has no
     // route to this flag in either direction.
     this.readOnlyProfile = execution.readOnly === true;
+    this.denyExternalAccess = execution.allowExternalFileAccess === false;
     this.validate();
   }
 
@@ -1063,6 +1066,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     return {
       ...super.getCapabilities(),
       defaultPort: null,
+      readsFileAccessPosture: true,
       supportsExplain: true,
       explainFormat: "sqlite-queryplan",
       supportsConnectionString: false,
@@ -1136,11 +1140,18 @@ export class SQLiteProvider extends SQLBaseProvider {
       return;
     }
 
+    if (this.denyExternalAccess) {
+      throw new DatabaseConfigError(
+        "SQLite connections require an administrator because this driver cannot confine statement-level file access",
+        "sqlite",
+      );
+    }
+
     try {
       // Dynamically load the runtime-appropriate SQLite driver
       const SQLiteDB = await loadSQLiteDriver();
 
-      const dbPath = this.getDatabasePath();
+      const dbPath = this.getDatabasePath(true);
 
       if (this.readOnlyProfile) {
         this.connectReadOnly(SQLiteDB, dbPath);
@@ -1296,7 +1307,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     }
   }
 
-  private getDatabasePath(): string {
+  private getDatabasePath(checkReserved = false): string {
     let dbPath: string;
     if (this.config.connectionString) {
       dbPath = this.config.connectionString.startsWith("file:")
@@ -1316,7 +1327,20 @@ export class SQLiteProvider extends SQLBaseProvider {
       throw new DatabaseConfigError("Invalid database path: NUL bytes are not allowed", "sqlite");
     }
 
-    return path.resolve(dbPath);
+    const resolved = path.resolve(dbPath);
+
+    // The server's own storage database is reserved: it is Studio's to manage, not a
+    // target a connection may open. A connection whose path resolves to it is refused
+    // here on connect, before any handle is opened. Metadata reads reuse the
+    // resolved path without repeating filesystem identity checks.
+    if (checkReserved && isReservedStoragePath(resolved)) {
+      throw new DatabaseConfigError(
+        "This path is reserved for the server's own storage and cannot be opened as a connection",
+        "sqlite",
+      );
+    }
+
+    return resolved;
   }
 
   // ============================================================================

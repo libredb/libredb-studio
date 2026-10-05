@@ -1338,3 +1338,9 @@ await provider.disconnect();
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/libredb-provider.test.ts`](../../tests/integration/db/libredb-provider.test.ts)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
+
+
+Connection targets reserve Studio's storage database, its WAL/SHM files and bootstrap
+credentials (including backups and temporary files). This applies to every role.
+Checks normalize paths, resolve symbolic links and compare existing file identities
+so hard links cannot alias reserved files. Other user database files beside them remain usable.

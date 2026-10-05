@@ -36,9 +36,10 @@ describe("READS_FILE_ACCESS_POSTURE against each provider's own declaration", ()
     expect([undefined, true]).toContain(provider.getCapabilities().readsFileAccessPosture);
   });
 
-  test("DuckDB is the engine that reads the posture, and it is the only one", () => {
+  test("SQLite and DuckDB read the file-access posture", () => {
     expect(READS_FILE_ACCESS_POSTURE.duckdb).toBe(true);
-    const others = [...SHIPPED_DATABASE_TYPES].filter((type) => type !== "duckdb");
+    expect(READS_FILE_ACCESS_POSTURE.sqlite).toBe(true);
+    const others = [...SHIPPED_DATABASE_TYPES].filter((type) => type !== "duckdb" && type !== "sqlite");
     expect(others.every((type) => READS_FILE_ACCESS_POSTURE[type] === false)).toBe(true);
   });
 });
