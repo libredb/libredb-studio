@@ -574,6 +574,8 @@ Every role a seed is offered to resolves the same record, and one record is one 
 A second read-write handle on the same file opens on Linux and macOS, keeps its own copy of the catalog, and whichever closes last checkpoints over the other's committed rows; Windows refuses it (§3.8).
 Two postures on one record would be two cache keys and so two handles, so the record keeps one posture, the narrower one: **on a DuckDB seed a non-admin role can use, admins get no file access on that connection either.**
 Where admins need file access on a seed's database, the operator offers that seed to admins only.
+Changing a seed's roles across that line while Studio runs changes the posture its handle opens under, so the first request after the seed file is re-read closes the connection's open handle and opens a new one ([`SEED_CONNECTIONS.md`](../SEED_CONNECTIONS.md#hot-reload)).
+A statement still running on the old handle does not complete, and the old handle's session state, its temporary tables, `SET` values and variables, is lost; it happens once per such edit.
 
 A refusal under the denied posture names the policy in front of the engine's own sentence (§10):
 

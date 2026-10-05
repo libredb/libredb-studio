@@ -604,6 +604,10 @@ The config file is **cached in memory** with a TTL (default 60 seconds). When th
 3. Updated credentials take effect immediately (for `managed: true`)
 4. **No restart required**
 
+On a DuckDB seed, a `roles` change that moves the seed between admins only and a non-admin role changes the file-access posture its one handle opens under (section 3.16 of [`docs/providers/duckdb.md`](./providers/duckdb.md)).
+The first request after the re-read then closes the open handle and opens a new one: a statement still running on the old handle does not complete, and its session state (temporary tables, `SET` values) is lost.
+It happens once per such edit.
+
 ### Tuning the Cache TTL
 
 ```bash
