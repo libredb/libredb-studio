@@ -129,7 +129,7 @@ caproverOneClickApp:
             cannot read that file through a DuckDB connection. Still give the
             standard login only to someone you trust, because a connection that
             names a database file on this server is not limited to a directory
-            (https://github.com/libredb/libredb-studio/blob/main/docs/providers/sqlite.md#14-known-limitations--future-work).
+            (https://github.com/libredb/libredb-studio/blob/main/docs/providers/duckdb.md#143-the-file-path-is-a-trust-boundary-for-every-role-and-statement-reach-is-the-admins).
             Enable HTTPS for Studio before you sign in for the first time. If
             you do not want the Docker socket on this server, install the plain
             LibreDB Studio entry instead.
@@ -208,7 +208,7 @@ caproverOneClickApp:
             every database's password. Still give the standard login only to
             someone you trust, because a connection that names a database file
             on this server is not limited to a directory:
-            https://github.com/libredb/libredb-studio/blob/main/docs/providers/sqlite.md#14-known-limitations--future-work
+            https://github.com/libredb/libredb-studio/blob/main/docs/providers/duckdb.md#143-the-file-path-is-a-trust-boundary-for-every-role-and-statement-reach-is-the-admins
 
             Save these credentials now. This screen does not show them again,
             but they stay readable as ADMIN_PASSWORD and USER_PASSWORD under the
