@@ -41,7 +41,8 @@ import * as path from "path";
  *   statement and ignore both. ABSENT MEANS DENY: called without a context, as an
  *   embedder that predates the posture calls it, a DuckDB handle opens with
  *   `enable_external_access: 'false'`, so `read_csv`, `COPY`, `ATTACH` of a file and
- *   `INSTALL` are refused while the database stays writable; pass
+ *   `INSTALL` are refused outside its private temp directory and its database's own file
+ *   names (docs/providers/duckdb.md section 3.16) while the database stays writable; pass
  *   `{ allowExternalFileAccess: true }` for the full editor reach.
  * @returns Promise<DatabaseProvider> instance
  * @throws DatabaseConfigError if connection type is not supported, or if its `readOnly` cannot be
@@ -712,7 +713,9 @@ function startIdleSweep(): void {
  *   routes derive it with `editorExecutionContext` from the verified session and the resolved
  *   connection. ABSENT MEANS DENY: called without it, as an embedder that predates the posture
  *   calls it, a DuckDB handle opens with `enable_external_access: 'false'`, so `read_csv`,
- *   `COPY`, `ATTACH` of a file and `INSTALL` are refused while the database stays writable. Pass
+ *   `COPY`, `ATTACH` of a file and `INSTALL` are refused outside its private temp directory and
+ *   its database's own file names (docs/providers/duckdb.md section 3.16) while the database
+ *   stays writable. Pass
  *   `{ allowExternalFileAccess: true }` for the full editor reach. Every other engine ignores it.
  *   A `readOnly` in it is refused (`DatabaseConfigError`): this cache holds writable providers,
  *   and a read-only one comes from `createDatabaseProvider` or an execution profile.

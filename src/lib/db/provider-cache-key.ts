@@ -50,7 +50,8 @@ import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
  *   `editorExecutionContext`, so that record still keeps one key.) The deny posture appends a segment;
  *   the allow/admin posture and an absent posture append NOTHING, so every other engine's key and the
  *   profiled key (which passes no posture) stay byte-identical to before this change. The posture
- *   lives on `ProviderExecutionContext`, server-derived from the session role, never on the
+ *   lives on `ProviderExecutionContext`, server-derived from the session role and the resolved
+ *   connection's audience, never on the
  *   connection, so a request body cannot move a handle between the two pools.
  *
  * WHY THE ID IS SAFE IN THE KEY. Reaching a cached entry now costs the victim's id AND their

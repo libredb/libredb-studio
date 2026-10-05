@@ -407,7 +407,8 @@ export class DuckDBProvider extends SQLBaseProvider {
 
   /**
    * True when the editor handle must open with `enable_external_access: 'false'` (non-admin DuckDB file access):
-   * the posture for every role but admin. Derived once in the constructor from the
+   * the posture for every role but admin, and for an admin too on a seed a non-admin role can
+   * use (one writer per file). Derived once in the constructor from the
    * server-injected execution context and NEVER from `config` or `ProviderOptions`, both of
    * which are caller-supplied. Absent means deny (fail closed). The agent read-only profile
    * already closes file access through `readOnly`, so this stays false there and does not

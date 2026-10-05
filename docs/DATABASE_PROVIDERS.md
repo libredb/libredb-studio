@@ -371,7 +371,7 @@ await provider.disconnect();
 
 Both factories take a third argument, a server-side execution context.
 Several providers read its `readOnly` field, but only DuckDB reads its `allowExternalFileAccess` field.
-Without it, a DuckDB handle opens with `enable_external_access: 'false'`: a statement that reads or writes a file or reaches the network (`read_csv`, `COPY`, `ATTACH` of a file, `INSTALL`) is refused, while the database the connection names stays writable.
+Without it, a DuckDB handle opens with `enable_external_access: 'false'`: a statement that reads or writes a file or reaches the network (`read_csv`, `COPY`, `ATTACH` of a file, `INSTALL`) is refused outside the handle's private temp directory and its database's own file names ([section 3.16 of the DuckDB page](providers/duckdb.md)), while the database the connection names stays writable.
 That default is fail-closed on purpose, and it changed what a call without the argument does: before it, every DuckDB handle had that reach.
 An embedder of `@libredb/studio/providers` that needs it back passes `{ allowExternalFileAccess: true }`, and should do so only where whoever writes the statements may read the server's files:
 

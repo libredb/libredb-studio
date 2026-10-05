@@ -1103,7 +1103,8 @@ export interface ProviderCapabilities {
   /**
    * True when this engine's provider reads `ProviderExecutionContext.allowExternalFileAccess` and
    * opens its editor handle under that file-access posture: `false` closes every statement-level file
-   * and network route while the database stays writable, `true` keeps the full reach (DuckDB, the
+   * and network route outside the handle's private temp directory and its database's own file names
+   * while the database stays writable, `true` keeps the full reach (DuckDB, the
    * non-admin DuckDB file-access change). Only DuckDB does this today.
    *
    * It is what tells `src/lib/db` that an editor handle of this engine must be split by posture: the

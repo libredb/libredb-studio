@@ -27,7 +27,7 @@
 | **Non-admin file access** | **Closed at statement level**: the editor handle opens `enable_external_access: 'false'`, read-write, for every non-admin role and for every role on a seed a non-admin role can use, so no statement reaches the network or a file other than the database's own and the handle's private temp directory, while that database stays editable and its path is still the connection's choice; an admin keeps full reach on an inline connection and on an admin-only seed, and the posture is server-derived from the session and the resolved connection, never the request body (§3.16, §14.3) |
 | **Maintenance** | `vacuum` and `analyze` (per table **and** global), `optimize` mapped onto `CHECKPOINT` (global only). `reindex`, `check` and `kill` are withheld — measured unsupported (§8) |
 | **Concurrency** | `singleWriterFile: true` — a **second process is refused even read-only** (§3.8) |
-| **Extensions** | Never installed or loaded implicitly: every handle opens with `autoinstall_known_extensions`, `autoload_known_extensions` and `allow_community_extensions` off, and a file that is not a DuckDB database is refused before the engine opens it. Only DuckDB's signed extensions can load; `INSTALL` and `LOAD` in the admin editor are the way in, and are refused on the denied posture (§3.14, §3.16). The admin editor's remaining network reach is in §14.4 |
+| **Extensions** | Never installed or loaded implicitly: every handle opens with `autoinstall_known_extensions`, `autoload_known_extensions` and `allow_community_extensions` off, and a file that is not a DuckDB database is refused before the engine opens it; only DuckDB's signed extensions can load, `INSTALL` and `LOAD` in the admin editor are the way in, the denied posture refuses `INSTALL` and the `LOAD` of any extension that is not bundled (§3.14, §3.16), and the admin editor's remaining network reach is in §14.4 |
 | **Unwritable file** | Opened `READ_ONLY` in the editor, so reads work and the engine refuses writes (§3.15) |
 | **Source** | [`src/lib/db/providers/sql/duckdb/`](../../src/lib/db/providers/sql/duckdb/) |
 | **Tests** | [`tests/integration/db/duckdb-provider.test.ts`](../../tests/integration/db/duckdb-provider.test.ts) |
@@ -502,7 +502,7 @@ profile's):
    SET autoload_known_extensions=1;
    ```
 
-   **Opting in** is therefore per session and explicit, in the admin editor (the denied posture refuses `INSTALL` and `LOAD` outright, §3.16): run `INSTALL <name>; LOAD <name>;` (measured working with both options off), or `SET` the two options back on for that session (measured accepted).
+   **Opting in** is therefore per session and explicit, in the admin editor (the denied posture refuses `INSTALL` and the `LOAD` of any extension that is not bundled, §3.16): run `INSTALL <name>; LOAD <name>;` (measured working with both options off), or `SET` the two options back on for that session (measured accepted).
    There is no server-wide switch: an extension is native code the server runs, and installing one is a decision to make in the open.
    On an air-gapped host, `INSTALL` needs the extension file already under the server user's extension directory.
    Extensions statically linked into `@duckdb/node-api` 1.5.5-r.4 are loaded anyway and unaffected: `core_functions`, `icu`, `json`, `parquet` and `autocomplete`.

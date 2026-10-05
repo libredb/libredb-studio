@@ -1648,7 +1648,7 @@ describe("queryReadOnly()", () => {
 // every scratch "secret" is PROBE-DUMMY-NOT-A-SECRET, never a real credential.
 // ============================================================================
 
-describe("a non-admin editor handle has no statement-level file or network reach (non-admin DuckDB file access)", () => {
+describe("a non-admin editor handle has no statement-level file or network reach outside its private temp directory and its database's own file names (non-admin DuckDB file access)", () => {
   let provider: DuckDBProvider;
   const SECRET_PLACEHOLDER = "PROBE-DUMMY-NOT-A-SECRET";
 
