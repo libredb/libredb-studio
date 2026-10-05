@@ -202,6 +202,14 @@ describe.each(TEMPLATES)("$name: what this repository requires of the template",
     expect(versionVariable?.description ?? "").toContain(`Example - ${pinned}.`);
   });
 
+  test("the pinned version is patched for GHSA-8gc9-2gm6-5c7f", () => {
+    // The install text explains how to turn on OIDC sign-in, and up to 0.17.0 a deployment with
+    // OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET set accepted the OIDC state cookie,
+    // which any visitor can request, as a session. 0.18.0 is the first patched release.
+    const [major, minor] = (versionVariable?.defaultValue ?? "0.0.0").split(".").map(Number);
+    expect(major > 0 || minor >= 18).toBe(true);
+  });
+
   test("the plain-HTTP cookie override is present", () => {
     // CapRover serves over http until the operator enables HTTPS, and the app marks its auth
     // cookie Secure on a non-loopback host, so the browser drops it and login loops with no
