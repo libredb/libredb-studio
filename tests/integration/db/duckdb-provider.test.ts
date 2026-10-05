@@ -2170,21 +2170,27 @@ describe("the private temp directory of a handle with external access off", () =
     }
   });
 
-  test("a denied :memory: handle's database file names are four fixed names in the working directory", async () => {
-    // An in-memory database writes no file, but the engine still allow-lists the names a file-backed
-    // one would use, resolved against the process directory. The docs say so rather than "nothing".
-    const handle = new DuckDBProvider(makeConfig(), {}, { allowExternalFileAccess: false });
-    await handle.connect();
-    try {
-      const paths = (await handle.query("SELECT current_setting('allowed_paths') AS v")).rows[0].v as string[];
-      const base = join(process.cwd(), ":memory:");
-      expect(paths.map(canonical).sort()).toEqual(
-        [base, `${base}.wal`, `${base}.wal.checkpoint`, `${base}.wal.recovery`].map(canonical).sort(),
-      );
-    } finally {
-      await handle.disconnect();
-    }
-  });
+  testIf(
+    process.platform === "win32"
+      ? "Windows: the engine's allow-list names for an in-memory database were measured on POSIX paths only"
+      : null,
+    "a denied :memory: handle's database file names are four fixed names in the working directory",
+    async () => {
+      // An in-memory database writes no file, but the engine still allow-lists the names a file-backed
+      // one would use, resolved against the process directory. The docs say so rather than "nothing".
+      const handle = new DuckDBProvider(makeConfig(), {}, { allowExternalFileAccess: false });
+      await handle.connect();
+      try {
+        const paths = (await handle.query("SELECT current_setting('allowed_paths') AS v")).rows[0].v as string[];
+        const base = join(process.cwd(), ":memory:");
+        expect(paths.map(canonical).sort()).toEqual(
+          [base, `${base}.wal`, `${base}.wal.checkpoint`, `${base}.wal.recovery`].map(canonical).sort(),
+        );
+      } finally {
+        await handle.disconnect();
+      }
+    },
+  );
 });
 
 // ============================================================================
