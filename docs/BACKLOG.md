@@ -892,7 +892,7 @@ sentences or its docblock says why a 400 raised before the provider is a differe
 
 `docs/providers/duckdb.md` section 3.11 says a multi-statement string runs the first statement only, that the rest is
 silently discarded, and that there is no error and no second result.
-`src/lib/db/providers/sql/duckdb/index.ts:872-875` says `client.run()` executes only the FIRST statement and that the method guarantees the tail is never executed.
+`src/lib/db/providers/sql/duckdb/index.ts:873-876` says `client.run()` executes only the FIRST statement and that the method guarantees the tail is never executed.
 
 Measured 2026-09-13 on DuckDB v1.5.5 through `@duckdb/node-api` 1.5.5-r.4, while grounding #778 Phase 3.
 `CREATE TABLE probe_c(i INTEGER); CREATE TABLE probe_c(i INTEGER)` answers
