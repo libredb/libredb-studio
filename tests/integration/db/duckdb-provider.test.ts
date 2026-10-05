@@ -2075,6 +2075,35 @@ describe("the private temp directory of a handle with external access off", () =
     });
   });
 
+  test("an unusable temp directory refuses the open in a sentence that names it, and the full-reach editor still opens", async () => {
+    // No fallback to the shared default: that is the directory the private one exists to keep this
+    // handle out of. The full-reach editor makes no private directory, so it is unaffected.
+    const missing = join(workDir, "no-such-os-temp");
+    await withOsTempDirectory(missing, async () => {
+      const denied = new DuckDBProvider(makeConfig(), {}, { allowExternalFileAccess: false });
+      const refusal = await denied.connect().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(refusal).toBeInstanceOf(ConnectionError);
+      expect((refusal as Error).message).toStartWith(
+        `Could not open DuckDB database :memory:: a handle with file and network access off keeps its temporary files in a private directory, and creating one under ${missing} failed: `,
+      );
+      expect((refusal as Error).message).toEndWith(
+        "Make that directory writable for the Studio process, or point TMPDIR (TEMP on Windows) at one that is.",
+      );
+      expect(denied.isConnected()).toBe(false);
+
+      const admin = new DuckDBProvider(makeConfig(), {}, { allowExternalFileAccess: true });
+      await admin.connect();
+      try {
+        expect((await admin.query("SELECT 1 AS one")).rows).toEqual([{ one: 1 }]);
+      } finally {
+        await admin.disconnect();
+      }
+    });
+  });
+
   test("the denied handle still reaches its own private directory and its database's own file names, and nothing else", async () => {
     // What the docs state as the posture's residue: the engine allow-lists the handle's temp directory
     // and the database file with its write-ahead-log siblings. A file inside the private directory can

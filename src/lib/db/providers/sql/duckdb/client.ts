@@ -348,6 +348,28 @@ const EXTENSION_POLICY = {
  * BEFORE `enable_external_access` on purpose: the engine refuses a `temp_directory` set after that
  * ("Failed to set config", measured). See `openDuckDBClient` for why the handle needs a private one.
  */
+/**
+ * The private temp directory a handle with external access off opens with: made under the operating
+ * system's temp directory with `mkdtemp` (mode 0700), and removed when the handle closes.
+ *
+ * A failure is refused in a sentence of its own rather than left as the raw `ENOENT ... mkdtemp`: the
+ * full-reach editor still opens in the same deployment, because it makes no such directory, so the raw
+ * error reads like a fault of the database. There is no fallback to the engine's shared default, which
+ * is the directory the private one exists to keep this handle out of.
+ */
+async function makePrivateTempDirectory(path: string): Promise<string> {
+  const parent = os.tmpdir();
+  try {
+    return await fs.promises.mkdtemp(join(parent, "libredb-duckdb-"));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ConnectionError(
+      `Could not open DuckDB database ${path}: a handle with file and network access off keeps its temporary files in a private directory, and creating one under ${parent} failed: ${message}. Make that directory writable for the Studio process, or point TMPDIR (TEMP on Windows) at one that is.`,
+      "duckdb",
+    );
+  }
+}
+
 function openConfig(options: DuckDBOpenOptions, privateTempDir: string | null): Record<string, string> {
   const config: Record<string, string> = { ...EXTENSION_POLICY };
   if (options.readOnly || options.unwritableFile) config.access_mode = "READ_ONLY";
@@ -432,9 +454,7 @@ export async function openDuckDBClient(path: string, options: DuckDBOpenOptions)
   // `allowed_directories` allow-list are its own rather than the process-wide `<cwd>/.tmp` a
   // `:memory:` handle would otherwise share. The full-reach editor keeps the engine default.
   const privateTempDir =
-    options.readOnly === true || options.denyExternalAccess === true
-      ? await fs.promises.mkdtemp(join(os.tmpdir(), "libredb-duckdb-"))
-      : null;
+    options.readOnly === true || options.denyExternalAccess === true ? await makePrivateTempDirectory(path) : null;
 
   let instance: DuckDBInstance;
   let connection: DuckDBConnection;

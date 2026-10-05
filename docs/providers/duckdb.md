@@ -1274,7 +1274,7 @@ A lock conflict uses the same `describeOpenFailure()` path whether it happens wh
 file or later in a session. When DuckDB includes the holder PID, the sentence names
 `process <pid>`; otherwise it says `another process`.
 
-Open-time failures have four additional provider-specific diagnoses:
+Open-time failures have five additional provider-specific diagnoses:
 
 | Condition | Provider error | What the user sees |
 |---|---|---|
@@ -1282,6 +1282,7 @@ Open-time failures have four additional provider-specific diagnoses:
 | Read-only open of a missing file | `ConnectionError` | `DuckDB database <path> does not exist and a read-only handle will not create one. Engine message: <engine message>` |
 | A SQLite file, refused before the engine opens it (§3.14) | `ConnectionError` | `<path> is a SQLite database file, not a DuckDB database file. Open it with a SQLite connection. DuckDB did not open it, so it is unchanged.` |
 | Any other file without DuckDB's header, an empty one included (§3.14) | `ConnectionError` | `<path> is not a DuckDB database file: a DuckDB file carries "DUCK" at byte 8, and this one does not. DuckDB did not open it, so it is unchanged.` |
+| A handle with file and network access off cannot make its private temp directory (§3.16) | `ConnectionError` | `Could not open DuckDB database <path>: a handle with file and network access off keeps its temporary files in a private directory, and creating one under <temp directory> failed: <system message>. Make that directory writable for the Studio process, or point TMPDIR (TEMP on Windows) at one that is.` |
 | Other open failure | `ConnectionError` | `Failed to open DuckDB database <path>: <engine message>` |
 
 The lock and missing-file sentences above are the provider's wrapped messages, not the raw engine
