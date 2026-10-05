@@ -142,9 +142,9 @@ case "sqlite": {
 }
 ```
 
-`execution` is the server-injected [`ProviderExecutionContext`](../../src/lib/db/types.ts) — empty
-on the normal path, and carrying the read-only flag only when
-`acquireExecutionProfileProvider` builds an agent provider ([§12](#12-agent-read-only-execution-profile-328)).
+`execution` is the server-injected [`ProviderExecutionContext`](../../src/lib/db/types.ts).
+Every cached path passes the server-derived `allowExternalFileAccess` posture, and SQLite refuses to open when it is `false` (the last section of this page).
+`acquireExecutionProfileProvider` adds the read-only flag when it builds an agent provider ([§12](#12-agent-read-only-execution-profile-328)).
 
 ---
 
@@ -1326,7 +1326,7 @@ bun run test:coverage                                    # CI coverage workflow
 ## 12. Agent read-only execution profile (#328)
 
 The agent programme (epic #325) never talks to the shared, writable provider. It acquires a
-**dedicated provider keyed by (connection id, execution profile)** via
+**dedicated provider keyed by (connection id, execution profile)**, plus the requester's file-access posture, via
 `acquireExecutionProfileProvider` ([factory.ts](../../src/lib/db/factory.ts)) and runs every
 statement through `queryReadOnly()`. See [postgres.md §12](./postgres.md#12-agent-read-only-execution-profile-328)
 for the acquisition/caching rules, which are provider-independent; this section is the SQLite half.

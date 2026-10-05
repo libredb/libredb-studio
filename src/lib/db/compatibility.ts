@@ -273,8 +273,8 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
   mysql: false,
   sqlite: true,
   libsql: false,
-  // The one engine whose editor handle opens under the posture: external access off for every role
-  // but admin, and for every role on a seed a non-admin role can use.
+  // The engine whose editor handle opens under the posture: external access off for every role but
+  // admin, and for every role on a seed a non-admin role can use. SQLite refuses a denied handle instead.
   duckdb: true,
   oracle: false,
   db2: false,

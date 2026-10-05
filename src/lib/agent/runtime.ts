@@ -202,7 +202,8 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
         deadline: new AgentRunDeadline(ceilings.deadlineMs),
         repairs: new AgentRepairLedger(),
         // Told the editor posture the run's persisted actor gets on this connection (non-admin DuckDB file access), which
-        // decides only which open single-writer handle an operations acquisition may borrow.
+        // decides whether a SQLite handle opens at all, keys the profiled cache, and picks which open single-writer
+        // handle an operations acquisition may borrow.
         acquireProvider: (target, profile) =>
           acquireExecutionProfileProvider(target, profile, {}, editorExecutionContext(actor, target)),
       },

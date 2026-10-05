@@ -48,8 +48,9 @@ import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
  *   two must never share a cached handle: a caller of one posture would otherwise be handed the
  *   other's handle. (A seed a non-admin role can use gets one posture for every role in
  *   `editorExecutionContext`, so that record still keeps one key.) The deny posture appends a segment;
- *   the allow/admin posture and an absent posture append NOTHING, so every other engine's key and the
- *   profiled key (which passes no posture) stay byte-identical to before this change. The posture
+ *   the allow/admin posture and an absent posture append NOTHING, so every other engine's key stays
+ *   byte-identical to before this change, and `profiledCacheKey` passes a definite posture, absent
+ *   read as denied, so the profiled key splits the same way. The posture
  *   lives on `ProviderExecutionContext`, server-derived from the session role and the resolved
  *   connection's audience, never on the
  *   connection, so a request body cannot move a handle between the two pools.
@@ -83,11 +84,11 @@ export async function providerCacheKey(
   const [server, credentials] = await Promise.all([connectionFingerprint(connection), credentialDigest(connection)]);
   const mode = connection.readOnly === true ? "read-only" : "read-write";
   const parts = [connection.id, server, credentials, mode];
-  // Only an engine that opens its editor handle under a file-access posture, and only its deny
-  // posture, adds bytes: the admin/allow and absent postures leave the key byte-identical to before
-  // this field existed, which keeps every other engine's key and the profiled key (passed no posture)
-  // unchanged. A denied editor handle must not be shared with a full-reach one on the same
-  // connection, so its key carries this extra segment (the non-admin DuckDB file-access change). The
+  // Only an engine that reads a file-access posture, and only its deny posture, adds bytes: the
+  // admin/allow and absent postures leave the key byte-identical to before this field existed, which
+  // keeps every other engine's key unchanged. A denied handle must not be shared with a full-reach one
+  // on the same connection, so its key carries this extra segment (the non-admin DuckDB file-access
+  // change), on the profiled key too, which always passes a definite posture. The
   // engine is read from `READS_FILE_ACCESS_POSTURE`, not a `connection.type` branch (CLAUDE.md).
   if (READS_FILE_ACCESS_POSTURE[connection.type] && allowExternalFileAccess === false) {
     parts.push(`${connection.type}-deny-file-access`);

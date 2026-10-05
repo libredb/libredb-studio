@@ -583,7 +583,7 @@ export function isSingleWriterFileOpen(connection: DatabaseConnection): boolean 
 // ----------------------------------------------------------------------------
 // Physically separate from providerCache on purpose: an agent acquisition must
 // be able to prove it never read from nor wrote to the shared writable cache.
-// Keyed by (connection id, execution profile).
+// Keyed by (connection id, execution profile), plus the requester's posture for SQLite and DuckDB.
 // ============================================================================
 
 type ProfiledCachedProvider = CachedProvider;
