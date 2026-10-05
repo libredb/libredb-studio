@@ -670,9 +670,9 @@ export async function describeObject(
  *    because the transport has no parameter channel and the bound is interpolated.
  * 4. A kind with no columns would answer `{ details: [] }` with no round trip - and Druid
  *    HAS NO SUCH KIND, measured: `INFORMATION_SCHEMA.COLUMNS` answers for a datasource,
- *    for a lookup's `k` and `v` and for a `sys` table alike. So the guard the other
- *    sixteen providers write is absent here rather than written as an unreachable branch,
- *    and this sentence is where that decision is recorded.
+ *    for a lookup's `k` and `v` and for a `sys` table alike. So the guard that providers
+ *    such as PostgreSQL, MySQL and Cassandra write is absent here rather than written as
+ *    an unreachable branch, and this sentence is where that decision is recorded.
  *
  * `limit + 1` reaches the target, the extra object is dropped here, and `truncated`
  * carries the CALLER's limit with `callerBoundTruncationReason()`'s shared sentence: this
