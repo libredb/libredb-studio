@@ -16,9 +16,9 @@
  * **Rule 2 - the driver is never imported at module scope as a VALUE.** This is the
  * expensive one. `@duckdb/node-bindings-<platform>-<arch>` ships a ~70 MB
  * `libduckdb.so` next to its `duckdb.node`, and a top-level `import` would load it
- * into every process that touches the provider registry - the factory, the
- * capabilities route, and the fourteen engines that are not DuckDB. So the value
- * import lives inside `openDuckDBClient` and a `import type` (erased at compile time,
+ * into every process that loads any module of this directory, before
+ * anything has asked to open a DuckDB file. So the value import lives
+ * inside `openDuckDBClient` and a `import type` (erased at compile time,
  * loading nothing) is the only static form allowed.
  *
  * Both rules prove their detectors in both directions below: a detector that finds
@@ -189,8 +189,8 @@ describe("DuckDB driver seam", () => {
 
 describe("the driver is never loaded at module scope", () => {
   test("no file in the provider directory imports it eagerly", () => {
-    // ~70 MB of native library per process that touches the provider registry is what
-    // this one line prevents.
+    // ~70 MB of native library in every process that loads this directory, before any
+    // DuckDB file is opened, is what this one line prevents.
     const eager = providerSources().flatMap((file) =>
       eagerDriverImports(file, readProviderSource(file)).map((text) => `${file}: ${text}`),
     );
