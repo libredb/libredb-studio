@@ -2185,15 +2185,32 @@ describe("single-writer file reuse", () => {
     const admin = await getOrCreateProvider(conn, {}, { allowExternalFileAccess: true });
     // The stale handle's disconnect rejects, so the warn-and-continue path runs; it still closes the
     // real handle first, so the file lock is released for the reopen below.
+    // The order of the stale close and the new open is recorded, since the close has to come first:
+    // a stale handle merely dropped from the cache, or closed after the reopen, is still a second
+    // writer on the file while the new one opens.
+    const order: string[] = [];
     const realDisconnect = admin.disconnect.bind(admin);
     admin.disconnect = async () => {
       await realDisconnect();
+      order.push("close");
       throw new Error("disconnect failed");
     };
+    const { DuckDBProvider } = await import("@/lib/db/providers/sql/duckdb");
+    const realConnect = DuckDBProvider.prototype.connect;
+    const connectSpy = spyOn(DuckDBProvider.prototype, "connect").mockImplementation(async function (
+      this: InstanceType<typeof DuckDBProvider>,
+    ) {
+      order.push("open");
+      return realConnect.call(this);
+    });
 
-    const nonAdmin = await getOrCreateProvider(conn, {}, { allowExternalFileAccess: false });
+    const nonAdmin = await getOrCreateProvider(conn, {}, { allowExternalFileAccess: false }).finally(() =>
+      connectSpy.mockRestore(),
+    );
 
     expect(nonAdmin).not.toBe(admin);
+    expect(admin.isConnected()).toBe(false);
+    expect(order).toEqual(["close", "open"]);
     // One record, one entry: the stale full-reach handle was closed rather than left beside the new
     // one. On the base before the fix this was two entries on one file.
     expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["duck-flip-close"] });

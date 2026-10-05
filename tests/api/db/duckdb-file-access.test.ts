@@ -31,7 +31,7 @@ const { POST: queryPost } = await import("@/app/api/db/query/route");
 const { POST: multiQueryPost } = await import("@/app/api/db/multi-query/route");
 const { POST: testConnectionPost } = await import("@/app/api/db/test-connection/route");
 const { POST: profilePost } = await import("@/app/api/db/profile/route");
-const { clearProviderCache, getProviderCacheStats } = await import("@/lib/db/factory");
+const { clearProviderCache, findOpenSingleWriterProvider, getProviderCacheStats } = await import("@/lib/db/factory");
 
 const workDir = mkdtempSync(join(tmpdir(), "libredb-duckdb-api-"));
 const SECRET_PLACEHOLDER = "PROBE-DUMMY-NOT-A-SECRET";
@@ -308,12 +308,20 @@ describe("a DuckDB seed whose roles change while Studio runs keeps one handle (n
     role = "admin";
     expect((await queryWith({ ...FLIP, sql: "CREATE TABLE t (id INTEGER)" })).status).toBe(200);
     expect((await queryWith({ ...FLIP, sql: "INSERT INTO t VALUES (1)" })).status).toBe(200);
+    // The full-reach handle the admin holds on the file, looked up by file and posture.
+    const fullReach = findOpenSingleWriterProvider(
+      { id: "flip-lookup", name: "Flip lookup", type: "duckdb", database: flipFile },
+      true,
+    );
+    expect(fullReach).not.toBeNull();
 
     // The operator offers the seed to every role; the seed cache reloads. Now every role, admin
     // included, resolves the denied posture, so the record moves to the other cache key.
     writeSeedConfig(["*"]);
     role = "user";
     expect((await queryWith({ ...FLIP, sql: "INSERT INTO t VALUES (2)" })).status).toBe(200);
+    // Closed, not merely dropped from the cache: a forgotten handle would still be a second writer.
+    expect(fullReach?.isConnected()).toBe(false);
     role = "admin";
     expect((await queryWith({ ...FLIP, sql: "INSERT INTO t VALUES (3)" })).status).toBe(200);
 
