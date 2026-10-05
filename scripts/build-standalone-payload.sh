@@ -127,7 +127,11 @@ export JWT_SECRET="${JWT_SECRET:-build-time-placeholder-secret-32ch}"
 export ADMIN_PASSWORD="${ADMIN_PASSWORD:-build}"
 export USER_PASSWORD="${USER_PASSWORD:-build}"
 echo "==> Building standalone server (version ${VERSION}, ${OS}-${ARCH})"
-NEXT_TELEMETRY_DISABLED=1 DOCKER_BUILD=true bun run build
+# next build type-checks the whole tree, and on a fresh checkout that outgrows the default heap of
+# the smaller release runners: the 0.18.0 tag stopped on macos-14 and macos-15-intel with "JavaScript
+# heap out of memory" at about 2 GB. Raised for the build only; the smoke test below starts the server
+# with the defaults a user gets.
+NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=6144" NEXT_TELEMETRY_DISABLED=1 DOCKER_BUILD=true bun run build
 
 if [ ! -f .next/standalone/server.js ]; then
   echo "Standalone output missing (.next/standalone/server.js) - is DOCKER_BUILD=true wired in next.config.ts?" >&2

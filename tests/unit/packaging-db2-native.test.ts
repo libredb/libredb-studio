@@ -22,7 +22,16 @@
  * the Windows zip probe and the engine-smoke Db2 connection.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describeIfPosixShell, posixShell } from "../helpers/posix-tools";
@@ -267,9 +276,49 @@ describeIfPosixShell("bash", "scripts/lib/prune-db2-node.sh", () => {
     expect(run.stderr.toString()).toContain("file tracing");
   });
 
-  test("fails when a second copy of an addon sits elsewhere in the payload", () => {
-    // A hashed external under .next/node_modules that is a real directory and
-    // not a symlink would ship all eight addons again.
+  test("win32 also prunes a hashed external that the Windows build turned into a real copy", () => {
+    // Turbopack links each serverExternalPackages entry under .next/node_modules/<name>-<hash> and the
+    // server chunks require that name. Git Bash's cp -R copies the link as a real directory, so on the
+    // Windows runner the payload holds a second copy of the package, and it is the one the server loads.
+    const payload = makePayload();
+    const hashed = join(payload, ".next", "node_modules", "db2-node-0123abcd");
+    mkdirSync(hashed, { recursive: true });
+    writeFileSync(join(hashed, "index.js"), "// fixture");
+    for (const addon of ADDONS) writeFileSync(join(hashed, addon), "");
+
+    const run = prune(payload, "win32", "x64");
+    expect(run.stderr.toString()).toBe("");
+    expect(run.exitCode).toBe(0);
+    expect(addonsLeft(payload)).toEqual(["db2-node.win32-x64-msvc.node"]);
+    expect(readdirSync(hashed).filter((file) => file.endsWith(".node"))).toEqual(["db2-node.win32-x64-msvc.node"]);
+  });
+
+  test("leaves a hashed external that is still a link alone, and counts its addons once", () => {
+    const payload = makePayload();
+    const hashedParent = join(payload, ".next", "node_modules");
+    mkdirSync(hashedParent, { recursive: true });
+    symlinkSync(join(payload, "node_modules", "db2-node"), join(hashedParent, "db2-node-0123abcd"));
+
+    const run = prune(payload, "linux", "x64");
+    expect(run.exitCode).toBe(0);
+    expect(addonsLeft(payload)).toEqual(["db2-node.linux-x64-gnu.node", "db2-node.linux-x64-musl.node"]);
+  });
+
+  test("fails when a real copy of the package lacks the addon the target needs", () => {
+    const payload = makePayload();
+    const hashed = join(payload, ".next", "node_modules", "db2-node-0123abcd");
+    mkdirSync(hashed, { recursive: true });
+    writeFileSync(join(hashed, "index.js"), "// fixture");
+    writeFileSync(join(hashed, "db2-node.darwin-x64.node"), "");
+
+    const run = prune(payload, "win32", "x64");
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr.toString()).toContain("db2-node-0123abcd");
+  });
+
+  test("fails when an addon sits outside every copy of the package", () => {
+    // A directory with no index.js is no copy of the package, so its addon would ship beside the
+    // ones the target loads.
     const payload = makePayload();
     const hashed = join(payload, ".next", "node_modules", "db2-node-0123abcd");
     mkdirSync(hashed, { recursive: true });

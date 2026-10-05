@@ -14,8 +14,13 @@
 # index.js falls back to db2-node-<triple> packages that do not exist, so a
 # pruned-away addon fails loudly at require time; this script fails earlier,
 # when the package or a kept addon is missing, or when the payload still holds
-# an addon outside the pruned directory (a second traced copy, for instance a
-# hashed external materialized as a real directory under .next/node_modules).
+# an addon outside every copy of the package.
+#
+# A copy is node_modules/db2-node, plus any .next/node_modules/db2-node-<hash>
+# that is a real directory. Turbopack links each serverExternalPackages entry
+# there under a hashed name and the server chunks require that name; on the
+# Windows runner Git Bash's cp -R turns the link into a real directory, which is
+# then the copy the server loads, so it is pruned the same way.
 #
 # Usage: prune-db2-node.sh <payload-dir> <linux|darwin|win32> <x64|arm64>
 # ==============================================================================
@@ -47,24 +52,34 @@ if [ ! -f "$DB2_NODE_DIR/index.js" ]; then
   exit 1
 fi
 
-for wanted in "${KEEP[@]}"; do
-  if [ ! -f "$DB2_NODE_DIR/$wanted" ]; then
-    echo "db2-node has no $wanted addon for ${OS}-${ARCH}" >&2
-    exit 1
+COPIES=("$DB2_NODE_DIR")
+for candidate in "$PAYLOAD_DIR"/.next/node_modules/db2-node-*; do
+  if [ -d "$candidate" ] && [ ! -L "$candidate" ] && [ -f "$candidate/index.js" ]; then
+    COPIES+=("$candidate")
   fi
 done
 
-for addon in "$DB2_NODE_DIR"/db2-node.*.node; do
-  keep=false
+for copy in "${COPIES[@]}"; do
   for wanted in "${KEEP[@]}"; do
-    [ "$(basename "$addon")" = "$wanted" ] && keep=true
+    if [ ! -f "$copy/$wanted" ]; then
+      echo "db2-node has no $wanted addon for ${OS}-${ARCH} in ${copy#"$PAYLOAD_DIR"/}" >&2
+      exit 1
+    fi
   done
-  [ "$keep" = true ] || rm -f "$addon"
+
+  for addon in "$copy"/db2-node.*.node; do
+    keep=false
+    for wanted in "${KEEP[@]}"; do
+      [ "$(basename "$addon")" = "$wanted" ] && keep=true
+    done
+    [ "$keep" = true ] || rm -f "$addon"
+  done
 done
 
+EXPECTED=$((${#KEEP[@]} * ${#COPIES[@]}))
 FOUND=$(find "$PAYLOAD_DIR" -type f -name 'db2-node.*.node' | sort)
-if [ "$(printf '%s\n' "$FOUND" | grep -c .)" -ne "${#KEEP[@]}" ]; then
-  echo "Expected ${#KEEP[@]} db2-node addon(s) in the payload after the prune, found:" >&2
+if [ "$(printf '%s\n' "$FOUND" | grep -c .)" -ne "$EXPECTED" ]; then
+  echo "Expected $EXPECTED db2-node addon(s) in ${#COPIES[@]} copy(ies) of the package after the prune, found:" >&2
   printf '%s\n' "$FOUND" >&2
   exit 1
 fi
