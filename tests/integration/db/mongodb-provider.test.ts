@@ -886,6 +886,34 @@ describe("MongoDBProvider", () => {
       await provider.connect(); // should not throw
       expect(provider.isConnected()).toBe(true);
     });
+
+    // #1458: server selection is a retry loop the driver runs until its own deadline, and
+    // `serverSelectionTimeoutMS` is a client option it applies to every query and write,
+    // so the bound has to clear a replica set election as well as the initial dial. The
+    // defect was handing it `pool.acquireTimeout` - 60000 by default - which made Test
+    // Connection to a port nothing listens on spin for a minute before the `ECONNREFUSED`
+    // it already had. `connectTimeoutMS` did not bound it: that caps one TCP attempt, and a
+    // refusal fails that attempt at once.
+    test("server selection carries its own bound, not the pool acquire timeout", async () => {
+      await provider.connect();
+      expect(lastMongoOptions.serverSelectionTimeoutMS).toBe(30000);
+      expect(lastMongoOptions.connectTimeoutMS).toBe(60000);
+    });
+
+    test("a configured pool still reaches the driver, and does not move the selection bound", async () => {
+      provider = new MongoDBProvider(
+        { ...baseConfig },
+        { pool: { min: 1, max: 4, idleTimeout: 12000, acquireTimeout: 25000 } },
+      );
+      await provider.connect();
+      expect(lastMongoOptions).toMatchObject({
+        minPoolSize: 1,
+        maxPoolSize: 4,
+        maxIdleTimeMS: 12000,
+        connectTimeoutMS: 25000,
+        serverSelectionTimeoutMS: 30000,
+      });
+    });
   });
 
   // --------------------------------------------------------------------------

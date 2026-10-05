@@ -529,6 +529,32 @@ const MONGODB_INTERNAL_PREFIX = "system.";
 const MONGODB_RESERVED_DATABASES: readonly string[] = Object.freeze(["admin", "config", "local"]);
 
 /**
+ * How long the driver's server selection waits before it gives up (#1458).
+ *
+ * `serverSelectionTimeoutMS` is a `MongoClient` option, not a connect-only one. The
+ * driver reads it when the client connects (`mongodb/lib/sdam/topology.js`) and again for
+ * every query and write for the life of that client
+ * (`mongodb/lib/operations/execute_operation.js`), so the value has to clear a replica set
+ * election as well as the initial dial. MongoDB documents the median election after an
+ * unplanned primary loss as up to 12 s and notes that network latency can extend it, so
+ * 30 s - the driver's own default - is the bound: above that window, and still half the
+ * 60 s that `pool.acquireTimeout` produced here.
+ *
+ * That 60 s was the defect (#1458). Server selection is a RETRY loop, not one attempt: the
+ * driver walks the topology it knows and re-attempts a member the moment a connect fails,
+ * until this deadline passes. Pointing it at a host and port where nothing listens
+ * therefore answered `connect ECONNREFUSED` only after the full deadline, so Test
+ * Connection spun for a minute over a typo in the port while Cassandra and Couchbase
+ * reported the same refusal in well under a second. `connectTimeoutMS` does not bound
+ * this: it caps ONE TCP attempt, and a refused connection fails that attempt immediately;
+ * it is the loop that kept going.
+ *
+ * `connectTimeoutMS` stays on `pool.acquireTimeout`, because that is the pool's own dial
+ * bound and not the selection loop's.
+ */
+const MONGODB_SERVER_SELECTION_TIMEOUT_MS = 30_000;
+
+/**
  * The `listDatabases` command, as one frozen document so the count and the listing of
  * containers cannot be asked two different questions.
  *
@@ -988,7 +1014,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         minPoolSize: this.poolConfig.min,
         maxIdleTimeMS: this.poolConfig.idleTimeout,
         connectTimeoutMS: this.poolConfig.acquireTimeout,
-        serverSelectionTimeoutMS: this.poolConfig.acquireTimeout,
+        serverSelectionTimeoutMS: MONGODB_SERVER_SELECTION_TIMEOUT_MS,
         ...this.buildTLSOptions(),
       };
 

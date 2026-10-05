@@ -295,11 +295,33 @@ pool is configured from `ProviderOptions.pool`:
 | `minPoolSize` | `pool.min` |
 | `maxIdleTimeMS` | `pool.idleTimeout` |
 | `connectTimeoutMS` | `pool.acquireTimeout` |
-| `serverSelectionTimeoutMS` | `pool.acquireTimeout` |
+| `serverSelectionTimeoutMS` | `MONGODB_SERVER_SELECTION_TIMEOUT_MS`, 30 s, the driver's default, not the pool's |
 
 The database name comes from `config.database`, else from the connection string's path (after the authority, so `mongodb://host:27017` names none), else
 defaults to `test`, the driver's own default; it is the database a statement with no `database` key reads.
 After connecting, a `{ ping: 1 }` command validates the connection.
+
+**Server selection is bounded at 30 seconds, and the bound is not connect-only (#1458).**
+`serverSelectionTimeoutMS` is a `MongoClient` option, so the driver reads it when the client
+connects and again for every query and write for the life of that client
+(`mongodb/lib/sdam/topology.js`, `mongodb/lib/operations/execute_operation.js`). It therefore has
+to clear a replica set election, not only the initial dial: MongoDB documents the median election
+after an unplanned primary loss as up to 12 seconds and notes that network latency can extend it.
+This provider used to hand that option `pool.acquireTimeout`, whose default is 60000
+([`types.ts`](../../src/lib/db/types.ts)), so Test Connection to a host and port where nothing
+listens held the spinner for a minute (`Test Connection` passes `queryTimeout: 10000`, which
+`connect()` does not read). Measured here against a closed port on 127.0.0.1: 60.0 s before, 30.0 s
+after. `connectTimeoutMS` did not bound it and does not: that option caps ONE TCP attempt, and a
+refused connection fails its attempt at once.
+
+30 s is the driver's own default and sits above the election window, so a write issued right after
+an unplanned primary loss waits the election out instead of failing at the deadline. It is a
+ceiling under abnormal discovery, not a latency budget: a healthy deployment selects a server well
+before it, and a genuinely dead one is reported as the refusal it is instead of after a wait the
+reader reads as a hang. The value is a constant in
+[`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts) rather than a second pool field,
+because it governs the whole client and not only the connect; `connectTimeoutMS` keeps following
+`pool.acquireTimeout` for the pool's own dial.
 
 ### 4.1 SSL / TLS
 
