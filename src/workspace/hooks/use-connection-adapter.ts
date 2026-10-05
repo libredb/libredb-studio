@@ -197,19 +197,21 @@ export function useConnectionAdapter({
   onSchemaFetch,
   onObjectsFetch,
 }: UseConnectionAdapterParams) {
+  // Stamped once, at mount: a clock read is impure, so it stays out of the render-time mapping.
+  const [mountedAt] = useState(() => new Date());
   const connections: DatabaseConnection[] = useMemo(
     () =>
       externalConnections.map((c) => ({
         id: c.id,
         name: c.name,
         type: c.type,
-        createdAt: new Date(),
+        createdAt: new Date(mountedAt),
         managed: true,
         // A hand-written field list, so a host field this forgets is dropped in silence.
         // Forgetting this one reads the catalog the host asked it not to (#765).
         skipObjectScan: c.skipObjectScan,
       })),
-    [externalConnections],
+    [externalConnections, mountedAt],
   );
 
   // The selection is held by ID, not by object, so it resolves against the host's
