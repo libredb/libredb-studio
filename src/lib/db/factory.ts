@@ -760,36 +760,44 @@ export async function getOrCreateProvider(
     return cached.provider;
   }
 
-  // A single-writer engine (DuckDB) keeps ONE writable handle per file per process. We are about to
-  // open a new one under `cacheKey`; a handle of THIS connection on the SAME file under a DIFFERENT
-  // key would make a second read-write handle on one file. The one way that arises for a single
-  // record is a file-access posture flip: an operator edits a seed's roles while Studio runs (the
-  // seed file hot-reloads), which moves the record between the allow key and the deny key. A second
-  // handle keeps its own copy of the catalog and checkpoints it over the file when it closes, losing
-  // the first handle's committed rows on Linux and macOS and corrupting the file after a bulk write;
-  // Windows refuses the second open. So close any such stale handle first, exactly as the
-  // query-timeout change above does, leaving this open as the file's only writer. Entries of a
-  // DIFFERENT connection id on the same file are the separate, pre-existing D240 case and are left
-  // alone here. `singleWriterFile` is set only for single-writer engines, so this is a no-op for the
-  // rest without a type-id branch.
+  // A single-writer engine keeps ONE writable handle per file per process. We are about to open one
+  // under `cacheKey`, so a handle of THIS connection record on the SAME file under a DIFFERENT key would
+  // be a second handle on one file. That happens whenever one record's key changes while its handle is
+  // open: an operator edits a DuckDB seed's roles across the admin-only line while Studio runs (the seed
+  // file hot-reloads), which flips its file-access posture; an edit changes what the key frames (the
+  // fingerprint, the credentials, the read-only mode) and keeps the file; or, on an inline DuckDB
+  // connection, an admin and a non-admin present the same client connection id (a browser profile the
+  // two accounts share, or a copied id), and then each request closes the other's handle. On DuckDB a
+  // second read-write handle keeps its own copy of the catalog and checkpoints it over the file when it
+  // closes, losing the first handle's committed rows on Linux and macOS and corrupting the file after a
+  // bulk write, and Windows refuses the second open; LibreDB, the other engine that declares
+  // `singleWriterFile`, refuses it on every platform. So every such stale handle is closed first, as the
+  // query-timeout change above closes its own, leaving this open as the file's only handle; the session
+  // state on a closed handle (temporary tables, SET values) goes with it. Entries of a DIFFERENT
+  // connection id on the same file are the separate, pre-existing D240 case and are left alone here.
+  // `singleWriterFile` is set only for single-writer engines, so this is a no-op for the rest without a
+  // type-id branch.
   const openFileIdentity = fileIdentity(connection);
   if (openFileIdentity !== null) {
-    for (const [key, entry] of providerCache) {
-      // Skip the key we are about to open under (any entry still there is disconnected, since a
-      // connected one would have returned above) and every entry that is not this record on this
-      // file; what remains is the same record's handle under the other posture key.
-      if (key === cacheKey || entry.connectionId !== connection.id || entry.singleWriterFile !== openFileIdentity)
-        continue;
-      try {
-        await entry.provider.disconnect();
-      } catch (error) {
+    // Not the key we are about to open under (any entry still there is disconnected, since a connected
+    // one would have returned above), and only this record on this file.
+    const stale = [...providerCache].filter(
+      ([key, entry]) =>
+        key !== cacheKey && entry.connectionId === connection.id && entry.singleWriterFile === openFileIdentity,
+    );
+    // All of them are closed before the open below. A close that fails is logged and its entry dropped
+    // all the same, as the query-timeout change above does.
+    const closes = await Promise.allSettled(stale.map(([, entry]) => entry.provider.disconnect()));
+    stale.forEach(([key], index) => {
+      const close = closes[index];
+      if (close.status === "rejected") {
         logger.warn(`[DB] Error disconnecting a stale single-writer handle before reopening`, {
           connectionId: connection.id,
-          error: String(error),
+          error: String(close.reason),
         });
       }
       providerCache.delete(key);
-    }
+    });
   }
 
   // If SSH tunnel is configured, create tunnel first and rewrite connection.
