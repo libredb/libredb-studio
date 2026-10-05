@@ -2104,6 +2104,37 @@ describe("the private temp directory of a handle with external access off", () =
     });
   });
 
+  testIf(
+    MISSING_POSIX_FILE_MODES ??
+      (process.getuid?.() === 0
+        ? "running as root: file modes do not restrict root, so the removal cannot fail"
+        : null),
+    "a disconnect whose temp-directory removal fails raises it and still leaves the provider disconnected",
+    async () => {
+      const osTemp = mkdtempSync(join(workDir, "os-temp-"));
+      await withOsTempDirectory(osTemp, async () => {
+        const handle = new DuckDBProvider(makeConfig(), {}, { allowExternalFileAccess: false });
+        await handle.connect();
+        const temp = await tempDirectoryOf(handle);
+        // A file the removal cannot unlink, because its directory is no longer writable.
+        writeFileSync(join(temp, "pinned"), "x");
+        chmodSync(temp, 0o500);
+        try {
+          await expect(handle.disconnect()).rejects.toThrow(/EACCES|permission denied/i);
+          // The engine handle closed before the removal failed, so the provider is disconnected and
+          // connect() opens a fresh handle instead of returning early on the closed one.
+          expect(handle.isConnected()).toBe(false);
+          await handle.connect();
+          expect((await handle.query("SELECT 1 AS one")).rows).toEqual([{ one: 1 }]);
+        } finally {
+          chmodSync(temp, 0o700);
+          if (handle.isConnected()) await handle.disconnect();
+          rmSync(temp, { recursive: true, force: true });
+        }
+      });
+    },
+  );
+
   test("the denied handle still reaches its own private directory and its database's own file names, and nothing else", async () => {
     // What the docs state as the posture's residue: the engine allow-lists the handle's temp directory
     // and the database file with its write-ahead-log siblings. A file inside the private directory can

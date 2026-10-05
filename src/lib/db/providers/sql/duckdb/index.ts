@@ -724,10 +724,17 @@ export class DuckDBProvider extends SQLBaseProvider {
 
   public async disconnect(): Promise<void> {
     if (this.client) {
-      this.client.close();
-      this.client = null;
-      this.runningQueryIds.clear();
-      this.setConnected(false);
+      try {
+        this.client.close();
+      } finally {
+        // Cleared whatever close() raised. It closes the engine handle before it removes the private
+        // temp directory, so a removal that fails (EACCES, or EBUSY on Windows) must not leave this
+        // provider marked connected on a closed client: connect() would return early on it and the
+        // handle could never be reopened. The error still reaches the caller.
+        this.client = null;
+        this.runningQueryIds.clear();
+        this.setConnected(false);
+      }
     }
   }
 
