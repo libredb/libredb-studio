@@ -162,3 +162,11 @@ test("dangling symbolic links cannot create reserved files", () => {
   expect(isReservedStoragePath(path.join(dir, "dangling.db"))).toBe(true);
   expect(fs.existsSync(process.env.STORAGE_SQLITE_PATH!)).toBe(false);
 });
+
+test("sidecars follow the canonical storage file when its configured name is a symlink", () => {
+  const target = path.join(dir, "actual.db");
+  fs.writeFileSync(target, "server state");
+  fs.symlinkSync(target, process.env.STORAGE_SQLITE_PATH!);
+  expect(isReservedStoragePath(`${target}-wal`)).toBe(true);
+  expect(isReservedStoragePath(`${target}-shm`)).toBe(true);
+});

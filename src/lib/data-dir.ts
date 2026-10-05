@@ -29,7 +29,7 @@ export function getStorageSqlitePath(): string {
  * write-ahead log keeps committed changes there until a checkpoint.
  */
 export function reservedStoragePaths(): string[] {
-  const base = path.resolve(getStorageSqlitePath());
+  const base = canonicalPath(path.resolve(getStorageSqlitePath()));
   return [base, `${base}-wal`, `${base}-shm`];
 }
 
