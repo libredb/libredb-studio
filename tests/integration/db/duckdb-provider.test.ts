@@ -683,9 +683,9 @@ describeIf(
     test("on a writable file, a refusal from a database ATTACHed read-only is the engine's sentence alone", async () => {
       const file = await seededFile("writable-main.duckdb");
       const other = await seededFile("attached-other.duckdb");
-      // An admin editor: ATTACH of a second FILE needs filesystem reach, which is admin-only
-      // since non-admin DuckDB file access. The #1486/#1494 read-only-reason wrapping it pins keys on the catalog
-      // name, not the posture, so it is the same for a non-admin (covered in the non-admin DuckDB file access block).
+      // An admin editor: ATTACH of a second FILE needs filesystem reach, which is admin-only since the
+      // non-admin DuckDB file-access change. The #1486/#1494 read-only-reason wrapping it pins keys on the
+      // catalog name, not the posture, so it is the same for a non-admin (covered in the non-admin block).
       provider = new DuckDBProvider(makeConfig({ database: file }), {}, { allowExternalFileAccess: true });
       await provider.connect();
 
@@ -706,8 +706,8 @@ describeIf(
       const other = await seededFile("remount-other.duckdb");
       chmodSync(file, 0o444);
       chmodSync(dir, 0o555);
-      // An admin editor: the later ATTACH of a second FILE needs filesystem reach (admin-only
-      // since non-admin DuckDB file access); the read-only-reason this pins is the same for either role.
+      // An admin editor: the later ATTACH of a second FILE needs filesystem reach (admin-only since the
+      // non-admin DuckDB file-access change); the read-only-reason this pins is the same for either role.
       provider = new DuckDBProvider(makeConfig({ database: file }), {}, { allowExternalFileAccess: true });
       try {
         await provider.connect();
@@ -738,8 +738,8 @@ describeIf(
       const other = await seededFile("scoped-other.duckdb");
       chmodSync(file, 0o444);
       chmodSync(dir, 0o555);
-      // An admin editor: the ATTACH of a second FILE below needs filesystem reach (admin-only
-      // since non-admin DuckDB file access); the scoped read-only-reason this pins is the same for either role.
+      // An admin editor: the ATTACH of a second FILE below needs filesystem reach (admin-only since the
+      // non-admin DuckDB file-access change); the scoped read-only-reason this pins is the same for either role.
       provider = new DuckDBProvider(makeConfig({ database: file }), {}, { allowExternalFileAccess: true });
       const refusalOf = (sql: string) =>
         provider.query(sql).then(
@@ -1635,10 +1635,10 @@ describe("queryReadOnly()", () => {
 // opened with `enable_external_access: 'false'`, so every statement that reaches the network,
 // or a file other than the database's own and the handle's private temp directory, is refused
 // by the engine while that database stays read-write. It is statement-level only: the database
-// path itself is still the connection's. The posture is carried by `ProviderExecutionContext.allowExternalFileAccess`,
-// which the route derives from the verified session and the resolved connection; absent
-// means deny (fail closed). An admin keeps full reach, except on a seed a non-admin role can
-// use, which is one handle for every role.
+// path itself is still the connection's. The posture is carried by
+// `ProviderExecutionContext.allowExternalFileAccess`, which the route derives from the verified
+// session and the resolved connection; absent means deny (fail closed). An admin keeps full
+// reach, except on a seed a non-admin role can use, which is one handle for every role.
 //
 // This closes the CapRover discovery-export exposure for the standard login: it can no longer read
 // `/app/discovery/services.json` through DuckDB.
@@ -1740,7 +1740,7 @@ describe("a non-admin editor handle has no statement-level file or network reach
     // A handle opened with external access off still allow-lists its default temp directory, and for
     // every :memory: database in the process that default is the shared <cwd>/.tmp. Without a private
     // one, a denied :memory: handle could list, read and write another session's spill files there.
-    // The handle gets a private per-handle temp directory instead (non-admin DuckDB file access).
+    // The handle gets a private per-handle temp directory instead (the non-admin DuckDB file-access change).
     provider = await nonAdmin(":memory:");
 
     const allowed = (await provider.query("SELECT current_setting('allowed_directories') AS d")).rows[0].d as string[];

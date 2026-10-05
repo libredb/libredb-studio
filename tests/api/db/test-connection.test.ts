@@ -518,9 +518,10 @@ describe("POST /api/db/test-connection", () => {
     expect(mockProvider.disconnect).toHaveBeenCalledTimes(1);
   });
 
-  // non-admin DuckDB file access: a DuckDB handle is borrowed only under the caller's own file-access posture, so a
-  // file can be open under the OTHER posture with nothing to borrow. A second read-write handle
-  // there checkpoints its own view over the file when it closes; the test handle opens read-only.
+  // Since the non-admin DuckDB file-access change, a DuckDB handle is borrowed only under the
+  // caller's own posture, so a file can be open under the OTHER posture with nothing to borrow. A
+  // second read-write handle there checkpoints its own view over the file when it closes; the test
+  // handle opens read-only.
 
   test("opens its own handle read-only when a handle of the other posture holds the file", async () => {
     mockIsSingleWriterFileOpen.mockImplementation(() => true);

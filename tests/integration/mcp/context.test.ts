@@ -211,9 +211,9 @@ describe("acquire", () => {
   });
 
   test("an admin's operations acquisition on an admin-only DuckDB seed borrows the editor's open handle", async () => {
-    // non-admin DuckDB file access with B49: the editor holds the file under the admin posture, which is the posture this
-    // caller gets in the editor on a seed only admins can use, so the borrow lends it that handle
-    // rather than opening a second one beside it.
+    // The non-admin DuckDB file-access change with B49: the editor holds the file under the admin
+    // posture, which is the posture this caller gets in the editor on a seed only admins can use, so
+    // the borrow lends it that handle rather than opening a second one beside it.
     const file = join(dir, "admin-only.duckdb");
     await createDuckdbFile(file, ["CREATE TABLE t (id INTEGER)"]);
     writeSeedFile(dir, [{ id: "warehouse", type: "duckdb", database: file, roles: ["admin"] }]);
