@@ -2166,6 +2166,46 @@ function tableStatsSql(whereClause: string): string {
       `;
 }
 
+// The same statistics for an engine whose pg_stat_user_tables answers nothing (#1540).
+//
+// CockroachDB v26.3.2 publishes that view and both pg_stat_all_tables, and both carry zero rows
+// while pg_class holds the user's tables: measured 2026-10-05 on a single node with one table,
+// `SELECT count(*) FROM pg_stat_user_tables` answered 0 against 1 in pg_class. So Monitoring >
+// Tables and Storage listed nothing, and the Admin > Operations table list was empty with it,
+// which is what took every per-table maintenance action out of reach - including the
+// `ANALYZE <table>` the connect-time probe measures CockroachDB as having (#1387).
+//
+// Keyed on the ANSWER rather than on the engine: this runs when the first statement returns no
+// rows, so nothing here asks which engine it is talking to, and any relative with the same gap
+// is served by it. On PostgreSQL it never runs, because pg_stat_user_tables lists a user table
+// whether or not anything has touched it, so no rows there means there are no tables.
+//
+// It reports what pg_class can answer and nothing else. On CockroachDB that is the names alone:
+// measured on the same server, reltuples, pg_table_size(), pg_indexes_size() and
+// pg_total_relation_size() all answer NULL for a table it has, so every figure is absent rather
+// than zero (BACKLOG D105). The names are the point - a row the panel can draw and an action a
+// user can reach - and a fabricated 0 B beside them would be worse than the empty list was.
+//
+// The live and dead tuple counts have no counterpart in pg_class at all, so they are not
+// selected: `relkind` covers an ordinary table, a partitioned one and a materialized view, the
+// same three the schema read counts as tables.
+function tableStatsFromClassSql(whereClause: string): string {
+  return `
+        SELECT
+          n.nspname AS schema_name,
+          c.relname AS table_name,
+          c.reltuples::bigint AS row_count,
+          pg_table_size(c.oid) AS table_size_bytes,
+          pg_indexes_size(c.oid) AS index_size_bytes,
+          pg_total_relation_size(c.oid) AS total_size_bytes
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind IN ('r', 'p', 'm')
+        ${whereClause}
+        ORDER BY total_size_bytes DESC NULLS LAST, n.nspname, c.relname
+      `;
+}
+
 // One refused size builtin, replaced by a typed NULL so the column keeps its place and the
 // row survives. `NULL::bigint` rather than a bare NULL because the value is read as a byte
 // count and the ORDER BY sorts on it; measured to bind on PostgreSQL 18.6, CockroachDB
@@ -2174,8 +2214,14 @@ function tableStatsSql(whereClause: string): string {
 // NOT a 0: a 0 is a measurement, and nobody measured this one. The Storage tab's
 // `tableSizeKnown` gate and the Tables tab both read the absence and draw "N/A", which is
 // the rule BACKLOG D105 states and the reason `tableSizeBytes` is optional at all.
+//
+// Both spellings of the argument, because the two statements name the oid differently:
+// `relid` is the column pg_stat_user_tables publishes, `c.oid` the one pg_class does (#1540).
+// Matching the call rather than the whole expression is what keeps this working after another
+// fallback has already rewritten its neighbours.
 function withoutSizeFn(fn: string): (sql: string) => string {
-  return (sql) => sql.replaceAll(`${fn}(relid)`, "NULL::bigint");
+  const call = new RegExp(`${fn}\\((?:relid|c\\.oid)\\)`, "g");
+  return (sql) => sql.replace(call, "NULL::bigint");
 }
 
 function isMissingSizeFnError(fn: string): (error: unknown) => boolean {
@@ -5444,7 +5490,30 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   /**
-   * The table statistics, retried without whichever size builtin the engine refuses (#1436).
+   * The table statistics, from whichever catalog on this server has the rows (#1540).
+   *
+   * `pg_stat_user_tables` first, which is the one that can answer every column. `pg_class`
+   * second, and only when the first answered NO ROWS, which is CockroachDB's shape: it
+   * publishes the view, keeps it empty, and holds the tables in pg_class. That read carries
+   * names and whatever figures the server will give for them, which on CockroachDB is none.
+   *
+   * The ORDER of the two is what makes this safe to do without asking which engine it is:
+   * an engine that fills the view never reaches the second read, so nothing it answers can
+   * be overwritten by a thinner row.
+   */
+  private async queryTableStats(client: PoolClient, where: (column: string) => string, params: unknown[]) {
+    const fromStat = await this.querySizedStatement(client, tableStatsSql(`WHERE ${where("schemaname")}`), params);
+    if (fromStat.rows.length > 0) return fromStat;
+
+    // No rows is the ANSWER here, not a refusal, so it is read rather than caught: CockroachDB
+    // v26.3.2 publishes pg_stat_user_tables and keeps it empty while pg_class holds the user's
+    // tables (#1540). On PostgreSQL this is reached only by a schema that really has none,
+    // where the second read answers nothing either and costs one round trip.
+    return this.querySizedStatement(client, tableStatsFromClassSql(`AND ${where("n.nspname")}`), params);
+  }
+
+  /**
+   * One table-statistics statement, retried without whichever size builtin the engine refuses.
    *
    * One repair per builtin, each applied to whatever statement is current, so an engine that
    * refuses two of the three still answers: RisingWave 3.1.0 publishes pg_table_size and
@@ -5457,12 +5526,12 @@ export class PostgresProvider extends SQLBaseProvider {
    * `pg_stat_user_tables` or a planner restriction leaves nothing to answer with and still
    * reaches the panel as itself.
    */
-  private async queryTableStats(client: PoolClient, whereClause: string, params: unknown[]) {
+  private async querySizedStatement(client: PoolClient, sql: string, params: unknown[]) {
     const remainingFallbacks = TABLE_SIZE_FNS.map((fn) => ({
       matches: isMissingSizeFnError(fn),
       apply: withoutSizeFn(fn),
     }));
-    let currentSql = tableStatsSql(whereClause);
+    let currentSql = sql;
     for (;;) {
       try {
         return await client.query(currentSql, params);
@@ -5486,11 +5555,14 @@ export class PostgresProvider extends SQLBaseProvider {
 
     const client = await this.pool!.connect();
     try {
-      // If schema is specified, filter by it; otherwise get all user schemas
-      const whereClause = schema ? `WHERE schemaname = $1` : `WHERE ${schemaExclusion("schemaname")}`;
+      // If schema is specified, filter by it; otherwise get all user schemas. The column is
+      // passed in rather than the finished clause: the two statements name the schema
+      // differently, pg_stat_user_tables as `schemaname` and pg_class through `n.nspname`,
+      // and `schemaExclusion()` writes its column twice (#1540).
       const params = schema ? [schema] : [];
+      const where = (column: string) => (schema ? `${column} = $1` : schemaExclusion(column));
 
-      const res = await this.queryTableStats(client, whereClause, params);
+      const res = await this.queryTableStats(client, where, params);
 
       return res.rows.map((r) => {
         // Each size is kept only where the engine published it. A refused builtin arrives as
@@ -5510,9 +5582,17 @@ export class PostgresProvider extends SQLBaseProvider {
         return {
           schemaName: r.schema_name,
           tableName: r.table_name,
-          rowCount: parseInt(r.row_count || "0"),
-          liveRowCount: parseInt(r.live_row_count || "0"),
-          deadRowCount: parseInt(r.dead_row_count || "0"),
+          rowCount: estimatedRowCount(r.row_count) ?? 0,
+          // Absent where the catalog that answered has no such column: pg_class publishes no
+          // live or dead tuple count, and the three fields are optional for exactly that
+          // (#1540). A 0 would say "this table has no dead rows", which nobody measured. On
+          // pg_stat_user_tables all three always arrive, so this reads as it always did there.
+          ...(r.live_row_count === null || r.live_row_count === undefined
+            ? {}
+            : { liveRowCount: parseInt(r.live_row_count) }),
+          ...(r.dead_row_count === null || r.dead_row_count === undefined
+            ? {}
+            : { deadRowCount: parseInt(r.dead_row_count) }),
           ...(sized && tableBytes !== undefined
             ? { tableSize: formatBytes(tableBytes), tableSizeBytes: tableBytes }
             : {}),
@@ -5530,7 +5610,7 @@ export class PostgresProvider extends SQLBaseProvider {
           lastVacuum: r.last_vacuum || r.last_autovacuum ? new Date(r.last_vacuum || r.last_autovacuum) : undefined,
           lastAnalyze:
             r.last_analyze || r.last_autoanalyze ? new Date(r.last_analyze || r.last_autoanalyze) : undefined,
-          bloatRatio: parseFloat(r.bloat_ratio || "0"),
+          ...(r.bloat_ratio === null || r.bloat_ratio === undefined ? {} : { bloatRatio: parseFloat(r.bloat_ratio) }),
         };
       });
     } finally {

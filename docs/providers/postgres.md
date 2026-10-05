@@ -1790,7 +1790,7 @@ base) fans these out in parallel.
 | `getPerformanceMetrics()` | `pg_statio_user_tables`, `pg_stat_database`, `pg_stat_checkpointer` (17+) or `pg_stat_bgwriter` | cache-hit % (omitted when unmeasurable), deadlocks, checkpoint write time (`N/A` when unreadable); **no buffer-pool %** — see [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `pg_stat_statements` → fallback `pg_stat_activity` | detailed per-statement stats; fallback shows live active queries |
 | `getActiveSessions()` | `pg_stat_activity` | pid, user, state, query, wait events, duration; excludes own backend |
-| `getTableStats()` | `pg_stat_user_tables` + `pg_table_size`/`pg_indexes_size`/`pg_total_relation_size`, each on `relid` | live/dead tuples, sizes (absent per function the engine refuses, [§3.1.2](#312-two-kinds-of-absence-and-why-neither-is-an-empty-array)), last (auto)vacuum/analyze, bloat ratio |
+| `getTableStats()` | `pg_stat_user_tables` + `pg_table_size`/`pg_indexes_size`/`pg_total_relation_size`, each on `relid`; `pg_class` when that view answers no rows (#1540) | live/dead tuples, sizes (absent per function the engine refuses, [§3.1.2](#312-two-kinds-of-absence-and-why-neither-is-an-empty-array)), last (auto)vacuum/analyze, bloat ratio |
 | `getIndexStats()` | `pg_stat_user_indexes`, `pg_index`, `pg_am` | type, columns, unique/primary, size, scan count, usage ratio |
 | `getStorageStats()` | `pg_tablespace`, WAL functions | per-tablespace size; WAL size (superuser-gated, swallowed if denied) |
 | `getPgStatActivity()` | `pg_stat_activity` | raw passthrough for advanced views |
@@ -1817,6 +1817,22 @@ zero and is still published as `0`/`"0 B"`, which is the shared helper's contrac
 state this engine produces: `pg_database_size()` is a function, not an aggregate, and measured on
 PostgreSQL 18 a freshly created database answers 7774735 bytes, never `NULL` and never zero. MySQL's
 `SUM()` over an empty schema is where that null row is real.
+
+**The table rows come from whichever catalog on this server has them (#1540).** `getTableStats()`
+reads `pg_stat_user_tables` first, the one catalog that can answer every column, and falls back to
+`pg_class` only when that view answers **no rows**. That is CockroachDB's shape: measured
+2026-10-05 on v26.3.2, `pg_stat_user_tables` and `pg_stat_all_tables` both carry zero rows while
+`pg_class` holds the user's tables, so Monitoring > Tables and Storage listed nothing and the
+Admin > Operations table list went with them, which put every per-table maintenance action out of
+reach — the supported `ANALYZE <table>` of #1387 among them. The fallback answers three rows there
+now, with the names and nothing else: `reltuples`, `pg_table_size()`, `pg_indexes_size()` and
+`pg_total_relation_size()` all answer `NULL` for a table CockroachDB has, so every figure is
+absent rather than zero. `pg_class` publishes no tuple counts at all, so `liveRowCount`,
+`deadRowCount` and `bloatRatio` are omitted rather than reported as 0.
+
+The order is what makes this safe without asking which engine answered: an engine that fills the
+view never reaches the second read. On PostgreSQL the fallback is reached only by a schema that
+really has no tables, where it answers nothing either and costs one round trip.
 
 **The table sizes are read the same way (#1436).** `getTableStats()` selects the three byte figures
 only and spells each with `formatBytes()`, so it selects no `pg_size_pretty()` column either — the
