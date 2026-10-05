@@ -775,8 +775,11 @@ export async function getOrCreateProvider(
   const openFileIdentity = fileIdentity(connection);
   if (openFileIdentity !== null) {
     for (const [key, entry] of providerCache) {
-      if (key === cacheKey) continue;
-      if (entry.connectionId !== connection.id || entry.singleWriterFile !== openFileIdentity) continue;
+      // Skip the key we are about to open under (any entry still there is disconnected, since a
+      // connected one would have returned above) and every entry that is not this record on this
+      // file; what remains is the same record's handle under the other posture key.
+      if (key === cacheKey || entry.connectionId !== connection.id || entry.singleWriterFile !== openFileIdentity)
+        continue;
       try {
         await entry.provider.disconnect();
       } catch (error) {
