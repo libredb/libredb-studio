@@ -1,9 +1,9 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting twenty-six engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3 and Oxia
+description: Web-based SQL IDE for cloud-native teams supporting twenty-six engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3 and Oxia
 type: application
-version: 0.1.77
-appVersion: "0.17.0"
+version: 0.1.78
+appVersion: "0.18.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -184,10 +184,21 @@ annotations:
   # description, the keywords and the README; no template, value or default moves.
   # False: 0.1.77 changes chart metadata only, naming Oxia in the description, the keywords and
   # the README; no template, value or default moves.
-  artifacthub.io/containsSecurityUpdates: "false"
+  # True: 0.1.78 tracks app release 0.18.0, which carries three security fixes in the image. On a
+  # deployment with the OIDC_* variables set, whatever its auth provider, the oidc-state cookie that
+  # GET /api/auth/oidc/login hands any visitor was also accepted as the session cookie, so an
+  # unauthenticated visitor passed the session check outside /admin, from 0.7.0 through 0.17.0
+  # (GHSA-8gc9-2gm6-5c7f); a non-admin user's DuckDB connection could read, and in some cases write,
+  # any file the Studio process can reach; and SQLite, DuckDB and LibreDB connections now refuse
+  # Studio's own storage and credential files as their database path for every role, with SQLite
+  # opening only for an admin. An operator with the OIDC_* variables set, or offering DuckDB or
+  # SQLite to non-admin users, should read all three; no chart template or value moves for any of
+  # them, so the upgrade is the image. The chart's own edit is its description, which calls Trino by
+  # its own name (#1158).
+  artifacthub.io/containsSecurityUpdates: "true"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.17.0
+      image: ghcr.io/libredb/libredb-studio:0.18.0
       platforms:
         - linux/amd64
         - linux/arm64
@@ -199,7 +210,16 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "The application image gains the Oxia provider; no template, value or default moves, and it acts once an application release moves appVersion."
+    - "Security: on a deployment with OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET set, whatever its auth provider, the oidc-state cookie that GET /api/auth/oidc/login hands any visitor was also accepted as the session cookie, so an unauthenticated visitor passed the session check outside /admin, from 0.7.0 through 0.17.0 (GHSA-8gc9-2gm6-5c7f). The state is now signed with a key derived for that purpose. Such an install should upgrade"
+    - "Seven engines join as eight connection types, and this is the first chart whose image runs them: etcd read-write over gRPC with Kubernetes-aware write refusals, IBM Db2 LUW over db2-node, Neo4j read-only with a Graph tab for Cypher results, Qdrant and Milvus read-only vector databases, InfluxDB as InfluxQL (1.x to 3) and InfluxDB 3 SQL, and Oxia read-only over gRPC"
+    - "With config.storageProvider sqlite or postgres, local sign-in gains any number of accounts under Admin > Accounts and passkeys, which config.passkeyOrigin (chart 0.1.72) switches on. ADMIN_* and USER_* then only seed the accounts table on first start, the first start creates four storage tables, local users are signed out once, and MCP tokens issued before the upgrade must be created again"
+    - "API routes answer a missing or ended session with 401 JSON and code AUTH_REQUIRED instead of a redirect to /login; pages still redirect"
+    - "Security: a non-admin user's DuckDB connection could read, and in some cases write, any file the Studio process can reach, which would have included the export of the new CapRover auto-connect template; a DuckDB editor handle now opens with file and network access closed for every non-admin role, and for every role on a DuckDB seed a non-admin role can use"
+    - "Security: SQLite, DuckDB and LibreDB connections refuse Studio's own storage and credential files as their database path for every role, links included, and a SQLite connection now opens only for an admin on an inline connection or an admin-only seed, in the editor, agent runs and MCP alike, since SQLite cannot confine file access per statement"
+    - "Launch sign-in for a platform that hosts Studio, off until LAUNCH_TOKEN_SECRET is set with LAUNCH_TOKEN_AUDIENCE and LAUNCH_TOKEN_ISSUER; ALLOW_CUSTOM_CONNECTIONS=false limits users to seed connections, and SEED_LITERAL_VALUES=true reads seed values as written. All three are unset by default and set through extraEnv"
+    - "A PostgreSQL connection with a verifying SSL mode to an IP address now checks the certificate against that IP instead of localhost (pg 8.23.1)"
+    - "The chart description calls Trino by its own name instead of Apache Trino"
+    - "Track app release 0.18.0 (appVersion bump; default image tag follows)"
 dependencies:
   - name: postgresql
     version: "16.x.x"

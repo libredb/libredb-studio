@@ -121,8 +121,7 @@ const ABRIDGED_RE = /\band more\b|\bamong them\b|\bfrom\b[^.]*?\bto\b/i;
 
 /**
  * The name each engine is searched for. Taken from the `DB_UI_CONFIG` label with a
- * leading "Apache " dropped, because the copy is inconsistent about it in both
- * directions - the label says "Trino" where the listings say "Apache Trino", and says
+ * leading "Apache " dropped, because the copy is inconsistent about it - the label says
  * "Apache Druid" where one listing says "Druid" - and because the bare product name is
  * what survives every spelling a listing uses for a family ("MySQL/MariaDB/TiDB",
  * "Microsoft SQL Server", "libSQL/Turso").

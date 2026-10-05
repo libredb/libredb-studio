@@ -21,14 +21,14 @@ metadata:
       ]
     capabilities: Basic Install
     categories: Database, Developer Tools
-    containerImage: ghcr.io/libredb/libredb-studio-operator:0.17.0
-    createdAt: "2026-10-04T08:28:20Z"
+    containerImage: ghcr.io/libredb/libredb-studio-operator:0.18.0
+    createdAt: "2026-10-05T09:28:45Z"
     description: Open-source web-based SQL IDE for twenty-six engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
-      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra,
+      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra,
       libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB
       3 and Oxia - with AI-powered query assistance.
-    olm.skipRange: '>=0.0.0 <0.17.0'
+    olm.skipRange: '>=0.0.0 <0.18.0'
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: helm.sdk.operatorframework.io/v1
     repository: https://github.com/libredb/libredb-studio
@@ -37,7 +37,7 @@ metadata:
     operatorframework.io/arch.amd64: supported
     operatorframework.io/arch.arm64: supported
     operatorframework.io/os.linux: supported
-  name: libredb-studio-operator.v0.17.0
+  name: libredb-studio-operator.v0.18.0
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -52,7 +52,7 @@ spec:
   description: |
     LibreDB Studio is an open-source, web-based SQL IDE. Query PostgreSQL,
     MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
-    ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache
+    ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache
     Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB,
     InfluxDB 3 and Oxia from the browser,
     with AI-powered query assistance (natural-language-to-SQL, explain, fix),
@@ -262,7 +262,7 @@ spec:
                 - --leader-elect
                 - --leader-election-id=libredb-studio-operator
                 - --health-probe-bind-address=:8081
-                image: ghcr.io/libredb/libredb-studio-operator:0.17.0
+                image: ghcr.io/libredb/libredb-studio-operator:0.18.0
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -390,4 +390,4 @@ spec:
   provider:
     name: LibreDB
     url: https://libredb.org
-  version: 0.17.0
+  version: 0.18.0
