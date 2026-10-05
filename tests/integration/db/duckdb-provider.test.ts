@@ -2122,7 +2122,8 @@ describe("the private temp directory of a handle with external access off", () =
         writeFileSync(join(temp, "pinned"), "x");
         chmodSync(temp, 0o500);
         try {
-          await expect(handle.disconnect()).rejects.toThrow(/EACCES|permission denied/i);
+          // Linux reports the pinned file's EACCES; macOS reports the directory's ENOTEMPTY.
+          await expect(handle.disconnect()).rejects.toThrow(/EACCES|EPERM|ENOTEMPTY|permission denied|not empty/i);
           // The engine handle closed before the removal failed, so the provider is disconnected and
           // connect() opens a fresh handle instead of returning early on the closed one.
           expect(handle.isConnected()).toBe(false);
