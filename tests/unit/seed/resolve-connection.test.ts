@@ -60,6 +60,32 @@ describe("resolve-connection", () => {
     });
   });
 
+  /*
+   * An empty `connectionId` is falsy but not nullish, so `connectionId ?? claimedSeedId` once kept
+   * it and dropped the claim: the inline record then came back verbatim, its `seed:` id included,
+   * and the namespace check above never ran. A present id must be a non-empty string.
+   */
+  it.each([[""], [0], [false], [{}]])(
+    "refuses a connectionId of %p next to an inline seed claim",
+    async (connectionId) => {
+      const forged: DatabaseConnection = {
+        id: "seed:admin-only",
+        name: "Not really the admin's",
+        type: "postgres",
+        host: "attacker.example.com",
+        password: "guess",
+        createdAt: new Date(),
+      };
+
+      await expect(
+        resolveConnection(
+          { connection: forged, connectionId: connectionId as unknown as string },
+          { role: "user", username: "test" },
+        ),
+      ).rejects.toMatchObject({ statusCode: 400 });
+    },
+  );
+
   it("resolves an inline connection that claims a seed id the role may reach", async () => {
     const claimed: DatabaseConnection = {
       id: "seed:everyone",

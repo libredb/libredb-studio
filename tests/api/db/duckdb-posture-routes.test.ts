@@ -216,6 +216,24 @@ describe("no route takes the posture from the request body (non-admin DuckDB fil
     role = "admin";
     expect(await postureFrom(route, forged(SHARED_SEED_CLAIM))).toEqual({ allowExternalFileAccess: false });
   });
+
+  test.each(ROUTES)(
+    "%s: an empty connectionId does not turn a shared seed claim into the caller's own record",
+    async (route) => {
+      // An empty id is falsy but not nullish; were it kept, the claim would be dropped and the body's
+      // `roles: [admin]` would decide the posture.
+      role = "admin";
+      const response = await handlers[route](
+        createMockRequest(`/api/db/${route}`, {
+          method: "POST",
+          body: { ...forged(SHARED_SEED_CLAIM), connectionId: "", ...EXTRA[route] },
+        }) as never,
+      );
+      expect(response.status).toBe(400);
+      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(mockCreateDatabaseProvider).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("POST /api/admin/fleet-health passes the same posture for each connection it checks (non-admin DuckDB file access)", () => {

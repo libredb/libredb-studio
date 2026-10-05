@@ -37,6 +37,11 @@ export async function resolveConnection(
    * An id outside the namespace is a user's own saved connection and stays untouched: those
    * carry the caller's own credentials and are not what the role filter is about.
    */
+  // A present id must be a non-empty string: an empty one is falsy but not nullish, so `??` below
+  // would keep it and drop the inline record's seed claim, handing the caller's copy back verbatim.
+  if (connectionId != null && (typeof connectionId !== "string" || connectionId === "")) {
+    throw new SeedConnectionError("Invalid connection ID format", 400);
+  }
   const claimedSeedId = connection?.id?.startsWith("seed:") ? connection.id : undefined;
   const effectiveId = connectionId ?? claimedSeedId;
 
