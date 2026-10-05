@@ -54,7 +54,8 @@ test.describe("Content-Security-Policy against the real asset surface", () => {
     expect(await readViolations(page)).toEqual([]);
 
     await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL(/\/admin(?:\/.*)?$/);
+    // /admin redirects to /admin/overview; wait for that landing, or the goto below races the redirect.
+    await page.waitForURL("**/admin/overview");
     await page.goto("/");
 
     // Monaco: script-src, style-src (the db-dark theme injects <style>), font-src (codicons).

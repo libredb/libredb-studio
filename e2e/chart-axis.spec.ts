@@ -88,7 +88,8 @@ async function loginAsAdmin(page: Page): Promise<void> {
   await page.locator('input[type="email"]').first().fill("admin@libredb.org");
   await page.locator('input[type="password"]').first().fill("test-admin");
   await page.locator('button[type="submit"]').first().click();
-  await page.waitForURL(/\/admin(?:\/.*)?$/);
+  // /admin redirects to /admin/overview; wait for that landing, or the goto below races the redirect.
+  await page.waitForURL("**/admin/overview");
   await page.goto("/");
   await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 15_000 });
 }

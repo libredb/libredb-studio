@@ -27,7 +27,8 @@ async function login(page: Page, role: "admin" | "user" = "admin"): Promise<void
   await page.locator('input[type="email"]').fill(`${role}@libredb.org`);
   await page.locator('input[type="password"]').fill(`test-${role}`);
   await page.getByRole("button", { name: "Sign In" }).click();
-  await page.waitForURL(role === "admin" ? /\/admin(?:\/.*)?$/ : "/");
+  // /admin redirects to /admin/overview; wait for that landing, or the goto below races the redirect.
+  await page.waitForURL(role === "admin" ? "**/admin/overview" : "/");
   if (role === "admin") await page.goto("/");
   await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 15_000 });
 }
