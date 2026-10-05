@@ -1241,6 +1241,7 @@ falls back to `main`.
 | `supportsResultPagination` | `true` | Enables Load More; the shared limiter emits `LIMIT n OFFSET m`. |
 | `supportsTransactions` | `false` | Hides the transaction controls; the provider exposes no transaction API. |
 | `singleWriterFile` | `true` | Lets callers treat an already-open DuckDB file as a single-writer resource (§3.8). |
+| `readsFileAccessPosture` | `true` | The editor handle opens under the file-access posture of `ProviderExecutionContext.allowExternalFileAccess`, so the handle cache and the single-writer borrow split DuckDB handles by posture through `READS_FILE_ACCESS_POSTURE` (§3.16). |
 | `identifierQuoting` | `double` | Generated SQL quotes identifiers with double quotes. |
 | `maintenanceOperations` | `vacuum`, `analyze`, `optimize` | Offers only the maintenance operations implemented in §8. |
 | `containerLevels` | `Database`, `Schema` | The object browser nests schemas under databases (§6). |
