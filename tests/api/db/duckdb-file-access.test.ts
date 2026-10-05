@@ -310,7 +310,7 @@ describe("a DuckDB seed whose roles change while Studio runs keeps one handle (n
     expect((await queryWith({ ...FLIP, sql: "INSERT INTO t VALUES (1)" })).status).toBe(200);
     // The full-reach handle the admin holds on the file, looked up by file and posture.
     const fullReach = findOpenSingleWriterProvider(
-      { id: "flip-lookup", name: "Flip lookup", type: "duckdb", database: flipFile },
+      { id: "flip-lookup", name: "Flip lookup", type: "duckdb", database: flipFile, createdAt: new Date() },
       true,
     );
     expect(fullReach).not.toBeNull();
