@@ -264,7 +264,11 @@ pool is configured from `ProviderOptions.pool`:
 | `minPoolSize` | `pool.min` |
 | `maxIdleTimeMS` | `pool.idleTimeout` |
 | `connectTimeoutMS` | `pool.acquireTimeout` |
-| `serverSelectionTimeoutMS` | `pool.acquireTimeout` |
+| `serverSelectionTimeoutMS` | the smaller of `pool.acquireTimeout` and 10 s |
+
+`serverSelectionTimeoutMS` has its own 10 s ceiling because the driver retries server selection until it elapses, and a refused connection is retried the same way.
+Following the pool's 60 s default made a mistyped port show a spinner for a minute before reporting `ECONNREFUSED` (#1458).
+Ten seconds still covers replica-set and SRV discovery on a healthy cluster; a smaller `pool.acquireTimeout` tightens it further, a larger one does not loosen it.
 
 The database name comes from `config.database`, else from the connection string's path (after the authority, so `mongodb://host:27017` names none), else
 defaults to `test`, the driver's own default; it is the database a statement with no `database` key reads.

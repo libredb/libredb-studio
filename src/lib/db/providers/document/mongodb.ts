@@ -346,6 +346,17 @@ const MAX_NESTED_FIELD_DEPTH = 3;
  */
 const MAX_INFERRED_FIELDS = 200;
 
+/**
+ * Longest the driver may keep selecting a server before `connect()` gives up, in ms.
+ * The driver retries server selection until this elapses, and a refused connection is
+ * retried the same way, so reusing the pool's 60 s `acquireTimeout` made a mistyped
+ * port show a spinner for a minute where other engines answer in well under a second
+ * (#1458). Ten seconds still covers replica-set and SRV discovery on a healthy
+ * cluster, which settles in a second or two. A smaller configured `acquireTimeout`
+ * still wins, so the pool setting can only tighten this bound, never loosen it.
+ */
+const SERVER_SELECTION_TIMEOUT_MS = 10_000;
+
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -985,7 +996,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         minPoolSize: this.poolConfig.min,
         maxIdleTimeMS: this.poolConfig.idleTimeout,
         connectTimeoutMS: this.poolConfig.acquireTimeout,
-        serverSelectionTimeoutMS: this.poolConfig.acquireTimeout,
+        serverSelectionTimeoutMS: Math.min(this.poolConfig.acquireTimeout, SERVER_SELECTION_TIMEOUT_MS),
         ...this.buildTLSOptions(),
       };
 

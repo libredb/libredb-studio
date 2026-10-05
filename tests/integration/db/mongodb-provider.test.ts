@@ -780,6 +780,35 @@ describe("MongoDBProvider", () => {
   });
 
   // --------------------------------------------------------------------------
+  // Connect timeouts
+  // --------------------------------------------------------------------------
+
+  describe("the timeouts handed to the driver", () => {
+    // The driver retries server selection until `serverSelectionTimeoutMS`, so a closed
+    // port only answers ECONNREFUSED once it elapses. It used to follow the pool's 60 s
+    // `acquireTimeout`, a minute-long spinner for a mistyped port (#1458).
+    test("bounds server selection at 10 s by default, though the pool default is 60 s", async () => {
+      await provider.connect();
+      expect(lastMongoOptions.serverSelectionTimeoutMS).toBe(10_000);
+      expect(lastMongoOptions.connectTimeoutMS).toBe(60_000);
+    });
+
+    test("lets a smaller pool acquire timeout tighten the bound", async () => {
+      provider = new MongoDBProvider(baseConfig, { pool: { acquireTimeout: 5_000 } });
+      await provider.connect();
+      expect(lastMongoOptions.serverSelectionTimeoutMS).toBe(5_000);
+      expect(lastMongoOptions.connectTimeoutMS).toBe(5_000);
+    });
+
+    test("does not let a larger pool acquire timeout loosen the bound", async () => {
+      provider = new MongoDBProvider(baseConfig, { pool: { acquireTimeout: 120_000 } });
+      await provider.connect();
+      expect(lastMongoOptions.serverSelectionTimeoutMS).toBe(10_000);
+      expect(lastMongoOptions.connectTimeoutMS).toBe(120_000);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // TLS
   // --------------------------------------------------------------------------
 
