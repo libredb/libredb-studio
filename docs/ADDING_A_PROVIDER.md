@@ -846,8 +846,10 @@ fallback.
 Returned by `prepareQuery()`. The query route uses it directly:
 
 ```typescript
-// In /api/db/query/route.ts — no type checks needed:
-const provider = await getOrCreateProvider(connection);
+// In /api/db/query/route.ts — no type checks needed. The third argument is the server-derived
+// file-access posture: every route that opens a handle passes it, so a DuckDB handle opens under
+// the caller's posture (editorExecutionContext in src/lib/api/execution-context.ts).
+const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
 const prepared = provider.prepareQuery(sql, { limit, offset, unlimited });
 const result = await provider.query(prepared.query);
 ```

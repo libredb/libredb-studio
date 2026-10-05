@@ -1161,11 +1161,11 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 48 hits, re-measured 2026-10-05. Fifteen of
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 48 hits, re-measured 2026-10-05. Sixteen of
 them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`,
-the agent routes' pattern). Thirty-one write out the same five-key object - `getSession`, `signJWT`,
+the agent routes' pattern). Thirty write out the same five-key object - `getSession`, `signJWT`,
 `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token
-nothing reads, and one of those thirty-one is `tests/helpers/object-edit-route-harness.ts`, a shared
+nothing reads, and one of those thirty is `tests/helpers/object-edit-route-harness.ts`, a shared
 harness that could have been the factory and copied the stub instead. The remaining two write a
 shorter stub of their own, one with two keys and one with a single `getSession`.
 
@@ -2579,10 +2579,10 @@ Not fixed there: none of the six files is part of that work.
 
 `getOrCreateProvider` in `src/lib/db/factory.ts` keys its cache per connection record and never borrows, so two different records that name the same DuckDB file each open a read-write `DuckDBInstance` on it: two users' own connections, say, or an admin-only seed and a user's connection naming its file.
 On Linux and macOS each handle keeps its own catalog, and whichever closes last checkpoints over the other's committed rows; on Windows the second open is refused (`docs/providers/duckdb.md` section 3.8).
-It predates the DuckDB file-access posture: `main` before B1/K1 behaves the same for two records, and B1/K1 removed only the one-record case, a seed every role can use, by giving that record one posture.
+It predates the DuckDB file-access posture: `main` before non-admin DuckDB file access behaves the same for two records, and non-admin DuckDB file access removed only the one-record case, a seed every role can use, by giving that record one posture.
 Test Connection and the agent's operations reads borrow the open handle instead, so the gap is the editor's own cache.
 
-Found while fixing the B1/K1 review findings.
+Found while fixing the non-admin DuckDB file access review findings.
 
 **Done when:** a second record naming a file the cache already holds is served without a second read-write handle, or is refused with a sentence that names the open one, measured on Linux and on Windows.
 
