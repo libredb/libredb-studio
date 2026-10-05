@@ -57,18 +57,30 @@ import { offersSqlExport } from "@/lib/db/types";
  * drift between two spellings of one list is what put the delimiter options out of
  * step with the writers before.
  */
-const RESULT_FORMATS: readonly {
+export type ResultFormatEntry = {
   readonly format: ResultExportFormat;
   readonly label: string;
   readonly csvDelimiter?: CsvDelimiter;
-}[] = [
+  /** Absent means both destinations; `false` is file export only (XLSX is binary). */
+  readonly clipboard?: false;
+};
+
+export const RESULT_FORMATS: readonly ResultFormatEntry[] = [
   { format: "csv", label: "CSV" },
   { format: "csv", label: "CSV (semicolon)", csvDelimiter: ";" },
   { format: "csv", label: "CSV (tab)", csvDelimiter: "\t" },
   { format: "json", label: "JSON" },
+  { format: "markdown", label: "Markdown" },
+  { format: "html", label: "HTML" },
+  { format: "xlsx", label: "XLSX", clipboard: false },
   { format: "sql-insert", label: "SQL INSERT" },
   { format: "sql-ddl", label: "DDL (CREATE TABLE)" },
 ];
+
+/** The entries the clipboard menu offers: every format but the binary-only ones. */
+export function clipboardResultFormats(entries: readonly ResultFormatEntry[]): readonly ResultFormatEntry[] {
+  return entries.filter((entry) => entry.clipboard !== false);
+}
 
 /** The two formats that write a SQL table, offered only where the dialect says they apply (`offersSqlExport`, BACKLOG U69). */
 const SQL_TABLE_FORMATS: ReadonlySet<ResultExportFormat> = new Set<ResultExportFormat>(["sql-insert", "sql-ddl"]);
@@ -542,7 +554,7 @@ export const BottomPanel = React.memo(function BottomPanel({
                   answer than a file does, having no name to carry a caveat.
                 */}
                 <DropdownMenuLabel className="text-xs font-normal text-fg-muted">To clipboard</DropdownMenuLabel>
-                {resultFormats.map((entry) => (
+                {clipboardResultFormats(resultFormats).map((entry) => (
                   <DropdownMenuItem
                     key={`copy-${entry.label}`}
                     onClick={() => runResultFormat(onCopyResults, entry)}

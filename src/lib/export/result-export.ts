@@ -3,7 +3,9 @@ import { isBareIdentifier, quoteIdentifier } from "@/lib/sql/identifier";
 import { quoteLiteral } from "@/lib/sql/values";
 import { asBytes, binaryText } from "./binary";
 import { cellOf, resolveColumns, toCsv, type CsvDelimiter } from "./csv";
+import { htmlTable } from "./html";
 import { binaryCellsAsHex, jsonText } from "./json";
+import { markdownTable } from "./markdown";
 import { resolveUpdateTarget } from "@/lib/sql/update-target";
 import { cqlFrozenNested, typedLiteral, UnwritableValue } from "./typed-literals";
 import { isNonFiniteWord, nonFiniteWord, type NonFiniteWord } from "@/lib/non-finite";
@@ -18,7 +20,10 @@ import { isNonFiniteWord, nonFiniteWord, type NonFiniteWord } from "@/lib/non-fi
  * masking) is decided by the caller and arrives here as `rows`.
  */
 
-export type ResultExportFormat = "csv" | "json" | "sql-insert" | "sql-ddl";
+export type ResultExportFormat = "csv" | "json" | "sql-insert" | "sql-ddl" | "markdown" | "html" | "xlsx";
+
+/** The formats whose output is text, built synchronously by `buildResultExport`. */
+export type TextExportFormat = Exclude<ResultExportFormat, "xlsx">;
 
 export interface ResultExportSource {
   /** The rows to write, already masked if the caller masks. */
@@ -44,11 +49,8 @@ export interface ResultExportSource {
   csvDelimiter?: CsvDelimiter;
 }
 
-export interface ResultExportFile {
-  content: string;
-  mimeType: string;
-  extension: string;
-}
+export type ResultTextFile = { content: string; mimeType: string; extension: string; binary?: undefined };
+export type ResultXlsxFile = { content: Blob; mimeType: string; extension: string; binary: true };
 
 /** The table name used when the tab's own name cannot safely be one. */
 export const FALLBACK_TABLE_NAME = "table_name";
@@ -1044,9 +1046,17 @@ function exportTableName(source: ResultExportSource): string {
 }
 
 /** Build the file for `format`. The caller owns naming it and handing it to the browser. */
-export function buildResultExport(format: ResultExportFormat, source: ResultExportSource): ResultExportFile {
+export function buildResultExport(format: TextExportFormat, source: ResultExportSource): ResultTextFile {
   const { rows, dialect } = source;
   const columns = resolveColumns(rows, source.fields);
+
+  if (format === "markdown") {
+    return { content: markdownTable(rows, columns), mimeType: "text/markdown;charset=utf-8", extension: "md" };
+  }
+
+  if (format === "html") {
+    return { content: htmlTable(rows, columns), mimeType: "text/html;charset=utf-8", extension: "html" };
+  }
 
   if (format === "json") {
     return { content: jsonText(rows.map(binaryCellsAsHex), 2), mimeType: "application/json", extension: "json" };
@@ -1058,7 +1068,7 @@ export function buildResultExport(format: ResultExportFormat, source: ResultExpo
     return { content: toCsv(rows, columns, source.csvDelimiter), mimeType: "text/csv;charset=utf-8", extension: "csv" };
   }
 
-  const sql = (content: string): ResultExportFile => ({ content, mimeType: "text/sql", extension: "sql" });
+  const sql = (content: string): ResultTextFile => ({ content, mimeType: "text/sql", extension: "sql" });
   // A statement with no column list parses nowhere: `CREATE TABLE t ()` and
   // `INSERT INTO t () VALUES ()` are both errors, and a 0-byte file says nothing
   // about why it is empty. A comment is valid SQL in every dialect here.

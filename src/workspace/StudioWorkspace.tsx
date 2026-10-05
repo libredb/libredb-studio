@@ -27,9 +27,15 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
 import { lazyRetry } from "@/lib/lazy";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
-import { buildResultExport, type ResultExportFormat } from "@/lib/export/result-export";
+import {
+  buildResultExport,
+  type ResultExportFormat,
+  type ResultExportSource,
+  type TextExportFormat,
+} from "@/lib/export/result-export";
+import { buildXlsxExport } from "@/lib/export/xlsx";
 import { writeToClipboard } from "@/components/copy-button";
-import { downloadText } from "@/lib/export/download";
+import { downloadBlob, downloadText } from "@/lib/export/download";
 
 // The ERD is the largest thing this shell can mount (`@xyflow/react` + the elk layout
 // engine + the snapdom capture), and it is mounted only while `showDiagram` is true.
@@ -346,35 +352,47 @@ export function StudioWorkspace({
   );
 
   // === Export results (shared writers; this shell applies no masking) ===
+  const buildExportSource = useCallback((): ResultExportSource | null => {
+    if (!tabMgr.currentTab.result) return null;
+    return {
+      rows: tabMgr.currentTab.result.rows,
+      fields: tabMgr.currentTab.result.fields,
+      tabName: tabMgr.currentTab.name,
+      // The statement that fetched these rows names their table when it reads exactly one (#1386).
+      query: tabMgr.currentTab.resultQuery,
+      // Was missing from this callback's dependencies, so a SQL export written
+      // after the host switched connections quoted its literals for whichever
+      // engine happened to be active on the first render.
+      dialect: conn.activeConnection?.type,
+      // The host's own declared column types (`use-query-adapter` carries them),
+      // which the DDL form prefers over a type guessed from a value.
+      columnTypes: tabMgr.currentTab.result.columnTypes,
+    };
+  }, [tabMgr.currentTab, conn.activeConnection?.type]);
+
   const buildResultFile = useCallback(
-    (format: ResultExportFormat, csvDelimiter?: CsvDelimiter) => {
-      if (!tabMgr.currentTab.result) return null;
-      return buildResultExport(format, {
-        rows: tabMgr.currentTab.result.rows,
-        fields: tabMgr.currentTab.result.fields,
-        tabName: tabMgr.currentTab.name,
-        // The statement that fetched these rows names their table when it reads exactly one (#1386).
-        query: tabMgr.currentTab.resultQuery,
-        // Was missing from this callback's dependencies, so a SQL export written
-        // after the host switched connections quoted its literals for whichever
-        // engine happened to be active on the first render.
-        dialect: conn.activeConnection?.type,
-        // The host's own declared column types (`use-query-adapter` carries them),
-        // which the DDL form prefers over a type guessed from a value.
-        columnTypes: tabMgr.currentTab.result.columnTypes,
-        csvDelimiter,
-      });
+    (format: TextExportFormat, csvDelimiter?: CsvDelimiter) => {
+      const source = buildExportSource();
+      if (source === null) return null;
+      return buildResultExport(format, { ...source, csvDelimiter });
     },
-    [tabMgr.currentTab, conn.activeConnection?.type],
+    [buildExportSource],
   );
 
   const exportResults = useCallback(
-    (format: ResultExportFormat, _hydrated?: unknown, csvDelimiter?: CsvDelimiter) => {
+    async (format: ResultExportFormat, _hydrated?: unknown, csvDelimiter?: CsvDelimiter) => {
+      if (format === "xlsx") {
+        const source = buildExportSource();
+        if (source === null) return;
+        const file = await buildXlsxExport(source);
+        downloadBlob(file.content, `query_result_export.${file.extension}`);
+        return;
+      }
       const file = buildResultFile(format, csvDelimiter);
       if (file === null) return;
       downloadText(file.content, file.mimeType, `query_result_export.${file.extension}`);
     },
-    [buildResultFile],
+    [buildExportSource, buildResultFile],
   );
 
   /**
@@ -391,6 +409,9 @@ export function StudioWorkspace({
    */
   const copyResults = useCallback(
     (format: ResultExportFormat, _hydrated?: unknown, csvDelimiter?: CsvDelimiter) => {
+      // XLSX is binary and the clipboard path is text-only; the menu never offers it
+      // here, so a stray call must not reach `writeToClipboard` with a Blob.
+      if (format === "xlsx") return;
       const file = buildResultFile(format, csvDelimiter);
       if (file === null) return;
       void writeToClipboard(file.content).then((copied) => {

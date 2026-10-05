@@ -1660,3 +1660,32 @@ describe("resultExportFileName", () => {
     expect(name).toBe(`agent_run_${"r".repeat(64)}_export.csv`);
   });
 });
+
+describe("buildResultExport — markdown and html", () => {
+  test("writes a Markdown table with the shared mime type and extension", () => {
+    const file = buildResultExport("markdown", source());
+    expect(file.content).toBe("| id | name |\n| --- | --- |\n| 1 | Ada |");
+    expect(file.mimeType).toBe("text/markdown;charset=utf-8");
+    expect(file.extension).toBe("md");
+  });
+
+  test("writes an HTML table with the shared mime type and extension", () => {
+    const file = buildResultExport("html", source());
+    expect(file.content).toContain("<tr><th>id</th><th>name</th></tr>");
+    expect(file.content).toContain("<tr><td>1</td><td>Ada</td></tr>");
+    expect(file.mimeType).toBe("text/html;charset=utf-8");
+    expect(file.extension).toBe("html");
+  });
+
+  test("ignores the dialect for the two text formats, which name no engine", () => {
+    const markdown = buildResultExport("markdown", source({ dialect: "oracle" }));
+    const html = buildResultExport("html", source({ dialect: "mssql" }));
+    expect(markdown.content).toBe("| id | name |\n| --- | --- |\n| 1 | Ada |");
+    expect(html.content).toContain("<tr><td>1</td><td>Ada</td></tr>");
+  });
+
+  test("returns a text file, never a binary one", () => {
+    expect(buildResultExport("markdown", source()).binary).toBeUndefined();
+    expect(buildResultExport("html", source()).binary).toBeUndefined();
+  });
+});
