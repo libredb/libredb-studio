@@ -70,10 +70,10 @@ export async function getManagedConnections(roles: string[]): Promise<ManagedCon
   /*
     The SQLite sample leads the built-ins, and the order is the point: a client with
     no persisted active connection selects the first of this list, so whichever sample
-    comes first is what a brand-new user lands on. Agent mode executes statements on
+    comes first is what a brand-new administrator lands on. Agent mode executes statements on
     PostgreSQL, SQLite, DuckDB and SQL Server; the LibreDB engine has no
     database-native read-only execution profile, so leading with it put every
-    zero-config user on the one connection an agent run can never execute
+    zero-config administrator on the one connection an agent run can never execute
     against. An operator's own seed config
     still leads both — those are already in `out`.
 
@@ -82,7 +82,7 @@ export async function getManagedConnections(roles: string[]): Promise<ManagedCon
     (NODE_ENV==='test' guard mirrors the existing pattern in src/lib/db/factory.ts.)
   */
   const sqliteSampleConsidered = process.env.NODE_ENV !== "test" || !!process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
-  if (isSqliteSampleEnabled() && sqliteSampleConsidered) {
+  if (isSqliteSampleEnabled() && sqliteSampleConsidered && roles.includes("admin")) {
     try {
       if (fs.existsSync(resolveSqliteSamplePath())) {
         out.push(buildSqliteSampleConnection());

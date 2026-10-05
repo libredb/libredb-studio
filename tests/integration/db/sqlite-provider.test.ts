@@ -4845,7 +4845,9 @@ describe("SQLiteProvider on a database file this process cannot write", () => {
       const db = new SQLiteProvider(makeSQLiteConfig({ database: file }));
       const connect = db.connect();
       await expect(connect).rejects.toBeInstanceOf(ConnectionError);
-      await expect(connect).rejects.toThrow(/^Failed to open SQLite database: unable to open database file$/);
+      await expect(connect).rejects.toThrow(
+        /^Failed to open SQLite database: (unable to open database file|EACCES: permission denied, lstat .*)$/,
+      );
       expect(db.isConnected()).toBe(false);
     });
 

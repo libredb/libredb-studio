@@ -30,7 +30,8 @@ function openToNonAdminRoles(connection: DatabaseConnection): boolean {
  * `getOrCreateProvider` (and `createDatabaseProvider` on the routes that build their own provider),
  * which hands it to the provider and folds it into the handle cache key.
  *
- * Only DuckDB reads the one field it sets. `false` opens the handle with
+ * SQLite and DuckDB read the field it sets. SQLite refuses a denied connection because its
+ * drivers cannot confine statement-level file access. For DuckDB, `false` opens the handle with
  * `enable_external_access: 'false'`, so no statement reaches the network, or a file other than the
  * database's own and the handle's private temp directory, while that database stays writable; `true`
  * keeps the full editor reach. It closes statement-level reach only: the database path itself is

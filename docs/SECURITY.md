@@ -722,3 +722,15 @@ bun run security:check   # the drift guard CI runs
 bun run test             # includes tests/security/
 bun run test:e2e         # includes the CSP verification against a real browser
 ```
+
+### Embedded file connection boundaries
+
+SQLite, DuckDB and LibreDB connection targets cannot name reserved server state or
+credential files, including filesystem aliases. Other database files in the same directory
+remain usable. These checks apply to every role and are checked before opening the target.
+
+SQLite connections require trusted file access. Studio denies them to non-admin callers
+and on managed connections shared with non-admin roles, including agent and MCP usage.
+Unlike DuckDB, SQLite's adapters cannot confine statement-level access to one database.
+The cached provider factory requires embedders to explicitly grant trusted SQLite access
+with `{ allowExternalFileAccess: true }` in the server-owned execution context.

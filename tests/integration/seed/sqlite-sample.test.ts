@@ -151,7 +151,7 @@ describe("sqlite-sample", () => {
     expect(conn.id).toBe(`seed:${SQLITE_SAMPLE_SEED_ID}`);
     expect(conn.type).toBe("sqlite");
     expect(conn.managed).toBe(false);
-    expect(conn.roles).toEqual(["*"]);
+    expect(conn.roles).toEqual(["admin"]);
     expect(conn.name).toBe("Sample (Employees)");
     expect(conn.database).toBe(resolveSqliteSamplePath());
   });

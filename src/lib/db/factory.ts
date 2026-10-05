@@ -740,7 +740,7 @@ export async function getOrCreateProvider(
   }
   // The DuckDB editor file-access posture, server-derived (non-admin DuckDB file access). A definite boolean, so the
   // handle it opens and the key it is cached under agree, and absent reads as deny (fail closed).
-  // Only DuckDB reads it; the cache key and the single-writer borrow ignore it for other engines.
+  // SQLite and DuckDB read it; engines without that capability ignore it.
   const allowExternalFileAccess = execution.allowExternalFileAccess === true;
   const cacheKey = await providerCacheKey(connection, allowExternalFileAccess);
 

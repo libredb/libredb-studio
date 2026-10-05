@@ -26,14 +26,14 @@ test("an expired session sends the user to sign in and back to where they were",
   await page.goto("/login");
   await signIn(page);
   await page.waitForURL("/");
-  await page.getByText("Sample (Employees)", { exact: true }).first().click();
+  await page.getByText("Sample (LibreDB)", { exact: true }).first().click();
   await page.waitForFunction(
     () =>
       ((window as unknown as { monaco?: { editor: { getEditors(): unknown[] } } }).monaco?.editor.getEditors().length ??
         0) > 0,
   );
-  await runQuery(page, "SELECT 1 AS one");
-  await expect(page.getByText("one", { exact: true }).first()).toBeVisible({ timeout: 30_000 });
+  await runQuery(page, "prefix users:");
+  await expect(page.getByText("Ada").filter({ visible: true }).first()).toBeVisible({ timeout: 30_000 });
 
   const expired = await new SignJWT({ role: "user", username: "user@libredb.org" })
     .setProtectedHeader({ alg: "HS256" })
@@ -44,7 +44,7 @@ test("an expired session sends the user to sign in and back to where they were",
   await context.addCookies([{ ...cookie, value: expired }]);
 
   const refused = page.waitForResponse((response) => response.url().endsWith("/api/db/query"));
-  await runQuery(page, "SELECT 2 AS two");
+  await runQuery(page, "prefix articles:");
   const response = await refused;
   expect(response.status()).toBe(401);
   expect(await response.json()).toEqual({ error: "Session expired. Sign in again.", code: "AUTH_REQUIRED" });

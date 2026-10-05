@@ -38,7 +38,7 @@ describe("getManagedConnections: sqlite embedded sample", () => {
     const file = useTempSamplePath();
     await seedSqliteSampleFile(file);
 
-    const conns = await getManagedConnections(["user"]);
+    const conns = await getManagedConnections(["admin"]);
     const sample = conns.find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID);
     expect(sample).toBeDefined();
     expect(sample?.type).toBe("sqlite");
@@ -70,7 +70,7 @@ describe("getManagedConnections: sqlite embedded sample", () => {
     await seedSampleFile(libredbFile);
 
     try {
-      const seedIds = (await getManagedConnections(["user"])).map((c) => c.seedId);
+      const seedIds = (await getManagedConnections(["admin"])).map((c) => c.seedId);
       expect(seedIds).toContain(SAMPLE_SEED_ID);
       expect(seedIds.indexOf(SQLITE_SAMPLE_SEED_ID)).toBeLessThan(seedIds.indexOf(SAMPLE_SEED_ID));
     } finally {
@@ -80,7 +80,7 @@ describe("getManagedConnections: sqlite embedded sample", () => {
 
   test("omits the sample while the file does not exist", async () => {
     useTempSamplePath(); // path set, file never seeded
-    const conns = await getManagedConnections(["user"]);
+    const conns = await getManagedConnections(["admin"]);
     expect(conns.find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)).toBeUndefined();
   });
 
@@ -89,14 +89,14 @@ describe("getManagedConnections: sqlite embedded sample", () => {
     await seedSqliteSampleFile(file);
     process.env.SQLITE_EMBEDDED_SAMPLE = "false";
 
-    const conns = await getManagedConnections(["user"]);
+    const conns = await getManagedConnections(["admin"]);
     expect(conns.find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)).toBeUndefined();
   });
 
   test("in test runs, only considers the sample when an explicit path override is set", async () => {
     // No SQLITE_EMBEDDED_SAMPLE_PATH: a real ./data/sample-employees.db (if any)
     // must not perturb unrelated suites — mirrors the libredb sample guard.
-    const conns = await getManagedConnections(["user"]);
+    const conns = await getManagedConnections(["admin"]);
     expect(conns.find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)).toBeUndefined();
   });
 });
@@ -117,4 +117,12 @@ describe("getPendingSeeds", () => {
     process.env.SQLITE_EMBEDDED_SAMPLE = "false";
     expect(getPendingSeeds()).toEqual([]);
   });
+});
+
+test("the SQLite sample is omitted for non-admin roles", async () => {
+  const file = useTempSamplePath();
+  await seedSqliteSampleFile(file);
+  for (const roles of [["user"], ["*"], []]) {
+    expect((await getManagedConnections(roles)).find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)).toBeUndefined();
+  }
 });

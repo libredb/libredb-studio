@@ -353,7 +353,7 @@ const nodeEnvBefore = process.env.NODE_ENV;
 (process.env as Record<string, string>).NODE_ENV = "production";
 const {
   createDatabaseProvider,
-  getOrCreateProvider,
+  getOrCreateProvider: rawGetOrCreateProvider,
   removeProvider,
   clearProviderCache,
   getProviderCacheStats,
@@ -366,6 +366,16 @@ const {
   withOneShotTunnel,
   assertReadOnlyHonoured,
 } = await import("@/lib/db/factory");
+// Existing SQLite cache tests exercise trusted callers. Explicitly grant their file posture;
+// denied callers are tested separately against the unwrapped factory below.
+function getOrCreateProvider(...args: Parameters<typeof rawGetOrCreateProvider>) {
+  const [connection, options, execution] = args;
+  return rawGetOrCreateProvider(
+    connection,
+    options,
+    execution ?? (connection.type === "sqlite" ? { allowExternalFileAccess: true } : {}),
+  );
+}
 if (nodeEnvBefore === undefined) {
   delete (process.env as Record<string, string>).NODE_ENV;
 } else {
@@ -3000,4 +3010,18 @@ describe("a tunnelled provider fingerprints the far end (X23)", () => {
     });
     expect(seen).toBe(await connectionFingerprint(stored));
   });
+});
+
+test("a denied SQLite caller cannot borrow a cached administrator handle", async () => {
+  const connection = makeConnection("sqlite", { database: ":memory:" });
+  const trusted = await getOrCreateProvider(connection, {}, { allowExternalFileAccess: true });
+  try {
+    await expect(getOrCreateProvider(connection, {}, { allowExternalFileAccess: false })).rejects.toThrow(
+      "require an administrator",
+    );
+    expect(trusted.isConnected()).toBe(true);
+    expect((await trusted.query("SELECT 1 AS value")).rows).toEqual([{ value: 1 }]);
+  } finally {
+    clearProviderCache();
+  }
 });

@@ -48,13 +48,15 @@ test.describe("Content-Security-Policy against the real asset surface", () => {
     expect(loginPolicy).toContain("frame-ancestors 'none'");
     expect(loginPolicy).toContain("worker-src 'self'");
 
-    await page.locator('input[type="email"]').fill("user@libredb.org");
-    await page.locator('input[type="password"]').fill("test-user");
+    await page.locator('input[type="email"]').fill("admin@libredb.org");
+    await page.locator('input[type="password"]').fill("test-admin");
     // The login document has its own violation array; assert it before navigating away.
     expect(await readViolations(page)).toEqual([]);
 
     await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL("/");
+    // /admin redirects to /admin/overview; wait for that landing, or the goto below races the redirect.
+    await page.waitForURL("**/admin/overview");
+    await page.goto("/");
 
     // Monaco: script-src, style-src (the db-dark theme injects <style>), font-src (codicons).
     await expect(page.locator(".monaco-editor").first()).toBeVisible({ timeout: 20_000 });
@@ -75,7 +77,7 @@ test.describe("Content-Security-Policy against the real asset surface", () => {
       if (!monaco) throw new Error("monaco global not found");
       monaco.editor.getEditors()[0].setValue("SELECT COUNT(*) AS employee_count FROM employee");
     });
-    await page.getByRole("button", { name: "RUN" }).click();
+    await page.getByRole("button", { name: "RUN", exact: true }).click();
     await expect(page.locator("text=employee_count").first()).toBeVisible({ timeout: 20_000 });
 
     // worker-src: the ELK layout worker runs when the diagram opens.

@@ -10,7 +10,7 @@
  * nothing the workspace needs comes from another host.
  *
  * Runs under playwright.config.ts's "chromium-offline-editor" project, against its own server
- * process, not the shared one every other spec uses. It logs in as the same user@libredb.org
+ * process, not the shared one every other spec uses. It logs in as the same admin@libredb.org
  * account as everything else in this suite and asserts on the query's actual result value, so it
  * is the one spec that visibly breaks if that account's "query" rate-limit bucket
  * (src/lib/api/rate-limit.ts) is already spent by the ~30 other tests' auto-hydration on the
@@ -18,12 +18,14 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 
-async function loginAsUser(page: Page): Promise<void> {
+async function loginAsAdmin(page: Page): Promise<void> {
   await page.goto("/login");
-  await page.locator('input[type="email"]').fill("user@libredb.org");
-  await page.locator('input[type="password"]').fill("test-user");
+  await page.locator('input[type="email"]').fill("admin@libredb.org");
+  await page.locator('input[type="password"]').fill("test-admin");
   await page.getByRole("button", { name: "Sign In" }).click();
-  await page.waitForURL("/");
+  // /admin redirects to /admin/overview; wait for that landing, or the goto below races the redirect.
+  await page.waitForURL("**/admin/overview");
+  await page.goto("/");
 }
 
 test.describe("Workspace with all off-origin requests blocked", () => {
@@ -43,7 +45,7 @@ test.describe("Workspace with all off-origin requests blocked", () => {
       return route.abort();
     });
 
-    await loginAsUser(page);
+    await loginAsAdmin(page);
 
     // The editor itself: this is what the CDN dependency used to break.
     await expect(page.locator(".monaco-editor").first()).toBeVisible({ timeout: 20_000 });
@@ -63,7 +65,7 @@ test.describe("Workspace with all off-origin requests blocked", () => {
       if (!monaco) throw new Error("monaco global not found");
       monaco.editor.getEditors()[0].setValue("SELECT COUNT(*) AS employee_count FROM employee");
     });
-    await page.getByRole("button", { name: "RUN" }).click();
+    await page.getByRole("button", { name: "RUN", exact: true }).click();
 
     await expect(page.locator("text=employee_count").first()).toBeVisible({ timeout: 20_000 });
     await expect(page.locator("text=1000").first()).toBeVisible({ timeout: 5_000 });

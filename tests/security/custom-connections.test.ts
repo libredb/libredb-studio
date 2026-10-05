@@ -304,7 +304,9 @@ describe("the controls: the detector sees a build, and a seed still opens", () =
       seedFile,
       JSON.stringify({
         version: "1",
-        connections: [{ id: "shop", name: "Shop", type: "sqlite", database: shopFile, roles: ["*"], managed: false }],
+        connections: [
+          { id: "shop", name: "Shop", type: "sqlite", database: shopFile, roles: ["admin"], managed: false },
+        ],
       }),
     );
     process.env.SEED_CONFIG_PATH = seedFile;

@@ -31,7 +31,7 @@ const RUN_TIMEOUT_MS = 300_000;
 */
 const ENABLED = process.env.AGENT_MODEL_E2E === "1";
 
-const EMAIL = process.env.E2E_EMAIL ?? "user@libredb.org";
+const EMAIL = process.env.E2E_EMAIL ?? "admin@libredb.org";
 const PASSWORD = process.env.E2E_PASSWORD ?? "";
 
 /** The surfaces, and the question each was measured with, so the UI run matches the API one. */
@@ -51,6 +51,7 @@ async function login(page: Page): Promise<void> {
   await page.locator('input[type="password"]').first().fill(PASSWORD);
   await page.locator('button[type="submit"]').first().click();
   await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 30_000 });
+  await page.goto("/");
 }
 
 /**
