@@ -112,12 +112,16 @@ test.describe("Functional smoke: XLSX export", () => {
 
     await page.locator(".monaco-editor, [data-testid='query-editor'], textarea").first().click();
     await page.keyboard.type(QUERY);
-    await page.getByRole("button", { name: "RUN" }).click();
+    // Scoped to the editor's own toolbar: the agent panel's "Run history" toggle also
+    // matches a bare "RUN" role-name query.
+    await page.getByTestId("studio-editor-top").getByRole("button", { name: "RUN", exact: true }).click();
 
     // The export menu appears only once the result is on screen.
     await expect(page.getByTestId("export-row-count")).toBeVisible({ timeout: 20_000 });
 
-    await page.getByRole("button", { name: /Export/ }).click();
+    // Scoped to the results panel: the connection card's own name ("Export E2E PG")
+    // also matches a bare /Export/ role-name query.
+    await page.getByTestId("studio-editor-bottom").getByRole("button", { name: /Export/ }).click();
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       page.getByRole("menuitem", { name: "Export as XLSX" }).click(),
