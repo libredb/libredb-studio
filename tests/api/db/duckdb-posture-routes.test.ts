@@ -250,6 +250,14 @@ describe("POST /api/admin/fleet-health passes the same posture for each connecti
     ).toEqual({ allowExternalFileAccess: false });
   });
 
+  test("an unmanaged copy of a seed every role can use is resolved, so its body cannot narrow the audience", async () => {
+    // A `managed: false` seed reaches the browser with its `seed:` id, and the dashboard sends that copy
+    // back. Its `roles: [admin]` is the body's claim; the operator offers the seed to every role.
+    expect(await fleetPosture({ ...SHARED_SEED_CLAIM.connection, roles: ["admin"] })).toEqual({
+      allowExternalFileAccess: false,
+    });
+  });
+
   test("a forged posture on the request or on a managed seed is ignored", async () => {
     const managedShared = {
       id: "seed:duck-shared",
