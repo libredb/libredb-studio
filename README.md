@@ -1,4 +1,6 @@
 <p align="center">
+
+[![Deploy to Railyard](https://app.railyard.run/deploy/badge)](https://app.railyard.run/deploy?repo=https://github.com/libredb/libredb-studio)
   <img src="public/logo.svg" width="200" alt="LibreDB Studio Logo" />
 </p>
 
