@@ -1722,6 +1722,7 @@ describe("a non-admin editor handle has no statement-level file or network reach
     provider = await nonAdmin(file);
 
     for (const [, sql] of fileRoutes(secret, join(workDir, "na-input.csv"))) {
+      // oxlint-disable-next-line no-await-in-loop -- one statement at a time on the one handle, as the editor sends them.
       await expect(provider.query(sql)).rejects.toThrow(/file system operations are disabled by configuration/);
     }
     // No scratch file the refused writes name was created.
@@ -1828,6 +1829,7 @@ describe("a non-admin editor handle has no statement-level file or network reach
       ["RESET enable_external_access", /Cannot enable external access while database is running/],
     ];
     for (const [sql, pattern] of refused) {
+      // oxlint-disable-next-line no-await-in-loop -- one statement at a time on the one handle, as the editor sends them.
       await expect(provider.query(sql)).rejects.toThrow(pattern);
     }
     expect((await provider.query("SELECT current_setting('enable_external_access') AS v")).rows).toEqual([

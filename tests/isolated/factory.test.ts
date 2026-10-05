@@ -1973,6 +1973,7 @@ describe("acquireExecutionProfileProvider", () => {
       const conn = await seedFileConnection();
 
       for (const readOnly of [true, false]) {
+        // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next call, and neither may reach the cache.
         const refusal: unknown = await getOrCreateProvider(conn, {}, { readOnly } as never).catch((e: unknown) => e);
         expect(refusal).toBeInstanceOf(DatabaseConfigError);
         expect((refusal as Error).message).toContain("takes no readOnly");
