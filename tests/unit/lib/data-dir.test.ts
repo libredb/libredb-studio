@@ -1,5 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import * as path from "path";
+import * as fs from "node:fs";
+import { tmpdir } from "node:os";
 import {
   DEFAULT_STORAGE_SQLITE_PATH,
   getDataDir,
@@ -64,12 +66,14 @@ describe("data-dir reserved storage paths", () => {
   });
 
   test("reservedStoragePaths lists the storage file and its WAL/SHM sidecars, resolved", () => {
-    process.env.STORAGE_SQLITE_PATH = "/var/lib/libredb/storage.db";
-    expect(reservedStoragePaths()).toEqual([
-      "/var/lib/libredb/storage.db",
-      "/var/lib/libredb/storage.db-wal",
-      "/var/lib/libredb/storage.db-shm",
-    ]);
+    const dir = fs.mkdtempSync(path.join(tmpdir(), "libredb-storage-path-"));
+    try {
+      process.env.STORAGE_SQLITE_PATH = path.join(dir, "storage.db");
+      const base = path.join(fs.realpathSync(dir), "storage.db");
+      expect(reservedStoragePaths()).toEqual([base, `${base}-wal`, `${base}-shm`]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("reservedStoragePaths resolves a relative configured path against the cwd", () => {

@@ -126,7 +126,7 @@ describe("seed/index with discovered connections", () => {
     const admin = await getManagedConnections(["admin"]);
     expect(admin.map((c) => c.seedId)).toEqual(["caprover-pg", SQLITE_SAMPLE_SEED_ID]);
     expect(admin.find((c) => c.seedId === "caprover-pg")?.literal).toBe(true);
-    expect((await getManagedConnections(["user"])).map((c) => c.seedId)).toEqual([SQLITE_SAMPLE_SEED_ID]);
+    expect((await getManagedConnections(["user"])).map((c) => c.seedId)).toEqual([]);
   });
 
   it("marks a discovered connection literal and leaves the file seeds and samples unmarked", async () => {

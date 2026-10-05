@@ -22,7 +22,7 @@ test.describe("Confirmation dialog Cancel colour", () => {
         if (theme === "light") {
           await page.addInitScript(() => window.localStorage.setItem("libredb-theme", "light"));
         }
-        await loginAsUser(page);
+        await loginAsAdmin(page);
       });
 
       test("Query Safety Check Cancel uses the fill token", async ({ page }) => {
@@ -68,14 +68,15 @@ async function expectFill(cancel: Locator, expected: string): Promise<void> {
   await expect.poll(() => cancel.evaluate((node) => getComputedStyle(node).backgroundColor)).toBe(expected);
 }
 
-async function loginAsUser(page: Page): Promise<void> {
+async function loginAsAdmin(page: Page): Promise<void> {
   await page.goto("/login");
   // The login page renders more than one field of each type. A bare type
   // selector is a strict-mode violation, same as e2e/agent-models.spec.ts.
-  await page.locator('input[type="email"]').first().fill("user@libredb.org");
-  await page.locator('input[type="password"]').first().fill("test-user");
+  await page.locator('input[type="email"]').first().fill("admin@libredb.org");
+  await page.locator('input[type="password"]').first().fill("test-admin");
   await page.locator('button[type="submit"]').first().click();
-  await page.waitForURL("/");
+  await page.waitForURL(/\/admin(?:\/.*)?$/);
+  await page.goto("/");
   await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 15_000 });
 }
 

@@ -10,7 +10,7 @@ test.describe("Chart axis labels", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
   test("timestamp ticks sit above the legend and inside the chart", async ({ page }) => {
-    await loginAsUser(page);
+    await loginAsAdmin(page);
 
     const sample = page.locator("text=Sample (Employees)").first();
     await expect(sample).toBeVisible({ timeout: 45_000 });
@@ -81,14 +81,15 @@ test.describe("Chart axis labels", () => {
   });
 });
 
-async function loginAsUser(page: Page): Promise<void> {
+async function loginAsAdmin(page: Page): Promise<void> {
   await page.goto("/login");
   // The login page renders more than one field of each type. A bare type
   // selector is a strict-mode violation, same as e2e/agent-models.spec.ts.
-  await page.locator('input[type="email"]').first().fill("user@libredb.org");
-  await page.locator('input[type="password"]').first().fill("test-user");
+  await page.locator('input[type="email"]').first().fill("admin@libredb.org");
+  await page.locator('input[type="password"]').first().fill("test-admin");
   await page.locator('button[type="submit"]').first().click();
-  await page.waitForURL("/");
+  await page.waitForURL(/\/admin(?:\/.*)?$/);
+  await page.goto("/");
   await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 15_000 });
 }
 

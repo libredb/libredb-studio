@@ -131,7 +131,7 @@ export function buildSqliteSampleConnection(): ManagedConnection {
     type: "sqlite",
     database: resolveSqliteSamplePath(),
     managed: false,
-    roles: ["*"],
+    roles: ["admin"],
     createdAt: new Date(0),
   };
 }

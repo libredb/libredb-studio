@@ -16,12 +16,13 @@ import { expect, test, type Page } from "@playwright/test";
 
 const SAMPLE_APPEAR_TIMEOUT = 45_000;
 
-async function loginAsUser(page: Page): Promise<void> {
+async function loginAsAdmin(page: Page): Promise<void> {
   await page.goto("/login");
-  await page.locator('input[type="email"]').fill("user@libredb.org");
-  await page.locator('input[type="password"]').fill("test-user");
+  await page.locator('input[type="email"]').fill("admin@libredb.org");
+  await page.locator('input[type="password"]').fill("test-admin");
   await page.getByRole("button", { name: "Sign In" }).click();
-  await page.waitForURL("/");
+  await page.waitForURL(/\/admin(?:\/.*)?$/);
+  await page.goto("/");
   await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 15_000 });
 }
 
@@ -38,7 +39,7 @@ async function runQuery(page: Page, sql: string): Promise<void> {
     if (!monaco) throw new Error("monaco global not found");
     monaco.editor.getEditors()[0].setValue(query);
   }, sql);
-  await page.getByRole("button", { name: "RUN" }).click();
+  await page.getByRole("button", { name: "RUN", exact: true }).click();
 }
 
 test.describe("SQLite EXPLAIN QUERY PLAN", () => {
@@ -48,7 +49,7 @@ test.describe("SQLite EXPLAIN QUERY PLAN", () => {
   test.describe.configure({ timeout: 120_000 });
 
   test.beforeEach(async ({ page }) => {
-    await loginAsUser(page);
+    await loginAsAdmin(page);
   });
 
   test("Explain tab renders a SCAN/SEARCH tree and hides the insights tab", async ({ page }) => {
@@ -67,7 +68,9 @@ test.describe("SQLite EXPLAIN QUERY PLAN", () => {
     // "10 rows" (StatsBar / BottomPanel toolbar) rather than a column header:
     // ResultsGrid virtualizes columns, so a header cell can resolve but report
     // not-visible depending on horizontal scroll/measurement state.
-    await expect(page.locator("text=10 rows").first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("10 rows", { exact: true }).filter({ visible: true }).first()).toBeVisible({
+      timeout: 20_000,
+    });
 
     await explainTab.click();
 

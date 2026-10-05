@@ -22,12 +22,13 @@ import { expect, test, type Page } from "@playwright/test";
 // up to 30s — allow the full window plus slack before calling it missing.
 const SAMPLE_APPEAR_TIMEOUT = 45_000;
 
-async function loginAsUser(page: Page): Promise<void> {
+async function login(page: Page, role: "admin" | "user" = "admin"): Promise<void> {
   await page.goto("/login");
-  await page.locator('input[type="email"]').fill("user@libredb.org");
-  await page.locator('input[type="password"]').fill("test-user");
+  await page.locator('input[type="email"]').fill(`${role}@libredb.org`);
+  await page.locator('input[type="password"]').fill(`test-${role}`);
   await page.getByRole("button", { name: "Sign In" }).click();
-  await page.waitForURL("/");
+  await page.waitForURL(role === "admin" ? /\/admin(?:\/.*)?$/ : "/");
+  if (role === "admin") await page.goto("/");
   await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 15_000 });
 }
 
@@ -44,7 +45,7 @@ async function runQuery(page: Page, sql: string): Promise<void> {
     if (!monaco) throw new Error("monaco global not found");
     monaco.editor.getEditors()[0].setValue(query);
   }, sql);
-  await page.getByRole("button", { name: "RUN" }).click();
+  await page.getByRole("button", { name: "RUN", exact: true }).click();
 }
 
 test.describe("Embedded sample connections", () => {
@@ -53,7 +54,7 @@ test.describe("Embedded sample connections", () => {
   test.describe.configure({ timeout: 120_000 });
 
   test.beforeEach(async ({ page }) => {
-    await loginAsUser(page);
+    await login(page);
   });
 
   test("both samples appear in the sidebar without a page refresh", async ({ page }) => {
@@ -84,4 +85,28 @@ test.describe("Embedded sample connections", () => {
 
     await expect(page.locator("text=Ada").first()).toBeVisible({ timeout: 20_000 });
   });
+});
+
+test("non-admin users receive LibreDB without the administrator-only SQLite sample", async ({ page }) => {
+  await login(page, "user");
+  await expect(page.locator("text=Sample (LibreDB)").first()).toBeVisible({ timeout: 15_000 });
+  const managed = await page.request.get("/api/connections/managed");
+  expect(managed.ok()).toBe(true);
+  const { connections } = await managed.json();
+  expect(connections.some((connection: { type: string }) => connection.type === "sqlite")).toBe(false);
+  await expect(page.locator("text=Sample (Employees)")).toHaveCount(0);
+  const refusal = await page.request.post("/api/db/test-connection", {
+    data: {
+      connection: {
+        id: "user-sqlite",
+        name: "User SQLite",
+        type: "sqlite",
+        database: ":memory:",
+        createdAt: new Date(0).toISOString(),
+      },
+      allowExternalFileAccess: true,
+    },
+  });
+  expect(refusal.status()).toBe(400);
+  expect((await refusal.json()).error).toContain("require an administrator");
 });

@@ -54,7 +54,7 @@ test("production deployment behind a path-preserving reverse proxy", async ({ pa
   const cookie = (await context.cookies()).find((value) => value.name === "auth-token");
   expect(cookie).toMatchObject({ path: prefix, httpOnly: true, sameSite: "Lax" });
 
-  await page.getByText("Sample (Employees)", { exact: true }).first().click();
+  await page.getByText("Sample (LibreDB)", { exact: true }).first().click();
   await page.waitForFunction(
     () =>
       ((window as unknown as { monaco?: { editor: { getEditors(): unknown[] } } }).monaco?.editor.getEditors().length ??
@@ -63,11 +63,10 @@ test("production deployment behind a path-preserving reverse proxy", async ({ pa
   await page.evaluate(() => {
     const monaco = (window as unknown as { monaco: { editor: { getEditors(): { setValue(value: string): void }[] } } })
       .monaco;
-    monaco.editor.getEditors()[0].setValue("SELECT COUNT(*) AS employee_count FROM employee");
+    monaco.editor.getEditors()[0].setValue("prefix users:");
   });
   await page.getByRole("button", { name: "RUN", exact: true }).click();
-  await expect(page.getByText("employee_count", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("1000", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Ada").filter({ visible: true }).first()).toBeVisible();
 
   const session = await page.evaluate(async (path) => (await fetch(`${path}/api/auth/me`)).json(), prefix);
   expect(session.user.role).toBe("user");

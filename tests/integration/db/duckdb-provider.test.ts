@@ -659,8 +659,9 @@ describeIf(
       try {
         provider = new DuckDBProvider(makeConfig({ database: file }));
 
-        await expect(provider.connect()).rejects.toThrow(`Failed to open DuckDB database ${file}: `);
-        await expect(provider.connect()).rejects.toThrow(/Permission denied/);
+        // Path identity validation may reject the file before DuckDB opens it (macOS).
+        await expect(provider.connect()).rejects.toThrow(/permission denied/i);
+        expect(provider.isConnected()).toBe(false);
       } finally {
         chmodSync(file, 0o644);
       }
