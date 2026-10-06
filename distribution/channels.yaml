@@ -824,7 +824,7 @@ channels:
   - id: zopdev-helm-charts
     name: ZopDev Helm Charts (helm.zop.dev, ZopDay)
     short_name: ZopDev Helm Charts
-    status: pending
+    status: live
     category: kubernetes-operators
     platforms: [kubernetes]
     runtime: channel_supplied
@@ -835,15 +835,18 @@ channels:
       sla: on_demand
     links:
       first_pr: https://github.com/zopdev/helm-charts/pull/322
+      catalog: https://helm.zop.dev
       upstream_repo: https://github.com/zopdev/helm-charts
     pin:
-      strategy: none
-      note: PR zopdev/helm-charts#322 is open, so nothing is listed yet. It is a chart of its own in their
-        repo, not a copy of ours, suggested by the ZopDay team (#1183). On merge, flip to live, add catalog
-        https://helm.zop.dev, and add a remote_file pin on
-        https://raw.githubusercontent.com/zopdev/helm-charts/main/charts/libredb-studio/Chart.yaml with
-        extract 'appVersion:\s*"(\d+\.\d+\.\d+)"'. A bump there is appVersion plus version, a Helm 3
-        package into docs/ and a regenerated docs/index.yaml.
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/zopdev/helm-charts/main/charts/libredb-studio/Chart.yaml
+      extract: 'appVersion:\s*"(\d+\.\d+\.\d+)"'
+      note: Merged in zopdev/helm-charts#322 (6 Oct 2026); chart v0.0.1 is served from
+        https://helm.zop.dev. It is a chart of its own in their repo, not a copy of ours, suggested by the
+        ZopDay team (#1183). The image tag comes from the top-level `version` value, which falls back to
+        appVersion, so a bump PR changes appVersion, `version` in values.yaml, values.schema.json and the
+        chart README, plus the chart version, then a Helm 3 package into docs/ and a regenerated
+        docs/index.yaml.
 
   - id: yunohost
     name: YunoHost app catalog

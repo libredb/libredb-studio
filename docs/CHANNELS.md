@@ -34,15 +34,15 @@ channel count.
 
 ## Coverage snapshot
 
-**43 channels · 35 live · 7 pending · 1 deprecated**
+**43 channels · 36 live · 6 pending · 1 deprecated**
 
-Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 6 · Kubernetes 4 · Cloud 14**
+Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 6 · Kubernetes 5 · Cloud 14**
 
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
 | Registries & releases | 2 | 0 | 0 |
 | Containers | 2 | 0 | 0 |
-| Kubernetes & operators | 3 | 1 | 0 |
+| Kubernetes & operators | 4 | 0 | 0 |
 | Package managers | 6 | 1 | 1 |
 | OS / desktop packages | 3 | 0 | 0 |
 | PaaS catalogs (listed) | 12 | 3 | 0 |
@@ -64,7 +64,7 @@ Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 6 · K
 | [Helm chart](https://artifacthub.io/packages/helm/libredb-studio/libredb-studio) | Kubernetes & operators | Kubernetes | live | Automated, every release | [HELM_CHART.md](HELM_CHART.md) |
 | [OperatorHub / OpenShift](https://operatorhub.io/operator/libredb-studio-operator) | Kubernetes & operators | Kubernetes | live | Automated PR, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Rancher Partner Charts](https://www.suse.com/pcsc/viewVersionPage?versionID=26969) | Kubernetes & operators | Kubernetes | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| [ZopDev Helm Charts](https://github.com/zopdev/helm-charts) | Kubernetes & operators | Kubernetes | pending | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [ZopDev Helm Charts](https://helm.zop.dev) | Kubernetes & operators | Kubernetes | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Chocolatey](https://community.chocolatey.org/packages/libredb-studio) | Package managers | Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [FlatPark (Flatpak)](https://flatpark.org/) | Package managers | Linux | live | Manual, every release | [packaging/flatpark/README.md](../packaging/flatpark/README.md) |
 | [Homebrew tap](https://github.com/libredb/homebrew-tap) | Package managers | Linux, macOS | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
