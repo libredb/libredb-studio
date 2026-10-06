@@ -1726,6 +1726,24 @@ describe("AgentRail", () => {
     );
   });
 
+  test("a run that reached its step limit says so on the status line, without pointing above it", async () => {
+    const failedLine = `${JSON.stringify({
+      kind: "event",
+      event: { kind: "run-finished", atMs: 1_002, status: "failed", stopReason: "turn-limit" },
+    })}\n`;
+    mockAgentFetch([OPENED_LINE, failedLine]);
+    const { getByTestId, findByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(getByTestId("agent-start"));
+    });
+
+    expect((await findByTestId("agent-failure-reason")).textContent).toBe(
+      "The run reached its step limit before it finished.",
+    );
+  });
+
   test("an answered run gets no failure line from its stop reason", async () => {
     const finishedLine = `${JSON.stringify({
       kind: "event",

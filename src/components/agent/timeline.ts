@@ -722,14 +722,26 @@ const WORKFLOW_WORDS: Readonly<Record<AgentRunWorkflowType, string>> = {
  * Only `model-stopped` differs. Every other ending is a shortfall in either mode: a
  * planning run that ran out of time or was cancelled produced no plan either.
  */
+const TURN_LIMIT_SENTENCE = "The run reached its step limit before it finished.";
+
 const AGENT_STOP_SENTENCES = {
   "report-composed": null,
   "model-stopped": "The model stopped without composing a cited report.",
   cancelled: "Stopped because it was cancelled.",
   "deadline-exceeded": "The run reached its time limit before it finished.",
   "model-timeout": "The model did not answer in time. Starting the run again is reasonable.",
-  "turn-limit": "The run reached its step limit before it finished. What it had gathered is above.",
+  "turn-limit": `${TURN_LIMIT_SENTENCE} What it had gathered is above.`,
 } as const satisfies Record<AgentRunStopReason, string | null>;
+
+/**
+ * The endings whose timeline sentence points at the entries above it, said without
+ * that clause for a surface that sits ABOVE the timeline: the answer card and the
+ * rail's status line. Read by `describeRunFailure` before `STOP_SENTENCES`, so the
+ * base wording lives once and only the position changes.
+ */
+const OFF_TIMELINE_STOP_SENTENCES: Readonly<Partial<Record<AgentRunStopReason, string>>> = {
+  "turn-limit": TURN_LIMIT_SENTENCE,
+};
 
 const STOP_SENTENCES: Readonly<Record<AgentRunMode, Record<AgentRunStopReason, string | null>>> = {
   agent: AGENT_STOP_SENTENCES,
@@ -884,13 +896,17 @@ function describeFailureReason(reason: AgentRunFailureReason): string {
  * The failure reason wins, as it does in `endingSentence`. Without one, a run the loop ended as
  * `failed` still says how: `model-timeout` and `deadline-exceeded` are on the record, and the
  * sentence is the one the timeline entry shows for the run's mode, from the same map, so the
- * card, the rail and the timeline cannot disagree. A run that did not fail never gets a stop
+ * card, the rail and the timeline cannot disagree. `turn-limit` reads its off-timeline
+ * wording, because "is above" is true of the timeline entry and false of the card and the
+ * rail, which sit above the timeline. A run that did not fail never gets a stop
  * sentence here, because the surfaces that read this are failure lines.
  */
 export function describeRunFailure(timeline: AgentRunTimeline): string | null {
   if (timeline.failureReason !== null) return describeFailureReason(timeline.failureReason);
   if (timeline.status !== "failed" || timeline.stopReason === null) return null;
-  return STOP_SENTENCES[timeline.mode]?.[timeline.stopReason] ?? null;
+  return (
+    OFF_TIMELINE_STOP_SENTENCES[timeline.stopReason] ?? STOP_SENTENCES[timeline.mode]?.[timeline.stopReason] ?? null
+  );
 }
 
 function describeRefusal(refusal: AgentToolRefusal): Omit<AgentTimelineItem, "id" | "atMs" | "tone"> {
