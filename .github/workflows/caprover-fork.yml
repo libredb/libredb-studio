@@ -33,9 +33,14 @@ name: CapRover Catalog Fork
 # token cannot fork across owners. Without it a run validates and pushes
 # nothing.
 #
-# Two jobs on purpose. `validate` runs the catalog's own npm tooling, which is
-# third-party code, and holds no secret. `push` holds the token and runs only
-# git, gh and the staging script from this repository.
+# No third-party code runs here. The catalog's own npm checks would execute
+# another repository's scripts and dependencies on the release tag's ref, and
+# code running in a job can write that ref's Actions cache, which later release
+# runs on the same tag restore (an npm publish retried on the tag, say). The
+# template tests below encode the catalog validator's rules instead, and the
+# catalog's own CI checks the pull request the member opens. `validate` holds no
+# secret; `push` holds the token and runs only git, gh and the staging script
+# from this repository.
 
 on:
   workflow_dispatch:
@@ -122,6 +127,11 @@ jobs:
           # version, so a tag that passes it stages that version.
           node scripts/sync-chart-version.mjs --check
 
+      - name: Run the template tests
+        # The catalog validator's rules (description length, instructions, the
+        # logo) and this repository's own, over both templates.
+        run: bun tests/run-tests.ts --jobs=1 tests/unit/caprover-template.test.ts
+
       - name: Read update.fork from distribution/channels.yaml
         id: settings
         env:
@@ -179,23 +189,6 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
             git -C catalog status --short
           fi
-
-      - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          # The version the catalog's own pull-request CI runs.
-          node-version: 20
-
-      - name: Validate with the catalog's own checks
-        working-directory: catalog
-        run: |
-          set -euo pipefail
-          # What the catalog's pull-request CI runs (its validate_apps.yml).
-          # --ignore-scripts: no dependency's install script runs on this runner.
-          npm ci --ignore-scripts
-          npm run validate_apps
-          npm run formatter
-          npm run build
 
   push:
     name: Push the branch to libredb/one-click-apps

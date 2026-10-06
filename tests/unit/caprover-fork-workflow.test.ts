@@ -97,12 +97,22 @@ describe("the CapRover catalog fork workflow", () => {
     expect(validate.outputs?.mode).toBe("${{ steps.settings.outputs.mode }}");
   });
 
-  test("validates with the catalog's own checks, with no install script and no token", () => {
-    const checks = stepRunning(validate, /npm run validate_apps/);
-    expect(checks?.run).toContain("npm ci --ignore-scripts");
-    expect(checks?.run).toContain("npm run formatter");
-    expect(checks?.run).toContain("npm run build");
-    // Only the presence check may name the secret in this job.
+  // The catalog's own npm checks would run another repository's scripts and
+  // dependencies on the release tag's ref, and code running in a job can write
+  // that ref's Actions cache, which a later release run on the tag restores.
+  test("runs no third-party code: neither npm nor a Node.js setup of its own", () => {
+    for (const step of [...steps(validate), ...steps(push)]) {
+      expect(step.run ?? "").not.toMatch(/\bnpm\b|\bnpx\b/);
+      expect(step.uses ?? "").not.toContain("setup-node");
+    }
+  });
+
+  test("runs the template tests, which encode the catalog validator's rules", () => {
+    const tests = stepRunning(validate, /caprover-template\.test\.ts/);
+    expect(tests?.run).toBe("bun tests/run-tests.ts --jobs=1 tests/unit/caprover-template.test.ts");
+  });
+
+  test("names the token only in a presence check in the job that stages", () => {
     expect(JSON.stringify(validate)).not.toContain("secrets.CAPROVER_CATALOG_TOKEN }}");
   });
 

@@ -150,7 +150,9 @@ The catalog's maintainer keeps version bumps manual: "When someone sends a PR we
 So a workflow prepares the branch, and a member tests it and opens the pull request.
 
 1. After each release, [`caprover-fork.yml`](../../.github/workflows/caprover-fork.yml) stages both templates and their logos, byte for byte from the release tag, on [`libredb/one-click-apps`](https://github.com/libredb/one-click-apps) as the branch `libredb-studio-<version>`.
-   It runs the catalog's own checks first (`npm ci`, `validate_apps`, `formatter`, `build`) and never opens a pull request.
+   It runs `tests/unit/caprover-template.test.ts` on the tag first, which encodes the catalog validator's rules, and never opens a pull request.
+   It runs none of the catalog's own npm checks: that would execute another repository's code on the release tag, whose Actions cache later release runs restore.
+   The catalog's CI runs them on the pull request, and a member can run them first in a clone of the catalog: `npm ci && npm run validate_apps && npm run formatter`.
 2. A member installs both staged templates on a CapRover: **Apps → One-Click Apps/Databases** → **`>> TEMPLATE <<`**, paste the raw file from the branch, and keep the default version.
 3. The member opens the pull request from the link in the run's summary, ticks the catalog's checklist from that test, and says what was tested.
    The summary lists every file the branch changes, so a change beside the version, such as a new logo, goes into the pull request's text too.
