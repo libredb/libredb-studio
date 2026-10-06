@@ -44,6 +44,7 @@ export const LIVE_CHANNELS: readonly ShowcaseChannel[] = [
   { id: "zopdev-helm-charts", label: "ZopDev Helm Charts", group: "kubernetes" },
   { id: "yunohost", label: "YunoHost", group: "paas" },
   { id: "rancher-partner", label: "Rancher Partner Charts", group: "kubernetes" },
+  { id: "railyard", label: "Railyard template catalog", group: "paas" },
   { id: "digitalocean", label: "DigitalOcean Marketplace", group: "paas" },
   { id: "gcp-marketplace", label: "Google Cloud Marketplace", group: "paas" },
   { id: "azure-marketplace", label: "Azure Marketplace", group: "paas" },

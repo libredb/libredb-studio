@@ -1767,15 +1767,14 @@ versions behind the catalog before anyone noticed
 ([#268](https://github.com/libredb/libredb-studio/issues/268)), and `chart:bump` now moves them with
 every release. **Dokploy**, **Kubero** and **Cosmos** keep only a README there -
 their descriptors are authored in the upstream catalog repo, so all three are pinned `remote_file`
-and a bump is an upstream PR with nothing to change here. **Eight catalog channels keep no
+and a bump is an upstream PR with nothing to change here. **Several catalog channels keep no
 descriptor here at all.** Two of them are pinned `remote_file` against the repository that does
 hold it — the Sealos template in `labring-actions/templates`, the Unraid CA template in
 `libredb/unraid-templates` — and both are documented under
 [App catalogs](#app-catalogs-unraid-sealos); TrueNAS SCALE is pinned the same way against
 `truenas/apps`, and CasaOS against `IceWhaleTech/CasaOS-AppStore`. The three open submissions (Umbrel, Easypanel, Portainer) have nothing to
 pin until their upstream PR merges, and each entry's note names the pin to add on that day.
-[Google Cloud Marketplace](#google-cloud-marketplace) is the one with nothing to pin even in
-principle: its artefacts are held in Google's Producer Portal and a private Artifact Registry.
+[Google Cloud Marketplace](#google-cloud-marketplace) and [Railyard](https://railyard.run/templates/libredb-studio) have nothing to pin even in principle: Google holds the artefacts in its Producer Portal and a private Artifact Registry, and Railyard keeps the template on its own side and says it builds `main` at deploy time.
 Neither Fly.io nor
 Render has a marketplace or template gallery to publish into, which is why the repo file itself is the
 deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none` for
