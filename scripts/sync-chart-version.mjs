@@ -175,10 +175,17 @@ export function bumpCaproverTemplate(template, version, file) {
 }
 
 /**
+ * A release candidate never becomes the catalog's default: while package.json
+ * carries a prerelease, the templates keep the last stable version, and only
+ * their shape is checked.
+ */
+const STABLE_VERSION = /^\d+\.\d+\.\d+$/;
+
+/**
  * Returns violation messages (empty = every pin equals pkgVersion). Skips
  * silently when deploy/caprover does not exist (test fixtures), like
- * operatorCopyViolations; a template missing from an existing directory is a
- * violation.
+ * operatorCopyViolations; a template missing from an existing directory, or one
+ * whose pins no longer parse, is a violation rather than a crash.
  */
 export function caproverTemplateViolations(root, pkgVersion) {
   if (!fs.existsSync(path.join(root, CAPROVER_DIR))) {
@@ -191,32 +198,50 @@ export function caproverTemplateViolations(root, pkgVersion) {
       violations.push(`${file}: missing`);
       continue;
     }
-    const { defaultValue, example } = parseCaproverVersions(fs.readFileSync(full, "utf8"), file);
-    if (defaultValue !== pkgVersion) {
+    let pins;
+    try {
+      pins = parseCaproverVersions(fs.readFileSync(full, "utf8"), file);
+    } catch (error) {
+      violations.push(error.message);
+      continue;
+    }
+    if (!STABLE_VERSION.test(pkgVersion)) {
+      continue;
+    }
+    if (pins.defaultValue !== pkgVersion) {
       violations.push(
-        `${file}: $$cap_version defaultValue '${defaultValue}' does not equal package.json version '${pkgVersion}'`,
+        `${file}: $$cap_version defaultValue '${pins.defaultValue}' does not equal package.json version '${pkgVersion}'`,
       );
     }
-    if (example !== pkgVersion) {
+    if (pins.example !== pkgVersion) {
       violations.push(
-        `${file}: the $$cap_version description example '${example}' does not equal package.json version '${pkgVersion}'`,
+        `${file}: the $$cap_version description example '${pins.example}' does not equal package.json version '${pkgVersion}'`,
       );
     }
   }
   return violations;
 }
 
-/** Moves every CapRover template to pkgVersion; returns the files it rewrote. */
+/**
+ * Moves every CapRover template to pkgVersion; returns the files it rewrote.
+ * Every template is read and bumped in memory before any is written, so a
+ * missing or unparseable one throws with nothing changed.
+ */
 export function refreshCaproverTemplates(root, pkgVersion) {
-  if (!fs.existsSync(path.join(root, CAPROVER_DIR))) {
+  if (!fs.existsSync(path.join(root, CAPROVER_DIR)) || !STABLE_VERSION.test(pkgVersion)) {
     return [];
   }
-  const rewritten = [];
-  for (const file of CAPROVER_TEMPLATES) {
+  const planned = CAPROVER_TEMPLATES.map((file) => {
     const full = path.join(root, file);
-    const result = bumpCaproverTemplate(fs.readFileSync(full, "utf8"), pkgVersion, file);
-    if (result.changed) {
-      fs.writeFileSync(full, result.template);
+    if (!fs.existsSync(full)) {
+      throw new Error(`${file}: missing`);
+    }
+    return { file, full, ...bumpCaproverTemplate(fs.readFileSync(full, "utf8"), pkgVersion, file) };
+  });
+  const rewritten = [];
+  for (const { file, full, template, changed } of planned) {
+    if (changed) {
+      fs.writeFileSync(full, template);
       rewritten.push(file);
     }
   }
@@ -534,9 +559,13 @@ function main(argv) {
       baseReason === "unparseable"
         ? `${CHART_YAML} at the merge-base of HEAD and origin/main is unparseable`
         : "origin/main not resolvable";
+    // The copies that need no base: every exit below reports them too.
+    const treeViolations = [...operatorCopyViolations(root), ...caproverTemplateViolations(root, pkgVersion)];
     if (!baseChart && strict) {
       // Content violations first, so a developer is not told about them one CI re-run later.
-      for (const violation of checkSync({ pkgVersion, chartYaml, readme })) console.error(`ERROR: ${violation}`);
+      for (const violation of [...checkSync({ pkgVersion, chartYaml, readme }), ...treeViolations]) {
+        console.error(`ERROR: ${violation}`);
+      }
       console.error(`ERROR: ${baseUnavailable} and CHART_SYNC_STRICT is set - refusing to skip base-comparison checks`);
       process.exit(1);
     }
@@ -547,7 +576,8 @@ function main(argv) {
     if (tagQueryNeeded({ baseChart, version, appVersion, chartChanges })) {
       chartTagExists = chartTagExistsOnOrigin(root, version);
       if (chartTagExists === null && strict) {
-        for (const violation of checkSync({ pkgVersion, chartYaml, readme, baseChart, chartTagExists, chartChanges })) {
+        const content = checkSync({ pkgVersion, chartYaml, readme, baseChart, chartTagExists, chartChanges });
+        for (const violation of [...content, ...treeViolations]) {
           console.error(`ERROR: ${violation}`);
         }
         console.error(
@@ -557,8 +587,7 @@ function main(argv) {
       }
     }
     const violations = checkSync({ pkgVersion, chartYaml, readme, baseChart, chartTagExists, chartChanges });
-    violations.push(...operatorCopyViolations(root));
-    violations.push(...caproverTemplateViolations(root, pkgVersion));
+    violations.push(...treeViolations);
     if (violations.length > 0) {
       for (const violation of violations) console.error(`ERROR: ${violation}`);
       console.error("\nFix: run 'bun run chart:bump', review the diff, and commit it in this PR.");
@@ -572,12 +601,14 @@ function main(argv) {
   }
 
   const result = applyBump({ pkgVersion, chartYaml, readme });
+  // First, because it throws on a missing or unparseable template before it
+  // writes anything: the tree is never left half bumped.
+  const caproverRewritten = refreshCaproverTemplates(root, pkgVersion);
   if (result.changed) {
     fs.writeFileSync(chartPath, result.chartYaml);
     fs.writeFileSync(readmePath, result.readme);
   }
   const copyRefreshed = refreshOperatorCopy(root);
-  const caproverRewritten = refreshCaproverTemplates(root, pkgVersion);
   if (!result.changed && !copyRefreshed && caproverRewritten.length === 0) {
     console.log(`OK: already in sync (chart ${result.version} / appVersion ${result.appVersion}) - nothing to write`);
     return;

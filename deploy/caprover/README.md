@@ -149,7 +149,8 @@ The release bump keeps both templates on the release version.
 The catalog's maintainer keeps version bumps manual: "When someone sends a PR we know that version works" ([caprover/one-click-apps#1334](https://github.com/caprover/one-click-apps/pull/1334#issuecomment-5717266315)).
 So a workflow prepares the branch, and a member tests it and opens the pull request.
 
-1. After each release, [`caprover-fork.yml`](../../.github/workflows/caprover-fork.yml) stages both templates and their logos, byte for byte from the release tag, on [`libredb/one-click-apps`](https://github.com/libredb/one-click-apps) as the branch `libredb-studio-<version>`.
+1. After each stable release, [`caprover-fork.yml`](../../.github/workflows/caprover-fork.yml) stages both templates and their logos, byte for byte from the release tag, on [`libredb/one-click-apps`](https://github.com/libredb/one-click-apps) as the branch `libredb-studio-<version>`.
+   `docker-build-push.yml` starts it once the release images passed their channel E2E; a prerelease is never staged, and its templates stay on the last stable version.
    It runs `tests/unit/caprover-template.test.ts` on the tag first, which encodes the catalog validator's rules, and never opens a pull request.
    It runs none of the catalog's own npm checks: that would execute another repository's code on the release tag, whose Actions cache later release runs restore.
    The catalog's CI runs them on the pull request, and a member can run them first in a clone of the catalog: `npm ci && npm run validate_apps && npm run formatter`.
@@ -161,15 +162,20 @@ So a workflow prepares the branch, and a member tests it and opens the pull requ
 
 | Setting | Value | Effect |
 |---|---|---|
-| `mode` | `update` | The fork must exist. Its default branch is fast-forwarded to the catalog's before the push. |
+| `mode` | `update` | The fork must exist. Its default branch is fast-forwarded to the catalog's before the push; a fork carrying commits the catalog lacks stops the run with nothing written to it. |
 | `mode` | `create_or_update` | A missing fork is created in the libredb org first. |
 | `push` | `auto` | The release run pushes the branch. |
 | `push` | `manual` | The release run only validates. A member pushes by running **CapRover Catalog Fork** by hand on the release tag: **Run workflow**, then **Use workflow from** the tag. |
 
-The push needs the `CAPROVER_CATALOG_TOKEN` secret: a classic personal access token with the `public_repo` scope, from a libredb org member who may create repositories there.
-The workflow's own token cannot write to another repository, and a fine-grained token cannot fork across owners.
-Without the secret the workflow validates and pushes nothing.
+The push needs the `CAPROVER_CATALOG_TOKEN` secret, because the workflow's own token cannot write to another repository.
+For `mode: update` a fine-grained personal access token is enough: resource owner `libredb`, repository access to `libredb/one-click-apps` only, and **Contents** read and write.
+GitHub lists the sync call (`merge-upstream`) under Contents write, and every token can read public repositories such as the catalog.
+`mode: create_or_update` also calls GitHub's fork endpoint, which GitHub lists under **Administration** write and Contents read, so that token needs access to the libredb org's repositories rather than to one fork.
+Without the secret the workflow validates and pushes nothing, by hand or not.
+
 It never pushes over a branch whose templates differ from the release's, for example after a fix made during review: delete the branch to stage it again.
+The staged commit is authored as the project owner, like the operator catalog submissions, and its message names the run and who started it.
+If a release's run did not stage the branch, run **CapRover Catalog Fork** by hand on the tag: a branch that already holds the same templates is left alone, so a second run is harmless.
 
 A change between releases, such as a description fix, still goes upstream by hand: merge it here first, then send the same bytes in a pull request.
 Compare against the live template before you do.

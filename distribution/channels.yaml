@@ -60,7 +60,8 @@
 #                             staged branch and opens it by hand. Two settings:
 #     mode                    update - the fork must already exist; its default
 #                               branch is fast-forwarded to upstream before the
-#                               release branch is staged.
+#                               release branch is staged, and a fork carrying
+#                               commits upstream lacks stops the run.
 #                             create_or_update - a missing fork is created in
 #                               the libredb org first, then updated the same way.
 #     push                    auto - the release run pushes the staged branch.

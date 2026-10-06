@@ -1455,7 +1455,7 @@ setups still publish the rest:
 | `OPERATOR_CATALOG_TOKEN` | The `submit-catalogs` job in `operator-release.yml`: bundle PRs to `k8s-operatorhub/community-operators` and `redhat-openshift-ecosystem/community-operators-prod`. Classic PAT with `public_repo` on an account in the operator's upstream `ci.yaml` reviewers list, because that login is what upstream authorizes | Catalog submission skipped with a notice |
 | `AUR_SSH_PRIVATE_KEY` | The aur job: render, build and `git push` of `libredb-studio-bin` to `ssh://aur@aur.archlinux.org/libredb-studio-bin.git`. The private half of the SSH key registered on the project's AUR account (`channels@libredb.org`). Runs only while the `aur` channel is `live` | AUR push skipped |
 | `WINGETCREATE_GITHUB_TOKEN` | The winget job: `wingetcreate update --submit` PRs to `microsoft/winget-pkgs`. Classic PAT with `public_repo` scope — wingetcreate does not support fine-grained PATs | winget submission skipped |
-| `CAPROVER_CATALOG_TOKEN` | `caprover-fork.yml`: creating the `libredb/one-click-apps` fork when `update.fork.mode` allows it, fast-forwarding it, and pushing the `libredb-studio-<version>` branch a member opens the CapRover catalog PR from. Classic PAT with `public_repo` from a libredb org member who may create repositories there - a fine-grained token cannot fork across owners. See [Staging an upstream catalog change on a fork](#staging-an-upstream-catalog-change-on-a-fork) | The workflow validates the templates and pushes nothing |
+| `CAPROVER_CATALOG_TOKEN` | `caprover-fork.yml`: fast-forwarding the `libredb/one-click-apps` fork, creating it first when `update.fork.mode` is `create_or_update`, and pushing the `libredb-studio-<version>` branch a member opens the CapRover catalog PR from. For `mode: update`, a fine-grained PAT with access to `libredb/one-click-apps` only and Contents read and write; `create_or_update` also needs GitHub's fork endpoint (Administration write on the org's repositories). See [Staging an upstream catalog change on a fork](#staging-an-upstream-catalog-change-on-a-fork) | The workflow validates the templates and pushes nothing |
 
 The chocolatey and winget jobs run strictly **after** `publish-release`: both channels download
 the zip from the release URL, which is public only once the release is published. A failure there
@@ -1810,6 +1810,7 @@ Its catalog's maintainer keeps bumps manual ([caprover/one-click-apps#1334](http
 `docker-build-push.yml` dispatches it once the release images passed their channel E2E.
 The workflow reads the settings with `distribution-check.mjs --fork-outputs caprover-official`, pushes only for a `live` channel, and needs the `CAPROVER_CATALOG_TOKEN` secret; without it a run validates and pushes nothing.
 It stages the release tag's templates unchanged, because `chart:bump` moves their version with `package.json` and `chart:check` holds every commit to it.
+A prerelease is never staged: while `package.json` carries one, `chart:bump` leaves the templates on the last stable version, and the dispatch skips a tag with a suffix.
 
 ### Manual steps still open
 

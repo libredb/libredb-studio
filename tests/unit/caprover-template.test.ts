@@ -194,9 +194,9 @@ describe.each(TEMPLATES)("$name: what this repository requires of the template",
   });
 
   test("the version moves in both places at once", () => {
-    // README: "The version appears twice in that file, the defaultValue of $$cap_version and
-    // the example inside its description, and both must move together." Nothing checked that,
-    // so an upgrade could leave the example naming the release before it.
+    // The version appears twice in each template, the defaultValue of $$cap_version and the
+    // example inside its description. chart:bump moves both (parseCaproverVersions in
+    // scripts/sync-chart-version.mjs); this keeps a hand edit from leaving the example behind.
     const pinned = versionVariable?.defaultValue ?? "";
     expect(pinned).toBeTruthy();
     expect(versionVariable?.description ?? "").toContain(`Example - ${pinned}.`);

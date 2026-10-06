@@ -473,18 +473,20 @@ jobs:
   dispatch-caprover-fork:
     # The CapRover templates deploy the image this run just published, so their
     # catalog branch is staged only after a successful publish and its channel
-    # E2E, and only in the release context: the same if: as the Helm dispatch
-    # above, keep the two in step. A recovery dispatch that repeats it is
-    # harmless, since caprover-fork leaves a branch that already holds the same
-    # templates alone. Separate job so actions:write is never granted to
-    # ordinary branch builds; the dispatch targets THIS run's ref, the release
-    # tag, whose templates chart:check holds at the release version.
+    # E2E, and only for a release: a run that moves the latest tags, never a
+    # backfill of an old version, and never a prerelease, which the catalog must
+    # not default to. Unlike the Helm dispatch above, a single-variant recovery
+    # dispatches it too: the leg it rebuilt was the last image missing, and
+    # caprover-fork leaves a branch that already holds the same templates alone.
+    # Separate job so actions:write is never granted to ordinary branch builds;
+    # the dispatch targets THIS run's ref, the release tag, whose templates
+    # chart:check holds at the release version.
     name: Dispatch CapRover catalog fork
     needs: [build-and-push, channel-e2e]
     if: >-
-      github.event_name == 'release' ||
-      (github.event_name == 'workflow_dispatch' && inputs.publish_latest == true &&
-       (inputs.variant == '' || inputs.variant == 'all'))
+      !contains(github.ref, '-') &&
+      (github.event_name == 'release' ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish_latest == true))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

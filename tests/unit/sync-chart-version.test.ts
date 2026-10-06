@@ -966,5 +966,67 @@ describe("CapRover template pins", () => {
       expect(caproverTemplateViolations(root, "0.9.44")).toEqual([]);
       expect(runCheck(root).exitCode).toBe(0);
     });
+
+    // The catalog must never default to a release candidate: while package.json
+    // carries a prerelease, the templates keep the last stable version.
+    test("a prerelease package.json leaves the templates on the last stable version", () => {
+      const root = makeRoot(["0.18.0", "0.18.0"]);
+      expect(caproverTemplateViolations(root, "0.19.0-rc.1")).toEqual([]);
+      expect(refreshCaproverTemplates(root, "0.19.0-rc.1")).toEqual([]);
+      expect(readFileSync(join(root, CAPROVER_FILES[0]), "utf8")).toBe(caproverTemplate("0.18.0"));
+    });
+
+    test("a prerelease package.json still reports a template that no longer parses", () => {
+      const root = makeRoot();
+      writeFileSync(join(root, CAPROVER_FILES[0]), caproverTemplate().replace("Example - 0.18.0. ", ""));
+      const violations = caproverTemplateViolations(root, "0.19.0-rc.1");
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toContain(`${CAPROVER_FILES[0]}: the $$cap_version description needs exactly one`);
+    });
+
+    test("a template that no longer parses is reported as a violation, not thrown", () => {
+      const root = makeRoot();
+      writeFileSync(
+        join(root, CAPROVER_FILES[1]),
+        caproverTemplate().replace("- id: $$cap_version", "- id: $$cap_tag"),
+      );
+      expect(caproverTemplateViolations(root, "0.18.0")).toEqual([
+        `${CAPROVER_FILES[1]}: could not find the $$cap_version variable`,
+      ]);
+    });
+
+    test("refreshCaproverTemplates checks every template before it writes any", () => {
+      const root = makeRoot(["0.17.0", "0.17.0"]);
+      writeFileSync(join(root, CAPROVER_FILES[1]), caproverTemplate("0.17.0").replace("Example - 0.17.0. ", ""));
+      expect(() => refreshCaproverTemplates(root, "0.18.0")).toThrow(/description needs exactly one/);
+      expect(readFileSync(join(root, CAPROVER_FILES[0]), "utf8")).toBe(caproverTemplate("0.17.0"));
+    });
+
+    test("refreshCaproverTemplates names a missing template instead of a raw read error", () => {
+      const root = makeRoot();
+      rmSync(join(root, CAPROVER_FILES[0]));
+      expect(() => refreshCaproverTemplates(root, "0.18.1")).toThrow(`${CAPROVER_FILES[0]}: missing`);
+    });
+
+    test("--write stops before touching the chart when a template cannot be bumped", () => {
+      const root = makeRoot(["0.9.43", "0.9.43"]);
+      rmSync(join(root, CAPROVER_FILES[1]));
+      const behind = chartYaml({ version: "0.1.3", appVersion: "0.9.43" });
+      writeTree(root, "0.9.44", behind, readme());
+      const result = Bun.spawnSync(["node", SCRIPT, "--write", "--root", root], { stdout: "pipe", stderr: "pipe" });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr.toString()).toContain(`${CAPROVER_FILES[1]}: missing`);
+      expect(readFileSync(join(root, "charts/libredb-studio/Chart.yaml"), "utf8")).toBe(behind);
+      expect(readFileSync(join(root, CAPROVER_FILES[0]), "utf8")).toBe(caproverTemplate("0.9.43"));
+    });
+
+    test("strict mode's early exit reports the template violations too", () => {
+      const root = makeRoot(["0.9.43", "0.9.44"]);
+      writeTree(root, "0.9.44", chartYaml(), readme());
+      const result = runCheck(root, { CHART_SYNC_STRICT: "1" });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr.toString()).toContain(`${CAPROVER_FILES[0]}: $$cap_version defaultValue '0.9.43'`);
+      expect(result.stderr.toString()).toContain("refusing to skip base-comparison checks");
+    });
   });
 });

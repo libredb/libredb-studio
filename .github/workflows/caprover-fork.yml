@@ -7,7 +7,8 @@ name: CapRover Catalog Fork
 # we know that version works", caprover/one-click-apps#1334), and the catalog's
 # pull request template asks for a test on a CapRover dashboard. A member
 # installs the staged templates, then opens the pull request from the link in
-# this run's summary (deploy/caprover/README.md, "Maintaining this template").
+# this run's summary (deploy/caprover/README.md, "Releasing to the official
+# catalog").
 #
 # docker-build-push.yml dispatches it on the release tag with trigger=release,
 # once the images are published and passed their channel E2E. A member runs it
@@ -17,7 +18,8 @@ name: CapRover Catalog Fork
 # distribution/channels.yaml decides what it may do, under caprover-official
 # update.fork:
 #   mode: update            the fork must exist; its default branch is
-#                           fast-forwarded to upstream before the push.
+#                           fast-forwarded to upstream before the push, and a
+#                           fork carrying commits upstream lacks stops the run.
 #         create_or_update  a missing fork is created in the libredb org first.
 #   push: auto              a release run pushes the branch.
 #         manual            a release run validates only; a member pushes by
@@ -27,11 +29,14 @@ name: CapRover Catalog Fork
 # with package.json in the release bump, and chart:check holds every commit on
 # main to it, so the tag's deploy/caprover files go upstream byte for byte.
 #
-# CAPROVER_CATALOG_TOKEN is a classic personal access token with the public_repo
-# scope, from a libredb org member who may create repositories there: the
-# workflow's GITHUB_TOKEN cannot write to another repository, and a fine-grained
-# token cannot fork across owners. Without it a run validates and pushes
-# nothing.
+# CAPROVER_CATALOG_TOKEN pushes to the fork; the workflow's GITHUB_TOKEN cannot
+# write to another repository. For mode update a fine-grained personal access
+# token is enough: resource owner libredb, access to libredb/one-click-apps
+# only, Contents read and write (GitHub lists merge-upstream under Contents
+# write, and every token reads public repositories). Mode create_or_update also
+# calls GitHub's fork endpoint, listed under Administration write and Contents
+# read, so its token needs the libredb org's repositories, not one fork. Without
+# the secret a run validates and pushes nothing.
 #
 # No third-party code runs here. The catalog's own npm checks would execute
 # another repository's scripts and dependencies on the release tag's ref, and
@@ -203,6 +208,8 @@ jobs:
           MODE: ${{ needs.validate.outputs.mode }}
         run: |
           set -euo pipefail
+          BASE=$(gh api "repos/${UPSTREAM}" --jq .default_branch)
+          echo "BASE=$BASE" >> "$GITHUB_ENV"
           if ! PARENT=$(gh api "repos/${FORK}" --jq '.parent.full_name // ""' 2> lookup-error.txt); then
             if ! grep -q 'HTTP 404' lookup-error.txt; then
               cat lookup-error.txt >&2
@@ -213,10 +220,11 @@ jobs:
               exit 1
             fi
             gh api -X POST "repos/${UPSTREAM}/forks" -f organization="${FORK%%/*}" -F default_branch_only=true --jq .full_name
-            # GitHub creates a fork in the background.
+            # GitHub answers at once and copies the git data in the background,
+            # so wait for the fork's default branch, not only the repository.
             READY=false
             for _ in $(seq 1 30); do
-              if PARENT=$(gh api "repos/${FORK}" --jq '.parent.full_name // ""' 2> /dev/null); then
+              if gh api "repos/${FORK}/branches/${BASE}" --jq .commit.sha > /dev/null 2>&1; then
                 READY=true
                 break
               fi
@@ -226,6 +234,7 @@ jobs:
               echo "::error::GitHub had not finished creating ${FORK} after five minutes; run this workflow again."
               exit 1
             fi
+            PARENT=$(gh api "repos/${FORK}" --jq '.parent.full_name // ""')
           fi
           if [ "$PARENT" != "$UPSTREAM" ]; then
             echo "::error::${FORK} is not a fork of ${UPSTREAM} (its parent is '${PARENT:-none}'). A fork's parent cannot be changed: re-create the fork from ${UPSTREAM}."
@@ -237,19 +246,27 @@ jobs:
           GH_TOKEN: ${{ secrets.CAPROVER_CATALOG_TOKEN }}
         run: |
           set -euo pipefail
-          BASE=$(gh api "repos/${UPSTREAM}" --jq .default_branch)
-          gh api -X POST "repos/${FORK}/merge-upstream" -f branch="$BASE" --jq .message
-          # Commits on the fork's default branch that upstream lacks would show
-          # up in the pull request a member opens: stop here instead.
+          # Compared before merge-upstream, which merges rather than
+          # fast-forwards a fork that carries commits upstream lacks: such a
+          # fork stops the run with nothing written to it.
           STATUS=$(gh api "repos/${UPSTREAM}/compare/${BASE}...${FORK%%/*}:${FORK##*/}:${BASE}" --jq .status)
           case "$STATUS" in
-            identical|behind) echo "${FORK} ${BASE} is ${STATUS} relative to ${UPSTREAM} ${BASE}." ;;
+            identical) echo "${FORK} ${BASE} is identical to ${UPSTREAM} ${BASE}." ;;
+            behind)
+              MERGE_TYPE=$(gh api -X POST "repos/${FORK}/merge-upstream" -f branch="$BASE" --jq .merge_type)
+              case "$MERGE_TYPE" in
+                fast-forward|none) echo "${FORK} ${BASE} fast-forwarded to ${UPSTREAM} ${BASE} (${MERGE_TYPE})." ;;
+                *)
+                  echo "::error::merge-upstream answered '${MERGE_TYPE}' instead of a fast-forward for ${FORK} ${BASE}."
+                  exit 1
+                  ;;
+              esac
+              ;;
             *)
               echo "::error::${FORK} ${BASE} is '${STATUS}' relative to ${UPSTREAM} ${BASE}: it carries commits upstream does not have. Reset it before staging."
               exit 1
               ;;
           esac
-          echo "BASE=$BASE" >> "$GITHUB_ENV"
 
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -269,6 +286,7 @@ jobs:
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           BRANCH: ${{ needs.validate.outputs.branch }}
+          TRIGGER: ${{ inputs.trigger }}
         run: |
           set -euo pipefail
           git -C catalog switch --quiet --create "$BRANCH"
@@ -277,8 +295,11 @@ jobs:
           STAGED_LIST=$(bash studio/scripts/stage-caprover-catalog.sh studio catalog)
           mapfile -t STAGED <<< "$STAGED_LIST"
           git -C catalog add -- "${STAGED[@]}"
+          # Authored as the project owner, like the operator catalog submissions;
+          # the body names the run and who started it.
           git -C catalog -c user.name="Mehmet Cevheri BOZOGLAN" -c user.email="cevheribozoglan@gmail.com" \
-            commit --quiet -m "libredb-studio: bump default version to ${VERSION}"
+            commit --quiet -m "libredb-studio: bump default version to ${VERSION}" \
+            -m "Staged by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}, a ${TRIGGER} run started by ${GITHUB_ACTOR}."
           git -C catalog show --stat --format='%h %s' HEAD
 
       - name: Push the branch, never over different templates

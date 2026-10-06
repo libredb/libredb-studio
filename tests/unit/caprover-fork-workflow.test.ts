@@ -154,9 +154,29 @@ describe("the CapRover catalog fork workflow", () => {
     expect(ensure?.run).toContain(".parent.full_name");
   });
 
-  test("fast-forwards the fork and stops on one that carries commits upstream lacks", () => {
-    const sync = stepRunning(push, /merge-upstream/);
-    expect(sync?.run).toContain("identical|behind)");
+  // GitHub answers the fork request at once and copies the git data after.
+  test("waits for a new fork's default branch, not only the repository", () => {
+    const ensure = stepRunning(push, /\/forks/);
+    expect(ensure?.run).toContain('gh api "repos/${FORK}/branches/${BASE}"');
+  });
+
+  // merge-upstream merges rather than fast-forwards a fork that carries commits
+  // upstream lacks, so the comparison has to come first.
+  test("compares before it syncs, and only ever fast-forwards the fork", () => {
+    const run = stepRunning(push, /merge-upstream/)?.run ?? "";
+    const compare = run.indexOf('gh api "repos/${UPSTREAM}/compare/');
+    const merge = run.indexOf('gh api -X POST "repos/${FORK}/merge-upstream"');
+    expect(compare).toBeGreaterThan(-1);
+    expect(merge).toBeGreaterThan(compare);
+    expect(run).toContain("--jq .merge_type");
+    expect(run).toContain("fast-forward|none)");
+  });
+
+  test("names the run and who started it in the staged commit", () => {
+    const commit = stepRunning(push, /commit --quiet/);
+    expect(commit?.env?.TRIGGER).toBe("${{ inputs.trigger }}");
+    expect(commit?.run).toContain("actions/runs/${GITHUB_RUN_ID}");
+    expect(commit?.run).toContain("${GITHUB_ACTOR}");
   });
 
   test("stages through one script in both jobs", () => {
@@ -199,9 +219,16 @@ describe("the dispatch from docker-build-push.yml", () => {
   const docker = parseYaml(readFileSync(join(WORKFLOWS, "docker-build-push.yml"), "utf8")) as Workflow;
   const dispatch = docker.jobs["dispatch-caprover-fork"];
 
-  test("runs after the images and their channel E2E, in the release context only", () => {
+  // A release run moves the latest tags; a backfill of an old version does not,
+  // and a prerelease tag carries a suffix the catalog must never default to. A
+  // single-variant recovery stages too, unlike the Helm dispatch: the leg it
+  // rebuilt was the last image missing, and an identical branch is left alone.
+  test("runs after the images and their channel E2E, for a stable release only", () => {
     expect(dispatch.needs).toEqual(["build-and-push", "channel-e2e"]);
-    expect(dispatch.if).toBe(docker.jobs["dispatch-helm-release"].if);
+    expect(dispatch.if?.replace(/\s+/g, " ")).toBe(
+      "!contains(github.ref, '-') && (github.event_name == 'release' || " +
+        "(github.event_name == 'workflow_dispatch' && inputs.publish_latest == true))",
+    );
     expect(dispatch.permissions).toEqual({ actions: "write" });
   });
 
