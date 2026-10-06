@@ -32,6 +32,7 @@ export const LIVE_CHANNELS: readonly ShowcaseChannel[] = [
   { id: "render", label: "Render Blueprint", group: "paas" },
   { id: "unraid-ca", label: "Unraid Community Apps", group: "paas" },
   { id: "caprover-official", label: "CapRover official", group: "paas" },
+  { id: "caprover-autoconnect", label: "CapRover auto-connect", group: "paas" },
   { id: "dokploy", label: "Dokploy template catalog", group: "paas" },
   { id: "cosmos", label: "Cosmos servapp marketplace", group: "paas" },
   { id: "kubero", label: "Kubero template catalog", group: "paas" },

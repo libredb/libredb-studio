@@ -724,6 +724,7 @@ describe("update.ci_enabled", () => {
       helm: (v) => `appVersion: ${v}\n`,
       homebrew: (v) => `  version ${v}\n`,
       "caprover-official": (v) => `          defaultValue: ${v}\n`,
+      "caprover-autoconnect": (v) => `          defaultValue: ${v}\n`,
       yunohost: (v) => `version = ${v}\n`,
     };
     // A formatter run upstream can turn one space into two, or into a tab, as
