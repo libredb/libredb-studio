@@ -31,6 +31,7 @@
 </p>
 <p align="center">
   साथ ही
+  <a href="https://planet.mysql.com/showcase/?search=LibreDB">MySQL</a>,
   <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>,
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>,
   <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>,
