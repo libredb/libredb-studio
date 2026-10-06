@@ -1,7 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { containerDepth, relationKindIds } from "@/lib/db/object-kinds";
 import { machineColumns } from "@/lib/db/detailed-object";
+import { ExecutionProfileError } from "@/lib/db/errors";
+import { containerDepth, relationKindIds } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, DatabaseProvider } from "@/lib/db/types";
 import {
   newMcpCorrelationId,
@@ -268,6 +269,14 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
     const { result, failure } = await readPage(provider, args, call.signal);
     return finish(result, failure);
   } catch (error) {
+    // #1462: the agent-operations profile runs the same role check as agent-read-only
+    // (factory.ts), so a superuser seed refuses here too. That refusal is Studio's own
+    // decision, not the engine's, so it reads in Studio's words - no untrusted-data
+    // notice, no "The database refused or failed the call:" prefix - exactly as
+    // run_read_query already answers an ExecutionProfileError.
+    if (error instanceof ExecutionProfileError) {
+      return finish(ownWordsError(error.message), "mcp_execution_failed");
+    }
     return finish(engineError(MCP_ENGINE_ERROR_PREFIX, error), "mcp_execution_failed");
   }
 }

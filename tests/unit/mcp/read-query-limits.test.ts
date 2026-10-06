@@ -52,7 +52,22 @@ describe("the texts", () => {
       "The statement was refused before it reached the database (NON_READ_STATEMENT). run_read_query runs one read-only statement: a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE.",
     );
     expect(profileRefusalText("the engine has no read-only statement path", "PostgreSQL and SQLite")).toBe(
-      "run_read_query cannot run on this connection: the engine has no read-only statement path. It runs on PostgreSQL and SQLite; inspect_schema works on every engine.",
+      "run_read_query cannot run on this connection: the engine has no read-only statement path. It runs on PostgreSQL and SQLite.",
+    );
+  });
+
+  // #1462: an ExecutionProfileError message (postgres.ts's assertAgentRoleIsUnprivileged,
+  // mssql.ts's assertAgentPrincipalIsUnprivileged) already ends in a period, and
+  // inspect_schema is refused by the same profile, so neither a double period nor the
+  // "inspect_schema works on every engine" claim should appear.
+  test("profileRefusalText strips a message's own trailing period rather than doubling it, and no longer claims inspect_schema works on every engine", () => {
+    expect(
+      profileRefusalText(
+        "The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution.",
+        "PostgreSQL, SQLite, DuckDB and SQL Server",
+      ),
+    ).toBe(
+      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB and SQL Server.",
     );
   });
 });

@@ -278,7 +278,7 @@ describe("the boundary", () => {
       expect(result.content).toEqual([
         {
           type: "text",
-          text: 'run_read_query cannot run on this connection: Provider type "libredb" has no database-native read-only execution profile. It runs on PostgreSQL, SQLite, DuckDB and SQL Server; inspect_schema works on every engine.',
+          text: 'run_read_query cannot run on this connection: Provider type "libredb" has no database-native read-only execution profile. It runs on PostgreSQL, SQLite, DuckDB and SQL Server.',
         },
       ]);
       expect(writes.calls).toBe(0);
