@@ -5,10 +5,11 @@
  * Enforces the invariant that the Helm chart always deploys the app version
  * in package.json: appVersion == package.json version, the artifacthub image
  * tag matches appVersion, and the chart README example matches the chart
- * version. `--check` (bun run chart:check) validates and is wired into the
- * required lint-and-build CI job; `--write` (bun run chart:bump) applies the
- * canonical bump. Both modes share the pure functions below, which are unit
- * tested in tests/unit/sync-chart-version.test.ts.
+ * version. The CapRover one-click templates follow package.json the same way
+ * (see CAPROVER_TEMPLATES). `--check` (bun run chart:check) validates and is
+ * wired into the required lint-and-build CI job; `--write` (bun run chart:bump)
+ * applies the canonical bump. Both modes share the pure functions below, which
+ * are unit tested in tests/unit/sync-chart-version.test.ts.
  */
 
 import { execFileSync } from "node:child_process";
@@ -20,6 +21,17 @@ const CHART_YAML = "charts/libredb-studio/Chart.yaml";
 const CHART_README = "charts/libredb-studio/README.md";
 const SOURCE_CHART_DIR = "charts/libredb-studio";
 const OPERATOR_CHART_DIR = "operator/helm-charts/libredb-studio";
+
+/**
+ * The CapRover one-click templates (deploy/caprover/README.md). Each pins the
+ * Studio image twice inside its `$$cap_version` variable: the defaultValue and
+ * the "Example - x.y.z." in its description. They follow package.json like
+ * appVersion does, so a release tag holds exactly the files that
+ * .github/workflows/caprover-fork.yml stages for the official catalog, and the
+ * in-repo copy cannot fall behind unnoticed again (#268).
+ */
+const CAPROVER_DIR = "deploy/caprover";
+const CAPROVER_TEMPLATES = [`${CAPROVER_DIR}/libredb-studio.yml`, `${CAPROVER_DIR}/libredb-studio-autoconnect.yml`];
 
 /**
  * The OpenShift operator embeds a verbatim copy of the chart (its docker build
@@ -95,6 +107,120 @@ export function refreshOperatorCopy(root) {
   // rebuilt by `helm dependency build` at image-build time, never committed.
   fs.rmSync(path.join(dstDir, "charts"), { recursive: true, force: true });
   return true;
+}
+
+/**
+ * The `$$cap_version` item of a template: its `- id:` line and every following
+ * line indented deeper than that dash, up to the next item. Its offset lets a
+ * bump rewrite the item alone, so another variable's defaultValue or example
+ * can never be taken for the image pin.
+ */
+function caproverVersionItem(template, file) {
+  const item = template.match(/^([ \t]*)- id: \$\$cap_version[ \t]*\n(?:\1[ \t]+\S[^\n]*\n)*/m);
+  if (!item) {
+    throw new Error(`${file}: could not find the $$cap_version variable`);
+  }
+  return { start: item.index, text: item[0] };
+}
+
+const CAPROVER_DEFAULT = /^([ \t]+defaultValue:[ \t]*(['"]?))(\d+\.\d+\.\d+)\2[ \t]*$/gm;
+const CAPROVER_EXAMPLE = /Example - (\d+\.\d+\.\d+)\./g;
+
+/**
+ * Reads both image pins of one template. Each must appear exactly once in the
+ * `$$cap_version` item: an ambiguous template is fixed by hand, never
+ * auto-repaired (the same rule as parseImageTag, #151).
+ *
+ * @param {string} template
+ * @param {string} file the path named in errors
+ * @returns {{ defaultValue: string, example: string }}
+ */
+export function parseCaproverVersions(template, file) {
+  const { text } = caproverVersionItem(template, file);
+  const defaults = [...text.matchAll(CAPROVER_DEFAULT)].map((m) => m[3]);
+  if (defaults.length !== 1) {
+    throw new Error(`${file}: $$cap_version needs exactly one x.y.z defaultValue, found ${defaults.length}`);
+  }
+  const examples = [...text.matchAll(CAPROVER_EXAMPLE)].map((m) => m[1]);
+  if (examples.length !== 1) {
+    throw new Error(
+      `${file}: the $$cap_version description needs exactly one "Example - x.y.z.", found ${examples.length}`,
+    );
+  }
+  return { defaultValue: defaults[0], example: examples[0] };
+}
+
+/**
+ * Moves both image pins of one template to `version` and leaves every other
+ * byte as it was, the defaultValue's quoting included. Returns changed=false
+ * (template untouched) when both already match.
+ *
+ * @param {string} template
+ * @param {string} version
+ * @param {string} file the path named in errors
+ * @returns {{ template: string, changed: boolean }}
+ */
+export function bumpCaproverTemplate(template, version, file) {
+  const pins = parseCaproverVersions(template, file);
+  if (pins.defaultValue === version && pins.example === version) {
+    return { template, changed: false };
+  }
+  const { start, text } = caproverVersionItem(template, file);
+  // Function replacers: a replacement string would read the `$$` of
+  // `$$cap_version` as an escaped dollar sign.
+  const bumped = text
+    .replace(CAPROVER_DEFAULT, (_, prefix, quote) => `${prefix}${version}${quote}`)
+    .replace(CAPROVER_EXAMPLE, () => `Example - ${version}.`);
+  return { template: template.slice(0, start) + bumped + template.slice(start + text.length), changed: true };
+}
+
+/**
+ * Returns violation messages (empty = every pin equals pkgVersion). Skips
+ * silently when deploy/caprover does not exist (test fixtures), like
+ * operatorCopyViolations; a template missing from an existing directory is a
+ * violation.
+ */
+export function caproverTemplateViolations(root, pkgVersion) {
+  if (!fs.existsSync(path.join(root, CAPROVER_DIR))) {
+    return [];
+  }
+  const violations = [];
+  for (const file of CAPROVER_TEMPLATES) {
+    const full = path.join(root, file);
+    if (!fs.existsSync(full)) {
+      violations.push(`${file}: missing`);
+      continue;
+    }
+    const { defaultValue, example } = parseCaproverVersions(fs.readFileSync(full, "utf8"), file);
+    if (defaultValue !== pkgVersion) {
+      violations.push(
+        `${file}: $$cap_version defaultValue '${defaultValue}' does not equal package.json version '${pkgVersion}'`,
+      );
+    }
+    if (example !== pkgVersion) {
+      violations.push(
+        `${file}: the $$cap_version description example '${example}' does not equal package.json version '${pkgVersion}'`,
+      );
+    }
+  }
+  return violations;
+}
+
+/** Moves every CapRover template to pkgVersion; returns the files it rewrote. */
+export function refreshCaproverTemplates(root, pkgVersion) {
+  if (!fs.existsSync(path.join(root, CAPROVER_DIR))) {
+    return [];
+  }
+  const rewritten = [];
+  for (const file of CAPROVER_TEMPLATES) {
+    const full = path.join(root, file);
+    const result = bumpCaproverTemplate(fs.readFileSync(full, "utf8"), pkgVersion, file);
+    if (result.changed) {
+      fs.writeFileSync(full, result.template);
+      rewritten.push(file);
+    }
+  }
+  return rewritten;
 }
 
 /**
@@ -432,6 +558,7 @@ function main(argv) {
     }
     const violations = checkSync({ pkgVersion, chartYaml, readme, baseChart, chartTagExists, chartChanges });
     violations.push(...operatorCopyViolations(root));
+    violations.push(...caproverTemplateViolations(root, pkgVersion));
     if (violations.length > 0) {
       for (const violation of violations) console.error(`ERROR: ${violation}`);
       console.error("\nFix: run 'bun run chart:bump', review the diff, and commit it in this PR.");
@@ -450,12 +577,16 @@ function main(argv) {
     fs.writeFileSync(readmePath, result.readme);
   }
   const copyRefreshed = refreshOperatorCopy(root);
-  if (!result.changed && !copyRefreshed) {
+  const caproverRewritten = refreshCaproverTemplates(root, pkgVersion);
+  if (!result.changed && !copyRefreshed && caproverRewritten.length === 0) {
     console.log(`OK: already in sync (chart ${result.version} / appVersion ${result.appVersion}) - nothing to write`);
     return;
   }
   if (copyRefreshed) {
     console.log(`Refreshed ${OPERATOR_CHART_DIR} from ${SOURCE_CHART_DIR}.`);
+  }
+  for (const file of caproverRewritten) {
+    console.log(`Moved ${file} to ${pkgVersion}.`);
   }
   if (result.changed) {
     console.log(`Bumped chart to ${result.version} / appVersion ${result.appVersion} - review the diff and commit.`);

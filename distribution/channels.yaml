@@ -52,6 +52,21 @@
 #                             release path (github-release, docker-ghcr, npm,
 #                             helm) and the required release assets have no
 #                             flag on purpose.
+#   update.fork               REQUIRED on, and allowed ONLY on, the channels a
+#                             release workflow stages on a LibreDB fork of the
+#                             upstream catalog (FORK_STAGED_CHANNEL_IDS in
+#                             scripts/distribution-check.mjs). The workflow
+#                             never opens the pull request: a member tests the
+#                             staged branch and opens it by hand. Two settings:
+#     mode                    update - the fork must already exist; its default
+#                               branch is fast-forwarded to upstream before the
+#                               release branch is staged.
+#                             create_or_update - a missing fork is created in
+#                               the libredb org first, then updated the same way.
+#     push                    auto - the release run pushes the staged branch.
+#                             manual - the release run only validates it; a
+#                               member pushes by running the workflow by hand on
+#                               the release tag.
 #   links                     tracking_issue / first_pr / last_bump_pr (nullable
 #                             until the first post-listing bump) / catalog /
 #                             upstream_repo / docs / get (user-facing "where do I
@@ -449,6 +464,11 @@ channels:
     update:
       method: upstream_pr
       sla: on_demand
+      # .github/workflows/caprover-fork.yml stages both CapRover templates on
+      # libredb/one-click-apps for each release; a member opens the PR.
+      fork:
+        mode: update
+        push: auto
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/56
       first_pr: https://github.com/caprover/one-click-apps/pull/1303

@@ -159,6 +159,27 @@ export const SWITCHABLE_CHANNEL_IDS = new Set([
 ]);
 
 /**
+ * Channels whose release workflow stages the upstream change on a LibreDB fork
+ * of the catalog and stops there: a member tests it and opens the pull request
+ * by hand, so no workflow opens one. `update.fork` holds what the workflow may
+ * do, and like `update.ci_enabled` it is required on these channels and
+ * rejected everywhere else, so that is always a stated decision.
+ *
+ * `caprover-official` qualifies because its catalog's maintainer keeps version
+ * bumps manual ("When someone sends a PR we know that version works",
+ * caprover/one-click-apps#1334) and the catalog's pull request template asks for
+ * a test on a CapRover dashboard. .github/workflows/caprover-fork.yml stages the
+ * auto-connect template on the same branch, under this channel's settings.
+ */
+export const FORK_STAGED_CHANNEL_IDS = new Set(["caprover-official"]);
+
+/** `update.fork.mode`: `create_or_update` may create a missing fork in the libredb org; `update` may not. */
+export const FORK_MODES = ["update", "create_or_update"];
+
+/** `update.fork.push`: `auto` pushes the staged branch from the release run; `manual` leaves the push to a member. */
+export const FORK_PUSH_MODES = ["auto", "manual"];
+
+/**
  * Probes measure channels whose served state is not one document a single
  * regex can read: a registry that answers "which digest does this tag point
  * at" rather than "which version", or a catalog that enumerates every
@@ -455,6 +476,29 @@ export function parseChannels(yamlText) {
         `${CHANNELS_YAML}: ${id}: update.ci_enabled is only allowed on ${[...SWITCHABLE_CHANNEL_IDS].join(", ")}`,
       );
     }
+    const fork = channel.update.fork;
+    if (FORK_STAGED_CHANNEL_IDS.has(id)) {
+      if (fork === null || typeof fork !== "object" || Array.isArray(fork)) {
+        throw new Error(`${CHANNELS_YAML}: ${id}: update.fork must be a mapping with mode and push`);
+      }
+      if (channel.update.method !== "upstream_pr") {
+        throw new Error(`${CHANNELS_YAML}: ${id}: update.fork needs update.method upstream_pr`);
+      }
+      const unknown = Object.keys(fork).filter((key) => key !== "mode" && key !== "push");
+      if (unknown.length > 0) {
+        throw new Error(`${CHANNELS_YAML}: ${id}: update.fork has unknown keys: ${unknown.join(", ")}`);
+      }
+      if (!FORK_MODES.includes(fork.mode)) {
+        throw new Error(`${CHANNELS_YAML}: ${id}: update.fork.mode must be one of ${FORK_MODES.join("|")}`);
+      }
+      if (!FORK_PUSH_MODES.includes(fork.push)) {
+        throw new Error(`${CHANNELS_YAML}: ${id}: update.fork.push must be one of ${FORK_PUSH_MODES.join("|")}`);
+      }
+    } else if (fork !== undefined) {
+      throw new Error(
+        `${CHANNELS_YAML}: ${id}: update.fork is only allowed on ${[...FORK_STAGED_CHANNEL_IDS].join(", ")}`,
+      );
+    }
     const pin = channel.pin;
     if (!pin || !STRATEGIES.includes(pin.strategy)) {
       throw new Error(`${CHANNELS_YAML}: ${id}: pin.strategy must be one of ${STRATEGIES.join("|")}`);
@@ -518,6 +562,15 @@ export function ciEnabledOutputs(channels) {
   return channels
     .filter((channel) => SWITCHABLE_CHANNEL_IDS.has(channel.id))
     .map((channel) => `${channel.id.replaceAll("-", "_")}=${ciPublishes(channel)}`);
+}
+
+/**
+ * `<name>=<value>` lines for $GITHUB_OUTPUT: what the fork staging workflow may
+ * do for one fork-staged channel. `live` is false for a pending or deprecated
+ * channel, which the workflow never pushes, whatever `push` says.
+ */
+export function forkOutputs(channel) {
+  return [`mode=${channel.update.fork.mode}`, `push=${channel.update.fork.push}`, `live=${channel.status === "live"}`];
 }
 
 /**
@@ -910,10 +963,29 @@ async function main(argv) {
     console.error("ERROR: --ci-enabled requires a channel id");
     process.exit(2);
   }
-  if (ciOutputs || ciIdx !== -1) {
+  const forkIdx = argv.indexOf("--fork-outputs");
+  const forkId = forkIdx === -1 ? undefined : argv[forkIdx + 1];
+  if (forkIdx !== -1 && (forkId === undefined || forkId.startsWith("--"))) {
+    console.error("ERROR: --fork-outputs requires a channel id");
+    process.exit(2);
+  }
+  if (ciOutputs || ciIdx !== -1 || forkIdx !== -1) {
     const inventory = parseChannels(fs.readFileSync(path.join(root, CHANNELS_YAML), "utf8"));
     if (ciOutputs) {
       for (const line of ciEnabledOutputs(inventory)) console.log(line);
+      return;
+    }
+    if (forkIdx !== -1) {
+      if (!FORK_STAGED_CHANNEL_IDS.has(forkId)) {
+        console.error(`ERROR: '${forkId}' is not a fork-staged channel (${[...FORK_STAGED_CHANNEL_IDS].join(", ")})`);
+        process.exit(2);
+      }
+      const channel = inventory.find((entry) => entry.id === forkId);
+      if (!channel) {
+        console.error(`ERROR: channel '${forkId}' is not in ${CHANNELS_YAML}`);
+        process.exit(2);
+      }
+      for (const line of forkOutputs(channel)) console.log(line);
       return;
     }
     if (!SWITCHABLE_CHANNEL_IDS.has(ciId)) {

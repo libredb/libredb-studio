@@ -1455,6 +1455,7 @@ setups still publish the rest:
 | `OPERATOR_CATALOG_TOKEN` | The `submit-catalogs` job in `operator-release.yml`: bundle PRs to `k8s-operatorhub/community-operators` and `redhat-openshift-ecosystem/community-operators-prod`. Classic PAT with `public_repo` on an account in the operator's upstream `ci.yaml` reviewers list, because that login is what upstream authorizes | Catalog submission skipped with a notice |
 | `AUR_SSH_PRIVATE_KEY` | The aur job: render, build and `git push` of `libredb-studio-bin` to `ssh://aur@aur.archlinux.org/libredb-studio-bin.git`. The private half of the SSH key registered on the project's AUR account (`channels@libredb.org`). Runs only while the `aur` channel is `live` | AUR push skipped |
 | `WINGETCREATE_GITHUB_TOKEN` | The winget job: `wingetcreate update --submit` PRs to `microsoft/winget-pkgs`. Classic PAT with `public_repo` scope — wingetcreate does not support fine-grained PATs | winget submission skipped |
+| `CAPROVER_CATALOG_TOKEN` | `caprover-fork.yml`: creating the `libredb/one-click-apps` fork when `update.fork.mode` allows it, fast-forwarding it, and pushing the `libredb-studio-<version>` branch a member opens the CapRover catalog PR from. Classic PAT with `public_repo` from a libredb org member who may create repositories there - a fine-grained token cannot fork across owners. See [Staging an upstream catalog change on a fork](#staging-an-upstream-catalog-change-on-a-fork) | The workflow validates the templates and pushes nothing |
 
 The chocolatey and winget jobs run strictly **after** `publish-release`: both channels download
 the zip from the release URL, which is public only once the release is published. A failure there
@@ -1760,10 +1761,11 @@ instead keep whatever they own under `deploy/<provider>/`, because the consumabl
 an external catalog. Only **CapRover** and **Railway** own a source descriptor there
 (`deploy/caprover/libredb-studio.yml`, `deploy/railway/template.json`): the in-repo file is the
 source that gets pushed or PR'd upstream, which is why Railway is pinned `local_file`. CapRover is
-pinned `remote_file` even so - that pin must measure what the catalog actually serves, which leaves
-its in-repo descriptor unmeasured by any gate
-([#268](https://github.com/libredb/libredb-studio/issues/268)); it fell 45 patch versions behind the
-catalog before anyone noticed. **Dokploy**, **Kubero** and **Cosmos** keep only a README there -
+pinned `remote_file` even so - that pin must measure what the catalog actually serves - and its two
+in-repo templates are held to `package.json` by `chart:check` instead: they once fell 45 patch
+versions behind the catalog before anyone noticed
+([#268](https://github.com/libredb/libredb-studio/issues/268)), and `chart:bump` now moves them with
+every release. **Dokploy**, **Kubero** and **Cosmos** keep only a README there -
 their descriptors are authored in the upstream catalog repo, so all three are pinned `remote_file`
 and a bump is an upstream PR with nothing to change here. **Eight catalog channels keep no
 descriptor here at all.** Two of them are pinned `remote_file` against the repository that does
@@ -1786,6 +1788,28 @@ report without blocking a release. Snapshot builds and Vendor Portal updates
 stay manual and on demand; every successful `publish-release` job adds a
 versioned build, test, submit and verify checklist to its summary. See the
 [DigitalOcean build guide](../deploy/digitalocean/README.md).
+
+#### Staging an upstream catalog change on a fork
+
+Some catalogs take a version bump only as a pull request that a person tested, so release CI prepares the change and stops short of the pull request.
+`update.fork` in `channels.yaml` holds what the workflow may do for such a channel.
+The set of channels that carry it is `FORK_STAGED_CHANNEL_IDS` in [`scripts/distribution-check.mjs`](../scripts/distribution-check.mjs), and like `ci_enabled` the field is required there and rejected everywhere else.
+
+```yaml
+  - id: caprover-official
+    update:
+      method: upstream_pr
+      sla: on_demand
+      fork:
+        mode: update   # or create_or_update: create a missing fork in the libredb org first
+        push: auto     # or manual: a release run validates only, and a member pushes by hand
+```
+
+CapRover is the one such channel.
+Its catalog's maintainer keeps bumps manual ([caprover/one-click-apps#1334](https://github.com/caprover/one-click-apps/pull/1334#issuecomment-5717266315)), so [`caprover-fork.yml`](../.github/workflows/caprover-fork.yml) stages both templates on `libredb/one-click-apps` after each release, and a member opens the pull request after testing them; [deploy/caprover/README.md](../deploy/caprover/README.md#releasing-to-the-official-catalog) has the steps.
+`docker-build-push.yml` dispatches it once the release images passed their channel E2E.
+The workflow reads the settings with `distribution-check.mjs --fork-outputs caprover-official`, pushes only for a `live` channel, and needs the `CAPROVER_CATALOG_TOKEN` secret; without it a run validates and pushes nothing.
+It stages the release tag's templates unchanged, because `chart:bump` moves their version with `package.json` and `chart:check` holds every commit to it.
 
 ### Manual steps still open
 

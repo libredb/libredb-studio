@@ -1,0 +1,343 @@
+name: CapRover Catalog Fork
+
+# Stages a release's CapRover one-click templates on libredb/one-click-apps, the
+# libredb fork of the official catalog (caprover/one-click-apps), as branch
+# libredb-studio-<version>, and stops there. It never opens the pull request:
+# the catalog's maintainer keeps version bumps manual ("When someone sends a PR
+# we know that version works", caprover/one-click-apps#1334), and the catalog's
+# pull request template asks for a test on a CapRover dashboard. A member
+# installs the staged templates, then opens the pull request from the link in
+# this run's summary (deploy/caprover/README.md, "Maintaining this template").
+#
+# docker-build-push.yml dispatches it on the release tag with trigger=release,
+# once the images are published and passed their channel E2E. A member runs it
+# by hand on a release tag (Run workflow, "Use workflow from" the tag) with the
+# default trigger=manual: that run is the manual push.
+#
+# distribution/channels.yaml decides what it may do, under caprover-official
+# update.fork:
+#   mode: update            the fork must exist; its default branch is
+#                           fast-forwarded to upstream before the push.
+#         create_or_update  a missing fork is created in the libredb org first.
+#   push: auto              a release run pushes the branch.
+#         manual            a release run validates only; a member pushes by
+#                           running this workflow by hand.
+#
+# Nothing here rewrites a template. chart:bump moves both templates' version
+# with package.json in the release bump, and chart:check holds every commit on
+# main to it, so the tag's deploy/caprover files go upstream byte for byte.
+#
+# CAPROVER_CATALOG_TOKEN is a classic personal access token with the public_repo
+# scope, from a libredb org member who may create repositories there: the
+# workflow's GITHUB_TOKEN cannot write to another repository, and a fine-grained
+# token cannot fork across owners. Without it a run validates and pushes
+# nothing.
+#
+# Two jobs on purpose. `validate` runs the catalog's own npm tooling, which is
+# third-party code, and holds no secret. `push` holds the token and runs only
+# git, gh and the staging script from this repository.
+
+on:
+  workflow_dispatch:
+    inputs:
+      trigger:
+        description: "manual pushes the staged branch now; release (sent by docker-build-push.yml) pushes only when update.fork.push is auto"
+        type: choice
+        options:
+          - manual
+          - release
+        default: manual
+
+permissions:
+  contents: read
+
+concurrency:
+  # One run per tag: two runs racing on the same branch could both find it
+  # missing and both push.
+  group: caprover-fork-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: caprover/one-click-apps
+  FORK: libredb/one-click-apps
+
+jobs:
+  validate:
+    name: Validate the CapRover templates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      branch: ${{ steps.version.outputs.branch }}
+      mode: ${{ steps.settings.outputs.mode }}
+      write: ${{ steps.settings.outputs.write }}
+      changed: ${{ steps.stage.outputs.changed }}
+      catalog_sha: ${{ steps.stage.outputs.catalog_sha }}
+    steps:
+      - name: Resolve the release version
+        id: version
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          # The staged templates are the tag's, and the branch is named after it.
+          case "$REF" in
+            refs/tags/*) VERSION="${REF#refs/tags/}" ;;
+            *)
+              echo "::error::Run this workflow on a release tag (Use workflow from > Tags), not '$REF'."
+              exit 1
+              ;;
+          esac
+          if ! printf '%s\n' "$VERSION" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::'$VERSION' is not a release version (x.y.z)."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "branch=libredb-studio-$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Check the templates carry this version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$PKG_VERSION" != "$VERSION" ]; then
+            echo "::error::package.json says '$PKG_VERSION' at tag '$VERSION'."
+            exit 1
+          fi
+          # chart:check holds both deploy/caprover templates at the package.json
+          # version, so a tag that passes it stages that version.
+          node scripts/sync-chart-version.mjs --check
+
+      - name: Read update.fork from distribution/channels.yaml
+        id: settings
+        env:
+          TRIGGER: ${{ inputs.trigger }}
+          # Presence only: the token's value never reaches this job.
+          TOKEN_PRESENT: ${{ secrets.CAPROVER_CATALOG_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          SETTINGS=$(node scripts/distribution-check.mjs --fork-outputs caprover-official)
+          echo "$SETTINGS"
+          MODE=$(printf '%s\n' "$SETTINGS" | sed -n 's/^mode=//p')
+          PUSH=$(printf '%s\n' "$SETTINGS" | sed -n 's/^push=//p')
+          LIVE=$(printf '%s\n' "$SETTINGS" | sed -n 's/^live=//p')
+          case "$TRIGGER" in
+            manual|release) ;;
+            *) echo "::error::trigger must be manual or release, not '$TRIGGER'."; exit 1 ;;
+          esac
+          WRITE=true
+          REASON=""
+          if [ "$LIVE" != "true" ]; then
+            WRITE=false
+            REASON="caprover-official is not live in distribution/channels.yaml."
+          elif [ "$TRIGGER" = "release" ] && [ "$PUSH" != "auto" ]; then
+            WRITE=false
+            REASON="update.fork.push is manual: run this workflow by hand on this tag to push."
+          elif [ "$TOKEN_PRESENT" != "true" ]; then
+            WRITE=false
+            REASON="CAPROVER_CATALOG_TOKEN is not configured."
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "write=$WRITE" >> "$GITHUB_OUTPUT"
+          if [ "$WRITE" != "true" ]; then
+            echo "::notice::Validating only, nothing is pushed: $REASON"
+            echo "Validating only, nothing is pushed: $REASON" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Checkout the catalog
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          repository: ${{ env.UPSTREAM }}
+          path: catalog
+          persist-credentials: false
+
+      - name: Stage the templates
+        id: stage
+        run: |
+          set -euo pipefail
+          bash scripts/stage-caprover-catalog.sh . catalog
+          echo "catalog_sha=$(git -C catalog rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ -z "$(git -C catalog status --porcelain)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::${UPSTREAM} already serves these templates; there is nothing to stage."
+            echo "${UPSTREAM} already serves these templates; there is nothing to stage." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git -C catalog status --short
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # The version the catalog's own pull-request CI runs.
+          node-version: 20
+
+      - name: Validate with the catalog's own checks
+        working-directory: catalog
+        run: |
+          set -euo pipefail
+          # What the catalog's pull-request CI runs (its validate_apps.yml).
+          # --ignore-scripts: no dependency's install script runs on this runner.
+          npm ci --ignore-scripts
+          npm run validate_apps
+          npm run formatter
+          npm run build
+
+  push:
+    name: Push the branch to libredb/one-click-apps
+    needs: validate
+    if: needs.validate.outputs.write == 'true' && needs.validate.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Make sure the fork exists and is a fork of the catalog
+        env:
+          GH_TOKEN: ${{ secrets.CAPROVER_CATALOG_TOKEN }}
+          MODE: ${{ needs.validate.outputs.mode }}
+        run: |
+          set -euo pipefail
+          if ! PARENT=$(gh api "repos/${FORK}" --jq '.parent.full_name // ""' 2> lookup-error.txt); then
+            if ! grep -q 'HTTP 404' lookup-error.txt; then
+              cat lookup-error.txt >&2
+              exit 1
+            fi
+            if [ "$MODE" != "create_or_update" ]; then
+              echo "::error::${FORK} does not exist and update.fork.mode is '${MODE}'. Create the fork, or set mode: create_or_update for caprover-official in distribution/channels.yaml."
+              exit 1
+            fi
+            gh api -X POST "repos/${UPSTREAM}/forks" -f organization="${FORK%%/*}" -F default_branch_only=true --jq .full_name
+            # GitHub creates a fork in the background.
+            READY=false
+            for _ in $(seq 1 30); do
+              if PARENT=$(gh api "repos/${FORK}" --jq '.parent.full_name // ""' 2> /dev/null); then
+                READY=true
+                break
+              fi
+              sleep 10
+            done
+            if [ "$READY" != "true" ]; then
+              echo "::error::GitHub had not finished creating ${FORK} after five minutes; run this workflow again."
+              exit 1
+            fi
+          fi
+          if [ "$PARENT" != "$UPSTREAM" ]; then
+            echo "::error::${FORK} is not a fork of ${UPSTREAM} (its parent is '${PARENT:-none}'). A fork's parent cannot be changed: re-create the fork from ${UPSTREAM}."
+            exit 1
+          fi
+
+      - name: Fast-forward the fork's default branch
+        env:
+          GH_TOKEN: ${{ secrets.CAPROVER_CATALOG_TOKEN }}
+        run: |
+          set -euo pipefail
+          BASE=$(gh api "repos/${UPSTREAM}" --jq .default_branch)
+          gh api -X POST "repos/${FORK}/merge-upstream" -f branch="$BASE" --jq .message
+          # Commits on the fork's default branch that upstream lacks would show
+          # up in the pull request a member opens: stop here instead.
+          STATUS=$(gh api "repos/${UPSTREAM}/compare/${BASE}...${FORK%%/*}:${FORK##*/}:${BASE}" --jq .status)
+          case "$STATUS" in
+            identical|behind) echo "${FORK} ${BASE} is ${STATUS} relative to ${UPSTREAM} ${BASE}." ;;
+            *)
+              echo "::error::${FORK} ${BASE} is '${STATUS}' relative to ${UPSTREAM} ${BASE}: it carries commits upstream does not have. Reset it before staging."
+              exit 1
+              ;;
+          esac
+          echo "BASE=$BASE" >> "$GITHUB_ENV"
+
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          path: studio
+          persist-credentials: false
+
+      - name: Checkout the catalog commit that was validated
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          repository: ${{ env.UPSTREAM }}
+          ref: ${{ needs.validate.outputs.catalog_sha }}
+          path: catalog
+          persist-credentials: false
+
+      - name: Commit the templates on the release branch
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          BRANCH: ${{ needs.validate.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git -C catalog switch --quiet --create "$BRANCH"
+          # An assignment, not a process substitution, so set -e stops the step
+          # when the script fails halfway instead of committing part of it.
+          STAGED_LIST=$(bash studio/scripts/stage-caprover-catalog.sh studio catalog)
+          mapfile -t STAGED <<< "$STAGED_LIST"
+          git -C catalog add -- "${STAGED[@]}"
+          git -C catalog -c user.name="Mehmet Cevheri BOZOGLAN" -c user.email="cevheribozoglan@gmail.com" \
+            commit --quiet -m "libredb-studio: bump default version to ${VERSION}"
+          git -C catalog show --stat --format='%h %s' HEAD
+
+      - name: Push the branch, never over different templates
+        env:
+          GH_TOKEN: ${{ secrets.CAPROVER_CATALOG_TOKEN }}
+          BRANCH: ${{ needs.validate.outputs.branch }}
+        run: |
+          set -euo pipefail
+          REMOTE="https://github.com/${FORK}.git"
+          EXISTING=$(git -C catalog ls-remote --heads "$REMOTE" "refs/heads/${BRANCH}")
+          if [ -n "$EXISTING" ]; then
+            git -C catalog fetch --quiet --depth 1 "$REMOTE" "refs/heads/${BRANCH}"
+            # Only the files this commit stages: the existing branch may sit on
+            # an older catalog commit, where every other app can differ.
+            OURS_LIST=$(git -C catalog diff-tree --no-commit-id --name-only -r HEAD)
+            mapfile -t OURS <<< "$OURS_LIST"
+            if git -C catalog diff --quiet FETCH_HEAD HEAD -- "${OURS[@]}"; then
+              echo "${FORK} already has ${BRANCH} with these templates."
+              echo "STAGED=existing" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "::error::${FORK} already has ${BRANCH} with different templates, perhaps a fix made during review. Not overwriting it: delete the branch to stage it again, or update it by hand."
+            exit 1
+          fi
+          gh auth setup-git
+          git -C catalog push --quiet "$REMOTE" "HEAD:refs/heads/${BRANCH}"
+          echo "STAGED=pushed" >> "$GITHUB_ENV"
+
+      - name: Write the test and pull request links
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          BRANCH: ${{ needs.validate.outputs.branch }}
+        run: |
+          set -euo pipefail
+          TITLE=$(jq -rn --arg title "libredb-studio: bump default version to ${VERSION}" '$title | @uri')
+          COMPARE="https://github.com/${UPSTREAM}/compare/${BASE}...${FORK%%/*}:${FORK##*/}:${BRANCH}?expand=1&title=${TITLE}"
+          RAW="https://raw.githubusercontent.com/${FORK}/${BRANCH}/public/v4/apps"
+          {
+            if [ "$STAGED" = "existing" ]; then
+              echo "## ${FORK} already had ${BRANCH} with these templates"
+            else
+              echo "## Staged ${BRANCH} on ${FORK}"
+            fi
+            echo
+            echo "1. Test both templates on a CapRover: Apps > One-Click Apps/Databases > \`>> TEMPLATE <<\`, paste [libredb-studio.yml](${RAW}/libredb-studio.yml), install it with the default version ${VERSION}, then do the same with [libredb-studio-autoconnect.yml](${RAW}/libredb-studio-autoconnect.yml)."
+            echo "2. [Open the pull request](${COMPARE}). The catalog fills in its checklist; tick it from your test and say what you tested."
+            echo
+            # A change beside the version (a logo, a description) belongs in the
+            # pull request's text too, so the member sees every file it touches.
+            echo "Files the branch changes in the catalog:"
+            echo
+            echo '```'
+            git -C catalog show --stat --format= HEAD
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

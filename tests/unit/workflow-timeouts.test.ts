@@ -11,6 +11,7 @@ const WORKFLOWS = join(import.meta.dir, "../../.github/workflows");
 // expected runtime has been considered.
 const EXPECTED_TIMEOUTS: Record<string, Record<string, number>> = {
   "azure-marketplace-package.yml": { package: 10 },
+  "caprover-fork.yml": { validate: 15, push: 15 },
   "codeql.yml": { analyze: 15 },
   "do-packer-build.yml": { build: 30 },
   "flatpak-smoke.yml": { appimage: 30, flatpak: 20 },

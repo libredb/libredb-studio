@@ -470,6 +470,36 @@ jobs:
           gh workflow run helm-release.yml --ref "$REF"
           echo "Dispatched helm-release on ${REF}."
 
+  dispatch-caprover-fork:
+    # The CapRover templates deploy the image this run just published, so their
+    # catalog branch is staged only after a successful publish and its channel
+    # E2E, and only in the release context: the same if: as the Helm dispatch
+    # above, keep the two in step. A recovery dispatch that repeats it is
+    # harmless, since caprover-fork leaves a branch that already holds the same
+    # templates alone. Separate job so actions:write is never granted to
+    # ordinary branch builds; the dispatch targets THIS run's ref, the release
+    # tag, whose templates chart:check holds at the release version.
+    name: Dispatch CapRover catalog fork
+    needs: [build-and-push, channel-e2e]
+    if: >-
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_latest == true &&
+       (inputs.variant == '' || inputs.variant == 'all'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch caprover-fork on this ref
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          gh workflow run caprover-fork.yml --ref "$REF" -f trigger=release
+          echo "Dispatched caprover-fork on ${REF}."
+
   # DOCKERHUB.md is the Docker Hub listing text. The repo keeps it current - the
   # release checklist asks for the engine list to be checked in it alongside
   # README.md - but nothing ever pushed it to the registry, so the listing sat

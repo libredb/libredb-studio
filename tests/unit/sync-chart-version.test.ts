@@ -7,20 +7,24 @@
  * hermetic local git fixtures for the base-comparison paths - no network.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   applyBump,
+  bumpCaproverTemplate,
   bumpPatch,
+  caproverTemplateViolations,
   checkChangesAnnotation,
   checkSync,
   listChartFiles,
   operatorCopyViolations,
   packagedChartChanges,
+  parseCaproverVersions,
   parseChart,
   parseImageTag,
   parseReadmeVersion,
+  refreshCaproverTemplates,
   refreshOperatorCopy,
   tagQueryNeeded,
 } from "../../scripts/sync-chart-version.mjs";
@@ -789,5 +793,178 @@ describe("operator embedded chart copy (PR #156)", () => {
     expect(violations[0]).toContain("missing while");
     expect(refreshOperatorCopy(root)).toBe(true);
     expect(operatorCopyViolations(root)).toEqual([]);
+  });
+});
+
+// The CapRover one-click templates pin the Studio image twice inside the
+// $$cap_version variable: its defaultValue and the "Example - x.y.z." in its
+// description. chart:bump moves both with package.json, so the release tag holds
+// the files the caprover-fork workflow stages for the official catalog, and
+// chart:check fails a tree whose templates fell behind (the gap #268 described).
+function caproverTemplate(version = "0.18.0", example = version, quote = "'"): string {
+  return `captainVersion: 4
+services:
+    $$cap_appname:
+        image: ghcr.io/libredb/libredb-studio:$$cap_version
+caproverOneClickApp:
+    variables:
+        - id: $$cap_version
+          label: LibreDB Studio Version
+          defaultValue: ${quote}${version}${quote}
+          description: Image tag to deploy. Always pin a fixed version, never "latest". Example - ${example}. Browse all valid tags at https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+          validRegex: '/^([^\\s^\\/])+$/'
+        - id: $$cap_admin_email
+          label: Admin Email
+          defaultValue: admin@libredb.org
+          description: Login email for the ADMIN account. Example - admin@yourcompany.com
+        - id: $$cap_pinned_elsewhere
+          defaultValue: '9.9.9'
+          description: A second pinned version that is not the image. Example - 9.9.9.
+`;
+}
+
+const CAPROVER_FILES = ["deploy/caprover/libredb-studio.yml", "deploy/caprover/libredb-studio-autoconnect.yml"];
+
+describe("CapRover template pins", () => {
+  test("parseCaproverVersions reads the defaultValue and the example of $$cap_version only", () => {
+    expect(parseCaproverVersions(caproverTemplate("0.18.0"), "t.yml")).toEqual({
+      defaultValue: "0.18.0",
+      example: "0.18.0",
+    });
+  });
+
+  test("parseCaproverVersions reads an unquoted and a double-quoted defaultValue", () => {
+    expect(parseCaproverVersions(caproverTemplate("0.18.0", "0.18.0", ""), "t.yml").defaultValue).toBe("0.18.0");
+    expect(parseCaproverVersions(caproverTemplate("0.18.0", "0.18.0", '"'), "t.yml").defaultValue).toBe("0.18.0");
+  });
+
+  test("parseCaproverVersions reports two pins that disagree as they are", () => {
+    expect(parseCaproverVersions(caproverTemplate("0.17.0", "0.16.0"), "t.yml")).toEqual({
+      defaultValue: "0.17.0",
+      example: "0.16.0",
+    });
+  });
+
+  test("parseCaproverVersions throws without a $$cap_version variable, naming the file", () => {
+    const template = caproverTemplate().replace("- id: $$cap_version", "- id: $$cap_image_tag");
+    expect(() => parseCaproverVersions(template, "deploy/caprover/x.yml")).toThrow(
+      /deploy\/caprover\/x\.yml.*cap_version/,
+    );
+  });
+
+  test("parseCaproverVersions throws when the defaultValue is not a version", () => {
+    const template = caproverTemplate().replace("defaultValue: '0.18.0'", "defaultValue: latest");
+    expect(() => parseCaproverVersions(template, "t.yml")).toThrow(/defaultValue/);
+  });
+
+  test("parseCaproverVersions throws when the description lost its example", () => {
+    const template = caproverTemplate().replace("Example - 0.18.0. ", "");
+    expect(() => parseCaproverVersions(template, "t.yml")).toThrow(/Example/);
+  });
+
+  test("parseCaproverVersions throws when the description carries two examples", () => {
+    const template = caproverTemplate().replace("Example - 0.18.0.", "Example - 0.18.0. Example - 0.17.0.");
+    expect(() => parseCaproverVersions(template, "t.yml")).toThrow(/Example/);
+  });
+
+  test("bumpCaproverTemplate moves both pins and leaves every other byte alone", () => {
+    const result = bumpCaproverTemplate(caproverTemplate("0.17.0"), "0.18.1", "t.yml");
+    expect(result.changed).toBe(true);
+    expect(result.template).toBe(caproverTemplate("0.18.1"));
+  });
+
+  test("bumpCaproverTemplate repairs two pins that disagree", () => {
+    const result = bumpCaproverTemplate(caproverTemplate("0.17.0", "0.16.0"), "0.18.1", "t.yml");
+    expect(result.template).toBe(caproverTemplate("0.18.1"));
+  });
+
+  test("bumpCaproverTemplate keeps the quoting of the defaultValue", () => {
+    const result = bumpCaproverTemplate(caproverTemplate("0.17.0", "0.17.0", '"'), "0.18.1", "t.yml");
+    expect(result.template).toBe(caproverTemplate("0.18.1", "0.18.1", '"'));
+  });
+
+  test("bumpCaproverTemplate is a no-op on a template already at the version", () => {
+    const template = caproverTemplate("0.18.1");
+    expect(bumpCaproverTemplate(template, "0.18.1", "t.yml")).toEqual({ template, changed: false });
+  });
+
+  test("the repository's own templates have both pins in the parsed places", () => {
+    for (const file of CAPROVER_FILES) {
+      const pins = parseCaproverVersions(readFileSync(join(import.meta.dir, "../..", file), "utf8"), file);
+      expect(pins.defaultValue).toMatch(/^\d+\.\d+\.\d+$/);
+      expect(pins.example).toBe(pins.defaultValue);
+    }
+  });
+
+  describe("against a checkout", () => {
+    const roots: string[] = [];
+    afterEach(() => {
+      for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+    });
+
+    function makeRoot(versions: [string, string] = ["0.18.0", "0.18.0"]): string {
+      const root = mkdtempSync(join(tmpdir(), "caprover-pins-"));
+      roots.push(root);
+      mkdirSync(join(root, "deploy/caprover"), { recursive: true });
+      CAPROVER_FILES.forEach((file, i) => writeFileSync(join(root, file), caproverTemplate(versions[i])));
+      return root;
+    }
+
+    test("templates at the package.json version produce no violations", () => {
+      expect(caproverTemplateViolations(makeRoot(), "0.18.0")).toEqual([]);
+    });
+
+    test("every pin that differs from package.json is a violation naming its file", () => {
+      const root = makeRoot(["0.17.0", "0.18.0"]);
+      const template = caproverTemplate("0.18.0").replace("Example - 0.18.0.", "Example - 0.16.0.");
+      writeFileSync(join(root, CAPROVER_FILES[1]), template);
+      const violations = caproverTemplateViolations(root, "0.18.0");
+      expect(violations).toHaveLength(3);
+      expect(violations[0]).toContain(`${CAPROVER_FILES[0]}: $$cap_version defaultValue '0.17.0'`);
+      expect(violations[1]).toContain(`${CAPROVER_FILES[0]}: the $$cap_version description example '0.17.0'`);
+      expect(violations[2]).toContain(`${CAPROVER_FILES[1]}: the $$cap_version description example '0.16.0'`);
+      expect(violations[2]).toContain("package.json version '0.18.0'");
+    });
+
+    test("a checkout without deploy/caprover is skipped", () => {
+      const root = mkdtempSync(join(tmpdir(), "caprover-pins-"));
+      roots.push(root);
+      expect(caproverTemplateViolations(root, "0.18.0")).toEqual([]);
+      expect(refreshCaproverTemplates(root, "0.18.0")).toEqual([]);
+    });
+
+    test("a template missing from deploy/caprover is a violation", () => {
+      const root = makeRoot();
+      rmSync(join(root, CAPROVER_FILES[1]));
+      expect(caproverTemplateViolations(root, "0.18.0")).toEqual([`${CAPROVER_FILES[1]}: missing`]);
+    });
+
+    test("refreshCaproverTemplates rewrites the drifted templates once, then has nothing to do", () => {
+      const root = makeRoot(["0.17.0", "0.18.1"]);
+      expect(refreshCaproverTemplates(root, "0.18.1")).toEqual([CAPROVER_FILES[0]]);
+      expect(readFileSync(join(root, CAPROVER_FILES[0]), "utf8")).toBe(caproverTemplate("0.18.1"));
+      expect(caproverTemplateViolations(root, "0.18.1")).toEqual([]);
+      expect(refreshCaproverTemplates(root, "0.18.1")).toEqual([]);
+    });
+
+    test("--check fails on a template behind package.json, with the chart:bump hint", () => {
+      const root = makeRoot(["0.9.43", "0.9.44"]);
+      writeTree(root, "0.9.44", chartYaml(), readme());
+      const result = runCheck(root);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr.toString()).toContain(`${CAPROVER_FILES[0]}: $$cap_version defaultValue '0.9.43'`);
+      expect(result.stderr.toString()).toContain("bun run chart:bump");
+    });
+
+    test("--write moves the templates to the package.json version and names them", () => {
+      const root = makeRoot(["0.9.43", "0.9.43"]);
+      writeTree(root, "0.9.44", chartYaml(), readme());
+      const result = Bun.spawnSync(["node", SCRIPT, "--write", "--root", root], { stdout: "pipe", stderr: "pipe" });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).toContain(`Moved ${CAPROVER_FILES[0]} to 0.9.44`);
+      expect(result.stdout.toString()).toContain(`Moved ${CAPROVER_FILES[1]} to 0.9.44`);
+      expect(caproverTemplateViolations(root, "0.9.44")).toEqual([]);
+      expect(runCheck(root).exitCode).toBe(0);
+    });
   });
 });

@@ -11,6 +11,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  FORK_MODES,
+  FORK_PUSH_MODES,
+  FORK_STAGED_CHANNEL_IDS,
   SWITCHABLE_CHANNEL_IDS,
   applyMatrixMarkers,
   buildChannelsDoc,
@@ -20,6 +23,7 @@ import {
   docsHref,
   evaluateChannel,
   extractPin,
+  forkOutputs,
   githubAuthHeaders,
   guideLabel,
   humanizeSla,
@@ -761,6 +765,100 @@ describe("update.ci_enabled", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// update.fork - what the release workflow may do to a LibreDB fork of an
+// upstream catalog. It stages the change there and stops: a person tests it
+// and opens the pull request, so nothing here ever opens one.
+// ---------------------------------------------------------------------------
+
+const FORK_SETTINGS = "      fork:\n        mode: update\n        push: auto\n";
+
+function forkRow(fork = FORK_SETTINGS, method = "upstream_pr"): string {
+  return `  - id: caprover-official
+    name: CapRover official one-click apps
+    status: live
+    category: paas-catalogs
+    platforms: [cloud]
+    runtime: channel_supplied
+    tier: 3
+    kind: one-click-template
+    update:
+      method: ${method}
+      sla: on_demand
+${fork}    pin:
+      strategy: none
+      note: Staged on the libredb fork by CI; a person opens the pull request.
+`;
+}
+
+describe("update.fork", () => {
+  test("the fork-staged set is exactly the CapRover catalog", () => {
+    expect([...FORK_STAGED_CHANNEL_IDS]).toEqual(["caprover-official"]);
+    expect(FORK_MODES).toEqual(["update", "create_or_update"]);
+    expect(FORK_PUSH_MODES).toEqual(["auto", "manual"]);
+  });
+
+  test("accepts every mode with every push setting", () => {
+    for (const mode of FORK_MODES) {
+      for (const push of FORK_PUSH_MODES) {
+        const row = forkRow(`      fork:\n        mode: ${mode}\n        push: ${push}\n`);
+        expect(parseChannels(channelsYaml(row))[0].update.fork).toEqual({ mode, push });
+      }
+    }
+  });
+
+  // Required, never defaulted, like ci_enabled: what the workflow may do to a
+  // fork has to be a stated decision in the inventory.
+  test("throws when a fork-staged channel omits the settings", () => {
+    expect(() => parseChannels(channelsYaml(forkRow("")))).toThrow(/caprover-official.*update\.fork must be a mapping/);
+  });
+
+  test("throws when the settings are not a mapping", () => {
+    expect(() => parseChannels(channelsYaml(forkRow("      fork: auto\n")))).toThrow(/update\.fork must be a mapping/);
+  });
+
+  test("throws on a mode outside the list", () => {
+    const row = forkRow(FORK_SETTINGS.replace("mode: update", "mode: create"));
+    expect(() => parseChannels(channelsYaml(row))).toThrow(
+      /update\.fork\.mode must be one of update\|create_or_update/,
+    );
+  });
+
+  test("throws on a push setting outside the list", () => {
+    const row = forkRow(FORK_SETTINGS.replace("push: auto", "push: true"));
+    expect(() => parseChannels(channelsYaml(row))).toThrow(/update\.fork\.push must be one of auto\|manual/);
+  });
+
+  test("throws on a key it does not know, so a misspelt setting is never ignored", () => {
+    const row = forkRow(`${FORK_SETTINGS}        open_pr: true\n`);
+    expect(() => parseChannels(channelsYaml(row))).toThrow(/update\.fork has unknown keys: open_pr/);
+  });
+
+  test("throws when the channel does not reach its catalog through a pull request", () => {
+    expect(() => parseChannels(channelsYaml(forkRow(FORK_SETTINGS, "commit")))).toThrow(
+      /update\.fork needs update\.method upstream_pr/,
+    );
+  });
+
+  test("throws when the settings appear on a channel the workflow does not stage", () => {
+    const row = NONE_ROW.replace("      sla: every_release\n", `      sla: every_release\n${FORK_SETTINGS}`);
+    expect(() => parseChannels(channelsYaml(row))).toThrow(/npm.*update\.fork is only allowed on caprover-official/);
+  });
+
+  test("forkOutputs emits the settings and whether the channel is live", () => {
+    const [live] = parseChannels(channelsYaml(forkRow()));
+    expect(forkOutputs(live)).toEqual(["mode=update", "push=auto", "live=true"]);
+    const [pending] = parseChannels(channelsYaml(forkRow().replace("status: live", "status: pending")));
+    expect(forkOutputs(pending)).toEqual(["mode=update", "push=auto", "live=false"]);
+  });
+
+  test("the real inventory declares the settings for every fork-staged channel", () => {
+    const channels = parseChannels(readFileSync(join(import.meta.dir, "../../distribution/channels.yaml"), "utf8"));
+    const declared = channels.filter((c: { update: { fork?: unknown } }) => c.update.fork !== undefined);
+    expect(declared.map((c: { id: string }) => c.id).sort()).toEqual([...FORK_STAGED_CHANNEL_IDS].sort());
+  });
+});
+
 const SCRIPT = join(import.meta.dir, "../../scripts/distribution-check.mjs");
 
 function writeFixture(root: string, pkgVersion: string, channels: string): void {
@@ -917,6 +1015,35 @@ describe("CLI (subprocess against temp fixtures)", () => {
     const result = Bun.spawnSync(["node", SCRIPT, "--ci-enabled"], { stdout: "pipe", stderr: "pipe" });
     expect(result.exitCode).toBe(2);
     expect(result.stderr.toString()).toContain("--ci-enabled requires");
+  });
+
+  // The caprover-fork workflow reads these lines into $GITHUB_OUTPUT.
+  test("--fork-outputs <id> prints the fork settings", () => {
+    const settings = "      fork:\n        mode: create_or_update\n        push: manual\n";
+    const root = makeFixture("0.18.0", channelsYaml(forkRow(settings)));
+    const result = runCheck(root, ["--fork-outputs", "caprover-official"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString().trim().split("\n")).toEqual(["mode=create_or_update", "push=manual", "live=true"]);
+  });
+
+  test("--fork-outputs rejects a channel the workflow does not stage", () => {
+    const root = makeFixture("0.18.0", channelsYaml(NONE_ROW));
+    const result = runCheck(root, ["--fork-outputs", "npm"]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain("'npm' is not a fork-staged channel");
+  });
+
+  test("--fork-outputs fails when the channel is not in the inventory", () => {
+    const root = makeFixture("0.18.0", channelsYaml(NONE_ROW));
+    const result = runCheck(root, ["--fork-outputs", "caprover-official"]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain("channel 'caprover-official' is not in");
+  });
+
+  test("--fork-outputs with no value exits 2 with usage", () => {
+    const result = Bun.spawnSync(["node", SCRIPT, "--fork-outputs"], { stdout: "pipe", stderr: "pipe" });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain("--fork-outputs requires");
   });
 });
 

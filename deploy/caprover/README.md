@@ -138,44 +138,42 @@ Set these under the app's **App Configs** tab to extend the deployment:
 
 ## Maintaining this template
 
-When a new Studio version is released, bump the version in `libredb-studio.yml`
-and submit an update PR to the official repo. The version appears **twice** in
-that file — the `defaultValue` of `$$cap_version` and the example inside its
-`description` — and both must move together. Validate locally with the CapRover
-repo's tooling:
+The release bump keeps both templates on the release version.
+`bun run chart:bump` moves `libredb-studio.yml` and `libredb-studio-autoconnect.yml` with `package.json`, in the two places each file carries the version: the `defaultValue` of `$$cap_version` and the example inside its `description`.
+`bun run chart:check`, which runs in the required `Lint, Typecheck and Build` check, fails a commit whose templates do not match `package.json`, so a release tag always holds the templates for that release and this copy can no longer fall behind unnoticed, the gap [#268](https://github.com/libredb/libredb-studio/issues/268) described.
+`libredb-studio-autoconnect.yml` never goes below 0.18.0, the first release with the exporter.
+`tests/unit/caprover-template.test.ts` checks the rest of both files: it fails when the plain-HTTP cookie override is missing or stops saying what it costs, when an em dash or a pictograph creeps back in, and when the auto-connect variant breaks its own rules (the socket only in the companion, the shared volume, the disclosure that opens the install text).
+
+### Releasing to the official catalog
+
+The catalog's maintainer keeps version bumps manual: "When someone sends a PR we know that version works" ([caprover/one-click-apps#1334](https://github.com/caprover/one-click-apps/pull/1334#issuecomment-5717266315)).
+So a workflow prepares the branch, and a member tests it and opens the pull request.
+
+1. After each release, [`caprover-fork.yml`](../../.github/workflows/caprover-fork.yml) stages both templates and their logos, byte for byte from the release tag, on [`libredb/one-click-apps`](https://github.com/libredb/one-click-apps) as the branch `libredb-studio-<version>`.
+   It runs the catalog's own checks first (`npm ci`, `validate_apps`, `formatter`, `build`) and never opens a pull request.
+2. A member installs both staged templates on a CapRover: **Apps → One-Click Apps/Databases** → **`>> TEMPLATE <<`**, paste the raw file from the branch, and keep the default version.
+3. The member opens the pull request from the link in the run's summary, ticks the catalog's checklist from that test, and says what was tested.
+   The summary lists every file the branch changes, so a change beside the version, such as a new logo, goes into the pull request's text too.
+
+`caprover-official` in [`distribution/channels.yaml`](../../distribution/channels.yaml) decides what the workflow may do, under `update.fork`:
+
+| Setting | Value | Effect |
+|---|---|---|
+| `mode` | `update` | The fork must exist. Its default branch is fast-forwarded to the catalog's before the push. |
+| `mode` | `create_or_update` | A missing fork is created in the libredb org first. |
+| `push` | `auto` | The release run pushes the branch. |
+| `push` | `manual` | The release run only validates. A member pushes by running **CapRover Catalog Fork** by hand on the release tag: **Run workflow**, then **Use workflow from** the tag. |
+
+The push needs the `CAPROVER_CATALOG_TOKEN` secret: a classic personal access token with the `public_repo` scope, from a libredb org member who may create repositories there.
+The workflow's own token cannot write to another repository, and a fine-grained token cannot fork across owners.
+Without the secret the workflow validates and pushes nothing.
+It never pushes over a branch whose templates differ from the release's, for example after a fix made during review: delete the branch to stage it again.
+
+A change between releases, such as a description fix, still goes upstream by hand: merge it here first, then send the same bytes in a pull request.
+Compare against the live template before you do.
+This folder leads and the catalog follows, but that order has been broken twice: [caprover/one-click-apps#1315](https://github.com/caprover/one-click-apps/pull/1315) bumped the catalog to 0.9.59 directly, and [#1335](https://github.com/caprover/one-click-apps/pull/1335) put the `AUTH_COOKIE_SECURE` override and other fixes straight into the catalog, none of which came back here until 0.17.0.
 
 ```bash
-npm ci && npm run validate_apps && npm run formatter
+curl -s https://raw.githubusercontent.com/caprover/one-click-apps/master/public/v4/apps/libredb-studio.yml \
+  | diff -u libredb-studio.yml -
 ```
-
-A release bumps both templates, `libredb-studio.yml` and `libredb-studio-autoconnect.yml`, in the same post-release pull request, and each carries the version in the same two places.
-`libredb-studio-autoconnect.yml` never goes below 0.18.0, the first release with the exporter.
-`tests/unit/caprover-template.test.ts` runs the same checks over both files, plus the auto-connect variant's own: the socket only in the companion, the shared volume, the disclosure that opens the install text.
-
-Two things to know before you bump:
-
-- **`bun run distribution:check` does not verify this file.** It pins
-  `caprover-official` with `remote_file` against the catalog, which is
-  deliberate: that pin must measure what upstream actually serves, so it can
-  never tell you whether this copy kept up. Nothing measures that, which is the
-  gap [#268](https://github.com/libredb/libredb-studio/issues/268) describes and
-  the reason to read the next bullet before every bump.
-  `tests/unit/caprover-template.test.ts` covers what can be checked without
-  leaving the file: it fails when the two places the version appears disagree,
-  when the plain-HTTP cookie override is missing or stops saying what it costs,
-  and when an em dash or a pictograph creeps back in.
-- **Check upstream first.** This folder leads and the catalog follows, but that
-  order has been broken twice, and the second time by us.
-  [caprover/one-click-apps#1315](https://github.com/caprover/one-click-apps/pull/1315)
-  bumped the catalog to 0.9.59 directly, leaving this file on 0.9.14 until it
-  was resynced. Then
-  [#1335](https://github.com/caprover/one-click-apps/pull/1335) ("fix login over
-  plain HTTP", merged 2026-09-22) put the `AUTH_COOKIE_SECURE` override, the
-  em dash and icon cleanup and the comment rewording straight into the catalog,
-  and none of it came back here until 0.17.0. Compare against the live template
-  before assuming this copy is ahead:
-
-  ```bash
-  curl -s https://raw.githubusercontent.com/caprover/one-click-apps/master/public/v4/apps/libredb-studio.yml \
-    | diff -u libredb-studio.yml -
-  ```
