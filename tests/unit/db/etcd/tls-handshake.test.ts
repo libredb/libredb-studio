@@ -898,8 +898,12 @@ const CASES: readonly CaseDefinition[] = [
         : {
             outcome: "failed",
             category: "not-connected",
-            grpcCode: 14,
-            text: /Last error: Failed to connect/,
+            // 14 with "Last error: Failed to connect" where Bun surfaces the TLS alert before the
+            // call's deadline, 4 with "Deadline exceeded ... Waiting for LB pick" where it does not.
+            // Which one arrives is Bun's, not ours (#1511 precedent): the loaded Windows CI runner
+            // reported 4 for both client-certificate refusals while the same file passed on macOS.
+            grpcCode: [14, 4],
+            text: /Last error: Failed to connect|Deadline exceeded/,
             sentence: noTlsAnswer("bun", `localhost:${ports.alerting}`, false),
           },
   ),
@@ -925,8 +929,10 @@ const CASES: readonly CaseDefinition[] = [
         : {
             outcome: "failed",
             category: "not-connected",
-            grpcCode: 14,
-            text: /Last error: Failed to connect/,
+            // Same as the no-client-certificate case above: 14 where Bun surfaces the alert in
+            // time, 4 where the call's deadline lands first on the loaded Windows runner.
+            grpcCode: [14, 4],
+            text: /Last error: Failed to connect|Deadline exceeded/,
             sentence: noTlsAnswer("bun", `localhost:${ports.alerting}`, true),
           },
   ),

@@ -57,15 +57,19 @@ import { offersSqlExport } from "@/lib/db/types";
  * drift between two spellings of one list is what put the delimiter options out of
  * step with the writers before.
  */
-const RESULT_FORMATS: readonly {
+export type ResultFormatEntry = {
   readonly format: ResultExportFormat;
   readonly label: string;
   readonly csvDelimiter?: CsvDelimiter;
-}[] = [
+};
+
+export const RESULT_FORMATS: readonly ResultFormatEntry[] = [
   { format: "csv", label: "CSV" },
   { format: "csv", label: "CSV (semicolon)", csvDelimiter: ";" },
   { format: "csv", label: "CSV (tab)", csvDelimiter: "\t" },
   { format: "json", label: "JSON" },
+  { format: "markdown", label: "Markdown" },
+  { format: "html", label: "HTML" },
   { format: "sql-insert", label: "SQL INSERT" },
   { format: "sql-ddl", label: "DDL (CREATE TABLE)" },
 ];

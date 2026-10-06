@@ -3,7 +3,9 @@ import { isBareIdentifier, quoteIdentifier } from "@/lib/sql/identifier";
 import { quoteLiteral } from "@/lib/sql/values";
 import { asBytes, binaryText } from "./binary";
 import { cellOf, resolveColumns, toCsv, type CsvDelimiter } from "./csv";
+import { htmlTable } from "./html";
 import { binaryCellsAsHex, jsonText } from "./json";
+import { markdownTable } from "./markdown";
 import { resolveUpdateTarget } from "@/lib/sql/update-target";
 import { cqlFrozenNested, typedLiteral, UnwritableValue } from "./typed-literals";
 import { isNonFiniteWord, nonFiniteWord, type NonFiniteWord } from "@/lib/non-finite";
@@ -18,7 +20,7 @@ import { isNonFiniteWord, nonFiniteWord, type NonFiniteWord } from "@/lib/non-fi
  * masking) is decided by the caller and arrives here as `rows`.
  */
 
-export type ResultExportFormat = "csv" | "json" | "sql-insert" | "sql-ddl";
+export type ResultExportFormat = "csv" | "json" | "sql-insert" | "sql-ddl" | "markdown" | "html";
 
 export interface ResultExportSource {
   /** The rows to write, already masked if the caller masks. */
@@ -1087,6 +1089,14 @@ function exportTableName(source: ResultExportSource): string {
 export function buildResultExport(format: ResultExportFormat, source: ResultExportSource): ResultExportFile {
   const { rows, dialect } = source;
   const columns = resolveColumns(rows, source.fields);
+
+  if (format === "markdown") {
+    return { content: markdownTable(rows, columns), mimeType: "text/markdown;charset=utf-8", extension: "md" };
+  }
+
+  if (format === "html") {
+    return { content: htmlTable(rows, columns), mimeType: "text/html;charset=utf-8", extension: "html" };
+  }
 
   if (format === "json") {
     return { content: jsonText(rows.map(binaryCellsAsHex), 2), mimeType: "application/json", extension: "json" };
