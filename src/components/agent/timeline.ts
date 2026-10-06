@@ -700,6 +700,9 @@ const WORKFLOW_WORDS: Readonly<Record<AgentRunWorkflowType, string>> = {
   "data-analysis": "a data analysis",
 };
 
+/** The step-limit sentence, shared by the timeline entry and the off-timeline wording below. */
+const TURN_LIMIT_SENTENCE = "The run reached its step limit before it finished.";
+
 /**
  * How the loop ended, said plainly. Total over the union, so a stop reason added to
  * the durable contract cannot reach a user as an unlabelled ending.
@@ -722,8 +725,6 @@ const WORKFLOW_WORDS: Readonly<Record<AgentRunWorkflowType, string>> = {
  * Only `model-stopped` differs. Every other ending is a shortfall in either mode: a
  * planning run that ran out of time or was cancelled produced no plan either.
  */
-const TURN_LIMIT_SENTENCE = "The run reached its step limit before it finished.";
-
 const AGENT_STOP_SENTENCES = {
   "report-composed": null,
   "model-stopped": "The model stopped without composing a cited report.",
