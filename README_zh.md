@@ -705,7 +705,7 @@ LibreDB Studio 已发布在官方 [CapRover One-Click Apps](https://github.com/c
 
 1. **打开你的 CapRover 面板** → **Apps → One-Click Apps/Databases**
 2. **搜索** **LibreDB Studio**
-3. **填写变量**（管理员/用户凭据、`JWT_SECRET`，以及可选的 AI/存储设置）
+3. **填写变量**（管理员/用户凭据，以及可选的 AI 设置）
 4. **部署！**
 
 应用运行预构建的 `ghcr.io/libredb/libredb-studio` 镜像。与 Railway 一样，Docker 镜像模板每次发版都需要手动升版本号。

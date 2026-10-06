@@ -751,12 +751,13 @@ LibreDB Studio is published in the official [CapRover One-Click Apps](https://gi
 
 1. **Open your CapRover dashboard** → **Apps → One-Click Apps/Databases**
 2. **Search** for **LibreDB Studio**
-3. **Fill in the variables** (admin/user credentials, `JWT_SECRET`, optional AI/storage settings)
+3. **Fill in the variables** (admin/user credentials, optional AI settings)
 4. **Deploy!**
 
 The app runs the prebuilt `ghcr.io/libredb/libredb-studio` image. As with Railway, Docker-image templates require a manual version bump on each release.
 
-A second template, [`deploy/caprover/libredb-studio-autoconnect.yml`](deploy/caprover/libredb-studio-autoconnect.yml), adds a discovery app that reads the Docker socket so Studio connects itself to the PostgreSQL, MySQL, MongoDB and Redis databases CapRover runs; read [Platform discovery (CapRover)](docs/SEED_CONNECTIONS.md#platform-discovery-caprover) before choosing it.
+The same search also lists **LibreDB Studio (auto-connect)**, from a second template, [`deploy/caprover/libredb-studio-autoconnect.yml`](deploy/caprover/libredb-studio-autoconnect.yml).
+It adds a discovery app that reads the Docker socket so Studio connects itself to the PostgreSQL, MySQL, MariaDB, Percona, MongoDB, Redis, Valkey, KeyDB and Dragonfly databases CapRover runs; read [Platform discovery (CapRover)](docs/SEED_CONNECTIONS.md#platform-discovery-caprover) before choosing it.
 
 ### Kubero
 

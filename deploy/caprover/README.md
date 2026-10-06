@@ -17,17 +17,17 @@ The first two files are submitted as a PR to
 (`public/v4/apps/libredb-studio.yml` + `public/v4/logos/libredb-studio.png`) —
 the official listing, merged and live.
 
-The auto-connect variant goes upstream the same way, as `public/v4/apps/libredb-studio-autoconnect.yml` and `public/v4/logos/libredb-studio-autoconnect.png`, and only once the Studio release it needs exists (see [Auto-connect variant](#auto-connect-variant)).
-Once Studio 0.18.0 is published, and until the variant is listed there, install it through the manual template path below, pasting `libredb-studio-autoconnect.yml`.
+The auto-connect variant went upstream the same way, as `public/v4/apps/libredb-studio-autoconnect.yml` and `public/v4/logos/libredb-studio-autoconnect.png` ([caprover/one-click-apps#1346](https://github.com/caprover/one-click-apps/pull/1346)), and is listed there too (see [Auto-connect variant](#auto-connect-variant)).
 
 ## Install (official one-click apps catalog)
 
 CapRover dashboard → **Apps → One-Click Apps/Databases** → search **LibreDB Studio**.
+The search lists two LibreDB entries: **LibreDB Studio**, and **LibreDB Studio (auto-connect)**, which also connects Studio to the databases on the server.
 No third-party repo to add.
 
-The LibreDB 3rd-party repo that served this app while the official submission was
-in review is now retired. Source for that repo:
-<https://github.com/libredb/caprover-one-click-apps>.
+The LibreDB 3rd-party repo that served this app while the official submission was in review is retired.
+Its address, `https://libredb.org/caprover-one-click-apps`, no longer serves a list, so a CapRover that still has it under 3rd party repositories gets no app from it.
+The repo is archived as [`libredb/caprover-one-click-apps-legacy`](https://github.com/libredb/caprover-one-click-apps-legacy), and its old name now belongs to the catalog fork in [Releasing to the official catalog](#releasing-to-the-official-catalog).
 
 ## Install (manual template, for a version the catalog has not caught up to)
 
@@ -149,7 +149,7 @@ The release bump keeps both templates on the release version.
 The catalog's maintainer keeps version bumps manual: "When someone sends a PR we know that version works" ([caprover/one-click-apps#1334](https://github.com/caprover/one-click-apps/pull/1334#issuecomment-5717266315)).
 So a workflow prepares the branch, and a member tests it and opens the pull request.
 
-1. After each stable release, [`caprover-fork.yml`](../../.github/workflows/caprover-fork.yml) stages both templates and their logos, byte for byte from the release tag, on [`libredb/one-click-apps`](https://github.com/libredb/one-click-apps) as the branch `libredb-studio-<version>`.
+1. After each stable release, [`caprover-fork.yml`](../../.github/workflows/caprover-fork.yml) stages both templates and their logos, byte for byte from the release tag, on [`libredb/caprover-one-click-apps`](https://github.com/libredb/caprover-one-click-apps) as the branch `libredb-studio-<version>`.
    `docker-build-push.yml` starts it once the release images passed their channel E2E; a prerelease is never staged, and its templates stay on the last stable version.
    It runs `tests/unit/caprover-template.test.ts` on the tag first, which encodes the catalog validator's rules, and never opens a pull request.
    It runs none of the catalog's own npm checks: that would execute another repository's code on the release tag, whose Actions cache later release runs restore.
@@ -168,7 +168,7 @@ So a workflow prepares the branch, and a member tests it and opens the pull requ
 | `push` | `manual` | The release run only validates. A member pushes by running **CapRover Catalog Fork** by hand on the release tag: **Run workflow**, then **Use workflow from** the tag. |
 
 The push needs the `CAPROVER_CATALOG_TOKEN` secret, because the workflow's own token cannot write to another repository.
-For `mode: update` a fine-grained personal access token is enough: resource owner `libredb`, repository access to `libredb/one-click-apps` only, and **Contents** read and write.
+For `mode: update` a fine-grained personal access token is enough: resource owner `libredb`, repository access to `libredb/caprover-one-click-apps` only, and **Contents** read and write.
 GitHub lists the sync call (`merge-upstream`) under Contents write, and every token can read public repositories such as the catalog.
 `mode: create_or_update` also calls GitHub's fork endpoint, which GitHub lists under **Administration** write and Contents read, so that token needs access to the libredb org's repositories rather than to one fork.
 Without the secret the workflow validates and pushes nothing, by hand or not.
