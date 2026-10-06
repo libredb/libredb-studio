@@ -1101,7 +1101,7 @@ measures nothing, and a metric nobody measured is omitted rather than reported a
 | `getPerformanceMetrics()` | bucket stats | cache hit ratio is `100 - ep_cache_miss_rate` (clamped 0..100); `queriesPerSecond` is `cmd_get + cmd_set`; buffer-pool usage is `quotaPercentUsed` — each is **omitted when its source published nothing** ([§7.1](#71-an-unread-metric-is-absent-not-zero)) |
 | `getSlowQueries()` | `system:completed_requests` ordered by `elapsedTime` | one row per recorded request, so `calls` is always 1 — these are individual requests, not aggregates |
 | `getActiveSessions()` | `system:active_requests` | request id, statement, user, remote address, state, elapsed |
-| `getTableStats()` | `/pools/default/buckets/<bucket>` | **bucket level only** — per-collection item counts need a `COUNT(*)` per collection, too expensive for a monitoring poll |
+| `getTableStats()` | `/pools/default/buckets/<bucket>` | **bucket level only** — per-collection item counts need a `COUNT(*)` per collection, too expensive for a monitoring poll. The row's `tableSize` and `totalSize` are both `basicStats.diskUsed`, the on-disk measure `getOverview()` publishes and the Storage tab divides by ([§7.2](#72-one-size-measure-per-bucket)) |
 | `getIndexStats()` | `system:indexes` + `/pools/default/buckets/@index-<bucket>/stats` | index name, scope, collection, keys, type. Modern servers no longer publish per-index statistics there, so an unpublished size shows as `indexSize: "N/A"` with `indexSizeBytes` **omitted** (a `0 B` read as an empty index, and the Storage tab summed it); `scans` still falls back to `0`, because `IndexStats.scans` is a required field |
 | `getStorageStats()` | `/pools/default/buckets/<bucket>` | Data (`basicStats.diskUsed`) and RAM Quota (`quota.ram` with `quotaPercentUsed`) |
 | `getHealth()` | the four above, in parallel | connections, size, cache hit ratio (the string `N/A` when there is none — `formatCacheHitRatio` from `src/lib/monitoring-cache-ratio.ts`), top 5 slow queries, top 10 sessions |
@@ -1130,6 +1130,26 @@ cache fault the cluster never reported**. Reading the KV stats needs a role many
 lack ([§3.9](#39-monitoring-degrades-to-empty-never-throws)), so that was the ordinary case, not an
 edge one. Omitted, the same panels render `N/A` / "Not measured" and score the card as healthy
 (`OverviewTab.tsx`, `PerformanceTab.tsx`).
+
+### 7.2 One size measure per bucket
+
+`basicStats` carries two sizes of the same bucket, `dataUsed` and `diskUsed`, and this provider used
+to publish one of them per monitoring tab: `getTableStats()` put `dataUsed` in the row's
+`tableSizeBytes`, the row's `totalSizeBytes` was `diskUsed`, and `getOverview()` published `diskUsed`
+as the database size the Storage tab divides every share by. One bucket therefore read two sizes at
+once — 1.57 MB on the Tables tab against 16.86 MB, "100% of DB", on the Storage tab, measured on
+Couchbase 8.0.2 CE (#1455).
+
+Both fields of the row now carry `diskUsed`, the measure `getOverview()`'s `databaseSizeBytes` and
+`getStorageStats()`'s *Data* row already publish. The bucket reads one size across the two tabs, and
+the Storage tab's share divides the bucket's own bytes by themselves. The Tables tab's *Size* column
+is therefore the bucket's **on-disk** size; `dataUsed` is deliberately not published as a table size,
+because nothing in the monitoring surface reports that measure as a total, and a share whose
+numerator and denominator measure different things is not a share.
+
+`IndexStats.indexSizeBytes` stays absent rather than `0`, so the *Indexes* card reads `N/A` beside a
+bucket whose disk usage the cluster does publish
+([§7.1](#71-an-unread-metric-is-absent-not-zero)).
 
 ---
 

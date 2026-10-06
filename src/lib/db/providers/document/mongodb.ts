@@ -1659,6 +1659,22 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // measured here; it is the absence the optional field exists to carry, and the
       // Storage tab keys its whole breakdown off the key being present.
       const dataSizeBytes = measuredNumber(dbStats.dataSize);
+      const indexSizeBytes = measuredNumber(dbStats.indexSize);
+
+      // The published size is the SUM of the two measures the collection rows are built
+      // from, because it is the denominator of every share on the Storage tab and those
+      // numerators carry both: a collection's row is `collStats.size +
+      // collStats.totalIndexSize` (`getTableStats()`) and the Indexes card sums
+      // `totalIndexSize`. `dataSize` alone - the documents, uncompressed - left index bytes
+      // in the numerator only, so the Indexes share and every collection carrying an index
+      // read far above 100% (measured on MongoDB 8.2: 1062.8% and 354.7%). `dbStats.totalSize`
+      // is the other candidate and the wrong one: it is `storageSize + indexSize`, and
+      // `storageSize` is the compressed on-disk footprint including pre-allocated space, so a
+      // denominator taken from it would not be the uncompressed measure those rows are in.
+      // One absent addend is not a zero here: a sum of a reading and a guess is not a reading,
+      // and `dataSize` alone is the state the shares were wrong in.
+      const databaseSizeBytes =
+        dataSizeBytes === undefined || indexSizeBytes === undefined ? undefined : dataSizeBytes + indexSizeBytes;
 
       // Get index count
       let indexCount = 0;
@@ -1677,8 +1693,8 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         startTime: new Date(Date.now() - uptimeSeconds * 1000),
         ...(current === undefined ? {} : { activeConnections: current }),
         maxConnections: maxConnections ?? 0,
-        databaseSize: dataSizeBytes === undefined ? "N/A" : formatBytes(dataSizeBytes),
-        ...(dataSizeBytes === undefined ? {} : { databaseSizeBytes: dataSizeBytes }),
+        databaseSize: databaseSizeBytes === undefined ? "N/A" : formatBytes(databaseSizeBytes),
+        ...(databaseSizeBytes === undefined ? {} : { databaseSizeBytes }),
         tableCount: collections.length,
         indexCount,
       };

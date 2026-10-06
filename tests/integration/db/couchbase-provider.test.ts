@@ -909,8 +909,34 @@ describe("CouchbaseProvider monitoring", () => {
     expect(stats).toHaveLength(1);
     expect(stats[0].tableName).toBe(BUCKET);
     expect(stats[0].rowCount).toBe(7);
-    expect(stats[0].tableSizeBytes).toBe(1814878);
     expect(stats[0].totalSizeBytes).toBe(17581056);
+  });
+
+  test("the bucket's row carries one size measure, the one the overview publishes", async () => {
+    // The Tables tab prints this row's `tableSize` and the Storage tab divides its
+    // `totalSize` by `overview.databaseSizeBytes`. `basicStats.dataUsed` and
+    // `basicStats.diskUsed` are different measures, so one bucket used to read two sizes at
+    // once: 1.57 MB on the Tables tab against 16.86 MB, "100% of DB", on the Storage tab
+    // (measured on Couchbase 8.0.2 CE). Both fields now carry `diskUsed`, which is what the
+    // overview and `getStorageStats()` publish, so the three agree and the share divides the
+    // bucket's own bytes by themselves.
+    const provider = await connectProvider();
+
+    const stats = await provider.getTableStats();
+    const overview = await provider.getOverview();
+
+    expect(stats).toHaveLength(1);
+    const databaseSizeBytes = overview.databaseSizeBytes ?? 0;
+    // Pinned, so the two comparisons below are not two absences agreeing with each other.
+    expect(databaseSizeBytes).toBe(17581056);
+    expect(stats[0].tableSizeBytes).toBe(databaseSizeBytes);
+    expect(stats[0].totalSizeBytes).toBe(databaseSizeBytes);
+    // Both printed sizes are the same figure, on the tab that prints either one.
+    expect(stats[0].tableSize).toBe("16.77 MB");
+    expect(stats[0].totalSize).toBe("16.77 MB");
+    // The fixture still carries `basicStats.dataUsed`, and it is deliberately not the figure
+    // this row publishes (1814878 against `diskUsed` 17581056).
+    expect(stats[0].tableSizeBytes).not.toBe(BUCKET_INFO.basicStats.dataUsed);
   });
 
   test("getTableStats returns empty when the bucket endpoint is denied", async () => {

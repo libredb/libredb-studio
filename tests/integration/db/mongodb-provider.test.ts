@@ -1680,6 +1680,50 @@ describe("MongoDBProvider", () => {
       expect(overview.tableCount).toBe(2);
       expect(overview.activeConnections).toBe(5);
     });
+
+    test("the published size is the same measure as the table rows the Storage tab divides", async () => {
+      // The Storage tab's shares are `figure / overview.databaseSizeBytes`, and the figures
+      // that go into them are this provider's own: a collection's row is
+      // `collStats.size + collStats.totalIndexSize`, and the Indexes card sums
+      // `totalIndexSize` (`getTableStats()`). Publishing `dbStats.dataSize` alone - the
+      // documents, uncompressed - put index bytes in the numerator and left them out of the
+      // denominator, so the Indexes share and every collection carrying an index read over
+      // 100% (measured on MongoDB 8.2: 1062.8% for Indexes, 354.7% for `customers`).
+      mockDbStats = () => ({ dataSize: 2048, indexSize: 1024, storageSize: 4096 });
+      const overview = await provider.getOverview();
+      const tables = await provider.getTableStats();
+
+      // Both dbStats measures the collection rows are built from, summed once.
+      expect(overview.databaseSizeBytes).toBe(3072);
+      expect(overview.databaseSize).toBe("3 KB");
+
+      const total = overview.databaseSizeBytes ?? 0;
+      const dataBytes = tables.reduce((sum, t) => sum + (t.tableSizeBytes ?? 0), 0);
+      const indexBytes = tables.reduce((sum, t) => sum + (t.indexSizeBytes ?? 0), 0);
+      // `collStats` answers 1024 + 512 for each of the two collections.
+      expect(dataBytes).toBe(2048);
+      expect(indexBytes).toBe(1024);
+      // And every figure the tab divides now sits inside the total it divides by.
+      expect((dataBytes / total) * 100).toBeLessThanOrEqual(100);
+      expect((indexBytes / total) * 100).toBeLessThanOrEqual(100);
+      for (const table of tables) {
+        expect(((table.totalSizeBytes ?? 0) / total) * 100).toBeLessThanOrEqual(100);
+      }
+    });
+
+    test("a dbStats answer carrying only one of the two measures publishes no byte figure", async () => {
+      // The published size is a sum of two readings now, and one reading plus a guess is not
+      // a reading: `dataSize` alone is exactly the state the shares were wrong in, and 0 for
+      // the index bytes the answer never carried would be the same fabrication one step
+      // further in. The absence the optional field carries is unchanged by that.
+      mockDbStats = () => ({ dataSize: 2048, storageSize: 4096 });
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+      // What the same read did answer still arrives - this is not a failed read.
+      expect(overview.tableCount).toBe(2);
+    });
   });
 
   // --------------------------------------------------------------------------

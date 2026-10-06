@@ -214,7 +214,6 @@ interface BucketPayload {
   basicStats?: {
     itemCount?: number;
     diskUsed?: number;
-    dataUsed?: number;
     quotaPercentUsed?: number;
   };
 }
@@ -1168,7 +1167,6 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     const stats = bucketInfo.basicStats;
     if (!stats) return [];
 
-    const dataUsed = stats.dataUsed ?? 0;
     const diskUsed = stats.diskUsed ?? 0;
 
     return [
@@ -1176,8 +1174,15 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
         schemaName: this.bucket,
         tableName: this.bucket,
         rowCount: stats.itemCount ?? 0,
-        tableSize: formatBytes(dataUsed),
-        tableSizeBytes: dataUsed,
+        // Both size fields carry `basicStats.diskUsed`, the on-disk measure `getOverview()`
+        // publishes as `databaseSizeBytes` and the Storage tab divides every share by.
+        // `basicStats.dataUsed` is a different measure, and putting it in `tableSizeBytes`
+        // made one bucket read two sizes at once: the Tables tab prints this row's
+        // `tableSize`, while the Storage tab divides its `totalSize` by the overview's
+        // database size (measured on Couchbase 8.0.2 CE: 1.57 MB against 16.86 MB, "100% of
+        // DB"). A bucket is one keyspace, so its own bytes are the whole total.
+        tableSize: formatBytes(diskUsed),
+        tableSizeBytes: diskUsed,
         totalSize: formatBytes(diskUsed),
         totalSizeBytes: diskUsed,
       },
