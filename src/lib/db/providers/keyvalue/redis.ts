@@ -564,6 +564,118 @@ function stringifyReply(reply: unknown): string {
   return JSON.stringify(reply, (_key, value: unknown) => (typeof value === "bigint" ? value.toString() : value));
 }
 
+/** The sorted-set range commands whose reply gains a score per member under `WITHSCORES`. */
+const ZSET_RANGE_COMMANDS: ReadonlySet<string> = new Set(["ZRANGE", "ZREVRANGE", "ZRANGEBYSCORE", "ZREVRANGEBYSCORE"]);
+
+/**
+ * The two column names a flat `[name, value, ...]` reply is read into, or `null`
+ * when the command's list is not a list of pairs (#1454).
+ *
+ * `HGETALL` has always been read this way and keeps its columns. `CONFIG GET`
+ * answers `[parameter, value, ...]`. A sorted-set range answers `[member, score,
+ * ...]` only when the caller asked for `WITHSCORES`: without it the reply is a
+ * plain member list, which belongs on the generic `index`/`value` shape, so the
+ * option is checked rather than the command alone.
+ */
+function flatPairColumns(command: string, args: readonly string[]): readonly [string, string] | null {
+  if (command === "HGETALL") return ["field", "value"];
+  if (command === "CONFIG") return args[0]?.toUpperCase() === "GET" ? ["parameter", "value"] : null;
+  if (ZSET_RANGE_COMMANDS.has(command)) {
+    return args.some((arg) => arg.toUpperCase() === "WITHSCORES") ? ["member", "score"] : null;
+  }
+  return null;
+}
+
+/** One row per pair of a flat `[name, value, ...]` reply. */
+function flatPairRows(
+  result: readonly unknown[],
+  columns: readonly [string, string],
+): Omit<QueryResult, "executionTime"> {
+  const [first, second] = columns;
+  const rows: Record<string, unknown>[] = [];
+  for (let index = 0; index < result.length; index += 2) {
+    rows.push({ [first]: String(result[index]), [second]: String(result[index + 1]) });
+  }
+  return { rows, fields: [first, second], rowCount: rows.length };
+}
+
+/**
+ * `XRANGE`/`XREVRANGE`: one `[id, [field, value, ...]]` entry per row, and the
+ * header is `id` plus every field name the page used, in first-seen order.
+ *
+ * Redis does not require the entries of a stream to share fields, so the header
+ * is the union of the page's fields and an entry missing one gets an empty cell
+ * rather than the column being dropped for the entries that do have it. The
+ * entry id is written LAST, so a stream field that happens to be called `id`
+ * cannot replace the one value the row is addressed by.
+ */
+function streamEntryRows(result: readonly unknown[]): Omit<QueryResult, "executionTime"> {
+  const fields: string[] = ["id"];
+  const rows: Record<string, unknown>[] = [];
+  for (const entry of result) {
+    const pair = Array.isArray(entry) ? entry : [];
+    const row: Record<string, unknown> = {};
+    const values = pair[1];
+    if (Array.isArray(values)) {
+      for (let index = 0; index + 1 < values.length; index += 2) {
+        const field = String(values[index]);
+        if (!fields.includes(field)) fields.push(field);
+        row[field] = String(values[index + 1]);
+      }
+    }
+    row.id = String(pair[0]);
+    rows.push(row);
+  }
+  for (const row of rows) {
+    for (const field of fields) {
+      if (!(field in row)) row[field] = "";
+    }
+  }
+  return { rows, fields, rowCount: rows.length };
+}
+
+/**
+ * The columns of a cursor reply. `SCAN` and `SSCAN` list one element per row;
+ * `HSCAN` and `ZSCAN` list pairs (#1454).
+ */
+const SCAN_REPLY_COLUMNS: Record<string, readonly string[]> = {
+  SCAN: ["cursor", "key"],
+  SSCAN: ["cursor", "member"],
+  HSCAN: ["cursor", "field", "value"],
+  ZSCAN: ["cursor", "member", "score"],
+};
+
+/**
+ * `SCAN` and its siblings answer `[cursor, elements]`, and the cursor is not a
+ * data row: every row carries it in its own column, so the next call can be
+ * written from any of them.
+ *
+ * A page with no elements still answers one row. A non-zero cursor with no keys
+ * is a real reply, and the cursor column exists to be read - a zero-row reply
+ * would hide the one value the reader needs to continue the walk.
+ */
+function scanRows(result: readonly unknown[], columns: readonly string[]): Omit<QueryResult, "executionTime"> {
+  const [cursorColumn, ...elementColumns] = columns;
+  const cursor = String(result[0]);
+  const list = Array.isArray(result[1]) ? (result[1] as unknown[]) : [];
+  const rows: Record<string, unknown>[] = [];
+  for (let index = 0; index < list.length; index += elementColumns.length) {
+    const row: Record<string, unknown> = { [cursorColumn]: cursor };
+    elementColumns.forEach((column, offset) => {
+      row[column] = String(list[index + offset] ?? "");
+    });
+    rows.push(row);
+  }
+  if (rows.length === 0) {
+    const row: Record<string, unknown> = { [cursorColumn]: cursor };
+    elementColumns.forEach((column, offset) => {
+      row[column] = offset === 0 ? "(empty list)" : "";
+    });
+    rows.push(row);
+  }
+  return { rows, fields: [...columns], rowCount: list.length === 0 ? 0 : rows.length };
+}
+
 /**
  * The three columns every row of a key grouping has, DERIVED rather than read from a
  * catalog: Redis publishes no schema for a key, so these are this provider's own statement
@@ -1463,13 +1575,13 @@ export class RedisProvider extends BaseDatabaseProvider {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = await (this.client as any).callBuffer(command, ...args);
-      return this.formatResult(command, decodeReply(result));
+      return this.formatResult(command, args, decodeReply(result));
     } catch (error) {
       throw new QueryError(`Redis error: ${error instanceof Error ? error.message : String(error)}`, "redis");
     }
   }
 
-  private formatResult(command: string, result: unknown): Omit<QueryResult, "executionTime"> {
+  private formatResult(command: string, args: readonly string[], result: unknown): Omit<QueryResult, "executionTime"> {
     // Handle null/nil
     if (result === null || result === undefined) {
       return { rows: [{ result: "(nil)" }], fields: ["result"], rowCount: 0 };
@@ -1481,13 +1593,25 @@ export class RedisProvider extends BaseDatabaseProvider {
         return { rows: [{ result: "(empty list)" }], fields: ["result"], rowCount: 0 };
       }
 
-      // HGETALL returns flat [key, val, key, val...]
-      if (command === "HGETALL" && result.length % 2 === 0) {
-        const rows: Record<string, unknown>[] = [];
-        for (let i = 0; i < result.length; i += 2) {
-          rows.push({ field: String(result[i]), value: String(result[i + 1]) });
-        }
-        return { rows, fields: ["field", "value"], rowCount: rows.length };
+      // The commands whose flat list is really pairs, read by the command that
+      // asked for them rather than guessed from the values (#1454). `HGETALL` is
+      // the pre-existing case here; its columns are unchanged.
+      const pairColumns = flatPairColumns(command, args);
+      if (pairColumns && result.length % 2 === 0) {
+        return flatPairRows(result, pairColumns);
+      }
+
+      // `XRANGE`/`XREVRANGE` answer one `[id, [field, value, ...]]` entry per row.
+      if (command === "XRANGE" || command === "XREVRANGE") {
+        return streamEntryRows(result);
+      }
+
+      // `SCAN` and its siblings answer `[cursor, elements]`. The generic mapping
+      // below would make the cursor a row of its own and the elements one JSON
+      // string, which is not the shape the reply has (#1454).
+      const scanColumns = SCAN_REPLY_COLUMNS[command];
+      if (scanColumns) {
+        return scanRows(result, scanColumns);
       }
 
       // Regular array result

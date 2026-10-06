@@ -558,12 +558,35 @@ HGETALL user:1
 | Integer (`DEL`, `DBSIZE`, `INCR`) | `result` | `(integer) 42`; past 2^53 the server's exact digits, `(integer) 9223372036854775807` ([§3.5a](#35a-integer-replies-are-exact-past-253)) |
 | `nil` | `result` | `(nil)` (rowCount `0`) |
 | Empty array | `result` | `(empty list)` (rowCount `0`) |
-| Array (`KEYS`, `SMEMBERS`, `LRANGE`) | `index`, `value` | `1 \| user:1` |
+| Array (`KEYS`, `SMEMBERS`, `LRANGE`, `ZRANGE` without `WITHSCORES`) | `index`, `value` | `1 \| user:1` |
 | Hash (`HGETALL`) | `field`, `value` | `email \| a@b.com` |
+| `CONFIG GET` | `parameter`, `value` | `databases \| 16` |
+| Sorted set with `WITHSCORES` (`ZRANGE`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`) | `member`, `score` | `alice \| 2500` |
+| Stream (`XRANGE`, `XREVRANGE`) | `id` plus every field the page used | `1700000000000-0 \| signup \| alice` |
+| `SCAN`, `SSCAN` | `cursor`, `key` / `member` | `0 \| user:1` |
+| `HSCAN` | `cursor`, `field`, `value` | `0 \| email \| a@b.com` |
+| `ZSCAN` | `cursor`, `member`, `score` | `0 \| alice \| 2500` |
 | `INFO` | `section`, `key`, `value` | `Server \| redis_version \| 7.2.4` |
 
 `INFO` is special-cased: `parseInfoResult()` ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts))
 splits the bulk reply into one row per metric, tagging each with its `# Section` header.
+
+The pair-shaped and cursor replies are read BY THE COMMAND that asked for them, never by
+inspecting the values, because the same array shape means different things (`#1454`). Three
+consequences are worth knowing when reading a grid:
+
+- **`WITHSCORES` is the option, not the command.** `ZRANGE board 0 -1` answers a plain member
+  list and keeps `index`/`value`; only the run that passed `WITHSCORES` gets `member`/`score`.
+- **A stream's header is the union of its page's fields, in first-seen order.** Redis does not
+  require the entries of a stream to share fields, so an entry missing one gets an empty cell
+  rather than the column being dropped for the entries that do have it. The `id` column is
+  always first.
+- **A cursor reply keeps the cursor on every row, and an empty page still answers one row.**
+  `SCAN` returns `[cursor, keys]`; read as a flat array, the cursor became a data row and the
+  keys one JSON string. A page with a non-zero cursor and no keys is a real reply, and the
+  cursor column is the only place the continuation is readable, so that page renders one row
+  carrying the cursor and `(empty list)` (rowCount `0`), the same convention an empty array
+  uses.
 
 ### 5.2a A `MULTI` a statement left open (D75)
 
@@ -712,6 +735,8 @@ sampled several (`string, hash`) or none does not, and falls into the unknown bu
 | bare key `queue` | `list` | `LRANGE queue 0 -1` |
 | bare key `tags` | `set` | `SMEMBERS tags` |
 | bare key `board` | `zset` | `ZRANGE board 0 -1 WITHSCORES` |
+| bare key `events` | `stream` | `XRANGE events - + COUNT 100` |
+| bare key `doc` | `ReJSON-RL` | `JSON.GET doc` |
 | bare key | unknown or mixed | `TYPE <key>` |
 
 A prefix group always SCANs and is never used as a key argument: it is a derived grouping
@@ -754,7 +779,8 @@ Shape rules:
   concrete rather than a `<placeholder>` — the same rule the LibreDB cheatsheet follows.
 - The read/write pair appears only when the type resolved. An unknown or mixed group gets the
   `TYPE` / `TTL` / `DEL` frame alone. The pairs are `GET`/`SET`, `HGETALL`/`HSET`,
-  `LRANGE`/`RPUSH`, `SMEMBERS`/`SADD`, `ZRANGE`/`ZADD`.
+  `LRANGE`/`RPUSH`, `SMEMBERS`/`SADD`, `ZRANGE`/`ZADD`, `XRANGE`/`XADD`,
+  `JSON.GET`/`JSON.SET`.
 - `DEL` is given a literal key, never the group pattern: Redis key arguments are byte strings, so
   `DEL user:*` deletes a key named `user:*` or nothing at all.
 - Glob metacharacters are escaped in the `MATCH` half of a `SCAN` only (a key `a[b:1` groups to
@@ -772,12 +798,13 @@ Shape rules:
   injection travelled through a comment rather than through a command. The LibreDB cheatsheet header
   is quoted the same way. For an ordinary name the rendering is unchanged (#427).
 - **`SCAN 0 MATCH <prefix>* COUNT 50` is ONE cursor iteration, not a listing.** `0` is the start
-  cursor and the reply's first row is the next cursor; re-run with that value in place of `0` until
-  it comes back `0`. On a large keyspace an iteration can legitimately return a **non-zero cursor and
-  no keys**, so "Scan Keys" may show a cursor and nothing else while the schema tree reports the
-  prefix has keys — the tree's count comes from the object surface, which loops the cursor over up to
-  1000 keys (§6) rather than stopping at one page. A one-line command cannot loop, so the cheatsheet
-  documents the continuation instead of hiding it.
+  cursor and the reply's `cursor` column holds the next one; re-run with that value in place of
+  `0` until it comes back `0`. On a large keyspace an iteration can legitimately return a
+  **non-zero cursor and no keys** — the reply then renders as one row carrying that cursor and
+  `(empty list)` (§5.2) — so "Scan Keys" may show a cursor and nothing else while the schema tree
+  reports the prefix has keys — the tree's count comes from the object surface, which loops the
+  cursor over up to 1000 keys (§6) rather than stopping at one page. A one-line command cannot
+  loop, so the cheatsheet documents the continuation instead of hiding it.
 
 A Redis tab is typed `redis` and rendered by a dedicated Monaco language
 ([`src/lib/editor/redis-language.ts`](../../src/lib/editor/redis-language.ts)) — command verbs as
@@ -1531,14 +1558,15 @@ One page carries four fields in and four out:
   (`+12 new`, or `nothing new in that page`) — because a scoped page is filtered by the server and
   then deduplicated here, so it can legitimately add nothing, and that true answer is otherwise
   indistinguishable from a dead button.
-- **A key's type, beside its name** — `string`, `hash`, `list`, `set` or `zset`, in the same
-  right-hand column a folder uses for its key count, so one edge answers "what is this row" for
-  every row. It arrives ON THE PAGE (see the contract above). A key no page described draws an
-  empty cell rather than a guess, and a key that vanished between the walk and that read draws the
-  server's own `none`.
+- **A key's type, beside its name** — `string`, `hash`, `list`, `set`, `zset`, `stream` or the
+  `ReJSON-RL` a RedisJSON key reports, in the same right-hand column a folder uses for its key
+  count, so one edge answers "what is this row" for every row. It arrives ON THE PAGE (see the
+  contract above). A key no page described draws an empty cell rather than a guess, and a key that
+  vanished between the walk and that read draws the server's own `none`.
 - **Activating a key** opens the statement that reads it — `GET`, `HGETALL`, `LRANGE 0 -1`,
-  `SMEMBERS` or `ZRANGE 0 -1 WITHSCORES`, chosen by the type the page carried — in a query tab and
-  runs it, so the value lands in the results grid the reader already uses. **There is no separate
+  `SMEMBERS`, `ZRANGE 0 -1 WITHSCORES`, `XRANGE - + COUNT 100` or `JSON.GET`, chosen by the type
+  the page carried — in a query tab and runs it, so the value lands in the results grid the reader
+  already uses. **There is no separate
   detail panel**: the statement is generated by the same type-aware generator the object tree's rows
   go through ([§5.3](#53-schema-explorer-menu-actions), #427), which is why a `hash` key opens on
   `HGETALL <key>` and not on a probe. Because the type is already in hand, an activation costs no

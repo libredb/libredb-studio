@@ -97,8 +97,23 @@ const mockCallResults: Record<string, unknown> = {
   RPUSH: 1,
   SMEMBERS: [],
   SADD: 1,
-  ZRANGE: [],
+  ZRANGE: ["alice", "2500", "bob", "1200"],
   ZADD: 1,
+  // The pair-shaped and cursor replies (#1454). Each one is the RESP2 shape a
+  // live server answers, so a formatter reading a fixed position fails here.
+  ZREVRANGE: ["bob", "1200"],
+  ZRANGEBYSCORE: ["alice", "2500"],
+  XRANGE: [
+    ["1700000000000-0", ["type", "signup", "user", "alice"]],
+    ["1700000000001-0", ["type", "login"]],
+  ],
+  XREVRANGE: [["1700000000001-0", ["type", "login"]]],
+  XADD: "1700000000002-0",
+  HSCAN: ["0", ["field1", "value1", "field2", "value2"]],
+  SSCAN: ["0", ["one", "two"]],
+  ZSCAN: ["0", ["alice", "2500", "bob", "1200"]],
+  "JSON.GET": ['{"user":"alice"}'],
+  "JSON.SET": "OK",
 };
 
 /**
@@ -1546,6 +1561,131 @@ describe("RedisProvider", () => {
       expect(result.rows[0].value).toBe("value1");
     });
 
+    // --- Replies that carry structure, not a flat list (#1454) ---
+
+    test("ZRANGE ... WITHSCORES pairs each member with its score", async () => {
+      const result = await provider.query("ZRANGE board 0 -1 WITHSCORES");
+      expect(result.fields).toEqual(["member", "score"]);
+      expect(result.rows).toEqual([
+        { member: "alice", score: "2500" },
+        { member: "bob", score: "1200" },
+      ]);
+    });
+
+    test("the other sorted-set ranges read WITHSCORES the same way", async () => {
+      // The family is one set of command names, so a reader keyed to a single
+      // verb would leave these on index/value while ZRANGE was fixed.
+      expect((await provider.query("ZREVRANGE board 0 -1 WITHSCORES")).rows).toEqual([
+        { member: "bob", score: "1200" },
+      ]);
+      expect((await provider.query("ZRANGEBYSCORE board -inf +inf WITHSCORES")).rows).toEqual([
+        { member: "alice", score: "2500" },
+      ]);
+    });
+
+    test("a sorted-set range without WITHSCORES keeps index/value", async () => {
+      // The mock answers the WITHSCORES shape for every ZRANGE, so the option in
+      // the args is what decides: dropping it must go back to the flat list.
+      const result = await provider.query("ZRANGE board 0 -1");
+      expect(result.fields).toEqual(["index", "value"]);
+      expect(result.rows[0]).toEqual({ index: 1, value: "alice" });
+    });
+
+    test("XRANGE gives each entry its id beside its fields", async () => {
+      const result = await provider.query("XRANGE events:stream - +");
+      // The fields are the union of the page's, in first-seen order, because a
+      // stream does not require its entries to share them: the second entry has
+      // no `user` and gets an empty cell rather than dropping the column.
+      expect(result.fields).toEqual(["id", "type", "user"]);
+      expect(result.rows).toEqual([
+        { id: "1700000000000-0", type: "signup", user: "alice" },
+        { id: "1700000000001-0", type: "login", user: "" },
+      ]);
+    });
+
+    test("XREVRANGE is read the same way as XRANGE", async () => {
+      const result = await provider.query("XREVRANGE events:stream + -");
+      expect(result.fields).toEqual(["id", "type"]);
+      expect(result.rows).toEqual([{ id: "1700000000001-0", type: "login" }]);
+    });
+
+    test("a stream field named id cannot replace the entry id", async () => {
+      // Stream fields are arbitrary, so one can be called `id`. The entry id is
+      // what addresses the row, so it wins the column rather than the field.
+      const original = mockCallResults.XRANGE;
+      mockCallResults.XRANGE = [["1700000000000-0", ["id", "shadow", "type", "signup"]]];
+      try {
+        const result = await provider.query("XRANGE events:stream - +");
+        expect(result.fields).toEqual(["id", "type"]);
+        expect(result.rows).toEqual([{ id: "1700000000000-0", type: "signup" }]);
+      } finally {
+        mockCallResults.XRANGE = original;
+      }
+    });
+
+    test("SCAN keeps the cursor in its own column, one row per key", async () => {
+      const result = await provider.query("SCAN 0 MATCH user:* COUNT 50");
+      expect(result.fields).toEqual(["cursor", "key"]);
+      expect(result.rows).toEqual([
+        { cursor: "0", key: "user:1" },
+        { cursor: "0", key: "user:2" },
+      ]);
+    });
+
+    test("SSCAN puts the cursor beside one member per row", async () => {
+      const result = await provider.query("SSCAN tags 0");
+      expect(result.fields).toEqual(["cursor", "member"]);
+      expect(result.rows).toEqual([
+        { cursor: "0", member: "one" },
+        { cursor: "0", member: "two" },
+      ]);
+    });
+
+    test("HSCAN puts the cursor beside each field/value pair", async () => {
+      const result = await provider.query("HSCAN user:1 0");
+      expect(result.fields).toEqual(["cursor", "field", "value"]);
+      expect(result.rows).toEqual([
+        { cursor: "0", field: "field1", value: "value1" },
+        { cursor: "0", field: "field2", value: "value2" },
+      ]);
+    });
+
+    test("ZSCAN puts the cursor beside each member/score pair", async () => {
+      const result = await provider.query("ZSCAN board 0");
+      expect(result.fields).toEqual(["cursor", "member", "score"]);
+      expect(result.rows).toEqual([
+        { cursor: "0", member: "alice", score: "2500" },
+        { cursor: "0", member: "bob", score: "1200" },
+      ]);
+    });
+
+    test("an empty SCAN page still shows the cursor to continue from", async () => {
+      // A non-zero cursor with no keys is a real page, and the continuation the
+      // cheatsheet documents is only readable if the cursor survives the shape.
+      mockCallResults.SSCAN = ["7", []];
+      try {
+        const result = await provider.query("SSCAN tags 0");
+        expect(result.fields).toEqual(["cursor", "member"]);
+        expect(result.rows).toEqual([{ cursor: "7", member: "(empty list)" }]);
+        expect(result.rowCount).toBe(0);
+      } finally {
+        delete mockCallResults.SSCAN;
+      }
+    });
+
+    test("CONFIG GET returns parameter/value pairs", async () => {
+      databasesReply = ["databases", "16"];
+      const result = await provider.query("CONFIG GET databases");
+      expect(result.fields).toEqual(["parameter", "value"]);
+      expect(result.rows).toEqual([{ parameter: "databases", value: "16" }]);
+    });
+
+    test("an array command with no shape of its own keeps index/value", async () => {
+      const result = await provider.query("KEYS user:*");
+      expect(result.fields).toEqual(["index", "value"]);
+      expect(result.rows[0]).toEqual({ index: 1, value: "user:1" });
+    });
+
     test("INFO returns section/key/value rows", async () => {
       const result = await provider.query(JSON.stringify({ command: "INFO", args: [] }));
       expect(result.rows).toBeArray();
@@ -1677,7 +1817,7 @@ describe("RedisProvider", () => {
     });
 
     test("every command line the cheatsheet generates is accepted (#427)", async () => {
-      for (const sample of ["string", "hash", "list", "set", "zset"]) {
+      for (const sample of ["string", "hash", "list", "set", "zset", "stream", "ReJSON-RL"]) {
         const columns = [
           { name: "key", type: "string", nullable: false, isPrimary: true },
           { name: "value", type: sample, nullable: true, isPrimary: false },
