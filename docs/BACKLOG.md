@@ -3131,31 +3131,19 @@ So whatever shape holds an index has to be absent on those engines rather than e
 column row by something other than their text, with no extra round trip, and an engine that answers
 neither draws no empty affordance for them.
 
-### U25. The object tree has no filter, over object names or column names
+### U25. The object tree filter does not match column names
 
-`docs/FEATURES.md` promises "Real-time, high-performance filtering across both table names and column
-names".
-That sentence is true of `SchemaExplorer`, which filters on `table.name` and on `col.name` and is
-what the mobile schema tab renders; it is false of the desktop sidebar, which has no filter box at
-all.
-This PR scoped the sentence to the schema tab rather than deleting it, which makes the desktop gap
-explicit instead of covered.
+The desktop sidebar's tree has a filter over object names (`src/components/object-tree/filter.ts`).
+It matches object rows only, over every folder already read, and reports the folders it has not read instead of reading them on a keystroke.
+Column names are still matched only by `SchemaExplorer`, which is what the mobile schema tab renders.
 
-Repro: open the desktop sidebar on a schema with 200 tables and look for a filter.
-Open the same connection at a mobile width, switch to the schema tab, and there is one.
+Repro: open the desktop sidebar, open a table's folder, and type the name of one of its columns into the filter box.
+No row matches.
 
-The tree's filter is not the flat list's, and that is the work.
-The flat list holds every table and every column in memory, so its filter is an array filter over
-data that is already there.
-The tree reads lazily: a filter over column names can only match a row whose `describe` has happened,
-and a filter over object names can only match a folder whose objects have been listed.
-What an unread subtree does under a filter has to be decided before anything is written, and the
-three answers are hide it, show it unfiltered, or read it, where the third is the eager
-whole-database read #789 removed.
+A column filter over the lazy tree can only see objects whose `describe` has run, which on a large schema is a handful.
+What an undescribed object does under a column filter has to be decided first, and reading every describe on a keystroke is the eager read #789 removed, one request per table.
 
-**Done when:** the tree has a filter over object and column names, its behaviour on an unread subtree
-is stated in the component's docblock and asserted by a test, and no keystroke in the box can trigger
-a whole-database read.
+**Done when:** the tree filter matches column names, its behaviour on an undescribed object is stated in `filter.ts` and asserted by a test, and no keystroke issues a describe.
 
 ### U26. The tree row menu is two items shorter than the flat explorer's
 

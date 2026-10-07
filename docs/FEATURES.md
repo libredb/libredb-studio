@@ -141,6 +141,7 @@ Two components are described below and a claim true of one can be false of the o
     When that tab's last run failed, focusing it also runs its query again, in the same tab.
     Holding Enter or Space down does not open another tab per key repeat.
 *   **Deep Tree Inspection (schema tab):** Expand tables to view column definitions, data types, and Primary Key (PK) constraints with intuitive iconography.
+*   **Object tree filter (sidebar):** Filters the desktop object tree by object name over every folder already read, keeps the path to each match, and reports the folders it has not read yet, reading them in batches of 24 only when asked.
 *   **Global Search & Filter (schema tab):** Real-time, high-performance filtering across both table names and column names.
 *   **Catalog Row Counts:** Both explorers draw the row count the engine already holds in its catalog, in compact K/M/B/T units (for example, `1.6M`).
     Hover to see the complete figure and the caveat that it is an estimate on most engines.
