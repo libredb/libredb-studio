@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D242, U17 · 146
+- [Drivers and connections](#drivers-and-connections) — D1-D243, U17 · 147
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U93 · 84
@@ -2603,6 +2603,18 @@ sqlite declares `false` in `src/lib/db/providers/sql/sqlite.ts` while its `getDa
 Deferred by Spec A (seed sources), which needed the providers' reading for its refusal and left both flags as they are.
 
 **Done when:** the flag means one thing, either split into a form capability and a provider capability or kept as the provider's reading with mssql and sqlite declaring what they read, and the census in `tests/unit/db/connection-string-records.test.ts` covers every shipped type with no exception list.
+
+### D243. Redis reply shaping matches an option against every argument, and two edges still lose or mislabel a value
+
+`hasReplyOption` in `src/lib/db/providers/keyvalue/redis.ts` looks for `WITHSCORES`, `NOVALUES` and `NOSCORES` in every argument, the key and a `MATCH` pattern included.
+So `HSCAN novalues 0` on a hash whose key is `novalues` renders its fields and values interleaved under one `field` column, and `ZSCAN noscores 0` does the same with members and scores, measured 2026-10-07 on redis 8.10.0 and valkey 9.1.1; a zset key named `withscores` under `ZRANGE` should pair a plain member list the same way (read in code, not probed).
+In `streamEntryRows`, a stream field named `id` is shown as `id (field)` (`STREAM_ID_FIELD_COLUMN`), so an entry that also carries a real field named `id (field)` keeps only one of the two values, and across entries the two fields share one column.
+`scanRows` still turns a cursor reply whose second element is not an array into an empty page (`Array.isArray(result[1]) ? ... : []`) instead of raising, as the stream path now does.
+`docs/providers/redis.md` section 5.2 lists `ZSCAN ... NOSCORES` with no engine note, while Redis 8.10 refuses the option with `ERR syntax error` and only Valkey answers it.
+
+Found in the round-2 review of #1552, which introduced the first two edges; the last two predate it.
+
+**Done when:** each option is read only from its option position (after the key and cursor for the scan family, skipping the values of `MATCH`, `COUNT` and `TYPE`), the renamed stream header cannot collide with a field of the same page, a malformed cursor reply raises, and the provider doc says `NOSCORES` is a Valkey option, each with a failing test first in `tests/integration/db/redis-provider.test.ts`.
 
 ## Value interpolation
 
