@@ -520,6 +520,21 @@ const MONGODB_VIEW_TYPE = "view";
 const MONGODB_INTERNAL_PREFIX = "system.";
 
 /**
+ * The `type` a time series collection reports, and the reason one collection can appear
+ * twice in a listing: beside the collection itself the server also lists its internal
+ * bucket collection, and `collStats` answers the same bytes for each (#1455).
+ */
+const MONGODB_TIMESERIES_TYPE = "timeseries";
+
+/**
+ * The prefix the server gives the internal bucket collection behind a time series
+ * collection. `system.buckets.weather` is where the documents of the time series
+ * collection `weather` live, and `collStats` reports the same bytes under both names, so a
+ * byte total that counts both counts that collection twice (#1455).
+ */
+const MONGODB_TIMESERIES_BUCKET_PREFIX = `${MONGODB_INTERNAL_PREFIX}buckets.`;
+
+/**
  * The databases the server owns, by exact NAME.
  *
  * `admin`, `config` and `local` are MongoDB's own three. An exact list rather than a
@@ -1479,11 +1494,20 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // `freeStorage*` fields are gated, on the command's own `freeStorage: 1` option), so
       // this arm is not a deployment measured here; a database that really holds 0 bytes
       // still formats as "0 B".
-      const healthDataSize = measuredNumber(dbStats.dataSize);
+      //
+      // The figure is `dataSize + indexSize`, the same sum `getOverview()` publishes and
+      // under the same omit-when-either-is-missing rule. The two are shown side by side -
+      // the admin fleet view prints this one per row and adds the overview's bytes up as
+      // its total, and the Monitoring Overview's DB Size card reads the overview's - so
+      // publishing `dataSize` alone here made one MongoDB read two sizes at once.
+      const dataSizeBytes = measuredNumber(dbStats.dataSize);
+      const indexSizeBytes = measuredNumber(dbStats.indexSize);
+      const healthDatabaseSize =
+        dataSizeBytes === undefined || indexSizeBytes === undefined ? undefined : dataSizeBytes + indexSizeBytes;
 
       return {
         ...(currentConnections === undefined ? {} : { activeConnections: currentConnections }),
-        databaseSize: healthDataSize === undefined ? "N/A" : formatBytes(healthDataSize),
+        databaseSize: healthDatabaseSize === undefined ? "N/A" : formatBytes(healthDatabaseSize),
         cacheHitRatio:
           healthCacheHitRatio === undefined
             ? CACHE_HIT_RATIO_UNAVAILABLE
@@ -1665,14 +1689,18 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // from, because it is the denominator of every share on the Storage tab and those
       // numerators carry both: a collection's row is `collStats.size +
       // collStats.totalIndexSize` (`getTableStats()`) and the Indexes card sums
-      // `totalIndexSize`. `dataSize` alone - the documents, uncompressed - left index bytes
-      // in the numerator only, so the Indexes share and every collection carrying an index
-      // read far above 100% (measured on MongoDB 8.2: 1062.8% and 354.7%). `dbStats.totalSize`
-      // is the other candidate and the wrong one: it is `storageSize + indexSize`, and
-      // `storageSize` is the compressed on-disk footprint including pre-allocated space, so a
-      // denominator taken from it would not be the uncompressed measure those rows are in.
-      // One absent addend is not a zero here: a sum of a reading and a guess is not a reading,
-      // and `dataSize` alone is the state the shares were wrong in.
+      // `totalIndexSize`. `dataSize` alone left index bytes in the numerator only, so the
+      // Indexes share and every collection carrying an index read far above 100% (measured
+      // on MongoDB 8.2: 1062.8% and 354.7%). The reason for the sum is FIELD PARITY, and
+      // MongoDB documents it: `dbStats.dataSize` and `dbStats.indexSize` are the
+      // database-level sums of the collection-level `collStats.size` and
+      // `collStats.totalIndexSize` - the two fields `getTableStats()` builds each row from -
+      // so the database figure is exactly the sum of the row figures. `dbStats.totalSize` is
+      // the other candidate and the wrong one: it is `storageSize + indexSize`, and
+      // `storageSize` is the on-disk footprint including pre-allocated space, so it is not
+      // the measure the rows are in. One absent addend is not a zero here: a sum of a
+      // reading and a guess is not a reading, and `dataSize` alone is the state the shares
+      // were wrong in.
       const databaseSizeBytes =
         dataSizeBytes === undefined || indexSizeBytes === undefined ? undefined : dataSizeBytes + indexSizeBytes;
 
@@ -1835,8 +1863,31 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     const collections = await this.db!.listCollections().toArray();
     const stats: TableStats[] = [];
 
+    // A time series collection is listed TWICE: the collection itself (`type:
+    // "timeseries"`) and the server's own bucket collection, `system.buckets.<name>`, and
+    // `collStats` answers the same bytes for both. Counting both put the collection's bytes
+    // into the rows twice, so the figures the Storage tab divides summed past
+    // `dbStats.dataSize + dbStats.indexSize`, every share read above 100% and the "Other
+    // (unattributed)" remainder went negative (measured on `mongo:8`: 110334 B of rows
+    // against a 105066 B total, #1455). Which rows are one collection is read from the
+    // listing itself rather than assumed: the bucket is skipped only when this same answer
+    // also reported the time series collection it belongs to.
+    const timeseriesCollections = new Set<string>();
+    for (const info of collections) {
+      if (readText(info.type) === MONGODB_TIMESERIES_TYPE) timeseriesCollections.add(readText(info.name));
+    }
+
     for (const collInfo of collections) {
       const collName = collInfo.name;
+
+      // `system.buckets.<name>` is the storage behind the time series collection `<name>`,
+      // which this answer already lists, and the two are one collection to a reader.
+      if (
+        collName.startsWith(MONGODB_TIMESERIES_BUCKET_PREFIX) &&
+        timeseriesCollections.has(collName.slice(MONGODB_TIMESERIES_BUCKET_PREFIX.length))
+      ) {
+        continue;
+      }
 
       try {
         const collStats = await this.db!.command({ collStats: collName });

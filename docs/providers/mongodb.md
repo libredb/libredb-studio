@@ -838,12 +838,12 @@ Every method is wrapped in try/catch. Degradation reports the absence rather tha
 
 | Method | Source | Notes |
 |--------|--------|-------|
-| `getHealth()` | `serverStatus`, `dbStats`, `currentOp`, `system.profile` | connections (**omitted**, never `0`, when the server publishes none — [§7.2](#72-a-connection-count-nobody-published-is-absent-not-zero)), data size (`dataSize` alone, the document measure — **`"N/A"`**, never `"0 B"`, when `db.stats()` answers without it — [§7.3](#73-a-database-size-nobody-published-is-absent-not-0-b)), WiredTiger cache-hit % (`"N/A"` when unmeasurable, [§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)), current ops; slow queries need the profiler (placeholder row if disabled) |
-| `getOverview()` | `serverStatus`, `buildInfo`, `dbStats`, `listCollections` | version, uptime, connections (**omitted**, never `0`, on the same two paths as `getHealth()` — [§7.2](#72-a-connection-count-nobody-published-is-absent-not-zero)), database size (**`dataSize + indexSize`**, the uncompressed measure the per-collection rows add up — `databaseSizeBytes` **omitted**, never `0`, when either addend is unpublished — [§7.3](#73-a-database-size-nobody-published-is-absent-not-0-b)), collection/index counts. `maxConnections` is `connections.current + connections.available`, or `0` — the repo's spelling of *no limit published* — when the server publishes no headroom |
+| `getHealth()` | `serverStatus`, `dbStats`, `currentOp`, `system.profile` | connections (**omitted**, never `0`, when the server publishes none, [§7.2](#72-a-connection-count-nobody-published-is-absent-not-zero)), data size (**`dataSize + indexSize`**, the same sum `getOverview()` publishes; **`"N/A"`**, never `"0 B"`, when `db.stats()` answers without either addend, [§7.3](#73-a-database-size-nobody-published-is-absent-not-0-b)), WiredTiger cache-hit % (`"N/A"` when unmeasurable, [§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)), current ops; slow queries need the profiler (placeholder row if disabled) |
+| `getOverview()` | `serverStatus`, `buildInfo`, `dbStats`, `listCollections` | version, uptime, connections (**omitted**, never `0`, on the same two paths as `getHealth()`, [§7.2](#72-a-connection-count-nobody-published-is-absent-not-zero)), database size (**`dataSize + indexSize`**, the database-level sums of the per-collection `collStats.size` and `totalIndexSize` the rows are built from, so a share's numerator and denominator are the same pair; `databaseSizeBytes` **omitted**, never `0`, when either addend is unpublished, [§7.3](#73-a-database-size-nobody-published-is-absent-not-0-b)), collection/index counts. `maxConnections` is `connections.current + connections.available`, or `0` (the repo's spelling of *no limit published*) when the server publishes no headroom |
 | `getPerformanceMetrics()` | `serverStatus` (WiredTiger + opcounters) | cache-hit %, **ops/sec** (`query`+`insert`+`update`+`delete` opcounters ÷ uptime — *total operations, not just queries*), buffer-pool % (cache bytes), `deadlocks: 0`. **Every field is optional**: each one is present only if its reading was, and a failed `serverStatus` reports `{}` ([§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)) |
 | `getSlowQueries()` | `system.profile` | per-op time/returned; **`[]` if the profiler isn't enabled** (`db.setProfilingLevel(1)`); sorted by `millis` (slowest) — note `getHealth()`'s slow-query block instead sorts by `ts` (most recent) and emits a placeholder row when disabled |
 | `getActiveSessions()` | `currentOp` | opid, ns, lock waits, duration — ⚠️ the **`user` field is populated from `op.client`** (the client `host:port`), **not** an authenticated user |
-| `getTableStats()` | `collStats` per collection | row count + data/index/total sizes, `totalIndexSize` carried as the byte figure `indexSizeBytes` and not only as formatted text |
+| `getTableStats()` | `collStats` per collection | row count + data/index/total sizes, `totalIndexSize` carried as the byte figure `indexSizeBytes` and not only as formatted text; a time series collection is **one** row, because the server's internal `system.buckets.<name>` duplicate is skipped rather than summed beside it |
 | `getIndexStats()` | `$indexStats` + `indexes()` | **real `scans`** (`accesses.ops`); `indexSize` `N/A`; **`indexType` only distinguishes `text` vs `btree`** — `hashed`/`2dsphere`/`2d`/wildcard/clustered are all mislabelled `btree` |
 | `getStorageStats()` | `dbStats` + WiredTiger | Data / Indexes / Storage / WiredTiger cache (with usage %) |
 
@@ -955,18 +955,21 @@ fabrication. Both outlived the round that fixed the count, one field over in the
   this arm is **not** a deployment measured in this repo; it is the input `|| 0` could not
   distinguish, and the optional field exists to carry it.
 
-**What `getOverview()` publishes is a sum**, `dataSize + indexSize`, because that figure is the
-denominator of every share on the Storage tab and the numerators carry both measures: a collection's
-row is `collStats.size + collStats.totalIndexSize` (`getTableStats()`) and the *Indexes* card sums
-`totalIndexSize`. `dataSize` alone left index bytes in the numerator only, so on MongoDB 8.2 the
-*Indexes* card read 1062.8% of the database and a `customers` collection read 354.7% (#1455).
-`dbStats.totalSize` is the other candidate and the wrong one — it is `storageSize + indexSize`, and
-`storageSize` is the compressed on-disk footprint including pre-allocated space — so a denominator
-taken from it would not be the uncompressed measure those rows are in. When either addend is
-unpublished the key is omitted rather than filled in: a sum of one reading and one guess is not a
-reading, and `dataSize` alone is exactly the state the shares were wrong in. `getHealth()`'s
-`databaseSize` stays `dataSize` alone — it is a health figure the curated reading hands to the model
-verbatim, not a share denominator.
+**What `getOverview()` publishes is a sum**, `dataSize + indexSize`, and the reason is field parity
+rather than a shared unit: `dbStats.dataSize` and `dbStats.indexSize` are documented as the
+database-level sums of the collection-level `collStats.size` and `collStats.totalIndexSize`, which
+are the two fields `getTableStats()` builds each row from, so the database figure is exactly the sum
+of the row figures. That figure is the denominator of every share on the Storage tab and the
+numerators carry both measures: a collection's row is `collStats.size + collStats.totalIndexSize`
+and the *Indexes* card sums `totalIndexSize`. `dataSize` alone left index bytes in the numerator
+only, so on MongoDB 8.2 the *Indexes* card read 1062.8% of the database and a `customers` collection
+read 354.7% (#1455). `dbStats.totalSize` is the other candidate and the wrong one: it is
+`storageSize + indexSize`, and `storageSize` is the on-disk footprint including pre-allocated space,
+so it is not the measure the rows are in. When either addend is unpublished the key is omitted
+rather than filled in: a sum of one reading and one guess is not a reading, and `dataSize` alone is
+exactly the state the shares were wrong in. `getHealth()`'s `databaseSize` publishes the same sum,
+because the admin fleet view prints it per row beside the overview's byte total, and both are one
+database's size.
 
 **What the absence buys is a whole panel.**
 [`StorageTab.tsx`](../../src/components/monitoring/tabs/StorageTab.tsx) keys its entire breakdown off

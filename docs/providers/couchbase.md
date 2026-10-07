@@ -1137,7 +1137,7 @@ edge one. Omitted, the same panels render `N/A` / "Not measured" and score the c
 to publish one of them per monitoring tab: `getTableStats()` put `dataUsed` in the row's
 `tableSizeBytes`, the row's `totalSizeBytes` was `diskUsed`, and `getOverview()` published `diskUsed`
 as the database size the Storage tab divides every share by. One bucket therefore read two sizes at
-once — 1.57 MB on the Tables tab against 16.86 MB, "100% of DB", on the Storage tab, measured on
+once: 1.57 MB on the Tables tab against 16.86 MB, "100% of DB", on the Storage tab, measured on
 Couchbase 8.0.2 CE (#1455).
 
 Both fields of the row now carry `diskUsed`, the measure `getOverview()`'s `databaseSizeBytes` and
@@ -1147,9 +1147,15 @@ is therefore the bucket's **on-disk** size; `dataUsed` is deliberately not publi
 because nothing in the monitoring surface reports that measure as a total, and a share whose
 numerator and denominator measure different things is not a share.
 
-`IndexStats.indexSizeBytes` stays absent rather than `0`, so the *Indexes* card reads `N/A` beside a
-bucket whose disk usage the cluster does publish
-([§7.1](#71-an-unread-metric-is-absent-not-zero)).
+The *Indexes* card reads `N/A` beside a bucket whose disk usage the cluster does publish, and the
+field it is missing belongs to the `TableStats` row rather than to the index listing:
+`getTableStats()` returns the one bucket row and that row carries no `indexSizeBytes`, while
+[`StorageTab.tsx`](../../src/components/monitoring/tabs/StorageTab.tsx):79-80 shows the card only
+when **every** table row carries one (`tables.every((t) => t.indexSizeBytes !== undefined)`).
+`getIndexStats()` omits `IndexStats.indexSizeBytes` for its own reason
+([§7.1](#71-an-unread-metric-is-absent-not-zero)), and that listing is not the one the card reads.
+A bucket is one keyspace with no separate index size to report, so the absent figure is real rather
+than a `0`.
 
 ---
 
