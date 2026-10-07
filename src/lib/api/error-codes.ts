@@ -46,6 +46,13 @@ export const ApiErrorCode = {
   AUTH_REQUIRED: "AUTH_REQUIRED",
 
   /**
+   * The request names, in X-LibreDB-Workspace-Owner, an account other than the signed-in one
+   * (409): the tab claimed its browser copy for that account, and the session is now another
+   * account's. The browser reloads the tab for this code, so the owner check runs again.
+   */
+  WORKSPACE_OWNER_MISMATCH: "WORKSPACE_OWNER_MISMATCH",
+
+  /**
    * The operator switched custom connections off (ALLOW_CUSTOM_CONNECTIONS) and the request supplied a
    * connection of its own (403). Distinct from AUTH_ERROR, which the same 403 carries when the role
    * filter refuses a seed: this refusal is the server's policy and no role or credential changes it.

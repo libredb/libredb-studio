@@ -21,6 +21,8 @@ import type { AgentRunWorkflowType, AgentThreadContext } from "@/lib/agent/types
 import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseConnection } from "@/lib/types";
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
+import { holdWorkspaceOwner } from "@/lib/config/base-path";
+import { WORKSPACE_OWNER_KEY } from "@/lib/storage/local-storage";
 
 /**
  * The standalone agent rail (#329 T10a): the gated surface, its two modes and the
@@ -684,6 +686,39 @@ describe("AgentRail", () => {
     await view.findByTestId("agent-run-id");
 
     expect(localStorage.getItem("libredb_agent_thread")).toBeNull();
+  });
+
+  test("a start neither records nor forgets a conversation once the copy is a different account's", async () => {
+    // Server storage mode: this tab claimed the copy for ana, and another tab has since
+    // recorded bob as its owner. The copy is bob's, so this tab writes nothing more to it.
+    const stored = JSON.stringify({ threadId: "arun_bob", steps: 2 });
+    holdWorkspaceOwner("ana@libredb.org");
+    localStorage.setItem(WORKSPACE_OWNER_KEY, "bob@libredb.org");
+    localStorage.setItem("libredb_agent_thread", stored);
+    try {
+      for (const thread of [
+        { threadId: "arun_a", steps: [{ runId: "arun_a", objective: "count by department" }], text: "Step 1" },
+        null,
+      ]) {
+        mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE], {
+          runId: "arun_b",
+          status: "queued",
+          mode: "planning",
+          thread,
+        });
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "chart those" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        await view.findByTestId("agent-run-id");
+        cleanup();
+
+        expect(localStorage.getItem("libredb_agent_thread")).toBe(stored);
+      }
+    } finally {
+      holdWorkspaceOwner(null);
+    }
   });
 
   test("a store that refuses the write costs the notice, never the run", async () => {

@@ -285,9 +285,12 @@ describe("the /launch page in a browser signed in as someone else", () => {
     launchFor: "bob@example.com",
   };
 
-  function serveConflict(logout: () => Promise<Response>): ReturnType<typeof mock> {
+  function serveConflict(logout: () => Promise<Response>, serverMode = false): ReturnType<typeof mock> {
     const fetchMock = mock(async (url: string) => {
       if (String(url).endsWith("/api/auth/me")) return SIGNED_IN();
+      if (String(url).endsWith("/api/storage/config")) {
+        return answer(200, { provider: serverMode ? "postgres" : "local", serverMode });
+      }
       return String(url).endsWith("/api/auth/logout") ? logout() : answer(409, CONFLICT);
     });
     globalThis.fetch = fetchMock as never;
@@ -318,7 +321,7 @@ describe("the /launch page in a browser signed in as someone else", () => {
     expect(
       await view.findByText("You are signed out. Open Studio again from the platform to continue as bob@example.com."),
     ).not.toBeNull();
-    const [url, init] = fetchMock.mock.calls[2] as unknown as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[3] as unknown as [string, RequestInit];
     expect(url).toBe("/api/auth/logout");
     expect(init.method).toBe("POST");
   });
@@ -335,5 +338,61 @@ describe("the /launch page in a browser signed in as someone else", () => {
       ),
     ).not.toBeNull();
     expect(view.getByRole("link", { name: "Stay signed in as ada@example.com" })).not.toBeNull();
+  });
+
+  describe("this browser's copy of the workspace", () => {
+    beforeEach(() => {
+      localStorage.clear();
+      localStorage.setItem("libredb_connections", JSON.stringify([{ id: "c1" }]));
+      localStorage.setItem("libredb_workspace_owner", "ada@example.com");
+    });
+
+    afterEach(() => {
+      localStorage.clear();
+    });
+
+    test("server mode: the session ends, then the copy is cleared", async () => {
+      let atLogout: string | null = "not called";
+      serveConflict(async () => {
+        atLogout = localStorage.getItem("libredb_connections");
+        return answer(200, { success: true });
+      }, true);
+      const view = render(<LaunchPage />);
+      fireEvent.click(await view.findByRole("button", { name: "Sign out" }));
+      expect(
+        await view.findByText(
+          "You are signed out. Open Studio again from the platform to continue as bob@example.com.",
+        ),
+      ).not.toBeNull();
+      expect(atLogout).toBe(JSON.stringify([{ id: "c1" }]));
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
+    });
+
+    test("server mode: a sign-out the server refused says so and keeps the copy", async () => {
+      serveConflict(async () => answer(500, { error: "Server error" }), true);
+      const view = render(<LaunchPage />);
+      fireEvent.click(await view.findByRole("button", { name: "Sign out" }));
+      expect(
+        await view.findByText(
+          "Studio could not sign you out. Sign out from the editor, then open Studio again from the platform.",
+        ),
+      ).not.toBeNull();
+      expect(view.queryByText(/You are signed out/)).toBeNull();
+      expect(localStorage.getItem("libredb_connections")).not.toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe("ada@example.com");
+    });
+
+    test("local mode: the copy stays", async () => {
+      serveConflict(async () => answer(200, { success: true }));
+      const view = render(<LaunchPage />);
+      fireEvent.click(await view.findByRole("button", { name: "Sign out" }));
+      expect(
+        await view.findByText(
+          "You are signed out. Open Studio again from the platform to continue as bob@example.com.",
+        ),
+      ).not.toBeNull();
+      expect(localStorage.getItem("libredb_connections")).not.toBeNull();
+    });
   });
 });

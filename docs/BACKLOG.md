@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D243, U17 · 147
+- [Drivers and connections](#drivers-and-connections) — D1-D244, U17 · 148
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U93 · 84
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U96 · 87
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC18 · 15
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B100 · 36
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B102 · 38
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246)
 
@@ -1160,8 +1160,8 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 50 hits, re-measured 2026-10-07.
-Seventeen of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 51 hits, re-measured 2026-10-07.
+Eighteen of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
 Thirty write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
 The remaining three write a shorter stub of their own, two with two keys and one with a single `getSession`.
 
@@ -2616,6 +2616,20 @@ Found in the round-2 review of #1552, which introduced the first two edges; the 
 
 **Done when:** each option is read only from its option position (after the key and cursor for the scan family, skipping the values of `MATCH`, `COUNT` and `TYPE`), the renamed stream header cannot collide with a field of the same page, a malformed cursor reply raises, and the provider doc says `NOSCORES` is a Valkey option, each with a failing test first in `tests/integration/db/redis-provider.test.ts`.
 
+### D244. A broken operator seed file makes the built-in sample connections fail as well
+
+`getSeedConnectionById` in `src/lib/seed/index.ts` finds one id by building the whole managed list, and `getManagedConnections` starts with `loadOperatorSources()`, which throws when an operator source fails.
+So a seed file that does not parse, does not validate or cannot be read makes every `seed:` id fail, including `seed:sqlite-embedded-sample` and `seed:libredb-embedded-sample`, which no operator source declares (`src/lib/seed/sqlite-sample.ts`, `src/lib/seed/libredb-sample.ts`).
+`resolveConnection` in `src/lib/seed/resolve-connection.ts` rethrows it, so `/api/db/provider-meta`, `/api/db/health`, `/api/db/query` and every other route that resolves a connection answer 500 for both samples and for every role, and a user's 404 for the admin-only SQLite sample becomes the same 500.
+Measured with the CI image of 715cca4 and an invalid `color` in the seed file: the sidebar showed "This connection could not be read" with the seed error while the active connection was Sample (Employees), and a bun probe on `main` reproduced it for an invalid and for an unreadable file.
+Spec A decided that a failing operator source fails the whole operator list, so a config read in part never looks complete (`docs/SEED_CONNECTIONS.md`, Error Handling); the samples are not part of that config, and no document says they stop resolving.
+Nothing reserves the two sample ids either: an operator entry with one of them shadows the sample in the lookup and lists the id twice.
+
+Found 2026-10-07 by the browser pass of PR #1570 (Spec A seed sources); pre-existing.
+
+**Done when:** a built-in sample id resolves without loading the operator sources, `SeedConnectionSchema` refuses the two sample ids, an operator id still fails with its source's error, a route test with an invalid seed file opens both samples, and `docs/SEED_CONNECTIONS.md` says the samples keep resolving by id while the operator list fails.
+Whether a browser that never loaded the list should also be offered the samples during such a failure is a separate product decision.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -3609,21 +3623,23 @@ Not fixed in #1070: the endpoint is the framework's, and whether to gate it in t
 
 **Done when:** the endpoint is unreachable without a session on a development server bound beyond loopback, or the development docs state the exposure where a contributor meets it.
 
-### U54. The agent rail keeps a pending start, and the last run, from the connection before a switch
+### U54. The agent rail and the Results pane keep a pending start, the last run and its result from the connection before a switch
 
-Two cases, both reproduced in a browser in the PR #1070 live check on 2026-09-26.
+Three cases, the first two reproduced in a browser in the PR #1070 live check on 2026-09-26, the third in the browser pass of PR #1570 on 2026-10-07.
 
 - **The consent step outlives a connection switch.** Select Live SQLite, choose Agent mode, type an objective and press Start, so the step reads "This run will open as Analyze on Live SQLite". Click Live PostgreSQL in the sidebar: the rail header changes to "on Live PostgreSQL" and the step stays. Pressing "Start run" opens the run on `seed:live-sqlite`.
 - **The previous connection's last run stays on screen.** Run plan mode on Live DuckDB, then click Live SQLite. The rail says "on Live SQLite" and "Connection changed, so this question started a new conversation", and still shows the DuckDB run and its outcome.
+- **The previous connection's agent result stays in the Results pane.** An Agent-mode run on Sample PostgreSQL (reader) stored a count (2) and the pane showed it; after selecting Sample SQL Server (reader) the header read MSSQL and the pane still showed that count, labelled "Stored by agent run arun_... via sql.query.read", which names the run and never the connection.
 
 Nothing runs in the wrong place: `ConsentCard` is bound to the snapshot on purpose (`src/components/agent/ConsentCard.tsx`, the `connectionName` docblock), so its sentence names the connection the run opens on.
-The defect is that the rail then shows two different connections at once, and a user who reads the header rather than the step starts a run somewhere else than they think.
+The defect is that the shell then shows two different connections at once, and a user who reads the header starts a run somewhere else than they think, or reads one database's value as another's.
 `pendingStart` in `src/components/agent/AgentRail.tsx` is not cleared when the shell's connection changes.
+The result shown in the pane is shell state from `useAgentArtifact` (`src/components/agent/use-agent-artifact.ts`), and the effect in `src/components/Studio.tsx` that dismisses it is keyed on the active tab's id, result and plan, not on the connection; the rail's answer delivery and its Show control also deliver a run's result after a switch.
 
-Found 2026-09-26 by the PR #1070 live check.
+Found 2026-09-26 by the PR #1070 live check, and 2026-10-07 by the browser pass of PR #1570 (Spec A seed sources); pre-existing.
 Not fixed in #1070: the PR does not touch the agent rail.
 
-**Done when:** a connection switch either closes the consent step or keeps it with the rail header naming the step's connection, the rail stops showing the previous connection's run after the switch, and a component test pins both across a connection change.
+**Done when:** a connection switch either closes the consent step or keeps it with the rail header naming the step's connection, the rail stops showing the previous connection's run after the switch, the Results pane ends an agent result's view on a switch and refuses a result from a run on another connection with that connection named, and component tests pin each across a connection change.
 
 ### U55. The editor path writes no audit event for a write statement on any engine
 
@@ -4020,6 +4036,38 @@ Found 2026-10-06 while giving the generator its own flag for #1468.
 Not fixed in #1468: the owner kept the offered set to the old one plus MongoDB.
 
 **Done when:** each of them either declares `supportsTestDataGeneration: true` with a live run of the generated statement recorded in its provider doc, or its provider doc says why the generator's output cannot run there.
+
+### U94. Pivot, Charts and Dashboard show the clear values of a column the grid masks
+
+`BottomPanel` (`src/components/studio/BottomPanel.tsx`) hands the masking configuration to `ResultsGrid` and `GraphView`, but renders `PivotTable`, `DataCharts` and `ChartDashboard` from the same result without it.
+So while display masking is in force, a role that may not reveal a masked column sees its clear values as soon as it opens the Pivot, Charts or Dashboard tab of that result.
+The README describes the feature as display masking that does not prevent access through the API or the browser's developer tools, so this is a gap in what the display covers, not in an access boundary.
+Read on `main` 9b370ee6d: none of the three views receives `maskingConfig`.
+
+Found 2026-10-07 by the security review of the result column names fix; pre-existing.
+
+**Done when:** the three views either show the masked text for a masked column or leave a masked column out while masking is in force, `docs/FEATURES.md` states which, and a component test per view pins it.
+
+### U95. On Oracle, data masking and the inline-edit refusal do not read a repeated column as a repeat
+
+node-oracledb numbers a repeated result column itself, `NAME_1`, `NAME_2` (`_setup` in `oracledb/lib/impl/resultset.js`; measured 2026-10-07 on Oracle XE), and the Oracle provider keeps those names (`docs/providers/oracle.md`, section 5.1).
+Data masking (`namesToMatch` in `src/lib/data-masking.ts`) and the inline-edit refusal (`generatedFieldNames` in `src/components/results-grid/utils.ts`) read only the `name (N)` form that `uniqueFieldNames` writes, so on Oracle a join that projects `EMAIL` from both tables masks `EMAIL` and shows `EMAIL_1` in clear while masking is in force.
+The driver's `NAME_1` cannot be told apart from a column the statement itself names `NAME_1`, and rebuilding the declared names costs a statement-cache miss on every editor statement (the same section).
+
+Found 2026-10-07 by the external review of the result column names fix; pre-existing.
+
+**Done when:** masking treats an Oracle repeat like any other numbered repeat (for example by reading `NAME_N` as a repeat of `NAME` when `NAME` is also in the result), the inline-edit refusal makes the same call or the provider doc says why it cannot, and tests pin both.
+
+### U96. A statement that returns several result sets shows only its first, and nothing says others came back
+
+`QueryResult.resultSets` (`src/lib/types.ts`) carries every set a text produced, and `shownSet` in `src/app/api/db/multi-query/route.ts` shows the last set with rows, but only for a unit the script splitter made of several statements.
+One statement that returns several sets is shown by its first: on SQL Server an `EXEC` of a procedure that selects twice, and `POST /api/db/query` drops the rest through `firstResultSet` (`src/lib/api/first-result-set.ts`).
+A batch run while a transaction is open goes through `queryInTransaction` in `src/lib/db/providers/sql/mssql.ts`, which reads only `result.recordset`, so `SELECT 1; SELECT 2` shows the first set there while the same text outside a transaction shows the last.
+The other sets ran, and the grid gives no sign that they exist; a MySQL `CALL` that selects twice answers the same way once its sets are read (#1575).
+
+Found 2026-10-07 by the external review of the result column names fix; pre-existing.
+
+**Done when:** a statement or a transaction batch that returns several sets is shown by the same rule as a script batch (or lets the user choose the set), the result says how many sets came back, and route tests pin `EXEC`, `CALL` and the transaction path.
 
 ## Dependencies
 
@@ -5738,6 +5786,31 @@ Found 2026-10-04 while designing the Oxia provider (DECISIONS O14).
 **Done when:** an MCP metadata surface that never returns a key value is designed and `run_read_query` serves a read command under the `oxia` grammar, with tests; cited in `docs/AGENT.md` beside B93.
 
 B100 rather than the next free id: InfluxDB, built at the same time, took B94, and the gap kept the two from racing for an id.
+
+### B101. A refused agent principal is told to narrow its privileges even when it lacks one
+
+The read-only execution profile refuses a database principal two opposite ways: `PROFILE_PRIVILEGES_TOO_BROAD` when it holds a privilege the boundary cannot contain, and `PROFILE_PRIVILEGES_TOO_NARROW` when it lacks one the boundary needs, such as `SHOWPLAN` on SQL Server (`assertAgentPrincipalIsUnprivileged` in `src/lib/db/providers/sql/mssql.ts`).
+`classifyDriveFailure` in `src/lib/agent/runtime.ts` maps both to the one failure reason `agent-principal-refused`, and the rail's sentence for it in `src/components/agent/timeline.ts` ends "Point the connection's agent credential at a least-privilege user", the repair for the too-broad case only.
+The too-narrow advice in `PROFILE_REFUSAL_ADVICE` (`src/lib/agent/context-snapshot.ts`) reaches only the ledger's `context-unavailable` detail, which the rail does not render, so a plan run shows "Schema not captured / CATALOG_READ_REFUSED" and nothing else, and so does a too-broad refusal (a PostgreSQL superuser seed showed the same).
+Measured on a seeded SQL Server login with `db_datareader`, `VIEW DEFINITION` and `VIEW DATABASE STATE` but not `SHOWPLAN`: an Agent-mode run failed with that sentence while `GET /api/agent/runs/<id>/stream` carried "Grant the missing privilege named in the server log to that user; this is the opposite repair to the one above".
+The docblock of `agent-principal-refused` in `src/lib/agent/types.ts` and `docs/providers/mssql.md` still describe the missing-`SHOWPLAN` refusal as `PROFILE_PRIVILEGES_TOO_BROAD`.
+
+Found 2026-10-07 by the browser pass of PR #1570 (Spec A seed sources); pre-existing.
+
+**Done when:** a too-narrow refusal ends a run with a failure reason of its own while `agent-principal-refused` keeps the too-broad meaning, so ledgers already written still read; the rail tells a too-narrow principal to grant the privilege the server log names; a refused grounding read carries the direction on its `context-unavailable` event so plan mode can say it too; a runtime test pins each code to its reason and a timeline test pins each reason to its sentence; and `docs/providers/mssql.md` names which check raises which code.
+
+### B102. Plan mode's name check warns on statements that run: catalog reads, and a `FROM` inside a function call
+
+`unknownTables` in `src/lib/agent/plan-statement.ts` reports every name in a table position that the run's inventory does not hold, and the rail and the answer card show it as "These names are not in the inventory this run read, so the statement may not run as written" with a warning chip (`src/components/agent/AnswerCard.tsx`, `rail-parts.tsx`, `timeline.ts`).
+Two kinds of correct statement get that warning.
+A catalog read: every provider's catalog reading leaves the engine's own catalog out of the inventory (`sys` and `INFORMATION_SCHEMA` on SQL Server, the `SYSTEM_SCHEMAS` of the PostgreSQL and MySQL providers, `sqlite_%` on SQLite), so `sys.databases`, `information_schema.tables`, `pg_class` and `sqlite_master` are flagged, and `docs/AGENT_DEMO.md` presents the PostgreSQL case as intended.
+A `FROM` inside a function call: `TABLE_KEYWORDS` takes no account of call parentheses, so `EXTRACT(YEAR FROM created_at)` flags `created_at` and `TRIM(BOTH ' ' FROM name)` flags `name`.
+Measured on SQL Server as a reader: plan mode drafted `SELECT COUNT(*) FROM sys.databases;` and flagged `sys.databases`, and the same statement ran in Agent mode and answered 4; the `FROM` case was measured with `validatePlanStatement` on `main`.
+The warning is a hint, not a refusal (Apply to editor still works), but it marks a correct statement the way it marks an invented table, which teaches a user to ignore the chip.
+
+Found 2026-10-07 by the browser pass of PR #1570 (Spec A seed sources); pre-existing.
+
+**Done when:** a `FROM` inside a call's parentheses is not read as a table position; a name qualified by a schema the provider declares as its engine's own catalog, through a capability built from the lists the providers already hold and no per-engine list in `src/lib/agent`, is reported as not checked rather than unknown; `docs/AGENT_DEMO.md` says what the check covers, including that an unqualified catalog name such as `pg_class` still gets the warning; and tests in `tests/unit/lib/agent/plan-statement.test.ts` pin both cases while an invented `sales.orders` is still reported.
 
 ## Passkey deferrals (#785)
 

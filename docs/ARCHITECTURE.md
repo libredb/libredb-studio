@@ -256,6 +256,7 @@ Multi-statement queries execute sequentially via `POST /api/db/multi-query`, one
   - `postgres`: Server-side PostgreSQL via `pg`
 - **`useStorageSync` hook** in Studio.tsx: discovers mode at runtime via `/api/storage/config`, pulls on mount, pushes mutations (debounced 500ms)
 - **Migration**: First login auto-migrates localStorage to server; `libredb_server_migrated` flag prevents re-migration
+- **Browser copy owner** (server mode): `libredb_workspace_owner` binds the browser copy to the signed-in account; a different account starts from its own server data and sign-out clears the copy (see [STORAGE.md](STORAGE.md#the-browser-copy-belongs-to-the-signed-in-account))
 - **Graceful degradation**: If server unreachable, localStorage continues working
 
 ### 4.5. Client State Management

@@ -26,7 +26,7 @@ import { render, fireEvent, waitFor, act, cleanup } from "@testing-library/react
 
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
 import { mockRouterPush, mockRouterRefresh, setMockPathname, resetMockPathname } from "../../helpers/mock-navigation";
-import { mockToastSuccess } from "../../helpers/mock-sonner";
+import { mockToastError, mockToastSuccess } from "../../helpers/mock-sonner";
 
 const { default: AdminDashboard } = await import("@/components/admin/AdminDashboard");
 
@@ -45,7 +45,10 @@ describe("AdminDashboard", () => {
     mockRouterRefresh.mockClear();
     mockToastSuccess.mockClear();
     setMockPathname("/admin/overview");
-    mockGlobalFetch({ "/api/auth/logout": { json: { success: true } } });
+    mockGlobalFetch({
+      "/api/auth/logout": { json: { success: true } },
+      "/api/storage/config": { json: { provider: "local", serverMode: false } },
+    });
   });
 
   test("renders admin dashboard title", async () => {
@@ -148,6 +151,7 @@ describe("AdminDashboard", () => {
       "/api/auth/logout": {
         json: { success: true, redirectUrl: "https://idp.example.com/logout?client_id=abc" },
       },
+      "/api/storage/config": { json: { provider: "local", serverMode: false } },
     });
 
     let renderResult: ReturnType<typeof render>;
@@ -172,5 +176,112 @@ describe("AdminDashboard", () => {
     if (savedDescriptor) {
       Object.defineProperty(window, "location", savedDescriptor);
     }
+  });
+
+  describe("this browser's copy of the workspace", () => {
+    beforeEach(() => {
+      localStorage.clear();
+      localStorage.setItem("libredb_connections", JSON.stringify([{ id: "c1" }]));
+      localStorage.setItem("libredb_workspace_owner", "admin@libredb.org");
+    });
+
+    afterEach(() => {
+      localStorage.clear();
+    });
+
+    async function clickLogout() {
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<AdminDashboard>content</AdminDashboard>);
+      });
+      await act(async () => {
+        fireEvent.click(renderResult!.getByText("Logout").closest("button")!);
+      });
+      await waitFor(() => {
+        expect(mockRouterPush).toHaveBeenCalledWith("/login");
+      });
+    }
+
+    test("server mode: the session ends, then the copy is cleared", async () => {
+      let atLogout: string | null = "not called";
+      mockGlobalFetch({
+        "/api/auth/logout": () => {
+          atLogout = localStorage.getItem("libredb_connections");
+          return { json: { success: true } };
+        },
+        "/api/storage/config": { json: { provider: "postgres", serverMode: true } },
+      });
+
+      await clickLogout();
+
+      expect(atLogout).toBe(JSON.stringify([{ id: "c1" }]));
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
+    });
+
+    test("a sign-out that cannot complete says so and keeps the copy", async () => {
+      mockToastError.mockClear();
+      mockGlobalFetch({
+        "/api/auth/logout": { json: { success: true } },
+        "/api/storage/config": { ok: false, status: 503, json: { error: "down" } },
+      });
+
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<AdminDashboard>content</AdminDashboard>);
+      });
+      await act(async () => {
+        fireEvent.click(renderResult!.getByText("Logout").closest("button")!);
+      });
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith("Failed to logout");
+      });
+
+      expect(mockRouterPush).not.toHaveBeenCalled();
+      expect(localStorage.getItem("libredb_connections")).not.toBeNull();
+    });
+
+    test("a sign-out the server refused says so, stays, and keeps the copy", async () => {
+      mockToastError.mockClear();
+      mockGlobalFetch({
+        "/api/auth/logout": { ok: false, status: 500, json: { error: "Server error" } },
+        "/api/storage/config": { json: { provider: "postgres", serverMode: true } },
+      });
+
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<AdminDashboard>content</AdminDashboard>);
+      });
+      await act(async () => {
+        fireEvent.click(renderResult!.getByText("Logout").closest("button")!);
+      });
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith("Failed to logout");
+      });
+
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+      expect(mockRouterPush).not.toHaveBeenCalled();
+      expect(localStorage.getItem("libredb_connections")).not.toBeNull();
+    });
+
+    test("server mode: a refused sign-out after which no session is left clears the copy and goes to sign in", async () => {
+      mockGlobalFetch({
+        "/api/auth/logout": { ok: false, status: 500, json: { error: "Server error" } },
+        "/api/auth/me": { ok: false, status: 401, json: { authenticated: false } },
+        "/api/storage/config": { json: { provider: "postgres", serverMode: true } },
+      });
+
+      await clickLogout();
+
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
+    });
+
+    test("local mode: the copy stays", async () => {
+      await clickLogout();
+
+      expect(localStorage.getItem("libredb_connections")).not.toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe("admin@libredb.org");
+    });
   });
 });

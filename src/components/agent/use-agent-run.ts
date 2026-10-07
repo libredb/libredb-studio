@@ -3,6 +3,7 @@
 import { appFetch } from "@/lib/config/base-path";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isAgentModelCapability } from "@/lib/agent/capability-labels";
+import { AGENT_THREAD_KEY, holdsAccountWorkspace } from "@/lib/storage/local-storage";
 // Type-only, so nothing of the probe — or of the AI SDK it runs — reaches this bundle.
 import type { AgentModelCapability } from "@/lib/agent/capability-probe";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
@@ -202,14 +203,15 @@ const isStartRefusalCode = (value: unknown): value is AgentStartRefusalCode => v
 /**
  * Where this browser remembers which conversation it was in.
  *
- * localStorage only, and per browser rather than per user: it is a resumption hint, not
- * user data, so it must never reach the storage layer or a server — the rule
- * `lib/community/star-prompt.ts` states for the same reason. Every access is wrapped, and
+ * localStorage only: it is a resumption hint, not user data, so it must never reach the
+ * storage layer or a server: the rule `lib/community/star-prompt.ts` states for the same
+ * reason. It is part of the signed-in account's browser copy all the same, so in server
+ * storage mode signing out clears it (`clearAccountWorkspace`). Every access is wrapped, and
  * every failure degrades to "nothing was interrupted", which is the behaviour before this
  * existed: a rail that cannot say a conversation ended is strictly better than one that
  * cannot open a run (#518).
  */
-const THREAD_STORAGE_KEY = "libredb_agent_thread";
+const THREAD_STORAGE_KEY = AGENT_THREAD_KEY;
 
 /** A conversation this browser was in and is no longer following. */
 export interface AgentInterruptedThread {
@@ -288,9 +290,13 @@ function parseStoredThread(raw: string | null): AgentInterruptedThread | null {
   return { threadId: candidate.threadId, steps: candidate.steps };
 }
 
-/** Remember the conversation this run belongs to, or forget the one that no longer applies. */
+/**
+ * Remember the conversation this run belongs to, or forget the one that no longer applies. Only
+ * while the browser copy is still the account this tab claimed it for (`holdsAccountWorkspace`).
+ */
 function rememberThread(thread: AgentThreadContext | null): void {
   try {
+    if (!holdsAccountWorkspace()) return;
     // Removed rather than left standing when a run belongs to no conversation: a stale
     // entry would tell the next mount a conversation was interrupted that had already ended.
     if (thread === null) localStorage.removeItem(THREAD_STORAGE_KEY);

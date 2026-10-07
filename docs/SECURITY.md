@@ -582,6 +582,10 @@ These are real, current, and not oversights. Each is a decision with a reason.
 - **Browser `localStorage` holds your credentials in plaintext.** It is the rendering source, and
   encrypting it would require a master password and a recovery flow, changing what the product is.
   This is why 0.1 and 1.1 matter as much as they do.
+  In server storage mode the browser copy belongs to the signed-in account: it is cleared on sign-out, and a different account signing in starts from its own server data.
+  Every request a tab sends after matching its copy names that account, and outside the public routes (`/api/auth/*`, `/api/db/health` and the rest of the public set in `src/proxy.ts`) the server refuses one that names an account other than the signed-in one, so a tab still open for one account never writes its workspace into another account's server storage.
+  A sign-out that could not complete, or a session that ended without one (expiry, a disabled account), leaves the copy in that browser until the next sign-in's owner check, which clears it for a different account.
+  In local mode it stays, and the next account to sign in on that browser profile sees and can open the connections saved there.
 - **Anyone who can read the server's environment can read the stored credentials.** 3.1 protects a
   stolen database file or dump on its own; it is not a vault. For `STORAGE_PROVIDER=sqlite` with no
   `STORAGE_ENCRYPTION_KEY` configured, that protection does not extend to a backup or volume

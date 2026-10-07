@@ -1,5 +1,6 @@
 import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import type { ObjectEditRevision } from "@/lib/db/types";
+import { holdsAccountWorkspace, SOURCE_DRAFTS_KEY } from "@/lib/storage/local-storage";
 
 /**
  * The unsaved edit of ONE part of an object's definition, held in this browser (#789 Phase 3,
@@ -59,9 +60,10 @@ export interface SourceDraft {
 
 /**
  * The one key. Versioned, so a later shape change is a new key rather than a migration over a
- * record a previous release wrote.
+ * record a previous release wrote. Spelled in `lib/storage/local-storage.ts`, which lists it among
+ * the keys of the signed-in account's browser copy.
  */
-export const DRAFT_KEY = "libredb_source_drafts_v1";
+export const DRAFT_KEY = SOURCE_DRAFTS_KEY;
 
 /**
  * 1,048,576 characters, which is 20 percent of the measured origin ceiling, and it is counted as
@@ -194,7 +196,8 @@ export function readDraft(storage: Storage | null, key: string): SourceDraft | u
  * the last thing that happens.
  */
 export function writeDraft(storage: Storage | null, key: string, draft: SourceDraft): DraftWrite {
-  if (storage === null) return { ok: false, reason: "unavailable" };
+  // A store another tab has handed to a different account is not this page's to write.
+  if (storage === null || !holdsAccountWorkspace(storage)) return { ok: false, reason: "unavailable" };
   if (draft.text.length > SOURCE_CHARACTER_LIMIT) return { ok: false, reason: "too-long" };
 
   const next: Record<string, SourceDraft> = { ...readStore(storage), [key]: draft };
@@ -232,7 +235,7 @@ export function writeDraft(storage: Storage | null, key: string, draft: SourceDr
  * "another tab" grammar. Nothing in this module builds that banner (#789).
  */
 export function dropDraft(storage: Storage | null, key: string): void {
-  if (storage === null) return;
+  if (storage === null || !holdsAccountWorkspace(storage)) return;
   const next = readStore(storage);
   delete next[key];
   try {

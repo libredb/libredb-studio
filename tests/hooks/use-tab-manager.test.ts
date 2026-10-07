@@ -8,6 +8,7 @@ import { mockToastDefault, mockToastDismiss, mockToastError } from "../helpers/m
 import "../helpers/mock-navigation";
 
 import { useTabManager, PREVIEW_PAGE_SIZE } from "@/hooks/use-tab-manager";
+import { holdWorkspaceOwner } from "@/lib/config/base-path";
 import type { DatabaseConnection } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { DatabaseObject } from "@/lib/db/types";
@@ -766,6 +767,40 @@ describe("useTabManager", () => {
   });
 
   // ─── Persistence: Load Effect ───
+
+  test("save in server mode: tabs are not written once another tab hands the copy to a different account", async () => {
+    holdWorkspaceOwner("ana@libredb.org");
+    localStorage.setItem("libredb_workspace_owner", "ana@libredb.org");
+    try {
+      const { result } = renderHook(() =>
+        useTabManager({ activeConnection: null, metadata: null, schema: [], persistWorkspace: true }),
+      );
+      await waitFor(() => {
+        expect(result.current.tabs).toHaveLength(1);
+      });
+      act(() => {
+        result.current.addTab();
+      });
+      await waitFor(
+        () => {
+          expect(localStorage.getItem("libredb_workspace_tabs_v1:default")).not.toBeNull();
+        },
+        { timeout: 2000 },
+      );
+
+      localStorage.removeItem("libredb_workspace_tabs_v1:default");
+      localStorage.setItem("libredb_workspace_owner", "bob@libredb.org");
+      act(() => {
+        result.current.addTab();
+      });
+      await new Promise((r) => setTimeout(r, 700));
+
+      expect(localStorage.getItem("libredb_workspace_tabs_v1:default")).toBeNull();
+    } finally {
+      holdWorkspaceOwner(null);
+      localStorage.removeItem("libredb_workspace_owner");
+    }
+  });
 
   test("load — empty storage with persistWorkspace defaults to DEFAULT_TAB", async () => {
     // No data in localStorage for this key

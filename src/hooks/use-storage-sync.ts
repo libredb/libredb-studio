@@ -1,6 +1,6 @@
 "use client";
 
-import { appFetch } from "@/lib/config/base-path";
+import { appFetch, heldWorkspaceOwner } from "@/lib/config/base-path";
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   storage,
@@ -9,9 +9,17 @@ import {
   type StorageData,
   STORAGE_COLLECTIONS,
 } from "@/lib/storage";
+import {
+  claimAccountWorkspace,
+  keepUnsavedCollections,
+  SERVER_MIGRATED_KEY as MIGRATION_FLAG,
+  takeUnsavedCollections,
+  WORKSPACE_OWNER_KEY,
+} from "@/lib/storage/local-storage";
+import { registerWorkspaceSync } from "@/lib/storage/sign-out";
+import { readSignedInUsername } from "@/lib/storage/workspace-owner";
 import { logger } from "@/lib/logger";
 
-const MIGRATION_FLAG = "libredb_server_migrated";
 const DEBOUNCE_MS = 500;
 /** First retry delay after a failed push; doubles per consecutive failure. */
 const RETRY_BASE_MS = 1000;
@@ -33,6 +41,8 @@ export interface StorageSyncState {
  * - Discovers storage mode via GET /api/storage/config
  * - In server mode: pulls data on mount, pushes mutations (debounced)
  * - Handles first-login migration from localStorage to server
+ * - Binds the browser copy to the signed-in account (server mode): a copy another account
+ *   left behind is cleared before anything is migrated, pulled or pushed
  * - Graceful degradation: if server unreachable, localStorage continues
  */
 export function useStorageSync(): StorageSyncState {
@@ -57,6 +67,14 @@ export function useStorageSync(): StorageSyncState {
   const pendingCollectionsRef = useRef<Set<string>>(new Set());
   const retryDelayRef = useRef(RETRY_BASE_MS);
   const serverModeRef = useRef(false);
+  /** The push in flight, so a sign-out can wait for it while the session cookie is still valid. */
+  const inFlightRef = useRef<Promise<unknown> | null>(null);
+  /**
+   * Set while a sign-out is under way and after it: changes are queued but not pushed, and no
+   * timer pushes, so nothing pushes the copy once it is cleared. A sign-out that did not happen
+   * resets it (`resume`).
+   */
+  const signingOutRef = useRef(false);
   /**
    * Whether this hook is still mounted. A push that is in flight when the user
    * navigates away resolves AFTER teardown, and the failure branch would arm a
@@ -69,8 +87,8 @@ export function useStorageSync(): StorageSyncState {
   // `flushPending` and `schedulePush` depending on each other.
   const flushPendingRef = useRef<() => void>(() => {});
 
-  // ── Flush pending collections ──
-  const flushPending = useCallback(async () => {
+  // ── Push pending collections ──
+  const pushPending = useCallback(async () => {
     // Declared inside the flush rather than as its own `useCallback`: it has
     // exactly one caller, and hoisting it only bought this memo a dependency
     // that could never change. It closes over nothing but refs, module-level
@@ -104,9 +122,11 @@ export function useStorageSync(): StorageSyncState {
 
     setIsSyncing(true);
     try {
-      const outcomes = await Promise.all(
+      const pushes = Promise.all(
         collections.map(async (col) => [col, await pushToServer(col, getCollectionData(col))] as const),
       );
+      inFlightRef.current = pushes;
+      const outcomes = await pushes;
 
       // A collection that failed to push is still only in localStorage. Putting
       // it back in the queue is what keeps the write recoverable — without this
@@ -133,6 +153,14 @@ export function useStorageSync(): StorageSyncState {
     }
   }, []);
 
+  // ── Flush pending collections, unless a sign-out is under way ──
+  // Every timer goes through here, so a debounce or retry that fires during or after a sign-out
+  // sends nothing; the sign-out's own flush pushes through `pushPending` directly.
+  const flushPending = useCallback(async () => {
+    if (signingOutRef.current) return;
+    await pushPending();
+  }, [pushPending]);
+
   // Filled after commit, never during render: React forbids writing `ref.current`
   // while rendering, and the ref's only reader — the retry timer armed inside
   // `flushPending` — cannot fire before the first commit, so it never sees the
@@ -146,6 +174,7 @@ export function useStorageSync(): StorageSyncState {
   const schedulePush = useCallback(
     (collection: string) => {
       pendingCollectionsRef.current.add(collection);
+      if (signingOutRef.current) return;
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
@@ -157,7 +186,14 @@ export function useStorageSync(): StorageSyncState {
   );
 
   // ── Pull all data from server → localStorage ──
-  const pullFromServer = useCallback(async () => {
+  /**
+   * `owner` is the account the copy was claimed for. Each collection of the answer is written
+   * only while the copy still belongs to it, checked again before every write: a sign-out, or
+   * another tab claiming the copy for a different account, while the pull was out or between two
+   * of its writes, keeps the copy as that left it. A collection still waiting to be pushed keeps
+   * its local value.
+   */
+  const pullFromServer = useCallback(async (owner: string) => {
     setIsSyncing(true);
     try {
       const res = await appFetch("/api/storage");
@@ -165,20 +201,12 @@ export function useStorageSync(): StorageSyncState {
       const data = (await res.json()) as Partial<StorageData>;
 
       // Write server data to localStorage (overwrite)
-      if (data.connections) writeCollectionToLocal("connections", data.connections);
-      if (data.history) writeCollectionToLocal("history", data.history);
-      if (data.saved_queries) writeCollectionToLocal("saved_queries", data.saved_queries);
-      if (data.schema_snapshots) writeCollectionToLocal("schema_snapshots", data.schema_snapshots);
-      if (data.saved_charts) writeCollectionToLocal("saved_charts", data.saved_charts);
-      if (data.active_connection_id !== undefined)
-        writeCollectionToLocal("active_connection_id", data.active_connection_id);
-      if (data.audit_log) writeCollectionToLocal("audit_log", data.audit_log);
-      if (data.masking_config) writeCollectionToLocal("masking_config", data.masking_config);
-      if (data.threshold_config) writeCollectionToLocal("threshold_config", data.threshold_config);
-      if (data.dismissed_seeds) writeCollectionToLocal("dismissed_seeds", data.dismissed_seeds);
-      if (data.favorite_connections) writeCollectionToLocal("favorite_connections", data.favorite_connections);
-      if (data.connection_order) writeCollectionToLocal("connection_order", data.connection_order);
-      if (data.connection_groups) writeCollectionToLocal("connection_groups", data.connection_groups);
+      for (const collection of STORAGE_COLLECTIONS) {
+        const value = data[collection];
+        if (!isPulled(collection, value) || pendingCollectionsRef.current.has(collection)) continue;
+        if (localStorage.getItem(WORKSPACE_OWNER_KEY) !== owner) return;
+        writeCollectionToLocal(collection, value);
+      }
 
       setLastSyncedAt(new Date());
       setSyncError(null);
@@ -258,26 +286,54 @@ export function useStorageSync(): StorageSyncState {
     let cancelled = false;
 
     async function init() {
+      let ready = true;
       try {
         const res = await appFetch("/api/storage/config");
         if (!res.ok || cancelled) return;
         const config = (await res.json()) as StorageConfigResponse;
 
         if (config.serverMode && !cancelled) {
+          // The browser copy belongs to the signed-in account. Without the account's name the
+          // copy cannot be matched to it, so it is neither used nor pushed: isReady stays false.
+          let username: string;
+          try {
+            username = await readSignedInUsername();
+          } catch (err) {
+            ready = false;
+            const message = err instanceof Error ? err.message : String(err);
+            logger.warn("StorageSync could not read the signed-in account", { error: message });
+            setSyncError(message);
+            return;
+          }
+          if (cancelled) return;
+          // The page's owner check claimed the copy for another account than the one signed in
+          // now: the page reloads, so the check runs again for this one.
+          const held = heldWorkspaceOwner();
+          if (held !== null && held !== username) {
+            ready = false;
+            window.location.reload();
+            return;
+          }
+
           setIsServerMode(true);
           serverModeRef.current = true;
 
-          // Migration first, then pull
+          // Records `username` as the owner of the copy it keeps or clears.
+          claimAccountWorkspace(username);
+          // Migration first, then the changes a sign-out of this account could not push, then pull
           await migrateToServer();
+          const unsaved = takeUnsavedCollections();
+          for (const collection of unsaved) pendingCollectionsRef.current.add(collection);
+          if (unsaved.length > 0) await pushPending();
           if (!cancelled) {
-            await pullFromServer();
+            await pullFromServer(username);
           }
         }
       } catch {
         // Server unreachable — stay in local mode
         logger.debug("Storage server unreachable, staying in local mode");
       } finally {
-        if (!cancelled) {
+        if (!cancelled && ready) {
           setIsReady(true);
         }
       }
@@ -287,7 +343,40 @@ export function useStorageSync(): StorageSyncState {
     return () => {
       cancelled = true;
     };
-  }, [migrateToServer, pullFromServer]);
+  }, [migrateToServer, pullFromServer, pushPending]);
+
+  // ── Sign-out: push what is pending while the session cookie is still valid ──
+  useEffect(() => {
+    if (!isServerMode) return;
+    return registerWorkspaceSync({
+      flush: async () => {
+        signingOutRef.current = true;
+        const clearTimers = () => {
+          if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+          if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+        };
+        clearTimers();
+        await inFlightRef.current;
+        // The push awaited above arms a retry when it failed: cleared again, and after this
+        // flush's own push for the same reason.
+        clearTimers();
+        await pushPending();
+        clearTimers();
+        if (pendingCollectionsRef.current.size > 0) {
+          // Kept in the copy for this account's next sign-in here, which pushes them first.
+          keepUnsavedCollections(Array.from(pendingCollectionsRef.current));
+          throw new Error("Unsaved changes could not be saved to server storage");
+        }
+      },
+      resume: () => {
+        signingOutRef.current = false;
+        // Held here again, so nothing is left for a later sign-in to push.
+        takeUnsavedCollections();
+        const held = Array.from(pendingCollectionsRef.current);
+        for (const collection of held) schedulePush(collection);
+      },
+    });
+  }, [isServerMode, pushPending, schedulePush]);
 
   // ── Listen for storage mutations ──
   useEffect(() => {
@@ -343,6 +432,14 @@ function getCollectionData(collection: string): unknown {
     default:
       return null;
   }
+}
+
+/**
+ * Whether the pull writes a collection the server answered: one it holds a value for, and
+ * `active_connection_id` also when that value is null (the account has no active connection).
+ */
+function isPulled(collection: string, value: unknown): boolean {
+  return collection === "active_connection_id" ? value !== undefined : Boolean(value);
 }
 
 /** Write server data directly to localStorage via storage key */

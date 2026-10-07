@@ -57,7 +57,9 @@ LibreDB Studio supports three storage modes. Pick the one that fits your use cas
 
 Server storage (`sqlite` or `postgres`) gives each person their own private workspace by partitioning connections, saved queries, and settings by the login username.
 For a team of three or more, pair server storage with Single Sign-On via [OIDC](OIDC.md) to provide individual logins, personal workspaces, and an audit trail that attributes actions to each user.
+In server storage the browser copy belongs to the signed-in account: signing out clears this browser's copy, open editor tabs included, and signing in as a different account starts from that account's server data.
 The default `local` mode stores data in the browser and does not isolate workspaces between people using the same browser profile.
+In `local` mode the next account to sign in on that browser profile sees, and can open, the connections saved there before it.
 
 ---
 
@@ -449,6 +451,7 @@ When you switch from local mode to SQLite or PostgreSQL, **existing browser data
 **No manual steps required.** Just change the env var and restart.
 
 > If multiple users were sharing a browser in local mode, only the data from the user who migrates first will be sent. Each user's server storage is isolated by their login email.
+> From then on the browser copy belongs to that account (`libredb_workspace_owner`), and a different account signing in on the same browser starts from its own server data.
 
 For the full migration lifecycle and the underlying merge semantics, see [Migration Flow](#10-migration-flow) in Part 2.
 
@@ -1203,6 +1206,19 @@ App Mount
   │   └─ serverMode: true ──┐
   │                          │
   │   ┌──────────────────────▼──────────────────────┐
+  │   │ Owner: GET /api/auth/me → username          │
+  │   │  ├─ Unreadable → syncError, isReady stays   │
+  │   │  │   false, nothing is pulled or pushed     │
+  │   │  ├─ libredb_workspace_owner = username      │
+  │   │  │   → keep the browser copy                │
+  │   │  ├─ No owner, never migrated → keep it,     │
+  │   │  │   owner = username (local-mode data,     │
+  │   │  │   migrated below into this account only) │
+  │   │  └─ Otherwise → clear the browser copy,     │
+  │   │      mark it migrated, owner = username     │
+  │   └──────────────────────┬──────────────────────┘
+  │                          │
+  │   ┌──────────────────────▼──────────────────────┐
   │   │ Check libredb_server_migrated flag          │
   │   │  ├─ Not migrated → POST /api/storage/migrate│
   │   │  │   (send all localStorage → server merge) │
@@ -1212,7 +1228,8 @@ App Mount
   │                          │
   │   ┌──────────────────────▼──────────────────────┐
   │   │ Pull: GET /api/storage                      │
-  │   │  → Write server data into localStorage      │
+  │   │  → Write server data into localStorage,     │
+  │   │    only while the owner is still username   │
   │   │  → Components re-render from localStorage   │
   │   └──────────────────────┬──────────────────────┘
   │                          │
@@ -1237,9 +1254,47 @@ When any `storage.*` mutation fires:
    - Reads each pending collection from `localStorage`
    - Sends `PUT /api/storage/[collection]` for each
 
+### The Browser Copy Belongs to the Signed-In Account
+
+In server mode the browser copy is bound to the account that signed in: `libredb_workspace_owner` holds its username, and it is compared with `GET /api/auth/me` before any page reads the copy.
+Every page that reads it (the editor, the admin dashboard and the monitoring page) renders inside `WorkspaceOwnerGate`, which runs that check first; the lifecycle above runs it again when it starts, before anything is migrated or pulled, and from then on every request names the owner (see below).
+The settings pages (`/settings/mcp`, `/settings/authenticator`) do not read the copy but render inside the gate too, because a sign-in can land on them, and the gate records the owner there.
+While the check runs, those pages show a loading indicator; when the signed-in account cannot be read, they show a message instead of the copy.
+They show it too when `GET /api/storage/config` cannot be read and the copy carries an owner or the migration flag, both written only in server mode; a copy with neither renders as it is, so local mode does not change.
+The copy is every synced collection, the editor tabs (never stored on the server), the object-source drafts, the agent thread hint, the names of the collections a sign-out could not push, the migration flag and the owner key itself; per-browser preferences such as the theme and line numbers are not part of it.
+`clearAccountWorkspace()` in `src/lib/storage/local-storage.ts` holds that list.
+
+- **Same account:** the copy is kept, the collections a sign-out could not push are pushed, and the pull overwrites each collection the server holds, except one still waiting to be pushed; a collection the server does not hold yet stays local.
+- **A different account, or a copy with no owner that was already migrated:** the copy is cleared first and recorded as this account's, so the account starts from its own server data.
+- **A copy with no owner that was never migrated:** local-mode data, recorded as the signed-in account's and migrated into that account as described in [Migration Flow](#10-migration-flow).
+  A different account that signs in before the migration ran finds it owned by the first account, so the copy is cleared for it.
+- **Sign-out** (the editor, the admin dashboard and the launch page): the signing-out tab's pending collections are pushed while the session is still valid, then `POST /api/auth/logout` ends the session, and only then is the copy cleared.
+  Only the signing-out tab's pending collections are pushed first: a change waiting in another open tab reaches the server only if that tab pushes it before the session ends, and is refused after.
+  The cleared copy keeps the migration flag and no owner, so whatever is written to it afterwards is cleared at the next sign-in rather than migrated.
+  A pending push that does not land does not stop the sign-out: when it failed because the session had already ended, the copy is cleared and the tab goes to sign in; otherwise (server storage unreachable) the session still ends, the copy stays for this account with the names of the collections that were not pushed, and the sign-out says so.
+  The next sign-in of the same account on this browser pushes those collections before it pulls, and a pull does not replace a collection still waiting to be pushed; the next sign-in of a different account clears the copy, those changes with it.
+  A change made in the signing-out tab while the sign-out request is out is not pushed; it goes with the cleared copy.
+  When the server refuses the sign-out, or its answer is lost, the tab asks `GET /api/auth/me`: with no session left the sign-out counts as done and the copy is cleared, and while the session goes on the copy stays, the sync goes on, and the sign-out says it did not complete.
+  When the storage mode cannot be read, a copy that carries the owner key or the migration flag fails the sign-out and stays; a copy with neither is local-mode data, and the session just ends.
+  A sign-out from a tab whose session another tab has meanwhile replaced with a different account's gets `409 WORKSPACE_OWNER_MISMATCH` on its push and reloads; a logout request it sends before the reload lands ends the session the browser holds, which is that other account's.
+- **Other open tabs:** every tab of the browser profile shares the copy, so when another tab records a different owner or clears the copy (a sign-out, or a different account signing in and landing on the editor, an admin page, the monitoring page or a settings page), each page inside `WorkspaceOwnerGate` stops rendering and reloads, and the owner check runs again for the account signed in now.
+  A sign-in can also land where no owner is recorded (an unknown address), so a page inside `WorkspaceOwnerGate` also asks which account is signed in whenever its tab is shown again, and reloads the same way when that is no longer the account it rendered for.
+  The editor's sync asks which account is signed in once more when it starts, and reloads the same way when that is no longer the account the page matched the copy for.
+- **Every request names the account:** once a page has matched the copy, every request it sends names that account in the `X-LibreDB-Workspace-Owner` header, and the server refuses one that names an account other than the signed-in one with `409 WORKSPACE_OWNER_MISMATCH` before the route runs, on every route that needs a session; the public routes (`src/proxy.ts`) are not checked ([API_DOCS.md](API_DOCS.md#storage-api)).
+- **The embedded workspace:** none of this applies to `StudioWorkspace` from the npm package, which mounts no sync, gate or owner check: its host supplies the connections, and the editor tabs it keeps in the host page's storage are the host's to scope to its own accounts.
+  The page then reloads, and the owner check runs again for the account signed in now, so a push, a pull or a migration a page sends after another tab signed in as a different account never reaches that account's server data, also in a tab that stays visible.
+  In the browser the same rule holds: a page writes the copy (the storage facade, its editor tabs, its object-source drafts, and each collection of a pull) only while the owner key still names the account it claimed, so a page that has not reloaded yet writes nothing into the copy another tab claimed.
+- **A session that ended on its own** (expiry, a disabled account) clears nothing: the copy stays until the next sign-in's owner check, which covers a different account on the first of these pages it opens.
+  A page inside `WorkspaceOwnerGate` that finds no session when it opens, or when its tab is shown again, shows neither the copy nor a message and goes to sign in.
+  It does not cover a copy written while `GET /api/storage/config` could not be read on a browser profile that had no owner and no migration flag yet: such a copy is treated as local-mode data, so the next account to sign in records it as its own and migrates it.
+- **The first sign-in after upgrading to a release that records the owner:** a browser that was already migrated has no owner yet, so its copy is cleared once, for the same account too, and that sign-in starts from the account's server data.
+  Open editor tabs from before the upgrade are not kept, since they are never stored on the server, and neither are object-source drafts or any change that had not reached the server.
+
+In local mode none of this runs: the browser copy is the only copy, it stays on sign-out, and no owner is recorded.
+
 ### Graceful Degradation
 
-- If `/api/storage/config` fails → stays in localStorage-only mode
+- If `/api/storage/config` fails → stays in localStorage-only mode, unless the browser copy carries `libredb_workspace_owner` or `libredb_server_migrated`: then the pages that read the copy show a message instead of it, because the copy may belong to a different account
 - If push fails → logs warning, sets `syncError`, does **not** block the UI
 - Components always read from `localStorage` — no loading states for storage
 
@@ -1251,15 +1306,18 @@ When a user first enables server mode (or a new user logs in for the first time)
 
 ```
 1. Hook detects serverMode = true
-2. Checks localStorage('libredb_server_migrated') flag
-3. If not migrated:
+2. Reads the signed-in username (GET /api/auth/me), clears a browser copy that belongs to another account, and sets 'libredb_workspace_owner' to the username
+3. Checks localStorage('libredb_server_migrated') flag
+4. If not migrated:
    a. Reads whichever of the 13 collections exist in localStorage (a fresh browser with none simply sets the flag and skips)
    b. POST /api/storage/migrate with the collected payload
    c. Server calls provider.mergeData() — upserts each collection as a whole blob in one transaction
    d. Sets 'libredb_server_migrated' flag in localStorage
-4. Pull: GET /api/storage → overwrite localStorage with server data
-5. Subsequent mutations sync normally via push
+5. Pull: GET /api/storage → overwrite localStorage with server data, unless a sign-out cleared the copy while the pull was out
+6. Subsequent mutations sync normally via push
 ```
+
+Step 2 is described in [The Browser Copy Belongs to the Signed-In Account](#the-browser-copy-belongs-to-the-signed-in-account).
 
 This ensures existing localStorage data is preserved when transitioning to server mode.
 

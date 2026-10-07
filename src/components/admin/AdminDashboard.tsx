@@ -1,6 +1,7 @@
 "use client";
 
 import { appFetch } from "@/lib/config/base-path";
+import { releaseAccountWorkspace } from "@/lib/storage/sign-out";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -29,8 +30,19 @@ export default function AdminDashboard({ children }: AdminDashboardProps) {
   const activeSection = adminSectionFromPathname(pathname);
 
   const handleLogout = async () => {
-    const res = await appFetch("/api/auth/logout", { method: "POST" });
-    const data = await res.json();
+    // In server storage mode the browser copy belongs to the signed-in account and is cleared once
+    // the session ended.
+    let data: { redirectUrl?: string };
+    try {
+      const { signedOut, response } = await releaseAccountWorkspace(() =>
+        appFetch("/api/auth/logout", { method: "POST" }),
+      );
+      if (!signedOut) throw new Error("Sign-out did not complete");
+      data = response ? await response.json() : {};
+    } catch {
+      toast.error("Failed to logout");
+      return;
+    }
     toast.success("Logged out successfully");
 
     // In OIDC mode the route answers with the provider's end_session URL. The local cookie is gone

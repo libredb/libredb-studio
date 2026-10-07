@@ -1,6 +1,6 @@
 import "../setup-dom";
 
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from "bun:test";
 import { renderHook, waitFor, act, cleanup } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
 
@@ -48,8 +48,18 @@ mock.module("@/lib/storage", () => ({
 }));
 
 import { useStorageSync } from "@/hooks/use-storage-sync";
+import { releaseAccountWorkspace } from "@/lib/storage/sign-out";
+import { workspaceTabsKey } from "@/lib/storage/local-storage";
+import { heldWorkspaceOwner, holdWorkspaceOwner } from "@/lib/config/base-path";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+const USERNAME = "user@libredb.org";
+
+/** GET /api/auth/me for the signed-in account; every server-mode route map carries it. */
+const SIGNED_IN = {
+  "/api/auth/me": { ok: true, status: 200, json: { authenticated: true, user: { username: USERNAME, role: "user" } } },
+};
 
 function setupLocalMode() {
   return mockGlobalFetch({
@@ -60,6 +70,7 @@ function setupLocalMode() {
 function setupServerMode(extraRoutes: Record<string, unknown> = {}) {
   return mockGlobalFetch({
     "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+    ...SIGNED_IN,
     "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: ["connections"] } },
     "/api/storage": { ok: true, status: 200, json: { connections: [{ id: "server-c1" }] } },
     ...extraRoutes,
@@ -86,6 +97,7 @@ describe("useStorageSync", () => {
   afterEach(() => {
     restoreGlobalFetch();
     cleanup();
+    holdWorkspaceOwner(null);
   });
 
   // ── Mode discovery ──────────────────────────────────────────────────────
@@ -252,6 +264,7 @@ describe("useStorageSync", () => {
       mockStorage.getConnections.mockReturnValue([{ id: "test" }]);
       mockGlobalFetch({
         "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        ...SIGNED_IN,
         "/api/storage/migrate": () => {
           throw new Error("migrate down");
         },
@@ -342,6 +355,7 @@ describe("useStorageSync", () => {
       localStorage.setItem("libredb_server_migrated", "true");
       mockGlobalFetch({
         "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        ...SIGNED_IN,
         "/api/storage": { ok: false, status: 500, json: { error: "DB error" } },
       });
 
@@ -360,6 +374,7 @@ describe("useStorageSync", () => {
       localStorage.setItem("libredb_server_migrated", "true");
       mockGlobalFetch({
         "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        ...SIGNED_IN,
         "/api/storage": () => {
           throw new Error("pull down");
         },
@@ -441,6 +456,35 @@ describe("useStorageSync", () => {
       expect(JSON.parse(stored!)).toEqual(groups);
     });
 
+    test("stops writing once another tab hands the copy to a different account mid-pull", async () => {
+      const write = localStorage.setItem.bind(localStorage);
+      // Another tab's claim lands between two of this pull's writes.
+      const setItem = spyOn(localStorage, "setItem").mockImplementation((key: string, value: string) => {
+        write(key, value);
+        if (key === "libredb_connections") write("libredb_workspace_owner", "admin@libredb.org");
+      });
+      try {
+        setupServerMode({
+          "/api/storage": {
+            ok: true,
+            status: 200,
+            json: { connections: [{ id: "server-c1" }], history: [{ id: "server-h1" }] },
+          },
+        });
+
+        const { result } = renderHook(() => useStorageSync());
+        await waitFor(() => {
+          expect(result.current.isReady).toBe(true);
+        });
+      } finally {
+        setItem.mockRestore();
+      }
+
+      expect(localStorage.getItem("libredb_connections")).toBe(JSON.stringify([{ id: "server-c1" }]));
+      expect(localStorage.getItem("libredb_history")).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe("admin@libredb.org");
+    });
+
     test("removes active_connection_id from localStorage when server returns null", async () => {
       localStorage.setItem("libredb_server_migrated", "true");
       localStorage.setItem("libredb_active_connection_id", "stale");
@@ -465,6 +509,7 @@ describe("useStorageSync", () => {
       localStorage.setItem("libredb_server_migrated", "true");
       const fetchMock = mockGlobalFetch({
         "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        ...SIGNED_IN,
         "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
         "/api/storage": { ok: true, status: 200, json: {} },
         "/api/storage/connections": { ok: true, status: 200, json: { ok: true } },
@@ -509,6 +554,7 @@ describe("useStorageSync", () => {
       let attempts = 0;
       const fetchMock = mockGlobalFetch({
         "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        ...SIGNED_IN,
         "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
         "/api/storage/connections": () => {
           attempts += 1;
@@ -556,6 +602,7 @@ describe("useStorageSync", () => {
       let attempts = 0;
       mockGlobalFetch({
         "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        ...SIGNED_IN,
         "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
         "/api/storage/connections": () => {
           attempts += 1;
@@ -636,6 +683,7 @@ describe("useStorageSync", () => {
 
       mockGlobalFetch({
         "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        ...SIGNED_IN,
         "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
         "/api/storage/connections": async () => {
           connectionsAttempts += 1;
@@ -703,6 +751,7 @@ describe("useStorageSync", () => {
 
       mockGlobalFetch({
         "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        ...SIGNED_IN,
         "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
         "/api/storage/connections": async () => {
           attempts += 1;
@@ -738,6 +787,7 @@ describe("useStorageSync", () => {
       // Use a request handler that returns 500 specifically for PUT /connections
       const fetchMock = mockGlobalFetch({
         "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        ...SIGNED_IN,
         "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
         "/api/storage/connections": { ok: false, status: 500, json: { error: "Write failed" } },
         "/api/storage": { ok: true, status: 200, json: {} },
@@ -908,6 +958,681 @@ describe("useStorageSync", () => {
       });
 
       expect(result.current.lastSyncedAt).toBeInstanceOf(Date);
+    });
+  });
+
+  // ── The browser copy belongs to the signed-in account ─────────────────
+
+  describe("the browser copy belongs to the signed-in account", () => {
+    const PREVIOUS = "admin@libredb.org";
+    const FORM_CONNECTION = { id: "form-1", name: "Warehouse", password: "previous-account-password" };
+
+    /** The previous account's browser copy, as a sign-in on this browser finds it. */
+    function seedPreviousCopy(owner: string | null, migrated: boolean) {
+      localStorage.setItem("libredb_connections", JSON.stringify([FORM_CONNECTION]));
+      localStorage.setItem("libredb_history", JSON.stringify([{ id: "h1", query: "SELECT 1" }]));
+      localStorage.setItem("libredb_active_connection_id", FORM_CONNECTION.id);
+      localStorage.setItem(workspaceTabsKey(FORM_CONNECTION.id), JSON.stringify([{ id: "t1", query: "SELECT 2" }]));
+      if (owner !== null) localStorage.setItem("libredb_workspace_owner", owner);
+      if (migrated) localStorage.setItem("libredb_server_migrated", "2026-10-01");
+    }
+
+    /** Every request body the hook sent: PUT /api/storage/* and POST /api/storage/migrate. */
+    function sentBodies(fetchMock: FetchMock): string[] {
+      return (fetchMock.mock.calls as unknown[][])
+        .map((c) => (c[1] as RequestInit | undefined)?.body)
+        .filter((body): body is string => typeof body === "string");
+    }
+
+    beforeEach(() => {
+      // The facade reads the browser copy itself, so a push carries exactly what is stored.
+      mockStorage.getConnections.mockImplementation(() =>
+        JSON.parse(localStorage.getItem("libredb_connections") ?? "[]"),
+      );
+    });
+
+    afterEach(() => {
+      mockStorage.getConnections.mockImplementation(() => [{ id: "c1" }]);
+    });
+
+    test("signing in as a different account starts from that account's server data", async () => {
+      seedPreviousCopy(PREVIOUS, true);
+      const fetchMock = setupServerMode({ "/api/storage": { ok: true, status: 200, json: {} } });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
+      expect(localStorage.getItem("libredb_history")).toBeNull();
+      expect(localStorage.getItem("libredb_active_connection_id")).toBeNull();
+      expect(localStorage.getItem(workspaceTabsKey(FORM_CONNECTION.id))).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe(USERNAME);
+      expect(calledPaths(fetchMock)).not.toContain("/api/storage/migrate");
+
+      // A change after the sign-in pushes this account's copy, never the previous one.
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "connections" } }));
+      });
+      await waitFor(
+        () => {
+          expect(calledPaths(fetchMock)).toContain("/api/storage/connections");
+        },
+        { timeout: 3000 },
+      );
+      expect(sentBodies(fetchMock).some((body) => body.includes(FORM_CONNECTION.password))).toBe(false);
+    });
+
+    test("a copy with no owner that was already handed to a server account is cleared", async () => {
+      seedPreviousCopy(null, true);
+      const fetchMock = setupServerMode({ "/api/storage": { ok: true, status: 200, json: {} } });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
+      expect(localStorage.getItem("libredb_history")).toBeNull();
+      expect(localStorage.getItem("libredb_active_connection_id")).toBeNull();
+      expect(localStorage.getItem(workspaceTabsKey(FORM_CONNECTION.id))).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe(USERNAME);
+      expect(sentBodies(fetchMock).some((body) => body.includes(FORM_CONNECTION.password))).toBe(false);
+    });
+
+    test("a local-mode copy never handed to a server account is migrated into the signed-in account", async () => {
+      seedPreviousCopy(null, false);
+      const fetchMock = setupServerMode({ "/api/storage": { ok: true, status: 200, json: {} } });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(calledPaths(fetchMock)).toContain("/api/storage/migrate");
+      expect(sentBodies(fetchMock).some((body) => body.includes(FORM_CONNECTION.id))).toBe(true);
+      expect(JSON.parse(localStorage.getItem("libredb_connections")!)).toEqual([FORM_CONNECTION]);
+      expect(localStorage.getItem(workspaceTabsKey(FORM_CONNECTION.id))).not.toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe(USERNAME);
+    });
+
+    test("the same account keeps its copy, and a collection the server lacks stays local", async () => {
+      seedPreviousCopy(USERNAME, true);
+      const fetchMock = setupServerMode({
+        "/api/storage": { ok: true, status: 200, json: { history: [{ id: "server-h1", query: "SELECT 3" }] } },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(JSON.parse(localStorage.getItem("libredb_connections")!)).toEqual([FORM_CONNECTION]);
+      expect(JSON.parse(localStorage.getItem("libredb_history")!)).toEqual([{ id: "server-h1", query: "SELECT 3" }]);
+      expect(localStorage.getItem("libredb_active_connection_id")).toBe(FORM_CONNECTION.id);
+      expect(localStorage.getItem(workspaceTabsKey(FORM_CONNECTION.id))).not.toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe(USERNAME);
+      expect(calledPaths(fetchMock)).not.toContain("/api/storage/migrate");
+    });
+
+    test("an unreadable signed-in account leaves the copy unused and unpushed", async () => {
+      seedPreviousCopy(PREVIOUS, true);
+      const fetchMock = mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        "/api/auth/me": { ok: false, status: 503, json: { error: "down" } },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.syncError).not.toBeNull();
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "connections" } }));
+      });
+      await act(async () => await new Promise((r) => setTimeout(r, 700)));
+
+      expect(result.current.isReady).toBe(false);
+      expect(result.current.isServerMode).toBe(false);
+      expect(
+        calledPaths(fetchMock).filter((p) => p.startsWith("/api/storage/") && p !== "/api/storage/config"),
+      ).toEqual([]);
+      expect(calledPaths(fetchMock)).not.toContain("/api/storage");
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe(PREVIOUS);
+    });
+
+    test("a signed-in answer without a username counts as unreadable", async () => {
+      seedPreviousCopy(PREVIOUS, true);
+      mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        "/api/auth/me": { ok: true, status: 200, json: { authenticated: true, user: {} } },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.syncError).not.toBeNull();
+      });
+      expect(result.current.isReady).toBe(false);
+    });
+
+    test("a page whose owner check matched another account reloads instead of claiming the copy again", async () => {
+      const original = window.location.reload;
+      const reload = mock(() => {});
+      Object.defineProperty(window.location, "reload", { value: reload, configurable: true });
+      try {
+        seedPreviousCopy(PREVIOUS, true);
+        // The page's owner check claimed the copy for PREVIOUS; another tab has since signed in.
+        holdWorkspaceOwner(PREVIOUS);
+        const fetchMock = setupServerMode();
+
+        const { result } = renderHook(() => useStorageSync());
+        await waitFor(() => {
+          expect(reload).toHaveBeenCalledTimes(1);
+        });
+
+        expect(result.current.isReady).toBe(false);
+        expect(localStorage.getItem("libredb_workspace_owner")).toBe(PREVIOUS);
+        expect(heldWorkspaceOwner()).toBe(PREVIOUS);
+        expect(calledPaths(fetchMock)).not.toContain("/api/storage/migrate");
+        expect(calledPaths(fetchMock).filter((path) => path === "/api/storage")).toHaveLength(0);
+      } finally {
+        Object.defineProperty(window.location, "reload", { value: original, configurable: true });
+      }
+    });
+
+    test("local mode clears nothing and records no owner", async () => {
+      seedPreviousCopy(PREVIOUS, true);
+      setupLocalMode();
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(JSON.parse(localStorage.getItem("libredb_connections")!)).toEqual([FORM_CONNECTION]);
+      expect(localStorage.getItem(workspaceTabsKey(FORM_CONNECTION.id))).not.toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe(PREVIOUS);
+    });
+
+    test("local mode on a fresh browser writes no owner", async () => {
+      setupLocalMode();
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
+    });
+  });
+
+  // ── Sign-out ──────────────────────────────────────────────────────────
+
+  describe("sign-out", () => {
+    /** Server mode with the collection routes ahead of the catch-all `/api/storage` pull. */
+    function setupSignOut(collectionRoutes: Parameters<typeof mockGlobalFetch>[0]) {
+      return mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        ...SIGNED_IN,
+        ...collectionRoutes,
+      });
+    }
+
+    /** POST /api/auth/logout as the sign-out paths send it; `status` is what the server answers. */
+    function signOutAnswering(status: number, during: () => void = () => {}) {
+      return async () => {
+        during();
+        return new Response(JSON.stringify({ success: status === 200 }), { status });
+      };
+    }
+
+    test("pushes a pending change, then ends the session, then clears the browser copy", async () => {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      const order: string[] = [];
+      setupSignOut({
+        "/api/storage/history": () => {
+          order.push(`push:${localStorage.getItem("libredb_workspace_owner")}`);
+          return { ok: true, status: 200, json: { ok: true } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "history" } }));
+      });
+      // Inside the debounce window: the push is still pending when the sign-out starts.
+      await act(async () => {
+        await releaseAccountWorkspace(
+          signOutAnswering(200, () => order.push(`sign-out:${localStorage.getItem("libredb_workspace_owner")}`)),
+        );
+      });
+      order.push(`cleared:${localStorage.getItem("libredb_workspace_owner")}`);
+
+      expect(order).toEqual([`push:${USERNAME}`, `sign-out:${USERNAME}`, "cleared:null"]);
+    });
+
+    test("waits for a push already in flight before the session ends", async () => {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      let started = false;
+      let landed = false;
+      let landedAtSignOut = null as boolean | null;
+      setupSignOut({
+        "/api/storage/history": async () => {
+          started = true;
+          await new Promise((r) => setTimeout(r, 150));
+          landed = true;
+          return { ok: true, status: 200, json: { ok: true } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "history" } }));
+      });
+      await waitFor(() => {
+        expect(started).toBe(true);
+      });
+      await act(async () => {
+        await releaseAccountWorkspace(signOutAnswering(200, () => (landedAtSignOut = landed)));
+      });
+
+      expect(landedAtSignOut).toBe(true);
+      expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
+    });
+
+    test("a pending push that does not land still ends the session and keeps the copy for this account", async () => {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      let signedOut = false;
+      setupSignOut({
+        "/api/storage/history": { ok: false, status: 500, json: { error: "Write failed" } },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "history" } }));
+      });
+      let outcome: Awaited<ReturnType<typeof releaseAccountWorkspace>> | null = null;
+      await act(async () => {
+        outcome = await releaseAccountWorkspace(signOutAnswering(200, () => (signedOut = true)));
+      });
+
+      expect(outcome).toMatchObject({ signedOut: true, changesKept: true });
+      expect(signedOut).toBe(true);
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe(USERNAME);
+    });
+
+    /** Signs out of a mounted sync whose pending `history` push does not land; the copy is kept. */
+    async function signOutKeepingHistory() {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      localStorage.setItem("libredb_history", JSON.stringify([{ id: "kept", query: "SELECT 'kept'" }]));
+      setupSignOut({
+        "/api/storage/history": { ok: false, status: 503, json: { error: "Storage unreachable" } },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+      const first = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(first.result.current.isReady).toBe(true);
+      });
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "history" } }));
+      });
+      let outcome: Awaited<ReturnType<typeof releaseAccountWorkspace>> | null = null;
+      await act(async () => {
+        outcome = await releaseAccountWorkspace(signOutAnswering(200));
+      });
+      expect(outcome).toMatchObject({ signedOut: true, changesKept: true });
+      first.unmount();
+      restoreGlobalFetch();
+      // The next sign-in loads a new page, which holds no claim yet.
+      holdWorkspaceOwner(null);
+    }
+
+    test("changes a sign-out could not push are pushed at the same account's next sign-in, before the pull", async () => {
+      mockStorage.getHistory.mockImplementation(() => JSON.parse(localStorage.getItem("libredb_history") ?? "[]"));
+      try {
+        await signOutKeepingHistory();
+
+        const order: string[] = [];
+        const fetchMock = setupSignOut({
+          "/api/storage/history": async (req: Request) => {
+            order.push(`push:${await req.text()}`);
+            return { ok: true, status: 200, json: { ok: true } };
+          },
+          "/api/storage": () => {
+            order.push("pull");
+            return { ok: true, status: 200, json: { history: [{ id: "server", query: "SELECT 'server'" }] } };
+          },
+        });
+        const second = renderHook(() => useStorageSync());
+        await waitFor(() => {
+          expect(second.result.current.isReady).toBe(true);
+        });
+
+        expect(order).toHaveLength(2);
+        expect(order[0]).toContain("kept");
+        expect(order[1]).toBe("pull");
+        expect(calledPaths(fetchMock)).not.toContain("/api/storage/migrate");
+        // Pushed once: nothing is left to push at a later sign-in.
+        expect(localStorage.getItem("libredb_unsaved_collections")).toBeNull();
+      } finally {
+        mockStorage.getHistory.mockImplementation(() => []);
+      }
+    });
+
+    test("kept changes that still cannot be pushed at the next sign-in are not replaced by the pull", async () => {
+      await signOutKeepingHistory();
+
+      setupSignOut({
+        "/api/storage/history": { ok: false, status: 503, json: { error: "Storage unreachable" } },
+        "/api/storage": { ok: true, status: 200, json: { history: [{ id: "server", query: "SELECT 'server'" }] } },
+      });
+      const second = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(second.result.current.isReady).toBe(true);
+      });
+
+      expect(localStorage.getItem("libredb_history")).toContain("kept");
+    });
+
+    test("a different account signing in drops the kept changes with the rest of the copy", async () => {
+      await signOutKeepingHistory();
+
+      const fetchMock = mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        "/api/auth/me": { ok: true, status: 200, json: { user: { username: "other@libredb.org" } } },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+      const second = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(second.result.current.isReady).toBe(true);
+      });
+
+      expect(calledPaths(fetchMock)).not.toContain("/api/storage/history");
+      expect(localStorage.getItem("libredb_history")).toBeNull();
+      expect(localStorage.getItem("libredb_unsaved_collections")).toBeNull();
+    });
+
+    test("a sign-out the server refused after a push that did not land leaves nothing for a later sign-in to push", async () => {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      setupSignOut({
+        "/api/storage/history": { ok: false, status: 503, json: { error: "Storage unreachable" } },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "history" } }));
+      });
+      let outcome: Awaited<ReturnType<typeof releaseAccountWorkspace>> | null = null;
+      await act(async () => {
+        outcome = await releaseAccountWorkspace(signOutAnswering(500));
+      });
+
+      // The session goes on, and this page pushes the change itself.
+      expect(outcome).toMatchObject({ signedOut: false });
+      expect(localStorage.getItem("libredb_unsaved_collections")).toBeNull();
+    });
+
+    test("a pending push refused because the session had ended clears the copy", async () => {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      localStorage.setItem("libredb_connections", JSON.stringify([{ id: "c1", password: "pw" }]));
+      let sessionEnded = false;
+      let signedOut = false;
+      setupSignOut({
+        "/api/auth/me": () =>
+          sessionEnded ? { ok: false, status: 401, json: { authenticated: false } } : SIGNED_IN["/api/auth/me"],
+        "/api/storage/history": () => {
+          sessionEnded = true;
+          return { ok: false, status: 401, json: { error: "Session expired. Sign in again.", code: "AUTH_REQUIRED" } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "history" } }));
+      });
+      let outcome: Awaited<ReturnType<typeof releaseAccountWorkspace>> | null = null;
+      await act(async () => {
+        outcome = await releaseAccountWorkspace(signOutAnswering(200, () => (signedOut = true)));
+      });
+
+      expect(outcome).toMatchObject({ signedOut: true, changesKept: false });
+      expect(signedOut).toBe(false);
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
+    });
+
+    test("a retry armed while the sign-out waited for a failing push sends nothing afterwards", async () => {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      let pushes = 0;
+      let started = false;
+      setupSignOut({
+        "/api/storage/history": async () => {
+          pushes += 1;
+          started = true;
+          await new Promise((r) => setTimeout(r, 100));
+          return { ok: false, status: 503, json: { error: "Storage unreachable" } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "history" } }));
+      });
+      await waitFor(() => {
+        expect(started).toBe(true);
+      });
+      await act(async () => {
+        await releaseAccountWorkspace(signOutAnswering(200));
+      });
+      const atSignOut = pushes;
+      await act(async () => await new Promise((r) => setTimeout(r, 2500)));
+
+      expect(atSignOut).toBe(2);
+      expect(pushes).toBe(atSignOut);
+    });
+
+    test("pushes nothing after the browser copy is cleared", async () => {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      const fetchMock = setupServerMode({ "/api/storage": { ok: true, status: 200, json: {} } });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      await act(async () => {
+        await releaseAccountWorkspace(signOutAnswering(200));
+      });
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "connections" } }));
+      });
+      await act(async () => await new Promise((r) => setTimeout(r, 700)));
+
+      expect(calledPaths(fetchMock)).not.toContain("/api/storage/connections");
+    });
+
+    test("a sign-out the server refused keeps the copy and pushes the changes made meanwhile", async () => {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      const pushed: string[] = [];
+      setupSignOut({
+        "/api/storage/history": () => {
+          pushed.push("history");
+          return { ok: true, status: 200, json: { ok: true } };
+        },
+        "/api/storage/connections": () => {
+          pushed.push("connections");
+          return { ok: true, status: 200, json: { ok: true } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      // A change made while the sign-out request is out is held, not pushed and not dropped.
+      await act(async () => {
+        await releaseAccountWorkspace(
+          signOutAnswering(500, () => {
+            window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "history" } }));
+          }),
+        );
+      });
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe(USERNAME);
+      await waitFor(
+        () => {
+          expect(pushed).toContain("history");
+        },
+        { timeout: 3000 },
+      );
+
+      // And the session goes on syncing as before.
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "connections" } }));
+      });
+      await waitFor(
+        () => {
+          expect(pushed).toContain("connections");
+        },
+        { timeout: 3000 },
+      );
+    });
+
+    test("a sign-out the server refused, with nothing held, pushes nothing", async () => {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      const fetchMock = setupServerMode({ "/api/storage": { ok: true, status: 200, json: {} } });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      await act(async () => {
+        await releaseAccountWorkspace(signOutAnswering(500));
+      });
+      await act(async () => await new Promise((r) => setTimeout(r, 700)));
+
+      expect(
+        calledPaths(fetchMock).filter((p) => p.startsWith("/api/storage/") && p !== "/api/storage/config"),
+      ).toEqual([]);
+    });
+
+    test("a sign-out while the first pull is out leaves the browser copy cleared", async () => {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      let pullStarted = false;
+      let answerPull: () => void = () => {};
+      setupSignOut({
+        "/api/storage": () =>
+          new Promise((resolve) => {
+            pullStarted = true;
+            answerPull = () => resolve({ ok: true, status: 200, json: { connections: [{ id: "server-c1" }] } });
+          }),
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isServerMode).toBe(true);
+        expect(pullStarted).toBe(true);
+      });
+      await act(async () => {
+        await releaseAccountWorkspace(signOutAnswering(200));
+      });
+      await act(async () => {
+        answerPull();
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      expect(result.current.isReady).toBe(true);
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
+    });
+
+    test("whatever is written after a sign-out never reaches the next account", async () => {
+      const PREVIOUS = "admin@libredb.org";
+      localStorage.setItem("libredb_workspace_owner", PREVIOUS);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        "/api/auth/me": { ok: true, status: 200, json: { user: { username: PREVIOUS } } },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+      const first = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(first.result.current.isReady).toBe(true);
+      });
+      await act(async () => {
+        await releaseAccountWorkspace(signOutAnswering(200));
+      });
+
+      // A query that finishes after the sign-out, in this tab or one still open, writes the copy.
+      localStorage.setItem("libredb_history", JSON.stringify([{ id: "h1", query: "SELECT * FROM prior_account" }]));
+      first.unmount();
+      // The next sign-in loads a new page, which holds no claim yet.
+      holdWorkspaceOwner(null);
+
+      const bodies: string[] = [];
+      const fetchMock = mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        ...SIGNED_IN,
+        "/api/storage/": async (req: Request) => {
+          bodies.push(await req.text());
+          return { ok: true, status: 200, json: { ok: true } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+      const second = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(second.result.current.isReady).toBe(true);
+      });
+
+      expect(calledPaths(fetchMock)).not.toContain("/api/storage/migrate");
+      expect(bodies.some((body) => body.includes("prior_account"))).toBe(false);
+      expect(localStorage.getItem("libredb_history")).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe(USERNAME);
     });
   });
 });
