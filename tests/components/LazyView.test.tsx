@@ -1,9 +1,10 @@
-import { describe, test, expect, afterEach, mock } from "bun:test";
+import { describe, test, expect, afterEach, mock, spyOn } from "bun:test";
 import { render, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
 
-import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
+import { ChunkBoundary, RENDER_ERROR_HINT, ViewLoading } from "@/components/LazyView";
 import { ChunkLoadError } from "@/lib/lazy";
+import { logger } from "@/lib/logger";
 
 afterEach(() => {
   cleanup();
@@ -114,45 +115,62 @@ describe("ChunkBoundary", () => {
 
   // TanStack Table, for one, throws in render when it is handed a column it cannot build.
   // That is not a request that failed, so the chunk copy and its Reload would be a false
-  // diagnosis; the notice says the view could not be displayed and gives the error's own words.
-  test("names a render error as one, with its message, rather than as a chunk that did not load", () => {
-    const { getByTestId, getByText, queryByText } = render(
-      <ChunkBoundary label="This view">
-        <RenderBoom message="Columns require an id" />
-      </ChunkBoundary>,
-    );
+  // diagnosis; the notice says the view could not be displayed. The error's own words go to
+  // the log only: a message may quote a value (a JSON.parse SyntaxError quotes its input),
+  // and the screen must not show one past masking.
+  test("names a render error as one, in a fixed sentence, and logs the message instead of showing it", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const { getByTestId, getByText, queryByText } = render(
+        <ChunkBoundary label="This view">
+          <RenderBoom message="Columns require an id: alice@example.com" />
+        </ChunkBoundary>,
+      );
 
-    expect(getByTestId("render-error")).toBeTruthy();
-    expect(getByText("This view could not be displayed.")).toBeTruthy();
-    expect(getByText("Columns require an id")).toBeTruthy();
-    expect(queryByText("Reload")).toBeNull();
-    expect(queryByText(/is fetched when it is first opened/)).toBeNull();
+      expect(getByTestId("render-error")).toBeTruthy();
+      expect(getByText("This view could not be displayed.")).toBeTruthy();
+      expect(getByText(RENDER_ERROR_HINT)).toBeTruthy();
+      expect(getByTestId("render-error").textContent).not.toContain("alice@example.com");
+      expect(queryByText("Reload")).toBeNull();
+      expect(queryByText(/is fetched when it is first opened/)).toBeNull();
+      expect(warn).toHaveBeenCalledWith("A view failed to render", {
+        route: "ChunkBoundary",
+        view: "This view",
+        error: "Columns require an id: alice@example.com",
+      });
+    } finally {
+      warn.mockRestore();
+    }
   });
 
-  // A production build throws some of these with an empty message; the notice then says
-  // only what it knows rather than printing an empty line.
-  test("states a render error with no message without an empty message line", () => {
-    const { getByTestId, queryByTestId } = render(
+  test("a render error with no message reads the same as one with a message", () => {
+    const { getByTestId } = render(
       <ChunkBoundary label="This view">
         <RenderBoom message="" />
       </ChunkBoundary>,
     );
 
     expect(getByTestId("render-error").textContent).toContain("This view could not be displayed.");
-    expect(queryByTestId("render-error-message")).toBeNull();
+    expect(getByTestId("render-error").textContent).toContain(RENDER_ERROR_HINT);
   });
 
-  test("a thrown value that is not an Error is still a render error", () => {
+  test("a thrown value that is not an Error is still a render error, and only the log carries it", () => {
     function Thrower(): React.ReactElement {
       throw "not an error object";
     }
-    const { getByTestId } = render(
-      <ChunkBoundary label="This view">
-        <Thrower />
-      </ChunkBoundary>,
-    );
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const { getByTestId } = render(
+        <ChunkBoundary label="This view">
+          <Thrower />
+        </ChunkBoundary>,
+      );
 
-    expect(getByTestId("render-error-message").textContent).toBe("not an error object");
+      expect(getByTestId("render-error").textContent).not.toContain("not an error object");
+      expect(warn.mock.calls[0]?.[1]).toMatchObject({ error: "not an error object" });
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("Try again renders the children once more, and a view that still throws is shown failing again", () => {

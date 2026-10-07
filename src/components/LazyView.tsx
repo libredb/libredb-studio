@@ -70,6 +70,14 @@ function messageOf(thrown: unknown): string {
 }
 
 /**
+ * What a render-error notice says under its first line, whatever was thrown. The thrown message goes to
+ * the log and never to the screen: it may quote a value (a `JSON.parse` SyntaxError quotes its input),
+ * and a value shown there would bypass masking.
+ */
+export const RENDER_ERROR_HINT =
+  "Something in what it was given could not be drawn. The error is in the browser console.";
+
+/**
  * The boundary a failed view lands in.
  *
  * A class, because catching a render-time error is still the one thing hooks cannot
@@ -81,8 +89,9 @@ function messageOf(thrown: unknown): string {
  *   on the server, and no number of retries against the old chunk names will produce
  *   it; only re-fetching the document will.
  * - anything else, a view that threw while drawing what it was given. That is said as
- *   such, with the error's own message, and offers Try again; Reload would be a false
- *   diagnosis, and the next thing the boundary is given (`resetKeys`) clears it.
+ *   such, in a fixed sentence (`RENDER_ERROR_HINT`; the message is logged, not shown), and
+ *   offers Try again; Reload would be a false diagnosis, and the next thing the boundary is
+ *   given (`resetKeys`) clears it.
  */
 export class ChunkBoundary extends React.Component<ChunkBoundaryProps, ChunkBoundaryState> {
   state: ChunkBoundaryState = { error: null, resetKeys: this.props.resetKeys };
@@ -113,7 +122,6 @@ export class ChunkBoundary extends React.Component<ChunkBoundaryProps, ChunkBoun
     const { error } = this.state;
     if (error === null) return this.props.children;
     const isChunk = error.thrown instanceof ChunkLoadError;
-    const message = messageOf(error.thrown);
     return (
       <div
         data-testid={isChunk ? "chunk-error" : "render-error"}
@@ -133,14 +141,7 @@ export class ChunkBoundary extends React.Component<ChunkBoundaryProps, ChunkBoun
         ) : (
           <>
             <p className="text-xs font-medium text-fg-secondary">{this.props.label} could not be displayed.</p>
-            {message !== "" && (
-              <p
-                data-testid="render-error-message"
-                className="text-xs font-mono text-fg-muted max-w-xl break-words whitespace-pre-wrap"
-              >
-                {message}
-              </p>
-            )}
+            <p className="text-xs text-fg-muted max-w-sm">{RENDER_ERROR_HINT}</p>
           </>
         )}
         <div className="flex items-center gap-2">

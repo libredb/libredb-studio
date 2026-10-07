@@ -622,7 +622,7 @@ describe("GraphView: lifecycle", () => {
       );
       const notice = await findByTestId("render-error");
       expect(notice.textContent).toContain("The graph could not be displayed.");
-      expect(notice.textContent).toContain("fcose did not register");
+      expect(notice.textContent).not.toContain("fcose did not register");
       expect(queryByTestId("chunk-error")).toBeNull();
     } finally {
       quiet.mockRestore();
