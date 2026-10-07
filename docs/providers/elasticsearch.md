@@ -252,7 +252,7 @@ Measured, `SELECT customer, total FROM probe_orders`:
 Three properties the code depends on:
 
 - **Rows are positional**, so each row is rebuilt against the declared column list
-  ([http-transport.ts:747](../../src/lib/db/providers/sql/search/http-transport.ts)) rather than read
+  (`toRow()`, [http-transport.ts:740](../../src/lib/db/providers/sql/search/http-transport.ts)) rather than read
   as an object. The declared **order** is therefore authoritative in a way object keys never are, and a
   row whose value count differs from the declaration is refused rather than padded with nulls or cut.
 - **Duplicate output names are legal here.** Measured, `SELECT 1 AS c, 2 AS c, 3 AS c` answers HTTP
@@ -305,7 +305,7 @@ traps shape the loop, both measured on that same run:
 
 - **Page two carries its rows and NO column declaration.** There is nothing on it to derive names
   from, so page one's declaration is carried forward and later pages are rebuilt against it
-  (`rebuildRows()`, [http-transport.ts:774](../../src/lib/db/providers/sql/search/http-transport.ts)).
+  (`rebuildRows()`, [http-transport.ts:771](../../src/lib/db/providers/sql/search/http-transport.ts)).
   That is also the only way the seam's "these names are exactly the key set of every row" invariant
   can hold across pages.
 - **The loop is bounded** by `MAX_PAGES = 1000`
