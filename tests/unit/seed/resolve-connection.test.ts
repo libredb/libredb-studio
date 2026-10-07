@@ -13,9 +13,8 @@ process.env.USER_MYSQL_PASS = "user-secret";
 process.env.SHARED_PG_PASS = "shared-secret";
 process.env.BOTH_PG_PASS = "both-secret";
 
-import { getManagedConnections } from "@/lib/seed";
+import { getManagedConnections, resetCache } from "@/lib/seed";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
-import { resetCache } from "@/lib/seed";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import * as vaultClient from "@/lib/seed/vault-client";
 import { logger } from "@/lib/logger";

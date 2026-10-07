@@ -135,8 +135,11 @@ describe("CONNECTION_STRING_ACCEPTED against each provider's own declaration (Sp
     expect(() => provider.validate()).not.toThrow();
     // buildConfig is private; reached through a cast, as tests/integration/db/mssql-provider.test.ts reaches the
     // protected escapeIdentifier. Nothing connects.
-    const config = (provider as unknown as { buildConfig(): { server: string; database?: string } }).buildConfig();
+    const config = (
+      provider as unknown as { buildConfig(): { server: string; port: number; database?: string } }
+    ).buildConfig();
     expect(config.server).toBe("localhost");
+    expect(config.port).toBe(1433);
     expect(config.database).toBeUndefined();
   });
 

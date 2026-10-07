@@ -102,13 +102,26 @@ describe("GET /api/admin/seed-sources: access", () => {
   // guardRoute rejects a missing session before the route's own role check runs.
   test("returns 401 when no session exists, without reading the status", async () => {
     mockGetSession.mockResolvedValueOnce(null);
+    const sink = spyOn(console, "log").mockImplementation(() => {});
 
-    const res = await GET(request());
-    const data = await parseResponseJSON<{ error: string; code: string }>(res);
+    try {
+      const res = await GET(request());
+      const data = await parseResponseJSON<{ error: string; code: string }>(res);
 
-    expect(res.status).toBe(401);
-    expect(data).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
-    expect(statusCalls).toBe(0);
+      expect(res.status).toBe(401);
+      expect(data).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
+      expect(statusCalls).toBe(0);
+      expect(auditLines(sink)).toEqual([
+        expect.objectContaining({
+          event: "permission_denied",
+          reason: "no_session",
+          actor: "anonymous",
+          route: "GET /api/admin/seed-sources",
+        }),
+      ]);
+    } finally {
+      sink.mockRestore();
+    }
   });
 
   // A standard user learns nothing: the body is the shared 403 and the loader never runs. The refusal is
@@ -183,26 +196,31 @@ describe("GET /api/admin/seed-sources: reports", () => {
         "",
       ].join("\n"),
     );
+    const info = spyOn(logger, "info").mockImplementation(() => {});
 
-    const { status, body } = await answer();
+    try {
+      const { status, body } = await answer();
 
-    expect(status).toBe(200);
-    expect(body).toEqual({
-      sources: [
-        {
-          source: "SEED_CONFIG_PATH",
-          location: seedPath,
-          state: "ok",
-          checkedAt: expect.any(String),
-          error: null,
-          connected: [{ id: "reporting", name: "Reporting", type: "postgres" }],
-          skipped: [],
-          notes: [],
-        },
-      ],
-    });
-    expect(new Date(body.sources[0].checkedAt).toISOString()).toBe(body.sources[0].checkedAt);
-    expect(JSON.stringify(body)).not.toContain("db.internal");
+      expect(status).toBe(200);
+      expect(body).toEqual({
+        sources: [
+          {
+            source: "SEED_CONFIG_PATH",
+            location: seedPath,
+            state: "ok",
+            checkedAt: expect.any(String),
+            error: null,
+            connected: [{ id: "reporting", name: "Reporting", type: "postgres" }],
+            skipped: [],
+            notes: [],
+          },
+        ],
+      });
+      expect(new Date(body.sources[0].checkedAt).toISOString()).toBe(body.sources[0].checkedAt);
+      expect(JSON.stringify(body)).not.toContain("db.internal");
+    } finally {
+      info.mockRestore();
+    }
   });
 
   test("answers missing, with the path, for an explicit SEED_CONFIG_PATH that does not exist", async () => {
@@ -358,6 +376,7 @@ describe("GET /api/admin/seed-sources: reports", () => {
       ].join("\n"),
     );
     const error = spyOn(logger, "error").mockImplementation(() => {});
+    const info = spyOn(logger, "info").mockImplementation(() => {});
 
     try {
       const { status, body } = await answer();
@@ -391,6 +410,7 @@ describe("GET /api/admin/seed-sources: reports", () => {
       );
     } finally {
       error.mockRestore();
+      info.mockRestore();
     }
   });
 
