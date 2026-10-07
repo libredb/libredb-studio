@@ -71,6 +71,16 @@ describe("describeIssues", () => {
 
     expect(describeIssues(parsed.error)).toBe("a: a is wrong; b.c: c is wrong");
   });
+
+  it("writes an issue with an empty path as its message alone, with no leading ': '", () => {
+    const rootOnly = z
+      .object({})
+      .refine(() => false, { message: "root is wrong" })
+      .safeParse({});
+    if (rootOnly.success) throw new Error("the premise: this input is refused");
+
+    expect(describeIssues(rootOnly.error)).toBe("root is wrong");
+  });
 });
 
 describe("parseSeedConfigText", () => {
@@ -174,8 +184,9 @@ describe("parseSeedConfigText", () => {
     const error = sourceErrorOf(() => parseSeedConfigText(text, "/seed/dup.json", "json"));
 
     expect(error.code).toBe("invalid");
-    // The refine on SeedConfigSchema (src/lib/seed/types.ts:247-249) has an empty path, as it has today.
-    expect(error.message).toBe("Invalid seed config at /seed/dup.json: : Connection IDs must be unique");
+    expect(error.message).toBe(
+      'Invalid seed config at /seed/dup.json: connections.1.id: Connection id "dup" is declared more than once',
+    );
   });
 
   it("names the fields of a refused connection and none of their values", () => {

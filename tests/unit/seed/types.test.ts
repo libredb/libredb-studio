@@ -180,6 +180,25 @@ describe("SeedConfigSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("names the repeated id once, at the path of its first repeat", () => {
+    const result = SeedConfigSchema.safeParse({
+      version: "1",
+      connections: [
+        { id: "pg", name: "A", type: "postgres", host: "h", roles: ["*"] },
+        { id: "other", name: "B", type: "mysql", host: "h", roles: ["*"] },
+        { id: "pg", name: "C", type: "postgres", host: "h", roles: ["*"] },
+        { id: "pg", name: "D", type: "postgres", host: "h", roles: ["*"] },
+        { id: "other", name: "E", type: "mysql", host: "h", roles: ["*"] },
+      ],
+    });
+    if (result.success) throw new Error("the premise: repeated ids are refused");
+
+    expect(result.error.issues.map((issue) => ({ path: issue.path, message: issue.message }))).toEqual([
+      { path: ["connections", 2, "id"], message: 'Connection id "pg" is declared more than once' },
+      { path: ["connections", 4, "id"], message: 'Connection id "other" is declared more than once' },
+    ]);
+  });
+
   it("rejects empty connections array", () => {
     const result = SeedConfigSchema.safeParse({ version: "1", connections: [] });
     expect(result.success).toBe(false);

@@ -45,7 +45,8 @@ docker run \
 
 Studio builds the managed list from operator sources first, then adds the connections [platform discovery](#platform-discovery-caprover) finds, then the [built-in samples](#built-in-sample-connections).
 The operator sources are read in a fixed order; in this version there is one, the seed file.
-Two operator connections with one id stop the whole list, naming the id and where each one was declared, because neither may shadow the other.
+Two connections with one id inside the seed file fail it as an invalid config, and the error names the repeated id.
+Two operator sources that declare one id stop the whole list, naming the id and where each one was declared, because neither may shadow the other.
 A discovered connection whose id an operator source declares is dropped and reported as skipped, with the reason "id taken by the seed file".
 
 ### The seed file
@@ -994,7 +995,8 @@ Pages that use the lighter connection list (the admin Overview and Operations ta
 | Config file unreadable (for example the path is a directory) | Endpoint returns a generic 500 with `reason: "seed-config-unreadable"`; the Seed sources card shows Failed with code `unreadable`. |
 | `Failed to parse seed config at <path>: TAG_RESOLVE_FAILED at line L, column C` | A value YAML reads as a tag: it starts with `!`, or carries a tag such as `!!int` on text. Quote the value. Studio refuses the file as `unparseable` instead of loading the value as empty or as other text, and never prints the line; earlier versions loaded such a file with the value changed. |
 | `connectionString` on a type whose provider does not read it | The whole file fails like any invalid config, and the error names the connection and the type ([The connection string refusal](#the-connection-string-refusal)). |
-| Two operator connections with the same id | The whole list fails like an invalid config, and the error names the id and both origins. |
+| Two connections with the same id in the seed file | The whole file fails like any invalid config, and the error names the repeated id, for example `connections.1.id: Connection id "pg" is declared more than once`. |
+| Two operator sources declaring the same id | The whole list fails, and the error names the id and both origins. |
 | Invalid YAML/JSON | Endpoint returns 500. Error logged with details. |
 | Invalid config (Zod validation fails) | Endpoint returns a generic 500. Validation errors are logged server-side, not returned in the response body. |
 | `mcp` that is not a boolean, or `mcp` in `defaults` | The whole file fails like any invalid config; every MCP tool answers that the connection configuration could not be read |

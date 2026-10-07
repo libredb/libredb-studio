@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { copyFileSync, mkdtempSync, rmSync, unlinkSync } from "fs";
+import * as fsPromises from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -196,6 +197,22 @@ describe("the SEED_CONFIG_PATH source", () => {
     expect(error.code).toBe("unreadable");
     expect(error.message).toBe(`Cannot read seed config at ${FIXTURES}: EISDIR`);
     expect((error.cause as NodeJS.ErrnoException).code).toBe("EISDIR");
+  });
+
+  it("names a read error that carries no code by its name, never as undefined", async () => {
+    process.env.SEED_CONFIG_PATH = "/seed/no-code.yaml";
+    const cause = new TypeError("no code on this error");
+    const readFile = spyOn(fsPromises, "readFile").mockRejectedValueOnce(cause);
+
+    try {
+      const error = await sourceErrorOf(() => load());
+
+      expect(error.code).toBe("unreadable");
+      expect(error.message).toBe("Cannot read seed config at /seed/no-code.yaml: TypeError");
+      expect(error.cause).toBe(cause);
+    } finally {
+      readFile.mockRestore();
+    }
   });
 
   describe("missing file warning", () => {

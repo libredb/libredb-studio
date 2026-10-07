@@ -36,7 +36,9 @@ async function loadFile(context: OperatorLoadContext): Promise<OperatorSourceRes
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== "ENOENT") {
-      throw new OperatorSourceError("unreadable", `Cannot read seed config at ${path}: ${code}`, { cause: err });
+      // An error without a code is named by its name, so the message never reads "undefined".
+      const reason = code ?? (err as Error).name;
+      throw new OperatorSourceError("unreadable", `Cannot read seed config at ${path}: ${reason}`, { cause: err });
     }
     if (!missingPathsLogged.has(path)) {
       missingPathsLogged.add(path);

@@ -257,8 +257,24 @@ export const SeedConfigSchema = z
     defaults: SeedDefaultsSchema.optional(),
     connections: z.array(SeedConnectionSchema).min(1, "At least one connection is required"),
   })
-  .refine((cfg) => new Set(cfg.connections.map((c) => c.id)).size === cfg.connections.length, {
-    message: "Connection IDs must be unique",
+  // One issue per repeated id, at the path of its first repeat, so the error names the id. A seed id is a name, not
+  // a value, so naming it is allowed.
+  .superRefine((cfg, ctx) => {
+    const seen = new Set<string>();
+    const reported = new Set<string>();
+    cfg.connections.forEach((conn, index) => {
+      if (!seen.has(conn.id)) {
+        seen.add(conn.id);
+        return;
+      }
+      if (reported.has(conn.id)) return;
+      reported.add(conn.id);
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Connection id "${conn.id}" is declared more than once`,
+        path: ["connections", index, "id"],
+      });
+    });
   })
   // Here and not on SeedConnectionSchema, because `defaults.managed` is merged only after parsing
   // (connection-filter.ts): the effective value is the connection's own, else the default, else true,

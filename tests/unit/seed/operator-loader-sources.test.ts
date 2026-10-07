@@ -19,9 +19,16 @@ mock.module("@/lib/logger", () => ({
 }));
 
 let sources: OperatorSource[] = [];
+/** When set, the next enabledOperatorSources() call throws it, once. */
+let registryFailure: Error | null = null;
 const resetOperatorSourceCaches = mock(() => {});
 mock.module("@/lib/seed/sources/registry", () => ({
-  enabledOperatorSources: () => sources,
+  enabledOperatorSources: () => {
+    const failure = registryFailure;
+    registryFailure = null;
+    if (failure !== null) throw failure;
+    return sources;
+  },
   resetOperatorSourceCaches,
 }));
 
@@ -90,6 +97,7 @@ describe("operator-loader with several sources", () => {
   beforeEach(() => {
     for (const key of ENV_KEYS) delete process.env[key];
     sources = [];
+    registryFailure = null;
     resetCache();
     resetLiteralModeNotices();
     for (const logger of [debug, info, warn, error, resetOperatorSourceCaches]) logger.mockClear();
@@ -375,6 +383,19 @@ describe("operator-loader with several sources", () => {
       state: "error",
       error: { code: "unreadable", message: "getter failed" },
     });
+  });
+
+  it("never leaves a fill whose source list threw in flight, so the next call fills again", async () => {
+    process.env.SEED_CONFIG_PATH = "/seed/a.yaml";
+    sources = [fakeSource("SEED_CONFIG_PATH", async () => ok([entry("a", "/seed/a.yaml")]))];
+    const thrown = new Error("the source registry failed");
+    registryFailure = thrown;
+
+    await expect(loadOperatorSources()).rejects.toBe(thrown);
+
+    const load = await loadOperatorSources();
+    expect(load.entries.map((loaded) => loaded.connection.id)).toEqual(["a"]);
+    expect(sources[0]?.load).toHaveBeenCalledTimes(1);
   });
 
   describe("a fill that something newer superseded (Review Focus A1.1)", () => {

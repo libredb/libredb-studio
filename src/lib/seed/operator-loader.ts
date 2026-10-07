@@ -101,9 +101,24 @@ export async function loadOperatorSources(): Promise<OperatorLoad> {
   if (inflight !== null && inflight.literalValues === literalValues) return inflight.promise;
   // The fill starts on the next microtask, after `inflight` names it, so even a fill with no source to await sees
   // itself as current when it stores.
-  const fill: Fill = { literalValues, promise: Promise.resolve().then(() => runFill(fill, now)) };
+  const fill: Fill = {
+    literalValues,
+    promise: Promise.resolve()
+      .then(() => runFill(fill, now))
+      .catch((err: unknown) => forgetFailedFill(fill, err)),
+  };
   inflight = fill;
   return fill.promise;
+}
+
+/**
+ * Rethrows a fill's error after clearing `inflight` when it still names that fill. A throw runFill does not catch
+ * itself (the source list, a source's location) must not leave the fill in flight, or every later call of its mode
+ * would join the rejection until resetCache(); a failed fill is never cached either way.
+ */
+function forgetFailedFill(fill: Fill, err: unknown): never {
+  if (inflight === fill) inflight = null;
+  throw err;
 }
 
 /** Runs or reuses a load, catches its error (already recorded), and returns the status cache. */

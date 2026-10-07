@@ -15,9 +15,11 @@ export function seedConfigFormatOf(fileName: string): SeedConfigFormat {
   return fileName.endsWith(".json") ? "json" : "yaml";
 }
 
-/** "path.joined: message" per issue, joined by "; ". */
+/** "path.joined: message" per issue, or the message alone for an issue with an empty path, joined by "; ". */
 export function describeIssues(error: ZodError): string {
-  return error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ");
+  return error.issues
+    .map((issue) => (issue.path.length === 0 ? issue.message : `${issue.path.join(".")}: ${issue.message}`))
+    .join("; ");
 }
 
 /**
