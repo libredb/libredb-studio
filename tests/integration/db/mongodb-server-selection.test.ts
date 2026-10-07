@@ -1,5 +1,5 @@
 /**
- * The wall-clock bound on MongoDB's server selection during `connect()` (#1458).
+ * The wall-clock bound on MongoDB's server selection during `connect()` (#1458, #1573).
  *
  * This file drives the REAL driver, and that is the point. The defect was a deadline the
  * driver enforces on its own retry loop, and a double of `MongoClient` cannot hold one:
@@ -57,4 +57,39 @@ describe("MongoDB server selection bound (#1458)", () => {
     // cannot fail a correct change. The defect answers at 60 s, so it fails here.
     expect(elapsed).toBeLessThan(45_000);
   }, 90_000);
+
+  // #1573: the request's own deadline now bounds the connect, so the same closed port is
+  // refused within the request's query timeout rather than the driver's own 30 s
+  // selection bound. The message still names the refusal the driver's monitoring saw.
+  test("a closed port is refused within the request's query timeout, still naming the refusal", async () => {
+    const port = await portNothingListensOn();
+    const provider = new MongoDBProvider(
+      {
+        id: "deadline-port",
+        name: "deadline port",
+        type: "mongodb",
+        host: "127.0.0.1",
+        port,
+        database: "repro",
+        createdAt: new Date(),
+      },
+      { queryTimeout: 10000 },
+    );
+
+    const started = Date.now();
+    let refusal = "";
+    try {
+      await provider.connect();
+      refusal = "connect() returned against a port nothing listens on";
+    } catch (error) {
+      refusal = error instanceof Error ? error.message : String(error);
+    }
+    const elapsed = Date.now() - started;
+    await provider.disconnect();
+
+    expect(refusal).toContain("ECONNREFUSED");
+    // The deadline is the request's query timeout (10 s) with a margin for a slow
+    // machine; the driver's own selection bound alone answers at 30 s, so it fails here.
+    expect(elapsed).toBeLessThan(15_000);
+  }, 60_000);
 });

@@ -323,6 +323,27 @@ minute. The value is a constant in
 because it governs the whole client and not only the connect; `connectTimeoutMS` keeps following
 `pool.acquireTimeout` for the pool's own dial.
 
+**The connect itself is bounded by the request's `queryTimeout` (#1573).** The 30 s selection
+bound above is the client's, and a request that only wants to know whether the server is there
+should not wait it out: `connect()` races `MongoClient.connect()` against the `queryTimeout` the
+request already carries (10000 for Test Connection, `DEFAULT_QUERY_TIMEOUT` 60000 otherwise,
+[`types.ts`](../../src/lib/db/types.ts)), and closes the client when the deadline wins. The
+reported error is a `ConnectionError` naming the refusal the driver's monitoring saw (its last
+heartbeat failure, read from the `serverHeartbeatFailed` events the client relays), not a generic
+timeout. Two details the driver forces:
+
+- With `mongodb+srv`, `MongoClient._connect` resolves the SRV record before it creates the
+  topology and never checks `hasBeenClosed` (`mongo_client.js`), so a `close()` that lands during
+  a slow DNS lookup is a no-op. The client is closed again once the connect promise settles, so
+  no socket outlives the request either way.
+- A failed `connect()` closes the client and clears it, rather than leaving `this.client` set
+  with `this.db` null: a later `connect()` used to find the half-open client and return as if it
+  were connected.
+
+Measured against a closed port on 127.0.0.1 with `queryTimeout: 10000`: the refusal
+(`connect ECONNREFUSED`) arrives in 10.0 s instead of 30.0, and a write issued right after an
+unplanned primary failure still succeeds, because the 30 s client-wide bound is unchanged.
+
 ### 4.1 SSL / TLS
 
 `buildTLSOptions()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)) maps

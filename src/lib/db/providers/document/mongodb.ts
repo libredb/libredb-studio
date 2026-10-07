@@ -1022,6 +1022,17 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       return;
     }
 
+    // The refusal the driver's monitoring saw, kept from the heartbeat events the
+    // client relays. When the request's deadline closes the client underneath a
+    // connect that is still selecting, the wait queue is drained with
+    // `MongoTopologyClosedError` (`topology.js`), which names no reason at all, so
+    // without this the person is told "client closed" over the `ECONNREFUSED` the
+    // driver already knew (#1573).
+    let lastRefusal: Error | undefined;
+    const onHeartbeatFailed = (event: mongodbDriver.ServerHeartbeatFailedEvent) => {
+      lastRefusal = event.failure;
+    };
+
     try {
       const connectionString = this.buildConnectionString();
       const options: MongoClientOptions = {
@@ -1034,18 +1045,48 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       };
 
       this.client = new MongoClient(connectionString, options);
-      await this.client.connect();
+      this.client.on("serverHeartbeatFailed", onHeartbeatFailed);
 
-      // Get database name from connection string or config
-      const dbName = this.getDatabaseName();
-      this.db = this.client.db(dbName);
+      // The request's own bound on this connect (#1573). `serverSelectionTimeoutMS`
+      // is client-wide and has to clear a replica set election, so the driver holds
+      // a closed port for its full 30 s (#1458, #1518). `queryTimeout` is the
+      // deadline the request that started this connect already carries, so the race
+      // answers within it while every later operation keeps the 30 s election bound.
+      const connecting = this.client.connect();
+      let timedOut = false;
+      const deadline = new Promise<"deadline">((resolve) => {
+        const timer = setTimeout(() => {
+          timedOut = true;
+          resolve("deadline");
+        }, this.queryTimeout);
+        // The connect settled first: the timer must not hold the process open.
+        connecting.finally(() => clearTimeout(timer)).catch(() => {});
+      });
+      const first = await Promise.race([connecting, deadline]);
+      if (first !== "deadline" && !timedOut) {
+        await connecting;
 
-      // Test connection
-      await this.db.command({ ping: 1 });
+        // Get database name from connection string or config
+        const dbName = this.getDatabaseName();
+        this.db = this.client.db(dbName);
 
-      this.setConnected(true);
+        // Test connection
+        await this.db.command({ ping: 1 });
+
+        this.setConnected(true);
+        return;
+      }
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));
+      // The error path must leave no client behind (#1573): `connect()` used to keep
+      // `this.client` set while `this.db` stayed null, so a later `connect()` found
+      // the half-open one and returned as if it were connected.
+      if (this.client) {
+        const client = this.client;
+        this.client = null;
+        this.db = null;
+        await client.close().catch(() => {});
+      }
       throw new ConnectionError(
         `Failed to connect to MongoDB: ${error instanceof Error ? error.message : error}`,
         "mongodb",
@@ -1053,6 +1094,29 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         this.config.port,
       );
     }
+
+    // The request's deadline closed this connect (#1573). Reached only on the timed
+    // out path, outside the catch above so the refusal is not wrapped twice.
+    // Draining the selection wait queue with `MongoTopologyClosedError` is what
+    // `Topology.close()` does (`topology.js:246-255`), so the in-flight connect
+    // rejects on its own. The SRV window is the reason this close is not
+    // `await`ed inline: `MongoClient._connect` resolves SRV before it creates
+    // the topology and never checks `hasBeenClosed` (`mongo_client.js:226-246`),
+    // so a close that lands during a slow DNS lookup is a no-op and the topology
+    // is created afterwards. The client is closed again once the connect
+    // settles, so no client and no socket outlives the request.
+    const refusal = lastRefusal?.message ?? `timed out after ${this.queryTimeout} ms`;
+    const client = this.client;
+    this.client = null;
+    this.db = null;
+    this.setError(new Error(refusal));
+    void client?.close().catch(() => {});
+    throw new ConnectionError(
+      `Failed to connect to MongoDB: ${refusal}`,
+      "mongodb",
+      this.config.host,
+      this.config.port,
+    );
   }
 
   public async disconnect(): Promise<void> {
