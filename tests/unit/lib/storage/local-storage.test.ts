@@ -213,6 +213,20 @@ describe("local-storage: the collections a sign-out could not push", () => {
     expect(takeUnsavedCollections()).toEqual([]);
   });
 
+  test("hand back only the collection names they know, and nothing from a record that is not a list", () => {
+    holdWorkspaceOwner("ana@libredb.org");
+    localStorage.setItem(WORKSPACE_OWNER_KEY, "ana@libredb.org");
+
+    localStorage.setItem(UNSAVED_COLLECTIONS_KEY, JSON.stringify(["history", "not_a_collection", 7]));
+    expect(takeUnsavedCollections()).toEqual(["history"]);
+
+    for (const corrupt of ["{not json", JSON.stringify({ history: true }), JSON.stringify("history")]) {
+      localStorage.setItem(UNSAVED_COLLECTIONS_KEY, corrupt);
+      expect(takeUnsavedCollections()).toEqual([]);
+      expect(localStorage.getItem(UNSAVED_COLLECTIONS_KEY)).toBeNull();
+    }
+  });
+
   test("are neither kept nor taken once the copy belongs to a different account", () => {
     holdWorkspaceOwner("ana@libredb.org");
     localStorage.setItem(WORKSPACE_OWNER_KEY, "bob@libredb.org");

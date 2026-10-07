@@ -7,7 +7,7 @@ if (typeof globalThis.window === "undefined") {
 
 import { mockGlobalFetch, restoreGlobalFetch } from "../../../helpers/mock-fetch";
 import { registerWorkspaceSync, releaseAccountWorkspace } from "@/lib/storage/sign-out";
-import { SERVER_MIGRATED_KEY, WORKSPACE_OWNER_KEY } from "@/lib/storage/local-storage";
+import { SERVER_MIGRATED_KEY, UNSAVED_COLLECTIONS_KEY, WORKSPACE_OWNER_KEY } from "@/lib/storage/local-storage";
 
 const CONNECTIONS = JSON.stringify([{ id: "c1", password: "pw" }]);
 
@@ -96,6 +96,20 @@ describe("releaseAccountWorkspace", () => {
     expect(result.signedOut).toBe(true);
     expect(seen).toEqual([CONNECTIONS]);
     expect(localStorage.getItem("libredb_connections")).toBeNull();
+  });
+
+  test("server mode with no sync mounted: changes an earlier sign-out kept stay with the copy", async () => {
+    // An editor sign-out could not push them, and this page (the admin dashboard) has no sync to push
+    // them now: clearing the copy here would lose what that sign-out promised to keep.
+    serverMode(true);
+    localStorage.setItem(UNSAVED_COLLECTIONS_KEY, JSON.stringify(["connections"]));
+
+    const result = await releaseAccountWorkspace(signOutAnswering(200));
+
+    expect(result).toMatchObject({ signedOut: true, changesKept: true });
+    expect(localStorage.getItem("libredb_connections")).toBe(CONNECTIONS);
+    expect(localStorage.getItem(UNSAVED_COLLECTIONS_KEY)).toBe(JSON.stringify(["connections"]));
+    expect(localStorage.getItem(WORKSPACE_OWNER_KEY)).toBe("admin@libredb.org");
   });
 
   test("server mode: a push that did not land because the session had ended clears the copy", async () => {

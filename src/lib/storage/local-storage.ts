@@ -151,12 +151,33 @@ export function keepUnsavedCollections(collections: readonly string[]): void {
   localStorage.setItem(UNSAVED_COLLECTIONS_KEY, JSON.stringify(collections));
 }
 
-/** The collections a sign-out could not push, removed from the copy: the caller pushes them now. */
+/**
+ * The collections a sign-out could not push, removed from the copy: the caller pushes them now.
+ * Only names of collections the sync knows come back; a record that is not a list of names (a copy
+ * edited by hand) is dropped with a warning rather than failing the sync that reads it.
+ */
 export function takeUnsavedCollections(): string[] {
   if (!isClient() || !holdsAccountWorkspace()) return [];
   const raw = localStorage.getItem(UNSAVED_COLLECTIONS_KEY);
   localStorage.removeItem(UNSAVED_COLLECTIONS_KEY);
-  return raw === null ? [] : (JSON.parse(raw) as string[]);
+  if (raw === null) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = null;
+  }
+  if (!Array.isArray(parsed)) {
+    logger.warn("Dropped a record of unsaved collections that is not a list", { key: UNSAVED_COLLECTIONS_KEY });
+    return [];
+  }
+  const known: readonly string[] = STORAGE_COLLECTIONS;
+  return parsed.filter((name): name is string => typeof name === "string" && known.includes(name));
+}
+
+/** Whether the copy holds changes an earlier sign-out could not push. */
+export function hasUnsavedCollections(): boolean {
+  return isClient() && localStorage.getItem(UNSAVED_COLLECTIONS_KEY) !== null;
 }
 
 /**

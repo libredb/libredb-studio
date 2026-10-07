@@ -15,7 +15,7 @@
  * the admin dashboard and the launch page have nothing pending and only clear.
  */
 
-import { resetAccountWorkspace } from "./local-storage";
+import { hasUnsavedCollections, resetAccountWorkspace } from "./local-storage";
 import { readServerMode, readSignedInUsername, SessionEndedError } from "./workspace-owner";
 
 /** The mounted sync, as a sign-out sees it. */
@@ -85,7 +85,9 @@ export async function releaseAccountWorkspace(signOut: () => Promise<Response>):
   if (!(await readServerMode())) return endSession(signOut, null, false);
 
   const sync = mountedSync;
-  let changesKept = false;
+  // A page with no sync (the admin dashboard) cannot push what an earlier sign-out kept, so it
+  // keeps the copy for this account rather than clear those changes.
+  let changesKept = !sync && hasUnsavedCollections();
   if (sync) {
     try {
       await sync.flush();
