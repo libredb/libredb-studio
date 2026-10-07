@@ -36,7 +36,8 @@ import type { QueryResult } from "@/lib/types";
  * Returns a spreadable object rather than a map, because the established convention
  * (`toQueryResult` in the Trino and ClickHouse providers) is to omit `columnTypes`
  * ENTIRELY when it would be empty, so a consumer can decide from the field's presence
- * alone. Nine call sites across the four providers spread this.
+ * alone. The Postgres, MySQL, SQL Server and Oracle results spread it through their
+ * wrappers below; SQLite and Db2 call it directly.
  *
  * `Object.fromEntries` rather than assignment into a literal: a column name is
  * arbitrary SQL output, and `columnTypes["__proto__"] = t` on an object literal
@@ -48,9 +49,9 @@ export function declaredColumnTypes(
 ): Pick<QueryResult, "columnTypes"> {
   const declared = new Map<string, string>();
   for (const [name, type] of pairs) {
-    // Last-wins: `SELECT 1 AS c, 'x' AS c` declares two columns called `c`, and the
-    // row object every one of these drivers builds keeps the last one's value - so the
-    // last one's type is the one that describes what the grid shows.
+    // The names arrive unique: the result's own `fields` (`uniqueFieldNames`), or Oracle's,
+    // whose driver numbers a repeat itself. A repeated name here would mean a caller passed
+    // the declared names instead; the last one's type is then the one kept.
     if (type !== undefined) declared.set(name, type);
   }
   return declared.size > 0 ? { columnTypes: Object.fromEntries(declared) } : {};

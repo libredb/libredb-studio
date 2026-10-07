@@ -10,7 +10,8 @@
  * One pass over every row's own keys, with a Set for membership: linear in the keys returned, so a wide
  * result of many documents costs what reading its keys costs.
  *
- * Server only, and it names no engine.
+ * It names no engine. The module is pure and imports nothing, so client code imports it too: the grid and
+ * masking read the names `uniqueFieldNames` makes.
  */
 export function unionFields(rows: readonly object[]): string[] {
   const fields = new Set<string>();
@@ -30,14 +31,14 @@ export const UNNAMED_FIELD = "(No column name)";
  * A driver may declare a column with no name (SQL Server leaves every unaliased expression unnamed) or two
  * columns with one name (a join that projects `id` from both tables). A row keyed by name then loses a value,
  * or carries an empty key no grid column can take. So a column with no name is named `UNNAMED_FIELD`, and a
- * repeat is numbered `name (2)`, `name (3)`, as the Db2, Druid, Trino and search transports already number
- * theirs. A number never produces a name the result itself declares, before or after the repeat, so no column
- * the statement named is shown under another column's value.
+ * repeat is numbered `name (2)`, `name (3)` (`numberedRepeatBase` reads that form back). A number never
+ * produces a name the result itself declares, before or after the repeat, so no column the statement named is
+ * shown under another column's value.
  *
  * Read the rows positionally and key them by these names; reading them keyed by the declared names is what
  * loses the value in the first place. Names that differ only in letter case stay apart, as row keys do.
  *
- * Server only, and it names no engine.
+ * It names no engine.
  */
 export function uniqueFieldNames(declared: readonly string[]): string[] {
   const declaredNames = new Set(declared);
