@@ -1,8 +1,8 @@
 /**
  * Whose browser copy this is, in server storage mode. The copy belongs to the signed-in account:
- * every page that reads it (the editor, the admin dashboard, monitoring) first makes it the
- * signed-in account's (`claimAccountWorkspace`), so a different account starts from its own
- * server data.
+ * every page that reads it (the editor, the admin dashboard, monitoring), and every settings page a
+ * sign-in can land on, first makes it the signed-in account's (`claimAccountWorkspace`), so a
+ * different account starts from its own server data.
  */
 
 import { appFetch } from "@/lib/config/base-path";
