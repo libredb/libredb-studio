@@ -399,7 +399,8 @@ const probeClientSideBinding = async (queryable: MySQLQueryable): Promise<boolea
 /**
  * One result set read as array rows: its columns named by `uniqueFieldNames`, and each row keyed by
  * those names by position. A row whose value count is not the column count is raised, not read.
- * `Object.fromEntries` rather than assignment, so a column named `__proto__` is a key like any other.
+ * `Object.fromEntries` rather than assignment, so no column name can reach the row's prototype
+ * (mysql2 itself refuses a column named `__proto__` before the provider sees it).
  */
 function mysqlResultSet(rows: readonly unknown[], declared: readonly FieldPacket[]): QueryResultSet {
   const fields = uniqueFieldNames(declared.map((field) => field.name));

@@ -338,8 +338,8 @@ function pgResultSet(answer: PgArrayAnswer): QueryResultSet {
  * The result of what `pg` answered a user's text with.
  *
  * One statement answers one result. A text of several statements on the simple protocol answers
- * one per statement, and a statement with no row description (an INSERT, a COMMIT) carries no
- * result set. Then, as `QueryResult.resultSets` says, `rows`, `fields` and `columnTypes` are the
+ * one per statement, and a statement that answers no column (an INSERT, a COMMIT, or a `SELECT` of
+ * no columns) carries no result set. Then, as `QueryResult.resultSets` says, `rows`, `fields` and `columnTypes` are the
  * first set's and `rowCount` the count of the statement that produced it, or of the first
  * statement when none did; every set is listed when there are several. Before this read such a
  * text answered no `rows` at all, because the answer was an array and was read as one result.

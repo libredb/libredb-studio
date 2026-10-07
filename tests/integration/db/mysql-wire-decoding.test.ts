@@ -219,6 +219,14 @@ const startServer = (textLabel: number, binding: Binding = "prepares"): Promise<
             [definition({ name: "bound", characterSet: textLabel, columnType: VAR_STRING, flags: 0 })],
           );
         }
+      } else if (sql === "SELECT '', ''") {
+        // MySQL names a column holding an empty string literal by that literal: an empty name.
+        connection.writeColumns([
+          definition({ name: "", characterSet: textLabel, columnType: VAR_STRING, flags: 0 }),
+          definition({ name: "", characterSet: textLabel, columnType: VAR_STRING, flags: 0 }),
+        ]);
+        connection.writeTextRow(["", ""]);
+        connection.writeEof();
       } else if (sql.startsWith("SELECT '")) {
         connection.writeTextResult(
           [{ probe: EMOJI }],
@@ -692,6 +700,18 @@ describe("a result with two columns of one name", () => {
   ])("keeps both values over %s", async (_label, port, params) => {
     const provider = await connected(port());
     expect(await provider.query("SELECT a, a FROM t", params)).toMatchObject(expected);
+  });
+
+  test.each([
+    ["the promise path", () => honest.port],
+    ["the relabelling path", () => labelling33.port],
+  ])("names two empty column names apart and keeps both values over %s", async (_label, port) => {
+    const provider = await connected(port());
+    expect(await provider.query("SELECT '', ''")).toMatchObject({
+      fields: ["(No column name)", "(No column name) (2)"],
+      rows: [{ "(No column name)": "", "(No column name) (2)": "" }],
+      rowCount: 1,
+    });
   });
 
   test("and in a transaction", async () => {

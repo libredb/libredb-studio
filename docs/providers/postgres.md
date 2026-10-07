@@ -1342,7 +1342,7 @@ Measured on PostgreSQL 16 through `pg` 8.23.1 on 2026-10-07, before and after:
 PostgreSQL never answers an empty column name: an unaliased expression is named by the server (`?column?`, `count`, `now`), so an unnamed column is only ever a repeated one here.
 
 A text of several statements sent as one simple query (`SELECT 1 AS a; SELECT 2 AS b, 3 AS b`) answers one result per statement.
-`rows`, `fields` and `columnTypes` are the first result set's, `rowCount` is the count of the statement that produced it (or of the first statement when none produced one), and `resultSets` lists every set when there are several; a statement with no row description (an INSERT, a COMMIT) is not a set.
+`rows`, `fields` and `columnTypes` are the first result set's, `rowCount` is the count of the statement that produced it (or of the first statement when none produced one), and `resultSets` lists every set when there are several; a statement that answers no column (an INSERT, a COMMIT, or a `SELECT` of no columns) is not a set.
 Measured the same day, that text answers `rows` `[{"a":1}]` and two `resultSets`, the second with fields `["b","b (2)"]`.
 Before, such a text answered no `rows` at all, because the list of answers was read as one answer.
 

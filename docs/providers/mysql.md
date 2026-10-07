@@ -270,8 +270,8 @@ against three live servers:
 One behaviour does differ, and only for a connection that opted into `multipleStatements=true` in its
 connection string: a `;`-separated statement is rejected by the prepared protocol and accepted by the
 text one, which then answers an array of result sets. That is the shape `CALL <procedure>()` already
-answers on both protocols, and the envelope reads it the same way ([§5.1](#51-execution)); the app splits multi-statement
-input itself (`POST /api/db/multi-query`) and issues one statement per call.
+answers on both protocols, and the envelope reads it the same way ([§5.1](#51-execution)); the app
+splits multi-statement input itself (`POST /api/db/multi-query`) and issues one statement per call.
 
 `rowCount` is `rows.length` **only when the driver returns a row array** (i.e. `SELECT`); for a
 non-`SELECT` statement mysql2 returns a `ResultSetHeader` rather than an array, and the provider
@@ -674,9 +674,11 @@ Measured on MySQL 8.4 through `mysql2` 3.24.5 on 2026-10-07, before and after:
 | `SELECT 1 AS a, 2 AS a` | fields `["a","a"]`, row `{"a":2}` | fields `["a","a (2)"]`, row `{"a":1,"a (2)":2}` |
 | `SELECT 1, 1` (MySQL names an unaliased expression by its text) | fields `["1","1"]`, row `{"1":1}` | fields `["1","1 (2)"]`, row `{"1":1,"1 (2)":1}` |
 | `SELECT * FROM orders o JOIN customers c ON c.id = o.customer_id` | fields `["id","customer_id","item","id","name"]`, the customer's id under both `id` headers, the order's id gone | fields `["id","customer_id","item","id (2)","name"]`, the order's id under `id` and the customer's under `id (2)` |
+| `SELECT ''` (MySQL names a column holding an empty string literal by it, and `SELECT 1 AS ''` names it empty too) | fields `[""]`, which the results grid cannot take as a column id | fields `["(No column name)"]`, row `{"(No column name)":""}` |
+| `SELECT '', ''` | fields `["",""]`, one value under `""` | fields `["(No column name)","(No column name) (2)"]`, both values |
 | `CALL sys.ps_setup_show_enabled(FALSE, FALSE)` | `TypeError: undefined is not an object (evaluating 'f.name')`, after the procedure had run | the first of its four result sets, and all four in `resultSets` |
 
-MySQL never answers an empty column name, so an unnamed column is only ever a repeated one here.
+An empty column name is named `(No column name)`, as `uniqueFieldNames` names it for every engine.
 
 **A `CALL` answers a list of result sets.**
 `mysql2` answers one result set per SELECT the procedure ran and the call's own OK packet last, with the field packets one list per set and `undefined` for each header.

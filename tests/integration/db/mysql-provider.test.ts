@@ -3427,6 +3427,25 @@ describe("MySQLProvider result columns", () => {
     }
   });
 
+  test("query() names an empty column name, which MySQL answers for SELECT '', and keeps both values", async () => {
+    // Measured on MySQL 8.4: `SELECT '', ''` declares two columns named "" and, read as object
+    // rows, kept one value under the key "".
+    mockExecuteFn = () =>
+      Promise.resolve([
+        [["", ""]],
+        [
+          { name: "", ...text },
+          { name: "", ...text },
+        ],
+      ]);
+    const provider = await connected();
+    const result = await provider.query("SELECT '', ''");
+    expect(result.fields).toEqual(["(No column name)", "(No column name) (2)"]);
+    expect(result.rows).toEqual([{ "(No column name)": "", "(No column name) (2)": "" }]);
+    expect(result.columnTypes).toEqual({ "(No column name)": "text", "(No column name) (2)": "text" });
+    await provider.disconnect();
+  });
+
   test("query() keeps the order's id and the customer's id of a join apart, over the prepared protocol too", async () => {
     const execute = spyOn(mockConnection, "execute");
     mockExecuteFn = () => Promise.resolve(join);
