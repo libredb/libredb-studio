@@ -175,12 +175,18 @@ export function useStorageSync(): StorageSyncState {
   );
 
   // ── Pull all data from server → localStorage ──
-  const pullFromServer = useCallback(async () => {
+  /**
+   * `owner` is the account the copy was claimed for. The answer is written only while the copy
+   * still belongs to it: a sign-out (or another tab) that cleared the copy while the pull was out
+   * keeps it cleared.
+   */
+  const pullFromServer = useCallback(async (owner: string) => {
     setIsSyncing(true);
     try {
       const res = await appFetch("/api/storage");
       if (!res.ok) return;
       const data = (await res.json()) as Partial<StorageData>;
+      if (localStorage.getItem(WORKSPACE_OWNER_KEY) !== owner) return;
 
       // Write server data to localStorage (overwrite)
       if (data.connections) writeCollectionToLocal("connections", data.connections);
@@ -300,13 +306,13 @@ export function useStorageSync(): StorageSyncState {
           setIsServerMode(true);
           serverModeRef.current = true;
 
+          // Records `username` as the owner of the copy it keeps or clears.
           claimAccountWorkspace(username);
           // Migration first, then pull
           await migrateToServer();
           if (!cancelled) {
-            await pullFromServer();
+            await pullFromServer(username);
           }
-          localStorage.setItem(WORKSPACE_OWNER_KEY, username);
         }
       } catch {
         // Server unreachable — stay in local mode

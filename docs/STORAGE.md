@@ -1228,8 +1228,8 @@ App Mount
   │                          │
   │   ┌──────────────────────▼──────────────────────┐
   │   │ Pull: GET /api/storage                      │
-  │   │  → Write server data into localStorage      │
-  │   │  → Set libredb_workspace_owner = username   │
+  │   │  → Write server data into localStorage,     │
+  │   │    only while the owner is still username   │
   │   │  → Components re-render from localStorage   │
   │   └──────────────────────┬──────────────────────┘
   │                          │
@@ -1290,16 +1290,15 @@ When a user first enables server mode (or a new user logs in for the first time)
 
 ```
 1. Hook detects serverMode = true
-2. Reads the signed-in username (GET /api/auth/me) and clears a browser copy that belongs to another account
+2. Reads the signed-in username (GET /api/auth/me), clears a browser copy that belongs to another account, and sets 'libredb_workspace_owner' to the username
 3. Checks localStorage('libredb_server_migrated') flag
 4. If not migrated:
    a. Reads whichever of the 13 collections exist in localStorage (a fresh browser with none simply sets the flag and skips)
    b. POST /api/storage/migrate with the collected payload
    c. Server calls provider.mergeData() — upserts each collection as a whole blob in one transaction
    d. Sets 'libredb_server_migrated' flag in localStorage
-5. Pull: GET /api/storage → overwrite localStorage with server data
-6. Sets 'libredb_workspace_owner' to the username
-7. Subsequent mutations sync normally via push
+5. Pull: GET /api/storage → overwrite localStorage with server data, unless a sign-out cleared the copy while the pull was out
+6. Subsequent mutations sync normally via push
 ```
 
 Step 2 is described in [The Browser Copy Belongs to the Signed-In Account](#the-browser-copy-belongs-to-the-signed-in-account).

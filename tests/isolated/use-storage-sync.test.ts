@@ -1318,6 +1318,37 @@ describe("useStorageSync", () => {
       ).toEqual([]);
     });
 
+    test("a sign-out while the first pull is out leaves the browser copy cleared", async () => {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      let pullStarted = false;
+      let answerPull: () => void = () => {};
+      setupSignOut({
+        "/api/storage": () =>
+          new Promise((resolve) => {
+            pullStarted = true;
+            answerPull = () => resolve({ ok: true, status: 200, json: { connections: [{ id: "server-c1" }] } });
+          }),
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isServerMode).toBe(true);
+        expect(pullStarted).toBe(true);
+      });
+      await act(async () => {
+        await releaseAccountWorkspace(signOutAnswering(200));
+      });
+      await act(async () => {
+        answerPull();
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      expect(result.current.isReady).toBe(true);
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
+    });
+
     test("whatever is written after a sign-out never reaches the next account", async () => {
       const PREVIOUS = "admin@libredb.org";
       localStorage.setItem("libredb_workspace_owner", PREVIOUS);
