@@ -454,10 +454,23 @@ export function ObjectTree({
     [filterQuery],
   );
 
-  const attach = useCallback((element: HTMLDivElement | null) => {
-    treeRef.current = element;
-    if (element !== null) setViewportHeight(element.clientHeight);
-  }, []);
+  /**
+   * A NEW scroll box, which `key={filterQuery}` makes on every query, starts at the top. So the
+   * stored offset is taken from the box rather than kept: clearing a query returns to the query
+   * `""`, whose offset from before the first keystroke is still on record, and the window would
+   * draw rows thousands of pixels below what the fresh box shows, a blank pane. A row pinned deep
+   * in the old list is released for the same reason.
+   */
+  const attach = useCallback(
+    (element: HTMLDivElement | null) => {
+      treeRef.current = element;
+      if (element === null) return;
+      setViewportHeight(element.clientHeight);
+      setScroll({ query: filterQuery, top: element.scrollTop });
+      setPinned(false);
+    },
+    [filterQuery],
+  );
 
   /*
     The escape hatch (#765). Checked before every other state, because the states below

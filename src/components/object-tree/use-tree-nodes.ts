@@ -437,11 +437,22 @@ function forgetRoot(cache: TreeCache, slot: RootSlot): TreeCache {
   return { ...emptied, counts };
 }
 
-/** Keeps exactly the detail slots `refresh` is re-issuing, so a collapsed object cannot go stale. */
+/**
+ * Keeps exactly the detail slots `refresh` is re-issuing, so a collapsed object cannot go stale.
+ *
+ * An object whose detail is dropped is CLOSED as well. Left open, it is an open row with an empty
+ * slot the moment anything shows it again, and the filter shows it on a keystroke: typing its name
+ * would issue a describe, which is the one thing the filter promises never to do (U25). Closed, it
+ * reads only when the reader opens it, as any closed table does.
+ */
 function withOnlyDetails(cache: TreeCache, keep: ReadonlySet<string>): TreeCache {
   const details: Record<string, ObjectDetail> = {};
-  for (const [key, detail] of Object.entries(cache.details)) if (keep.has(key)) details[key] = detail;
-  return { ...cache, details };
+  const expanded = new Set(cache.expanded);
+  for (const [key, detail] of Object.entries(cache.details)) {
+    if (keep.has(key)) details[key] = detail;
+    else expanded.delete(key);
+  }
+  return { ...cache, details, expanded };
 }
 
 class ObjectReadError extends Error {

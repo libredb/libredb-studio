@@ -2,7 +2,7 @@ import "../../setup-dom";
 import "../../helpers/mock-navigation";
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ObjectTree } from "@/components/object-tree";
 import { useTreeNodes } from "@/components/object-tree/use-tree-nodes";
@@ -118,6 +118,33 @@ describe("useTreeNodes with a query", () => {
 
     hook.rerender({ query: "" });
     expect(hook.result.current.rows.map((row) => [row.id, row.expanded])).toEqual(unfiltered);
+  });
+
+  test("typing reads nothing for a table whose columns a DDL refresh dropped behind a collapsed folder", async () => {
+    const calls = installFetch();
+    const hook = renderHook(
+      ({ query }: { query: string }) => useTreeNodes(connectionOf("pg"), oneLevel, false, undefined, true, query),
+      {
+        initialProps: { query: "" },
+      },
+    );
+    await waitFor(() => expect(hook.result.current.rows.some((row) => row.id === "app/table")).toBe(true));
+    act(() => hook.result.current.toggle("app/table"));
+    await waitFor(() => expect(hook.result.current.rows.some((row) => row.label === "orders")).toBe(true));
+    const orders = hook.result.current.rows.find((row) => row.label === "orders")?.id ?? "";
+    act(() => hook.result.current.toggle(orders));
+    await waitFor(() => expect(hook.result.current.rows.some((row) => row.label === "id")).toBe(true));
+    act(() => hook.result.current.toggle("app/table"));
+    // The DDL refresh: it drops the columns of an object it is not re-reading.
+    act(() => hook.result.current.refresh());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const before = calls.length;
+
+    hook.rerender({ query: "orders" });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls.slice(before).map((call) => call.route)).toEqual([]);
+    expect(hook.result.current.rows.find((row) => row.label === "orders")?.expanded).toBe(false);
   });
 
   test("opening a table's columns from the filtered view reads them, though its folder is collapsed", async () => {
@@ -276,6 +303,31 @@ describe("ObjectTree filter box", () => {
     await waitFor(() =>
       expect((screen.getByRole("searchbox", { name: "Filter objects" }) as HTMLInputElement).value).toBe(""),
     );
+  });
+
+  test("clearing after a scroll draws the rows the new scroll box is showing, not the old offset", async () => {
+    installFetch();
+    const many = Array.from({ length: 300 }, (_, index) => ({
+      path: ["app", `t${index}`],
+      name: `t${index}`,
+      kind: "table",
+    }));
+    const ok = globalThis.fetch;
+    globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) =>
+      String(url).endsWith("/list") ? Response.json(many) : ok(url, init),
+    ) as never;
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
+    await userEvent.click(await screen.findByRole("treeitem", { name: /Tables/ }));
+    await waitFor(() => expect(shownLabels()).toContain("t0"));
+    fireEvent.scroll(screen.getByRole("tree"), { target: { scrollTop: 28 * 150 } });
+    await waitFor(() => expect(shownLabels()).not.toContain("t0"));
+    const box = screen.getByRole("searchbox", { name: "Filter objects" });
+
+    await userEvent.type(box, "t1");
+    await userEvent.clear(box);
+
+    // A new scroll box starts at the top, so the window must start there too.
+    await waitFor(() => expect(shownLabels()[0]).toBe("app"));
   });
 
   test("the clear button empties the box", async () => {
