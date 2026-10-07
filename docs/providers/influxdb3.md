@@ -269,6 +269,12 @@ A line that is not a JSON object, or one nested deeper than 64 levels, is refuse
 
 > InfluxDB 3 answered with a line Studio cannot read as a row.
 
+No column comes back unnamed, and the engine refuses a projection of two columns of one name, measured on 3.12 Core: `SELECT 1 AS a, 2 AS a`, `SELECT usage, usage FROM cpu` and `SELECT 1, 1` answer 400 "Projections require unique expression names".
+A join still answers one key twice: `SELECT c1.usage, c2.usage FROM cpu c1 CROSS JOIN cpu c2` answers the line `{"usage":1.5,"usage":1.5}`, and `SELECT *` over that join repeats every key.
+JSON keeps one value per key and a line leaves out the key of a null cell, so which value belongs to which column cannot be recovered, and Studio refuses the result rather than show it a column short:
+
+> InfluxDB 3 answered with two columns named usage, and its answer cannot say which value belongs to which column, so nothing was shown; give one of them an alias with AS.
+
 The answer is read line by line up to the row cut, so a body of many short lines never holds more than the cut's worth of rows.
 
 ### 5.6 Bounds
@@ -439,6 +445,7 @@ None: no Admin > Operations card and no tree control is offered, because InfluxD
 | 500 with any other text | InfluxDB 3 refused the statement: [server text] |
 | The server ended the answer after accepting it | InfluxDB failed while running this query after accepting it, so its reason did not reach Studio; it is in the server log. Common causes: a division by zero, a failed cast. |
 | A line that is not a row | InfluxDB 3 answered with a line Studio cannot read as a row. |
+| A line that names a column twice | InfluxDB 3 answered with two columns named [column], and its answer cannot say which value belongs to which column, so nothing was shown; give one of them an alias with AS. |
 | Over the response cap | The result is larger than 16 MiB, the most Studio reads for one answer; add a LIMIT or a narrower time range. |
 | The deadline | InfluxDB did not answer within [milliseconds] ms, so Studio stopped waiting and closed the connection, which stops the query on the server. |
 | Stop | The query was cancelled. |
@@ -501,6 +508,7 @@ The token goes in `password`, there is no `user`, and `allowInsecureAuth: true` 
 - SSL mode `require` sends the token to a server whose certificate is not checked.
 - Studio reads `query_sql` as jsonl, with no Arrow Flight: column types are what JSON carries, and a stopped query gets no server-side cancel ([D197](../BACKLOG.md)).
 - An all-null column and the columns of an empty result cannot be known, and no column type is reported.
+- A result that names a column twice, such as a self join's two `usage` columns, is refused: alias one of them with `AS`.
 - One connection reads one database; a server with several needs one connection each ([U81](../BACKLOG.md)).
 - A page boundary inside a tie of `time` can repeat or skip a row; add the tag columns to `ORDER BY` for stable pages.
 - Count and Profile read the whole table and meet Core's file limit on a large one.

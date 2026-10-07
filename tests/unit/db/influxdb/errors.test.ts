@@ -375,6 +375,14 @@ describe("influxdb, connect and query", () => {
     );
   });
 
+  test("a line naming a column twice names the column and asks for an alias", () => {
+    expectError(
+      mapped(new InfluxAnswerShapeError("repeated-column", "usage"), SQL3),
+      QueryError,
+      "InfluxDB 3 answered with two columns named usage, and its answer cannot say which value belongs to which column, so nothing was shown; give one of them an alias with AS.",
+    );
+  });
+
   test("C5: a lexer disagreement is never rows", () => {
     expectError(
       mapped(new InfluxAnswerShapeError("lexer-disagreement"), V3),

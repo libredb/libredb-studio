@@ -171,6 +171,19 @@ describe("InfluxDB 3.12.0 Core, replayed", () => {
     await provider.disconnect();
   });
 
+  test("a line naming a column twice is refused with the column's name, never shown a column short", async () => {
+    // The body is what 3.12 Core answered on 2026-10-07 for `SELECT c1.usage, c2.usage FROM cpu c1 CROSS JOIN cpu
+    // c2`, put behind a captured statement so the request the provider builds is one the fake answers.
+    const sparse = capture("sql-sparse");
+    const q = (sparse.request.body as { q: string }).q;
+    const { provider } = recordedServer({ [q]: { ...sparse, name: "built", body: '{"usage":1.5,"usage":1.5}\n' } });
+    await provider.connect();
+    const error = await rejection(provider.query(q));
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(S.repeatedColumn("usage"));
+    await provider.disconnect();
+  });
+
   test("the error captures are worded by the error table, never shown as rows", async () => {
     const cases: readonly [string, string][] = [
       ["sql-parse-error", S.sqlParse('SQL error: ParserError("Expected: an expression, found: EOF")')],

@@ -12,7 +12,11 @@
  *
  * The row cut and the cell budget (rows times columns) stop the read and set `cut`; a row the budget drops adds no
  * column. A line that is not a JSON object, or one nested deeper than `MAX_LINE_DEPTH` (R47), is an
- * `InfluxAnswerShapeError("not-json")`, worded by errors.ts. No pattern reads the server's text (R40): every pass over
+ * `InfluxAnswerShapeError("not-json")`, worded by errors.ts. A line that names a top-level key twice is an
+ * `InfluxAnswerShapeError("repeated-column")` naming the key: measured on 3.12 Core, the engine refuses a projection
+ * of two columns of one name, yet `SELECT c1.usage, c2.usage FROM cpu c1 CROSS JOIN cpu c2` answers
+ * `{"usage":1.5,"usage":1.5}`, and since `JSON.parse` keeps the last value and a line omits the key of a null cell,
+ * which value belongs to which column cannot be recovered, so the result is refused rather than shown a column short. No pattern reads the server's text (R40): every pass over
  * it is one forward walk, and the body is walked line by line, never split whole, so at most `rowCut + 1` line
  * strings exist however short its lines are (R46).
  */
@@ -68,6 +72,12 @@ function keysInTextOrder(text: string): string[] {
   return keys;
 }
 
+/** The first key a line names twice, or undefined when every key is named once. */
+function repeatedKey(keys: readonly string[]): string | undefined {
+  const seen = new Set<string>();
+  return keys.find((key) => seen.has(key) || !seen.add(key));
+}
+
 /** One line as an object, its integers beyond 2^53 kept as exact digits; anything else is not a row. */
 function parseLine(line: string): { readonly row: Readonly<Record<string, unknown>>; readonly text: string } {
   const text = quoteUnsafeIntegers(line);
@@ -101,8 +111,11 @@ export function shapeJsonlBody(text: string, limits: InfluxShapeLimits): ShapedR
       break;
     }
     const { row, text: lineText } = parseLine(line);
-    const newKeys = keysInTextOrder(lineText).filter((key) => !fields.has(key));
-    const columns = fields.size + new Set(newKeys).size;
+    const keys = keysInTextOrder(lineText);
+    const repeated = repeatedKey(keys);
+    if (repeated !== undefined) throw new InfluxAnswerShapeError("repeated-column", repeated);
+    const newKeys = keys.filter((key) => !fields.has(key));
+    const columns = fields.size + newKeys.length;
     if ((parsedRows.length + 1) * columns > limits.cellBudget) {
       cut = true;
       break;

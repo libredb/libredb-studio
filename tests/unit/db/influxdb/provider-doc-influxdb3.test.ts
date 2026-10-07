@@ -347,6 +347,14 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
     expect(flat(sectionOf(DOC, "### 5.5 Result shape"))).toContain(`> ${sentence("notReadableRow")}`);
   });
 
+  test("a line naming a column twice is refused with the sentence the doc quotes", () => {
+    const limits = { rowCut: INFLUX_ROW_CUT, cellBudget: INFLUX_CELL_BUDGET };
+    expect(() => shapeJsonlBody('{"usage":1.5,"usage":1.5}\n', limits)).toThrow();
+    const shape = flat(sectionOf(DOC, "### 5.5 Result shape"));
+    expect(shape).toContain('`{"usage":1.5,"usage":1.5}`');
+    expect(shape).toContain(`> ${template("repeatedColumn")("usage")}`);
+  });
+
   test("the one-database sentences are what a cross-database statement and a long path get", () => {
     const one = flat(sectionOf(DOC, "### 5.8 One database per connection"));
     expect(one).toContain(`> ${wordedCapture("sql-cross-database")}`);
@@ -388,6 +396,7 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
       sentence("fileLimit"),
       sentence("truncated"),
       sentence("notReadableRow"),
+      template("repeatedColumn")("[column]"),
       sentence("cancelled"),
       sentence("unrecognised"),
     ]) {

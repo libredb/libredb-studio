@@ -47,7 +47,7 @@ export class InfluxAnswerError extends Error {
 /** What a results module found in a 200 answer; `serverText` is the server's raw words, when it sent any. */
 export class InfluxAnswerShapeError extends Error {
   constructor(
-    readonly fault: "lexer-disagreement" | "not-json" | "top-level-error" | "statement-error",
+    readonly fault: "lexer-disagreement" | "not-json" | "repeated-column" | "top-level-error" | "statement-error",
     readonly serverText?: string,
   ) {
     super(fault);
@@ -137,6 +137,8 @@ const SENTENCES = Object.freeze({
   truncated:
     "InfluxDB failed while running this query after accepting it, so its reason did not reach Studio; it is in the server log. Common causes: a division by zero, a failed cast.",
   notReadableRow: "InfluxDB 3 answered with a line Studio cannot read as a row.",
+  repeatedColumn: (column: string) =>
+    `InfluxDB 3 answered with two columns named ${column}, and its answer cannot say which value belongs to which column, so nothing was shown; give one of them an alias with AS.`,
   noSqlOnVersion: (version: string) =>
     `This server is ${version}, which has no SQL endpoint: connect with InfluxDB (InfluxQL).`,
   pingForbiddenNoDatabase:
@@ -491,6 +493,8 @@ function shapeError(error: InfluxAnswerShapeError, context: InfluxErrorContext):
       return query(context, S.lexerDisagreement);
     case "not-json":
       return query(context, TYPE_WORDING[context.type].notReadable);
+    case "repeated-column":
+      return query(context, S.repeatedColumn(shown(error.serverText ?? "", context)));
     case "top-level-error":
     case "statement-error":
       return first(STATEMENT_ROWS, { raw: error.serverText ?? "", context });
