@@ -757,12 +757,19 @@ that is how the rest of the application calls every provider uniformly.
 
 | Source | `QueryResult` field | Notes |
 |--------|----------------------|-------|
-| `data` array | `rows` | Objects exactly as the server returned them; 64-bit integers and every `Decimal` arrive as strings ([§3.5](#35-64-bit-integers-and-decimals-are-quoted-on-purpose-to-stop-jsonparse-from-rounding-them)) |
-| `meta` array | `fields` | Declared column order; `[]` when the source could not describe the rows (a non-JSON format, or a write) |
+| `data` array | `rows` | One object per row, keyed by the names in `fields` and holding the values the server returned; 64-bit integers and every `Decimal` arrive as strings ([§3.5](#35-64-bit-integers-and-decimals-are-quoted-on-purpose-to-stop-jsonparse-from-rounding-them)) |
+| `meta` array | `fields` | Declared column order, a repeated name numbered (see below); `[]` when the source could not describe the rows (a non-JSON format, or a write) |
 | — | `rowCount` | `rows.length` when there are rows; otherwise `mutationCount` from `X-ClickHouse-Summary`, verbatim, zero included ([§3.6](#36-writes-return-an-empty-200-body-the-row-count-lives-in-a-header)) |
 | `X-ClickHouse-Summary.elapsed_ns` | `executionTime` | The server's own duration, preferred because it excludes network latency; falls back to the envelope's `statistics.elapsed` (seconds), then to the measured wall clock when neither source reported anything |
 | a non-JSON `X-ClickHouse-Format` | `rows` / `fields` | One synthetic row `{ __text: "<raw body>" }` under the single column `__text` ([§3.4](#34-default_formatjson-as-a-url-parameter-never-appended-to-the-sql)) |
 | `meta` array | `columnTypes` | The declared type per column, keyed by its name in `fields` and spelled exactly as ClickHouse spells it — `Nullable(String)`, `LowCardinality(String)`, `Enum8('x' = 1)` — because the wrapper is what tells the user the column is nullable or low-cardinality. **Absent** when the envelope described no columns: a write, a format the user chose, or a statement with no result set. For a computed column such as `count()` this is the only source of a type at all, since no catalog entry exists for it (issue #273) |
+
+Every name in `fields` is non-empty and appears once, measured on 26.7.1.1315.
+An empty quoted alias is a syntax error, so no column comes back unnamed.
+Two expressions under one alias (`SELECT 1 AS a, 2 AS a`) are refused with `MULTIPLE_EXPRESSIONS_FOR_ALIAS`, and a join qualifies a repeated column itself (`id`, `t2.id`).
+But `SELECT number, number FROM numbers(2)` and `SELECT rand(), rand()` declare two `meta` columns of one name, and each `data` object names that key twice with one value.
+One name is one column in ClickHouse, so the two values are always identical (even `rand()` is evaluated once) and nothing is lost, but a repeated name in `fields` would give the grid two columns of one id.
+So the repeat is numbered as every provider numbers it: `fields` is `["number", "number (2)"]`, each row carries the value under both names, and `columnTypes` is keyed by the numbered names.
 
 ### 5.3 EXPLAIN
 

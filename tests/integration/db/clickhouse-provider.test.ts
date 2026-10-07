@@ -800,6 +800,30 @@ describe("ClickHouseProvider query", () => {
     expect(Object.keys(result.columnTypes ?? {})).toEqual(result.fields);
   });
 
+  test("numbers a column the server declares twice, each keyed and typed under its own name", async () => {
+    // Measured on 26.7.1.1315: `SELECT number, number FROM numbers(2)` and
+    // `SELECT rand(), rand()` answer two `meta` columns of one name and a `data`
+    // object naming the key twice with one value, since one name is one column in
+    // ClickHouse (even `rand()` is evaluated once). The body is the live answer
+    // with one more column, so a numbered column is seen beside an ordinary one.
+    const provider = await connectProvider();
+    replyFor = () => ({
+      body:
+        '{"meta":[{"name":"number","type":"UInt64"},{"name":"number","type":"UInt64"},{"name":"n","type":"UInt8"}],' +
+        '"data":[{"number":"0","number":"0","n":1},{"number":"1","number":"1","n":2}],' +
+        '"rows":2,"statistics":{"elapsed":0.0012}}',
+    });
+
+    const result = await provider.query("SELECT number, number, 1 AS n FROM numbers(2)");
+
+    expect(result.fields).toEqual(["number", "number (2)", "n"]);
+    expect(result.rows).toEqual([
+      { number: "0", "number (2)": "0", n: 1 },
+      { number: "1", "number (2)": "1", n: 2 },
+    ]);
+    expect(result.columnTypes).toEqual({ number: "UInt64", "number (2)": "UInt64", n: "UInt8" });
+  });
+
   test("leaves the type channel absent for a write, which declares no columns", async () => {
     const provider = await connectProvider();
     replyFor = () => writeReply("2");
