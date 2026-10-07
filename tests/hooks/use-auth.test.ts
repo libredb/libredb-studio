@@ -8,7 +8,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
 
 import { useAuth } from "@/hooks/use-auth";
-import { registerPendingPush } from "@/lib/storage/sign-out";
+import { registerWorkspaceSync } from "@/lib/storage/sign-out";
 
 // =============================================================================
 // useAuth Tests
@@ -436,7 +436,7 @@ describe("useAuth", () => {
       localStorage.clear();
     });
 
-    test("server mode: pending pushes go out, then the copy is cleared, then the session ends", async () => {
+    test("server mode: pending pushes go out, then the session ends, then the copy is cleared", async () => {
       const order: string[] = [];
       mockGlobalFetch({
         "/api/auth/me": { ok: true, json: { user: { role: "user" } } },
@@ -446,8 +446,11 @@ describe("useAuth", () => {
           return { ok: true, json: { success: true } };
         },
       });
-      const unregister = registerPendingPush(async () => {
-        order.push(`push:${localStorage.getItem("libredb_connections")}`);
+      const unregister = registerWorkspaceSync({
+        flush: async () => {
+          order.push(`push:${localStorage.getItem("libredb_connections")}`);
+        },
+        resume: () => {},
       });
 
       const { result } = renderHook(() => useAuth());
@@ -459,7 +462,9 @@ describe("useAuth", () => {
       });
       unregister();
 
-      expect(order).toEqual([`push:${JSON.stringify([{ id: "c1" }])}`, "logout:null"]);
+      const copy = JSON.stringify([{ id: "c1" }]);
+      expect(order).toEqual([`push:${copy}`, `logout:${copy}`]);
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
       expect(localStorage.getItem("libredb_workspace_tabs_v1:c1")).toBeNull();
       expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
       expect(mockRouterPush).toHaveBeenCalledWith("/login");
@@ -471,8 +476,11 @@ describe("useAuth", () => {
         "/api/storage/config": { ok: true, json: { provider: "postgres", serverMode: true } },
         "/api/auth/logout": { ok: true, json: { success: true } },
       });
-      const unregister = registerPendingPush(async () => {
-        throw new Error("Unsaved changes could not be saved to server storage");
+      const unregister = registerWorkspaceSync({
+        flush: async () => {
+          throw new Error("Unsaved changes could not be saved to server storage");
+        },
+        resume: () => {},
       });
 
       const { result } = renderHook(() => useAuth());
@@ -487,6 +495,25 @@ describe("useAuth", () => {
       expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/auth/logout"))).toBe(false);
       expect(localStorage.getItem("libredb_connections")).not.toBeNull();
       expect(mockToastError).toHaveBeenCalledWith("Error", { description: "Failed to logout." });
+    });
+
+    test("server mode: a sign-out the server refused keeps the copy", async () => {
+      mockGlobalFetch({
+        "/api/auth/me": { ok: true, json: { user: { role: "user" } } },
+        "/api/storage/config": { ok: true, json: { provider: "postgres", serverMode: true } },
+        "/api/auth/logout": { ok: false, status: 500, json: { error: "Server error" } },
+      });
+
+      const { result } = renderHook(() => useAuth());
+      await waitFor(() => {
+        expect(result.current.user).not.toBeNull();
+      });
+      await act(async () => {
+        await result.current.handleLogout();
+      });
+
+      expect(localStorage.getItem("libredb_connections")).not.toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe("user@libredb.org");
     });
 
     test("local mode: the copy stays", async () => {

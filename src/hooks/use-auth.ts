@@ -49,10 +49,10 @@ export function useAuth() {
   const handleLogout = useCallback(async () => {
     try {
       // In server storage mode the browser copy belongs to the signed-in account: it is pushed
-      // and cleared while the session cookie is still valid. The session-ended path above clears
-      // nothing; the next sign-in's owner check in useStorageSync covers a different account.
-      await releaseAccountWorkspace();
-      const res = await appFetch("/api/auth/logout", { method: "POST" });
+      // while the session cookie is still valid and cleared once the session ended. The
+      // session-ended path above clears nothing; the owner check every page that reads the copy
+      // runs at the next sign-in covers a different account.
+      const res = await releaseAccountWorkspace(() => appFetch("/api/auth/logout", { method: "POST" }));
       const data = await res.json();
       toast({ title: "Logged out", description: "You have been successfully logged out." });
 

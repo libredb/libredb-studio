@@ -26,7 +26,7 @@ import { render, fireEvent, waitFor, act, cleanup } from "@testing-library/react
 
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
 import { mockRouterPush, mockRouterRefresh, setMockPathname, resetMockPathname } from "../../helpers/mock-navigation";
-import { mockToastSuccess } from "../../helpers/mock-sonner";
+import { mockToastError, mockToastSuccess } from "../../helpers/mock-sonner";
 
 const { default: AdminDashboard } = await import("@/components/admin/AdminDashboard");
 
@@ -202,7 +202,7 @@ describe("AdminDashboard", () => {
       });
     }
 
-    test("server mode: the copy is cleared before the session ends", async () => {
+    test("server mode: the session ends, then the copy is cleared", async () => {
       let atLogout: string | null = "not called";
       mockGlobalFetch({
         "/api/auth/logout": () => {
@@ -214,8 +214,31 @@ describe("AdminDashboard", () => {
 
       await clickLogout();
 
-      expect(atLogout).toBeNull();
+      expect(atLogout).toBe(JSON.stringify([{ id: "c1" }]));
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
       expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
+    });
+
+    test("a sign-out that cannot complete says so and keeps the copy", async () => {
+      mockToastError.mockClear();
+      mockGlobalFetch({
+        "/api/auth/logout": { json: { success: true } },
+        "/api/storage/config": { ok: false, status: 503, json: { error: "down" } },
+      });
+
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<AdminDashboard>content</AdminDashboard>);
+      });
+      await act(async () => {
+        fireEvent.click(renderResult!.getByText("Logout").closest("button")!);
+      });
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith("Failed to logout");
+      });
+
+      expect(mockRouterPush).not.toHaveBeenCalled();
+      expect(localStorage.getItem("libredb_connections")).not.toBeNull();
     });
 
     test("local mode: the copy stays", async () => {

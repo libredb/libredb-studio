@@ -10,11 +10,12 @@ import {
   STORAGE_COLLECTIONS,
 } from "@/lib/storage";
 import {
-  clearAccountWorkspace,
+  claimAccountWorkspace,
   SERVER_MIGRATED_KEY as MIGRATION_FLAG,
   WORKSPACE_OWNER_KEY,
 } from "@/lib/storage/local-storage";
-import { registerPendingPush } from "@/lib/storage/sign-out";
+import { registerWorkspaceSync } from "@/lib/storage/sign-out";
+import { readSignedInUsername } from "@/lib/storage/workspace-owner";
 import { logger } from "@/lib/logger";
 
 const DEBOUNCE_MS = 500;
@@ -66,8 +67,11 @@ export function useStorageSync(): StorageSyncState {
   const serverModeRef = useRef(false);
   /** The push in flight, so a sign-out can wait for it while the session cookie is still valid. */
   const inFlightRef = useRef<Promise<unknown> | null>(null);
-  /** Set once a sign-out cleared the browser copy: nothing may push the empty copy after that. */
-  const signedOutRef = useRef(false);
+  /**
+   * Set while a sign-out is under way and after it: changes are queued but not pushed, so nothing
+   * pushes the copy once it is cleared. A sign-out that did not happen resets it (`resume`).
+   */
+  const signingOutRef = useRef(false);
   /**
    * Whether this hook is still mounted. A push that is in flight when the user
    * navigates away resolves AFTER teardown, and the failure branch would arm a
@@ -158,8 +162,8 @@ export function useStorageSync(): StorageSyncState {
   // ── Schedule debounced push ──
   const schedulePush = useCallback(
     (collection: string) => {
-      if (signedOutRef.current) return;
       pendingCollectionsRef.current.add(collection);
+      if (signingOutRef.current) return;
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
@@ -296,7 +300,7 @@ export function useStorageSync(): StorageSyncState {
           setIsServerMode(true);
           serverModeRef.current = true;
 
-          claimBrowserCopy(username);
+          claimAccountWorkspace(username);
           // Migration first, then pull
           await migrateToServer();
           if (!cancelled) {
@@ -323,17 +327,24 @@ export function useStorageSync(): StorageSyncState {
   // ── Sign-out: push what is pending while the session cookie is still valid ──
   useEffect(() => {
     if (!isServerMode) return;
-    return registerPendingPush(async () => {
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-      await inFlightRef.current;
-      await flushPending();
-      if (pendingCollectionsRef.current.size > 0) {
-        throw new Error("Unsaved changes could not be saved to server storage");
-      }
-      signedOutRef.current = true;
+    return registerWorkspaceSync({
+      flush: async () => {
+        if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+        if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+        await inFlightRef.current;
+        await flushPending();
+        if (pendingCollectionsRef.current.size > 0) {
+          throw new Error("Unsaved changes could not be saved to server storage");
+        }
+        signingOutRef.current = true;
+      },
+      resume: () => {
+        signingOutRef.current = false;
+        const held = Array.from(pendingCollectionsRef.current);
+        for (const collection of held) schedulePush(collection);
+      },
     });
-  }, [isServerMode, flushPending]);
+  }, [isServerMode, flushPending, schedulePush]);
 
   // ── Listen for storage mutations ──
   useEffect(() => {
@@ -356,31 +367,6 @@ export function useStorageSync(): StorageSyncState {
 }
 
 // ── Helpers ──
-
-/** The signed-in account's username, from GET /api/auth/me. Throws when it cannot be read. */
-async function readSignedInUsername(): Promise<string> {
-  const res = await appFetch("/api/auth/me");
-  if (!res.ok) throw new Error(`Could not read the signed-in account: HTTP ${res.status}`);
-  const body = (await res.json()) as { user?: { username?: unknown } };
-  const username = body.user?.username;
-  if (typeof username !== "string" || username === "") {
-    throw new Error("Could not read the signed-in account: no username");
-  }
-  return username;
-}
-
-/**
- * Keep the browser copy only for the account it belongs to. The same owner keeps it; a copy
- * with no owner that was never handed to a server account is local-mode data, migrated into
- * this account as before (docs/STORAGE.md). Anything else starts from this account's server
- * data, so the copy is cleared before the migration and the pull run.
- */
-function claimBrowserCopy(username: string): void {
-  const owner = localStorage.getItem(WORKSPACE_OWNER_KEY);
-  if (owner === username) return;
-  if (owner === null && localStorage.getItem(MIGRATION_FLAG) === null) return;
-  clearAccountWorkspace();
-}
 
 /** Read a collection's current data from the storage facade */
 function getCollectionData(collection: string): unknown {

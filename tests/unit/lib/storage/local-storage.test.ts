@@ -13,6 +13,8 @@ import {
   remove,
   getKey,
   clearAccountWorkspace,
+  claimAccountWorkspace,
+  resetAccountWorkspace,
   workspaceTabsKey,
   WORKSPACE_OWNER_KEY,
   SERVER_MIGRATED_KEY,
@@ -172,5 +174,79 @@ describe("local-storage: clearAccountWorkspace", () => {
 
     expect(localStorage.getItem(getKey("connections"))).toBeNull();
     for (const [key, value] of Object.entries(preferences)) expect(localStorage.getItem(key)).toBe(value);
+  });
+});
+
+describe("local-storage: resetAccountWorkspace", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("clears the copy and leaves it marked as handed to a server account, with no owner", () => {
+    localStorage.setItem(getKey("history"), "[]");
+    localStorage.setItem(workspaceTabsKey("c1"), "[]");
+    localStorage.setItem(WORKSPACE_OWNER_KEY, "admin@libredb.org");
+
+    resetAccountWorkspace(null);
+
+    expect(localStorage.getItem(getKey("history"))).toBeNull();
+    expect(localStorage.getItem(workspaceTabsKey("c1"))).toBeNull();
+    expect(localStorage.getItem(SERVER_MIGRATED_KEY)).not.toBeNull();
+    expect(localStorage.getItem(WORKSPACE_OWNER_KEY)).toBeNull();
+  });
+
+  test("records the given owner", () => {
+    resetAccountWorkspace("user@libredb.org");
+
+    expect(localStorage.getItem(SERVER_MIGRATED_KEY)).not.toBeNull();
+    expect(localStorage.getItem(WORKSPACE_OWNER_KEY)).toBe("user@libredb.org");
+  });
+});
+
+describe("local-storage: claimAccountWorkspace", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem(getKey("connections"), '[{"id":"c1"}]');
+    localStorage.setItem(workspaceTabsKey("default"), "[]");
+  });
+
+  test("the same owner keeps the copy", () => {
+    localStorage.setItem(WORKSPACE_OWNER_KEY, "user@libredb.org");
+    localStorage.setItem(SERVER_MIGRATED_KEY, "2026-10-07");
+
+    claimAccountWorkspace("user@libredb.org");
+
+    expect(localStorage.getItem(getKey("connections"))).not.toBeNull();
+    expect(localStorage.getItem(workspaceTabsKey("default"))).toBe("[]");
+  });
+
+  test("a copy with no owner that was never handed to a server account is kept, still unowned", () => {
+    claimAccountWorkspace("user@libredb.org");
+
+    expect(localStorage.getItem(getKey("connections"))).not.toBeNull();
+    expect(localStorage.getItem(WORKSPACE_OWNER_KEY)).toBeNull();
+    expect(localStorage.getItem(SERVER_MIGRATED_KEY)).toBeNull();
+  });
+
+  test("another owner's copy is cleared and the signed-in account becomes its owner", () => {
+    localStorage.setItem(WORKSPACE_OWNER_KEY, "admin@libredb.org");
+    localStorage.setItem(SERVER_MIGRATED_KEY, "2026-10-07");
+
+    claimAccountWorkspace("user@libredb.org");
+
+    expect(localStorage.getItem(getKey("connections"))).toBeNull();
+    expect(localStorage.getItem(workspaceTabsKey("default"))).toBeNull();
+    expect(localStorage.getItem(WORKSPACE_OWNER_KEY)).toBe("user@libredb.org");
+    expect(localStorage.getItem(SERVER_MIGRATED_KEY)).not.toBeNull();
+  });
+
+  test("a copy left after a sign-out is cleared, whatever was written to it since", () => {
+    resetAccountWorkspace(null);
+    localStorage.setItem(getKey("history"), '[{"id":"h1"}]');
+
+    claimAccountWorkspace("user@libredb.org");
+
+    expect(localStorage.getItem(getKey("history"))).toBeNull();
+    expect(localStorage.getItem(WORKSPACE_OWNER_KEY)).toBe("user@libredb.org");
   });
 });

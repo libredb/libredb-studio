@@ -351,7 +351,7 @@ describe("the /launch page in a browser signed in as someone else", () => {
       localStorage.clear();
     });
 
-    test("server mode: the copy is cleared before the session ends", async () => {
+    test("server mode: the session ends, then the copy is cleared", async () => {
       let atLogout: string | null = "not called";
       serveConflict(async () => {
         atLogout = localStorage.getItem("libredb_connections");
@@ -364,7 +364,8 @@ describe("the /launch page in a browser signed in as someone else", () => {
           "You are signed out. Open Studio again from the platform to continue as bob@example.com.",
         ),
       ).not.toBeNull();
-      expect(atLogout).toBeNull();
+      expect(atLogout).toBe(JSON.stringify([{ id: "c1" }]));
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
       expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
     });
 

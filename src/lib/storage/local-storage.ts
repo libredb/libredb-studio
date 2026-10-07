@@ -161,3 +161,30 @@ export function clearAccountWorkspace(): void {
   }
   for (const key of tabKeys) localStorage.removeItem(key);
 }
+
+/**
+ * Clear the browser copy and mark it as handed to a server account, so `claimAccountWorkspace`
+ * never takes what is written to it afterwards for local-mode data. `owner` is the account the
+ * emptied copy now belongs to, or null after a sign-out.
+ */
+export function resetAccountWorkspace(owner: string | null): void {
+  if (!isClient()) return;
+  clearAccountWorkspace();
+  localStorage.setItem(SERVER_MIGRATED_KEY, new Date().toISOString());
+  if (owner !== null) localStorage.setItem(WORKSPACE_OWNER_KEY, owner);
+}
+
+/**
+ * Server storage mode: keep the browser copy only for the account it belongs to, before anything
+ * reads it. The same owner keeps it. A copy with no owner that was never handed to a server
+ * account is local-mode data, kept for `useStorageSync` to migrate into this account
+ * (docs/STORAGE.md). Anything else is cleared, and the signed-in account starts from its own
+ * server data.
+ */
+export function claimAccountWorkspace(username: string): void {
+  if (!isClient()) return;
+  const owner = localStorage.getItem(WORKSPACE_OWNER_KEY);
+  if (owner === username) return;
+  if (owner === null && localStorage.getItem(SERVER_MIGRATED_KEY) === null) return;
+  resetAccountWorkspace(username);
+}

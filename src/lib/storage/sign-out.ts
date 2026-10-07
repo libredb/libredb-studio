@@ -2,41 +2,63 @@
  * What an explicit sign-out does to this browser's copy of the workspace.
  *
  * In server storage mode the browser copy belongs to the signed-in account, so signing out
- * pushes whatever is still waiting to be pushed, while the session cookie is still valid, and
- * then clears the copy. In local mode the browser copy is the only one and stays.
+ * pushes whatever is still waiting to be pushed while the session cookie is still valid, ends
+ * the session, and only then clears the copy: a sign-out that does not happen leaves the
+ * signed-in account's copy in place. In local mode the browser copy is the only one and stays.
  *
- * Every sign-out path calls `releaseAccountWorkspace()` before POST /api/auth/logout. Only the
- * Studio page mounts `useStorageSync`, which registers its pending push here while it is
- * mounted; the admin dashboard and the launch page have nothing pending and only clear.
+ * Every sign-out path goes through `releaseAccountWorkspace()` with its POST /api/auth/logout.
+ * Only the Studio page mounts `useStorageSync`, which registers itself here while it is mounted;
+ * the admin dashboard and the launch page have nothing pending and only clear.
  */
 
 import { appFetch } from "@/lib/config/base-path";
-import { clearAccountWorkspace } from "./local-storage";
+import { resetAccountWorkspace } from "./local-storage";
 import type { StorageConfigResponse } from "./types";
 
-/** Pushes every pending collection; rejects when one of them did not reach the server. */
-type PendingPush = () => Promise<void>;
+/** The mounted sync, as a sign-out sees it. */
+export interface WorkspaceSync {
+  /** Pushes every pending collection and holds later changes; rejects when one did not land. */
+  flush(): Promise<void>;
+  /** Pushes again: the sign-out did not happen and the session goes on. */
+  resume(): void;
+}
 
-let pendingPush: PendingPush | null = null;
+let mountedSync: WorkspaceSync | null = null;
 
-/** Register the mounted sync's pending push. Returns the unregister function. */
-export function registerPendingPush(push: PendingPush): () => void {
-  pendingPush = push;
+/** Register the mounted sync. Returns the unregister function. */
+export function registerWorkspaceSync(sync: WorkspaceSync): () => void {
+  mountedSync = sync;
   return () => {
-    if (pendingPush === push) pendingPush = null;
+    if (mountedSync === sync) mountedSync = null;
   };
 }
 
 /**
- * Server mode: push what is pending, then clear this browser's copy. Local mode: nothing.
- * Rejects, and clears nothing, when the storage mode cannot be read or a pending push does not
- * land, so the caller reports a failed sign-out instead of dropping unsaved changes.
+ * Server mode: push what is pending, run `signOut`, and once it succeeded clear this browser's
+ * copy, marked so nothing written to it afterwards is migrated into the next account. Local
+ * mode: only `signOut`. Rejects, before `signOut` runs, when the storage mode cannot be read or a
+ * pending push does not land, so the caller reports a failed sign-out instead of dropping unsaved
+ * changes. A refused or failed `signOut` keeps the copy and resumes the sync.
  */
-export async function releaseAccountWorkspace(): Promise<void> {
+export async function releaseAccountWorkspace(signOut: () => Promise<Response>): Promise<Response> {
   const res = await appFetch("/api/storage/config");
   if (!res.ok) throw new Error(`Storage mode unavailable: HTTP ${res.status}`);
   const config = (await res.json()) as StorageConfigResponse;
-  if (!config.serverMode) return;
-  if (pendingPush) await pendingPush();
-  clearAccountWorkspace();
+  if (!config.serverMode) return signOut();
+
+  const sync = mountedSync;
+  if (sync) await sync.flush();
+  let response: Response;
+  try {
+    response = await signOut();
+  } catch (err) {
+    sync?.resume();
+    throw err;
+  }
+  if (!response.ok) {
+    sync?.resume();
+    return response;
+  }
+  resetAccountWorkspace(null);
+  return response;
 }
