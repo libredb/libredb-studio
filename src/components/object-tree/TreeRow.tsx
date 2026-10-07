@@ -299,9 +299,7 @@ export function TreeRow({
         {row.match !== undefined && row.match[1] > row.match[0] ? (
           <>
             {row.label.slice(0, row.match[0])}
-            <mark className="rounded-sm bg-brand/25 text-foreground">
-              {row.label.slice(row.match[0], row.match[1])}
-            </mark>
+            <mark className="rounded-sm bg-brand/25 text-inherit">{row.label.slice(row.match[0], row.match[1])}</mark>
             {row.label.slice(row.match[1])}
           </>
         ) : (
