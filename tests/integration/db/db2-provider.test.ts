@@ -810,6 +810,20 @@ describe("Db2Provider: query", () => {
     expect(result).not.toHaveProperty("warnings");
   });
 
+  test("a repeat is numbered past a name the statement declares later", async () => {
+    userQuery = async () => ({
+      rows: [[1, 2, 3]],
+      rowCount: 1,
+      columns: [column("A", "Integer"), column("A", "Integer"), column("A (2)", "Integer")],
+      diagnostics: [],
+    });
+    const provider = await connected();
+    const result = await provider.query('SELECT 1 AS A, 2 AS A, 3 AS "A (2)" FROM SYSIBM.SYSDUMMY1');
+
+    expect(result.fields).toEqual(["A", "A (3)", "A (2)"]);
+    expect(result.rows).toEqual([{ A: 1, "A (3)": 2, "A (2)": 3 }]);
+  });
+
   // K24, measured on 12.1.0.0 and 11.5.9.0 through 1.0.24 and 1.0.25: a value bound to a CLOB(1M)
   // answers 0 changed rows and is not written, so a result holding one says the grid does not edit it.
   test("a result holding a CLOB says the grid does not edit it (K24)", async () => {

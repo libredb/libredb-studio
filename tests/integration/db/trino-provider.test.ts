@@ -805,6 +805,25 @@ describe("TrinoProvider query", () => {
     expect(result.rows).toEqual([{ c: 1, "c (2)": 2 }]);
   });
 
+  test("numbers a repeat past a name the statement declares later", async () => {
+    const provider = await connectProvider();
+    overrideSurface(
+      "SELECT 1 AS a",
+      rows(
+        [
+          { name: "a", type: "integer" },
+          { name: "a", type: "integer" },
+          { name: "a (2)", type: "integer" },
+        ],
+        [[1, 2, 3]],
+      ),
+    );
+    const result = await provider.query('SELECT 1 AS a, 2 AS a, 3 AS "a (2)"');
+
+    expect(result.fields).toEqual(["a", "a (3)", "a (2)"]);
+    expect(result.rows).toEqual([{ a: 1, "a (3)": 2, "a (2)": 3 }]);
+  });
+
   /**
    * The one value the transport rewrites, proved through the PROVIDER rather than
    * through the seam alone, because this is the layer a caller actually reads.

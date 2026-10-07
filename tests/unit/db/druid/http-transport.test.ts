@@ -419,6 +419,18 @@ describe("DruidHttpTransport results", () => {
     expect(result.rows).toEqual([{ c: 1, "c (2)": 2, "c (3)": 3 }]);
   });
 
+  // A name the statement declares AFTER the repeat is the user's own column too, so
+  // the number skips it rather than showing that column under a generated name.
+  test("never numbers a repeat into a name the result declares later", async () => {
+    handler = () => respond('[["c","c","c (2)"],["LONG","LONG","LONG"],["INTEGER","BIGINT","INTEGER"],[1,2,3]]');
+
+    const result = await makeTransport().query('SELECT 1 AS c, 2 AS c, 3 AS "c (2)"');
+
+    expect(result.fieldNames).toEqual(["c", "c (3)", "c (2)"]);
+    expect(result.rows).toEqual([{ c: 1, "c (3)": 2, "c (2)": 3 }]);
+    expect(result.sqlTypes).toEqual({ c: "INTEGER", "c (3)": "BIGINT", "c (2)": "INTEGER" });
+  });
+
   // Live-verified: `SELECT id FROM libredb_demo WHERE id = -1` answers
   // `[["id"],["LONG"],["BIGINT"]]` - all three header rows, no data.
   test("describes the columns of a result set with no rows", async () => {

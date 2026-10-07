@@ -417,6 +417,10 @@ counter above 2^53 would arrive as a string and `numberField` would read it as a
 
 Column labels are taken from the page's declaration and **de-duplicated** — a second column called
 `x` becomes `x (2)` — because the seam promises `fieldNames` is exactly the key set of every row.
+A number never takes a name the statement itself declares, before or after the repeat:
+`SELECT 1 AS a, 2 AS a, 3 AS "a (2)"` reaches the grid as `a`, `a (3)`, `a (2)`, so the user's own
+`a (2)` keeps its value. Trino names an unaliased expression itself (`_col0`), so a declaration with
+no name is not something the engine sends; if one ever arrives it is shown as `(No column name)`.
 
 ### 3.12 Statelessness is a warning, not a silent surprise
 

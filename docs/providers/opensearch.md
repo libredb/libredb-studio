@@ -259,11 +259,11 @@ Four properties the code depends on:
   must show.
 - **Rows are positional**, so each row is rebuilt against the declared column list rather than read as
   an object; the declared **order** is authoritative in a way object keys never are.
-- **A duplicate output name is REFUSED, not disambiguated.** Measured, `SELECT 1 AS c, 2 AS c` answers
+- **A duplicate output name is REFUSED, not numbered.** Measured, `SELECT 1 AS c, 2 AS c` answers
   HTTP 400, `IllegalArgumentException`, "Multiple entries with same key: c=2 and c=1" — where upstream
   answers 200 with two columns named `c`. So the seam's uniqueness invariant is load-bearing on exactly
-  one of the two products, and `disambiguate()`
-  ([http-transport.ts:695](../../src/lib/db/providers/sql/search/http-transport.ts)) can never fire
+  one of the two products, and the numbering in `uniqueFieldNames()`
+  ([result-fields.ts](../../src/lib/db/utils/result-fields.ts)) can never fire
   here. That is a fact about this engine, not dead code.
 - **`total` and `size` accompany every answer**, so `SearchQueryResult.totalHits` is a real number here
   and `null` upstream. It is deliberately **not used** by the provider

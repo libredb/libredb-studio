@@ -39,6 +39,7 @@ import type { DatabaseConnection } from "@/lib/db/types";
 // An explain strategy may not import from a provider directory, which is why this
 // lives in db/utils rather than here.
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import {
   DRUID_TRANSPORT_FAILURE,
   type DruidQueryOptions,
@@ -261,27 +262,7 @@ function unavailableSegmentCount(headers: Headers): number | null {
 // ============================================================================
 
 /**
- * The declared names, made unique.
- *
- * `SELECT 1 AS c, 2 AS c` really declares `["c","c"]` (live-verified), and a row
- * is a record, so the repeat has to be disambiguated as the row is built or the
- * second column disappears BEFORE the seam rather than after it. The suffix keeps
- * climbing because `SELECT 1 AS c, 2 AS "c (2)", 3 AS c` is legal too, and
- * uniqueness is the invariant the seam states.
- */
-function disambiguate(declared: readonly string[]): string[] {
-  const taken = new Set<string>();
-
-  return declared.map((name) => {
-    let unique = name;
-    for (let repeat = 2; taken.has(unique); repeat += 1) unique = `${name} (${repeat})`;
-    taken.add(unique);
-    return unique;
-  });
-}
-
-/**
- * One type per column, keyed by the disambiguated name.
+ * One type per column, keyed by the unique name.
  *
  * A column the header row did not reach is left OUT rather than given a
  * placeholder: an invented type name would be indistinguishable from one the
@@ -326,7 +307,10 @@ function toQueryResult(
     throw new DruidTransportError(UNREADABLE_PAYLOAD);
   }
 
-  const fieldNames = disambiguate((names as unknown[]).map(String));
+  // `SELECT 1 AS c, 2 AS c` really declares `["c","c"]` (live-verified), and a row is a
+  // record, so the repeat is numbered as the row is built or the second column
+  // disappears BEFORE the seam rather than after it.
+  const fieldNames = uniqueFieldNames((names as unknown[]).map(String));
   return {
     rows: payload.slice(HEADER_ROW_COUNT).map((row) => toRow(fieldNames, row)),
     fieldNames,

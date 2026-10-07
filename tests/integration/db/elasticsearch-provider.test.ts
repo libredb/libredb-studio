@@ -1583,6 +1583,24 @@ describe("ElasticsearchProvider query", () => {
     expect(result.rowCount).toBe(1);
   });
 
+  test("numbers a repeat past a name the statement declares later", async () => {
+    // `SELECT 1 AS a, 2 AS a, 3 AS "a (2)"`: the third column is the user's own `a (2)`,
+    // so the repeat of `a` is numbered `a (3)` and every value stays under its own name.
+    const provider = await connectProvider();
+    overrideSql(
+      ok(
+        '{"columns":[{"name":"a","type":"integer"},{"name":"a","type":"long"},{"name":"a (2)","type":"integer"}],' +
+          '"rows":[[1,2,3]]}',
+      ),
+    );
+
+    const result = await provider.query('SELECT 1 AS a, 2 AS a, 3 AS "a (2)"');
+
+    expect(result.fields).toEqual(["a", "a (3)", "a (2)"]);
+    expect(result.rows).toEqual([{ a: 1, "a (3)": 2, "a (2)": 3 }]);
+    expect(result.columnTypes).toEqual({ a: "integer", "a (3)": "long", "a (2)": "integer" });
+  });
+
   test("shows the alias the user typed, which this product folds into the column name", async () => {
     // `SELECT customer AS who` declares `{"name":"who"}` here and
     // `{"name":"customer","alias":"who"}` on OpenSearch, so reading `name` alone

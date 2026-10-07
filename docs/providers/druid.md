@@ -326,9 +326,12 @@ convincing possible lie: a successful query, over the right datasource, that hap
 nothing. Data loss has to surface as an error, which is the same reason the mid-response truncation
 case above raises instead of returning what it managed to read.
 
-Rows are rebuilt from the declared names, and a repeat is **disambiguated rather than overwritten**:
-`SELECT 1 AS c, 2 AS c` reaches the grid as columns `c` and `c (2)`, both with their values. The
-suffix keeps climbing (`c (3)`, …) because `SELECT 1 AS c, 2 AS "c (2)", 3 AS c` is legal too. Without
+Rows are rebuilt from the declared names, and a repeat is **numbered rather than overwritten**:
+`SELECT 1 AS c, 2 AS c` reaches the grid as columns `c` and `c (2)`, both with their values. A
+number never takes a name the statement itself declares, before or after the repeat:
+`SELECT 1 AS a, 2 AS a, 3 AS "a (2)"` reaches the grid as `a`, `a (3)`, `a (2)`, so the user's own
+`a (2)` keeps its value. A header naming a column with an empty string would be shown as
+`(No column name)`. Without
 this the array format would have been chosen and then thrown away one step later, since a row is a
 `Record<string, unknown>`.
 
@@ -862,11 +865,11 @@ both the reason and the alternative, which is more useful than anything this pro
 
 | Source | `QueryResult` field | Notes |
 |---|---|---|
-| the data rows | `rows` | Rebuilt from the positional arrays, keyed by the disambiguated column names |
-| header row 0 | `fields` | Declared column order, made unique (`c`, `c (2)`); `[]` when the payload carried no header |
+| the data rows | `rows` | Rebuilt from the positional arrays, keyed by the unique column names |
+| header row 0 | `fields` | Declared column order, made unique (`c`, `c (2)`, never a name the payload itself declares); `[]` when the payload carried no header |
 | — | `rowCount` | `rows.length`. There is no second number: no Druid statement mutates, so a mutation count could only ever be zero |
 | the measured exchange | `executionTime` | Rounded milliseconds, **measured by the transport**. The endpoint reports no timing whatsoever, so there is no server-side number this could be preferred over ([§3.2](#32-the-transport-seam-one-interface-one-implementation)) |
-| header row 2 (SQL types) | `columnTypes` | Keyed by the same disambiguated names; **absent** when the payload declared no types. The native types (header row 1) deliberately do not travel — they lie for an expression ([§3.5](#35-the-sql-type-labels-the-column-because-the-native-type-lies)) |
+| header row 2 (SQL types) | `columnTypes` | Keyed by the same unique names; **absent** when the payload declared no types. The native types (header row 1) deliberately do not travel — they lie for an expression ([§3.5](#35-the-sql-type-labels-the-column-because-the-native-type-lies)) |
 | `X-Druid-Response-Context.missingSegments` | `warnings` | One warning naming how many segments were unavailable, and **absent** for a whole answer or an answer that said nothing about availability ([§13](#13-known-limitations--future-work)) |
 
 **`COUNT(DISTINCT ...)` answers an estimate.** Druid documents it as an alias for

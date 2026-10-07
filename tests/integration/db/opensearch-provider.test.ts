@@ -924,7 +924,7 @@ describe("OpenSearch faults", () => {
 
   test("refuses duplicate output names instead of needing them disambiguated", async () => {
     // `SELECT 1 AS c, 2 AS c` answers HTTP 200 on Elasticsearch with TWO columns
-    // named `c`, which is what `disambiguate` upholds the seam's uniqueness
+    // named `c`, which is what `uniqueFieldNames` upholds the seam's uniqueness
     // invariant against. Here the engine refuses the statement outright, so that
     // code can never fire on this product - a fact about the engine, not dead code.
     overridePath(

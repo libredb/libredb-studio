@@ -127,6 +127,19 @@ describe("readResult", () => {
     expect(read.rows).toEqual([{ A: 1, "A (2)": 2, "A (3)": 3 }]);
   });
 
+  test("the numbering skips a name the statement declares later", () => {
+    const read = readResult(
+      result({
+        columns: [column("A", "Integer"), column("A", "BigInt"), column("A (2)", "Integer")],
+        rows: [[1, 2, 3]],
+      }),
+    );
+
+    expect(read.fields).toEqual(["A", "A (3)", "A (2)"]);
+    expect(read.rows).toEqual([{ A: 1, "A (3)": 2, "A (2)": 3 }]);
+    expect(read.columnTypes).toEqual({ A: "INTEGER", "A (3)": "BIGINT", "A (2)": "INTEGER" });
+  });
+
   test("the driver's own diagnostics are passed through as warnings", () => {
     const read = readResult(result({ rowCount: 1, diagnostics: ["SQLSTATE 01003: null values were eliminated"] }));
 

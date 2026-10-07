@@ -867,6 +867,19 @@ describe("TrinoHttpTransport result", () => {
     expect(result.fieldNames).toEqual(["c", "c (2)", "c (3)"]);
   });
 
+  test("never numbers a repeat into a name the result declares later", async () => {
+    sequence(
+      `{"id":"${QUERY_ID}","columns":[{"name":"c","type":"integer"},{"name":"c","type":"bigint"},` +
+        `{"name":"c (2)","type":"integer"}],"data":[[1,2,3]],"stats":${FINISHED_STATS},"warnings":[]}`,
+    );
+
+    const result = await makeTransport().query('SELECT 1 AS c, 2 AS c, 3 AS "c (2)"');
+
+    expect(result.fieldNames).toEqual(["c", "c (3)", "c (2)"]);
+    expect(result.rows).toEqual([{ c: 1, "c (3)": 2, "c (2)": 3 }]);
+    expect(result.columnTypes).toEqual({ c: "integer", "c (3)": "bigint", "c (2)": "integer" });
+  });
+
   test("passes every value encoding through untouched", async () => {
     sequence(TYPED_PAGE);
 
@@ -1031,15 +1044,16 @@ describe("TrinoHttpTransport result", () => {
     ]);
   });
 
-  test("names a column the declaration left unnamed rather than inventing one", async () => {
+  test("names a column the declaration left unnamed as an unnamed column", async () => {
     sequence(
       `{"id":"${QUERY_ID}","columns":[{"type":"integer"},"not-a-column"],"data":[[1,2]],"stats":${FINISHED_STATS},"warnings":[]}`,
     );
 
     const result = await makeTransport().query("SELECT 1, 2");
 
-    expect(result.fieldNames).toEqual(["", " (2)"]);
-    expect(result.columnTypes).toEqual({ "": "integer", " (2)": "" });
+    expect(result.fieldNames).toEqual(["(No column name)", "(No column name) (2)"]);
+    expect(result.rows).toEqual([{ "(No column name)": 1, "(No column name) (2)": 2 }]);
+    expect(result.columnTypes).toEqual({ "(No column name)": "integer", "(No column name) (2)": "" });
   });
 
   test("says the rows were never described when no page declared a column", async () => {

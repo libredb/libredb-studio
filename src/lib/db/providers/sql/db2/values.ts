@@ -12,6 +12,7 @@
  */
 
 import type { PreviewProjection, QueryResult, QueryWarning } from "@/lib/db/types";
+import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { declaredColumnTypes } from "../column-types";
 import type { Db2ArrayQueryResult, Db2ColumnMeta } from "./driver";
 
@@ -99,29 +100,13 @@ function largeObjectEditWarning(types: readonly (readonly [string, string])[]): 
 }
 
 /**
- * The column names made unique, as the Druid and Trino transports make theirs.
- *
- * `SELECT 1 AS A, 2 AS A` really declares two columns named `A`, and a row the grid reads is a
- * record, so the repeat is numbered while the record is built or its value is lost (K15). The
- * number keeps climbing past a name the statement already used, so every field stays unique.
- */
-function uniqueNames(declared: readonly string[]): string[] {
-  const taken = new Set<string>();
-  return declared.map((name) => {
-    let unique = name;
-    for (let repeat = 2; taken.has(unique); repeat += 1) unique = `${name} (${repeat})`;
-    taken.add(unique);
-    return unique;
-  });
-}
-
-/**
  * One driver result, read with `rowMode: "array"`, as the product's `QueryResult` without its
  * execution time. Array rows are what keep a duplicated column's every value (K15, fixed in
- * 1.0.25): an object row keys by name and keeps the last.
+ * 1.0.25): an object row keys by name and keeps the last. `SELECT 1 AS A, 2 AS A` really declares
+ * two columns named `A`, so the repeat is numbered while the record is built.
  */
 export function readResult(result: Db2ArrayQueryResult): Omit<QueryResult, "executionTime"> {
-  const fields = uniqueNames(result.columns.map((column) => column.name));
+  const fields = uniqueFieldNames(result.columns.map((column) => column.name));
   const types = result.columns.map((column, index) => [fields[index], db2TypeName(column)] as const);
   const isResultSet = result.columns.length > 0;
   const rows = result.rows.map((row) => Object.fromEntries(fields.map((field, index) => [field, row[index]])));

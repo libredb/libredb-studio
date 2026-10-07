@@ -256,10 +256,12 @@ Three properties the code depends on:
   as an object. The declared **order** is therefore authoritative in a way object keys never are.
 - **Duplicate output names are legal here.** Measured, `SELECT 1 AS c, 2 AS c, 3 AS c` answers HTTP
   200 with `[{"name":"c",…},{"name":"c",…},{"name":"c",…}]` and the row `[1,2,3]`. A `SearchRow` is a
-  record, so without `disambiguate()`
-  ([http-transport.ts:695](../../src/lib/db/providers/sql/search/http-transport.ts)) the second and
-  third values would vanish **before** the seam. They reach the grid as `c`, `c (2)`, `c (3)`, and the
-  suffix keeps climbing because `SELECT 1 AS c, 2 AS "c (2)", 3 AS c` is legal too. **The same
+  record, so without `uniqueFieldNames()`
+  ([result-fields.ts](../../src/lib/db/utils/result-fields.ts)) the second and
+  third values would vanish **before** the seam. They reach the grid as `c`, `c (2)`, `c (3)`. A
+  number never takes a name the statement itself declares, before or after the repeat:
+  `SELECT 1 AS a, 2 AS a, 3 AS "a (2)"` reaches the grid as `a`, `a (3)`, `a (2)`, so the user's own
+  `a (2)` keeps its value. A column declared with no name would be shown as `(No column name)`. **The same
   statement is refused outright by OpenSearch**, so this invariant is load-bearing on exactly one of
   the two products — which is a fact about that engine, not dead code
   ([opensearch.md §3.4](./opensearch.md#34-the-success-envelope-schemadatarows-a-separate-alias-and-a-count)).
@@ -595,8 +597,8 @@ everything it *would* have accepted, which is more useful than anything substitu
 
 | Source | `QueryResult` field | Notes |
 |---|---|---|
-| `rows` | `rows` | Rebuilt from the positional arrays, keyed by the disambiguated column names; an integer past 2^53 arrives as its exact digits ([§5.3](#53-row-values-arrive-as-the-mappings-json)) |
-| `columns[].name` | `fields` | Declared order, made unique (`c`, `c (2)`); `[]` when the answer described no columns |
+| `rows` | `rows` | Rebuilt from the positional arrays, keyed by the unique column names; an integer past 2^53 arrives as its exact digits ([§5.3](#53-row-values-arrive-as-the-mappings-json)) |
+| `columns[].name` | `fields` | Declared order, made unique (`c`, `c (2)`, never a name the answer itself declares); `[]` when the answer described no columns |
 | — | `rowCount` | `rows.length`. There is no second number: no statement here mutates, so a mutation count could only ever be zero |
 | the measured exchange | `executionTime` | Rounded milliseconds, **measured by this process**. Neither the body nor the headers carry any timing, so there is no server number to prefer |
 | `columns[].type` | `columnTypes` | The engine's **mapping** types (`keyword`, `double`, `datetime`); **absent** when the answer declared none ([§3.9](#39-columns-are-labelled-with-mapping-types-not-sql-types)) |

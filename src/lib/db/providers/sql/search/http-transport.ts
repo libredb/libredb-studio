@@ -27,7 +27,7 @@
  *    and is REFUSED outright by OpenSearch - HTTP 400,
  *    `IllegalArgumentException`, "Multiple entries with same key: c=3 and c=2".
  *    So the seam's uniqueness invariant is load-bearing on exactly one of the two
- *    products, and `disambiguate` below is what upholds it; on OpenSearch it can
+ *    products, and `uniqueFieldNames` is what upholds it; on OpenSearch it can
  *    never fire, which is a fact about that engine and not dead code.
  * 2. **Rows are positional on both** (`rows` / `datarows` are arrays of arrays), so
  *    a row is rebuilt against the declared column list rather than read as an
@@ -76,6 +76,7 @@ import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import {
   type SearchClusterHealth,
   type SearchDialectId,
@@ -682,31 +683,6 @@ interface DeclaredColumn {
 }
 
 /**
- * The declared names, made unique.
- *
- * Measured on Elasticsearch: `SELECT 1 AS c, 2 AS c, 3 AS c` answers HTTP 200 with
- * three columns all named `c` and the row `[1,2,3]`. A `SearchRow` is a record, so
- * without this the second and third values would vanish BEFORE the seam rather
- * than after it, and `columnTypes` would silently describe only the last of them.
- * The suffix keeps climbing because `SELECT 1 AS c, 2 AS "c (2)", 3 AS c` is legal
- * too, and uniqueness is the invariant the seam states.
- *
- * On OpenSearch this can never fire - the same statement is refused with
- * `IllegalArgumentException`, "Multiple entries with same key: c=3 and c=2" - which
- * is a difference between the engines, not a reason to make the transport branch.
- */
-function disambiguate(declared: readonly string[]): string[] {
-  const taken = new Set<string>();
-
-  return declared.map((name) => {
-    let unique = name;
-    for (let repeat = 2; taken.has(unique); repeat += 1) unique = `${name} (${repeat})`;
-    taken.add(unique);
-    return unique;
-  });
-}
-
-/**
  * Declared order and types, or nulls when the envelope described neither.
  *
  * The types are copied verbatim because they are MAPPING types, not SQL types
@@ -725,7 +701,15 @@ function describeColumns(
   const columns = declared as DeclaredColumn[];
   // The alias is what the user typed and therefore what the grid must show. Only
   // OpenSearch keeps it separate from `name`; see `aliasKey` for the measurement.
-  const fieldNames = disambiguate(
+  //
+  // Measured on Elasticsearch: `SELECT 1 AS c, 2 AS c, 3 AS c` answers HTTP 200 with
+  // three columns all named `c` and the row `[1,2,3]`. A `SearchRow` is a record, so
+  // without unique names the second and third values would vanish BEFORE the seam,
+  // and `columnTypes` would silently describe only the last of them. On OpenSearch
+  // the same statement is refused with `IllegalArgumentException`, "Multiple entries
+  // with same key: c=3 and c=2", which is a difference between the engines, not a
+  // reason to make the transport branch.
+  const fieldNames = uniqueFieldNames(
     columns.map((column) => {
       const alias = spec.aliasKey === null ? undefined : (column as Record<string, unknown>)[spec.aliasKey];
       return String(typeof alias === "string" && alias.length > 0 ? alias : column.name);
