@@ -18,7 +18,7 @@
  */
 
 /**
- * One result row.
+ * One result row, keyed by the names in `fieldNames`.
  *
  * Unlike Couchbase SQL++ - where `SELECT RAW` yields bare scalars and the
  * equivalent declaration is a known unsoundness - ClickHouse has no projection
@@ -42,6 +42,11 @@ export interface ClickHouseQueryResult {
    * describe the rows (see `rawText`). Declared order matters: it is the only
    * way to render columns the way the statement projected them, since object
    * keys of an all-null first row cannot be trusted to be complete.
+   *
+   * Every name is unique, and it is the key each row and `columnTypes` use: a
+   * name the server declares twice (a join can qualify a column into a name the
+   * statement already has, `b.x`) is numbered with `uniqueFieldNames`, and its
+   * value read by position, because two values under one key would leave one.
    */
   fieldNames: string[] | null;
 

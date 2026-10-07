@@ -279,10 +279,15 @@ let sentAuth: (string | null)[] = [];
 let networkFailure: Error | null = null;
 let replyFor: (sql: string) => Reply;
 
-/** The JSON envelope, verbatim in shape: meta, data, rows, statistics. */
+/**
+ * The JSONCompact envelope, verbatim in shape: meta, data, rows, statistics. Each
+ * fixture row is written as an object for readability and sent as the array of its
+ * values in `meta` order, the way the server sends it.
+ */
 function envelope(rows: Record<string, unknown>[], meta?: { name: string; type: string }[]): string {
   const columns = meta ?? Object.keys(rows[0] ?? {}).map((name) => ({ name, type: "String" }));
-  return JSON.stringify({ meta: columns, data: rows, rows: rows.length, statistics: { elapsed: 0.0012 } });
+  const data = rows.map((row) => columns.map((column) => row[column.name]));
+  return JSON.stringify({ meta: columns, data, rows: rows.length, statistics: { elapsed: 0.0012 } });
 }
 
 function jsonReply(rows: Record<string, unknown>[], meta?: { name: string; type: string }[]): Reply {
@@ -316,7 +321,7 @@ const DENIED = () =>
 
 function toResponse(reply: Reply): Response {
   const headers = new Headers({ "content-type": "application/json" });
-  const format = reply.format === undefined ? "JSON" : reply.format;
+  const format = reply.format === undefined ? "JSONCompact" : reply.format;
   if (format !== null) headers.set("x-clickhouse-format", format);
   const summary = reply.summary === undefined ? { written_rows: "0", elapsed_ns: "1200000" } : reply.summary;
   if (summary !== null) headers.set("x-clickhouse-summary", JSON.stringify(summary));
@@ -742,7 +747,7 @@ describe("ClickHouseProvider query", () => {
   });
 
   test("surfaces a format the user chose as one synthetic text column", async () => {
-    // Live-verified: an explicit FORMAT in the user's SQL beats the JSON the
+    // Live-verified: an explicit FORMAT in the user's SQL beats the JSONCompact the
     // transport asked for, so the body is TSV. The user asked for that
     // deliberately, so it is shown rather than thrown away or parsed.
     const provider = await connectProvider();
@@ -800,28 +805,24 @@ describe("ClickHouseProvider query", () => {
     expect(Object.keys(result.columnTypes ?? {})).toEqual(result.fields);
   });
 
-  test("numbers a column the server declares twice, each keyed and typed under its own name", async () => {
-    // Measured on 26.7.1.1315: `SELECT number, number FROM numbers(2)` and
-    // `SELECT rand(), rand()` answer two `meta` columns of one name and a `data`
-    // object naming the key twice with one value, since one name is one column in
-    // ClickHouse (even `rand()` is evaluated once). The body is the live answer
-    // with one more column, so a numbered column is seen beside an ordinary one.
+  test("numbers a column the server declares twice, keeping each value under its own name", async () => {
+    // Measured on 26.7.1.1315: the engine qualifies a joined column itself (`b.x`),
+    // and that name can collide with a column already called `b.x`, so `meta`
+    // names it twice with two different values. Under `default_format=JSON` the
+    // row object named the key twice and JSON.parse kept only 3; the body below is
+    // the live JSONCompact answer, which keeps both by position.
     const provider = await connectProvider();
     replyFor = () => ({
       body:
-        '{"meta":[{"name":"number","type":"UInt64"},{"name":"number","type":"UInt64"},{"name":"n","type":"UInt8"}],' +
-        '"data":[{"number":"0","number":"0","n":1},{"number":"1","number":"1","n":2}],' +
-        '"rows":2,"statistics":{"elapsed":0.0012}}',
+        '{"meta":[{"name":"x","type":"UInt8"},{"name":"b.x","type":"UInt8"},{"name":"b.x","type":"UInt8"}],' +
+        '"data":[[1,2,3]],"rows":1,"statistics":{"elapsed":0.0012}}',
     });
 
-    const result = await provider.query("SELECT number, number, 1 AS n FROM numbers(2)");
+    const result = await provider.query("SELECT a.x, b.x, 3 AS `b.x` FROM (SELECT 1 AS x) a, (SELECT 2 AS x) b");
 
-    expect(result.fields).toEqual(["number", "number (2)", "n"]);
-    expect(result.rows).toEqual([
-      { number: "0", "number (2)": "0", n: 1 },
-      { number: "1", "number (2)": "1", n: 2 },
-    ]);
-    expect(result.columnTypes).toEqual({ number: "UInt64", "number (2)": "UInt64", n: "UInt8" });
+    expect(result.fields).toEqual(["x", "b.x", "b.x (2)"]);
+    expect(result.rows).toEqual([{ x: 1, "b.x": 2, "b.x (2)": 3 }]);
+    expect(result.columnTypes).toEqual({ x: "UInt8", "b.x": "UInt8", "b.x (2)": "UInt8" });
   });
 
   test("leaves the type channel absent for a write, which declares no columns", async () => {
@@ -862,7 +863,7 @@ describe("ClickHouseProvider query", () => {
         body:
           '{"meta":[{"name":"id","type":"UInt32"},{"name":"amount","type":"Decimal(38, 10)"},' +
           '{"name":"small","type":"Decimal(10, 2)"},{"name":"f","type":"Float64"}],' +
-          `"data":[{"id":1,"amount":${amount},"small":${small},"f":1.5}],"rows":1,"statistics":{"elapsed":0.001}}`,
+          `"data":[[1,${amount},${small},1.5]],"rows":1,"statistics":{"elapsed":0.001}}`,
       };
     };
 

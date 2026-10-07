@@ -71,7 +71,6 @@ import {
 } from "@/lib/db/types";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
-import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { ClickHouseHttpTransport } from "./http-transport";
@@ -454,19 +453,6 @@ function sslForScheme(url: URL, configured: DatabaseConnection["ssl"]): Database
 }
 
 /**
- * Each row keyed by the unique field names, reading the value of the column's declared name.
- *
- * Measured on 26.7.1.1315: an empty alias is a syntax error and `SELECT 1 AS a, 2 AS a` is refused
- * (MULTIPLE_EXPRESSIONS_FOR_ALIAS), and a join qualifies a repeated column itself (`id`, `t2.id`), but
- * `SELECT number, number FROM numbers(2)` and `SELECT rand(), rand()` declare two columns of one name. One name
- * is one column in ClickHouse, so both carry the same value (even `rand()` is evaluated once) and the JSON row
- * names the key twice with it: no value is lost, yet `fields` would repeat a name, which the grid cannot key.
- */
-function keyedByField(rows: readonly ClickHouseRow[], declared: readonly string[], fields: readonly string[]) {
-  return rows.map((row) => Object.fromEntries(fields.map((field, index) => [field, row[declared[index]]])));
-}
-
-/**
  * The neutral transport result as the grid's row contract.
  *
  * The server's own duration is preferred over the round trip because it excludes
@@ -475,9 +461,7 @@ function keyedByField(rows: readonly ClickHouseRow[], declared: readonly string[
  */
 function toQueryResult(result: ClickHouseQueryResult, measuredMs: number): QueryResult {
   const textual = result.rawText !== null;
-  const declared = result.fieldNames ?? [];
-  const fields = uniqueFieldNames(declared);
-  const rows = textual ? [{ [RAW_TEXT_COLUMN]: result.rawText }] : keyedByField(result.rows, declared, fields);
+  const rows = textual ? [{ [RAW_TEXT_COLUMN]: result.rawText }] : result.rows;
   const reportedMs = Math.round(result.executionTimeMs);
   // Declared types travel with the result (#273), verbatim wrappers included:
   // `Nullable(String)` is what tells the user the column accepts nulls, and for a
@@ -485,12 +469,13 @@ function toQueryResult(result: ClickHouseQueryResult, measuredMs: number): Query
   // no catalog entry for it. An empty map means the envelope described no
   // columns (a write, or a format the user chose), which stays absent rather than
   // shipping a `{}` the grid would have to check.
-  const declaredTypes = result.columnTypes ?? {};
-  const columnTypes = Object.fromEntries(declared.map((name, index) => [fields[index], declaredTypes[name]]));
+  const columnTypes = result.columnTypes ?? {};
 
   return {
     rows,
-    fields: textual ? [RAW_TEXT_COLUMN] : fields,
+    // The transport already numbered a name the server declared twice, so these
+    // are unique and are the keys every row uses.
+    fields: textual ? [RAW_TEXT_COLUMN] : (result.fieldNames ?? []),
     // A write returns no rows, so its row count is what the server says it
     // changed - verbatim, including the zero a queued mutation reports.
     rowCount: rows.length > 0 ? rows.length : result.mutationCount,

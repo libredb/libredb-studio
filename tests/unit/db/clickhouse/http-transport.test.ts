@@ -40,11 +40,11 @@ function summaryHeader(overrides: Record<string, string> = {}): string {
   return JSON.stringify({ read_rows: "2", written_rows: "2", elapsed_ns: "58781261", ...overrides });
 }
 
-/** Headers a JSON-format 200 really carries. */
+/** Headers a JSONCompact-format 200 really carries. */
 function jsonHeaders(overrides: Record<string, string> = {}): Record<string, string> {
   return {
     "content-type": "application/json; charset=UTF-8",
-    "x-clickhouse-format": "JSON",
+    "x-clickhouse-format": "JSONCompact",
     "x-clickhouse-summary": summaryHeader(),
     ...overrides,
   };
@@ -64,7 +64,7 @@ const SELECT_BODY = JSON.stringify({
     { name: "id", type: "Int32" },
     { name: "big", type: "UInt64" },
   ],
-  data: [{ id: 1, big: "18446744073709551615" }],
+  data: [[1, "18446744073709551615"]],
   rows: 1,
   rows_before_limit_at_least: 2,
   statistics: { elapsed: 0.001164102, rows_read: 2, bytes_read: 12 },
@@ -147,10 +147,13 @@ describe("ClickHouseHttpTransport request", () => {
     expect(lastUrl().pathname).toBe("/");
   });
 
-  test("asks for the JSON envelope through default_format", async () => {
+  // JSONCompact rather than JSON: a row is an array of values in `meta` order, so two
+  // columns of one name keep both values (see "reads a column the server names
+  // twice by position" below).
+  test("asks for the JSONCompact envelope through default_format", async () => {
     await makeTransport().query("SELECT 1");
 
-    expect(lastParam("default_format")).toBe("JSON");
+    expect(lastParam("default_format")).toBe("JSONCompact");
   });
 
   // Spec 2.1: without this, `SELECT toUInt64(18446744073709551615)` arrives as an
@@ -254,7 +257,7 @@ describe("ClickHouseHttpTransport request", () => {
       },
     });
 
-    expect(lastParam("default_format")).toBe("JSON");
+    expect(lastParam("default_format")).toBe("JSONCompact");
     expect(lastParam("output_format_json_quote_64bit_integers")).toBe("1");
     expect(lastParam("output_format_json_quote_decimals")).toBe("1");
     expect(lastParam("database")).toBe("demo");
@@ -470,7 +473,8 @@ describe("ClickHouseHttpTransport JSON results", () => {
   });
 
   test("reports no elapsed time rather than a guess when neither source has one", async () => {
-    handler = () => respond(JSON.stringify({ meta: [], data: [] }), { headers: { "x-clickhouse-format": "JSON" } });
+    handler = () =>
+      respond(JSON.stringify({ meta: [], data: [] }), { headers: { "x-clickhouse-format": "JSONCompact" } });
 
     const result = await makeTransport().query("SELECT 1");
 
@@ -492,12 +496,67 @@ describe("ClickHouseHttpTransport JSON results", () => {
     ]);
   });
 
-  test("describes nothing when the envelope carries no meta", async () => {
-    handler = () => respond(JSON.stringify({ data: [{ x: 1 }] }), { headers: jsonHeaders() });
+  // Live, 26.7.1.1315: the engine qualifies a joined column itself (`b.x`), and that
+  // name can collide with a column already called `b.x`, so `meta` names it twice
+  // with two different values. A JSON object row keeps only the last of them; the
+  // JSONCompact row keeps both, by position.
+  test("reads a column the server names twice by position, numbering the repeat", async () => {
+    handler = () =>
+      respond(
+        JSON.stringify({
+          meta: [
+            { name: "x", type: "UInt8" },
+            { name: "b.x", type: "UInt8" },
+            { name: "b.x", type: "UInt16" },
+          ],
+          data: [[1, 2, 3]],
+          rows: 1,
+        }),
+        { headers: jsonHeaders() },
+      );
+
+    const result = await makeTransport().query("SELECT a.x, b.x, 3 AS `b.x` FROM (SELECT 1 AS x) a, (SELECT 2 AS x) b");
+
+    expect(result.fieldNames).toEqual(["x", "b.x", "b.x (2)"]);
+    expect(result.rows).toEqual([{ x: 1, "b.x": 2, "b.x (2)": 3 }]);
+    expect(result.columnTypes).toEqual({ x: "UInt8", "b.x": "UInt8", "b.x (2)": "UInt16" });
+  });
+
+  test("refuses a row whose value count differs from the declared columns", async () => {
+    handler = () =>
+      respond(JSON.stringify({ meta: [{ name: "x", type: "UInt8" }], data: [[1, 2]] }), { headers: jsonHeaders() });
+
+    const error = await captureError(() => makeTransport().query("SELECT 1"));
+
+    expect(error.code).toBe(0);
+    expect(error.message).toBe("ClickHouse answered a row of 2 values for 1 declared columns");
+  });
+
+  test("refuses a row that is not an array of values", async () => {
+    handler = () =>
+      respond(JSON.stringify({ meta: [{ name: "x", type: "UInt8" }], data: [{ x: 1 }] }), { headers: jsonHeaders() });
+
+    const error = await captureError(() => makeTransport().query("SELECT 1"));
+
+    expect(error.message).toBe("ClickHouse answered a row that is not an array of values");
+  });
+
+  // Without `meta` a positional row cannot be named, so the rows are refused rather
+  // than shown under no column at all.
+  test("refuses rows when the envelope carries no meta", async () => {
+    handler = () => respond(JSON.stringify({ data: [[1]] }), { headers: jsonHeaders() });
+
+    const error = await captureError(() => makeTransport().query("SELECT 1"));
+
+    expect(error.message).toBe("ClickHouse answered a row of 1 values for 0 declared columns");
+  });
+
+  test("describes nothing when the envelope carries neither meta nor rows", async () => {
+    handler = () => respond(JSON.stringify({ data: [] }), { headers: jsonHeaders() });
 
     const result = await makeTransport().query("SELECT 1");
 
-    expect(result.rows).toEqual([{ x: 1 }]);
+    expect(result.rows).toEqual([]);
     expect(result.fieldNames).toBeNull();
     expect(result.columnTypes).toBeNull();
   });
@@ -586,7 +645,9 @@ describe("ClickHouseHttpTransport non-JSON formats", () => {
     expect(result.executionTimeMs).toBeCloseTo(58.781261, 6);
   });
 
-  test.each(["TSV", "CSV", "JSONEachRow", "Pretty"])("does not parse a %s response", async (format) => {
+  // `FORMAT JSON` included: the transport parses only the envelope it asked for, and
+  // a JSON object row would lose a value under a repeated name.
+  test.each(["TSV", "CSV", "JSON", "JSONEachRow", "Pretty"])("does not parse a %s response", async (format) => {
     handler = () => respond("payload", { headers: { "x-clickhouse-format": format } });
 
     expect((await makeTransport().query(`SELECT 1 FORMAT ${format}`)).rawText).toBe("payload");
@@ -670,7 +731,7 @@ describe("ClickHouseHttpTransport failures", () => {
       respond(
         JSON.stringify({
           meta: [{ name: "query", type: "String" }],
-          data: [{ query: "Code: 62. DB::Exception: Syntax error (SYNTAX_ERROR)" }],
+          data: [["Code: 62. DB::Exception: Syntax error (SYNTAX_ERROR)"]],
         }),
         { headers: jsonHeaders() },
       );
@@ -823,7 +884,7 @@ const MIDSTREAM_MESSAGE =
 function midstreamBody(tag: string = MIDSTREAM_TAG, message: string = MIDSTREAM_MESSAGE): string {
   return [
     '{\n\t"meta":\n\t[\n\t\t{ "name": "number", "type": "UInt64" }\n\t],\n\n\t"data":\n\t[',
-    '\t\t{ "number": 180999 }',
+    '\t\t["180999"],',
     "__exception__",
     tag,
     message,
@@ -856,7 +917,7 @@ describe("ClickHouseHttpTransport mid-stream exceptions", () => {
     // `SELECT '__exception__' AS x` is a legal statement. Only the per-request
     // tag distinguishes a real trailer from user data that happens to say this.
     handler = () =>
-      respond(JSON.stringify({ meta: [{ name: "x", type: "String" }], data: [{ x: "__exception__" }] }), {
+      respond(JSON.stringify({ meta: [{ name: "x", type: "String" }], data: [["__exception__"]] }), {
         headers: midstreamHeaders(),
       });
 

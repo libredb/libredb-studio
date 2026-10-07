@@ -26,6 +26,7 @@ import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import {
   type ClickHouseQueryOptions,
   type ClickHouseQueryResult,
@@ -45,8 +46,16 @@ const DEFAULT_TLS_PORT = 8443;
 /**
  * The envelope this file parses. Requested per statement instead of appended to
  * the user's SQL, so what the editor sends is what the server parses (spec 1.2).
+ *
+ * JSONCompact and not JSON, because only a positional row keeps every value.
+ * Measured on 26.7.1.1315: the engine qualifies a joined column itself (`b.x`), and
+ * that name can collide with a column already called `b.x`, so
+ * `SELECT a.x, b.x, 3 AS \`b.x\` FROM (SELECT 1 AS x) a, (SELECT 2 AS x) b` declares
+ * `b.x` twice. Under JSON the row is the object `{"x": 1,"b.x": 2,"b.x": 3}` and
+ * JSON.parse keeps only 3; under JSONCompact it is `[1, 2, 3]`, with the same `meta`
+ * and the same 64-bit and Decimal quoting.
  */
-const RESPONSE_FORMAT = "JSON";
+const RESPONSE_FORMAT = "JSONCompact";
 
 /** Header names are matched case-insensitively by `Headers.get`, hence lower case. */
 const SUMMARY_HEADER = "x-clickhouse-summary";
@@ -194,15 +203,42 @@ function executionTimeMs(summary: ResponseSummary, envelope: ClickHouseJsonEnvel
  * Declared column order and types, or nulls when the envelope described neither.
  * Types are copied verbatim, wrappers included (spec 1.7): `Nullable(String)` is
  * what tells the user the column is nullable, and collapsing it would lose that.
+ *
+ * A name the server declares twice is numbered by the shared helper (`b.x`,
+ * `b.x (2)`), so every row and type is keyed by a name no other column has.
  */
 function describeColumns(envelope: ClickHouseJsonEnvelope): Pick<ClickHouseQueryResult, "fieldNames" | "columnTypes"> {
   if (!Array.isArray(envelope.meta)) return { fieldNames: null, columnTypes: null };
 
   const columns = envelope.meta as EnvelopeColumn[];
+  const fieldNames = uniqueFieldNames(columns.map((column) => column.name));
   return {
-    fieldNames: columns.map((column) => column.name),
-    columnTypes: Object.fromEntries(columns.map((column) => [column.name, column.type])),
+    fieldNames,
+    columnTypes: Object.fromEntries(columns.map((column, index) => [fieldNames[index], column.type])),
   };
+}
+
+/**
+ * Each JSONCompact row, an array of values in `meta` order, as an object keyed by
+ * the field names. A row that is not an array, or whose value count differs from
+ * the declared columns, is refused: naming its values would be a guess.
+ */
+function keyedRows(data: unknown, fieldNames: readonly string[] | null): ClickHouseRow[] {
+  if (!Array.isArray(data)) return [];
+
+  const names = fieldNames ?? [];
+  return data.map((values: unknown) => {
+    if (!Array.isArray(values)) {
+      throw new ClickHouseTransportError("ClickHouse answered a row that is not an array of values", 0);
+    }
+    if (values.length !== names.length) {
+      throw new ClickHouseTransportError(
+        `ClickHouse answered a row of ${values.length} values for ${names.length} declared columns`,
+        0,
+      );
+    }
+    return Object.fromEntries(names.map((name, index) => [name, values[index]]));
+  });
 }
 
 function parseEnvelope(text: string): ClickHouseJsonEnvelope {
@@ -252,9 +288,10 @@ function toQueryResult(outcome: HttpOutcome): ClickHouseQueryResult {
   if (outcome.headers.get(FORMAT_HEADER) !== RESPONSE_FORMAT) return untabulated(summary, outcome.text);
 
   const envelope = parseEnvelope(outcome.text);
+  const columns = describeColumns(envelope);
   return {
-    rows: Array.isArray(envelope.data) ? (envelope.data as ClickHouseRow[]) : [],
-    ...describeColumns(envelope),
+    rows: keyedRows(envelope.data, columns.fieldNames),
+    ...columns,
     executionTimeMs: executionTimeMs(summary, envelope),
     mutationCount: summary.mutationCount,
     rawText: null,

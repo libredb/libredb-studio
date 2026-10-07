@@ -57,10 +57,10 @@ from:
 | `DatabaseProvider` slot | ClickHouse realisation | Mechanism |
 |-------------------------|-------------------------|-----------|
 | "Table" (the relation kind) | A table, displayed as `name` or `database.name` | `system.tables`, filtered to non-system databases |
-| "Row" | One result row | JSON `data` array element |
+| "Row" | One result row | JSONCompact `data` array element, read by position |
 | Columns | The declared column list, types verbatim | `system.columns` / the query response `meta` |
 | Primary key | The MergeTree sparse primary index | `system.tables.primary_key`, `is_in_primary_key` |
-| `query(sql)` | One SQL statement | `POST /?default_format=JSON` |
+| `query(sql)` | One SQL statement | `POST /?default_format=JSONCompact` |
 | Indexes | Data-skipping indexes, and nothing else ([below](#indexes-are-only-the-skipping-indexes)) | `system.data_skipping_indices` |
 | Foreign keys | none (ClickHouse has none) | always `[]` |
 | `getOverview()` / storage | Server identity, connection counts, part sizes | `version()`, `uptime()`, `system.metrics`, `system.parts`, `system.disks` |
@@ -262,18 +262,26 @@ The upside is real: **the schema tree and the overview panel survive a restricte
 monitoring panels and maintenance operations that need their own grant degrade
 ([§7](#7-monitoring--health)).
 
-### 3.4 `default_format=JSON` as a URL parameter, never appended to the SQL
+### 3.4 `default_format=JSONCompact` as a URL parameter, never appended to the SQL
 
-`POST /?default_format=JSON` with the raw statement as the body returns the JSON envelope. User SQL
+`POST /?default_format=JSONCompact` with the raw statement as the body returns the JSONCompact envelope. User SQL
 is never rewritten to add a format — the editor sends exactly what the user typed.
 
+JSONCompact and not JSON, because only a positional row keeps every value.
+Its `meta` is the same as JSON's, and each `data` row is an array of values in `meta` order instead of an object keyed by column name.
+Measured on 26.7.1.1315: the engine qualifies a joined column itself (`b.x`), and that name can collide with a column the statement already calls `b.x`.
+``SELECT a.x, b.x, 3 AS `b.x` FROM (SELECT 1 AS x) a, (SELECT 2 AS x) b`` declares `b.x` twice; under JSON the row is `{"x": 1,"b.x": 2,"b.x": 3}` and `JSON.parse` keeps only `3`, under JSONCompact it is `[1, 2, 3]`.
+The transport numbers the repeated name with the shared `uniqueFieldNames` helper and keys each row by position ([§5.2](#52-result-shaping)).
+A row that is not an array, or whose value count differs from the `meta` column count, is refused with an error rather than shown under guessed names.
+
 **An explicit `FORMAT` in the user's own SQL wins over `default_format`, live-verified.**
-`SELECT 1 FORMAT TSV` genuinely comes back as TSV even with `default_format=JSON` on the URL. The
+`SELECT 1 FORMAT TSV` genuinely comes back as TSV even with `default_format=JSONCompact` on the URL. The
 response header `X-ClickHouse-Format` reports the format the server actually used, and the transport
 branches on it before parsing the body
 ([`toQueryResult`](../../src/lib/db/providers/sql/clickhouse/http-transport.ts)): when it is not
-`JSON`, the raw text comes back as `rawText` rather than being parsed or thrown away — the user asked
-for that format deliberately. The provider then surfaces it as one synthetic column,
+`JSONCompact`, the raw text comes back as `rawText` rather than being parsed or thrown away: the user asked
+for that format deliberately.
+That includes an explicit `FORMAT JSON`: it comes back as the server's text under `__text`, like any other format the user chose. The provider then surfaces it as one synthetic column,
 `__text` (`RAW_TEXT_COLUMN`, [`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts)),
 the same convention Couchbase uses for a scalar projection.
 
@@ -757,19 +765,21 @@ that is how the rest of the application calls every provider uniformly.
 
 | Source | `QueryResult` field | Notes |
 |--------|----------------------|-------|
-| `data` array | `rows` | One object per row, keyed by the names in `fields` and holding the values the server returned; 64-bit integers and every `Decimal` arrive as strings ([§3.5](#35-64-bit-integers-and-decimals-are-quoted-on-purpose-to-stop-jsonparse-from-rounding-them)) |
-| `meta` array | `fields` | Declared column order, a repeated name numbered (see below); `[]` when the source could not describe the rows (a non-JSON format, or a write) |
+| `data` array | `rows` | One object per row, built by position from the row's array of values and keyed by the names in `fields`; 64-bit integers and every `Decimal` arrive as strings ([§3.5](#35-64-bit-integers-and-decimals-are-quoted-on-purpose-to-stop-jsonparse-from-rounding-them)) |
+| `meta` array | `fields` | Declared column order, a repeated name numbered (see below); `[]` when the source could not describe the rows (a format the user chose, or a write) |
 | — | `rowCount` | `rows.length` when there are rows; otherwise `mutationCount` from `X-ClickHouse-Summary`, verbatim, zero included ([§3.6](#36-writes-return-an-empty-200-body-the-row-count-lives-in-a-header)) |
 | `X-ClickHouse-Summary.elapsed_ns` | `executionTime` | The server's own duration, preferred because it excludes network latency; falls back to the envelope's `statistics.elapsed` (seconds), then to the measured wall clock when neither source reported anything |
-| a non-JSON `X-ClickHouse-Format` | `rows` / `fields` | One synthetic row `{ __text: "<raw body>" }` under the single column `__text` ([§3.4](#34-default_formatjson-as-a-url-parameter-never-appended-to-the-sql)) |
+| any `X-ClickHouse-Format` but `JSONCompact` | `rows` / `fields` | One synthetic row `{ __text: "<raw body>" }` under the single column `__text` ([§3.4](#34-default_formatjsoncompact-as-a-url-parameter-never-appended-to-the-sql)) |
 | `meta` array | `columnTypes` | The declared type per column, keyed by its name in `fields` and spelled exactly as ClickHouse spells it — `Nullable(String)`, `LowCardinality(String)`, `Enum8('x' = 1)` — because the wrapper is what tells the user the column is nullable or low-cardinality. **Absent** when the envelope described no columns: a write, a format the user chose, or a statement with no result set. For a computed column such as `count()` this is the only source of a type at all, since no catalog entry exists for it (issue #273) |
 
-Every name in `fields` is non-empty and appears once, measured on 26.7.1.1315.
+Every name in `fields` is non-empty and appears once, and every column keeps its own value, measured on 26.7.1.1315.
 An empty quoted alias is a syntax error, so no column comes back unnamed.
 Two expressions under one alias (`SELECT 1 AS a, 2 AS a`) are refused with `MULTIPLE_EXPRESSIONS_FOR_ALIAS`, and a join qualifies a repeated column itself (`id`, `t2.id`).
-But `SELECT number, number FROM numbers(2)` and `SELECT rand(), rand()` declare two `meta` columns of one name, and each `data` object names that key twice with one value.
-One name is one column in ClickHouse, so the two values are always identical (even `rand()` is evaluated once) and nothing is lost, but a repeated name in `fields` would give the grid two columns of one id.
-So the repeat is numbered as every provider numbers it: `fields` is `["number", "number (2)"]`, each row carries the value under both names, and `columnTypes` is keyed by the numbered names.
+But the server can still declare two `meta` columns of one name, in two ways.
+`SELECT number, number FROM numbers(2)` and `SELECT rand(), rand()` repeat one expression, which ClickHouse evaluates once, so both columns carry the same value.
+The qualified name can also collide with a name the statement already has: ``SELECT a.x, b.x, 3 AS `b.x` FROM (SELECT 1 AS x) a, (SELECT 2 AS x) b`` declares `x`, `b.x`, `b.x` with the values `1`, `2`, `3`.
+The same holds for ``SELECT * FROM (SELECT 1 AS x) a JOIN (SELECT 2 AS x, 7 AS `b.x`) b ON 1=1`` (`1`, `2`, `7`), and `b.x` is also how a Nested sub-column is named.
+Rows are read by position ([§3.4](#34-default_formatjsoncompact-as-a-url-parameter-never-appended-to-the-sql)), so both values survive, and the repeat is numbered as every provider numbers it: `fields` is `["x", "b.x", "b.x (2)"]`, the row is `{ x: 1, "b.x": 2, "b.x (2)": 3 }`, and `columnTypes` is keyed by the numbered names.
 
 ### 5.3 EXPLAIN
 
