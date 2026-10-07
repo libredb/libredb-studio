@@ -123,18 +123,28 @@ mock.module("@/components/PivotTable", () => ({
   },
 }));
 
+/** A schema, and a connection type, the docs and diff views throw on: input one of them cannot draw. */
+const SCHEMA_THROWS = "__schema_throws__";
+const throwsOnSchema = (schema: unknown) =>
+  Array.isArray(schema) && schema.some((object) => (object as { name?: string }).name === SCHEMA_THROWS);
+const TYPE_THROWS = "__type_throws__";
+
 mock.module("@/components/DatabaseDocs", () => ({
-  DatabaseDocs: () => {
+  DatabaseDocs: (props: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    if (throwsOnSchema(props.schema) || props.databaseType === TYPE_THROWS) throw new Error("");
     return React.createElement("div", { "data-testid": "databasedocs" }, "DatabaseDocs");
   },
 }));
 
 mock.module("@/components/SchemaDiff", () => ({
-  SchemaDiff: () => {
+  SchemaDiff: (props: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    if (throwsOnSchema(props.schema) || (props.connection as { type?: string } | null)?.type === TYPE_THROWS) {
+      throw new Error("");
+    }
     return React.createElement("div", { "data-testid": "schemadiff" }, "SchemaDiff");
   },
 }));
@@ -495,6 +505,56 @@ describe("BottomPanel", () => {
         rerender(<BottomPanel {...(history as React.ComponentProps<typeof BottomPanel>)} />);
         expect(queryByTestId("render-error")).toBeNull();
         expect(getByTestId("queryhistory")).toBeTruthy();
+      } finally {
+        quiet.mockRestore();
+      }
+    });
+  });
+
+  /*
+    The docs and diff views draw the schema, not the result, so a schema one of them cannot
+    draw must not leave the notice up after the schema is refreshed or the connection changes.
+  */
+  describe.each([
+    ["docs", "databasedocs"],
+    ["schemadiff", "schemadiff"],
+  ])("a schema the %s view cannot draw", (mode, testId) => {
+    const BAD_SCHEMA = [{ name: SCHEMA_THROWS }];
+
+    test("is followed by the refreshed schema", () => {
+      const quiet = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const props = createDefaultProps({ mode, schema: BAD_SCHEMA });
+        const { getByTestId, queryByTestId, rerender } = render(
+          <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+        );
+        expect(getByTestId("render-error")).toBeTruthy();
+
+        const next = createDefaultProps({ mode, schema: [{ name: "orders" }] });
+        rerender(<BottomPanel {...(next as React.ComponentProps<typeof BottomPanel>)} />);
+        expect(queryByTestId("render-error")).toBeNull();
+        expect(getByTestId(testId)).toBeTruthy();
+      } finally {
+        quiet.mockRestore();
+      }
+    });
+
+    test("is followed by another connection over the same schema", () => {
+      const quiet = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const schema = [{ name: "orders" }];
+        const broken = { id: "c1", name: "broken", type: TYPE_THROWS, createdAt: new Date(0) };
+        const props = createDefaultProps({ mode, schema, activeConnection: broken });
+        const { getByTestId, queryByTestId, rerender } = render(
+          <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+        );
+        expect(getByTestId("render-error")).toBeTruthy();
+
+        const other = { id: "c2", name: "other", type: "postgres", createdAt: new Date(0) };
+        const next = createDefaultProps({ mode, schema, activeConnection: other });
+        rerender(<BottomPanel {...(next as React.ComponentProps<typeof BottomPanel>)} />);
+        expect(queryByTestId("render-error")).toBeNull();
+        expect(getByTestId(testId)).toBeTruthy();
       } finally {
         quiet.mockRestore();
       }

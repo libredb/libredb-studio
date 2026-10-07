@@ -594,8 +594,12 @@ export const BottomPanel = React.memo(function BottomPanel({
             so the fallback is what the user sees while a split chunk is in flight and
             the error boundary is what they see when it never arrives or a view throws.
             The boundary outlives every result, mode and tab, so it is reset by what it
-            shows: one result a view cannot draw must not fail every later one. */}
-        <ChunkBoundary label="This view" resetKeys={[mode, result, agentArtifact, explainPlan]}>
+            shows: one result a view cannot draw must not fail every later one. The docs
+            and diff views draw the schema and the connection, so those reset it too. */}
+        <ChunkBoundary
+          label="This view"
+          resetKeys={[mode, result, agentArtifact, explainPlan, schema, activeConnection]}
+        >
           <React.Suspense fallback={<ViewLoading label="Loading the panel" />}>
             {mode === "pivot" ? (
               <PivotTable
