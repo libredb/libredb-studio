@@ -1,5 +1,11 @@
 import { describe, test, expect } from "bun:test";
-import { describeWarning, formatCellCopy, formatCellValue, renderContextFor } from "@/components/results-grid/utils";
+import {
+  describeWarning,
+  formatCellCopy,
+  formatCellValue,
+  generatedFieldNames,
+  renderContextFor,
+} from "@/components/results-grid/utils";
 import type { VectorColumn } from "@/lib/db/vector/types";
 
 // =============================================================================
@@ -148,5 +154,25 @@ describe("formatCellValue and formatCellCopy with a column's declaration", () =>
   test("a masked cell's text in a declared column draws and copies as the text", () => {
     expect(formatCellValue("***", context).display).toBe("***");
     expect(formatCellCopy("***", context)).toBe("***");
+  });
+});
+
+describe("generatedFieldNames", () => {
+  test("names the columns a result had to name itself", () => {
+    expect([...generatedFieldNames(["id", "name", "id (2)", "(No column name)", "(No column name) (2)"])]).toEqual([
+      "id (2)",
+      "(No column name)",
+      "(No column name) (2)",
+    ]);
+  });
+
+  // The direction of every doubt is a refusal: a column the statement aliased `id (2)` beside
+  // an `id` cannot be told from a numbered repeat, and neither is a column of the table.
+  test("counts a numbered name as generated only when its base is in the result too", () => {
+    expect([...generatedFieldNames(["total (2)", "a (3)", "a"])]).toEqual(["a (3)"]);
+  });
+
+  test("leaves a result with no repeat and no unnamed column alone", () => {
+    expect(generatedFieldNames(["id", "name", "price (usd)"]).size).toBe(0);
   });
 });

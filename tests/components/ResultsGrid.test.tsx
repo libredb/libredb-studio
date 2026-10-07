@@ -1845,6 +1845,42 @@ describe("ResultsGrid", () => {
       expect(findEditInput(container)).not.toBeUndefined();
     });
 
+    // A repeated or unnamed column comes back under a name the result made up (`name (2)`,
+    // `(No column name)`), and inline edit writes the field name into `UPDATE ... SET`.
+    // Measured on PostgreSQL 16: `SET "name (2)"` on a table with `id, name` is refused as
+    // a missing column, and on a table that does have a column of that name it would
+    // write the wrong one. So such a cell opens no editor, and says why.
+    test("a column the result named itself opens no editor, and says why", () => {
+      const onCellChange = mock(() => {});
+      const { container, getByTestId } = render(
+        React.createElement(ResultsGrid, {
+          result: {
+            rows: [{ id: 1, name: "Alice", "name (2)": "Alice-copy", "(No column name)": "ALICE" }],
+            fields: ["id", "name", "name (2)", "(No column name)"],
+            rowCount: 1,
+            executionTime: 1,
+          },
+          editingEnabled: true,
+          onCellChange,
+          pendingChanges: [],
+        }),
+      );
+      fireEvent.click(getByTestId("view-table"));
+
+      const row = findDesktopRow(container, "Alice-copy")!;
+      for (const text of ["Alice-copy", "ALICE"]) {
+        const refused = within(row).getByText(text).parentElement!;
+        expect(refused.getAttribute("title")).toContain("not a column of the table");
+        expect(refused.classList.contains("cursor-text")).toBe(false);
+        fireEvent.doubleClick(refused);
+        expect(findEditInput(container)).toBeUndefined();
+      }
+
+      // The column the statement named itself still edits.
+      fireEvent.doubleClick(findDesktopCell(container, "Alice")!);
+      expect(findEditInput(container)).not.toBeUndefined();
+    });
+
     test("Enter key commits a desktop-table edit and calls onCellChange", () => {
       const onCellChange = mock(() => {});
       const { container, getByTestId } = render(

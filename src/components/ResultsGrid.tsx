@@ -40,6 +40,7 @@ import {
   foldFilterCase,
   formatCellCopy,
   formatCellValue,
+  generatedFieldNames,
   renderContextFor,
 } from "@/components/results-grid/utils";
 import {
@@ -62,6 +63,8 @@ export interface CellChange {
 }
 
 const CLEAR_FILTER_LABEL = "Clear filter";
+const GENERATED_FIELD_EDIT_REASON =
+  "This column's name was given by the result, not the table: it is not a column of the table, so it cannot be edited here. Edit the SQL manually.";
 const EMPTY_RESULT_HINT = "The operation was successful, but the result set is currently empty.";
 /**
  * What a write statement answers: no columns, no rows, and the count of rows it changed. The
@@ -482,9 +485,12 @@ export function ResultsGrid({
   }, []);
 
   // The reason a column cannot be edited inline, keyed by field, for the columns whose declared
-  // type the provider refuses (K24 on Db2). Such a cell opens no editor and shows the reason.
+  // type the provider refuses (K24 on Db2), and for the columns the result had to name itself:
+  // an edit writes the field name into `UPDATE ... SET`, and `name (2)` or `(No column name)` is
+  // no column of the table. Such a cell opens no editor and shows the reason.
   const editRefusals = useMemo(() => {
     const refusals = new Map<string, string>();
+    for (const field of generatedFieldNames(result.fields)) refusals.set(field, GENERATED_FIELD_EDIT_REASON);
     if (inlineEditRefusedColumns === undefined) return refusals;
     const refused = new RegExp(inlineEditRefusedColumns.type);
     for (const field of result.fields) {

@@ -1,3 +1,4 @@
+import { UNNAMED_FIELD } from "@/lib/db/utils/result-fields";
 import type { VectorColumn } from "@/lib/db/vector/types";
 import type { QueryWarning } from "@/lib/types";
 import { classifyValue } from "./renderers/classify";
@@ -5,6 +6,29 @@ import { getRenderer } from "./renderers/registry";
 import type { RenderContext } from "./renderers/types";
 
 const WARNING_FALLBACK_LABEL = "Warning";
+
+const NUMBERED_REPEAT = /^(.*) \((\d+)\)$/;
+
+/**
+ * The columns of a result that carry a name the result made up rather than one the statement
+ * gave: `UNNAMED_FIELD` for a column with no name, and `name (N)` for a repeat of `name`
+ * (`uniqueFieldNames`). Neither is a column of any table, so nothing may write to one by name.
+ *
+ * A numbered name counts only when its base is in the result too. That cannot tell a repeat
+ * from a column the statement itself aliased `id (2)` beside an `id`, and it does not need to:
+ * the alias is not a table column either, and a refusal costs a click where a guess costs a
+ * write to the wrong column.
+ */
+export function generatedFieldNames(fields: readonly string[]): ReadonlySet<string> {
+  const present = new Set(fields);
+  return new Set(
+    fields.filter((field) => {
+      if (field === UNNAMED_FIELD) return true;
+      const repeat = NUMBERED_REPEAT.exec(field);
+      return repeat !== null && present.has(repeat[1]);
+    }),
+  );
+}
 
 /**
  * How one engine warning reads to the user - shared by the stats bar's badge and
