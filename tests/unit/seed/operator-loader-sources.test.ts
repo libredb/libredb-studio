@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import type { Mock } from "bun:test";
 import type {
   OperatorEntry,
@@ -396,6 +396,30 @@ describe("operator-loader with several sources", () => {
     const load = await loadOperatorSources();
     expect(load.entries.map((loaded) => loaded.connection.id)).toEqual(["a"]);
     expect(sources[0]?.load).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the previous load when the source list throws, so a clock that steps back fills again", async () => {
+    process.env.SEED_CACHE_TTL_MS = "60000";
+    process.env.SEED_CONFIG_PATH = "/seed/a.yaml";
+    sources = [fakeSource("SEED_CONFIG_PATH", async () => ok([entry("a", "/seed/a.yaml")]))];
+    const T0 = 1_800_000_000_000;
+    let clock = T0;
+    const now = spyOn(Date, "now").mockImplementation(() => clock);
+    try {
+      await loadOperatorSources();
+
+      const thrown = new Error("the source registry failed");
+      registryFailure = thrown;
+      clock = T0 + 60_000;
+      await expect(loadOperatorSources()).rejects.toBe(thrown);
+
+      // Inside the first fill's TTL again: the failed fill must not leave the old load to be served.
+      clock = T0 + 30_000;
+      await loadOperatorSources();
+      expect(sources[0]?.load).toHaveBeenCalledTimes(2);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   describe("a fill that something newer superseded (Review Focus A1.1)", () => {

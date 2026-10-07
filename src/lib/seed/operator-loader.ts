@@ -112,12 +112,16 @@ export async function loadOperatorSources(): Promise<OperatorLoad> {
 }
 
 /**
- * Rethrows a fill's error after clearing `inflight` when it still names that fill. A throw runFill does not catch
- * itself (the source list, a source's location) must not leave the fill in flight, or every later call of its mode
- * would join the rejection until resetCache(); a failed fill is never cached either way.
+ * Rethrows a fill's error after clearing `inflight` and the previous load when it still names that fill. A throw
+ * runFill does not catch itself (the source list, a source's location) must not leave the fill in flight, or every
+ * later call of its mode would join the rejection until resetCache(), nor leave the previous load to be served by a
+ * clock that steps back into its TTL or a flip back to its literal mode; a failed fill is never cached either way.
  */
 function forgetFailedFill(fill: Fill, err: unknown): never {
-  if (inflight === fill) inflight = null;
+  if (inflight === fill) {
+    cache = null;
+    inflight = null;
+  }
   throw err;
 }
 
