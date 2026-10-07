@@ -712,11 +712,18 @@ function describeColumns(
   //
   // A declared name that is not text would reach the grid as its stringification
   // ("[object Object]"), a label the engine never sent, so it is refused; an absent
-  // one is an unnamed column.
+  // one is an unnamed column. An alias that is present but not text is refused too:
+  // passing over it for `name` would show the name the user aliased away.
   const fieldNames = uniqueFieldNames(
     columns.map((column) => {
       const alias = spec.aliasKey === null ? undefined : (column as Record<string, unknown>)[spec.aliasKey];
       if (typeof alias === "string" && alias.length > 0) return alias;
+      if (alias !== undefined && alias !== null && typeof alias !== "string") {
+        throw new SearchTransportError(
+          "engine",
+          `${spec.label} declared a column whose alias is not text, so the result cannot be read`,
+        );
+      }
       const name = column.name ?? "";
       if (typeof name !== "string") {
         throw new SearchTransportError(

@@ -257,6 +257,7 @@ Four properties the code depends on:
   ([http-transport.ts:719](../../src/lib/db/providers/sql/search/http-transport.ts)) prefers the alias
   when the dialect declares an `aliasKey`, and the alias is what the user typed, so it is what the grid
   must show.
+  An alias that is present but not text (an object, a number) is refused with an engine error, as a name that is not text is, rather than passed over for the name the user aliased away; a `null` alias is no alias, and the name stands.
 - **Rows are positional**, so each row is rebuilt against the declared column list rather than read as
   an object; the declared **order** is authoritative in a way object keys never are, and a row whose
   value count differs from the declaration is refused rather than padded with nulls or cut.

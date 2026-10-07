@@ -22,7 +22,7 @@
  *   (`http-transport.ts:554-557`).
  * - `SELECT customer AS who` declares `{"name":"customer","alias":"who"}` here and
  *   `{"name":"who"}` on Elasticsearch, so reading `name` alone would put the WRONG
- *   label on the same statement's column (`http-transport.ts:724-727`).
+ *   label on the same statement's column (`http-transport.ts:719-731`).
  * - A missing index is HTTP **404** (`IndexNotFoundException`) where Elasticsearch
  *   answers HTTP 400 - the same typo, two statuses, which is why categorisation is
  *   body-driven (`http-transport.ts:35-42`).
@@ -782,6 +782,33 @@ describe("OpenSearch envelope", () => {
     expect(result.fieldNames).toEqual(["who"]);
     expect(result.columnTypes).toEqual({ who: "keyword" });
     expect(result.rows).toEqual([{ who: "acme" }]);
+  });
+
+  // An alias that is present but not text would otherwise be passed over for `name`, which is
+  // the name the user aliased away: the wrong label above. It is refused, as a name that is
+  // not text is; an alias the engine sends as null is no alias, and the name stands.
+  test.each<[string, string]>([
+    ["an object", '{"first":"who"}'],
+    ["a number", "7"],
+  ])("refuses a column whose declared alias is %s", async (_label, alias) => {
+    replyFor = () =>
+      ok(
+        `{"schema":[{"name":"customer","alias":${alias},"type":"keyword"}],"datarows":[["acme"]],"total":1,"size":1,"status":200}`,
+      );
+
+    await expect(transport().query("SELECT customer AS who FROM probe_orders")).rejects.toThrow(
+      "OpenSearch declared a column whose alias is not text, so the result cannot be read",
+    );
+  });
+
+  test("names a column by its name when the alias is null", async () => {
+    replyFor = () =>
+      ok(
+        '{"schema":[{"name":"customer","alias":null,"type":"keyword"}],"datarows":[["acme"]],"total":1,"size":1,"status":200}',
+      );
+
+    const result = await transport().query("SELECT customer FROM probe_orders");
+    expect(result.fieldNames).toEqual(["customer"]);
   });
 
   test("reports the total member as totalHits, which Elasticsearch sends no counterpart for", async () => {
