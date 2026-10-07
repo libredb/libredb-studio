@@ -35,6 +35,8 @@ import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { keyRowsByPosition } from "@/lib/db/utils/positional-rows";
+import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { isSQLiteInt64Digits } from "../sqlite-int64";
 import {
   type LibSQLBatchOutcome,
@@ -289,36 +291,36 @@ function encodeValue(param: unknown): HranaValue {
   return { type: "text", value: String(param) };
 }
 
-/** The column names and the types the engine declared for them. */
+/**
+ * The column names and the types the engine declared for them.
+ *
+ * The names are the declared ones through `uniqueFieldNames`: a column the engine did not
+ * name is `(No column name)` and a repeated name is numbered `id (2)`, so every column keeps a
+ * key of its own. A positional `column_N` used to stand in for a missing name, and it could
+ * collide with a column the statement itself named `column_1`.
+ */
 function readColumns(cols: unknown): { fieldNames: string[]; columnTypes: Record<string, string> } {
-  const fieldNames: string[] = [];
   const columnTypes: Record<string, string> = {};
-  if (!Array.isArray(cols)) return { fieldNames, columnTypes };
+  if (!Array.isArray(cols)) return { fieldNames: [], columnTypes };
 
-  for (const [index, raw] of cols.entries()) {
-    const col = (asRecord(raw) ?? {}) as HranaColumn;
-    // A column the engine did not name still occupies a position, so it gets a
-    // positional name rather than being dropped - dropping one would shift every
-    // later value into the wrong key.
-    const name = typeof col.name === "string" && col.name !== "" ? col.name : `column_${index + 1}`;
-    fieldNames.push(name);
-    if (typeof col.decltype === "string" && col.decltype !== "") columnTypes[name] = col.decltype;
+  const declared = cols.map((raw) => (asRecord(raw) ?? {}) as HranaColumn);
+  const fieldNames = uniqueFieldNames(declared.map((col) => (typeof col.name === "string" ? col.name : "")));
+  for (const [index, col] of declared.entries()) {
+    if (typeof col.decltype === "string" && col.decltype !== "") columnTypes[fieldNames[index]] = col.decltype;
   }
 
   return { fieldNames, columnTypes };
 }
 
-function readRows(rows: unknown, fieldNames: string[]): LibSQLRow[] {
+/**
+ * The rows, keyed by position under `fieldNames`. A row that is not a list, or carries a value
+ * count other than the column count, is refused by `keyRowsByPosition` rather than padded.
+ */
+function readRows(rows: unknown, fieldNames: string[], sql: string): LibSQLRow[] {
   if (!Array.isArray(rows)) return [];
 
-  return rows.map((raw) => {
-    const values = Array.isArray(raw) ? raw : [];
-    const row: LibSQLRow = {};
-    for (const [index, name] of fieldNames.entries()) {
-      row[name] = decodeValue(values[index]);
-    }
-    return row;
-  });
+  const values = rows.map((raw) => (Array.isArray(raw) ? raw.map(decodeValue) : []));
+  return keyRowsByPosition(fieldNames, values, "libsql", sql);
 }
 
 function toNumber(raw: unknown, fallback: number): number {
@@ -333,7 +335,7 @@ function toNumber(raw: unknown, fallback: number): number {
  * than shifting every later result onto the wrong statement - the shape a short
  * answer would otherwise silently produce.
  */
-function readOutcome(raw: unknown): LibSQLBatchOutcome {
+function readOutcome(raw: unknown, sql: string): LibSQLBatchOutcome {
   const step = asRecord(raw);
   if (!step) return { ok: false, error: new LibSQLTransportError(NO_RESULT, 200) };
 
@@ -347,15 +349,15 @@ function readOutcome(raw: unknown): LibSQLBatchOutcome {
     return { ok: false, error: new LibSQLTransportError(message, 200, code) };
   }
 
-  return { ok: true, result: toStatementResult(asRecord(step.response)?.result) };
+  return { ok: true, result: toStatementResult(asRecord(step.response)?.result, sql) };
 }
 
-function toStatementResult(raw: unknown): LibSQLStatementResult {
+function toStatementResult(raw: unknown, sql: string): LibSQLStatementResult {
   const result = (asRecord(raw) ?? {}) as HranaStatementResult;
   const { fieldNames, columnTypes } = readColumns(result.cols);
 
   return {
-    rows: readRows(result.rows, fieldNames),
+    rows: readRows(result.rows, fieldNames, sql),
     fieldNames,
     columnTypes,
     affectedRowCount: toNumber(result.affected_row_count, 0),
@@ -473,7 +475,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
     // fails the whole call: there is no per-statement answer to hand back.
     if (!Array.isArray(results)) throw new LibSQLTransportError(NOT_AN_ENVELOPE, 200);
 
-    return statements.map((_statement, index) => readOutcome(results[index]));
+    return statements.map((statement, index) => readOutcome(results[index], statement.sql));
   }
 
   public async serverVersion(): Promise<string | null> {

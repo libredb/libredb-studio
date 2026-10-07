@@ -519,6 +519,28 @@ describe("LibSQLProvider query", () => {
     await provider.disconnect();
   });
 
+  test("a repeated or empty column name keeps its own value and type", async () => {
+    // The shape sqld answers for `SELECT o.id, c.id, 1 AS "" ...`: two columns declared `id`
+    // and one declared with an empty name. Keyed by name, the second id replaced the first.
+    server = () =>
+      result(
+        [
+          ["id", "INTEGER"],
+          ["id", "INTEGER"],
+          ["", null],
+        ],
+        [[int(100), int(1), int(7)]],
+      );
+    const provider = await connected();
+
+    const answer = await provider.query('SELECT o.id, c.id, 1 AS "" FROM probe_orders o JOIN probe_customers c');
+
+    expect(answer.fields).toEqual(["id", "id (2)", "(No column name)"]);
+    expect(answer.rows).toEqual([{ id: 100, "id (2)": 1, "(No column name)": 7 }]);
+    expect(answer.columnTypes).toEqual({ id: "INTEGER", "id (2)": "INTEGER" });
+    await provider.disconnect();
+  });
+
   test("omits columnTypes entirely when the engine declared none", async () => {
     const provider = await connected();
 

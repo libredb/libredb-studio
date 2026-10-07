@@ -19,13 +19,12 @@
  */
 
 /**
- * One result row, keyed by the column name the engine declared.
+ * One result row, keyed by the names in `fieldNames`.
  *
  * libSQL answers a statement with declared columns and positional rows, so an
  * object row is a mapping this layer performs rather than a shape the wire
- * carries. Duplicate column names collapse - `SELECT 1 AS a, 2 AS a` keeps the
- * last - which is SQLite's own behaviour through every driver here and is why
- * `fieldNames` is carried separately.
+ * carries. The keys are the declared names made unique (`uniqueFieldNames`), so
+ * `SELECT 1 AS a, 2 AS a` answers `a` and `a (2)` and keeps both values.
  */
 export type LibSQLRow = Record<string, unknown>;
 
@@ -34,7 +33,9 @@ export interface LibSQLStatementResult {
   rows: LibSQLRow[];
 
   /**
-   * Column order exactly as the engine declared it. Never null: libSQL declares
+   * The names `rows` are keyed under, one per column in the order the engine declared
+   * them: the declared names, with an unnamed column named `(No column name)` and a
+   * repeat numbered `a (2)`. Never null: libSQL declares
    * columns for every statement, answering an empty list for one that projects
    * nothing (a `CREATE TABLE`), which is a declaration rather than an absence.
    */

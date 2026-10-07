@@ -425,6 +425,12 @@ columnTypes? }`.
 - **Parameters are positional** (`?`), encoded per type: an integer as a decimal string, a
   non-integral number as a float, a boolean as SQLite's own 1/0, `Uint8Array` as base64, a `Date` as
   an ISO string. Passing none sends no `args` member at all.
+- **`fields`** are the declared column names, each non-empty and unique, and the rows are keyed by position under them in [`hrana-transport.ts`](../../src/lib/db/providers/sql/libsql/hrana-transport.ts).
+  A repeated name comes back numbered: two columns declared `id` are `id` and `id (2)`, each with its own value and declared type.
+  A column declared with no name, or with an empty one (`1 AS ""`), comes back as `(No column name)`.
+  Before this, a repeated name kept only the last value while `fields` listed it twice, and an unnamed column was `column_N`, which a column the statement itself named `column_1` overwrote.
+  Pinned against the Hrana answer shape in `tests/unit/db/libsql/hrana-transport.test.ts` and `tests/integration/db/libsql-provider.test.ts`; not re-measured against a live sqld in this change.
+  A row whose value count is not the column count is refused with an error rather than padded.
 - **`rowCount`** is the row count for a read and the engine's `affected_row_count` for a write.
 - **`columnTypes`** carries SQLite's declared types verbatim (`INTEGER`, `TEXT`) and is OMITTED when
   the engine declared none — which it does for every computed column and every PRAGMA, so an absent

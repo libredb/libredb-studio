@@ -748,13 +748,14 @@ describe("LibSQLHranaTransport tolerances", () => {
     await transport().execute("SELECT 1", { timeoutMs: 250 });
   });
 
-  test("names a column the engine left unnamed by its position rather than dropping it", async () => {
+  test("names a column the engine left unnamed rather than dropping it", async () => {
     withResult({
-      cols: [{ decltype: null }, { name: "", decltype: "TEXT" }],
+      cols: [{ decltype: null }, { name: "", decltype: "TEXT" }, { name: "column_1", decltype: "INTEGER" }],
       rows: [
         [
           { type: "integer", value: "1" },
           { type: "text", value: "x" },
+          { type: "integer", value: "3" },
         ],
       ],
       affected_row_count: 0,
@@ -762,13 +763,38 @@ describe("LibSQLHranaTransport tolerances", () => {
       query_duration_ms: 0.01,
     });
 
-    const result = await transport().execute("SELECT 1, 'x'");
+    const result = await transport().execute("SELECT 1, 'x' AS \"\", 3 AS column_1");
 
-    expect(result.fieldNames).toEqual(["column_1", "column_2"]);
-    expect(result.rows).toEqual([{ column_1: 1, column_2: "x" }]);
-    // The empty name is not a declared type either: the second column's TEXT
-    // lands under the positional name, never under "".
-    expect(result.columnTypes).toEqual({ column_2: "TEXT" });
+    // A positional `column_1` collided with a column the statement itself named so, and the
+    // later value replaced the earlier one. The unnamed columns are named apart instead.
+    expect(result.fieldNames).toEqual(["(No column name)", "(No column name) (2)", "column_1"]);
+    expect(result.rows).toEqual([{ "(No column name)": 1, "(No column name) (2)": "x", column_1: 3 }]);
+    // The empty name is not a declared type either: the second column's TEXT lands under
+    // its own name, never under "".
+    expect(result.columnTypes).toEqual({ "(No column name) (2)": "TEXT", column_1: "INTEGER" });
+  });
+
+  test("a repeated column name keeps both values and both types", async () => {
+    withResult({
+      cols: [
+        { name: "id", decltype: "INTEGER" },
+        { name: "id", decltype: "TEXT" },
+      ],
+      rows: [
+        [
+          { type: "integer", value: "100" },
+          { type: "text", value: "c1" },
+        ],
+      ],
+      affected_row_count: 0,
+      query_duration_ms: 0,
+    });
+
+    const result = await transport().execute("SELECT o.id, c.id FROM o JOIN c");
+
+    expect(result.fieldNames).toEqual(["id", "id (2)"]);
+    expect(result.rows).toEqual([{ id: 100, "id (2)": "c1" }]);
+    expect(result.columnTypes).toEqual({ id: "INTEGER", "id (2)": "TEXT" });
   });
 
   test("reads a column declaration that is not a list as no columns at all", async () => {
@@ -779,7 +805,26 @@ describe("LibSQLHranaTransport tolerances", () => {
     expect(result).toMatchObject({ fieldNames: [], rows: [], affectedRowCount: 0, executionTimeMs: 0 });
   });
 
-  test("reads a row that is not a list as a row of nulls, keeping the column count", async () => {
+  test("refuses a row whose value count is not the column count, rather than padding it", async () => {
+    withResult({
+      cols: [{ name: "a" }, { name: "b" }],
+      rows: [
+        [
+          { type: "integer", value: "1" },
+          { type: "integer", value: "2" },
+        ],
+        [{ type: "integer", value: "3" }],
+      ],
+      affected_row_count: 0,
+      query_duration_ms: 0,
+    });
+
+    await expect(transport().execute("SELECT a, b FROM t")).rejects.toThrow(
+      "Row 2 carries 1 values for 2 result columns",
+    );
+  });
+
+  test("refuses a row that is not a list at all", async () => {
     withResult({
       cols: [{ name: "a" }, { name: "b" }],
       rows: [null],
@@ -787,7 +832,9 @@ describe("LibSQLHranaTransport tolerances", () => {
       query_duration_ms: 0,
     });
 
-    expect((await transport().execute("SELECT a, b FROM t")).rows).toEqual([{ a: null, b: null }]);
+    await expect(transport().execute("SELECT a, b FROM t")).rejects.toThrow(
+      "Row 1 carries 0 values for 2 result columns",
+    );
   });
 
   test("decodes a float the protocol quoted, and a text value it did not", async () => {
