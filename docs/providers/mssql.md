@@ -484,7 +484,7 @@ This is the only source of a type for a computed column or an ad-hoc projection.
 because `BIGINT` reaches the browser as a string and `DECIMAL` as a number (§5.3): measured before
 this existed, the probe table's `BIGINT` and `UNIQUEIDENTIFIER` columns both exported as
 `NVARCHAR(MAX)` and its `DECIMAL(10,2)` as `FLOAT` - which is the same evidence read the right way
-round, a string exporting as text and a number as a float. Both execution paths fill it from the same column map - including
+round, a string exporting as text and a number as a float. All three execution paths fill it from the same column map - including
 `queryInTransaction()`, which had the map available all along and simply never read it.
 
 ### 5.5 What the SQL INSERT export writes for a BIT

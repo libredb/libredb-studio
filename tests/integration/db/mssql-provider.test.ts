@@ -2146,7 +2146,7 @@ describe("MSSQLProvider declared column types", () => {
     expect(Object.hasOwn(result, "resultSets")).toBe(false);
   });
 
-  test("the key is omitted entirely when the recordset carries no column map", async () => {
+  test("the key is omitted entirely when no column's metadata carries a declaration", async () => {
     mockQueryFn = async () => ({ recordset: [{ a: 1 }], rowsAffected: [1] });
 
     await provider.connect();
@@ -2353,7 +2353,7 @@ describe("MSSQLProvider zoneless value types (#1132)", () => {
     expect(result.rows[0].t).toBeNull();
   });
 
-  test("a result without the driver's column map is left exactly as the driver built it", async () => {
+  test("a column whose metadata carries no declaration is left exactly as the driver built it", async () => {
     const untyped = tediousDate(Date.UTC(1970, 0, 1, 10, 30, 0, 123), 0.0004567);
     mockQueryFn = async () => ({ recordset: [{ t: untyped }], rowsAffected: [1] });
 
@@ -2512,16 +2512,26 @@ describe("MSSQLProvider result column names", () => {
   });
 
   test("each result set of a batch is named and keyed on its own", async () => {
-    answerWith(arrayModeSet(["a", "a"], [[1, 2]]), arrayModeSet(["", "b"], [[3, 4]]));
+    answerWith(
+      arrayModeSet(["a", "a"], [[1, 2]]),
+      arrayModeSet(
+        ["", "b", { name: "", type: { declaration: "datetime2" }, scale: 7 }],
+        [[3, 4, tediousDate(Date.UTC(2026, 9, 7, 10, 30, 0, 123), 0.0004567)]],
+      ),
+    );
     await provider.connect();
 
-    const result = await provider.query("SELECT 1 AS a, 2 AS a; SELECT 3, 4 AS b");
+    const result = await provider.query("SELECT 1 AS a, 2 AS a; SELECT 3, 4 AS b, SYSDATETIME()");
 
     expect(result.fields).toEqual(["a", "a (2)"]);
     expect(result.rows).toEqual([{ a: 1, "a (2)": 2 }]);
     expect(result.resultSets).toEqual([
       { rows: [{ a: 1, "a (2)": 2 }], fields: ["a", "a (2)"] },
-      { rows: [{ "(No column name)": 3, b: 4 }], fields: ["(No column name)", "b"] },
+      {
+        rows: [{ "(No column name)": 3, b: 4, "(No column name) (2)": "2026-10-07 10:30:00.1234567" }],
+        fields: ["(No column name)", "b", "(No column name) (2)"],
+        columnTypes: { "(No column name) (2)": "datetime2" },
+      },
     ]);
   });
 
@@ -2573,7 +2583,7 @@ describe("MSSQLProvider result column names", () => {
     expect(result.fields).toEqual(["(No column name)", "id", "id (2)"]);
     expect(result.rows).toEqual([{ "(No column name)": 1, id: 2, "id (2)": 3 }]);
 
-    // The X9 residue: a zero-row result named no fields while its types were declared.
+    // Formerly a zero-row result named no fields while its types were declared.
     answerWith(arrayModeSet([{ name: "u", type: { declaration: "uniqueidentifier" } }], []));
     const empty = await provider.queryInTransaction("SELECT u FROM t WHERE 1 = 0");
 
