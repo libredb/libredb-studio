@@ -4299,6 +4299,7 @@ Two halves, and the second is what stops it recurring:
    resolves each, and fails on a miss, so a coordinate cannot go stale silently again.
 
 DOC4 is the same class in the provider docs.
+More instances, found stale at `8f2fc5c81` during the PR #1575 review (2026-10-07): `tests/integration/db/mssql-provider.test.ts` (`mssql.ts:1798`), `docs/providers/opensearch.md` (`http-transport.ts` `:806`, `:883-935`, `:913`, `:999`, `:1127`, `:1128`, `:1283`), `docs/providers/elasticsearch.md` (`http-transport.ts:1194`), `docs/BACKLOG.md` (`http-transport.ts:1556`), `tests/components/studio/BottomPanel.test.tsx` (`BottomPanel.tsx:574`), `docs/BACKLOG.md` (`BottomPanel.tsx:445`), and the `oracle.ts:1492`, `:2000` and `:2015` citations in `oracle.ts`, `tests/integration/db/oracle-provider.test.ts` and `tests/api/db-objects.test.ts`.
 This entry was first written as a second "D94 (proposed)" block, which reused the id of D94 and was not a heading the structure guard reads.
 
 **Done when:** a test fails on a stale `file.ts:NNNN` anywhere under `src/`, `docs/` and `tests/`,
