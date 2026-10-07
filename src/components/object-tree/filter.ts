@@ -22,23 +22,25 @@ export function normalizeQuery(query: string): string {
 
 /**
  * The expansion set the filtered walk uses: the reader's own, plus every known container and every
- * READ folder, minus what the reader collapsed while filtering.
+ * READ folder.
  *
  * A folder enters only once its objects are cached, which is what keeps this set from implying a
  * read: an open folder with no cached objects would draw nothing anyway, and the walk is never what
  * issues reads. Object ids come only from the reader's own set, so columns show where the reader
  * opened them and nowhere else.
+ *
+ * What the reader collapsed while filtering is NOT taken out here but by `collapseRows` after the
+ * filter ran: a container closed before the walk hides the matches under it, and a row with no
+ * match below it is dropped by `filterRows`, so the container being closed would vanish instead.
  */
 export function searchExpanded(
   expanded: ReadonlySet<string>,
   containers: readonly Container[],
   objects: Readonly<Record<string, readonly DatabaseObject[]>>,
-  collapsed: ReadonlySet<string>,
 ): ReadonlySet<string> {
   const open = new Set(expanded);
   for (const container of containers) open.add(containerRowId(container.path));
   for (const folderId of Object.keys(objects)) open.add(folderId);
-  for (const id of collapsed) open.delete(id);
   return open;
 }
 
@@ -110,4 +112,30 @@ export function filterRows(rows: readonly TreeRowModel[], needle: string): Filte
     return { ...row, setSize: sizes.get(parent) ?? posInSet, posInSet, ...(match === undefined ? {} : { match }) };
   });
   return { rows: filtered, matches };
+}
+
+/**
+ * The filtered rows with what the reader collapsed WHILE filtering closed (D4): the collapsed row
+ * stays, drawn closed, and every row under it goes.
+ *
+ * Applied after `filterRows` so a closed container keeps its place, and so `matches` still counts
+ * what is under it: the status line answers "how many loaded objects match", which a twisty does
+ * not change. The surviving rows keep their ARIA positions, because hiding a row's children leaves
+ * every sibling group above and beside it exactly as it was.
+ */
+export function collapseRows(rows: readonly TreeRowModel[], collapsed: ReadonlySet<string>): readonly TreeRowModel[] {
+  if (collapsed.size === 0) return rows;
+  const shown: TreeRowModel[] = [];
+  let hiddenBelow = -1;
+  for (const row of rows) {
+    if (hiddenBelow >= 0 && row.depth > hiddenBelow) continue;
+    hiddenBelow = -1;
+    if (collapsed.has(row.id)) {
+      shown.push({ ...row, expanded: false });
+      hiddenBelow = row.depth;
+    } else {
+      shown.push(row);
+    }
+  }
+  return shown;
 }

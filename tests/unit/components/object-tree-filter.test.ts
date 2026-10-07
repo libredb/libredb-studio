@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { filterRows, normalizeQuery, searchExpanded } from "@/components/object-tree/filter";
+import { collapseRows, filterRows, normalizeQuery, searchExpanded } from "@/components/object-tree/filter";
 import type { TreeRowModel } from "@/components/object-tree/flatten";
 
 /**
@@ -85,7 +85,7 @@ describe("filterRows", () => {
 });
 
 describe("searchExpanded", () => {
-  test("opens every known container and every READ folder, keeps the real set, drops the collapsed", () => {
+  test("opens every known container and every READ folder, and keeps the real set", () => {
     const open = searchExpanded(
       new Set(["app/orders/table"]),
       [
@@ -93,8 +93,25 @@ describe("searchExpanded", () => {
         { path: ["audit"], name: "audit", level: 0 },
       ],
       { "app/table": [] },
-      new Set(["audit"]),
     );
-    expect([...open].sort()).toEqual(["app", "app/orders/table", "app/table"]);
+    expect([...open].sort()).toEqual(["app", "app/orders/table", "app/table", "audit"]);
+  });
+});
+
+describe("collapseRows", () => {
+  test("keeps a collapsed row, closed, and hides everything under it", () => {
+    const { rows } = filterRows(tree, "o");
+    const closed = collapseRows(rows, new Set(["app/table"]));
+    expect(closed.map((row) => [row.id, row.expanded])).toEqual([
+      ["app", true],
+      ["app/table", false],
+      ["app/view", true],
+      ["app/order_summary/view", undefined],
+    ]);
+  });
+
+  test("collapsing nothing hands the rows back as they were", () => {
+    const { rows } = filterRows(tree, "o");
+    expect(collapseRows(rows, new Set())).toBe(rows);
   });
 });

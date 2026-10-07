@@ -26,6 +26,7 @@ import { appFetch } from "@/lib/config/base-path";
 import { containerDepth, enumerableKinds } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, KindCount, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { collapseRows, filterRows, normalizeQuery, searchExpanded } from "./filter";
 import { containerRowId, flattenTree, pathKey, type TreeRowModel } from "./flatten";
 
 /** How a read addresses its connection: a seed by id, anything else in full. */
@@ -222,6 +223,29 @@ function readFor(row: TreeRowModel, depth: 0 | 1 | 2): TreeRead | undefined {
   // the end, so a later arm cannot silently start answering for it.
   return undefined;
 }
+
+/**
+ * The read each OPEN row asks for, once per slot, in row order.
+ *
+ * Takes row GROUPS because a filtered tree has two: the reader's own rows, which drive every
+ * automatic read exactly as before, and the OBJECT rows of the filtered view, which can be open
+ * where the reader's own folder is collapsed. The filtered view's containers and folders are
+ * deliberately not a group: they are open because the filter opened them, and a read derived from
+ * that would make a keystroke issue requests (U25).
+ */
+function openReads(groups: readonly (readonly TreeRowModel[])[], depth: 0 | 1 | 2): TreeRead[] {
+  const reads = new Map<string, TreeRead>();
+  for (const group of groups) {
+    for (const row of group) {
+      if (row.expanded !== true) continue;
+      const read = readFor(row, depth);
+      if (read !== undefined) reads.set(slotKey(read.slot), read);
+    }
+  }
+  return [...reads.values()];
+}
+
+const NO_IDS: ReadonlySet<string> = new Set();
 
 function isSlotFilled(cache: TreeCache, slot: ReadSlot): boolean {
   switch (slot.kind) {
@@ -459,6 +483,10 @@ function toFailure(error: unknown): TreeReadFailure {
  * standalone shell passes none and `ObjectTree` resolves that case to true, because its own
  * route always exists. A host that has not implemented `describeObject` gets no twisty rather
  * than a twisty over a read that cannot succeed (B76).
+ *
+ * `query` is the filter box's text. While it normalizes to non-empty, `rows` is the filtered VIEW
+ * from `filter.ts`; every automatic read is still derived from the unfiltered rows, so typing reads
+ * nothing.
  */
 export function useTreeNodes(
   connection: DatabaseConnection,
@@ -466,6 +494,7 @@ export function useTreeNodes(
   deferred = false,
   source?: ObjectSource,
   readsColumns = false,
+  query = "",
 ): TreeNodes {
   const connectionId = connection.id;
   const [stored, setStored] = useState<TreeCache>(() => emptyCache(connectionId));
@@ -533,7 +562,7 @@ export function useTreeNodes(
     [applyFor],
   );
 
-  const rows = useMemo(
+  const treeRows = useMemo(
     () =>
       flattenTree({
         kinds,
@@ -548,6 +577,42 @@ export function useTreeNodes(
     [cache, depth, kinds, readsColumns],
   );
 
+  const needle = normalizeQuery(query);
+  /**
+   * What the reader collapsed WHILE filtering, which is the filter's and never the tree's (D4).
+   * Keyed by connection and needle, so a new query or a new connection starts fully open without an
+   * effect to reset it.
+   */
+  const [collapsedState, setCollapsedState] = useState<{
+    readonly connectionId: string;
+    readonly needle: string;
+    readonly ids: ReadonlySet<string>;
+  }>({ connectionId, needle: "", ids: NO_IDS });
+  const collapsed =
+    collapsedState.connectionId === connectionId && collapsedState.needle === needle ? collapsedState.ids : NO_IDS;
+
+  const filtered = useMemo(() => {
+    if (needle === "") return undefined;
+    const searchRows = flattenTree({
+      kinds,
+      containers: cache.containers,
+      expanded: searchExpanded(cache.expanded, cache.containers, cache.objects),
+      counts: cache.counts,
+      objects: cache.objects,
+      details: cache.details,
+      readsColumns,
+      containerDepth: depth,
+    });
+    const { rows: matched, matches } = filterRows(searchRows, needle);
+    return { rows: collapseRows(matched, collapsed), matches };
+  }, [cache, collapsed, depth, kinds, needle, readsColumns]);
+
+  const rows = filtered?.rows ?? treeRows;
+  const readGroups = useMemo(
+    () => (filtered === undefined ? [treeRows] : [treeRows, filtered.rows.filter((row) => row.kind === "object")]),
+    [filtered, treeRows],
+  );
+
   const root = useMemo(() => rootRead(depth), [depth]);
 
   const pending = useMemo(() => {
@@ -556,16 +621,12 @@ export function useTreeNodes(
     // reads, so the derivation that drives every fetch answers with nothing (#765).
     if (deferred) return reads;
     if (!isSlotFilled(cache, root.slot) && cache.failures[slotKey(root.slot)] === undefined) reads.push(root);
-    for (const row of rows) {
-      if (row.expanded !== true) continue;
-      const read = readFor(row, depth);
-      if (read === undefined || isSlotFilled(cache, read.slot) || cache.failures[slotKey(read.slot)] !== undefined) {
-        continue;
-      }
+    for (const read of openReads(readGroups, depth)) {
+      if (isSlotFilled(cache, read.slot) || cache.failures[slotKey(read.slot)] !== undefined) continue;
       reads.push(read);
     }
     return reads;
-  }, [cache, deferred, depth, root, rows]);
+  }, [cache, deferred, depth, readGroups, root]);
 
   useEffect(() => {
     for (const read of pending) void run(connectionId, connection, reader, read);
@@ -620,6 +681,17 @@ export function useTreeNodes(
   const toggle = useCallback(
     (id: string) => {
       const opening = rows.find((row) => row.id === id);
+      // A container or folder in the FILTERED view is open because the filter opened it, so closing
+      // it is the filter's business: writing it to `expanded` would change the reader's tree behind
+      // the filter and fire reads for rows they never opened (D4).
+      if (filtered !== undefined && (opening?.kind === "container" || opening?.kind === "folder")) {
+        setCollapsedState({
+          connectionId,
+          needle,
+          ids: collapsed.has(id) ? new Set([...collapsed].filter((other) => other !== id)) : new Set(collapsed).add(id),
+        });
+        return;
+      }
       const read = opening === undefined ? undefined : readFor(opening, depth);
       apply((current) => {
         const expanded = new Set(current.expanded);
@@ -632,7 +704,7 @@ export function useTreeNodes(
         return willOpen && read !== undefined ? withoutFailure(next, read.slot) : next;
       });
     },
-    [apply, depth, rows],
+    [apply, collapsed, connectionId, depth, filtered, needle, rows],
   );
 
   /**
@@ -681,12 +753,7 @@ export function useTreeNodes(
     // A deferred connection wants ZERO catalog reads (#765), and a DDL statement it ran does
     // not change that: the reader asked for nothing to be read and nothing is.
     if (deferred) return;
-    const reads: TreeRead[] = [root];
-    for (const row of rows) {
-      if (row.expanded !== true) continue;
-      const read = readFor(row, depth);
-      if (read !== undefined) reads.push(read);
-    }
+    const reads: TreeRead[] = [root, ...openReads(readGroups, depth)];
     // Every detail this call is NOT re-reading is dropped. The rest of this function ISSUES over
     // a filled slot so the stale rows stay on screen while the new answer is in flight, and that
     // is right for a container, a count and a listing, whose rows are visible. A COLLAPSED
@@ -696,7 +763,7 @@ export function useTreeNodes(
     const reread = new Set(reads.flatMap((read) => (read.slot.kind === "details" ? [read.slot.key] : [])));
     apply((current) => withOnlyDetails(current, reread));
     for (const read of reads) void run(connectionId, connection, reader, read);
-  }, [apply, connection, connectionId, deferred, depth, reader, root, rows, run]);
+  }, [apply, connection, connectionId, deferred, depth, readGroups, reader, root, run]);
 
   const loadContainers = useCallback(() => apply((current) => forgetRoot(current, root.slot)), [apply, root]);
 
