@@ -768,7 +768,7 @@ describe("useTabManager", () => {
 
   // ─── Persistence: Load Effect ───
 
-  test("save — server mode: tabs are not written once another tab hands the copy to a different account", async () => {
+  test("save in server mode: tabs are not written once another tab hands the copy to a different account", async () => {
     holdWorkspaceOwner("ana@libredb.org");
     localStorage.setItem("libredb_workspace_owner", "ana@libredb.org");
     try {

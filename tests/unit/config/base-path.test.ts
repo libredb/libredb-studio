@@ -246,7 +246,7 @@ describe("appFetch and the account this tab claimed the browser copy for", () =>
   }
 
   function answering(response: () => Response) {
-    const fetchMock = mock(async () => response());
+    const fetchMock = mock<(input: string, init?: RequestInit) => Promise<Response>>(async () => response());
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     return fetchMock;
   }
