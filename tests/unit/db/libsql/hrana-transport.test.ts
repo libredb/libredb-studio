@@ -797,6 +797,20 @@ describe("LibSQLHranaTransport tolerances", () => {
     expect(result.columnTypes).toEqual({ id: "INTEGER", "id (2)": "TEXT" });
   });
 
+  test("a column named __proto__ keeps its declared type as a column of its own", async () => {
+    withResult({
+      cols: [{ name: "__proto__", decltype: "TEXT" }],
+      rows: [[{ type: "text", value: "x" }]],
+      affected_row_count: 0,
+      query_duration_ms: 0,
+    });
+
+    const result = await transport().execute('SELECT v AS "__proto__" FROM t');
+
+    expect(Object.hasOwn(result.columnTypes, "__proto__")).toBe(true);
+    expect(result.columnTypes.__proto__).toBe("TEXT");
+  });
+
   test("reads a column declaration that is not a list as no columns at all", async () => {
     withResult({ cols: null, rows: null, affected_row_count: null, query_duration_ms: null });
 

@@ -300,14 +300,16 @@ function encodeValue(param: unknown): HranaValue {
  * collide with a column the statement itself named `column_1`.
  */
 function readColumns(cols: unknown): { fieldNames: string[]; columnTypes: Record<string, string> } {
-  const columnTypes: Record<string, string> = {};
-  if (!Array.isArray(cols)) return { fieldNames: [], columnTypes };
+  if (!Array.isArray(cols)) return { fieldNames: [], columnTypes: {} };
 
   const declared = cols.map((raw) => (asRecord(raw) ?? {}) as HranaColumn);
   const fieldNames = uniqueFieldNames(declared.map((col) => (typeof col.name === "string" ? col.name : "")));
-  for (const [index, col] of declared.entries()) {
-    if (typeof col.decltype === "string" && col.decltype !== "") columnTypes[fieldNames[index]] = col.decltype;
-  }
+  // `Object.fromEntries` defines each type as an own property, so a column named `__proto__` keeps its type.
+  const columnTypes: Record<string, string> = Object.fromEntries(
+    declared.flatMap((col, index) =>
+      typeof col.decltype === "string" && col.decltype !== "" ? [[fieldNames[index], col.decltype] as const] : [],
+    ),
+  );
 
   return { fieldNames, columnTypes };
 }
