@@ -937,6 +937,22 @@ describe("OracleProvider", () => {
       expect(typeof result.executionTime).toBe("number");
     });
 
+    // node-oracledb 6.10 numbers a repeated column in `metaData` itself, before any row is keyed
+    // (`lib/impl/resultset.js` `_setup`), and skips a name the statement declares. Measured against
+    // Oracle XE on 2026-10-07: `SELECT 1 AS a, 2 AS a, 3 AS a_1 FROM dual` answers the names
+    // A, A_2, A_1 and the row { A: 1, A_2: 2, A_1: 3 } in both out formats, so no value is lost and
+    // the names reach the grid as the driver numbered them.
+    test("a repeated column arrives numbered by the driver, each value under its own name", async () => {
+      mockExecuteFn = async () => ({
+        rows: [{ A: 1, A_2: 2, A_1: 3 }],
+        metaData: [{ name: "A" }, { name: "A_2" }, { name: "A_1" }],
+      });
+      await provider.connect();
+      const result = await provider.query("SELECT 1 AS a, 2 AS a, 3 AS a_1 FROM dual");
+      expect(result.fields).toEqual(["A", "A_2", "A_1"]);
+      expect(result.rows).toEqual([{ A: 1, A_2: 2, A_1: 3 }]);
+    });
+
     // oracledb answers a non-SELECT with no `rows` array at all and its own
     // `rowsAffected`; the envelope used to be built from `rows.length`, so every
     // INSERT, UPDATE and DELETE reported 0 for work it had done. Measured through

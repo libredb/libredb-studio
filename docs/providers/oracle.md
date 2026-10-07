@@ -509,6 +509,21 @@ and returns:
 { rows, fields: metaData.map(m => m.name), rowCount: rows.length, executionTime, columnTypes? }
 ```
 
+**Column names.** Every column reaches the grid named, and under a name no other column of the result has, by the driver's own doing.
+An unaliased expression is named by its text (`SELECT 1+1 FROM dual` answers `1+1`), and an empty alias is refused by the server (`SELECT 1 AS "" FROM dual` fails with `ORA-01741: illegal zero-length identifier`).
+A repeated name is numbered by node-oracledb itself, in `metaData` and before any row is keyed (`_setup` in `oracledb/lib/impl/resultset.js`, 6.10.0): the first column keeps the name, a repeat takes `NAME_1`, `NAME_2`, and a number skips a name the statement declares.
+Measured on 2026-10-07 against Oracle XE with that driver, the same in `OUT_FORMAT_OBJECT` and `OUT_FORMAT_ARRAY`:
+
+| statement | names | row |
+|---|---|---|
+| `SELECT 1 AS a, 2 AS a FROM dual` | `A`, `A_1` | `{ A: 1, A_1: 2 }` |
+| `SELECT 1 AS a, 2 AS a, 3 AS a_1 FROM dual` | `A`, `A_2`, `A_1` | `{ A: 1, A_2: 2, A_1: 3 }` |
+| a join projecting `user_id` from both sides of `all_users` | `USER_ID`, `USER_ID_1` | both values |
+| `SELECT 1+1, 1+1 FROM dual` | `1+1`, `1+1_1` | both values |
+
+So no value is lost, and the provider keys rows by the names the driver gives rather than through `uniqueFieldNames`.
+The driver discards the declared name of a repeat, so the shared `name (2)` form cannot be rebuilt here: a repeat reads `NAME_1`, and a column the statement itself names `NAME_1` is indistinguishable from one.
+
 A `SELECT` answers with a `rows` array and `rowCount` is `rows.length`. A non-`SELECT`
 (INSERT/UPDATE/DELETE/DDL/PL/SQL) carries **no `rows` array at all**, and that absence is what
 selects the other branch of `buildQueryResult()`: the grid is empty (`rows: []`, `fields: []`, no
