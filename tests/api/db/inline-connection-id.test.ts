@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
-import { resetCache as resetSeedCache } from "@/lib/seed/config-loader";
+import { resetCache as resetSeedCache } from "@/lib/seed";
 
 /**
  * An inline connection without an id is answered 400 CONFIG_ERROR, "Connection ID is required", by

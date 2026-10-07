@@ -88,6 +88,25 @@ import * as path from "path";
 const sanitize = (v: string) => v.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
 
 /**
+ * Refuse a connection with no id, before the cache key is computed (#1539).
+ *
+ * The provider's own `validate()` raises `DatabaseConfigError("Connection ID is required")` for this
+ * record, but `getOrCreateProvider` and `acquireExecutionProfileProvider` compute their cache key
+ * first, and `providerCacheKey` length-frames `connection.id`: a missing id crashed there with a
+ * `TypeError`, which `createErrorResponse` answered as a 500 `INTERNAL_ERROR` on every route that
+ * opens a cached provider (query, health and multi-query were measured). The same record reaching the
+ * provider through `createDatabaseProvider`, as `POST /api/db/test-connection` builds it, was already
+ * refused with a 400 `CONFIG_ERROR`. The refusal is raised here instead, as the same
+ * `DatabaseConfigError` the provider would have raised, so the key never sees a record the provider
+ * would refuse, and no fallback key is invented for a missing id.
+ */
+function assertConnectionIdPresent(connection: DatabaseConnection): void {
+  if (!connection.id) {
+    throw new DatabaseConfigError("Connection ID is required", connection.type);
+  }
+}
+
+/**
  * Refuse a `readOnly` this connection's engine cannot keep, before anything is built or dialled (#1089).
  *
  * A read-only connection is a promise its provider keeps by refusing every write before any request,
@@ -109,25 +128,6 @@ const sanitize = (v: string) => v.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0
  * provider without refusing it. Exported for the tests; the published factory's three entry points
  * raise it (`src/exports/providers.ts`).
  */
-/**
- * Refuse a connection with no id, before the cache key is computed (#1539).
- *
- * The provider's own `validate()` raises `DatabaseConfigError("Connection ID is required")` for this
- * record, but `getOrCreateProvider` and `acquireExecutionProfileProvider` compute their cache key
- * first, and `providerCacheKey` length-frames `connection.id`: a missing id crashed there with a
- * `TypeError`, which `createErrorResponse` answered as a 500 `INTERNAL_ERROR` on every route that
- * opens a cached provider (query, health and multi-query were measured). The same record reaching the
- * provider through `createDatabaseProvider` — as `POST /api/db/test-connection` builds it — was already
- * refused with a 400 `CONFIG_ERROR`. The refusal is raised here instead, as the same
- * `DatabaseConfigError` the provider would have raised, so the key never sees a record the provider
- * would refuse, and no fallback key is invented for a missing id.
- */
-function assertConnectionIdPresent(connection: DatabaseConnection): void {
-  if (!connection.id) {
-    throw new DatabaseConfigError("Connection ID is required", connection.type);
-  }
-}
-
 export function assertReadOnlyHonoured(connection: DatabaseConnection): void {
   const readOnly: unknown = connection.readOnly;
   if (readOnly === undefined) return;
