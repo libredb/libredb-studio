@@ -195,6 +195,28 @@ describe("detectSensitiveColumnsFromConfig", () => {
     expect(result.has("public_field")).toBe(false);
   });
 
+  test("a repeated sensitive column the result numbered is masked like the column it repeats", () => {
+    const result = detectSensitiveColumnsFromConfig(
+      ["email", "email (2)", "ssn", "ssn (3)", "credit_card (2)"],
+      DEFAULT_MASKING_CONFIG,
+    );
+    expect(result.get("email (2)")).toBe(result.get("email")!);
+    expect(result.get("ssn (3)")).toBe(result.get("ssn")!);
+    expect(result.has("credit_card (2)")).toBe(true);
+  });
+
+  test("a numbered name is masked by its base even alone, and after a second numbering", () => {
+    expect(detectSensitiveColumnsFromConfig(["phone (2)"], mockMaskingConfigEnabled).has("phone (2)")).toBe(true);
+    expect(detectSensitiveColumnsFromConfig(["email (2) (2)"], mockMaskingConfigEnabled).has("email (2) (2)")).toBe(
+      true,
+    );
+  });
+
+  test("a numbered name whose base is not sensitive stays unmasked", () => {
+    const result = detectSensitiveColumnsFromConfig(["id", "id (2)", "(No column name)"], DEFAULT_MASKING_CONFIG);
+    expect(result.size).toBe(0);
+  });
+
   test("returns empty map for no fields", () => {
     const result = detectSensitiveColumnsFromConfig([], mockMaskingConfigEnabled);
     expect(result.size).toBe(0);

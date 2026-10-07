@@ -194,20 +194,39 @@ export function maskByType(value: string, pattern: MaskingPattern): string {
 
 // ─── Config-based Detection ──────────────────────────────────────────────────
 
+const NUMBERED_REPEAT = /^(.*) \(\d+\)$/;
+
+/**
+ * A field name and every name it may repeat: a result numbers a repeated column `name (2)`
+ * (`uniqueFieldNames`), so `email (2)` carries an email and must be matched as `email` too.
+ * The base is tried even when it is not in the result (the graph asks one name at a time), and
+ * an alias that merely looks numbered is masked like its base, which is the safe direction.
+ */
+function namesToMatch(field: string): string[] {
+  const names = [field];
+  for (let repeat = NUMBERED_REPEAT.exec(field); repeat !== null; repeat = NUMBERED_REPEAT.exec(repeat[1])) {
+    names.push(repeat[1]);
+  }
+  return names;
+}
+
 export function detectSensitiveColumnsFromConfig(fields: string[], config: MaskingConfig): Map<string, MaskingPattern> {
   const sensitiveMap = new Map<string, MaskingPattern>();
 
   const enabledPatterns = config.patterns.filter((p) => p.enabled);
 
   for (const field of fields) {
+    const names = namesToMatch(field);
     for (const pattern of enabledPatterns) {
-      const matched = pattern.columnPatterns.some((cp) => {
-        try {
-          return new RegExp(`^${cp}$`, "i").test(field);
-        } catch {
-          return cp.toLowerCase() === field.toLowerCase();
-        }
-      });
+      const matched = pattern.columnPatterns.some((cp) =>
+        names.some((name) => {
+          try {
+            return new RegExp(`^${cp}$`, "i").test(name);
+          } catch {
+            return cp.toLowerCase() === name.toLowerCase();
+          }
+        }),
+      );
       if (matched) {
         sensitiveMap.set(field, pattern);
         break;
