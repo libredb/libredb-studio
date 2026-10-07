@@ -3,7 +3,7 @@
 import { appFetch } from "@/lib/config/base-path";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isAgentModelCapability } from "@/lib/agent/capability-labels";
-import { AGENT_THREAD_KEY } from "@/lib/storage/local-storage";
+import { AGENT_THREAD_KEY, holdsAccountWorkspace } from "@/lib/storage/local-storage";
 // Type-only, so nothing of the probe — or of the AI SDK it runs — reaches this bundle.
 import type { AgentModelCapability } from "@/lib/agent/capability-probe";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
@@ -290,9 +290,13 @@ function parseStoredThread(raw: string | null): AgentInterruptedThread | null {
   return { threadId: candidate.threadId, steps: candidate.steps };
 }
 
-/** Remember the conversation this run belongs to, or forget the one that no longer applies. */
+/**
+ * Remember the conversation this run belongs to, or forget the one that no longer applies. Only
+ * while the browser copy is still the account this tab claimed it for (`holdsAccountWorkspace`).
+ */
 function rememberThread(thread: AgentThreadContext | null): void {
   try {
+    if (!holdsAccountWorkspace()) return;
     // Removed rather than left standing when a run belongs to no conversation: a stale
     // entry would tell the next mount a conversation was interrupted that had already ended.
     if (thread === null) localStorage.removeItem(THREAD_STORAGE_KEY);
