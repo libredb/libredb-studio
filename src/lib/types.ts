@@ -589,6 +589,12 @@ export interface AgentChartSpec {
 
 export interface QueryResult {
   rows: Record<string, unknown>[];
+  /**
+   * The result's columns, in order. Every name is non-empty and no two are the same, and rows key their
+   * values by these names, so no two columns read one value.
+   * A provider whose driver declares a column with no name or two columns with one name reads its rows
+   * positionally and keys them by `uniqueFieldNames` (`src/lib/db/utils/result-fields.ts`).
+   */
   fields: string[];
   rowCount: number;
   executionTime: number;
@@ -638,6 +644,7 @@ export interface QueryResult {
 /** One result set of a text that produced several (`QueryResult.resultSets`). */
 export interface QueryResultSet {
   rows: Record<string, unknown>[];
+  /** As `QueryResult.fields`: non-empty, unique, and the keys every row carries. */
   fields: string[];
   columnTypes?: Record<string, string>;
 }

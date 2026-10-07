@@ -1,9 +1,53 @@
 /**
  * The columns of a result whose rows do not share one shape: a document store answers
  * documents, and two documents of one collection need not carry the same keys.
+ * And the names a result's columns are keyed under when a driver declares a column with no
+ * name, or two columns with one name.
  */
 import { describe, expect, test } from "bun:test";
-import { unionFields } from "@/lib/db/utils/result-fields";
+import { UNNAMED_FIELD, unionFields, uniqueFieldNames } from "@/lib/db/utils/result-fields";
+
+describe("uniqueFieldNames", () => {
+  test("names that are already unique and non-empty are kept as declared, in order", () => {
+    expect(uniqueFieldNames(["id", "name", "ID"])).toEqual(["id", "name", "ID"]);
+    expect(uniqueFieldNames([])).toEqual([]);
+  });
+
+  test("a column with no name is named the way SQL Server's own tools name it", () => {
+    // `SELECT @@VERSION` or `SELECT COUNT(*) FROM t` on SQL Server: the driver declares the
+    // column with an empty name, and a row keyed by "" crashed the results grid.
+    expect(UNNAMED_FIELD).toBe("(No column name)");
+    expect(uniqueFieldNames([""])).toEqual(["(No column name)"]);
+  });
+
+  test("a repeated name is numbered from 2, so every value keeps a column of its own", () => {
+    // A join that projects `id` from both tables: keyed by name, the second value replaced the first.
+    expect(uniqueFieldNames(["id", "customer_id", "item", "id", "name"])).toEqual([
+      "id",
+      "customer_id",
+      "item",
+      "id (2)",
+      "name",
+    ]);
+    expect(uniqueFieldNames(["?column?", "?column?", "?column?"])).toEqual([
+      "?column?",
+      "?column? (2)",
+      "?column? (3)",
+    ]);
+    expect(uniqueFieldNames(["", ""])).toEqual(["(No column name)", "(No column name) (2)"]);
+  });
+
+  test("a generated name never takes a name the result itself declares", () => {
+    // The statement may already use the spelling a number would produce, before or after the repeat.
+    expect(uniqueFieldNames(["a", "a (2)", "a"])).toEqual(["a", "a (2)", "a (3)"]);
+    expect(uniqueFieldNames(["a", "a", "a (2)"])).toEqual(["a", "a (3)", "a (2)"]);
+    expect(uniqueFieldNames(["", "(No column name)"])).toEqual(["(No column name) (2)", "(No column name)"]);
+  });
+
+  test("names differing only in letter case are different columns, as row keys are", () => {
+    expect(uniqueFieldNames(["Id", "id", "id"])).toEqual(["Id", "id", "id (2)"]);
+  });
+});
 
 describe("unionFields", () => {
   test("no rows, no columns", () => {
