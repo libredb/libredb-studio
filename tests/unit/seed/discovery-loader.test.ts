@@ -12,7 +12,7 @@ mock.module("@/lib/logger", () => ({
   logger: { debug, info, warn, error },
 }));
 
-import { resetCache } from "@/lib/seed/config-loader";
+import { resetCache } from "@/lib/seed";
 import type { DiscoveredService, DiscoveryExport } from "@/lib/seed/discovery-export";
 import {
   getDiscoveredConnections,
@@ -779,6 +779,31 @@ describe("discovery-loader", () => {
           "    name: File seed",
           "    type: postgres",
           "    host: db.internal",
+          "    roles: [admin]",
+          "",
+        ].join("\n"),
+      );
+      process.env.SEED_CONFIG_PATH = seedFile;
+      write(exportFile());
+
+      const status = await getDiscoveryStatus({ now: () => clock, probe });
+
+      expect(status?.connected).toEqual([]);
+      expect(status?.skipped).toEqual([{ appName: "pgtest", reason: "id taken by the seed file" }]);
+    });
+
+    it("takes the id of an operator entry that credential resolution dropped", async () => {
+      const seedFile = path.join(dir, "seed-connections.yaml");
+      writeFileSync(
+        seedFile,
+        [
+          'version: "1"',
+          "connections:",
+          "  - id: caprover-pgtest",
+          "    name: File seed",
+          "    type: postgres",
+          "    host: db.internal",
+          '    password: "${DISCOVERY_TEST_UNSET_PASSWORD}"',
           "    roles: [admin]",
           "",
         ].join("\n"),

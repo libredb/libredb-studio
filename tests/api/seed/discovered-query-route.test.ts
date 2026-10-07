@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as actualDb from "@/lib/db";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
-import { resetCache } from "@/lib/seed/config-loader";
+import { resetCache } from "@/lib/seed";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import { resetVaultCache } from "@/lib/seed/vault-client";
 import type { DatabaseConnection } from "@/lib/types";

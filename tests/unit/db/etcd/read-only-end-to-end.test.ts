@@ -66,7 +66,7 @@ process.env.SEED_CONFIG_PATH = path.resolve(
 
 // After the substitution, so the factory and the provider it imports read the substituted adapter.
 const { acquireExecutionProfileProvider, clearProviderCache, getOrCreateProvider } = await import("@/lib/db/factory");
-const { resetCache } = await import("@/lib/seed/config-loader");
+const { resetCache } = await import("@/lib/seed");
 const { resolveConnection } = await import("@/lib/seed/resolve-connection");
 
 const WRITE = "put /app/cfg value";

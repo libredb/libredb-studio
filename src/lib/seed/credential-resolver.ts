@@ -143,8 +143,9 @@ export function resetLiteralModeNotices(): void {
  * `${NAME}` in `user`, `password`, `host`, `database` and the other resolvable fields from this
  * process's environment, and a `${vault:...}` reference from Vault. A platform user allowed to name
  * a database user `${JWT_SECRET}` would therefore have Studio send its own session secret, as that
- * user name, to a server whose log the platform user reads. With the mode on, `src/lib/seed/index.ts`
- * keeps every file seed out of `resolveAllCredentials` and marks it literal after the role filter,
+ * user name, to a server whose log the platform user reads. With the mode on, the operator loader
+ * (`src/lib/seed/operator-loader.ts`) records the mode for its fill and resolves no file-like entry,
+ * `src/lib/seed/index.ts` marks each of them literal after the role filter,
  * and `resolveConnection` returns a marked connection without calling `resolveVaultCredentials`, so
  * nothing is looked up when connections are listed, when a refused id is checked or when one is
  * opened. The plaintext-password warning is not logged either, because every value in such a file
@@ -217,21 +218,6 @@ export function resolveConnectionCredentials(conn: SeedConnection): SeedConnecti
     }
   }
   return resolved;
-}
-
-export function resolveAllCredentials(connections: SeedConnection[]): SeedConnection[] {
-  const results: SeedConnection[] = [];
-  for (const conn of connections) {
-    try {
-      results.push(resolveConnectionCredentials(conn));
-    } catch (err) {
-      logger.error("Seed connection skipped due to credential resolution failure", err, {
-        route: "seed/credential-resolver",
-        connectionId: conn.id,
-      });
-    }
-  }
-  return results;
 }
 
 function parseVaultReference(value: string, connId: string, fieldName: ResolvableField): { path: string; key: string } {

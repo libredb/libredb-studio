@@ -19,7 +19,7 @@ import { join } from "node:path";
 import * as actualDb from "@/lib/db";
 import * as actualFactory from "@/lib/db/factory";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
-import { resetCache as resetSeedCache } from "@/lib/seed/config-loader";
+import { resetCache as resetSeedCache } from "@/lib/seed";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { createMockRequest } from "../../helpers/mock-next";
 

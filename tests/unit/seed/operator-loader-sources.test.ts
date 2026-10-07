@@ -25,9 +25,16 @@ mock.module("@/lib/seed/sources/registry", () => ({
   resetOperatorSourceCaches,
 }));
 
+mock.module("@/lib/auth", () => ({
+  getSession: mock(() => ({ role: "admin", username: "admin@test.com" })),
+  verifyJWT: mock(() => ({ role: "admin", username: "admin@test.com" })),
+}));
+
 import { getOperatorSourceStatus, loadOperatorSources, resetCache } from "@/lib/seed/operator-loader";
 import { resetLiteralModeNotices, UndefinedSeedVariableError } from "@/lib/seed/credential-resolver";
 import { OperatorSourceError } from "@/lib/seed/sources/types";
+import { GET } from "@/app/api/connections/managed/route";
+import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
 
 type LoadFn = (context: OperatorLoadContext) => Promise<OperatorSourceResult>;
 type FakeSource = { readonly name: OperatorSourceName; readonly load: Mock<LoadFn> };
@@ -182,6 +189,29 @@ describe("operator-loader with several sources", () => {
     // Two failed fills and one good one: a failure is never served from the cache.
     expect(first.load).toHaveBeenCalledTimes(3);
     expect((await getOperatorSourceStatus()).map((report) => report.state)).toEqual(["ok", "ok"]);
+  });
+
+  it("fails GET /api/connections/managed with the seed-config reason while a later source throws, and lists once it reads", async () => {
+    let broken = true;
+    sources = [
+      fakeSource("SEED_CONFIG_PATH", async () => ok([entry("first", "/seed/first.yaml")])),
+      fakeSource("SEED_CONNECTION", async () => {
+        if (broken) throw refusal();
+        return ok([entry("x", "SEED_CONNECTION_X_URL")]);
+      }),
+    ];
+
+    const failed = await GET();
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({
+      error: "Failed to load managed connections",
+      reason: SEED_CONFIG_UNREADABLE_REASON,
+    });
+
+    broken = false;
+    const listed = await GET();
+    expect(listed.status).toBe(200);
+    expect((await listed.json()).connections.map((c: { seedId: string }) => c.seedId)).toEqual(["first", "x"]);
   });
 
   it("still reports the sources after a failing one, then throws the first error and caches nothing", async () => {

@@ -3,8 +3,8 @@
  *
  * A seed file a platform writes from data its users control must not have its values resolved: a
  * database user named `${JWT_SECRET}` would be looked up in this process's environment and sent, as
- * that user name, to a server the platform user runs. With the mode on, every file seed skips
- * resolveAllCredentials and carries the literal marker from the role filter on, so nothing is
+ * that user name, to a server the platform user runs. With the mode on, the operator loader resolves
+ * no file seed, and each carries the literal marker from the role filter on, so nothing is
  * resolved when connections are listed (getManagedConnections), when a refused id is checked
  * (getSeedConnectionByIdUnfiltered, behind the 403) or when one is opened (resolveConnection, which
  * honours the marker and never calls resolveVaultCredentials). No plaintext-password warning is

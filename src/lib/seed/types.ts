@@ -273,8 +273,9 @@ export interface ManagedConnection extends DatabaseConnection {
   /** Visible to MCP clients (#246); absent on the built-in samples, which never opt in. */
   mcp?: boolean;
   /**
-   * Set in code after the role filter, by the discovery source on every discovered connection and, while
-   * SEED_LITERAL_VALUES is on, on every seed-file connection; never read from a file;
+   * Set in code after the role filter, by the discovery source on every discovered connection and, for an
+   * operator entry, by src/lib/seed/index.ts when the operator loader's fill read it as literal (every
+   * file-like entry while SEED_LITERAL_VALUES is on); never read from a file;
    * stripped by GET /api/connections/managed. A connection carrying it is used with its values as
    * written: no `${NAME}` or `${vault:...}` in it is resolved.
    */

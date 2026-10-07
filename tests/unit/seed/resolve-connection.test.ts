@@ -15,9 +15,11 @@ process.env.BOTH_PG_PASS = "both-secret";
 
 import { getManagedConnections } from "@/lib/seed";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
-import { resetCache } from "@/lib/seed/config-loader";
+import { resetCache } from "@/lib/seed";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import * as vaultClient from "@/lib/seed/vault-client";
+import { logger } from "@/lib/logger";
+import { resetLiteralModeNotices, resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
 
 describe("resolve-connection", () => {
   beforeEach(() => {
@@ -283,5 +285,110 @@ describe("resolve-connection with discovered connections", () => {
     expect((discovered as SeedConnectionError).message).toBe('Seed connection "caprover-pg" not found');
     expect((unknown as SeedConnectionError).message).toBe('Seed connection "caprover-none" not found');
     expect(readVaultSecret).not.toHaveBeenCalled();
+  });
+});
+
+/*
+  Review Focus A1.5. The operator loader resolves `${NAME}` inside its cache fill and records the literal mode that
+  fill read, so SEED_LITERAL_VALUES flipped between two calls must still decide each call: no `${NAME}` resolved, no
+  plaintext warning and no Vault read while it is on, and today's resolution once it is off, with no resetCache() in
+  between and the cache warm for the whole test.
+*/
+describe("resolve-connection with SEED_LITERAL_VALUES toggled on a warm operator cache", () => {
+  const ADMIN = { role: "admin", username: "test" };
+  const ENV_REFERENCE = "${LITERAL_MODE_PROBE_PASSWORD}";
+  const VAULT_REFERENCE = "${vault:secret/data/literal#password}";
+  const PLAINTEXT_WARNING = "Seed connection has plaintext password, use ${ENV_VAR} syntax";
+  const originalSeedPath = process.env.SEED_CONFIG_PATH;
+  let scratch: string;
+  let readVaultSecret: ReturnType<typeof spyOn>;
+  let warn: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    scratch = mkdtempSync(path.join(tmpdir(), "libredb-resolve-literal-mode-"));
+    const seedFile = path.join(scratch, "seed-connections.json");
+    writeFileSync(
+      seedFile,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          {
+            id: "env-ref",
+            name: "Env",
+            type: "postgres",
+            host: "env.internal",
+            password: ENV_REFERENCE,
+            roles: ["admin"],
+          },
+          {
+            id: "vault-ref",
+            name: "Vault",
+            type: "postgres",
+            host: "vault.internal",
+            password: VAULT_REFERENCE,
+            roles: ["admin"],
+          },
+          {
+            id: "plain",
+            name: "Plain",
+            type: "postgres",
+            host: "plain.internal",
+            password: "plain-password",
+            roles: ["admin"],
+          },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = seedFile;
+    process.env.LITERAL_MODE_PROBE_PASSWORD = "resolved-from-env";
+    process.env.SEED_CACHE_TTL_MS = "60000";
+    resetCache();
+    resetPlaintextWarnings();
+    resetLiteralModeNotices();
+    readVaultSecret = spyOn(vaultClient, "readVaultSecret").mockResolvedValue("vault-resolved-secret");
+    warn = spyOn(logger, "warn");
+  });
+
+  afterEach(() => {
+    readVaultSecret.mockRestore();
+    warn.mockRestore();
+    process.env.SEED_CONFIG_PATH = originalSeedPath;
+    delete process.env.LITERAL_MODE_PROBE_PASSWORD;
+    delete process.env.SEED_CACHE_TTL_MS;
+    delete process.env.SEED_LITERAL_VALUES;
+    resetCache();
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  const plaintextWarnings = () => (warn.mock.calls as unknown[][]).filter((call) => call[0] === PLAINTEXT_WARNING);
+
+  it("resolves nothing, warns of nothing and reads no Vault while the mode is on, and resolves again once it is off", async () => {
+    process.env.SEED_LITERAL_VALUES = "true";
+    const literal = await getManagedConnections(["admin"]);
+    expect(literal.map((c) => [c.seedId, c.password, c.literal])).toEqual([
+      ["env-ref", ENV_REFERENCE, true],
+      ["vault-ref", VAULT_REFERENCE, true],
+      ["plain", "plain-password", true],
+    ]);
+    expect((await resolveConnection({ connectionId: "seed:vault-ref" }, ADMIN)).password).toBe(VAULT_REFERENCE);
+    expect(readVaultSecret).not.toHaveBeenCalled();
+    expect(plaintextWarnings()).toEqual([]);
+
+    process.env.SEED_LITERAL_VALUES = "false";
+    const resolved = await getManagedConnections(["admin"]);
+    expect(resolved.map((c) => [c.seedId, c.password, "literal" in c])).toEqual([
+      ["env-ref", "resolved-from-env", false],
+      ["vault-ref", VAULT_REFERENCE, false],
+      ["plain", "plain-password", false],
+    ]);
+    expect((await resolveConnection({ connectionId: "seed:vault-ref" }, ADMIN)).password).toBe("vault-resolved-secret");
+    expect(readVaultSecret).toHaveBeenCalledTimes(1);
+    expect(plaintextWarnings()).toHaveLength(1);
+
+    process.env.SEED_LITERAL_VALUES = "true";
+    expect((await resolveConnection({ connectionId: "seed:env-ref" }, ADMIN)).password).toBe(ENV_REFERENCE);
+    expect((await resolveConnection({ connectionId: "seed:vault-ref" }, ADMIN)).password).toBe(VAULT_REFERENCE);
+    expect(readVaultSecret).toHaveBeenCalledTimes(1);
+    expect(plaintextWarnings()).toHaveLength(1);
   });
 });
