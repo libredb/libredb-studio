@@ -56,7 +56,26 @@ describe("claimWorkspaceForSignedInAccount", () => {
     expect(fetchMock.mock.calls.length).toBe(1);
   });
 
-  test("a storage mode that cannot be read counts as local mode, as the sync counts it", async () => {
+  test("a storage mode that cannot be read throws for a copy that was bound to a server account", async () => {
+    mockGlobalFetch({ "/api/storage/config": { ok: false, status: 500, json: { error: "down" } } });
+    await expect(claimWorkspaceForSignedInAccount()).rejects.toThrow("HTTP 500");
+
+    localStorage.removeItem(WORKSPACE_OWNER_KEY);
+    globalThis.fetch = (async () => {
+      throw new Error("offline");
+    }) as unknown as typeof fetch;
+    await expect(claimWorkspaceForSignedInAccount()).rejects.toThrow("offline");
+
+    localStorage.setItem(WORKSPACE_OWNER_KEY, "admin@libredb.org");
+    localStorage.removeItem(SERVER_MIGRATED_KEY);
+    await expect(claimWorkspaceForSignedInAccount()).rejects.toThrow("offline");
+    expect(localStorage.getItem("libredb_connections")).not.toBeNull();
+  });
+
+  test("a storage mode that cannot be read counts as local mode for a copy never bound to a server account", async () => {
+    localStorage.removeItem(WORKSPACE_OWNER_KEY);
+    localStorage.removeItem(SERVER_MIGRATED_KEY);
+
     mockGlobalFetch({ "/api/storage/config": { ok: false, status: 500, json: { error: "down" } } });
     await claimWorkspaceForSignedInAccount();
     expect(localStorage.getItem("libredb_connections")).not.toBeNull();

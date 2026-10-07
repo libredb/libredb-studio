@@ -75,6 +75,36 @@ describe("WorkspaceOwnerGate", () => {
     expect(localStorage.getItem("libredb_workspace_owner")).toBe("admin@libredb.org");
   });
 
+  test("a storage mode that cannot be read shows why and renders no page for a copy bound to a server account", async () => {
+    mockGlobalFetch({ "/api/storage/config": { ok: false, status: 502, json: { error: "down" } } });
+    const seen: (string | null)[] = [];
+
+    const view = render(
+      <WorkspaceOwnerGate>
+        <CopyReader seen={seen} />
+      </WorkspaceOwnerGate>,
+    );
+
+    expect((await view.findByRole("alert")).textContent).toContain("could not confirm the signed-in account");
+    expect(seen).toEqual([]);
+  });
+
+  test("a storage mode that cannot be read renders the page for a copy never bound to a server account", async () => {
+    localStorage.removeItem("libredb_workspace_owner");
+    localStorage.removeItem("libredb_server_migrated");
+    mockGlobalFetch({ "/api/storage/config": { ok: false, status: 502, json: { error: "down" } } });
+    const seen: (string | null)[] = [];
+
+    const view = render(
+      <WorkspaceOwnerGate>
+        <CopyReader seen={seen} />
+      </WorkspaceOwnerGate>,
+    );
+
+    expect(await view.findByText("workspace page")).not.toBeNull();
+    expect(seen.at(-2)).toBe(JSON.stringify([{ id: "c1", name: "Warehouse" }]));
+  });
+
   test("local mode: the page reads the browser copy as before", async () => {
     mockGlobalFetch({ "/api/storage/config": { json: { provider: "local", serverMode: false } } });
     const seen: (string | null)[] = [];

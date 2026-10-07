@@ -1259,6 +1259,7 @@ When any `storage.*` mutation fires:
 In server mode the browser copy is bound to the account that signed in: `libredb_workspace_owner` holds its username, and it is compared with `GET /api/auth/me` before any page reads the copy.
 Every page that reads it (the editor, the admin dashboard and the monitoring page) renders inside `WorkspaceOwnerGate`, which runs that check first; the lifecycle above runs it again before anything is migrated, pulled or pushed.
 When the signed-in account cannot be read, those pages show a message instead of the copy.
+They show it too when `GET /api/storage/config` cannot be read and the copy carries an owner or the migration flag, both written only in server mode; a copy with neither renders as it is, so local mode does not change.
 The copy is every synced collection, the editor tabs (never stored on the server), the object-source drafts, the agent thread hint, the migration flag and the owner key itself; per-browser preferences such as the theme and line numbers are not part of it.
 `clearAccountWorkspace()` in `src/lib/storage/local-storage.ts` holds that list.
 
@@ -1276,7 +1277,7 @@ In local mode none of this runs: the browser copy is the only copy, it stays on 
 
 ### Graceful Degradation
 
-- If `/api/storage/config` fails → stays in localStorage-only mode
+- If `/api/storage/config` fails → stays in localStorage-only mode, unless the browser copy carries `libredb_workspace_owner` or `libredb_server_migrated`: then the pages that read the copy show a message instead of it, because the copy may belong to a different account
 - If push fails → logs warning, sets `syncError`, does **not** block the UI
 - Components always read from `localStorage` — no loading states for storage
 
