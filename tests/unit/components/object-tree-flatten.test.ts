@@ -1081,3 +1081,28 @@ describe("a listed object's readable ranges", () => {
     expect(host.textContent).toContain("/config/*");
   });
 });
+
+describe("a filtered row's label", () => {
+  const base: TreeRowModel = {
+    id: "app/orders/table",
+    kind: "object",
+    label: "customer_orders",
+    depth: 2,
+    setSize: 1,
+    posInSet: 1,
+    path: ["app", "customer_orders"],
+    kindId: "table",
+  };
+
+  test("wraps the matched letters in a mark and keeps the whole name readable", () => {
+    const label = drawRow({ row: { ...base, match: [9, 13] } }).querySelector('[data-testid="tree-row-label"]');
+    expect(label?.querySelector("mark")?.textContent).toBe("orde");
+    expect(label?.textContent).toBe("customer_orders");
+  });
+
+  test("an empty range draws no mark", () => {
+    const label = drawRow({ row: { ...base, match: [0, 0] } }).querySelector('[data-testid="tree-row-label"]');
+    expect(label?.querySelector("mark")).toBeNull();
+    expect(label?.textContent).toBe("customer_orders");
+  });
+});

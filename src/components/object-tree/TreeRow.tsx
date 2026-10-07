@@ -296,7 +296,17 @@ export function TreeRow({
         data-testid="tree-row-label"
         className={sentenceShown ? "grow basis-[60%] max-w-max truncate" : "truncate"}
       >
-        {row.label}
+        {row.match !== undefined && row.match[1] > row.match[0] ? (
+          <>
+            {row.label.slice(0, row.match[0])}
+            <mark className="rounded-sm bg-brand/25 text-foreground">
+              {row.label.slice(row.match[0], row.match[1])}
+            </mark>
+            {row.label.slice(row.match[1])}
+          </>
+        ) : (
+          row.label
+        )}
       </span>
       {isPrimaryColumn && (
         <span id={rowNameId("primary", row.id)} data-testid="tree-row-primary" className="sr-only">
