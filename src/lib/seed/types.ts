@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { CONNECTION_STRING_ACCEPTED, MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import { isCredentialReference } from "./credential-resolver";
@@ -222,6 +222,19 @@ export const SeedConnectionSchema = z
       code: z.ZodIssueCode.custom,
       message: `Seed connection "${conn.id}": ${refusal} readOnly: true is refused with this credential, because the mode would promise a boundary the server does not keep. Give this connection a credential of its own, or remove readOnly.`,
       path: ["password"],
+    });
+  })
+  // A connection string the type's provider does not read (Spec A section 7): the provider would drop it in
+  // silence and open whatever the other fields say, so the seed would be listed as one database and reach
+  // another, or none. Read from CONNECTION_STRING_ACCEPTED, never a type-id branch. Any set value counts, a
+  // reference included, because the file is validated before anything is resolved. The message names the
+  // connection and the type, never the value.
+  .superRefine((conn, ctx) => {
+    if (conn.connectionString === undefined || CONNECTION_STRING_ACCEPTED[conn.type]) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Seed connection "${conn.id}" sets connectionString, which the ${conn.type} provider does not read: move the value into host, port, user, password and database`,
+      path: ["connectionString"],
     });
   });
 
