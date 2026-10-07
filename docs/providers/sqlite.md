@@ -485,7 +485,7 @@ Homebrew). Each channel is browser-verified by
 
 ## 5. Query interface
 
-`query(sql, params?)` — positional params via the driver's `values()`/`run()`. There is no
+`query(sql, params?)`: positional params via the driver's `values()`/`run()`. There is no
 `prepareQuery()` override, so the inherited base injects a `LIMIT` into bare `SELECT`s
 (`DEFAULT_QUERY_LIMIT = 500`). No transactions, no cancellation ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 

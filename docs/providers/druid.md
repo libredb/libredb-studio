@@ -870,7 +870,7 @@ both the reason and the alternative, which is more useful than anything this pro
 | header row 0 | `fields` | Declared column order, made unique (`c`, `c (2)`, never a name the payload itself declares); `[]` when the payload carried no header |
 | — | `rowCount` | `rows.length`. There is no second number: no Druid statement mutates, so a mutation count could only ever be zero |
 | the measured exchange | `executionTime` | Rounded milliseconds, **measured by the transport**. The endpoint reports no timing whatsoever, so there is no server-side number this could be preferred over ([§3.2](#32-the-transport-seam-one-interface-one-implementation)) |
-| header row 2 (SQL types) | `columnTypes` | Keyed by the same unique names; **absent** when the payload declared no types. The native types (header row 1) deliberately do not travel — they lie for an expression ([§3.5](#35-the-sql-type-labels-the-column-because-the-native-type-lies)) |
+| header row 2 (SQL types) | `columnTypes` | Keyed by the same unique names; **absent** when the payload declared no types. The native types (header row 1) deliberately do not travel: they lie for an expression ([§3.5](#35-the-sql-type-labels-the-column-because-the-native-type-lies)) |
 | `X-Druid-Response-Context.missingSegments` | `warnings` | One warning naming how many segments were unavailable, and **absent** for a whole answer or an answer that said nothing about availability ([§13](#13-known-limitations--future-work)) |
 
 **`COUNT(DISTINCT ...)` answers an estimate.** Druid documents it as an alias for
