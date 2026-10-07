@@ -17,8 +17,8 @@ import {
  * so a copy another account left behind is cleared before the page reads it, and signing in as
  * a different account starts from that account's server data on every such page, not only the
  * editor. The copy is shared by every tab of the browser profile: when another tab records a
- * different owner or clears it (a sign-out, a different account signing in), this page stops
- * rendering and reloads, so the check runs again for the account signed in now. A sign-in can
+ * different owner or clears it (a sign-out, a different account signing in, or a claim for this
+ * same account that cleared it first), this page stops rendering and reloads, so the check runs again for the account signed in now. A sign-in can
  * also land where nothing records an owner (an unknown address), so whenever the tab is shown
  * again it asks which account is signed in, and reloads the same way when that is no longer the
  * account it rendered for. A session that has ended, at the first check or when the tab is shown
@@ -51,7 +51,10 @@ export function WorkspaceOwnerGate({ children }: { children: ReactNode }) {
         };
         const onStorage = (event: StorageEvent) => {
           if (event.key !== null && event.key !== WORKSPACE_OWNER_KEY) return;
-          if (localStorage.getItem(WORKSPACE_OWNER_KEY) === owner) return;
+          // A removed owner key means the copy was cleared, also when another tab claiming for
+          // this same account writes the name again right after: this page's data is gone.
+          const removed = event.key === WORKSPACE_OWNER_KEY && event.newValue === null;
+          if (!removed && localStorage.getItem(WORKSPACE_OWNER_KEY) === owner) return;
           leave();
         };
         const onShown = () => {

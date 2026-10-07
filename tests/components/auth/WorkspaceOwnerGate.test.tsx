@@ -257,6 +257,31 @@ describe("WorkspaceOwnerGate", () => {
       expect(reload).not.toHaveBeenCalled();
     });
 
+    test("server mode: the owner key removed elsewhere drops the page, even when the same name is written right after", async () => {
+      // Another tab claiming for the same account clears the copy and records the name again; this
+      // page's pulled data is gone from the copy all the same.
+      mockGlobalFetch({ ...SERVER_MODE, "/api/auth/me": { json: { user: { username: "admin@libredb.org" } } } });
+      const view = render(
+        <WorkspaceOwnerGate>
+          <p>workspace page</p>
+        </WorkspaceOwnerGate>,
+      );
+      expect(await view.findByText("workspace page")).not.toBeNull();
+
+      act(() => {
+        window.dispatchEvent(
+          new window.StorageEvent("storage", {
+            key: "libredb_workspace_owner",
+            oldValue: "admin@libredb.org",
+            newValue: null,
+          }),
+        );
+      });
+
+      expect(view.queryByText("workspace page")).toBeNull();
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
     test("local mode: an owner key written elsewhere changes nothing", async () => {
       mockGlobalFetch({ "/api/storage/config": { json: { provider: "local", serverMode: false } } });
       const view = render(
