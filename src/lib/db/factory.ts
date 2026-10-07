@@ -122,7 +122,7 @@ const sanitize = (v: string) => v.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0
  * `DatabaseConfigError` the provider would have raised, so the key never sees a record the provider
  * would refuse, and no fallback key is invented for a missing id.
  */
-export function assertConnectionIdPresent(connection: DatabaseConnection): void {
+function assertConnectionIdPresent(connection: DatabaseConnection): void {
   if (!connection.id) {
     throw new DatabaseConfigError("Connection ID is required", connection.type);
   }
