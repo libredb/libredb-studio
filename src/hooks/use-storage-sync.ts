@@ -1,6 +1,6 @@
 "use client";
 
-import { appFetch } from "@/lib/config/base-path";
+import { appFetch, heldWorkspaceOwner } from "@/lib/config/base-path";
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   storage,
@@ -11,7 +11,9 @@ import {
 } from "@/lib/storage";
 import {
   claimAccountWorkspace,
+  keepUnsavedCollections,
   SERVER_MIGRATED_KEY as MIGRATION_FLAG,
+  takeUnsavedCollections,
   WORKSPACE_OWNER_KEY,
 } from "@/lib/storage/local-storage";
 import { registerWorkspaceSync } from "@/lib/storage/sign-out";
@@ -188,7 +190,8 @@ export function useStorageSync(): StorageSyncState {
    * `owner` is the account the copy was claimed for. Each collection of the answer is written
    * only while the copy still belongs to it, checked again before every write: a sign-out, or
    * another tab claiming the copy for a different account, while the pull was out or between two
-   * of its writes, keeps the copy as that left it.
+   * of its writes, keeps the copy as that left it. A collection still waiting to be pushed keeps
+   * its local value.
    */
   const pullFromServer = useCallback(async (owner: string) => {
     setIsSyncing(true);
@@ -200,7 +203,7 @@ export function useStorageSync(): StorageSyncState {
       // Write server data to localStorage (overwrite)
       for (const collection of STORAGE_COLLECTIONS) {
         const value = data[collection];
-        if (!isPulled(collection, value)) continue;
+        if (!isPulled(collection, value) || pendingCollectionsRef.current.has(collection)) continue;
         if (localStorage.getItem(WORKSPACE_OWNER_KEY) !== owner) return;
         writeCollectionToLocal(collection, value);
       }
@@ -303,14 +306,25 @@ export function useStorageSync(): StorageSyncState {
             return;
           }
           if (cancelled) return;
+          // The page's owner check claimed the copy for another account than the one signed in
+          // now: the page reloads, so the check runs again for this one.
+          const held = heldWorkspaceOwner();
+          if (held !== null && held !== username) {
+            ready = false;
+            window.location.reload();
+            return;
+          }
 
           setIsServerMode(true);
           serverModeRef.current = true;
 
           // Records `username` as the owner of the copy it keeps or clears.
           claimAccountWorkspace(username);
-          // Migration first, then pull
+          // Migration first, then the changes a sign-out of this account could not push, then pull
           await migrateToServer();
+          const unsaved = takeUnsavedCollections();
+          for (const collection of unsaved) pendingCollectionsRef.current.add(collection);
+          if (unsaved.length > 0) await pushPending();
           if (!cancelled) {
             await pullFromServer(username);
           }
@@ -329,7 +343,7 @@ export function useStorageSync(): StorageSyncState {
     return () => {
       cancelled = true;
     };
-  }, [migrateToServer, pullFromServer]);
+  }, [migrateToServer, pullFromServer, pushPending]);
 
   // ── Sign-out: push what is pending while the session cookie is still valid ──
   useEffect(() => {
@@ -349,11 +363,15 @@ export function useStorageSync(): StorageSyncState {
         await pushPending();
         clearTimers();
         if (pendingCollectionsRef.current.size > 0) {
+          // Kept in the copy for this account's next sign-in here, which pushes them first.
+          keepUnsavedCollections(Array.from(pendingCollectionsRef.current));
           throw new Error("Unsaved changes could not be saved to server storage");
         }
       },
       resume: () => {
         signingOutRef.current = false;
+        // Held here again, so nothing is left for a later sign-in to push.
+        takeUnsavedCollections();
         const held = Array.from(pendingCollectionsRef.current);
         for (const collection of held) schedulePush(collection);
       },

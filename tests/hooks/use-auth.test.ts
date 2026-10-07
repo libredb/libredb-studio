@@ -498,7 +498,7 @@ describe("useAuth", () => {
       expect(localStorage.getItem("libredb_workspace_owner")).toBe("user@libredb.org");
       expect(mockToastSuccess).toHaveBeenCalledWith("Logged out", {
         description:
-          "Some changes could not be saved to server storage. They stay in this browser for this account until a different account signs in here.",
+          "Some changes could not be saved to server storage. This browser keeps them and saves them when this account signs in here again; a different account signing in here first discards them.",
       });
       expect(mockRouterPush).toHaveBeenCalledWith("/login");
     });

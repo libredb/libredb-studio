@@ -22,6 +22,9 @@ import {
   SERVER_MIGRATED_KEY,
   SOURCE_DRAFTS_KEY,
   AGENT_THREAD_KEY,
+  UNSAVED_COLLECTIONS_KEY,
+  keepUnsavedCollections,
+  takeUnsavedCollections,
 } from "@/lib/storage/local-storage";
 import { STORAGE_COLLECTIONS } from "@/lib/storage/types";
 import { heldWorkspaceOwner, holdWorkspaceOwner } from "@/lib/config/base-path";
@@ -189,6 +192,40 @@ describe("local-storage: writes while another tab changed whose copy this is", (
   });
 });
 
+describe("local-storage: the collections a sign-out could not push", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    holdWorkspaceOwner(null);
+  });
+
+  test("are kept in the copy and handed back once", () => {
+    holdWorkspaceOwner("ana@libredb.org");
+    localStorage.setItem(WORKSPACE_OWNER_KEY, "ana@libredb.org");
+
+    expect(takeUnsavedCollections()).toEqual([]);
+    keepUnsavedCollections(["history", "connections"]);
+
+    expect(takeUnsavedCollections()).toEqual(["history", "connections"]);
+    expect(localStorage.getItem(UNSAVED_COLLECTIONS_KEY)).toBeNull();
+    expect(takeUnsavedCollections()).toEqual([]);
+  });
+
+  test("are neither kept nor taken once the copy belongs to a different account", () => {
+    holdWorkspaceOwner("ana@libredb.org");
+    localStorage.setItem(WORKSPACE_OWNER_KEY, "bob@libredb.org");
+
+    keepUnsavedCollections(["history"]);
+    expect(localStorage.getItem(UNSAVED_COLLECTIONS_KEY)).toBeNull();
+
+    localStorage.setItem(UNSAVED_COLLECTIONS_KEY, '["connections"]');
+    expect(takeUnsavedCollections()).toEqual([]);
+    expect(localStorage.getItem(UNSAVED_COLLECTIONS_KEY)).toBe('["connections"]');
+  });
+});
+
 describe("local-storage: clearAccountWorkspace", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -199,6 +236,7 @@ describe("local-storage: clearAccountWorkspace", () => {
     expect(SERVER_MIGRATED_KEY).toBe("libredb_server_migrated");
     expect(SOURCE_DRAFTS_KEY).toBe("libredb_source_drafts_v1");
     expect(AGENT_THREAD_KEY).toBe("libredb_agent_thread");
+    expect(UNSAVED_COLLECTIONS_KEY).toBe("libredb_unsaved_collections");
   });
 
   test("removes every key the signed-in account's browser copy is held under", () => {
@@ -207,6 +245,7 @@ describe("local-storage: clearAccountWorkspace", () => {
     localStorage.setItem(workspaceTabsKey("seed:sample"), "[]");
     localStorage.setItem(SOURCE_DRAFTS_KEY, "{}");
     localStorage.setItem(AGENT_THREAD_KEY, "{}");
+    localStorage.setItem(UNSAVED_COLLECTIONS_KEY, '["history"]');
     localStorage.setItem(SERVER_MIGRATED_KEY, "2026-10-07");
     localStorage.setItem(WORKSPACE_OWNER_KEY, "admin@libredb.org");
 

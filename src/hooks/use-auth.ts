@@ -10,7 +10,7 @@ import { releaseAccountWorkspace } from "@/lib/storage/sign-out";
 
 /** What a sign-out says when changes that could not be pushed stay in this browser's copy. */
 const CHANGES_KEPT =
-  "Some changes could not be saved to server storage. They stay in this browser for this account until a different account signs in here.";
+  "Some changes could not be saved to server storage. This browser keeps them and saves them when this account signs in here again; a different account signing in here first discards them.";
 
 interface AuthUser {
   role?: string;

@@ -5,7 +5,8 @@
  * pushes whatever is still waiting to be pushed while the session cookie is still valid, ends
  * the session, and only then clears the copy. A push that did not land does not stop the sign-out:
  * when the session had already ended the copy is cleared, and otherwise the session ends and the
- * copy is kept for this account, whose owner key the next sign-in checks. A sign-out the server
+ * copy is kept for this account with the collections that were not pushed, which the same account's
+ * next sign-in here pushes before it pulls (`useStorageSync`). A sign-out the server
  * refused while the session goes on leaves the copy in place. In local mode the browser copy is
  * the only one and stays.
  *

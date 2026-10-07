@@ -140,6 +140,26 @@ export const SOURCE_DRAFTS_KEY = `${KEY_PREFIX}source_drafts_v1`;
 export const AGENT_THREAD_KEY = `${KEY_PREFIX}agent_thread`;
 
 /**
+ * The collections a sign-out could not push (`useStorageSync`). Their changes stay in the copy,
+ * and the same account's next sign-in on this browser pushes them before it pulls.
+ */
+export const UNSAVED_COLLECTIONS_KEY = `${KEY_PREFIX}unsaved_collections`;
+
+/** Record the collections a sign-out could not push, while the copy is still this tab's. */
+export function keepUnsavedCollections(collections: readonly string[]): void {
+  if (!isClient() || !holdsAccountWorkspace()) return;
+  localStorage.setItem(UNSAVED_COLLECTIONS_KEY, JSON.stringify(collections));
+}
+
+/** The collections a sign-out could not push, removed from the copy: the caller pushes them now. */
+export function takeUnsavedCollections(): string[] {
+  if (!isClient() || !holdsAccountWorkspace()) return [];
+  const raw = localStorage.getItem(UNSAVED_COLLECTIONS_KEY);
+  localStorage.removeItem(UNSAVED_COLLECTIONS_KEY);
+  return raw === null ? [] : (JSON.parse(raw) as string[]);
+}
+
+/**
  * Whether this tab may write the browser copy. Before a claim, and so always in local mode, it
  * may. In server storage mode it may only while the copy still belongs to the account this tab
  * claimed it for: once another tab of the browser profile has cleared it or recorded a different
@@ -160,6 +180,7 @@ const ACCOUNT_KEYS: readonly string[] = [
   ...STORAGE_COLLECTIONS.map(getKey),
   SOURCE_DRAFTS_KEY,
   AGENT_THREAD_KEY,
+  UNSAVED_COLLECTIONS_KEY,
   SERVER_MIGRATED_KEY,
   WORKSPACE_OWNER_KEY,
 ];
