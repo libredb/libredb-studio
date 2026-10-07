@@ -1,6 +1,6 @@
 import "../setup-dom";
 
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from "bun:test";
 import { renderHook, waitFor, act, cleanup } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
 
@@ -50,6 +50,7 @@ mock.module("@/lib/storage", () => ({
 import { useStorageSync } from "@/hooks/use-storage-sync";
 import { releaseAccountWorkspace } from "@/lib/storage/sign-out";
 import { workspaceTabsKey } from "@/lib/storage/local-storage";
+import { holdWorkspaceOwner } from "@/lib/config/base-path";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -96,6 +97,7 @@ describe("useStorageSync", () => {
   afterEach(() => {
     restoreGlobalFetch();
     cleanup();
+    holdWorkspaceOwner(null);
   });
 
   // ── Mode discovery ──────────────────────────────────────────────────────
@@ -452,6 +454,35 @@ describe("useStorageSync", () => {
       const stored = localStorage.getItem("libredb_connection_groups");
       expect(stored).not.toBeNull();
       expect(JSON.parse(stored!)).toEqual(groups);
+    });
+
+    test("stops writing once another tab hands the copy to a different account mid-pull", async () => {
+      const write = localStorage.setItem.bind(localStorage);
+      // Another tab's claim lands between two of this pull's writes.
+      const setItem = spyOn(localStorage, "setItem").mockImplementation((key: string, value: string) => {
+        write(key, value);
+        if (key === "libredb_connections") write("libredb_workspace_owner", "admin@libredb.org");
+      });
+      try {
+        setupServerMode({
+          "/api/storage": {
+            ok: true,
+            status: 200,
+            json: { connections: [{ id: "server-c1" }], history: [{ id: "server-h1" }] },
+          },
+        });
+
+        const { result } = renderHook(() => useStorageSync());
+        await waitFor(() => {
+          expect(result.current.isReady).toBe(true);
+        });
+      } finally {
+        setItem.mockRestore();
+      }
+
+      expect(localStorage.getItem("libredb_connections")).toBe(JSON.stringify([{ id: "server-c1" }]));
+      expect(localStorage.getItem("libredb_history")).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe("admin@libredb.org");
     });
 
     test("removes active_connection_id from localStorage when server returns null", async () => {

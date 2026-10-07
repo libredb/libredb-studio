@@ -16,6 +16,8 @@ import {
   claimAccountWorkspace,
   resetAccountWorkspace,
   workspaceTabsKey,
+  removeWorkspaceTabs,
+  holdsAccountWorkspace,
   WORKSPACE_OWNER_KEY,
   SERVER_MIGRATED_KEY,
   SOURCE_DRAFTS_KEY,
@@ -131,6 +133,59 @@ describe("local-storage: remove", () => {
     writeString("active_connection_id", "conn-42");
     remove("active_connection_id");
     expect(readString("active_connection_id")).toBeNull();
+  });
+});
+
+describe("local-storage: writes while another tab changed whose copy this is", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    holdWorkspaceOwner(null);
+  });
+
+  test("before a claim, as in local mode, every write lands whatever the owner key says", () => {
+    localStorage.setItem(WORKSPACE_OWNER_KEY, "bob@libredb.org");
+
+    expect(holdsAccountWorkspace()).toBe(true);
+    expect(writeJSON("history", [])).toBe(true);
+    expect(writeString("active_connection_id", "c1")).toBe(true);
+  });
+
+  test("server mode: the browser copy is written only while it still belongs to the claimed account", () => {
+    holdWorkspaceOwner("ana@libredb.org");
+    localStorage.setItem(WORKSPACE_OWNER_KEY, "ana@libredb.org");
+    expect(holdsAccountWorkspace()).toBe(true);
+    expect(writeJSON("history", [{ id: "h1" }])).toBe(true);
+    localStorage.setItem(workspaceTabsKey("c1"), "[]");
+
+    localStorage.setItem(WORKSPACE_OWNER_KEY, "bob@libredb.org");
+
+    expect(holdsAccountWorkspace()).toBe(false);
+    expect(writeJSON("history", [{ id: "h2" }])).toBe(false);
+    expect(writeString("active_connection_id", "c2")).toBe(false);
+    remove("history");
+    removeWorkspaceTabs("c1");
+    expect(localStorage.getItem(getKey("history"))).toBe(JSON.stringify([{ id: "h1" }]));
+    expect(localStorage.getItem(getKey("active_connection_id"))).toBeNull();
+    expect(localStorage.getItem(workspaceTabsKey("c1"))).toBe("[]");
+  });
+
+  test("server mode: a copy cleared by a sign-out elsewhere is not written either", () => {
+    holdWorkspaceOwner("ana@libredb.org");
+    resetAccountWorkspace(null);
+
+    expect(writeJSON("connections", [{ id: "c1" }])).toBe(false);
+    expect(localStorage.getItem(getKey("connections"))).toBeNull();
+  });
+
+  test("the owner is read from the storage it is given", () => {
+    holdWorkspaceOwner("ana@libredb.org");
+    const other = { getItem: (key: string) => (key === WORKSPACE_OWNER_KEY ? "ana@libredb.org" : null) };
+
+    expect(holdsAccountWorkspace(other)).toBe(true);
+    expect(holdsAccountWorkspace()).toBe(false);
   });
 });
 

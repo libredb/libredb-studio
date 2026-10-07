@@ -4,7 +4,7 @@
  * No event dispatching — that's the facade's responsibility.
  */
 
-import { holdWorkspaceOwner } from "@/lib/config/base-path";
+import { heldWorkspaceOwner, holdWorkspaceOwner } from "@/lib/config/base-path";
 import { logger } from "@/lib/logger";
 import { STORAGE_COLLECTIONS } from "./types";
 
@@ -58,10 +58,11 @@ export function readString(collection: string): string | null {
 
 /**
  * Write JSON to localStorage.
- * Returns true on success, false on failure (e.g. QuotaExceededError).
+ * Returns true on success, false on failure (e.g. QuotaExceededError, or a copy this tab no
+ * longer holds: `holdsAccountWorkspace`).
  */
 export function writeJSON(collection: string, data: unknown): boolean {
-  if (!isClient()) return false;
+  if (!isClient() || !holdsAccountWorkspace()) return false;
   try {
     localStorage.setItem(getKey(collection), JSON.stringify(data));
     return true;
@@ -76,10 +77,11 @@ export function writeJSON(collection: string, data: unknown): boolean {
 
 /**
  * Write raw string to localStorage.
- * Returns true on success, false on failure (e.g. QuotaExceededError).
+ * Returns true on success, false on failure (e.g. QuotaExceededError, or a copy this tab no
+ * longer holds: `holdsAccountWorkspace`).
  */
 export function writeString(collection: string, value: string): boolean {
-  if (!isClient()) return false;
+  if (!isClient() || !holdsAccountWorkspace()) return false;
   try {
     localStorage.setItem(getKey(collection), value);
     return true;
@@ -96,7 +98,7 @@ export function writeString(collection: string, value: string): boolean {
  * Remove a key from localStorage.
  */
 export function remove(collection: string): void {
-  if (!isClient()) return;
+  if (!isClient() || !holdsAccountWorkspace()) return;
   localStorage.removeItem(getKey(collection));
 }
 
@@ -114,7 +116,7 @@ export function workspaceTabsKey(connectionId: string): string {
 
 /** Drop a connection's saved editor tabs; the connection they belonged to is gone. */
 export function removeWorkspaceTabs(connectionId: string): void {
-  if (!isClient()) return;
+  if (!isClient() || !holdsAccountWorkspace()) return;
   localStorage.removeItem(workspaceTabsKey(connectionId));
 }
 
@@ -136,6 +138,18 @@ export const SOURCE_DRAFTS_KEY = `${KEY_PREFIX}source_drafts_v1`;
 
 /** The agent conversation this browser was last in (`components/agent/use-agent-run.ts`). */
 export const AGENT_THREAD_KEY = `${KEY_PREFIX}agent_thread`;
+
+/**
+ * Whether this tab may write the browser copy. Before a claim, and so always in local mode, it
+ * may. In server storage mode it may only while the copy still belongs to the account this tab
+ * claimed it for: once another tab of the browser profile has cleared it or recorded a different
+ * owner, this tab writes nothing more and reloads (`WorkspaceOwnerGate`). `storage` is the store
+ * the owner key is read from, for a writer that is handed its store.
+ */
+export function holdsAccountWorkspace(storage: Pick<Storage, "getItem"> = localStorage): boolean {
+  const claimed = heldWorkspaceOwner();
+  return claimed === null || storage.getItem(WORKSPACE_OWNER_KEY) === claimed;
+}
 
 /**
  * Every key that holds the signed-in account's browser copy: the synced collections, the

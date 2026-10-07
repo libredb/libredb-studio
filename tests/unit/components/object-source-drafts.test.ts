@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   DRAFT_BUDGET_CHARACTERS,
   DRAFT_KEY,
@@ -10,6 +10,8 @@ import {
 } from "@/components/object-source/source-drafts";
 import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import type { ObjectEditRevision } from "@/lib/db/types";
+import { holdWorkspaceOwner } from "@/lib/config/base-path";
+import { WORKSPACE_OWNER_KEY } from "@/lib/storage/local-storage";
 
 const BASE: ObjectEditRevision = { check: "guarded", token: "t", basis: "b", scope: "server" };
 
@@ -287,5 +289,25 @@ describe("the populations the eviction policy is actually for", () => {
     storage.setItem(DRAFT_KEY, JSON.stringify({ stale: { text: filler, base: BASE } }));
     expect(writeDraft(storage, "new", draft(filler, 2))).toEqual({ ok: true, evicted: [] });
     expect(readDraft(storage, "new")).toBeDefined();
+  });
+});
+
+describe("server storage mode: a store that another tab has handed to a different account", () => {
+  afterEach(() => {
+    holdWorkspaceOwner(null);
+  });
+
+  test("is neither written nor dropped from, and the write says it was unavailable", () => {
+    const storage = fakeStorage();
+    holdWorkspaceOwner("ana@libredb.org");
+    storage.setItem(WORKSPACE_OWNER_KEY, "ana@libredb.org");
+    expect(writeDraft(storage, "a", draft("SELECT 1", 1))).toEqual({ ok: true, evicted: [] });
+
+    storage.setItem(WORKSPACE_OWNER_KEY, "bob@libredb.org");
+
+    expect(writeDraft(storage, "b", draft("SELECT 2", 2))).toEqual({ ok: false, reason: "unavailable" });
+    dropDraft(storage, "a");
+    expect(readDraft(storage, "a")?.text).toBe("SELECT 1");
+    expect(readDraft(storage, "b")).toBeUndefined();
   });
 });

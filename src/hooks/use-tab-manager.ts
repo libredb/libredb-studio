@@ -12,7 +12,7 @@ import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import { resolveTabType } from "@/lib/editor/tab-language";
 import { logger } from "@/lib/logger";
 import { newLocalId } from "@/lib/ids";
-import { workspaceTabsKey } from "@/lib/storage/local-storage";
+import { holdsAccountWorkspace, workspaceTabsKey } from "@/lib/storage/local-storage";
 import { useStableCallback } from "@/hooks/use-stable-callback";
 
 /**
@@ -282,6 +282,8 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
     if (!isWorkspaceHydrated || !storage) return;
 
     const timer = setTimeout(() => {
+      // A copy another tab has handed to a different account is not this page's to write.
+      if (!holdsAccountWorkspace(storage)) return;
       const serialized: PersistedWorkspaceState = {
         activeTabId,
         tabs: tabs.map((tab) => ({

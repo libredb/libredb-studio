@@ -176,9 +176,10 @@ export function useStorageSync(): StorageSyncState {
 
   // ── Pull all data from server → localStorage ──
   /**
-   * `owner` is the account the copy was claimed for. The answer is written only while the copy
-   * still belongs to it: a sign-out (or another tab) that cleared the copy while the pull was out
-   * keeps it cleared.
+   * `owner` is the account the copy was claimed for. Each collection of the answer is written
+   * only while the copy still belongs to it, checked again before every write: a sign-out, or
+   * another tab claiming the copy for a different account, while the pull was out or between two
+   * of its writes, keeps the copy as that left it.
    */
   const pullFromServer = useCallback(async (owner: string) => {
     setIsSyncing(true);
@@ -186,23 +187,14 @@ export function useStorageSync(): StorageSyncState {
       const res = await appFetch("/api/storage");
       if (!res.ok) return;
       const data = (await res.json()) as Partial<StorageData>;
-      if (localStorage.getItem(WORKSPACE_OWNER_KEY) !== owner) return;
 
       // Write server data to localStorage (overwrite)
-      if (data.connections) writeCollectionToLocal("connections", data.connections);
-      if (data.history) writeCollectionToLocal("history", data.history);
-      if (data.saved_queries) writeCollectionToLocal("saved_queries", data.saved_queries);
-      if (data.schema_snapshots) writeCollectionToLocal("schema_snapshots", data.schema_snapshots);
-      if (data.saved_charts) writeCollectionToLocal("saved_charts", data.saved_charts);
-      if (data.active_connection_id !== undefined)
-        writeCollectionToLocal("active_connection_id", data.active_connection_id);
-      if (data.audit_log) writeCollectionToLocal("audit_log", data.audit_log);
-      if (data.masking_config) writeCollectionToLocal("masking_config", data.masking_config);
-      if (data.threshold_config) writeCollectionToLocal("threshold_config", data.threshold_config);
-      if (data.dismissed_seeds) writeCollectionToLocal("dismissed_seeds", data.dismissed_seeds);
-      if (data.favorite_connections) writeCollectionToLocal("favorite_connections", data.favorite_connections);
-      if (data.connection_order) writeCollectionToLocal("connection_order", data.connection_order);
-      if (data.connection_groups) writeCollectionToLocal("connection_groups", data.connection_groups);
+      for (const collection of STORAGE_COLLECTIONS) {
+        const value = data[collection];
+        if (!isPulled(collection, value)) continue;
+        if (localStorage.getItem(WORKSPACE_OWNER_KEY) !== owner) return;
+        writeCollectionToLocal(collection, value);
+      }
 
       setLastSyncedAt(new Date());
       setSyncError(null);
@@ -406,6 +398,14 @@ function getCollectionData(collection: string): unknown {
     default:
       return null;
   }
+}
+
+/**
+ * Whether the pull writes a collection the server answered: one it holds a value for, and
+ * `active_connection_id` also when that value is null (the account has no active connection).
+ */
+function isPulled(collection: string, value: unknown): boolean {
+  return collection === "active_connection_id" ? value !== undefined : Boolean(value);
 }
 
 /** Write server data directly to localStorage via storage key */
