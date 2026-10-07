@@ -3547,6 +3547,14 @@ describe.each(["bun", "node"] as const)("SQLiteProvider result column names on t
     if (namesAgent?.isConnected()) await namesAgent.disconnect();
     namesAgent = null;
     await namesProvider.disconnect();
+    // Under Bun the `node` driver is Bun's own node:sqlite, whose `close()` leaves the
+    // statements it prepared holding the database, its WAL and its shared-memory file
+    // until they are collected: measured 2026-10-07 through /proc/self/fd, three
+    // descriptors after disconnect and none after a collection. Node's own `close()`
+    // releases them (the driver's `close` docblock; the under-Node test below), so this
+    // is the test runtime's behaviour, and on windows-latest it failed the removal
+    // below with EBUSY.
+    Bun.gc(true);
     rmSync(namesTmpDir, { recursive: true });
     if (originalDriverEnv === undefined) delete process.env.LIBREDB_SQLITE_DRIVER;
     else process.env.LIBREDB_SQLITE_DRIVER = originalDriverEnv;
