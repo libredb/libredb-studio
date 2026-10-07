@@ -1046,6 +1046,28 @@ describe("getOrCreateProvider", () => {
     expect(tunnel?.close).not.toHaveBeenCalled();
     expect(getProviderCacheStats().size).toBe(0);
   });
+
+  test("an inline connection without an id is refused before the cache key is computed (#1539)", async () => {
+    // The provider's own validate() refuses this record with DatabaseConfigError("Connection ID is
+    // required"), but the cache key is computed ahead of the provider: providerCacheKey length-frames
+    // connection.id, and a missing id crashed there with a TypeError, which createErrorResponse turned
+    // into a 500 INTERNAL_ERROR on query, health and multi-query. The refusal now happens first, as the
+    // same DatabaseConfigError the provider would have raised, so no cache key and no fallback key for a
+    // missing id.
+    const conn = makeConnection("sqlite", { id: undefined as unknown as string, database: ":memory:" });
+    await expect(getOrCreateProvider(conn)).rejects.toThrow("Connection ID is required");
+    await expect(getOrCreateProvider(conn)).rejects.toBeInstanceOf(DatabaseConfigError);
+    expect(getProviderCacheStats().size).toBe(0);
+  });
+
+  test("an execution-profile acquisition without an id is refused the same way (#1539)", async () => {
+    const conn = makeConnection("sqlite", { id: undefined as unknown as string, database: ":memory:" });
+    await expect(acquireExecutionProfileProvider(conn, "agent-operations")).rejects.toThrow(
+      "Connection ID is required",
+    );
+    await expect(acquireExecutionProfileProvider(conn, "agent-operations")).rejects.toBeInstanceOf(DatabaseConfigError);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
 });
 
 // ─── The cache key may not be a string the caller typed (GHSA-3wh2-8x78-jfw4) ──
