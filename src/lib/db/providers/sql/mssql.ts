@@ -1558,17 +1558,18 @@ type ArrayModeRecordset = unknown[] & { columns?: unknown };
  * A statement that answers no result set (an UPDATE) has no recordset at all. A recordset
  * without its column list, or a row whose values do not match the columns one for one, is
  * refused: naming columns by guess or shifting a value into a neighbour is a wrong answer.
+ * The refusal carries the statement, as `keyRowsByPosition`'s does.
  */
-function positionalResultSet(recordset: ArrayModeRecordset | undefined): MssqlResultSet {
+function positionalResultSet(recordset: ArrayModeRecordset | undefined, sql: string): MssqlResultSet {
   if (recordset === undefined) return { rows: [], fields: [], columns: {} };
   const declared = recordset.columns;
   if (!Array.isArray(declared)) {
-    throw new QueryError("SQL Server answered a result set without its column list", "mssql");
+    throw new QueryError("SQL Server answered a result set without its column list", "mssql", sql);
   }
   const metadata = declared as Array<MssqlColumnMetadata & { name: string }>;
   const fields = uniqueFieldNames(metadata.map((column) => column.name));
   const rows = recordset.map((row) => {
-    const values = rowValues(row, fields.length);
+    const values = rowValues(row, fields.length, sql);
     return Object.fromEntries(fields.map((field, index) => [field, values[index]]));
   });
   return { rows, fields, columns: Object.fromEntries(fields.map((field, index) => [field, metadata[index]])) };
@@ -1582,12 +1583,12 @@ function positionalResultSet(recordset: ArrayModeRecordset | undefined): MssqlRe
  * (`lib/tedious/request.js`, measured), so that single-column shape is read as the one value
  * it is.
  */
-function rowValues(row: unknown, width: number): unknown[] {
+function rowValues(row: unknown, width: number, sql: string): unknown[] {
   if (Array.isArray(row) && row.length === width) return row;
   const keys = row !== null && typeof row === "object" && !Array.isArray(row) ? Object.keys(row) : [];
   if (width === 1 && keys.length === 1 && keys[0] === "0") return [(row as Record<string, unknown>)[0]];
   const count = Array.isArray(row) ? row.length : keys.length;
-  throw new QueryError(`SQL Server answered a row of ${count} value(s) for ${width} column(s)`, "mssql");
+  throw new QueryError(`SQL Server answered a row of ${count} value(s) for ${width} column(s)`, "mssql", sql);
 }
 
 /**
@@ -1955,7 +1956,7 @@ export class MSSQLProvider extends SQLBaseProvider {
         }
       });
 
-      const first = positionalResultSet(result.recordset);
+      const first = positionalResultSet(result.recordset, sql);
       convertZonelessValues(first.rows, first.columns);
 
       // A text with several result sets carries all of them (#1312). The editor sends a
@@ -1967,7 +1968,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       const resultSets =
         recordsets.length > 1
           ? recordsets.map((recordset) => {
-              const set = recordset === result.recordset ? first : positionalResultSet(recordset);
+              const set = recordset === result.recordset ? first : positionalResultSet(recordset, sql);
               if (set !== first) convertZonelessValues(set.rows, set.columns);
               return { rows: set.rows, fields: set.fields, ...mssqlColumnTypes(set.columns) };
             })
@@ -2263,7 +2264,7 @@ export class MSSQLProvider extends SQLBaseProvider {
           const valueCeiling = MSSQLProvider.sessionCeiling(budget.maxResultBytes);
           await new mssql.Request(transaction).batch(`SET TEXTSIZE ${valueCeiling}`);
           const executed = await this.runWithDeadline(transaction, sql, budget.statementTimeoutMs, true);
-          const read = positionalResultSet(executed.recordset);
+          const read = positionalResultSet(executed.recordset, sql);
           MSSQLProvider.assertNoValueWasCut(read.rows, valueCeiling, sql);
           return read;
         } catch (error) {
@@ -2743,7 +2744,7 @@ export class MSSQLProvider extends SQLBaseProvider {
         }
       });
 
-      const { rows, fields, columns } = positionalResultSet(result.recordset);
+      const { rows, fields, columns } = positionalResultSet(result.recordset, sql);
       convertZonelessValues(rows, columns);
 
       return {

@@ -2548,27 +2548,45 @@ describe("MSSQLProvider result column names", () => {
     answerWith(arrayModeSet(["a", "b"], [[1]]));
     await provider.connect();
 
-    await expect(provider.query("SELECT 1 AS a, 2 AS b")).rejects.toThrow(
-      "SQL Server answered a row of 1 value(s) for 2 column(s)",
-    );
+    await expect(provider.query("SELECT 1 AS a, 2 AS b")).rejects.toMatchObject({
+      name: "QueryError",
+      message: "SQL Server answered a row of 1 value(s) for 2 column(s)",
+      query: "SELECT 1 AS a, 2 AS b",
+    });
   });
 
   test("an object row that is not the driver's joined FOR JSON or FOR XML text is refused", async () => {
     answerWith(arrayModeSet(["a"], [{ a: 1 } as never]));
     await provider.connect();
 
-    await expect(provider.query("SELECT 1 AS a")).rejects.toThrow(
-      "SQL Server answered a row of 1 value(s) for 1 column(s)",
-    );
+    await expect(provider.query("SELECT 1 AS a")).rejects.toMatchObject({
+      name: "QueryError",
+      message: "SQL Server answered a row of 1 value(s) for 1 column(s)",
+      query: "SELECT 1 AS a",
+    });
   });
 
   test("a result set without the driver's column list is refused rather than named by guess", async () => {
     answerWith([[1]]);
     await provider.connect();
 
-    await expect(provider.query("SELECT 1")).rejects.toThrow(
-      "SQL Server answered a result set without its column list",
-    );
+    await expect(provider.query("SELECT 1")).rejects.toMatchObject({
+      name: "QueryError",
+      message: "SQL Server answered a result set without its column list",
+      query: "SELECT 1",
+    });
+  });
+
+  test("queryInTransaction() refuses a short row the same way, naming its statement", async () => {
+    answerWith(arrayModeSet(["a", "b"], [[1]]));
+    await provider.connect();
+    await provider.beginTransaction();
+
+    await expect(provider.queryInTransaction("SELECT 1 AS a, 2 AS b")).rejects.toMatchObject({
+      name: "QueryError",
+      message: "SQL Server answered a row of 1 value(s) for 2 column(s)",
+      query: "SELECT 1 AS a, 2 AS b",
+    });
   });
 
   test("queryInTransaction() names and keys its columns the same way, zero rows included", async () => {
