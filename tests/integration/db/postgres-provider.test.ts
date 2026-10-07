@@ -4823,9 +4823,10 @@ describe("PostgresProvider result columns", () => {
   test("a row whose value count differs from the column count is an error, not a guess", async () => {
     mockQueryFn = () => Promise.resolve({ rows: [[1]], fields: [{ name: "a" }, { name: "b" }], rowCount: 1 });
     const provider = await connected();
-    await expect(provider.query("SELECT a, b FROM t")).rejects.toThrow(
-      "PostgreSQL answered a row of 1 values for 2 columns",
-    );
+    const refused = await provider.query("SELECT a, b FROM t").catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(QueryError);
+    expect((refused as QueryError).message).toBe("Row 1 carries 1 values for 2 result columns");
+    expect((refused as QueryError).query).toBe("SELECT a, b FROM t");
     await provider.disconnect();
   });
 });

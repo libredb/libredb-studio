@@ -161,7 +161,7 @@ export class Db2Provider extends SQLBaseProvider {
           throw mapDb2Error(error, sql);
         }
       });
-      return { ...readResult(result), executionTime };
+      return { ...readResult(result, sql), executionTime };
     });
   }
 

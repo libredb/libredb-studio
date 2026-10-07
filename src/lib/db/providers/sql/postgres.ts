@@ -91,6 +91,7 @@ import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { sendPgCancelRequest, type PgCancelTarget } from "./pg-wire-cancel";
 import { type PgFieldMetadata, postgresColumnTypes } from "./column-types";
 import { uniqueFieldNames } from "../../utils/result-fields";
+import { keyRowsByPosition } from "../../utils/positional-rows";
 import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
@@ -312,23 +313,13 @@ function arrayRowsOf(text: string): QueryConfig {
 
 /**
  * One answer as a result set: its columns named by `uniqueFieldNames`, and each row keyed by those
- * names by position. A row whose value count is not the column count is raised, not read.
+ * names by position (`keyRowsByPosition`, which raises a row whose value count is not the column count).
  */
-function pgResultSet(answer: PgArrayAnswer): QueryResultSet {
+function pgResultSet(answer: PgArrayAnswer, sql: string): QueryResultSet {
   const declared = answer.fields ?? [];
   const fields = uniqueFieldNames(declared.map((field) => field.name));
-  const rows = answer.rows.map((values) => {
-    if (values.length !== fields.length) {
-      throw new QueryError(
-        `PostgreSQL answered a row of ${values.length} values for ${fields.length} columns`,
-        "postgres",
-      );
-    }
-    // `Object.fromEntries` and not assignment, so a column named `__proto__` is a key like any other.
-    return Object.fromEntries(fields.map((name, index) => [name, values[index]]));
-  });
   return {
-    rows,
+    rows: keyRowsByPosition(fields, answer.rows, "postgres", sql),
     fields,
     ...postgresColumnTypes(declared.map((field, index) => ({ name: fields[index], dataTypeID: field.dataTypeID }))),
   };
@@ -346,10 +337,11 @@ function pgResultSet(answer: PgArrayAnswer): QueryResultSet {
  */
 function pgQueryResult(
   answer: PgArrayAnswer | PgArrayAnswer[],
+  sql: string,
 ): Pick<QueryResult, "rows" | "fields" | "columnTypes" | "rowCount" | "resultSets"> {
-  if (!Array.isArray(answer)) return { ...pgResultSet(answer), rowCount: answer.rowCount ?? 0 };
+  if (!Array.isArray(answer)) return { ...pgResultSet(answer, sql), rowCount: answer.rowCount ?? 0 };
   const producing = answer.filter((one) => (one.fields ?? []).length > 0);
-  const sets = producing.map(pgResultSet);
+  const sets = producing.map((one) => pgResultSet(one, sql));
   const [first] = sets;
   return {
     ...(first ?? { rows: [], fields: [] }),
@@ -2858,7 +2850,7 @@ export class PostgresProvider extends SQLBaseProvider {
       });
 
       return {
-        ...pgQueryResult(result.res),
+        ...pgQueryResult(result.res, sql),
         executionTime,
         ...noticesAsWarnings(result.notices),
       };
@@ -2999,7 +2991,7 @@ export class PostgresProvider extends SQLBaseProvider {
 
       // One statement on the extended protocol is one answer, never a list of them. The budgets are
       // measured on the keyed rows, which are what the caller receives.
-      const result = pgQueryResult(answered as unknown as PgArrayAnswer);
+      const result = pgQueryResult(answered as unknown as PgArrayAnswer, sql);
       if (result.rows.length > budget.maxResultRows) {
         throw new QueryError(
           `Read-only execution exceeded the row budget: ${result.rows.length} rows > ${budget.maxResultRows} allowed`,
@@ -3310,7 +3302,7 @@ export class PostgresProvider extends SQLBaseProvider {
       });
 
       return {
-        ...pgQueryResult(result.res),
+        ...pgQueryResult(result.res, sql),
         executionTime,
         ...noticesAsWarnings(result.notices),
       };

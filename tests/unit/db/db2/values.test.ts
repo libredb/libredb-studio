@@ -13,6 +13,10 @@
 import { describe, expect, test } from "bun:test";
 import type { Db2ArrayQueryResult, Db2ColumnMeta } from "@/lib/db/providers/sql/db2/driver";
 import { DB2_PREVIEW_PROJECTION, db2TypeName, readResult } from "@/lib/db/providers/sql/db2/values";
+import { QueryError } from "@/lib/db/errors";
+
+/** The statement each result below answers; a refusal carries it. */
+const SQL = "SELECT * FROM APP.T";
 
 function column(name: string, typeName: string, extra: Partial<Db2ColumnMeta> = {}): Db2ColumnMeta {
   return { name, typeName, nullable: true, ...extra };
@@ -69,7 +73,7 @@ describe("db2TypeName", () => {
 
 describe("readResult", () => {
   test("fields come from the columns even when no row came back", () => {
-    const read = readResult(result({ columns: [column("ID", "Integer"), column("NAME", "VarChar(10)")] }));
+    const read = readResult(result({ columns: [column("ID", "Integer"), column("NAME", "VarChar(10)")] }), SQL);
 
     expect(read.fields).toEqual(["ID", "NAME"]);
     expect(read.rows).toEqual([]);
@@ -79,14 +83,14 @@ describe("readResult", () => {
   });
 
   test("a result set counts its rows, whatever rowCount the driver answered, and keys each array row by column", () => {
-    const read = readResult(result({ columns: [column("ID", "Integer")], rows: [[1], [2]], rowCount: 99 }));
+    const read = readResult(result({ columns: [column("ID", "Integer")], rows: [[1], [2]], rowCount: 99 }), SQL);
 
     expect(read.rows).toEqual([{ ID: 1 }, { ID: 2 }]);
     expect(read.rowCount).toBe(2);
   });
 
   test("a DML statement reports the driver's count of changed rows", () => {
-    const read = readResult(result({ rowCount: 3 }));
+    const read = readResult(result({ rowCount: 3 }), SQL);
 
     expect(read.fields).toEqual([]);
     expect(read.rowCount).toBe(3);
@@ -96,7 +100,7 @@ describe("readResult", () => {
 
   // db2-node 1.0.24 reads SQLERRD3, so an UPDATE that matched nothing answers 0 (K19, fixed).
   test("a DML statement that changed no row reports zero", () => {
-    expect(readResult(result({ rowCount: 0 })).rowCount).toBe(0);
+    expect(readResult(result({ rowCount: 0 }), SQL).rowCount).toBe(0);
   });
 
   // Measured on 12.1.0.0 and 11.5.9.0 through 1.0.25: `SELECT 1 AS A, 2 AS A` answers the array
@@ -107,6 +111,7 @@ describe("readResult", () => {
         columns: [column("A", "Integer"), column("A", "Integer"), column("B", "Integer"), column("A", "BigInt")],
         rows: [[1, 2, 3, 4]],
       }),
+      SQL,
     );
 
     expect(read.fields).toEqual(["A", "A (2)", "B", "A (3)"]);
@@ -121,6 +126,7 @@ describe("readResult", () => {
         columns: [column("A", "Integer"), column("A (2)", "Integer"), column("A", "Integer")],
         rows: [[1, 2, 3]],
       }),
+      SQL,
     );
 
     expect(read.fields).toEqual(["A", "A (2)", "A (3)"]);
@@ -133,6 +139,7 @@ describe("readResult", () => {
         columns: [column("A", "Integer"), column("A", "BigInt"), column("A (2)", "Integer")],
         rows: [[1, 2, 3]],
       }),
+      SQL,
     );
 
     expect(read.fields).toEqual(["A", "A (3)", "A (2)"]);
@@ -146,13 +153,19 @@ describe("readResult", () => {
     ["short", [1]],
     ["long", [1, 2, 3]],
   ])("a %s row is refused rather than read by position", (_label, row) => {
-    expect(() =>
-      readResult(result({ columns: [column("A", "Integer"), column("B", "Integer")], rows: [row] })),
-    ).toThrow(/row with \d+ values for 2 columns/);
+    let refused: unknown;
+    try {
+      readResult(result({ columns: [column("A", "Integer"), column("B", "Integer")], rows: [row] }), SQL);
+    } catch (error) {
+      refused = error;
+    }
+    expect(refused).toBeInstanceOf(QueryError);
+    expect((refused as QueryError).message).toBe(`Row 1 carries ${row.length} values for 2 result columns`);
+    expect((refused as QueryError).query).toBe(SQL);
   });
 
   test("the driver's own diagnostics are passed through as warnings", () => {
-    const read = readResult(result({ rowCount: 1, diagnostics: ["SQLSTATE 01003: null values were eliminated"] }));
+    const read = readResult(result({ rowCount: 1, diagnostics: ["SQLSTATE 01003: null values were eliminated"] }), SQL);
 
     expect(read.warnings).toEqual([{ message: "SQLSTATE 01003: null values were eliminated" }]);
   });
@@ -163,6 +176,7 @@ describe("readResult", () => {
   test("a LOB or XML column beside other columns carries no integrity warning", () => {
     const read = readResult(
       result({ columns: [column("ID", "Integer"), column("C_XML", "Xml"), column("C_VCHAR", "VarChar(50)")] }),
+      SQL,
     );
     expect(read.warnings).toBeUndefined();
   });
@@ -181,6 +195,7 @@ describe("readResult", () => {
           column("C_XML", "Xml"),
         ],
       }),
+      SQL,
     );
 
     expect(read.warnings).toEqual([
@@ -194,7 +209,7 @@ describe("readResult", () => {
   });
 
   test("the LOB warning comes before the driver's diagnostics, and a LOB alone carries it too", () => {
-    const read = readResult(result({ columns: [column("B", "BLOB")], diagnostics: ["driver says"] }));
+    const read = readResult(result({ columns: [column("B", "BLOB")], diagnostics: ["driver says"] }), SQL);
 
     expect(read.warnings).toHaveLength(2);
     expect(read.warnings?.[0]?.message).toContain("does not edit B (BLOB) inline");

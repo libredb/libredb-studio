@@ -10,7 +10,7 @@ import { join } from "node:path";
 import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider, MaintenanceOperation, ObjectKindSpec } from "@/lib/db/types";
 import { maintenanceControl } from "@/lib/db/types";
-import { DatabaseConfigError, NO_TRANSACTION_OPENED, TRANSACTION_STATE_UNREPORTED } from "@/lib/db/errors";
+import { DatabaseConfigError, NO_TRANSACTION_OPENED, QueryError, TRANSACTION_STATE_UNREPORTED } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
@@ -3587,9 +3587,10 @@ describe("MySQLProvider result columns", () => {
         ],
       ]);
     const provider = await connected();
-    await expect(provider.query("SELECT a, b FROM t")).rejects.toThrow(
-      "MySQL answered a row of 1 values for 2 columns",
-    );
+    const refused = await provider.query("SELECT a, b FROM t").catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(QueryError);
+    expect((refused as QueryError).message).toBe("Row 1 carries 1 values for 2 result columns");
+    expect((refused as QueryError).query).toBe("SELECT a, b FROM t");
     await provider.disconnect();
   });
 });

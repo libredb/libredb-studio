@@ -15,6 +15,7 @@ import mysql, {
 import { SQLBaseProvider } from "./sql-base";
 import { mysqlColumnTypes } from "./column-types";
 import { uniqueFieldNames } from "../../utils/result-fields";
+import { keyRowsByPosition } from "../../utils/positional-rows";
 import {
   type ColumnSchema,
   type Container,
@@ -398,20 +399,13 @@ const probeClientSideBinding = async (queryable: MySQLQueryable): Promise<boolea
 
 /**
  * One result set read as array rows: its columns named by `uniqueFieldNames`, and each row keyed by
- * those names by position. A row whose value count is not the column count is raised, not read.
- * `Object.fromEntries` rather than assignment, so no column name can reach the row's prototype
- * (mysql2 itself refuses a column named `__proto__` before the provider sees it).
+ * those names by position (`keyRowsByPosition`, which raises a row whose value count is not the
+ * column count).
  */
-function mysqlResultSet(rows: readonly unknown[], declared: readonly FieldPacket[]): QueryResultSet {
+function mysqlResultSet(rows: readonly unknown[], declared: readonly FieldPacket[], sql: string): QueryResultSet {
   const fields = uniqueFieldNames(declared.map((field) => field.name));
   return {
-    rows: rows.map((values) => {
-      const row = values as unknown[];
-      if (row.length !== fields.length) {
-        throw new QueryError(`MySQL answered a row of ${row.length} values for ${fields.length} columns`, "mysql");
-      }
-      return Object.fromEntries(fields.map((name, index) => [name, row[index]]));
-    }),
+    rows: keyRowsByPosition(fields, rows as readonly unknown[][], "mysql", sql),
     fields,
     ...mysqlColumnTypes(declared.map((field, index) => ({ ...field, name: fields[index] }))),
   };
@@ -421,14 +415,15 @@ function mysqlResultSet(rows: readonly unknown[], declared: readonly FieldPacket
 function mysqlResults(
   rows: readonly unknown[],
   fields: FieldPacket[] | undefined,
+  sql: string,
 ): Pick<QueryResult, "rows" | "fields" | "columnTypes" | "rowCount" | "resultSets"> {
   const perAnswer = (fields ?? []) as unknown as (FieldPacket[] | undefined)[];
   if (!perAnswer.some((declared) => declared === undefined || Array.isArray(declared))) {
-    const set = mysqlResultSet(rows, fields ?? []);
+    const set = mysqlResultSet(rows, fields ?? [], sql);
     return { ...set, rowCount: set.rows.length };
   }
   const sets = perAnswer.flatMap((declared, index) =>
-    Array.isArray(declared) ? [mysqlResultSet(rows[index] as unknown[], declared)] : [],
+    Array.isArray(declared) ? [mysqlResultSet(rows[index] as unknown[], declared, sql)] : [],
   );
   const [first] = sets;
   if (first === undefined) {
@@ -3130,7 +3125,12 @@ export class MySQLProvider extends SQLBaseProvider {
    * `affectedRows` when no set came back), and `resultSets` lists every set when there are several.
    * Before, that list was read as one set's rows.
    */
-  private buildQueryResult(rows: unknown, fields: FieldPacket[] | undefined, executionTime: number): QueryResult {
+  private buildQueryResult(
+    rows: unknown,
+    fields: FieldPacket[] | undefined,
+    executionTime: number,
+    sql: string,
+  ): QueryResult {
     if (!Array.isArray(rows)) {
       const header = rows as { affectedRows?: number };
       return {
@@ -3152,7 +3152,7 @@ export class MySQLProvider extends SQLBaseProvider {
       // `0x0102ab` where Postgres showed `\x0102ab`, and the export wrote the eight
       // characters `'0x0102ab'` into a BLOB column rather than the three bytes.
       // Measured against MySQL 26.7.0 on 2026-08-24; see docs/providers/mysql.md §3.3.
-      ...mysqlResults(rows, fields),
+      ...mysqlResults(rows, fields, sql),
       executionTime,
     };
   }
@@ -3181,7 +3181,7 @@ export class MySQLProvider extends SQLBaseProvider {
         }
       });
 
-      return this.buildQueryResult(result.rows, result.fields, executionTime);
+      return this.buildQueryResult(result.rows, result.fields, executionTime, sql);
     });
   }
 
@@ -3351,7 +3351,7 @@ export class MySQLProvider extends SQLBaseProvider {
         }
       });
 
-      return this.buildQueryResult(result.rows, result.fields, executionTime);
+      return this.buildQueryResult(result.rows, result.fields, executionTime, sql);
     });
   }
 
