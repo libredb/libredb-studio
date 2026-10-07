@@ -120,7 +120,7 @@ describe("WorkspaceOwnerGate", () => {
     expect(localStorage.getItem("libredb_workspace_owner")).toBe("admin@libredb.org");
   });
 
-  test("nothing renders while the check is out, and an answer after unmount changes nothing", async () => {
+  test("the page waits behind a loading indicator while the check is out, and an answer after unmount changes nothing", async () => {
     let answer: (value: Response) => void = () => {};
     globalThis.fetch = (() => new Promise<Response>((resolve) => (answer = resolve))) as unknown as typeof fetch;
     const seen: (string | null)[] = [];
@@ -131,6 +131,8 @@ describe("WorkspaceOwnerGate", () => {
       </WorkspaceOwnerGate>,
     );
     expect(view.queryByText("workspace page")).toBeNull();
+    const loading = view.getByTestId("view-loading");
+    expect(loading.getAttribute("aria-label")).toBe("Checking the signed-in account");
     view.unmount();
     answer(new Response(JSON.stringify({ provider: "local", serverMode: false }), { status: 200 }));
     await new Promise((resolve) => setTimeout(resolve, 10));

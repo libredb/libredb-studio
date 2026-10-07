@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useEffect, useState } from "react";
+import { ViewLoading } from "@/components/LazyView";
 import { logger } from "@/lib/logger";
 import { WORKSPACE_OWNER_KEY } from "@/lib/storage/local-storage";
 import { claimWorkspaceForSignedInAccount } from "@/lib/storage/workspace-owner";
@@ -58,5 +59,5 @@ export function WorkspaceOwnerGate({ children }: { children: ReactNode }) {
       </p>
     );
   }
-  return null;
+  return <ViewLoading label="Checking the signed-in account" className="h-screen" />;
 }
