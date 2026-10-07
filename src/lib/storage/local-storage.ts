@@ -119,11 +119,15 @@ export function removeWorkspaceTabs(connectionId: string): void {
 
 /**
  * The signed-in username the browser copy belongs to. Written in server storage mode only, by
- * `useStorageSync`, which compares it with the signed-in account before it uses the copy.
+ * `claimAccountWorkspace` and `resetAccountWorkspace` (from `WorkspaceOwnerGate`, `useStorageSync`
+ * and the sign-out), which compare it with the signed-in account before the copy is used.
  */
 export const WORKSPACE_OWNER_KEY = `${KEY_PREFIX}workspace_owner`;
 
-/** Set once this browser's copy has been handed to a server account (`useStorageSync`). */
+/**
+ * Set once this browser's copy has been handed to a server account: by `useStorageSync` after
+ * the migration, and by `resetAccountWorkspace` when the copy is cleared.
+ */
 export const SERVER_MIGRATED_KEY = `${KEY_PREFIX}server_migrated`;
 
 /** Unsaved object-source edits (`components/object-source/source-drafts.ts`). */

@@ -1272,7 +1272,8 @@ The copy is every synced collection, the editor tabs (never stored on the server
   When the storage mode cannot be read or a pending push does not land, the sign-out fails and the copy stays, so no unsaved change is dropped; when the server refuses the sign-out, the copy stays and the sync goes on.
 - **Other open tabs:** every tab of the browser profile shares the copy, so when another tab records a different owner or clears the copy (a sign-out, a different account signing in), each page inside `WorkspaceOwnerGate` stops rendering and reloads, and the owner check runs again for the account signed in now.
 - **A session that ended on its own** (expiry, a disabled account) clears nothing; the owner check at the next sign-in, on whichever of these pages it lands, covers a different account.
-- **The first sign-in after upgrading to a release that records the owner:** a browser that was already migrated has no owner yet, so its copy is cleared once, for the same account too; open editor tabs, object-source drafts and any change that had not reached the server start over.
+- **The first sign-in after upgrading to a release that records the owner:** a browser that was already migrated has no owner yet, so its copy is cleared once, for the same account too, and that sign-in starts from the account's server data.
+  Open editor tabs from before the upgrade are not kept, since they are never stored on the server, and neither are object-source drafts or any change that had not reached the server.
 
 In local mode none of this runs: the browser copy is the only copy, it stays on sign-out, and no owner is recorded.
 
