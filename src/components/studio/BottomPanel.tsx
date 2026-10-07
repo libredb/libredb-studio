@@ -592,8 +592,10 @@ export const BottomPanel = React.memo(function BottomPanel({
       <div className="flex-1 overflow-hidden relative">
         {/* One pair of boundaries for the whole switch: only one view is ever mounted,
             so the fallback is what the user sees while a split chunk is in flight and
-            the error boundary is what they see when it never arrives. */}
-        <ChunkBoundary label="This view">
+            the error boundary is what they see when it never arrives or a view throws.
+            The boundary outlives every result, mode and tab, so it is reset by what it
+            shows: one result a view cannot draw must not fail every later one. */}
+        <ChunkBoundary label="This view" resetKeys={[mode, result, agentArtifact, explainPlan]}>
           <React.Suspense fallback={<ViewLoading label="Loading the panel" />}>
             {mode === "pivot" ? (
               <PivotTable

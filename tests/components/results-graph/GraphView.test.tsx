@@ -603,7 +603,9 @@ describe("GraphView: lifecycle", () => {
       const { findByTestId } = render(
         <ChunkBoundary label="The graph">{view({ loadCytoscape: failing })}</ChunkBoundary>,
       );
-      expect((await findByTestId("chunk-error")).textContent).toContain("The graph could not be loaded.");
+      const notice = await findByTestId("chunk-error");
+      expect(notice.textContent).toContain("The graph could not be loaded.");
+      expect(notice.textContent).toContain("Reload");
     } finally {
       quiet.mockRestore();
     }

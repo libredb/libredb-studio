@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { lazyRetry } from "@/lib/lazy";
+import { ChunkLoadError, lazyRetry } from "@/lib/lazy";
 
 describe("lazyRetry", () => {
   test("loads once when the chunk arrives", async () => {
@@ -44,5 +44,29 @@ describe("lazyRetry", () => {
     // both the wait and the fact.
     await expect(load()).rejects.toThrow("attempt 2");
     expect(calls).toBe(2);
+  });
+
+  // The boundary tells a chunk that never arrived from a view that threw while drawing
+  // by this class, never by sniffing a message: a production render error can have none.
+  test("reports the second failure as a chunk load failure that keeps the original as its cause", async () => {
+    const original = new Error("Loading chunk 7 failed");
+    const load = lazyRetry(async () => {
+      throw original;
+    });
+
+    const error = await load().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ChunkLoadError);
+    expect((error as ChunkLoadError).message).toBe("Loading chunk 7 failed");
+    expect((error as ChunkLoadError).cause).toBe(original);
+  });
+
+  test("a rejection that is not an Error still becomes a chunk load failure", async () => {
+    const load = lazyRetry(async () => {
+      throw "network down";
+    });
+
+    const error = await load().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ChunkLoadError);
+    expect((error as ChunkLoadError).message).toBe("network down");
   });
 });

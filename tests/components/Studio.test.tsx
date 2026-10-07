@@ -5,6 +5,8 @@ import { mockRouterPush } from "../helpers/mock-navigation";
 import { describe, test, expect, afterEach, beforeEach, mock } from "bun:test";
 import { render, cleanup, act, fireEvent, waitFor, within } from "@testing-library/react";
 import React from "react";
+// What `lazyRetry` throws when a split view's chunk never arrives, so the fixtures below fail the way production does.
+import { ChunkLoadError } from "@/lib/lazy";
 import { setupMonacoMock, setupRechartssMock, setupXYFlowMock, setupFramerMotionMock } from "../helpers/mock-monaco";
 
 // Setup heavy library mocks before any component imports
@@ -317,7 +319,7 @@ mock.module("@/components/schema-explorer", () => {
   const React = require("react");
   return {
     SchemaExplorer: (props: Record<string, unknown>) => {
-      if (failingSplitViews.has("schema-explorer")) throw new Error("Loading chunk 9 failed");
+      if (failingSplitViews.has("schema-explorer")) throw new ChunkLoadError("Loading chunk 9 failed");
       capturedSchemaExplorerProps = props;
       return React.createElement("div", { "data-testid": "schema-explorer" }, "SchemaExplorer");
     },
@@ -326,7 +328,7 @@ mock.module("@/components/schema-explorer", () => {
 
 mock.module("@/components/ConnectionModal", () => ({
   ConnectionModal: (props: Record<string, unknown>) => {
-    if (failingSplitViews.has("connection-dialog")) throw new Error("Loading chunk 8 failed");
+    if (failingSplitViews.has("connection-dialog")) throw new ChunkLoadError("Loading chunk 8 failed");
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     capturedConnectionModalProps = props;
@@ -384,7 +386,7 @@ mock.module("@/components/CommandPalette", () => ({
 
 mock.module("@/components/SchemaDiagram", () => ({
   SchemaDiagram: () => {
-    if (failingSplitViews.has("diagram")) throw new Error("Loading chunk 7 failed");
+    if (failingSplitViews.has("diagram")) throw new ChunkLoadError("Loading chunk 7 failed");
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     return React.createElement("div", { "data-testid": "schemadiagram" }, "SchemaDiagram");

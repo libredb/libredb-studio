@@ -3,6 +3,7 @@ import { render, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
 
 import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
+import { ChunkLoadError } from "@/lib/lazy";
 
 afterEach(() => {
   cleanup();
@@ -26,8 +27,14 @@ describe("ViewLoading", () => {
   });
 });
 
+// A chunk that never arrived, as `lazyRetry` reports it after its retry.
 function Boom(): React.ReactElement {
-  throw new Error("Loading chunk 42 failed");
+  throw new ChunkLoadError("Loading chunk 42 failed");
+}
+
+// Any other render error, the way a component in the panel throws one.
+function RenderBoom({ message }: { message: string }): React.ReactElement {
+  throw new Error(message);
 }
 
 describe("ChunkBoundary", () => {
@@ -103,5 +110,142 @@ describe("ChunkBoundary", () => {
       </ChunkBoundary>,
     );
     expect(without.queryByText("Close")).toBeNull();
+  });
+
+  // TanStack Table, for one, throws in render when it is handed a column it cannot build.
+  // That is not a request that failed, so the chunk copy and its Reload would be a false
+  // diagnosis; the notice says the view could not be displayed and gives the error's own words.
+  test("names a render error as one, with its message, rather than as a chunk that did not load", () => {
+    const { getByTestId, getByText, queryByText } = render(
+      <ChunkBoundary label="This view">
+        <RenderBoom message="Columns require an id" />
+      </ChunkBoundary>,
+    );
+
+    expect(getByTestId("render-error")).toBeTruthy();
+    expect(getByText("This view could not be displayed.")).toBeTruthy();
+    expect(getByText("Columns require an id")).toBeTruthy();
+    expect(queryByText("Reload")).toBeNull();
+    expect(queryByText(/is fetched when it is first opened/)).toBeNull();
+  });
+
+  // A production build throws some of these with an empty message; the notice then says
+  // only what it knows rather than printing an empty line.
+  test("states a render error with no message without an empty message line", () => {
+    const { getByTestId, queryByTestId } = render(
+      <ChunkBoundary label="This view">
+        <RenderBoom message="" />
+      </ChunkBoundary>,
+    );
+
+    expect(getByTestId("render-error").textContent).toContain("This view could not be displayed.");
+    expect(queryByTestId("render-error-message")).toBeNull();
+  });
+
+  test("a thrown value that is not an Error is still a render error", () => {
+    function Thrower(): React.ReactElement {
+      throw "not an error object";
+    }
+    const { getByTestId } = render(
+      <ChunkBoundary label="This view">
+        <Thrower />
+      </ChunkBoundary>,
+    );
+
+    expect(getByTestId("render-error-message").textContent).toBe("not an error object");
+  });
+
+  test("Try again renders the children once more, and a view that still throws is shown failing again", () => {
+    let throws = true;
+    function Flaky(): React.ReactElement {
+      if (throws) throw new Error("first render failed");
+      return <p>the view</p>;
+    }
+    const { getByText, queryByTestId } = render(
+      <ChunkBoundary label="This view">
+        <Flaky />
+      </ChunkBoundary>,
+    );
+    fireEvent.click(getByText("Try again"));
+    expect(queryByTestId("render-error")).toBeTruthy();
+
+    throws = false;
+    fireEvent.click(getByText("Try again"));
+    expect(getByText("the view")).toBeTruthy();
+    expect(queryByTestId("render-error")).toBeNull();
+  });
+
+  test("offers Close on a render error when the caller can take the view away", () => {
+    const onDismiss = mock(() => {});
+    const { getByText } = render(
+      <ChunkBoundary label="The diagram" onDismiss={onDismiss}>
+        <RenderBoom message="boom" />
+      </ChunkBoundary>,
+    );
+    fireEvent.click(getByText("Close"));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  // The panel mounts one boundary for every result, every mode and every tab, so a
+  // boundary that never resets turns one bad result into a failed panel until a reload.
+  test("a changed reset key renders the new children instead of the old failure", () => {
+    const { getByText, queryByTestId, rerender } = render(
+      <ChunkBoundary label="This view" resetKeys={["results", { first: true }]}>
+        <RenderBoom message="first result" />
+      </ChunkBoundary>,
+    );
+    expect(queryByTestId("render-error")).toBeTruthy();
+
+    rerender(
+      <ChunkBoundary label="This view" resetKeys={["results", { second: true }]}>
+        <p>the next result</p>
+      </ChunkBoundary>,
+    );
+    expect(getByText("the next result")).toBeTruthy();
+    expect(queryByTestId("render-error")).toBeNull();
+  });
+
+  test("the same reset keys keep the failure, so a re-render alone does not hide it", () => {
+    const key = { result: 1 };
+    const { queryByTestId, rerender } = render(
+      <ChunkBoundary label="This view" resetKeys={["results", key]}>
+        <RenderBoom message="still failing" />
+      </ChunkBoundary>,
+    );
+    rerender(
+      <ChunkBoundary label="This view" resetKeys={["results", key]}>
+        <p>not shown</p>
+      </ChunkBoundary>,
+    );
+    expect(queryByTestId("render-error")).toBeTruthy();
+  });
+
+  test("a reset key list of a different length is a change", () => {
+    const { getByText, rerender } = render(
+      <ChunkBoundary label="This view" resetKeys={["results"]}>
+        <RenderBoom message="x" />
+      </ChunkBoundary>,
+    );
+    rerender(
+      <ChunkBoundary label="This view" resetKeys={["results", "charts"]}>
+        <p>recovered</p>
+      </ChunkBoundary>,
+    );
+    expect(getByText("recovered")).toBeTruthy();
+  });
+
+  // A real chunk failure that recurs after a reset throws again, and is named again.
+  test("a chunk failure after a reset is shown as a chunk failure again", () => {
+    const { getByTestId, rerender } = render(
+      <ChunkBoundary label="Charts" resetKeys={[1]}>
+        <Boom />
+      </ChunkBoundary>,
+    );
+    rerender(
+      <ChunkBoundary label="Charts" resetKeys={[2]}>
+        <Boom />
+      </ChunkBoundary>,
+    );
+    expect(getByTestId("chunk-error").textContent).toContain("Charts could not be loaded.");
   });
 });

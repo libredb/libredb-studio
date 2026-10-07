@@ -11,10 +11,32 @@ import { logger } from "@/lib/logger";
  * replaced them, so the request 404s and the view never arrives.
  *
  * One retry, after a short delay, is what separates a transient blip from a genuinely
- * missing file. A second failure is reported to the boundary above, which can say so
+ * missing file. A second failure is reported to the boundary above as a
+ * `ChunkLoadError`, which can say so
  * (`src/components/LazyView.tsx`) instead of leaving a spinner running forever.
  */
 const RETRY_DELAY_MS = 400;
+
+/**
+ * A view's code that did not arrive: what `lazyRetry` throws after its retry, and what
+ * a view that fetches a library of its own throws when that fetch fails.
+ *
+ * Its own class because the boundary that catches it (`ChunkBoundary`) must tell it
+ * from a view that threw while drawing, and the error's message cannot: a production
+ * React or TanStack render error can have none at all. Only this one is answered with
+ * Reload; the failure it wraps is kept as `cause`.
+ */
+export class ChunkLoadError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "ChunkLoadError";
+  }
+
+  /** The failure of a load, whatever was rejected, as one of these. */
+  static from(failure: unknown): ChunkLoadError {
+    return new ChunkLoadError(failure instanceof Error ? failure.message : String(failure), { cause: failure });
+  }
+}
 
 export function lazyRetry<T>(load: () => Promise<T>): () => Promise<T> {
   return async () => {
@@ -26,7 +48,11 @@ export function lazyRetry<T>(load: () => Promise<T>): () => Promise<T> {
         error: error instanceof Error ? error.message : String(error),
       });
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-      return load();
+      try {
+        return await load();
+      } catch (second) {
+        throw ChunkLoadError.from(second);
+      }
     }
   };
 }
