@@ -584,6 +584,12 @@
         "retryUnreadStop": false,
         "suppressPlanReasoning": true,
         "refusalExamples": false
+      },
+      "rationale": {
+        "suppressPlanReasoning": [
+          "This setting carries two cells, which is why it is the model's only one. Plan reads 1/5 at the defaults with four of its five losses inside a four-second band at 141-145s, every one a turn timeout with no tool call after the plan-statement notice: the second turn dies on the 90s ceiling with the turn spent thinking.",
+          "Optimize reads 3/5 at the defaults and 5/5 with this setting, on the third roll. Four other settings were each measured ALONE on that cell - `retryUnreadStop`, `unreportedCallCeiling: 6`, `turnTimeoutMs: 150000` and `retryEmptyTurn` - and none reached 5/5. A first lever document had changed `retryUnreadStop` alongside this one and read 5/5; the single-variable re-run read 1/5, which is how the credit moved to the setting that earned it. Its 35b sibling needs nothing at all."
+        ]
       }
     },
     {
@@ -815,6 +821,12 @@
         "retryUnreadStop": false,
         "suppressPlanReasoning": true,
         "refusalExamples": false
+      },
+      "rationale": {
+        "suppressPlanReasoning": [
+          "Plan reads 4/5 at the defaults and the single loss is the turn itself: `unmet=[no-plan]` with zero tool calls, a turn spent reasoning while the deliverable never arrives.",
+          "The ceiling is NOT the bound, and that was measured rather than assumed: `turnTimeoutMs` at the shipped maximum took the same cell from 4/5 to 1/5 and moved the losses from 94s to a cluster at 157s. A passing plan run emits in 59-72s whatever the ceiling is, so more room only bought more thinking. Quiet, the cell is 5/5. It reaches plan turns only, so it is not what carried the five agent surfaces."
+        ]
       }
     },
     {

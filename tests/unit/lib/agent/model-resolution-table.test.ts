@@ -618,6 +618,60 @@ const RESOLVED: ResolvedRow[] = [
     refusalExamples: false,
     turnTimeoutMs: undefined,
   },
+  // The two sizes of ornith-1.5 part company here, and the smaller one is the interesting half.
+  // 35b closes six surfaces on the defaults; 9b needs the plan switch for TWO cells, and the
+  // measurement that proves it is the one that nearly went in wrong. A first lever document
+  // changed `retryUnreadStop` as well and read 5/5, so a single-variable re-run of the same cell
+  // was taken: it read 1/5, which is how the credit moved to the setting that earned it.
+  {
+    id: "ornith-1.5:35b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  {
+    id: "ornith-1.5:9b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    suppressesPlanReasoning: true,
+    turnTimeoutMs: undefined,
+  },
+  // `qwen3:32b` on the defaults, beside a sibling that is not: its optimize cell read 4/5 and then
+  // 1/5 while two measurement runners raced on one machine, and 5/5 with one. The low readings
+  // measured the rig, so no setting is pinned for them.
+  {
+    id: "qwen3:32b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  // The plan switch WITHOUT the ceiling, and that pairing is the measurement. Raising
+  // `turnTimeoutMs` to the shipped maximum took this cell from 4/5 to 1/5 and moved the losses
+  // from 94s to a cluster at 157s: a passing plan run emits in 59-72s whatever the ceiling is, so
+  // the turn was being spent, not cut short.
+  {
+    id: "qwen3.5:35b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    suppressesPlanReasoning: true,
+    turnTimeoutMs: undefined,
+  },
 ];
 
 describe("every resolver's answer, pinned before the profiles moved", () => {
@@ -653,7 +707,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
     // would assert 43 against 40 and deriving from the profiles would assert nothing at all. The
     // loop above is what guarantees coverage; this is the second half, that the roster is the size
     // the change intended. `model-roster-docs.test.ts` derives the same count for the docs.
-    expect(Object.keys(modelProfiles())).toHaveLength(40);
+    expect(Object.keys(modelProfiles())).toHaveLength(44);
   });
 });
 
@@ -733,6 +787,10 @@ describe("what each model records about the runs that earned its settings", () =
     "ministral-3:3b": "5522600e4e25e5c2eefa34fd215e2ddf9b936ea609119c99cad5cdd5e423a7ac",
     "qwen3:30b": "c322fa51bfdf5dc84e82d10cdee7748154da0960fa8b0ef629f55ee077e4d3ec",
     "granite4.2:3b": "27db8b46210ea045ee05c56b99fe237a46b961faaccd5180bbd1269a2a93f3c8",
+    "ornith-1.5:35b": "4ba1ad8f40aab26751bc9d8a65586f7ecbcfa06b70f3486d7f3627051b7c5a78",
+    "ornith-1.5:9b": "98cd715892ea02c6625bee605d2f90eb4e3d63fbc6db69e9c8cb760642d2096b",
+    "qwen3.5:35b": "b32ca3f5bcb21ab7c084a53144438c95e277535735ee43c5840b5941a4b1a5c7",
+    "qwen3:32b": "95abe040e1654ecf1462bd73d48079a6fb152723551bbc8001899facd16d70c0",
   };
 
   test("every model's record survives the move, character for character", () => {

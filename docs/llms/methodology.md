@@ -30,7 +30,7 @@ Each model was asked one question per surface, the same wording for every model,
 | Analyze | "Which part of the company costs us the most in salary?" |
 | Plan | "What tables are in this database and how do they relate to each other?" |
 
-Forty models, six surfaces, five runs: **1200 runs, and all 1050 passed.**
+Forty-four models, six surfaces, five runs: **1320 runs, and all 1170 passed.**
 
 A run passes only when its goal verdict is `answered`. A run that ends `succeeded` having
 answered nothing is a failure here, and the ledger names which bar it missed.
@@ -105,7 +105,7 @@ one, and each page says what its model needed.
 
 ## Driven through the interface as well
 
-The 1200 runs above were opened over HTTP. A separate sweep drove ten of the models through the
+The 1320 runs above were opened over HTTP. A separate sweep drove ten of the models through the
 product's own rail — log in, pick the sample connection, type the objective, press Start, wait
 for the run to finish on screen — one run per surface: **57 of 60 passed.** Ten, not thirty-five:
 that sweep was run when ten models were supported and has not been repeated, and the twenty-five added
