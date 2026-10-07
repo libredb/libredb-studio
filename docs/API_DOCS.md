@@ -1884,6 +1884,11 @@ Mints a token for the signed-in user and role; it reads no body field and spends
 
 The write-through storage sync layer (see [`docs/STORAGE.md`](STORAGE.md)). Data is per-user, keyed by the session username.
 
+In server storage mode a browser tab that has matched its copy of the workspace to the signed-in account sends that account's username, URI-encoded, in the `X-LibreDB-Workspace-Owner` header on every request it makes through `appFetch`, not only on the storage routes.
+When the header is present and does not name the session's username, the middleware (`src/proxy.ts`) answers `409 { "error": "...", "code": "WORKSPACE_OWNER_MISMATCH" }` before any route runs, and the browser reloads the tab so the owner check runs again for the account signed in now.
+A request without the header is not checked: MCP clients, the agent drive callback, external clients and local mode behave as before.
+The public routes (`/api/auth/*`, `/api/storage/config`, `/api/db/health` and the others listed above) are not checked either, so a tab can still ask which account is signed in.
+
 #### GET /api/storage/config
 
 Public. Returns the active storage configuration so the client can discover whether server-side storage is enabled.
@@ -2267,6 +2272,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `AUTH_ERROR` | Authentication failed (401) |
 | `CUSTOM_CONNECTIONS_DISABLED` | `ALLOW_CUSTOM_CONNECTIONS` is off and the request supplied a connection that is not a seed (403); see `GET /api/connections/policy`. A seed the caller's role may not open is refused with `AUTH_ERROR` (403) instead |
 | `AUTH_REQUIRED` | No Studio session, or one that no longer verifies (401). Answered by the middleware and the route-level session checks rather than `createErrorResponse`; the only 401 the browser answers by sending the user to sign in |
+| `WORKSPACE_OWNER_MISMATCH` | The request's `X-LibreDB-Workspace-Owner` header names an account other than the signed-in one (409). Answered by the middleware rather than `createErrorResponse`; the browser reloads the tab for it (see [Storage API](#storage-api)) |
 | `TIMEOUT_ERROR` | Query exceeded time limit (408); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |
 | `CONNECTION_ERROR` | Database connection failed (503) |
 | `POOL_EXHAUSTED` | Connection pool exhausted (503) |

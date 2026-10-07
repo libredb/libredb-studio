@@ -397,6 +397,93 @@ describe("proxy", () => {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
+  // The account a tab claimed the browser copy for (X-LibreDB-Workspace-Owner)
+  // ───────────────────────────────────────────────────────────────────────────
+
+  describe("workspace owner header", () => {
+    async function tokenFor(username: string) {
+      return await new SignJWT({ role: "user", username })
+        .setProtectedHeader({ alg: "HS256" })
+        .setIssuedAt()
+        .setExpirationTime("1h")
+        .sign(JWT_SECRET);
+    }
+
+    function request(pathname: string, token: string, owner: string | null, method = "GET"): NextRequest {
+      const headers = new Headers({
+        cookie: `auth-token=${token}`,
+        host: "localhost:3000",
+        origin: "http://localhost:3000",
+      });
+      if (owner !== null) headers.set("X-LibreDB-Workspace-Owner", owner);
+      return new NextRequest(`http://localhost:3000${pathname}`, { method, headers });
+    }
+
+    /** NextResponse.next() marks the response so the route runs; a refusal never carries it. */
+    const reachesRoute = (response: Response) => response.headers.get("x-middleware-next") === "1";
+
+    async function expectOwnerMismatch(response: Response) {
+      expect(response.status).toBe(409);
+      expect(reachesRoute(response)).toBe(false);
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      const body = (await response.json()) as { code?: string };
+      expect(body.code).toBe("WORKSPACE_OWNER_MISMATCH");
+    }
+
+    test("a request whose owner is the signed-in account reaches the route", async () => {
+      const token = await tokenFor("ana@libredb.org");
+      const res = await proxy(request("/api/storage", token, encodeURIComponent("ana@libredb.org")));
+
+      expect(reachesRoute(res)).toBe(true);
+    });
+
+    test("a request whose owner is a different account answers 409 with the code", async () => {
+      const token = await tokenFor("bob@libredb.org");
+
+      await expectOwnerMismatch(await proxy(request("/api/storage", token, encodeURIComponent("ana@libredb.org"))));
+    });
+
+    test("an owner that does not decode is not the signed-in account", async () => {
+      const token = await tokenFor("ana@libredb.org");
+
+      await expectOwnerMismatch(await proxy(request("/api/storage", token, "%E0%A4%A")));
+    });
+
+    test("a request without the header behaves as before", async () => {
+      const token = await tokenFor("ana@libredb.org");
+
+      expect(reachesRoute(await proxy(request("/api/storage", token, null)))).toBe(true);
+      expect(reachesRoute(await proxy(request("/", token, null)))).toBe(true);
+    });
+
+    test("a storage write carrying another account's owner is refused before the route runs", async () => {
+      const token = await tokenFor("bob@libredb.org");
+      const put = request("/api/storage/connections", token, encodeURIComponent("ana@libredb.org"), "PUT");
+
+      await expectOwnerMismatch(await proxy(put));
+      const own = request("/api/storage/connections", token, encodeURIComponent("bob@libredb.org"), "PUT");
+      expect(reachesRoute(await proxy(own))).toBe(true);
+    });
+
+    test("public routes are not checked, so a tab can still ask which account is signed in", async () => {
+      const token = await tokenFor("bob@libredb.org");
+      const stale = encodeURIComponent("ana@libredb.org");
+
+      expect(reachesRoute(await proxy(request("/api/auth/me", token, stale)))).toBe(true);
+      expect(reachesRoute(await proxy(request("/api/auth/logout", token, stale, "POST")))).toBe(true);
+      expect(reachesRoute(await proxy(request("/api/db/health", token, stale)))).toBe(true);
+    });
+
+    test("without a session the answer is still the session-required 401", async () => {
+      const req = new NextRequest("http://localhost:3000/api/storage", {
+        headers: { "X-LibreDB-Workspace-Owner": "ana%40libredb.org" },
+      });
+
+      await expectSessionRequired(await proxy(req), "Authentication required");
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
   // The agent drive path (#329 T9)
   //
   // The milestone's constraint is that wiring the durable transport must not open

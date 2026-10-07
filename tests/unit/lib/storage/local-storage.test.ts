@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 
 if (typeof globalThis.window === "undefined") {
   // @ts-expect-error — minimal window stub
@@ -22,6 +22,7 @@ import {
   AGENT_THREAD_KEY,
 } from "@/lib/storage/local-storage";
 import { STORAGE_COLLECTIONS } from "@/lib/storage/types";
+import { heldWorkspaceOwner, holdWorkspaceOwner } from "@/lib/config/base-path";
 
 describe("local-storage: getKey", () => {
   test("maps known collection names to libredb_ prefix keys", () => {
@@ -208,6 +209,19 @@ describe("local-storage: claimAccountWorkspace", () => {
     localStorage.clear();
     localStorage.setItem(getKey("connections"), '[{"id":"c1"}]');
     localStorage.setItem(workspaceTabsKey("default"), "[]");
+  });
+
+  afterEach(() => {
+    holdWorkspaceOwner(null);
+  });
+
+  test("every outcome holds the signed-in account for the requests this tab sends", () => {
+    claimAccountWorkspace("admin@libredb.org");
+    expect(heldWorkspaceOwner()).toBe("admin@libredb.org");
+    claimAccountWorkspace("admin@libredb.org");
+    expect(heldWorkspaceOwner()).toBe("admin@libredb.org");
+    claimAccountWorkspace("user@libredb.org");
+    expect(heldWorkspaceOwner()).toBe("user@libredb.org");
   });
 
   test("the same owner keeps the copy", () => {

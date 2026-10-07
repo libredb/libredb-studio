@@ -583,6 +583,7 @@ These are real, current, and not oversights. Each is a decision with a reason.
   encrypting it would require a master password and a recovery flow, changing what the product is.
   This is why 0.1 and 1.1 matter as much as they do.
   In server storage mode the browser copy belongs to the signed-in account: it is cleared on sign-out, and a different account signing in starts from its own server data.
+  Every request a tab sends after matching its copy names that account, and the server refuses one that names an account other than the signed-in one, so a tab still open for one account never writes into another account's server data.
   In local mode it stays, and the next account to sign in on that browser profile sees and can open the connections saved there.
 - **Anyone who can read the server's environment can read the stored credentials.** 3.1 protects a
   stolen database file or dump on its own; it is not a vault. For `STORAGE_PROVIDER=sqlite` with no

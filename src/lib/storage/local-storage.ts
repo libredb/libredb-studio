@@ -4,6 +4,7 @@
  * No event dispatching — that's the facade's responsibility.
  */
 
+import { holdWorkspaceOwner } from "@/lib/config/base-path";
 import { logger } from "@/lib/logger";
 import { STORAGE_COLLECTIONS } from "./types";
 
@@ -180,13 +181,16 @@ export function resetAccountWorkspace(owner: string | null): void {
 
 /**
  * Server storage mode: keep the browser copy only for the account it belongs to, before anything
- * reads it. The same owner keeps it. A copy with no owner that was never handed to a server
+ * reads it, and hold that account for the requests this tab sends (`holdWorkspaceOwner`). The
+ * same owner keeps it. A copy with no owner that was never handed to a server
  * account is local-mode data: it now belongs to the signed-in account and is kept for
  * `useStorageSync` to migrate into that account alone (docs/STORAGE.md). Anything else is
  * cleared, and the signed-in account starts from its own server data.
  */
 export function claimAccountWorkspace(username: string): void {
   if (!isClient()) return;
+  // Every request this tab sends from now on names the account it claimed the copy for.
+  holdWorkspaceOwner(username);
   const owner = localStorage.getItem(WORKSPACE_OWNER_KEY);
   if (owner === username) return;
   if (owner === null && localStorage.getItem(SERVER_MIGRATED_KEY) === null) {

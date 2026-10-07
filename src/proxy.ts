@@ -1,4 +1,5 @@
-import { withBasePath } from "@/lib/config/base-path";
+import { WORKSPACE_OWNER_HEADER, withBasePath } from "@/lib/config/base-path";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 import { AGENT_DRIVE_HEADER, AGENT_DRIVE_PATH, verifyAgentDriveToken } from "@/lib/agent/drive-token";
@@ -35,6 +36,20 @@ const ORIGIN_MISMATCH_BODY = {
   statusCode: 403,
   retryable: false,
 };
+
+const WORKSPACE_OWNER_MISMATCH_BODY = {
+  error: "This page's workspace belongs to a different account than the one signed in. Reload the page.",
+  code: ApiErrorCode.WORKSPACE_OWNER_MISMATCH,
+};
+
+/** The account a workspace owner header names, or null when it is not a valid encoding. */
+function decodedOwner(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
 
 export async function proxy(request: NextRequest) {
   // NextURL removes the configured basePath before exposing pathname; Next also
@@ -174,6 +189,15 @@ export async function proxy(request: NextRequest) {
   try {
     const { payload } = await jwtVerify(token, jwtSecret());
     const role = payload.role as string;
+
+    // A tab that claimed the browser copy names that account on every request (docs/STORAGE.md).
+    // One that names a different account than the session's is answered here, before any route
+    // runs, and the tab reloads to claim the copy again. A request without the header (MCP, the
+    // agent drive callback, an external client, local mode) is not checked.
+    const claimed = request.headers.get(WORKSPACE_OWNER_HEADER);
+    if (claimed !== null && decodedOwner(claimed) !== payload.username) {
+      return withSecurityHeaders(NextResponse.json(WORKSPACE_OWNER_MISMATCH_BODY, { status: 409 }));
+    }
 
     // RBAC: /admin only for admin
     if (pathname.startsWith("/admin") && role !== "admin") {

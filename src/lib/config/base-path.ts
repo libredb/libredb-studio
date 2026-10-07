@@ -82,12 +82,69 @@ async function noticeSessionEnded(response: Response): Promise<void> {
 }
 
 /**
+ * The request header that names the account this tab claimed the browser copy for, URI-encoded
+ * so any username fits a header value. The proxy (src/proxy.ts) answers 409 with
+ * WORKSPACE_OWNER_MISMATCH_CODE when it is not the signed-in account.
+ */
+export const WORKSPACE_OWNER_HEADER = "X-LibreDB-Workspace-Owner";
+
+/**
+ * ApiErrorCode.WORKSPACE_OWNER_MISMATCH (src/lib/api/error-codes.ts), written out for the reason
+ * SESSION_REQUIRED_CODE is. A test pins the two together.
+ */
+export const WORKSPACE_OWNER_MISMATCH_CODE = "WORKSPACE_OWNER_MISMATCH";
+
+let workspaceOwner: string | null = null;
+
+/**
+ * Records the account this tab claimed the browser copy for, in server storage mode
+ * (`claimAccountWorkspace`), so every request it sends from then on names it; null sends none.
+ * Nothing is held in local mode or before a claim.
+ */
+export function holdWorkspaceOwner(username: string | null): void {
+  workspaceOwner = username;
+}
+
+/** The account this tab claimed the browser copy for, or null when it holds no claim. */
+export function heldWorkspaceOwner(): string | null {
+  return workspaceOwner;
+}
+
+/** Adds the owner header to an app request; any other request, or no claim, passes as it came. */
+function withWorkspaceOwner(path: string, init: [RequestInit?], owner: string | null): [RequestInit?] {
+  if (owner === null || !path.startsWith("/") || path.startsWith("//")) return init;
+  const headers = new Headers(init[0]?.headers);
+  headers.set(WORKSPACE_OWNER_HEADER, encodeURIComponent(owner));
+  return [{ ...init[0], headers }];
+}
+
+/**
+ * The browser copy this tab claimed belongs to a different account than the one signed in now
+ * (another tab signed in as someone else). The tab reloads, so the owner check runs again for the
+ * account signed in now. Reads a clone and never throws, as noticeSessionEnded does.
+ */
+async function noticeOwnerMismatch(response: Response, owner: string | null): Promise<void> {
+  if (response.status !== 409 || owner === null) return;
+  let body: unknown;
+  try {
+    body = await response.clone().json();
+  } catch {
+    return;
+  }
+  if ((body as { code?: unknown } | null)?.code === WORKSPACE_OWNER_MISMATCH_CODE) window.location.reload();
+}
+
+/**
  * Preserve fetch's arguments and cancellation while applying the application's prefix. A
  * session-required 401 is also reported to the page's session-ended handler, when it has one; the
- * response itself is returned unchanged either way.
+ * response itself is returned unchanged either way. While this tab holds a claim on the browser
+ * copy, every app request names its account (WORKSPACE_OWNER_HEADER), and an answer that it is not
+ * the signed-in account reloads the tab.
  */
 export async function appFetch(path: string, ...init: [RequestInit?]): Promise<Response> {
-  const response = await fetch(withBasePath(path), ...init);
+  const owner = workspaceOwner;
+  const response = await fetch(withBasePath(path), ...withWorkspaceOwner(path, init, owner));
   await noticeSessionEnded(response);
+  await noticeOwnerMismatch(response, owner);
   return response;
 }

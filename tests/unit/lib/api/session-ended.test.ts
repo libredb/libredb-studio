@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { claimSignInRedirect, safeReturnPath, sessionRequiredBody, signInPath } from "@/lib/api/session-ended";
-import { SESSION_REQUIRED_CODE } from "@/lib/config/base-path";
+import { SESSION_REQUIRED_CODE, WORKSPACE_OWNER_MISMATCH_CODE } from "@/lib/config/base-path";
 
 describe("sessionRequiredBody", () => {
   // base-path.ts writes the code out because next.config.ts reads that file and cannot resolve
   // the alias an import would need. This keeps the browser's copy and the server's code one value.
   test("is the code the browser's appFetch keys on", () => {
     expect(SESSION_REQUIRED_CODE).toBe(ApiErrorCode.AUTH_REQUIRED);
+  });
+
+  test("the owner mismatch code appFetch keys on is the server's", () => {
+    expect(WORKSPACE_OWNER_MISMATCH_CODE).toBe(ApiErrorCode.WORKSPACE_OWNER_MISMATCH);
   });
 
   test("names the AUTH_REQUIRED code the browser keys on", () => {

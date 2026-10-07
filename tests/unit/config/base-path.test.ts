@@ -8,6 +8,9 @@ import {
   currentAppPath,
   onSessionEnded,
   reportSessionEnded,
+  heldWorkspaceOwner,
+  holdWorkspaceOwner,
+  WORKSPACE_OWNER_HEADER,
 } from "@/lib/config/base-path";
 import { sessionRequiredBody } from "@/lib/api/session-ended";
 
@@ -225,6 +228,93 @@ describe("appFetch session-ended notice", () => {
     unregister = null;
     await respondWith(json(401, sessionRequiredBody("x")));
     expect(second).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("appFetch and the account this tab claimed the browser copy for", () => {
+  const originalReload = window.location.reload;
+  let reload: ReturnType<typeof mock>;
+
+  afterEach(() => {
+    holdWorkspaceOwner(null);
+    Object.defineProperty(window.location, "reload", { value: originalReload, configurable: true });
+  });
+
+  function sentHeaders(fetchMock: ReturnType<typeof mock>): Headers {
+    const init = fetchMock.mock.calls.at(-1)?.[1] as RequestInit | undefined;
+    return new Headers(init?.headers);
+  }
+
+  function answering(response: () => Response) {
+    const fetchMock = mock(async () => response());
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  }
+
+  function watchReload() {
+    reload = mock(() => {});
+    Object.defineProperty(window.location, "reload", { value: reload, configurable: true });
+  }
+
+  test("before a claim no owner header is sent, and the arguments pass through untouched", async () => {
+    const fetchMock = answering(() => json(200, {}));
+    const init = { method: "PUT", headers: { "Content-Type": "application/json" } };
+
+    await appFetch("/api/storage/connections", init);
+
+    expect(heldWorkspaceOwner()).toBeNull();
+    expect(fetchMock.mock.calls[0]).toEqual(["/api/storage/connections", init]);
+  });
+
+  test("while a claim is held every app request names the claimed account, keeping the caller's headers", async () => {
+    const fetchMock = answering(() => json(200, {}));
+    holdWorkspaceOwner("ana@libredb.org");
+
+    await appFetch("/api/storage/connections", { method: "PUT", headers: { "Content-Type": "application/json" } });
+    const headers = sentHeaders(fetchMock);
+    expect(headers.get(WORKSPACE_OWNER_HEADER)).toBe("ana%40libredb.org");
+    expect(headers.get("Content-Type")).toBe("application/json");
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("PUT");
+
+    await appFetch("/api/auth/me");
+    expect(sentHeaders(fetchMock).get(WORKSPACE_OWNER_HEADER)).toBe("ana%40libredb.org");
+  });
+
+  test("a request that leaves the application never carries it", async () => {
+    const fetchMock = answering(() => json(200, {}));
+    holdWorkspaceOwner("ana@libredb.org");
+
+    await appFetch("https://example.com/x");
+    await appFetch("//example.com/x");
+
+    expect(fetchMock.mock.calls.map((call) => call.length)).toEqual([1, 1]);
+  });
+
+  test("an owner mismatch while a claim is held reloads the tab, so the owner check runs again", async () => {
+    watchReload();
+    holdWorkspaceOwner("ana@libredb.org");
+    answering(() => json(409, { error: "x", code: "WORKSPACE_OWNER_MISMATCH" }));
+
+    const response = await appFetch("/api/storage/connections");
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(409);
+    expect(response.bodyUsed).toBe(false);
+  });
+
+  test("any other 409, a body that is not JSON, or no claim held does not reload", async () => {
+    watchReload();
+    holdWorkspaceOwner("ana@libredb.org");
+    answering(() => json(409, { error: "conflict", code: "QUERY_ERROR" }));
+    await appFetch("/api/storage/connections");
+    answering(() => new Response("<html>", { status: 409 }));
+    await appFetch("/api/storage/connections");
+
+    holdWorkspaceOwner(null);
+    answering(() => json(409, { error: "x", code: "WORKSPACE_OWNER_MISMATCH" }));
+    await appFetch("/api/storage/connections");
+
+    expect(reload).not.toHaveBeenCalled();
   });
 });
 
