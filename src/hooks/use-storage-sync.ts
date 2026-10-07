@@ -9,9 +9,14 @@ import {
   type StorageData,
   STORAGE_COLLECTIONS,
 } from "@/lib/storage";
+import {
+  clearAccountWorkspace,
+  SERVER_MIGRATED_KEY as MIGRATION_FLAG,
+  WORKSPACE_OWNER_KEY,
+} from "@/lib/storage/local-storage";
+import { registerPendingPush } from "@/lib/storage/sign-out";
 import { logger } from "@/lib/logger";
 
-const MIGRATION_FLAG = "libredb_server_migrated";
 const DEBOUNCE_MS = 500;
 /** First retry delay after a failed push; doubles per consecutive failure. */
 const RETRY_BASE_MS = 1000;
@@ -33,6 +38,8 @@ export interface StorageSyncState {
  * - Discovers storage mode via GET /api/storage/config
  * - In server mode: pulls data on mount, pushes mutations (debounced)
  * - Handles first-login migration from localStorage to server
+ * - Binds the browser copy to the signed-in account (server mode): a copy another account
+ *   left behind is cleared before anything is migrated, pulled or pushed
  * - Graceful degradation: if server unreachable, localStorage continues
  */
 export function useStorageSync(): StorageSyncState {
@@ -57,6 +64,10 @@ export function useStorageSync(): StorageSyncState {
   const pendingCollectionsRef = useRef<Set<string>>(new Set());
   const retryDelayRef = useRef(RETRY_BASE_MS);
   const serverModeRef = useRef(false);
+  /** The push in flight, so a sign-out can wait for it while the session cookie is still valid. */
+  const inFlightRef = useRef<Promise<unknown> | null>(null);
+  /** Set once a sign-out cleared the browser copy: nothing may push the empty copy after that. */
+  const signedOutRef = useRef(false);
   /**
    * Whether this hook is still mounted. A push that is in flight when the user
    * navigates away resolves AFTER teardown, and the failure branch would arm a
@@ -104,9 +115,11 @@ export function useStorageSync(): StorageSyncState {
 
     setIsSyncing(true);
     try {
-      const outcomes = await Promise.all(
+      const pushes = Promise.all(
         collections.map(async (col) => [col, await pushToServer(col, getCollectionData(col))] as const),
       );
+      inFlightRef.current = pushes;
+      const outcomes = await pushes;
 
       // A collection that failed to push is still only in localStorage. Putting
       // it back in the queue is what keeps the write recoverable — without this
@@ -145,6 +158,7 @@ export function useStorageSync(): StorageSyncState {
   // ── Schedule debounced push ──
   const schedulePush = useCallback(
     (collection: string) => {
+      if (signedOutRef.current) return;
       pendingCollectionsRef.current.add(collection);
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
@@ -258,26 +272,43 @@ export function useStorageSync(): StorageSyncState {
     let cancelled = false;
 
     async function init() {
+      let ready = true;
       try {
         const res = await appFetch("/api/storage/config");
         if (!res.ok || cancelled) return;
         const config = (await res.json()) as StorageConfigResponse;
 
         if (config.serverMode && !cancelled) {
+          // The browser copy belongs to the signed-in account. Without the account's name the
+          // copy cannot be matched to it, so it is neither used nor pushed: isReady stays false.
+          let username: string;
+          try {
+            username = await readSignedInUsername();
+          } catch (err) {
+            ready = false;
+            const message = err instanceof Error ? err.message : String(err);
+            logger.warn("StorageSync could not read the signed-in account", { error: message });
+            setSyncError(message);
+            return;
+          }
+          if (cancelled) return;
+
           setIsServerMode(true);
           serverModeRef.current = true;
 
+          claimBrowserCopy(username);
           // Migration first, then pull
           await migrateToServer();
           if (!cancelled) {
             await pullFromServer();
           }
+          localStorage.setItem(WORKSPACE_OWNER_KEY, username);
         }
       } catch {
         // Server unreachable — stay in local mode
         logger.debug("Storage server unreachable, staying in local mode");
       } finally {
-        if (!cancelled) {
+        if (!cancelled && ready) {
           setIsReady(true);
         }
       }
@@ -288,6 +319,21 @@ export function useStorageSync(): StorageSyncState {
       cancelled = true;
     };
   }, [migrateToServer, pullFromServer]);
+
+  // ── Sign-out: push what is pending while the session cookie is still valid ──
+  useEffect(() => {
+    if (!isServerMode) return;
+    return registerPendingPush(async () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      await inFlightRef.current;
+      await flushPending();
+      if (pendingCollectionsRef.current.size > 0) {
+        throw new Error("Unsaved changes could not be saved to server storage");
+      }
+      signedOutRef.current = true;
+    });
+  }, [isServerMode, flushPending]);
 
   // ── Listen for storage mutations ──
   useEffect(() => {
@@ -310,6 +356,31 @@ export function useStorageSync(): StorageSyncState {
 }
 
 // ── Helpers ──
+
+/** The signed-in account's username, from GET /api/auth/me. Throws when it cannot be read. */
+async function readSignedInUsername(): Promise<string> {
+  const res = await appFetch("/api/auth/me");
+  if (!res.ok) throw new Error(`Could not read the signed-in account: HTTP ${res.status}`);
+  const body = (await res.json()) as { user?: { username?: unknown } };
+  const username = body.user?.username;
+  if (typeof username !== "string" || username === "") {
+    throw new Error("Could not read the signed-in account: no username");
+  }
+  return username;
+}
+
+/**
+ * Keep the browser copy only for the account it belongs to. The same owner keeps it; a copy
+ * with no owner that was never handed to a server account is local-mode data, migrated into
+ * this account as before (docs/STORAGE.md). Anything else starts from this account's server
+ * data, so the copy is cleared before the migration and the pull run.
+ */
+function claimBrowserCopy(username: string): void {
+  const owner = localStorage.getItem(WORKSPACE_OWNER_KEY);
+  if (owner === username) return;
+  if (owner === null && localStorage.getItem(MIGRATION_FLAG) === null) return;
+  clearAccountWorkspace();
+}
 
 /** Read a collection's current data from the storage facade */
 function getCollectionData(collection: string): unknown {

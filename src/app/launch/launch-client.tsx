@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { appFetch, withBasePath } from "@/lib/config/base-path";
+import { releaseAccountWorkspace } from "@/lib/storage/sign-out";
 
 const NO_TOKEN =
   "This address carries no launch token. Open Studio again from the platform that sent you, or sign in with your password.";
@@ -111,7 +112,10 @@ function SessionConflict({ signedInAs, launchFor }: Conflict) {
   const [state, setState] = useState<"asking" | "signed-out" | "failed">("asking");
 
   async function signOut() {
-    const response = await appFetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+    // In server storage mode the browser copy belongs to the signed-in account and is cleared first.
+    const response = await releaseAccountWorkspace()
+      .then(() => appFetch("/api/auth/logout", { method: "POST" }))
+      .catch(() => null);
     setState(response?.ok ? "signed-out" : "failed");
   }
 

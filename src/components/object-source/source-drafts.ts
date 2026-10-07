@@ -1,5 +1,6 @@
 import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import type { ObjectEditRevision } from "@/lib/db/types";
+import { SOURCE_DRAFTS_KEY } from "@/lib/storage/local-storage";
 
 /**
  * The unsaved edit of ONE part of an object's definition, held in this browser (#789 Phase 3,
@@ -59,9 +60,10 @@ export interface SourceDraft {
 
 /**
  * The one key. Versioned, so a later shape change is a new key rather than a migration over a
- * record a previous release wrote.
+ * record a previous release wrote. Spelled in `lib/storage/local-storage.ts`, which lists it among
+ * the keys of the signed-in account's browser copy.
  */
-export const DRAFT_KEY = "libredb_source_drafts_v1";
+export const DRAFT_KEY = SOURCE_DRAFTS_KEY;
 
 /**
  * 1,048,576 characters, which is 20 percent of the measured origin ceiling, and it is counted as

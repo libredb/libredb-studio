@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { logger } from "@/lib/logger";
+import { releaseAccountWorkspace } from "@/lib/storage/sign-out";
 
 interface AuthUser {
   role?: string;
@@ -47,6 +48,10 @@ export function useAuth() {
 
   const handleLogout = useCallback(async () => {
     try {
+      // In server storage mode the browser copy belongs to the signed-in account: it is pushed
+      // and cleared while the session cookie is still valid. The session-ended path above clears
+      // nothing; the next sign-in's owner check in useStorageSync covers a different account.
+      await releaseAccountWorkspace();
       const res = await appFetch("/api/auth/logout", { method: "POST" });
       const data = await res.json();
       toast({ title: "Logged out", description: "You have been successfully logged out." });

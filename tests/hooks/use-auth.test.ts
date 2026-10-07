@@ -8,6 +8,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
 
 import { useAuth } from "@/hooks/use-auth";
+import { registerPendingPush } from "@/lib/storage/sign-out";
 
 // =============================================================================
 // useAuth Tests
@@ -88,6 +89,7 @@ describe("useAuth", () => {
   test("handleLogout calls /api/auth/logout with POST method", async () => {
     const fetchMock = mockGlobalFetch({
       "/api/auth/me": { ok: true, json: { user: { role: "user" } } },
+      "/api/storage/config": { ok: true, json: { provider: "local", serverMode: false } },
       "/api/auth/logout": { ok: true, json: { success: true } },
     });
 
@@ -112,6 +114,7 @@ describe("useAuth", () => {
   test('handleLogout calls router.push("/login") and router.refresh()', async () => {
     mockGlobalFetch({
       "/api/auth/me": { ok: true, json: { user: { role: "user" } } },
+      "/api/storage/config": { ok: true, json: { provider: "local", serverMode: false } },
       "/api/auth/logout": { ok: true, json: { success: true } },
     });
 
@@ -132,6 +135,7 @@ describe("useAuth", () => {
   test("handleLogout shows success toast on success", async () => {
     mockGlobalFetch({
       "/api/auth/me": { ok: true, json: { user: { role: "user" } } },
+      "/api/storage/config": { ok: true, json: { provider: "local", serverMode: false } },
       "/api/auth/logout": { ok: true, json: { success: true } },
     });
 
@@ -154,6 +158,7 @@ describe("useAuth", () => {
   test("handleLogout shows destructive toast on error", async () => {
     mockGlobalFetch({
       "/api/auth/me": { ok: true, json: { user: { role: "user" } } },
+      "/api/storage/config": { ok: true, json: { provider: "local", serverMode: false } },
     });
 
     // Override fetch so logout throws a network error
@@ -296,6 +301,12 @@ describe("useAuth", () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/api/auth/me")) return mePromise;
+      if (url.includes("/api/storage/config")) {
+        return new Response(JSON.stringify({ provider: "local", serverMode: false }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
       if (url.includes("/api/auth/logout")) {
         return new Response(JSON.stringify({ success: true }), {
           status: 200,
@@ -341,6 +352,7 @@ describe("useAuth", () => {
 
     mockGlobalFetch({
       "/api/auth/me": { ok: true, json: { user: { role: "user" } } },
+      "/api/storage/config": { ok: true, json: { provider: "local", serverMode: false } },
       "/api/auth/logout": {
         ok: true,
         json: { success: true, redirectUrl: "https://auth0.com/v2/logout?client_id=abc" },
@@ -372,6 +384,7 @@ describe("useAuth", () => {
   test("handleLogout navigates even if logout API returns non-ok", async () => {
     mockGlobalFetch({
       "/api/auth/me": { ok: true, json: { user: { role: "user" } } },
+      "/api/storage/config": { ok: true, json: { provider: "local", serverMode: false } },
       "/api/auth/logout": { ok: false, status: 500, json: { error: "Server error" } },
     });
 
@@ -393,6 +406,7 @@ describe("useAuth", () => {
       const fetchMock = mockGlobalFetch({
         "/~/libredb/api/auth/me": { json: { user: { role: "user" } } },
         "/~/libredb/api/auth/logout": { json: { success: true } },
+        "/~/libredb/api/storage/config": { json: { provider: "local", serverMode: false } },
       });
       const { result, unmount } = renderHook(() => useAuth());
       try {
@@ -405,6 +419,94 @@ describe("useAuth", () => {
         unmount();
         restoreGlobalFetch();
       }
+    });
+  });
+
+  // ── Sign-out and this browser's copy of the workspace ─────────────────────
+
+  describe("sign-out and the browser copy", () => {
+    beforeEach(() => {
+      localStorage.clear();
+      localStorage.setItem("libredb_connections", JSON.stringify([{ id: "c1" }]));
+      localStorage.setItem("libredb_workspace_tabs_v1:c1", "[]");
+      localStorage.setItem("libredb_workspace_owner", "user@libredb.org");
+    });
+
+    afterEach(() => {
+      localStorage.clear();
+    });
+
+    test("server mode: pending pushes go out, then the copy is cleared, then the session ends", async () => {
+      const order: string[] = [];
+      mockGlobalFetch({
+        "/api/auth/me": { ok: true, json: { user: { role: "user" } } },
+        "/api/storage/config": { ok: true, json: { provider: "postgres", serverMode: true } },
+        "/api/auth/logout": () => {
+          order.push(`logout:${localStorage.getItem("libredb_connections")}`);
+          return { ok: true, json: { success: true } };
+        },
+      });
+      const unregister = registerPendingPush(async () => {
+        order.push(`push:${localStorage.getItem("libredb_connections")}`);
+      });
+
+      const { result } = renderHook(() => useAuth());
+      await waitFor(() => {
+        expect(result.current.user).not.toBeNull();
+      });
+      await act(async () => {
+        await result.current.handleLogout();
+      });
+      unregister();
+
+      expect(order).toEqual([`push:${JSON.stringify([{ id: "c1" }])}`, "logout:null"]);
+      expect(localStorage.getItem("libredb_workspace_tabs_v1:c1")).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
+      expect(mockRouterPush).toHaveBeenCalledWith("/login");
+    });
+
+    test("server mode: a push that does not land keeps the session and the copy", async () => {
+      const fetchMock = mockGlobalFetch({
+        "/api/auth/me": { ok: true, json: { user: { role: "user" } } },
+        "/api/storage/config": { ok: true, json: { provider: "postgres", serverMode: true } },
+        "/api/auth/logout": { ok: true, json: { success: true } },
+      });
+      const unregister = registerPendingPush(async () => {
+        throw new Error("Unsaved changes could not be saved to server storage");
+      });
+
+      const { result } = renderHook(() => useAuth());
+      await waitFor(() => {
+        expect(result.current.user).not.toBeNull();
+      });
+      await act(async () => {
+        await result.current.handleLogout();
+      });
+      unregister();
+
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/auth/logout"))).toBe(false);
+      expect(localStorage.getItem("libredb_connections")).not.toBeNull();
+      expect(mockToastError).toHaveBeenCalledWith("Error", { description: "Failed to logout." });
+    });
+
+    test("local mode: the copy stays", async () => {
+      mockGlobalFetch({
+        "/api/auth/me": { ok: true, json: { user: { role: "user" } } },
+        "/api/storage/config": { ok: true, json: { provider: "local", serverMode: false } },
+        "/api/auth/logout": { ok: true, json: { success: true } },
+      });
+
+      const { result } = renderHook(() => useAuth());
+      await waitFor(() => {
+        expect(result.current.user).not.toBeNull();
+      });
+      await act(async () => {
+        await result.current.handleLogout();
+      });
+
+      expect(localStorage.getItem("libredb_connections")).not.toBeNull();
+      expect(localStorage.getItem("libredb_workspace_tabs_v1:c1")).toBe("[]");
+      expect(mockRouterPush).toHaveBeenCalledWith("/login");
     });
   });
 });

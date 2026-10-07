@@ -5,6 +5,7 @@
  */
 
 import { logger } from "@/lib/logger";
+import { STORAGE_COLLECTIONS } from "./types";
 
 const KEY_PREFIX = "libredb_";
 
@@ -114,4 +115,49 @@ export function workspaceTabsKey(connectionId: string): string {
 export function removeWorkspaceTabs(connectionId: string): void {
   if (!isClient()) return;
   localStorage.removeItem(workspaceTabsKey(connectionId));
+}
+
+/**
+ * The signed-in username the browser copy belongs to. Written in server storage mode only, by
+ * `useStorageSync`, which compares it with the signed-in account before it uses the copy.
+ */
+export const WORKSPACE_OWNER_KEY = `${KEY_PREFIX}workspace_owner`;
+
+/** Set once this browser's copy has been handed to a server account (`useStorageSync`). */
+export const SERVER_MIGRATED_KEY = `${KEY_PREFIX}server_migrated`;
+
+/** Unsaved object-source edits (`components/object-source/source-drafts.ts`). */
+export const SOURCE_DRAFTS_KEY = `${KEY_PREFIX}source_drafts_v1`;
+
+/** The agent conversation this browser was last in (`components/agent/use-agent-run.ts`). */
+export const AGENT_THREAD_KEY = `${KEY_PREFIX}agent_thread`;
+
+/**
+ * Every key that holds the signed-in account's browser copy: the synced collections, the
+ * unsynced drafts and hints, and the two keys that say whose copy it is. Per-browser
+ * preferences (theme, line numbers, the star prompt counters) are not on it.
+ */
+const ACCOUNT_KEYS: readonly string[] = [
+  ...STORAGE_COLLECTIONS.map(getKey),
+  SOURCE_DRAFTS_KEY,
+  AGENT_THREAD_KEY,
+  SERVER_MIGRATED_KEY,
+  WORKSPACE_OWNER_KEY,
+];
+
+/**
+ * Remove the signed-in account's browser copy, editor tabs included, and nothing else. In
+ * server storage mode the browser copy belongs to the signed-in account: signing out clears
+ * it, and signing in as a different account starts from that account's server data.
+ */
+export function clearAccountWorkspace(): void {
+  if (!isClient()) return;
+  for (const key of ACCOUNT_KEYS) localStorage.removeItem(key);
+  // Collected first: removing while walking by index would skip the key after each removal.
+  const tabKeys: string[] = [];
+  for (let index = 0; index < localStorage.length; index++) {
+    const key = localStorage.key(index);
+    if (key?.startsWith(`${WORKSPACE_TABS_KEY_PREFIX}:`)) tabKeys.push(key);
+  }
+  for (const key of tabKeys) localStorage.removeItem(key);
 }

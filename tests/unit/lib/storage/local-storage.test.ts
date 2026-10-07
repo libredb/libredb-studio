@@ -5,7 +5,21 @@ if (typeof globalThis.window === "undefined") {
   globalThis.window = globalThis;
 }
 
-import { readJSON, writeJSON, readString, writeString, remove, getKey } from "@/lib/storage/local-storage";
+import {
+  readJSON,
+  writeJSON,
+  readString,
+  writeString,
+  remove,
+  getKey,
+  clearAccountWorkspace,
+  workspaceTabsKey,
+  WORKSPACE_OWNER_KEY,
+  SERVER_MIGRATED_KEY,
+  SOURCE_DRAFTS_KEY,
+  AGENT_THREAD_KEY,
+} from "@/lib/storage/local-storage";
+import { STORAGE_COLLECTIONS } from "@/lib/storage/types";
 
 describe("local-storage: getKey", () => {
   test("maps known collection names to libredb_ prefix keys", () => {
@@ -114,5 +128,49 @@ describe("local-storage: remove", () => {
     writeString("active_connection_id", "conn-42");
     remove("active_connection_id");
     expect(readString("active_connection_id")).toBeNull();
+  });
+});
+
+describe("local-storage: clearAccountWorkspace", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("the account keys are named once, with their stored spelling", () => {
+    expect(WORKSPACE_OWNER_KEY).toBe("libredb_workspace_owner");
+    expect(SERVER_MIGRATED_KEY).toBe("libredb_server_migrated");
+    expect(SOURCE_DRAFTS_KEY).toBe("libredb_source_drafts_v1");
+    expect(AGENT_THREAD_KEY).toBe("libredb_agent_thread");
+  });
+
+  test("removes every key the signed-in account's browser copy is held under", () => {
+    for (const collection of STORAGE_COLLECTIONS) localStorage.setItem(getKey(collection), "x");
+    localStorage.setItem(workspaceTabsKey("c1"), "[]");
+    localStorage.setItem(workspaceTabsKey("seed:sample"), "[]");
+    localStorage.setItem(SOURCE_DRAFTS_KEY, "{}");
+    localStorage.setItem(AGENT_THREAD_KEY, "{}");
+    localStorage.setItem(SERVER_MIGRATED_KEY, "2026-10-07");
+    localStorage.setItem(WORKSPACE_OWNER_KEY, "admin@libredb.org");
+
+    clearAccountWorkspace();
+
+    expect(localStorage.length).toBe(0);
+  });
+
+  test("keeps the per-browser preferences", () => {
+    const preferences = {
+      "editor-line-numbers": "false",
+      "libredb-theme": "dark",
+      libredb_star_prompt_query_count: "3",
+      libredb_star_prompt_handled: "1",
+      "another-app": "kept",
+    };
+    for (const [key, value] of Object.entries(preferences)) localStorage.setItem(key, value);
+    localStorage.setItem(getKey("connections"), "[]");
+
+    clearAccountWorkspace();
+
+    expect(localStorage.getItem(getKey("connections"))).toBeNull();
+    for (const [key, value] of Object.entries(preferences)) expect(localStorage.getItem(key)).toBe(value);
   });
 });

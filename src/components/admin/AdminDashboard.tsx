@@ -1,6 +1,7 @@
 "use client";
 
 import { appFetch } from "@/lib/config/base-path";
+import { releaseAccountWorkspace } from "@/lib/storage/sign-out";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -29,6 +30,8 @@ export default function AdminDashboard({ children }: AdminDashboardProps) {
   const activeSection = adminSectionFromPathname(pathname);
 
   const handleLogout = async () => {
+    // In server storage mode the browser copy belongs to the signed-in account and is cleared first.
+    await releaseAccountWorkspace();
     const res = await appFetch("/api/auth/logout", { method: "POST" });
     const data = await res.json();
     toast.success("Logged out successfully");
