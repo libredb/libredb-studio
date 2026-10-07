@@ -2,7 +2,9 @@ import "../../setup-dom";
 import "../../helpers/mock-navigation";
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { ObjectTree } from "@/components/object-tree";
 import { useTreeNodes } from "@/components/object-tree/use-tree-nodes";
 import type { DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
@@ -207,5 +209,119 @@ describe("what the filter cannot see", () => {
     const hook = renderHook(() => useTreeNodes(connectionOf("pg"), oneLevel));
     await waitFor(() => expect(hook.result.current.rows.length).toBeGreaterThan(0));
     expect(hook.result.current.search).toBeUndefined();
+  });
+});
+
+/**
+ * The rendered rows' labels, read from the label span rather than from the accessible name. A
+ * highlighted label is split by a `<mark>`, and happy-dom reports no `display` for one, so
+ * `dom-accessibility-api` treats it as a block and names the row "cust om ers". A browser draws
+ * `mark` inline and names it "customers"; the label's text is the same in both.
+ */
+function shownLabels(): (string | null)[] {
+  return screen.queryAllByTestId("tree-row-label").map((label) => label.textContent);
+}
+
+describe("ObjectTree filter box", () => {
+  async function mountTree() {
+    const calls = installFetch();
+    const view = render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
+    await userEvent.click(await screen.findByRole("treeitem", { name: /Tables/ }));
+    await screen.findByRole("treeitem", { name: /orders/ });
+    return { calls, view };
+  }
+
+  test("typing filters the tree, announces the count, and issues no request", async () => {
+    const { calls } = await mountTree();
+    const before = calls.length;
+    await userEvent.type(screen.getByRole("searchbox", { name: "Filter objects" }), "cust");
+
+    await waitFor(() => expect(screen.getByTestId("tree-filter-matches").textContent).toBe("1 match"));
+    expect(shownLabels()).toEqual(["app", "Tables", "customers"]);
+    expect(calls.length).toBe(before);
+  });
+
+  test("Escape clears it and ArrowDown hands focus to the first row", async () => {
+    await mountTree();
+    const box = screen.getByRole("searchbox", { name: "Filter objects" });
+    await userEvent.type(box, "cust");
+    await userEvent.keyboard("{ArrowDown}");
+    await waitFor(() => expect(document.activeElement?.getAttribute("data-row-id")).toBe("app"));
+
+    box.focus();
+    await userEvent.keyboard("{Escape}");
+    expect((box as HTMLInputElement).value).toBe("");
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: /orders/ })).toBeTruthy());
+  });
+
+  test("no match keeps the status line and offers the unread read", async () => {
+    const { calls } = await mountTree();
+    await userEvent.type(screen.getByRole("searchbox", { name: "Filter objects" }), "summary");
+
+    await waitFor(() => expect(screen.getByTestId("tree-no-match")).toBeTruthy());
+    expect(screen.getByTestId("tree-no-match").textContent).toBe(
+      'No loaded object matches "summary"Only folders that have been read are searched.',
+    );
+    expect(screen.getByTestId("tree-filter-unread").textContent).toBe("3 not read yet");
+    await userEvent.click(screen.getByTestId("tree-filter-read"));
+
+    await waitFor(() => expect(shownLabels()).toContain("order_summary"));
+    expect(calls.filter((call) => call.route === "list")).toHaveLength(4);
+  });
+
+  test("switching connection starts unfiltered", async () => {
+    const { view } = await mountTree();
+    await userEvent.type(screen.getByRole("searchbox", { name: "Filter objects" }), "cust");
+    view.rerender(<ObjectTree connection={connectionOf("other")} capabilities={oneLevel} />);
+    await waitFor(() =>
+      expect((screen.getByRole("searchbox", { name: "Filter objects" }) as HTMLInputElement).value).toBe(""),
+    );
+  });
+
+  test("the clear button empties the box", async () => {
+    await mountTree();
+    await userEvent.type(screen.getByRole("searchbox", { name: "Filter objects" }), "cust");
+    await userEvent.click(screen.getByRole("button", { name: "Clear filter" }));
+    expect((screen.getByRole("searchbox", { name: "Filter objects" }) as HTMLInputElement).value).toBe("");
+  });
+
+  test("a batch in flight is shown, and the action waits for it", async () => {
+    const releases: (() => void)[] = [];
+    const schemas = Array.from({ length: 30 }, (_, index) => ({ path: [`s${index}`], name: `s${index}`, level: 0 }));
+    globalThis.fetch = mock(async (url: string | URL) => {
+      const route = String(url).slice(String(url).lastIndexOf("/") + 1);
+      if (route === "containers") return Response.json(schemas);
+      return new Promise<Response>((resolve) => releases.push(() => resolve(Response.json([]))));
+    }) as never;
+    render(<ObjectTree connection={connectionOf("many")} capabilities={oneLevel} />);
+    await userEvent.type(await screen.findByRole("searchbox", { name: "Filter objects" }), "zzz");
+    await waitFor(() => expect(screen.getByTestId("tree-filter-read").textContent).toBe("Read 24 more"));
+
+    await userEvent.click(screen.getByTestId("tree-filter-read"));
+
+    await waitFor(() => expect(screen.getByTestId("tree-filter-reading").textContent).toBe("Reading 24..."));
+    expect(screen.getByTestId("tree-filter-unread").textContent).toBe("36 not read yet");
+    expect((screen.getByTestId("tree-filter-read") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      for (const release of releases.splice(0)) release();
+    });
+    await waitFor(() => expect(screen.queryByTestId("tree-filter-reading")).toBeNull());
+    expect((screen.getByTestId("tree-filter-read") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  test("reads that failed are counted apart", async () => {
+    installFetch();
+    const ok = globalThis.fetch;
+    globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) =>
+      String(url).endsWith("/list") ? Response.json({ error: "rate limited" }, { status: 429 }) : ok(url, init),
+    ) as never;
+    render(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} />);
+    await userEvent.type(await screen.findByRole("searchbox", { name: "Filter objects" }), "x");
+    await waitFor(() => expect(screen.getByTestId("tree-filter-read").textContent).toBe("Read and search"));
+
+    await userEvent.click(screen.getByTestId("tree-filter-read"));
+
+    await waitFor(() => expect(screen.getByTestId("tree-filter-failed").textContent).toBe("4 could not be read"));
+    expect(screen.queryByTestId("tree-filter-unread")).toBeNull();
   });
 });

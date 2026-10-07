@@ -366,4 +366,25 @@ describe("the embedded workspace's object tree", () => {
     await waitFor(() => expect(screen.getByTestId("tree-failure")).toBeTruthy());
     expect(screen.getByTestId("tree-failure").textContent).toContain("The tenant's warehouse is asleep");
   });
+
+  test("the embedded tree carries the same filter box, answered from the host's reads", async () => {
+    installFetch();
+    const reader: WorkspaceObjectReader = {
+      listContainers: async () => [{ path: ["app"], level: 0, name: "app", isSessionDefault: true }],
+      countObjects: async () => ({ table: { count: 2 } }),
+      listObjects: async () => [
+        { path: ["app", "orders"], name: "orders", kind: "table" },
+        { path: ["app", "customers"], name: "customers", kind: "table" },
+      ],
+    };
+    renderWorkspace(reader);
+    await userEvent.click(await screen.findByText("Tables"));
+    await screen.findByText("orders");
+
+    await userEvent.type(screen.getByRole("searchbox", { name: "Filter objects" }), "cust");
+
+    // Read from the label span: the match highlight splits "customers" across a `<mark>`.
+    await waitFor(() => expect(screen.queryByText("orders")).toBeNull());
+    expect(screen.getAllByTestId("tree-row-label").map((label) => label.textContent)).toContain("customers");
+  });
 });
