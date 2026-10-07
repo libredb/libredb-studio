@@ -267,4 +267,128 @@ describe("WorkspaceOwnerGate", () => {
       expect(reload).not.toHaveBeenCalled();
     });
   });
+
+  describe("the tab is shown again", () => {
+    const original = window.location.reload;
+    let reload: ReturnType<typeof mock>;
+    /** The account GET /api/auth/me names; null answers 503. */
+    let signedIn: string | null;
+
+    beforeEach(() => {
+      reload = mock(() => {});
+      Object.defineProperty(window.location, "reload", { value: reload, configurable: true });
+      signedIn = "admin@libredb.org";
+    });
+
+    afterEach(() => {
+      Object.defineProperty(window.location, "reload", { value: original, configurable: true });
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    });
+
+    function shown(state: "visible" | "hidden" = "visible") {
+      Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+      act(() => {
+        document.dispatchEvent(new window.Event("visibilitychange"));
+      });
+    }
+
+    async function renderPage(routes: Parameters<typeof mockGlobalFetch>[0]) {
+      const fetchMock = mockGlobalFetch(routes);
+      const view = render(
+        <WorkspaceOwnerGate>
+          <p>workspace page</p>
+        </WorkspaceOwnerGate>,
+      );
+      expect(await view.findByText("workspace page")).not.toBeNull();
+      return { view, fetchMock, asked: () => fetchMock.mock.calls.length };
+    }
+
+    const SERVER_ROUTES = {
+      ...SERVER_MODE,
+      "/api/auth/me": () =>
+        signedIn === null ? { status: 503, json: { error: "down" } } : { json: { user: { username: signedIn } } },
+    };
+
+    test("server mode: a different account signed in since then drops the page and reloads", async () => {
+      // A sign-in can land on a page that records no owner (an unknown address), so no storage
+      // event reaches this tab; the account is asked again when the tab is shown.
+      const { view } = await renderPage(SERVER_ROUTES);
+      signedIn = "user@libredb.org";
+
+      shown();
+
+      await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+      expect(view.queryByText("workspace page")).toBeNull();
+    });
+
+    test("server mode: the same account keeps the page", async () => {
+      const { view, asked } = await renderPage(SERVER_ROUTES);
+      const before = asked();
+
+      shown();
+
+      await waitFor(() => expect(asked()).toBe(before + 1));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(reload).not.toHaveBeenCalled();
+      expect(view.queryByText("workspace page")).not.toBeNull();
+    });
+
+    test("server mode: an account that cannot be read now keeps the page as it is", async () => {
+      const { view, asked } = await renderPage(SERVER_ROUTES);
+      const before = asked();
+      signedIn = null;
+
+      shown();
+
+      await waitFor(() => expect(asked()).toBe(before + 1));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(reload).not.toHaveBeenCalled();
+      expect(view.queryByText("workspace page")).not.toBeNull();
+    });
+
+    test("server mode: a tab that is hidden asks nothing", async () => {
+      const { asked } = await renderPage(SERVER_ROUTES);
+      const before = asked();
+
+      shown("hidden");
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(asked()).toBe(before);
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    test("local mode: a tab shown again asks nothing", async () => {
+      const { asked } = await renderPage({ "/api/storage/config": { json: { provider: "local", serverMode: false } } });
+      const before = asked();
+
+      shown();
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(asked()).toBe(before);
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    test("an answer that arrives after the page is gone, or after it already left, reloads once at most", async () => {
+      const { view } = await renderPage(SERVER_ROUTES);
+      signedIn = "user@libredb.org";
+
+      shown();
+      ownerChanged();
+      await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+      view.unmount();
+      shown();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(reload).toHaveBeenCalledTimes(1);
+
+      function ownerChanged() {
+        localStorage.setItem("libredb_workspace_owner", "user@libredb.org");
+        act(() => {
+          window.dispatchEvent(
+            new window.StorageEvent("storage", { key: "libredb_workspace_owner", newValue: "user@libredb.org" }),
+          );
+        });
+      }
+    });
+  });
 });
