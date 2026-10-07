@@ -1,7 +1,7 @@
 import "../../setup-dom";
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
 
 import { WorkspaceOwnerGate } from "@/components/auth/WorkspaceOwnerGate";
@@ -159,5 +159,110 @@ describe("WorkspaceOwnerGate", () => {
     answer(new Response(""));
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(view.queryByRole("alert")).toBeNull();
+  });
+
+  describe("another tab changes whose copy this is", () => {
+    const original = window.location.reload;
+    let reload: ReturnType<typeof mock>;
+
+    beforeEach(() => {
+      reload = mock(() => {});
+      Object.defineProperty(window.location, "reload", { value: reload, configurable: true });
+    });
+
+    afterEach(() => {
+      Object.defineProperty(window.location, "reload", { value: original, configurable: true });
+    });
+
+    function ownerChanged(key: string | null, owner: string | null) {
+      if (owner === null) localStorage.removeItem("libredb_workspace_owner");
+      else localStorage.setItem("libredb_workspace_owner", owner);
+      act(() => {
+        window.dispatchEvent(new window.StorageEvent("storage", { key, newValue: owner }));
+      });
+    }
+
+    test("server mode: a different account signing in elsewhere drops the page and reloads", async () => {
+      mockGlobalFetch({ ...SERVER_MODE, "/api/auth/me": { json: { user: { username: "admin@libredb.org" } } } });
+      const view = render(
+        <WorkspaceOwnerGate>
+          <p>workspace page</p>
+        </WorkspaceOwnerGate>,
+      );
+      expect(await view.findByText("workspace page")).not.toBeNull();
+
+      ownerChanged("libredb_workspace_owner", "user@libredb.org");
+
+      expect(view.queryByText("workspace page")).toBeNull();
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    for (const [what, key] of [
+      ["a sign-out elsewhere", "libredb_workspace_owner"],
+      ["a browser copy cleared elsewhere", null],
+    ] as const) {
+      test(`server mode: ${what} drops the page and reloads`, async () => {
+        mockGlobalFetch({ ...SERVER_MODE, "/api/auth/me": { json: { user: { username: "admin@libredb.org" } } } });
+        const view = render(
+          <WorkspaceOwnerGate>
+            <p>workspace page</p>
+          </WorkspaceOwnerGate>,
+        );
+        expect(await view.findByText("workspace page")).not.toBeNull();
+
+        ownerChanged(key, null);
+
+        expect(view.queryByText("workspace page")).toBeNull();
+        expect(reload).toHaveBeenCalledTimes(1);
+      });
+    }
+
+    test("server mode: other keys, and the same owner written again, keep the page", async () => {
+      mockGlobalFetch({ ...SERVER_MODE, "/api/auth/me": { json: { user: { username: "admin@libredb.org" } } } });
+      const view = render(
+        <WorkspaceOwnerGate>
+          <p>workspace page</p>
+        </WorkspaceOwnerGate>,
+      );
+      expect(await view.findByText("workspace page")).not.toBeNull();
+
+      act(() => {
+        window.dispatchEvent(new window.StorageEvent("storage", { key: "libredb_history", newValue: "[]" }));
+      });
+      ownerChanged("libredb_workspace_owner", "admin@libredb.org");
+
+      expect(view.queryByText("workspace page")).not.toBeNull();
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    test("local mode: an owner key written elsewhere changes nothing", async () => {
+      mockGlobalFetch({ "/api/storage/config": { json: { provider: "local", serverMode: false } } });
+      const view = render(
+        <WorkspaceOwnerGate>
+          <p>workspace page</p>
+        </WorkspaceOwnerGate>,
+      );
+      expect(await view.findByText("workspace page")).not.toBeNull();
+
+      ownerChanged("libredb_workspace_owner", "user@libredb.org");
+
+      expect(view.queryByText("workspace page")).not.toBeNull();
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    test("the page stops listening once it is gone", async () => {
+      mockGlobalFetch({ ...SERVER_MODE, "/api/auth/me": { json: { user: { username: "admin@libredb.org" } } } });
+      const view = render(
+        <WorkspaceOwnerGate>
+          <p>workspace page</p>
+        </WorkspaceOwnerGate>,
+      );
+      expect(await view.findByText("workspace page")).not.toBeNull();
+      view.unmount();
+
+      ownerChanged("libredb_workspace_owner", "user@libredb.org");
+
+      expect(reload).not.toHaveBeenCalled();
+    });
   });
 });

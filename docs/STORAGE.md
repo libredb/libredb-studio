@@ -1270,6 +1270,7 @@ The copy is every synced collection, the editor tabs (never stored on the server
 - **Sign-out** (the editor, the admin dashboard and the launch page): pending collections are pushed while the session is still valid, then `POST /api/auth/logout` ends the session, and only then is the copy cleared.
   The cleared copy keeps the migration flag and no owner, so whatever is written to it afterwards is cleared at the next sign-in rather than migrated.
   When the storage mode cannot be read or a pending push does not land, the sign-out fails and the copy stays, so no unsaved change is dropped; when the server refuses the sign-out, the copy stays and the sync goes on.
+- **Other open tabs:** every tab of the browser profile shares the copy, so when another tab records a different owner or clears the copy (a sign-out, a different account signing in), each page inside `WorkspaceOwnerGate` stops rendering and reloads, and the owner check runs again for the account signed in now.
 - **A session that ended on its own** (expiry, a disabled account) clears nothing; the owner check at the next sign-in, on whichever of these pages it lands, covers a different account.
 - **The first sign-in after upgrading to a release that records the owner:** a browser that was already migrated has no owner yet, so its copy is cleared once, for the same account too; open editor tabs, object-source drafts and any change that had not reached the server start over.
 

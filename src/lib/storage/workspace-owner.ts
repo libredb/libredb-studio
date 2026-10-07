@@ -26,9 +26,10 @@ export async function readSignedInUsername(): Promise<string> {
  * nothing. Throws in server mode when the signed-in account cannot be read: the copy must not be
  * used. A storage mode that cannot be read throws too when the copy carries an owner or the
  * migration flag, which only server mode writes, so such a copy is never shown unchecked; a copy
- * with neither counts as local mode, as `useStorageSync` counts it.
+ * with neither counts as local mode, as `useStorageSync` counts it. Answers the account the copy
+ * now belongs to, or null when no account was matched (local mode).
  */
-export async function claimWorkspaceForSignedInAccount(): Promise<void> {
+export async function claimWorkspaceForSignedInAccount(): Promise<string | null> {
   let config: StorageConfigResponse;
   try {
     const res = await appFetch("/api/storage/config");
@@ -36,10 +37,12 @@ export async function claimWorkspaceForSignedInAccount(): Promise<void> {
     config = (await res.json()) as StorageConfigResponse;
   } catch (err) {
     if (isServerBoundCopy()) throw err;
-    return;
+    return null;
   }
-  if (!config.serverMode) return;
-  claimAccountWorkspace(await readSignedInUsername());
+  if (!config.serverMode) return null;
+  const username = await readSignedInUsername();
+  claimAccountWorkspace(username);
+  return username;
 }
 
 function isServerBoundCopy(): boolean {
