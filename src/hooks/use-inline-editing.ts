@@ -11,6 +11,7 @@ import { positionalPlaceholder, quoteLiteral } from "@/lib/sql/values";
 import { appFetch } from "@/lib/config/base-path";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { asBytes } from "@/lib/export/binary";
+import { generatedFieldNames } from "@/components/results-grid/utils";
 
 interface UseInlineEditingParams {
   activeConnection: DatabaseConnection | null;
@@ -846,6 +847,20 @@ export function useInlineEditing({
       toast({
         title: "Cannot Apply Changes",
         description: "The rows these edits were made on are no longer on screen. Run the query again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // The grid opens no editor on a column the result named itself (`id (2)`, `(No column
+    // name)`), since no table has that column; this keeps the SET clause below from ever
+    // naming one, whatever hands the change in.
+    const generated = generatedFieldNames(currentTab.result.fields);
+    const generatedChange = pendingChanges.find((change) => generated.has(change.columnId));
+    if (generatedChange) {
+      toast({
+        title: "Cannot Apply Changes",
+        description: `"${generatedChange.columnId}" is a name the result gave, not a column of the table. Edit the SQL manually.`,
         variant: "destructive",
       });
       return;

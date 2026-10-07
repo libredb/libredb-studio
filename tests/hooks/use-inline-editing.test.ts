@@ -483,6 +483,35 @@ describe("useInlineEditing", () => {
     });
   });
 
+  test("handleApplyChanges refuses a change to a column the result named itself", async () => {
+    // The grid opens no editor on such a column; this holds should another entry ever hand one in.
+    const tab = makeTab({
+      result: makeResult({
+        fields: ["id", "name", "name (2)"],
+        rows: [{ id: 1, name: "Alice", "name (2)": "Alice" }],
+      }),
+    });
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection(),
+        currentTab: tab,
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange({ rowIndex: 0, columnId: "name (2)", originalValue: "Alice", newValue: "Bob" });
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Cannot Apply Changes", {
+      description: expect.stringContaining('"name (2)" is a name the result gave'),
+    });
+  });
+
   // ── handleApplyChanges no active connection ───────────────────────────────
 
   test("handleApplyChanges does nothing when no active connection", async () => {
