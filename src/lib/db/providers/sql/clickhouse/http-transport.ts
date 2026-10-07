@@ -243,7 +243,7 @@ function keyedRows(data: unknown, fieldNames: readonly string[] | null): ClickHo
 
 function parseEnvelope(text: string): ClickHouseJsonEnvelope {
   const envelope = asRecord(parseJson(text));
-  // The server announced JSON, so a body that is not a JSON object means
+  // The server announced JSONCompact, so a body that is not a JSON object means
   // something between here and it rewrote the response. Normalizing that keeps
   // the seam's promise that every throw is a ClickHouseTransportError - a raw
   // SyntaxError would slip past every `instanceof` branch in the provider.

@@ -75,7 +75,8 @@ export interface ClickHouseQueryResult {
 
   /**
    * The result verbatim as text, set only when the statement produced something
-   * other than JSON.
+   * other than the `JSONCompact` the transport asks for (an explicit `FORMAT JSON`
+   * included).
    *
    * Live-verified (spec 1.2): an explicit `FORMAT` clause in the user's own SQL
    * wins over the format the transport asks for, so `SELECT 1 FORMAT TSV`

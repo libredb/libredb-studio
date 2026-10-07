@@ -71,7 +71,7 @@ export function numberedRepeatBase(name: string): string | null {
  * promises. The keys of one object are already distinct, so the only name `uniqueFieldNames` changes is an
  * empty key, which a grid column cannot take: every row carrying it is keyed under the new name instead.
  *
- * Rows no name changed for are answered as they are, without a copy. A renamed row is rebuilt with
+ * A result whose names all stay is answered as it is, without a copy; otherwise every row is rebuilt with
  * `Object.fromEntries`, so a `__proto__` key stays a plain key.
  */
 export function uniquelyKeyedRows(
