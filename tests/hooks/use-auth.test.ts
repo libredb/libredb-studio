@@ -471,9 +471,9 @@ describe("useAuth", () => {
       expect(mockRouterPush).toHaveBeenCalledWith("/login");
     });
 
-    test("server mode: a push that does not land keeps the session and the copy", async () => {
+    test("server mode: a push that does not land ends the session, keeps the copy for this account and says so", async () => {
       const fetchMock = mockGlobalFetch({
-        "/api/auth/me": { ok: true, json: { user: { role: "user" } } },
+        "/api/auth/me": { ok: true, json: { user: { role: "user", username: "user@libredb.org" } } },
         "/api/storage/config": { ok: true, json: { provider: "postgres", serverMode: true } },
         "/api/auth/logout": { ok: true, json: { success: true } },
       });
@@ -493,9 +493,42 @@ describe("useAuth", () => {
       });
       unregister();
 
-      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/auth/logout"))).toBe(false);
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/auth/logout"))).toBe(true);
       expect(localStorage.getItem("libredb_connections")).not.toBeNull();
-      expect(mockToastError).toHaveBeenCalledWith("Error", { description: "Failed to logout." });
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe("user@libredb.org");
+      expect(mockToastSuccess).toHaveBeenCalledWith("Logged out", {
+        description:
+          "Some changes could not be saved to server storage. They stay in this browser for this account until a different account signs in here.",
+      });
+      expect(mockRouterPush).toHaveBeenCalledWith("/login");
+    });
+
+    test("server mode: a sign-out refused after which no session is left clears the copy and goes to sign in", async () => {
+      let signedIn = true;
+      mockGlobalFetch({
+        "/api/auth/me": () =>
+          signedIn
+            ? { ok: true, json: { user: { role: "user", username: "user@libredb.org" } } }
+            : { ok: false, status: 401, json: { authenticated: false } },
+        "/api/storage/config": { ok: true, json: { provider: "postgres", serverMode: true } },
+        "/api/auth/logout": () => {
+          signedIn = false;
+          return { ok: false, status: 500, json: { error: "Server error" } };
+        },
+      });
+
+      const { result } = renderHook(() => useAuth());
+      await waitFor(() => {
+        expect(result.current.user).not.toBeNull();
+      });
+      await act(async () => {
+        await result.current.handleLogout();
+      });
+
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
+      expect(mockToastError).not.toHaveBeenCalled();
+      expect(mockRouterPush).toHaveBeenCalledWith("/login");
     });
 
     test("server mode: a sign-out the server refused keeps the copy", async () => {

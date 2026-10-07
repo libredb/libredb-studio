@@ -68,8 +68,9 @@ export function useStorageSync(): StorageSyncState {
   /** The push in flight, so a sign-out can wait for it while the session cookie is still valid. */
   const inFlightRef = useRef<Promise<unknown> | null>(null);
   /**
-   * Set while a sign-out is under way and after it: changes are queued but not pushed, so nothing
-   * pushes the copy once it is cleared. A sign-out that did not happen resets it (`resume`).
+   * Set while a sign-out is under way and after it: changes are queued but not pushed, and no
+   * timer pushes, so nothing pushes the copy once it is cleared. A sign-out that did not happen
+   * resets it (`resume`).
    */
   const signingOutRef = useRef(false);
   /**
@@ -84,8 +85,8 @@ export function useStorageSync(): StorageSyncState {
   // `flushPending` and `schedulePush` depending on each other.
   const flushPendingRef = useRef<() => void>(() => {});
 
-  // ── Flush pending collections ──
-  const flushPending = useCallback(async () => {
+  // ── Push pending collections ──
+  const pushPending = useCallback(async () => {
     // Declared inside the flush rather than as its own `useCallback`: it has
     // exactly one caller, and hoisting it only bought this memo a dependency
     // that could never change. It closes over nothing but refs, module-level
@@ -149,6 +150,14 @@ export function useStorageSync(): StorageSyncState {
       setIsSyncing(false);
     }
   }, []);
+
+  // ── Flush pending collections, unless a sign-out is under way ──
+  // Every timer goes through here, so a debounce or retry that fires during or after a sign-out
+  // sends nothing; the sign-out's own flush pushes through `pushPending` directly.
+  const flushPending = useCallback(async () => {
+    if (signingOutRef.current) return;
+    await pushPending();
+  }, [pushPending]);
 
   // Filled after commit, never during render: React forbids writing `ref.current`
   // while rendering, and the ref's only reader — the retry timer armed inside
@@ -327,14 +336,21 @@ export function useStorageSync(): StorageSyncState {
     if (!isServerMode) return;
     return registerWorkspaceSync({
       flush: async () => {
-        if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-        if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+        signingOutRef.current = true;
+        const clearTimers = () => {
+          if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+          if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+        };
+        clearTimers();
         await inFlightRef.current;
-        await flushPending();
+        // The push awaited above arms a retry when it failed: cleared again, and after this
+        // flush's own push for the same reason.
+        clearTimers();
+        await pushPending();
+        clearTimers();
         if (pendingCollectionsRef.current.size > 0) {
           throw new Error("Unsaved changes could not be saved to server storage");
         }
-        signingOutRef.current = true;
       },
       resume: () => {
         signingOutRef.current = false;
@@ -342,7 +358,7 @@ export function useStorageSync(): StorageSyncState {
         for (const collection of held) schedulePush(collection);
       },
     });
-  }, [isServerMode, flushPending, schedulePush]);
+  }, [isServerMode, pushPending, schedulePush]);
 
   // ── Listen for storage mutations ──
   useEffect(() => {

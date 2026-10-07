@@ -114,10 +114,10 @@ function SessionConflict({ signedInAs, launchFor }: Conflict) {
   async function signOut() {
     // In server storage mode the browser copy belongs to the signed-in account and is cleared once
     // the session ended.
-    const response = await releaseAccountWorkspace(() => appFetch("/api/auth/logout", { method: "POST" })).catch(
+    const result = await releaseAccountWorkspace(() => appFetch("/api/auth/logout", { method: "POST" })).catch(
       () => null,
     );
-    setState(response?.ok ? "signed-out" : "failed");
+    setState(result?.signedOut ? "signed-out" : "failed");
   }
 
   return (

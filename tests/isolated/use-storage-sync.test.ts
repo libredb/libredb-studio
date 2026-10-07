@@ -1230,7 +1230,7 @@ describe("useStorageSync", () => {
       expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
     });
 
-    test("a pending push that does not land fails the sign-out and keeps the copy", async () => {
+    test("a pending push that does not land still ends the session and keeps the copy for this account", async () => {
       localStorage.setItem("libredb_workspace_owner", USERNAME);
       localStorage.setItem("libredb_server_migrated", "2026-10-01");
       let signedOut = false;
@@ -1247,16 +1247,85 @@ describe("useStorageSync", () => {
       act(() => {
         window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "history" } }));
       });
-      let failure: unknown = null;
+      let outcome: Awaited<ReturnType<typeof releaseAccountWorkspace>> | null = null;
       await act(async () => {
-        await releaseAccountWorkspace(signOutAnswering(200, () => (signedOut = true))).catch((err: unknown) => {
-          failure = err;
-        });
+        outcome = await releaseAccountWorkspace(signOutAnswering(200, () => (signedOut = true)));
       });
 
-      expect(failure).toBeInstanceOf(Error);
-      expect(signedOut).toBe(false);
+      expect(outcome).toMatchObject({ signedOut: true, changesKept: true });
+      expect(signedOut).toBe(true);
       expect(localStorage.getItem("libredb_workspace_owner")).toBe(USERNAME);
+    });
+
+    test("a pending push refused because the session had ended clears the copy", async () => {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      localStorage.setItem("libredb_connections", JSON.stringify([{ id: "c1", password: "pw" }]));
+      let sessionEnded = false;
+      let signedOut = false;
+      setupSignOut({
+        "/api/auth/me": () =>
+          sessionEnded ? { ok: false, status: 401, json: { authenticated: false } } : SIGNED_IN["/api/auth/me"],
+        "/api/storage/history": () => {
+          sessionEnded = true;
+          return { ok: false, status: 401, json: { error: "Session expired. Sign in again.", code: "AUTH_REQUIRED" } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "history" } }));
+      });
+      let outcome: Awaited<ReturnType<typeof releaseAccountWorkspace>> | null = null;
+      await act(async () => {
+        outcome = await releaseAccountWorkspace(signOutAnswering(200, () => (signedOut = true)));
+      });
+
+      expect(outcome).toMatchObject({ signedOut: true, changesKept: false });
+      expect(signedOut).toBe(false);
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
+    });
+
+    test("a retry armed while the sign-out waited for a failing push sends nothing afterwards", async () => {
+      localStorage.setItem("libredb_workspace_owner", USERNAME);
+      localStorage.setItem("libredb_server_migrated", "2026-10-01");
+      let pushes = 0;
+      let started = false;
+      setupSignOut({
+        "/api/storage/history": async () => {
+          pushes += 1;
+          started = true;
+          await new Promise((r) => setTimeout(r, 100));
+          return { ok: false, status: 503, json: { error: "Storage unreachable" } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "history" } }));
+      });
+      await waitFor(() => {
+        expect(started).toBe(true);
+      });
+      await act(async () => {
+        await releaseAccountWorkspace(signOutAnswering(200));
+      });
+      const atSignOut = pushes;
+      await act(async () => await new Promise((r) => setTimeout(r, 2500)));
+
+      expect(atSignOut).toBe(2);
+      expect(pushes).toBe(atSignOut);
     });
 
     test("pushes nothing after the browser copy is cleared", async () => {

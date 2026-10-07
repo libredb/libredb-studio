@@ -8,6 +8,10 @@ import { useToast } from "@/hooks/use-toast";
 import { logger } from "@/lib/logger";
 import { releaseAccountWorkspace } from "@/lib/storage/sign-out";
 
+/** What a sign-out says when changes that could not be pushed stay in this browser's copy. */
+const CHANGES_KEPT =
+  "Some changes could not be saved to server storage. They stay in this browser for this account until a different account signs in here.";
+
 interface AuthUser {
   role?: string;
 }
@@ -49,13 +53,19 @@ export function useAuth() {
   const handleLogout = useCallback(async () => {
     try {
       // In server storage mode the browser copy belongs to the signed-in account: it is pushed
-      // while the session cookie is still valid and cleared once the session ended. The
-      // session-ended path above clears nothing; the owner check every page that reads the copy
-      // runs at the next sign-in covers a different account.
-      const res = await releaseAccountWorkspace(() => appFetch("/api/auth/logout", { method: "POST" }));
-      if (!res.ok) throw new Error(`Sign-out refused: HTTP ${res.status}`);
-      const data = await res.json();
-      toast({ title: "Logged out", description: "You have been successfully logged out." });
+      // while the session cookie is still valid and cleared once the session ended, or kept for
+      // this account when a push did not land. The session-ended path above clears nothing; the
+      // owner check every page that reads the copy runs at the next sign-in covers a different
+      // account.
+      const { signedOut, response, changesKept } = await releaseAccountWorkspace(() =>
+        appFetch("/api/auth/logout", { method: "POST" }),
+      );
+      if (!signedOut) throw new Error("Sign-out did not complete");
+      const data: { redirectUrl?: string } = response ? await response.json() : {};
+      toast({
+        title: "Logged out",
+        description: changesKept ? CHANGES_KEPT : "You have been successfully logged out.",
+      });
 
       if (data.redirectUrl) {
         window.location.href = data.redirectUrl;

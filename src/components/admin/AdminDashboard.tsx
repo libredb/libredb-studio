@@ -34,9 +34,11 @@ export default function AdminDashboard({ children }: AdminDashboardProps) {
     // the session ended.
     let data: { redirectUrl?: string };
     try {
-      const res = await releaseAccountWorkspace(() => appFetch("/api/auth/logout", { method: "POST" }));
-      if (!res.ok) throw new Error(`Sign-out refused: HTTP ${res.status}`);
-      data = await res.json();
+      const { signedOut, response } = await releaseAccountWorkspace(() =>
+        appFetch("/api/auth/logout", { method: "POST" }),
+      );
+      if (!signedOut) throw new Error("Sign-out did not complete");
+      data = response ? await response.json() : {};
     } catch {
       toast.error("Failed to logout");
       return;

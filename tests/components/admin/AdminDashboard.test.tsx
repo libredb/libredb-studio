@@ -264,6 +264,19 @@ describe("AdminDashboard", () => {
       expect(localStorage.getItem("libredb_connections")).not.toBeNull();
     });
 
+    test("server mode: a refused sign-out after which no session is left clears the copy and goes to sign in", async () => {
+      mockGlobalFetch({
+        "/api/auth/logout": { ok: false, status: 500, json: { error: "Server error" } },
+        "/api/auth/me": { ok: false, status: 401, json: { authenticated: false } },
+        "/api/storage/config": { json: { provider: "postgres", serverMode: true } },
+      });
+
+      await clickLogout();
+
+      expect(localStorage.getItem("libredb_connections")).toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
+    });
+
     test("local mode: the copy stays", async () => {
       await clickLogout();
 

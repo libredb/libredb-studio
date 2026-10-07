@@ -34,24 +34,30 @@ export async function readSignedInUsername(): Promise<string> {
 }
 
 /**
- * Server mode: make the browser copy the signed-in account's before a page reads it. Local mode:
- * nothing. Throws in server mode when the signed-in account cannot be read: the copy must not be
- * used. A storage mode that cannot be read throws too when the copy carries an owner or the
- * migration flag, which only server mode writes, so such a copy is never shown unchecked; a copy
- * with neither counts as local mode, as `useStorageSync` counts it. Answers the account the copy
- * now belongs to, or null when no account was matched (local mode).
+ * Whether server storage mode is on, from GET /api/storage/config. A storage mode that cannot be
+ * read throws when the copy carries an owner or the migration flag, which only server mode
+ * writes, so such a copy is never handled unchecked; a copy with neither counts as local mode, as
+ * `useStorageSync` counts it.
  */
-export async function claimWorkspaceForSignedInAccount(): Promise<string | null> {
-  let config: StorageConfigResponse;
+export async function readServerMode(): Promise<boolean> {
   try {
     const res = await appFetch("/api/storage/config");
     if (!res.ok) throw new Error(`Storage mode unavailable: HTTP ${res.status}`);
-    config = (await res.json()) as StorageConfigResponse;
+    return ((await res.json()) as StorageConfigResponse).serverMode;
   } catch (err) {
     if (isServerBoundCopy()) throw err;
-    return null;
+    return false;
   }
-  if (!config.serverMode) return null;
+}
+
+/**
+ * Server mode: make the browser copy the signed-in account's before a page reads it. Local mode:
+ * nothing. Throws in server mode when the signed-in account cannot be read: the copy must not be
+ * used. A storage mode that cannot be read is judged as `readServerMode` judges it. Answers the
+ * account the copy now belongs to, or null when no account was matched (local mode).
+ */
+export async function claimWorkspaceForSignedInAccount(): Promise<string | null> {
+  if (!(await readServerMode())) return null;
   const username = await readSignedInUsername();
   claimAccountWorkspace(username);
   return username;
