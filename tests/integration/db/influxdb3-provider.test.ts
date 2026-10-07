@@ -171,6 +171,18 @@ describe("InfluxDB 3.12.0 Core, replayed", () => {
     await provider.disconnect();
   });
 
+  test("an empty column name reaches the grid as (No column name)", async () => {
+    // The body is what 3.12 Core answered on 2026-10-07 for `SELECT 1 AS ""`, put behind a captured statement.
+    const sparse = capture("sql-sparse");
+    const q = (sparse.request.body as { q: string }).q;
+    const { provider } = recordedServer({ [q]: { ...sparse, name: "built", body: '{"":1}\n' } });
+    await provider.connect();
+    const result = await provider.query(q);
+    expect(result.fields).toEqual(["(No column name)"]);
+    expect(result.rows).toEqual([{ "(No column name)": 1 }]);
+    await provider.disconnect();
+  });
+
   test("a line naming a column twice is refused with the column's name, never shown a column short", async () => {
     // The body is what 3.12 Core answered on 2026-10-07 for `SELECT c1.usage, c2.usage FROM cpu c1 CROSS JOIN cpu
     // c2`, put behind a captured statement so the request the provider builds is one the fake answers.

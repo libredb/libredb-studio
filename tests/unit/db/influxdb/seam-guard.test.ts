@@ -86,6 +86,8 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     "src/lib/sql/spans.ts",
     "src/lib/db/utils/json-integers.ts",
     "src/lib/db/utils/bounded-limiter.ts",
+    // The shared column naming every SQL provider uses, a pure module that imports nothing.
+    "src/lib/db/utils/result-fields.ts",
     "src/lib/db/object-kinds.ts",
     "src/lib/db/providers/sql/sql-base.ts",
   ],

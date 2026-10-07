@@ -139,6 +139,21 @@ describe("shapeJsonlBody, values and lines", () => {
     expect(error.serverText).toBe("ab");
   });
 
+  test('an empty key, which 3.12 Core answers for SELECT 1 AS "", is named (No column name) on every row', () => {
+    const shaped = shapeJsonlBody('{"":1,"a":2}\n{"a":3}\n', LIMITS);
+    expect(shaped.fields).toEqual(["(No column name)", "a"]);
+    expect(shaped.rows).toEqual([
+      { "(No column name)": 1, a: 2 },
+      { "(No column name)": null, a: 3 },
+    ]);
+  });
+
+  test("a key a statement spells (No column name) stays apart from the empty one", () => {
+    const shaped = shapeJsonlBody('{"(No column name)":1,"":2}\n', LIMITS);
+    expect(shaped.fields).toEqual(["(No column name)", "(No column name) (2)"]);
+    expect(shaped.rows).toEqual([{ "(No column name)": 1, "(No column name) (2)": 2 }]);
+  });
+
   test("a column named __proto__ is an ordinary cell, never the row's prototype", () => {
     const shaped = shapeJsonlBody('{"__proto__":"x","a":1}\n{"a":2}\n', LIMITS);
     expect(shaped.fields).toEqual(["__proto__", "a"]);

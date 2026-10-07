@@ -6,9 +6,10 @@
  * exact digits; NaN and the infinities arrive as null (arrow-json writes them so) and a timestamp stays the engine's
  * text, nanoseconds and UTC with no zone suffix. A line omits the key of a null cell, so the columns are the ordered
  * union of the keys the lines name, in the order they name them: with `SELECT *` the engine's alphabetical order, an
- * explicit projection's own order, and a sparse table's late keys appended. That order is read from the line's text,
- * never from the parsed object, whose key order puts index-like keys (`"1"`) first. An all-null column and the
- * columns of an empty result cannot be known from JSON (the I9 known limit), and no column type is reported.
+ * explicit projection's own order, and a sparse table's late keys appended; an empty key (`SELECT 1 AS ""`) is named
+ * by `uniqueFieldNames`. That order is read from the line's text, never from the parsed object, whose key order puts
+ * index-like keys (`"1"`) first. An all-null column and the columns of an empty result cannot be known from JSON (the
+ * I9 known limit), and no column type is reported.
  *
  * The row cut and the cell budget (rows times columns) stop the read and set `cut`; a row the budget drops adds no
  * column. A line that is not a JSON object, or one nested deeper than `MAX_LINE_DEPTH` (R47), is an
@@ -21,6 +22,7 @@
  * strings exist however short its lines are (R46).
  */
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import type { InfluxShapeLimits, ShapedResult } from "./connection-options";
 import { InfluxAnswerShapeError } from "./errors";
 
@@ -124,10 +126,12 @@ export function shapeJsonlBody(text: string, limits: InfluxShapeLimits): ShapedR
     parsedRows.push(row);
   }
 
-  const names = [...fields.keys()];
+  const keys = [...fields.keys()];
+  // The keys are already distinct; `uniqueFieldNames` names an empty one, which the engine answers for `AS ""`.
+  const names = uniqueFieldNames(keys);
   // `Object.fromEntries` defines each cell as an own property, so a column named `__proto__` is a cell like any other.
   const rows = parsedRows.map((row) =>
-    Object.fromEntries(names.map((name) => [name, Object.hasOwn(row, name) ? row[name] : null])),
+    Object.fromEntries(keys.map((key, position) => [names[position], Object.hasOwn(row, key) ? row[key] : null])),
   );
   return { fields: names, rows, cut, warnings: [] };
 }

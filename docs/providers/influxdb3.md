@@ -269,7 +269,8 @@ A line that is not a JSON object, or one nested deeper than 64 levels, is refuse
 
 > InfluxDB 3 answered with a line Studio cannot read as a row.
 
-No column comes back unnamed, and the engine refuses a projection of two columns of one name, measured on 3.12 Core: `SELECT 1 AS a, 2 AS a`, `SELECT usage, usage FROM cpu` and `SELECT 1, 1` answer 400 "Projections require unique expression names".
+An unaliased expression is named by the engine, but an empty alias is accepted: measured on 3.12 Core, `SELECT 1 AS ""` answers the line `{"":1}`, and Studio names that column `(No column name)` through `uniqueFieldNames`.
+The engine refuses a projection of two columns of one name, measured on 3.12 Core: `SELECT 1 AS a, 2 AS a`, `SELECT usage, usage FROM cpu` and `SELECT 1, 1` answer 400 "Projections require unique expression names".
 A join still answers one key twice: `SELECT c1.usage, c2.usage FROM cpu c1 CROSS JOIN cpu c2` answers the line `{"usage":1.5,"usage":1.5}`, and `SELECT *` over that join repeats every key.
 JSON keeps one value per key and a line leaves out the key of a null cell, so which value belongs to which column cannot be recovered, and Studio refuses the result rather than show it a column short:
 
