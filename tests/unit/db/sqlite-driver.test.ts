@@ -48,6 +48,7 @@ class StubDatabaseSync implements NodeDatabaseSyncLike {
       all: (...params: unknown[]) => [{ sql, params }],
       get: (...params: unknown[]) => (params[0] === "miss" ? undefined : { sql, first: params[0] }),
       run: (...params: unknown[]) => ({ changes: params[0] === "bigint" ? BigInt(3) : 1 }),
+      setReturnArrays: () => {},
       // node:sqlite answers both halves in one call, and `null` is its word for a column
       // SQLite declared nothing for.
       columns: () => [
@@ -72,8 +73,16 @@ class StubDatabaseSync implements NodeDatabaseSyncLike {
  */
 function bigIntStatement() {
   const row = () => ({ small: BigInt("1"), huge: BigInt("9007199254740993"), text: "x", nothing: null });
+  const cells = () => [BigInt("1"), BigInt("9007199254740993"), "x", null];
+  // node:sqlite's array mode is a switch on the statement, and bun's is its own method; the
+  // stand-in answers both, so the same row is read either way on either adapter.
+  let arrays = false;
   return {
-    all: () => [row()],
+    all: () => [arrays ? cells() : row()],
+    values: () => [cells()],
+    setReturnArrays: (enabled: boolean) => {
+      arrays = enabled;
+    },
     get: () => row(),
     run: () => ({ changes: BigInt("2"), lastInsertRowid: BigInt("9007199254740993") }),
     // The declared columns in BOTH drivers' spellings, so the one stand-in can stand in
@@ -317,6 +326,19 @@ describe("sqlite-driver", () => {
       expect(stmt.get()).toEqual({ small: 1, huge: "9007199254740993", text: "x", nothing: null });
       // run(): the write path's own result object.
       expect(stmt.run()).toEqual(expectedRun);
+    });
+
+    test.each([
+      ["bun", () => createBunSQLiteDriver(StubBunDatabase)],
+      ["node", () => createNodeSQLiteDriver(StubDatabaseSync)],
+    ] as const)("the %s adapter reads array rows with every BigInt converted", (_name, makeDriver) => {
+      const stmt = new (makeDriver())("/tmp/bigint.db").prepare("SELECT bigints");
+
+      // values(): the positional read every user result goes through.
+      expect(stmt.values()).toEqual([[1, "9007199254740993", "x", null]]);
+      // node's array mode is switched back off after the read, so a later all() on the same
+      // statement still answers objects.
+      expect(stmt.all()).toEqual([{ small: 1, huge: "9007199254740993", text: "x", nothing: null }]);
     });
 
     test.each([
@@ -627,6 +649,7 @@ describe("toSQLiteBindValue()", () => {
 function statementReturning(record: unknown): ReturnType<BunDatabaseLike["prepare"]> {
   return {
     all: () => [record],
+    values: () => [record] as unknown[][],
     get: () => record,
     run: () => ({ changes: 1 }),
     columnNames: [],
@@ -646,6 +669,26 @@ function driverReturning(record: unknown): SQLiteConstructor {
   }
   return createBunSQLiteDriver(RecordDatabase as BunSQLiteConstructor);
 }
+
+describe("the bun adapter's array rows", () => {
+  // Measured 2026-10-07 on Bun 1.4.2: bun:sqlite's `values()` answers `null`, not `[]`, for a
+  // statement with no result columns (`PRAGMA query_only = false`, a plain INSERT).
+  test("bun's null for a statement with no result columns is read as no rows", () => {
+    class NoColumnsDatabase implements BunDatabaseLike {
+      exec(): void {}
+      prepare(): ReturnType<BunDatabaseLike["prepare"]> {
+        return { ...statementReturning({}), values: () => null };
+      }
+      close(): void {}
+      readonly inTransaction = false;
+    }
+    const stmt = new (createBunSQLiteDriver(NoColumnsDatabase as BunSQLiteConstructor))(":memory:").prepare(
+      "PRAGMA x = 1",
+    );
+
+    expect(stmt.values()).toEqual([]);
+  });
+});
 
 describe("the record seam's guards", () => {
   // Kills "hand a bare integer straight on": without this branch the record falls

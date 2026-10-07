@@ -28,14 +28,23 @@ import { fitsJavaScriptNumber, isSQLiteInt64Digits } from "./sqlite-int64";
  * A PAIR rather than a map, because that is exactly what `declaredColumnTypes()` in
  * `column-types.ts` already consumes from the four other drivers that answer this
  * question, duplicate column names and all: `SELECT 1 AS c, name AS c` really does
- * declare two columns called `c`, the row object keeps the last one, and the shared
- * helper is where last-wins is decided.
+ * declare two columns called `c`. The provider names them apart with `uniqueFieldNames`
+ * and pairs each type with its column by position, so each keeps its own type.
  */
 export type SQLiteDeclaredColumn = readonly [name: string, declaredType: string | undefined];
 
 // The exact driver surface the SQLite provider uses (bun:sqlite-shaped).
 export type SQLiteStatement = {
   all(...params: unknown[]): unknown[];
+  /**
+   * The rows as arrays of values, one per result column in column order: the one read that keeps
+   * every column. `all()` keys each row by column name, so `SELECT 1 AS a, 2 AS a` answers one key
+   * holding 2 on both drivers, and the provider reads every user result through this instead.
+   * Both drivers publish it, bun:sqlite as `values()` and node:sqlite as `all()` after
+   * `setReturnArrays(true)`, so the two are bridged below. The names come from `declaredColumns()`,
+   * read after this call for the reason that method states.
+   */
+  values(...params: unknown[]): unknown[][];
   get(...params: unknown[]): unknown;
   run(...params: unknown[]): { changes: number };
   /**
@@ -300,11 +309,11 @@ type RawSQLiteStatement = Omit<SQLiteStatement, "declaredColumns" | "returnsRows
  * Both driver adapters below route `prepare()` through this, which is what makes the
  * coverage argument checkable: the provider reaches the database ONLY through
  * `SQLiteDatabase`, whose sole row-returning entry point is `prepare()` (`exec()`
- * returns nothing). The wrapper republishes exactly the three methods of
+ * returns nothing). The wrapper republishes exactly the four row methods of
  * `SQLiteStatement` and hands back none of the raw driver statement, so a plain
  * query, a prepared statement, a statement inside a transaction and every schema /
  * PRAGMA read go through it alike, and a future row-returning driver method cannot
- * quietly bypass it. The parameters travel the same three methods, so the two
+ * quietly bypass it. The parameters travel the same four methods, so the two
  * directions are inverses at ONE seam rather than at two that can drift apart.
  *
  * `declaredColumns` and `returnsRows` are handed in rather than read off `stmt`, because
@@ -324,6 +333,14 @@ function withoutBigInts(
     returnsRows,
     all: (...params: unknown[]): unknown[] => {
       const rows = stmt.all(...toSQLiteBindValues(params));
+      for (const row of rows) {
+        normalizeRecordInPlace(row);
+      }
+      return rows;
+    },
+    values: (...params: unknown[]): unknown[][] => {
+      const rows = stmt.values(...toSQLiteBindValues(params));
+      // An array row is walked by index exactly as an object row is walked by key.
       for (const row of rows) {
         normalizeRecordInPlace(row);
       }
@@ -360,7 +377,13 @@ export type BunSQLiteOpenOptions = SQLiteOpenOptions & { safeIntegers?: boolean 
  * in one `columns()` call, and the only reason this type exists at all - the rest of the
  * surface was already bun-shaped.
  */
-type BunStatementLike = RawSQLiteStatement & {
+type BunStatementLike = Omit<RawSQLiteStatement, "values"> & {
+  /**
+   * bun answers `null`, not `[]`, for a statement with no result columns: measured 2026-10-07 on
+   * Bun 1.4.2, `values()` on `PRAGMA query_only = false` or a plain INSERT is `null` where `all()`
+   * is `[]`. The adapter below reads that as the empty row list it means.
+   */
+  values(...params: unknown[]): unknown[][] | null;
   readonly columnNames: string[];
   readonly declaredTypes: (string | null)[];
 };
@@ -387,11 +410,17 @@ export function createBunSQLiteDriver(DatabaseCtor: BunSQLiteConstructor): SQLit
 
     prepare(sql: string): SQLiteStatement {
       const stmt = this.db.prepare(sql);
+      const raw: RawSQLiteStatement = {
+        all: (...params) => stmt.all(...params),
+        values: (...params) => stmt.values(...params) ?? [],
+        get: (...params) => stmt.get(...params),
+        run: (...params) => stmt.run(...params),
+      };
       // Read lazily, never here: bun refuses `declaredTypes` until the statement has run
       // (measured - see `SQLiteStatement.declaredColumns`), so reading it at `prepare()`
       // would throw on every query the provider makes.
       return withoutBigInts(
-        stmt,
+        raw,
         () => stmt.columnNames.map((name, index) => [name, stmt.declaredTypes[index] ?? undefined] as const),
         // `columnNames`, unlike `declaredTypes`, is filled at prepare time.
         () => stmt.columnNames.length > 0,
@@ -414,6 +443,8 @@ export function createBunSQLiteDriver(DatabaseCtor: BunSQLiteConstructor): SQLit
 // tests never need the real module, which Bun does not implement).
 type NodeStatementLike = {
   all(...params: unknown[]): unknown;
+  /** node:sqlite's switch between object rows and array rows; `values()` below turns it on for one read. */
+  setReturnArrays(enabled: boolean): void;
   get(...params: unknown[]): unknown;
   run(...params: unknown[]): { changes: number | bigint };
   /**
@@ -515,6 +546,14 @@ export function createNodeSQLiteDriver(DatabaseSyncCtor: NodeSQLiteModule["Datab
       return withoutBigInts(
         {
           all: (...params: unknown[]): unknown[] => stmt.all(...params) as unknown[],
+          values: (...params: unknown[]): unknown[][] => {
+            stmt.setReturnArrays(true);
+            try {
+              return stmt.all(...params) as unknown[][];
+            } finally {
+              stmt.setReturnArrays(false);
+            }
+          },
           get: (...params: unknown[]): unknown => stmt.get(...params) ?? null,
           run: (...params: unknown[]): { changes: number } => {
             const info = stmt.run(...params);

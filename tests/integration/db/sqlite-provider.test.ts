@@ -302,14 +302,14 @@ describe("SQLiteProvider", () => {
       expect(select.rows).toEqual([{ id: 1, name: "Ann" }]);
     });
 
-    test("SELECT with no matching rows returns empty rows and fields", async () => {
+    test("SELECT with no matching rows returns no rows and still names its columns", async () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       await provider.connect();
 
       await provider.query("CREATE TABLE empty_result (id INTEGER PRIMARY KEY)");
       const result = await provider.query("SELECT * FROM empty_result WHERE id = 999");
       expect(result.rows).toEqual([]);
-      expect(result.fields).toEqual([]);
+      expect(result.fields).toEqual(["id"]);
       expect(result.rowCount).toBe(0);
     });
 
@@ -818,6 +818,7 @@ describe("SQLiteProvider", () => {
         prepare: (sql: string) => ({
           all: () => (sql.includes("dbstat") ? dbstat : owners),
           get: () => null,
+          values: () => [],
           run: () => ({ changes: 0 }),
           declaredColumns: () => [],
           returnsRows: () => true,
@@ -1421,6 +1422,7 @@ function answerReadsMatching(provider: SQLiteProvider, match: string, rows: read
   interceptReads(provider, match, () => ({
     all: () => [...rows],
     get: () => rows[0] ?? null,
+    values: () => [],
     run: () => ({ changes: 0 }),
     declaredColumns: () => [],
     returnsRows: () => true,
@@ -1449,6 +1451,7 @@ function captureReadsMatching(
         return [...rows];
       },
       get: () => rows[0] ?? null,
+      values: () => [],
       run: () => ({ changes: 0 }),
       declaredColumns: () => [],
       returnsRows: () => true,
@@ -3514,6 +3517,92 @@ describe.each(["bun", "node"] as const)("SQLiteProvider row-returning statements
 });
 
 // ============================================================================
+// Result column names: an unnamed or repeated column keeps its own value
+//
+// The rows were read keyed by name and `fields` was `Object.keys(rows[0])`, so
+// `SELECT 1 AS a, 2 AS a` answered one column holding 2, and `SELECT 1 AS ""` answered
+// `fields: [""]`, a column no grid can key. The rows are now read positionally on both
+// drivers and keyed by `uniqueFieldNames`.
+
+describe.each(["bun", "node"] as const)("SQLiteProvider result column names on the %s driver", (driver) => {
+  const originalDriverEnv = process.env.LIBREDB_SQLITE_DRIVER;
+  let namesTmpDir: string;
+  let namesProvider: SQLiteProvider;
+  let namesAgent: SQLiteProvider | null = null;
+
+  beforeEach(async () => {
+    process.env.LIBREDB_SQLITE_DRIVER = driver;
+    namesTmpDir = mkdtempSync(join(tmpdir(), "libredb-sqlite-names-"));
+    namesProvider = new SQLiteProvider(
+      makeSQLiteConfig({ id: `names-${driver}`, database: join(namesTmpDir, "n.db") }),
+    );
+    await namesProvider.connect();
+    await namesProvider.query("CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER, item TEXT)");
+    await namesProvider.query("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT)");
+    await namesProvider.query("INSERT INTO orders VALUES (100, 1, 'book')");
+    await namesProvider.query("INSERT INTO customers VALUES (1, 'Ann')");
+  });
+
+  afterEach(async () => {
+    if (namesAgent?.isConnected()) await namesAgent.disconnect();
+    namesAgent = null;
+    await namesProvider.disconnect();
+    rmSync(namesTmpDir, { recursive: true });
+    if (originalDriverEnv === undefined) delete process.env.LIBREDB_SQLITE_DRIVER;
+    else process.env.LIBREDB_SQLITE_DRIVER = originalDriverEnv;
+  });
+
+  test("a repeated alias keeps both values under two names", async () => {
+    const result = await namesProvider.query("SELECT 1 AS a, 2 AS a");
+
+    expect(result.fields).toEqual(["a", "a (2)"]);
+    expect(result.rows).toEqual([{ a: 1, "a (2)": 2 }]);
+  });
+
+  test("a join that projects id from both tables keeps the order's id", async () => {
+    const result = await namesProvider.query("SELECT * FROM orders o JOIN customers c ON c.id = o.customer_id");
+
+    expect(result.fields).toEqual(["id", "customer_id", "item", "id (2)", "name"]);
+    expect(result.rows).toEqual([{ id: 100, customer_id: 1, item: "book", "id (2)": 1, name: "Ann" }]);
+    expect(result.columnTypes).toEqual({
+      id: "INTEGER",
+      customer_id: "INTEGER",
+      item: "TEXT",
+      "id (2)": "INTEGER",
+      name: "TEXT",
+    });
+  });
+
+  test("an empty alias is named, and an unaliased expression keeps the name SQLite gives it", async () => {
+    const result = await namesProvider.query('SELECT 1 AS "", 4 + 5');
+
+    expect(result.fields).toEqual(["(No column name)", "4 + 5"]);
+    expect(result.rows).toEqual([{ "(No column name)": 1, "4 + 5": 9 }]);
+  });
+
+  test("an empty result still names its columns", async () => {
+    const result = await namesProvider.query("SELECT id, id FROM orders WHERE id = -1");
+
+    expect(result.rows).toEqual([]);
+    expect(result.fields).toEqual(["id", "id (2)"]);
+  });
+
+  test("the read-only profile keys a repeated column the same way", async () => {
+    namesAgent = new SQLiteProvider(
+      makeSQLiteConfig({ id: `names-agent-${driver}`, database: join(namesTmpDir, "n.db") }),
+      {},
+      { readOnly: true },
+    );
+    await namesAgent.connect();
+
+    const result = await namesAgent.queryReadOnly('SELECT 1 AS a, 2 AS a, 3 AS ""', AGENT_BUDGET);
+
+    expect(result.fields).toEqual(["a", "a (2)", "(No column name)"]);
+    expect(result.rows).toEqual([{ a: 1, "a (2)": 2, "(No column name)": 3 }]);
+  });
+});
+
+// ============================================================================
 // Node driver (LIBREDB_SQLITE_DRIVER=node -> node:sqlite)
 //
 // Bun refuses to load better-sqlite3 and does not implement node:sqlite, so
@@ -4292,11 +4381,11 @@ describe("declared column types (#273)", () => {
   test("a result that matched no rows is still described", async () => {
     const result = await declared.query("SELECT id, price FROM decl WHERE id = -1");
 
-    // `fields` comes from row 0 and there is none, so this is the one case where the
-    // declaration says more than the rows do. It is also the case a value-shaped guess
-    // could never answer at all.
+    // The names and the types both come from the statement, not from a row, so a result
+    // with no rows is named and described alike. A value-shaped guess could never answer
+    // this case at all.
     expect(result.rows).toEqual([]);
-    expect(result.fields).toEqual([]);
+    expect(result.fields).toEqual(["id", "price"]);
     expect(result.columnTypes).toEqual({ id: "INTEGER", price: "REAL" });
   });
 
@@ -4307,13 +4396,15 @@ describe("declared column types (#273)", () => {
     expect(Object.hasOwn(result, "columnTypes")).toBe(false);
   });
 
-  test("two result columns of one name keep the type of the one the row kept", async () => {
-    const result = await declared.query("SELECT 1 AS c, label AS c FROM decl");
+  test("two result columns of one name each keep their own value and type", async () => {
+    const result = await declared.query("SELECT label AS c, 1 AS c, id AS c FROM decl");
 
-    // SQLite really does answer two columns called `c`; the row object keeps the LAST,
-    // so the type that describes what the grid shows is the last one's too.
-    expect(result.rows).toEqual([{ c: "first" }]);
-    expect(result.columnTypes).toEqual({ c: "TEXT" });
+    // SQLite really does answer three columns called `c`. Each is named apart and keyed
+    // by position, so each keeps its value, and its type is paired with it by position:
+    // the undeclared literal declares none, and the third column is not shown the first's.
+    expect(result.fields).toEqual(["c", "c (2)", "c (3)"]);
+    expect(result.rows).toEqual([{ c: "first", "c (2)": 1, "c (3)": 1 }]);
+    expect(result.columnTypes).toEqual({ c: "TEXT", "c (3)": "INTEGER" });
   });
 
   /**
