@@ -1601,6 +1601,19 @@ describe("ElasticsearchProvider query", () => {
     expect(result.columnTypes).toEqual({ a: "integer", "a (3)": "long", "a (2)": "integer" });
   });
 
+  // A row whose value count differs from the declaration cannot be read by position:
+  // padding a short one invents nulls and cutting a long one drops values, both silently.
+  test.each<[string, string]>([
+    ["short", "[[1]]"],
+    ["long", "[[1,2,3]]"],
+    ["not an array", '["not-a-row"]'],
+  ])("refuses a row the engine sent %s", async (_label, rows) => {
+    const provider = await connectProvider();
+    overrideSql(ok(`{"columns":[{"name":"a","type":"integer"},{"name":"b","type":"integer"}],"rows":${rows}}`));
+
+    await expect(provider.query("SELECT a, b FROM probe_orders")).rejects.toThrow(/row with \d+ values? for 2 columns/);
+  });
+
   test("shows the alias the user typed, which this product folds into the column name", async () => {
     // `SELECT customer AS who` declares `{"name":"who"}` here and
     // `{"name":"customer","alias":"who"}` on OpenSearch, so reading `name` alone

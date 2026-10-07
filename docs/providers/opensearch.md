@@ -258,7 +258,8 @@ Four properties the code depends on:
   when the dialect declares an `aliasKey`, and the alias is what the user typed, so it is what the grid
   must show.
 - **Rows are positional**, so each row is rebuilt against the declared column list rather than read as
-  an object; the declared **order** is authoritative in a way object keys never are.
+  an object; the declared **order** is authoritative in a way object keys never are, and a row whose
+  value count differs from the declaration is refused rather than padded with nulls or cut.
 - **A duplicate output name is REFUSED, not numbered.** Measured, `SELECT 1 AS c, 2 AS c` answers
   HTTP 400, `IllegalArgumentException`, "Multiple entries with same key: c=2 and c=1" — where upstream
   answers 200 with two columns named `c`. So the seam's uniqueness invariant is load-bearing on exactly

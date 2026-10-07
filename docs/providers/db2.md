@@ -324,6 +324,7 @@ Each statement commits on its own.
 The statement is read with `rowMode: "array"`, so two columns of one name keep both values: the repeat is named `A (2)`, then `A (3)`, never a name the statement itself declares, before or after the repeat (K15, fixed in 1.0.25).
 So `SELECT 1 AS A, 2 AS A, 3 AS "A (2)"` comes back as `A`, `A (3)`, `A (2)`, and the user's own `A (2)` keeps its value.
 Db2 names an unaliased expression itself (`1`, `2`, see below), so an empty name is not something it declares.
+A row whose value count differs from the column count is refused with a query error rather than read by position, which would leave a value `undefined` or drop one.
 The driver's diagnostics are passed through as result warnings, after the LOB warning of K24.
 A failure the driver raises itself carries a `driverCode` and no SQLSTATE: `DB2_PARAMETER_COUNT` and `DB2_PARAMETER_TYPE`, a wrong number of parameters or a value that does not fit its target, are a query error, and `DB2_PROTOCOL` and `DB2_INVALID_OPTION` are the driver's own and stay a plain database error whatever their words say, each with the driver's message (K17, fixed in 1.0.25).
 Every other error goes through the shared `mapDatabaseError()`, which reads the SQLSTATE and SQLCODE when the driver's message carries them.

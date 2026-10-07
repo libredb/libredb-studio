@@ -14,6 +14,7 @@
 import type { PreviewProjection, QueryResult, QueryWarning } from "@/lib/db/types";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { declaredColumnTypes } from "../column-types";
+import { QueryError } from "../../../errors";
 import type { Db2ArrayQueryResult, Db2ColumnMeta } from "./driver";
 
 /** The driver's spellings that map one to one onto Db2's own type name. */
@@ -109,7 +110,17 @@ export function readResult(result: Db2ArrayQueryResult): Omit<QueryResult, "exec
   const fields = uniqueFieldNames(result.columns.map((column) => column.name));
   const types = result.columns.map((column, index) => [fields[index], db2TypeName(column)] as const);
   const isResultSet = result.columns.length > 0;
-  const rows = result.rows.map((row) => Object.fromEntries(fields.map((field, index) => [field, row[index]])));
+  const rows = result.rows.map((row) => {
+    // A row whose value count differs from the declaration cannot be read by position: a short
+    // one would carry `undefined` values and a long one would lose its tail, both silently.
+    if (row.length !== fields.length) {
+      throw new QueryError(
+        `Db2 answered a row with ${row.length} values for ${fields.length} columns, so the result cannot be read`,
+        "db2",
+      );
+    }
+    return Object.fromEntries(fields.map((field, index) => [field, row[index]]));
+  });
   const warnings: QueryWarning[] = [...largeObjectEditWarning(types), ...result.diagnostics].map((message) => ({
     message,
   }));

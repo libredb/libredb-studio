@@ -730,14 +730,24 @@ function describeColumns(
   };
 }
 
-/** One positional row, rebuilt as the record the seam promises. */
-function toRow(fieldNames: readonly string[], row: unknown): SearchRow {
-  const values = Array.isArray(row) ? (row as unknown[]) : [];
+/**
+ * One positional row, rebuilt as the record the seam promises.
+ *
+ * A row whose value count differs from its declaration is measured never to
+ * happen, and it cannot be read by position: padding it would invent nulls and
+ * cutting it would drop values, both silently. So it is refused.
+ */
+function toRow(spec: SearchDialectSpec, fieldNames: readonly string[], row: unknown): SearchRow {
+  if (!Array.isArray(row) || row.length !== fieldNames.length) {
+    const count = Array.isArray(row) ? row.length : 0;
+    throw new SearchTransportError(
+      "engine",
+      `${spec.label} answered a row with ${count} values for ${fieldNames.length} columns, so the result cannot be read`,
+    );
+  }
+  const values = row as unknown[];
 
-  // `?? null` normalizes a row shorter than its declaration: measured never to
-  // happen, but the alternative is a key whose value is `undefined`, which the
-  // seam's "exactly the key set of every row" invariant does not allow.
-  return Object.fromEntries(fieldNames.map((name, column) => [name, values[column] ?? null]));
+  return Object.fromEntries(fieldNames.map((name, column) => [name, values[column]]));
 }
 
 /**
@@ -766,7 +776,7 @@ function rebuildRows(
   const rows = envelope[spec.rowsKey];
   if (fieldNames === null || !Array.isArray(rows)) return [];
 
-  return (rows as unknown[]).map((row) => toRow(fieldNames, row));
+  return (rows as unknown[]).map((row) => toRow(spec, fieldNames, row));
 }
 
 function toQueryResult(spec: SearchDialectSpec, envelope: Record<string, unknown>): SearchQueryResult {
@@ -777,7 +787,7 @@ function toQueryResult(spec: SearchDialectSpec, envelope: Record<string, unknown
     rows:
       described.fieldNames === null || !Array.isArray(rows)
         ? []
-        : (rows as unknown[]).map((row) => toRow(described.fieldNames as string[], row)),
+        : (rows as unknown[]).map((row) => toRow(spec, described.fieldNames as string[], row)),
     ...described,
     // Null on Elasticsearch by construction (`totalKey` is null): the product
     // sends no count, and the seam requires "unknown" rather than zero.

@@ -276,11 +276,23 @@ function typesByName(fieldNames: readonly string[], row: unknown): Record<string
   );
 }
 
-/** One positional row, rebuilt as the record the seam promises. */
+/**
+ * One positional row, rebuilt as the record the seam promises.
+ *
+ * A row whose value count differs from the header cannot be read by position:
+ * padding it would invent nulls and cutting it would drop values, both silently.
+ * Only a truncated body or a rewrite produces one, so it fails like a short header.
+ */
 function toRow(fieldNames: readonly string[], row: unknown): DruidRow {
-  const values = Array.isArray(row) ? (row as unknown[]) : [];
+  if (!Array.isArray(row) || row.length !== fieldNames.length) {
+    const count = Array.isArray(row) ? row.length : 0;
+    throw new DruidTransportError(
+      `Druid answered a row with ${count} values for ${fieldNames.length} columns, so the result cannot be read`,
+    );
+  }
+  const values = row as unknown[];
 
-  return Object.fromEntries(fieldNames.map((name, column) => [name, values[column] ?? null]));
+  return Object.fromEntries(fieldNames.map((name, column) => [name, values[column]]));
 }
 
 function toQueryResult(

@@ -253,7 +253,8 @@ Three properties the code depends on:
 
 - **Rows are positional**, so each row is rebuilt against the declared column list
   ([http-transport.ts:747](../../src/lib/db/providers/sql/search/http-transport.ts)) rather than read
-  as an object. The declared **order** is therefore authoritative in a way object keys never are.
+  as an object. The declared **order** is therefore authoritative in a way object keys never are, and a
+  row whose value count differs from the declaration is refused rather than padded with nulls or cut.
 - **Duplicate output names are legal here.** Measured, `SELECT 1 AS c, 2 AS c, 3 AS c` answers HTTP
   200 with `[{"name":"c",…},{"name":"c",…},{"name":"c",…}]` and the row `[1,2,3]`. A `SearchRow` is a
   record, so without `uniqueFieldNames()`

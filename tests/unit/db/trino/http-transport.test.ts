@@ -1030,18 +1030,20 @@ describe("TrinoHttpTransport result", () => {
     expect(result.affectedRows).toBeNull();
   });
 
-  test("pads a row the server sent short", async () => {
+  // A row whose value count differs from its declaration cannot be read by
+  // position: padding a short one invents nulls and cutting a long one drops
+  // values, both silently.
+  test.each<[string, string]>([
+    ["short", "[[1]]"],
+    ["long", "[[1,2,3]]"],
+    ["not an array", '["not-a-row"]'],
+  ])("raises on a row the server sent %s", async (_label, data) => {
     sequence(
       `{"id":"${QUERY_ID}","columns":[{"name":"a","type":"integer"},{"name":"b","type":"integer"}],` +
-        `"data":[[1],"not-a-row"],"stats":${FINISHED_STATS},"warnings":[]}`,
+        `"data":${data},"stats":${FINISHED_STATS},"warnings":[]}`,
     );
 
-    const result = await makeTransport().query("SELECT a, b");
-
-    expect(result.rows).toEqual([
-      { a: 1, b: null },
-      { a: null, b: null },
-    ]);
+    await expect(makeTransport().query("SELECT a, b")).rejects.toThrow(/row with \d+ values? for 2 columns/);
   });
 
   test("names a column the declaration left unnamed as an unnamed column", async () => {

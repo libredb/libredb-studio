@@ -140,6 +140,17 @@ describe("readResult", () => {
     expect(read.columnTypes).toEqual({ A: "INTEGER", "A (3)": "BIGINT", "A (2)": "INTEGER" });
   });
 
+  // A row whose value count differs from the declaration cannot be read by position: a short
+  // one would carry `undefined` values and a long one would lose its tail, both silently.
+  test.each<[string, unknown[]]>([
+    ["short", [1]],
+    ["long", [1, 2, 3]],
+  ])("a %s row is refused rather than read by position", (_label, row) => {
+    expect(() =>
+      readResult(result({ columns: [column("A", "Integer"), column("B", "Integer")], rows: [row] })),
+    ).toThrow(/row with \d+ values for 2 columns/);
+  });
+
   test("the driver's own diagnostics are passed through as warnings", () => {
     const read = readResult(result({ rowCount: 1, diagnostics: ["SQLSTATE 01003: null values were eliminated"] }));
 

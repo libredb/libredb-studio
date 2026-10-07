@@ -468,20 +468,18 @@ describe("DruidHttpTransport results", () => {
     await expect(makeTransport().query("SELECT id FROM libredb_demo")).rejects.toThrow(/incomplete/i);
   });
 
-  test("fills a short data row with nulls rather than dropping the row", async () => {
-    handler = () => respond('[["a","b"],["LONG","LONG"],["BIGINT","BIGINT"],[1]]');
+  // A row whose value count differs from its header cannot be read by position:
+  // padding a short one invents nulls and cutting a long one drops values, both
+  // silently. A truncated body or a proxy rewrite is the only way to get one, so
+  // it fails like the short header above.
+  test.each<[string, string]>([
+    ["a short data row", '[["a","b"],["LONG","LONG"],["BIGINT","BIGINT"],[1]]'],
+    ["a long data row", '[["a","b"],["LONG","LONG"],["BIGINT","BIGINT"],[1,2,3]]'],
+    ["a row that is not an array", '[["a"],["LONG"],["BIGINT"],7]'],
+  ])("raises on %s rather than inventing or dropping values", async (_label, body) => {
+    handler = () => respond(body);
 
-    const result = await makeTransport().query("SELECT a, b FROM t");
-
-    expect(result.rows).toEqual([{ a: 1, b: null }]);
-  });
-
-  test("reads a row that is not an array as one with no values", async () => {
-    handler = () => respond('[["a"],["LONG"],["BIGINT"],7]');
-
-    const result = await makeTransport().query("SELECT a FROM t");
-
-    expect(result.rows).toEqual([{ a: null }]);
+    await expect(makeTransport().query("SELECT a, b FROM t")).rejects.toThrow(/row with \d+ values? for \d+ columns?/);
   });
 
   // Never fabricate a type: a types row something rewrote describes fewer columns

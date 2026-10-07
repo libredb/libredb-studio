@@ -331,7 +331,8 @@ Rows are rebuilt from the declared names, and a repeat is **numbered rather than
 number never takes a name the statement itself declares, before or after the repeat:
 `SELECT 1 AS a, 2 AS a, 3 AS "a (2)"` reaches the grid as `a`, `a (3)`, `a (2)`, so the user's own
 `a (2)` keeps its value. A header naming a column with an empty string would be shown as
-`(No column name)`. Without
+`(No column name)`. A data row whose value count differs from the header is refused as
+unreadable rather than padded with nulls or cut, the same reasoning as the short header above. Without
 this the array format would have been chosen and then thrown away one step later, since a row is a
 `Record<string, unknown>`.
 

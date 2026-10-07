@@ -490,10 +490,23 @@ function readData(dialect: TrinoDialect, page: Record<string, unknown>): unknown
   return data;
 }
 
-/** One positional row, rebuilt as the record the seam promises. */
-function toRow(fieldNames: readonly string[], row: unknown): TrinoRow {
-  const values = Array.isArray(row) ? (row as unknown[]) : [];
-  return Object.fromEntries(fieldNames.map((name, column) => [name, values[column] ?? null]));
+/**
+ * One positional row, rebuilt as the record the seam promises.
+ *
+ * A row whose value count differs from its declaration cannot be read by
+ * position: padding it would invent nulls and cutting it would drop values,
+ * both silently. So it is refused.
+ */
+function toRow(dialect: TrinoDialect, fieldNames: readonly string[], row: unknown): TrinoRow {
+  if (!Array.isArray(row) || row.length !== fieldNames.length) {
+    const count = Array.isArray(row) ? row.length : 0;
+    throw new TrinoTransportError(
+      "engine",
+      `${dialect.displayName} answered a row with ${count} values for ${fieldNames.length} columns, so the result cannot be read`,
+    );
+  }
+  const values = row as unknown[];
+  return Object.fromEntries(fieldNames.map((name, column) => [name, values[column]]));
 }
 
 function readStats(page: Record<string, unknown>): TrinoExecutionStats | null {
@@ -828,7 +841,7 @@ export class TrinoHttpTransport implements TrinoTransport {
     }
 
     return {
-      rows: fieldNames === null ? [] : positional.map((row) => toRow(fieldNames, row)),
+      rows: fieldNames === null ? [] : positional.map((row) => toRow(this.dialect, fieldNames, row)),
       fieldNames,
       columnTypes,
       queryId,

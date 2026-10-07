@@ -421,6 +421,7 @@ A number never takes a name the statement itself declares, before or after the r
 `SELECT 1 AS a, 2 AS a, 3 AS "a (2)"` reaches the grid as `a`, `a (3)`, `a (2)`, so the user's own
 `a (2)` keeps its value. Trino names an unaliased expression itself (`_col0`), so a declaration with
 no name is not something the engine sends; if one ever arrives it is shown as `(No column name)`.
+A row whose value count differs from the declaration is refused rather than padded with nulls or cut.
 
 ### 3.12 Statelessness is a warning, not a silent surprise
 
