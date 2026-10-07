@@ -220,9 +220,26 @@ describe("detectSensitiveColumnsFromConfig", () => {
     expect([...result.keys()]).toEqual(["email", "email (2)", "email (3)"]);
   });
 
-  test("a numbered name whose base is not sensitive stays unmasked", () => {
-    const result = detectSensitiveColumnsFromConfig(["id", "id (2)", "(No column name)"], DEFAULT_MASKING_CONFIG);
-    expect(result.size).toBe(0);
+  test("only the numbered form reads back to its base; any other name keeps its own rule", () => {
+    const config: MaskingConfig = {
+      enabled: true,
+      patterns: [
+        { ...makePattern("email"), id: "base", columnPatterns: ["email"] },
+        { ...makePattern("full"), id: "own", columnPatterns: ["email \\(work\\)"] },
+      ],
+      roleSettings: DEFAULT_MASKING_CONFIG.roleSettings,
+    };
+    const result = detectSensitiveColumnsFromConfig(
+      ["id", "id (2)", "(No column name)", "email (2)", "email (work)", "email (2)x"],
+      config,
+    );
+    // `email (2)` repeats `email` and takes its rule; `email (work)` is not a repeat and matches its own
+    // pattern; `email (2)x` is not the numbered form, so nothing reads it back to `email`; `id` and its
+    // repeat match no pattern.
+    expect([...result.entries()].map(([field, pattern]) => [field, pattern.id])).toEqual([
+      ["email (2)", "base"],
+      ["email (work)", "own"],
+    ]);
   });
 
   test("returns empty map for no fields", () => {
