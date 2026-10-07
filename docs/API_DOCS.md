@@ -2009,10 +2009,11 @@ Both flags drive a display warning and never a security decision.
 The status of the operator seed sources ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#diagnostics)), read by the admin Overview page.
 It goes through the shared route guard: `401` with no session, `403` for a non-admin.
 It answers `{ "sources": [{ "source", "location", "state", "checkedAt", "error": { "code", "message" } | null, "connected": [{ "id", "name", "type" }], "skipped": [{ "id", "origin", "reason", "variable"?, "field"? }], "notes": [...] }] }`, one entry per enabled source in load order, where `state` is `ok`, `empty`, `missing` or `error`.
-`source` names the variable that turned the source on; `location` is the file path for `SEED_CONFIG_PATH` and `SEED_CONFIG_DIR`, and `null` for a source read from the environment.
+The only operator source today is `SEED_CONFIG_PATH`, so `sources` holds at most that one entry: `source` is `"SEED_CONFIG_PATH"` and `location` is the seed file's path.
 `missing` is a file named explicitly in `SEED_CONFIG_PATH` that does not exist; the default path absent is `empty`.
-`error.code` is `unreadable`, `unparseable`, `invalid`, `duplicate-id` or `refused`.
-A note is `{ "kind": "ignored-variable", "name" }` or `{ "kind": "ignored-parameter", "origin", "name" }`.
+`error.code` is `unreadable`, `unparseable`, `invalid` or `duplicate-id`.
+`notes` is always empty.
+Further operator sources add their own entries, error codes and notes; the response shape does not change.
 Every message, skip and note names files, variables, fields and ids only, never a value, and the answer never quotes a seed file.
 A source that fails is reported here with `state: "error"` while `GET /api/connections/managed` answers `500` with `reason: "seed-config-unreadable"`; this route answers `500` only when reading the status itself throws.
 

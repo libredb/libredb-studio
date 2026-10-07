@@ -1836,7 +1836,7 @@ An undefined variable now drops only that connection, and `src/lib/seed/operator
 The built-in samples are left out on a filesystem error by an empty `catch` (`src/lib/seed/index.ts:82-84`, `:93-95`).
 Both reach the caller as a shorter list with no reason: `GET /api/connections/managed` and MCP's `list_connections` show fewer connections and say nothing.
 
-**Done when:** each failure reaches the caller as a named reason, in the shape of `SEED_CONFIG_UNREADABLE_REASON` (`src/app/api/connections/managed/route.ts:17-33`), or a recorded decision says why a partial list is the right answer.
+**Done when:** each failure reaches the caller as a named reason, in the shape of `SEED_CONFIG_UNREADABLE_REASON` (`src/app/api/connections/managed/route.ts:36-43`), or a recorded decision says why a partial list is the right answer.
 
 ### D128. A read-only statement cannot be cancelled, so a cancelled or timed-out MCP query keeps running
 
