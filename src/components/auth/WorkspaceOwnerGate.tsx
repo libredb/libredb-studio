@@ -26,7 +26,7 @@ import {
  * reports an ended session. In local mode the page renders after the storage mode is known, with
  * the copy as it is.
  */
-export function WorkspaceOwnerGate({ children }: { children: ReactNode }) {
+export function WorkspaceOwnerGate({ children }: Readonly<{ children: ReactNode }>) {
   const [state, setState] = useState<"checking" | "ready" | "failed">("checking");
 
   useEffect(() => {

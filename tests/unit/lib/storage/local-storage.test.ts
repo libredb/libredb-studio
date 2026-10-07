@@ -212,7 +212,7 @@ describe("local-storage: clearAccountWorkspace", () => {
 
     clearAccountWorkspace();
 
-    expect(localStorage.length).toBe(0);
+    expect(localStorage).toHaveLength(0);
   });
 
   test("keeps the per-browser preferences", () => {

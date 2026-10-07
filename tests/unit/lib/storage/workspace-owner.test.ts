@@ -57,7 +57,7 @@ describe("claimWorkspaceForSignedInAccount", () => {
     await claimWorkspaceForSignedInAccount();
 
     expect(localStorage.getItem("libredb_connections")).not.toBeNull();
-    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(fetchMock.mock.calls).toHaveLength(1);
   });
 
   test("a storage mode that cannot be read throws for a copy that was bound to a server account", async () => {
