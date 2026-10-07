@@ -254,7 +254,7 @@ Four properties the code depends on:
 - **The alias is a separate member.** Upstream declares `{"name":"who"}` for the same statement — the
   alias *is* the name there — so reading `name` alone would label this column `customer`, which is a
   **wrong** label rather than a missing one. `describeColumns()`
-  ([http-transport.ts:715](../../src/lib/db/providers/sql/search/http-transport.ts)) prefers the alias
+  ([http-transport.ts:719](../../src/lib/db/providers/sql/search/http-transport.ts)) prefers the alias
   when the dialect declares an `aliasKey`, and the alias is what the user typed, so it is what the grid
   must show.
 - **Rows are positional**, so each row is rebuilt against the declared column list rather than read as

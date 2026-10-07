@@ -1613,6 +1613,20 @@ describe("ElasticsearchProvider query", () => {
     expect(result.rows).toEqual([{ "(No column name)": 1, "(No column name) (2)": 2 }]);
   });
 
+  // A name that is not text would be shown as its stringification ("[object Object]", "7"),
+  // a label the engine never sent, so the result is refused rather than named by guess.
+  test.each<[string, string]>([
+    ["an object", '{"first":"a"}'],
+    ["a number", "7"],
+  ])("refuses a column whose declared name is %s", async (_label, name) => {
+    const provider = await connectProvider();
+    overrideSql(ok(`{"columns":[{"name":${name},"type":"integer"}],"rows":[[1]]}`));
+
+    await expect(provider.query("SELECT 1")).rejects.toThrow(
+      "Elasticsearch declared a column whose name is not text, so the result cannot be read",
+    );
+  });
+
   // A row whose value count differs from the declaration cannot be read by position:
   // padding a short one invents nulls and cutting a long one drops values, both silently.
   test.each<[string, string]>([

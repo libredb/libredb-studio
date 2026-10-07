@@ -709,10 +709,22 @@ function describeColumns(
   // the same statement is refused with `IllegalArgumentException`, "Multiple entries
   // with same key: c=3 and c=2", which is a difference between the engines, not a
   // reason to make the transport branch.
+  //
+  // A declared name that is not text would reach the grid as its stringification
+  // ("[object Object]"), a label the engine never sent, so it is refused; an absent
+  // one is an unnamed column.
   const fieldNames = uniqueFieldNames(
     columns.map((column) => {
       const alias = spec.aliasKey === null ? undefined : (column as Record<string, unknown>)[spec.aliasKey];
-      return String(typeof alias === "string" && alias.length > 0 ? alias : (column.name ?? ""));
+      if (typeof alias === "string" && alias.length > 0) return alias;
+      const name = column.name ?? "";
+      if (typeof name !== "string") {
+        throw new SearchTransportError(
+          "engine",
+          `${spec.label} declared a column whose name is not text, so the result cannot be read`,
+        );
+      }
+      return name;
     }),
   );
 

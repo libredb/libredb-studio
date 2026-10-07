@@ -252,7 +252,7 @@ Measured, `SELECT customer, total FROM probe_orders`:
 Three properties the code depends on:
 
 - **Rows are positional**, so each row is rebuilt against the declared column list
-  (`toRow()`, [http-transport.ts:740](../../src/lib/db/providers/sql/search/http-transport.ts)) rather than read
+  (`toRow()`, [http-transport.ts:752](../../src/lib/db/providers/sql/search/http-transport.ts)) rather than read
   as an object. The declared **order** is therefore authoritative in a way object keys never are, and a
   row whose value count differs from the declaration is refused rather than padded with nulls or cut.
 - **Duplicate output names are legal here.** Measured, `SELECT 1 AS c, 2 AS c, 3 AS c` answers HTTP
@@ -262,7 +262,8 @@ Three properties the code depends on:
   third values would vanish **before** the seam. They reach the grid as `c`, `c (2)`, `c (3)`. A
   number never takes a name the statement itself declares, before or after the repeat:
   `SELECT 1 AS a, 2 AS a, 3 AS "a (2)"` reaches the grid as `a`, `a (3)`, `a (2)`, so the user's own
-  `a (2)` keeps its value. A column declared with no name would be shown as `(No column name)`. **The same
+  `a (2)` keeps its value. A column declared with no name would be shown as `(No column name)`, and one whose
+  declared name is not text is refused as an engine error rather than shown as its stringification. **The same
   statement is refused outright by OpenSearch**, so this invariant is load-bearing on exactly one of
   the two products — which is a fact about that engine, not dead code
   ([opensearch.md §3.4](./opensearch.md#34-the-success-envelope-schemadatarows-a-separate-alias-and-a-count)).
@@ -305,7 +306,7 @@ traps shape the loop, both measured on that same run:
 
 - **Page two carries its rows and NO column declaration.** There is nothing on it to derive names
   from, so page one's declaration is carried forward and later pages are rebuilt against it
-  (`rebuildRows()`, [http-transport.ts:771](../../src/lib/db/providers/sql/search/http-transport.ts)).
+  (`rebuildRows()`, [http-transport.ts:783](../../src/lib/db/providers/sql/search/http-transport.ts)).
   That is also the only way the seam's "these names are exactly the key set of every row" invariant
   can hold across pages.
 - **The loop is bounded** by `MAX_PAGES = 1000`
