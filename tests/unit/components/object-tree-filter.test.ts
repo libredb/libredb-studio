@@ -77,10 +77,11 @@ describe("filterRows", () => {
     expect(rows.filter((row) => row.match !== undefined)).toHaveLength(1);
   });
 
-  test("a label whose case fold changes length still matches, with an empty range", () => {
-    const { rows, matches } = filterRows([r("x", "object", "İstanbul", 0)], "stan");
-    expect(matches).toBe(1);
-    expect(rows[0].match).toEqual([0, 0]);
+  test("a dotted capital I is found by a plain i, and highlighted on the right letters", () => {
+    const istanbul = [r("x", "object", "İstanbul", 0)];
+    expect(filterRows(istanbul, normalizeQuery("istanbul")).rows[0]?.match).toEqual([0, 8]);
+    expect(filterRows(istanbul, normalizeQuery("İSTAN")).rows[0]?.match).toEqual([0, 5]);
+    expect(filterRows(istanbul, normalizeQuery("stan")).rows[0]?.match).toEqual([1, 5]);
   });
 });
 

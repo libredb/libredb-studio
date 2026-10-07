@@ -1108,10 +1108,4 @@ describe("a filtered row's label", () => {
     expect(mark?.classList.contains("text-inherit")).toBe(true);
     expect(mark?.classList.contains("text-foreground")).toBe(false);
   });
-
-  test("an empty range draws no mark", () => {
-    const label = drawRow({ row: { ...base, match: [0, 0] } }).querySelector('[data-testid="tree-row-label"]');
-    expect(label?.querySelector("mark")).toBeNull();
-    expect(label?.textContent).toBe("customer_orders");
-  });
 });

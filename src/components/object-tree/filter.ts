@@ -15,9 +15,22 @@
 import type { Container, DatabaseObject } from "@/lib/db/types";
 import { containerRowId, type TreeRowModel } from "./flatten";
 
+/**
+ * Lower case with one letter folded by hand: U+0130 (the dotted capital I).
+ *
+ * `toLowerCase` turns it into `i` plus a combining dot, two code units for one, so "istanbul" would
+ * not find "İstanbul" and every index after the letter would be off by one for the highlight. It is
+ * the only letter whose default lower case changes length, so folding it to a plain `i` keeps the
+ * folded text exactly as long as the label and the match range valid in both.
+ */
+function fold(text: string): string {
+  // Replaced BEFORE lowering, so a label that really spells `i` plus a combining dot keeps both.
+  return text.replaceAll("\u0130", "i").toLowerCase();
+}
+
 /** `""` is "not filtering", so whitespace alone never hides the tree. */
 export function normalizeQuery(query: string): string {
-  return query.trim().toLowerCase();
+  return fold(query.trim());
 }
 
 /**
@@ -51,10 +64,8 @@ export interface FilteredRows {
 }
 
 function matchRange(label: string, needle: string): readonly [number, number] | undefined {
-  const folded = label.toLowerCase();
-  const start = folded.indexOf(needle);
-  if (start < 0) return undefined;
-  return folded.length === label.length ? [start, start + needle.length] : [0, 0];
+  const start = fold(label).indexOf(needle);
+  return start < 0 ? undefined : [start, start + needle.length];
 }
 
 /**

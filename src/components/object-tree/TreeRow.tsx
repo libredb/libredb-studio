@@ -296,7 +296,7 @@ export function TreeRow({
         data-testid="tree-row-label"
         className={sentenceShown ? "grow basis-[60%] max-w-max truncate" : "truncate"}
       >
-        {row.match !== undefined && row.match[1] > row.match[0] ? (
+        {row.match !== undefined ? (
           <>
             {row.label.slice(0, row.match[0])}
             <mark className="rounded-sm bg-brand/25 text-inherit">{row.label.slice(row.match[0], row.match[1])}</mark>
