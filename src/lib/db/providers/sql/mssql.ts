@@ -64,6 +64,7 @@ import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
+import { uniqueFieldNames } from "../../utils/result-fields";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
@@ -1507,27 +1508,18 @@ function timeText(value: Date, scale: number | undefined): string {
 /**
  * Rewrites, in place, every value whose declaration is one of those, into its text (#1132).
  *
- * Keyed on `recordset.columns` - the map `mssqlColumnTypes` reads - because a value cannot
- * be told from its own shape: `time` and `datetimeoffset` arrive as the same kind of
- * `Date`, and only the column says which one holds an instant. A result without the map is
- * left exactly as the driver built it.
+ * Keyed on the result's column metadata - the map `mssqlColumnTypes` reads - because a value
+ * cannot be told from its own shape: `time` and `datetimeoffset` arrive as the same kind of
+ * `Date`, and only the column says which one holds an instant.
  *
- * All three query paths call it as the recordset is taken, before anything measures or
- * shapes the result.
+ * All three query paths call it as the result is taken, before anything shapes it; the
+ * read-only path calls it after its cut check, which must see the values the server sent.
  */
-/** A result set's column names: its declared columns, or the first row's keys without them. */
-function mssqlFields(recordset: Record<string, unknown>[] & { columns?: object }): string[] {
-  if (recordset.columns) return Object.keys(recordset.columns);
-  return recordset.length > 0 ? Object.keys(recordset[0]) : [];
-}
-
-function convertZonelessValues(recordset: Record<string, unknown>[]): void {
-  const columns = (recordset as { columns?: Record<string, MssqlColumnMetadata> }).columns;
-  if (!columns) return;
+function convertZonelessValues(rows: Record<string, unknown>[], columns: Record<string, MssqlColumnMetadata>): void {
   for (const [name, column] of Object.entries(columns)) {
     const declaration = (column.type as { declaration?: unknown } | undefined)?.declaration;
     if (typeof declaration !== "string" || !ZONELESS_VALUE_DECLARATIONS.has(declaration)) continue;
-    for (const row of recordset) {
+    for (const row of rows) {
       const value = row[name];
       if (!(value instanceof Date)) continue;
       row[name] =
@@ -1538,6 +1530,76 @@ function convertZonelessValues(recordset: Record<string, unknown>[]): void {
             : `${dateText(value)} ${timeText(value, column.scale)}`;
     }
   }
+}
+
+/** One result set as every result path hands it on: rows keyed by `fields`, and the column metadata keyed the same. */
+interface MssqlResultSet {
+  rows: Record<string, unknown>[];
+  /** Non-empty and unique, which is what `QueryResult.fields` promises. */
+  fields: string[];
+  /** The driver's metadata for each column, keyed by its entry in `fields`. */
+  columns: Record<string, MssqlColumnMetadata>;
+}
+
+/** A recordset as `mssql` answers it in array row mode: rows of values, and an array of column metadata hung off it. */
+type ArrayModeRecordset = unknown[] & { columns?: unknown };
+
+/**
+ * A result set read by position, which is the only reading that keeps every column.
+ *
+ * SQL Server leaves every unaliased expression unnamed, and a join may project two columns
+ * with one name. In object row mode the driver keys both the column map and each row by
+ * that name, so `SELECT @@VERSION` came back under an empty key no grid column can take,
+ * and `SELECT 1 AS a, 2 AS a` as ONE column holding `[1, 2]`. In array row mode it answers
+ * the columns as a list and each row as its values in that order (measured on SQL Server
+ * 2022, docs/providers/mssql.md section 5.1), so the names come from `uniqueFieldNames` and
+ * each value lands under its own column.
+ *
+ * A statement that answers no result set (an UPDATE) has no recordset at all. A recordset
+ * without its column list, or a row whose values do not match the columns one for one, is
+ * refused: naming columns by guess or shifting a value into a neighbour is a wrong answer.
+ */
+function positionalResultSet(recordset: ArrayModeRecordset | undefined): MssqlResultSet {
+  if (recordset === undefined) return { rows: [], fields: [], columns: {} };
+  const declared = recordset.columns;
+  if (!Array.isArray(declared)) {
+    throw new QueryError("SQL Server answered a result set without its column list", "mssql");
+  }
+  const metadata = declared as Array<MssqlColumnMetadata & { name: string }>;
+  const fields = uniqueFieldNames(metadata.map((column) => column.name));
+  const rows = recordset.map((row) => {
+    const values = rowValues(row, fields.length);
+    return Object.fromEntries(fields.map((field, index) => [field, values[index]]));
+  });
+  return { rows, fields, columns: Object.fromEntries(fields.map((field, index) => [field, metadata[index]])) };
+}
+
+/**
+ * One row's values in column order.
+ *
+ * A FOR JSON or FOR XML result is the exception the driver makes even in array row mode: it
+ * joins the chunks of the text into ONE object keyed by the column's position, `{ "0": text }`
+ * (`lib/tedious/request.js`, measured), so that single-column shape is read as the one value
+ * it is.
+ */
+function rowValues(row: unknown, width: number): unknown[] {
+  if (Array.isArray(row) && row.length === width) return row;
+  const keys = row !== null && typeof row === "object" && !Array.isArray(row) ? Object.keys(row) : [];
+  if (width === 1 && keys.length === 1 && keys[0] === "0") return [(row as Record<string, unknown>)[0]];
+  const count = Array.isArray(row) ? row.length : keys.length;
+  throw new QueryError(`SQL Server answered a row of ${count} value(s) for ${width} column(s)`, "mssql");
+}
+
+/**
+ * The query plan the read-only profile admitted a statement with, as a result set.
+ *
+ * Read in object mode, by name, because the admission reads `Parent` and `StmtId` from it.
+ * That loses nothing here: `SET SHOWPLAN_ALL` answers a fixed set of columns SQL Server
+ * itself names, each once.
+ */
+function planResultSet(plan: mssql.IResult): MssqlResultSet {
+  const recordset = plan.recordset as Record<string, unknown>[] & { columns: Record<string, MssqlColumnMetadata> };
+  return { rows: recordset, fields: Object.keys(recordset.columns), columns: recordset.columns };
 }
 
 // ============================================================================
@@ -1870,6 +1932,8 @@ export class MSSQLProvider extends SQLBaseProvider {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
           const request = this.pool!.request();
+          // Positional rows, so an unnamed or repeated column keeps its value (see positionalResultSet).
+          request.arrayRowMode = true;
 
           if (queryId) {
             this.runningRequests.set(queryId, request);
@@ -1891,33 +1955,30 @@ export class MSSQLProvider extends SQLBaseProvider {
         }
       });
 
-      const recordset = result.recordset || [];
-      convertZonelessValues(recordset);
+      const first = positionalResultSet(result.recordset);
+      convertZonelessValues(first.rows, first.columns);
 
       // A text with several result sets carries all of them (#1312). The editor sends a
       // T-SQL batch as one request, so `SELECT * FROM a; SELECT * FROM b` reaches here whole,
       // and the multi-statement route shows the last one with rows, as it does across a
       // script's statements. `rows` stays the FIRST set, which is what `EXEC sp_help` and
       // every caller before batches were shown.
-      const recordsets = (result.recordsets ?? []) as (typeof result.recordset)[];
+      const recordsets = (result.recordsets ?? []) as ArrayModeRecordset[];
       const resultSets =
         recordsets.length > 1
-          ? recordsets.map((set) => {
-              if (set !== recordset) convertZonelessValues(set);
-              return {
-                rows: set as Record<string, unknown>[],
-                fields: mssqlFields(set),
-                ...mssqlColumnTypes(set.columns),
-              };
+          ? recordsets.map((recordset) => {
+              const set = recordset === result.recordset ? first : positionalResultSet(recordset);
+              if (set !== first) convertZonelessValues(set.rows, set.columns);
+              return { rows: set.rows, fields: set.fields, ...mssqlColumnTypes(set.columns) };
             })
           : undefined;
 
       return {
-        rows: recordset as Record<string, unknown>[],
-        fields: mssqlFields(recordset),
-        rowCount: result.rowsAffected?.[0] ?? recordset.length,
+        rows: first.rows,
+        fields: first.fields,
+        rowCount: result.rowsAffected?.[0] ?? first.rows.length,
         executionTime,
-        ...mssqlColumnTypes(recordset.columns),
+        ...mssqlColumnTypes(first.columns),
         ...(resultSets && { resultSets }),
       };
     });
@@ -2177,7 +2238,7 @@ export class MSSQLProvider extends SQLBaseProvider {
           // The admission compiled the statement, so the ESTIMATING plan is already in
           // hand: on this engine the plan a caller asks for IS the plan that admitted
           // the statement, which is a stronger pairing than composing a second one.
-          if (mode === "estimate-plan") return plan;
+          if (mode === "estimate-plan") return planResultSet(plan);
 
           // One more than the budget: SQL Server stops the result there, and the extra
           // row is what distinguishes "the statement returned exactly the budget" from
@@ -2201,9 +2262,10 @@ export class MSSQLProvider extends SQLBaseProvider {
           // byte budget, so the refusal below fires for every truncation there can be.
           const valueCeiling = MSSQLProvider.sessionCeiling(budget.maxResultBytes);
           await new mssql.Request(transaction).batch(`SET TEXTSIZE ${valueCeiling}`);
-          const executed = await this.runWithDeadline(transaction, sql, budget.statementTimeoutMs);
-          MSSQLProvider.assertNoValueWasCut(executed, valueCeiling, sql);
-          return executed;
+          const executed = await this.runWithDeadline(transaction, sql, budget.statementTimeoutMs, true);
+          const read = positionalResultSet(executed.recordset);
+          MSSQLProvider.assertNoValueWasCut(read.rows, valueCeiling, sql);
+          return read;
         } catch (error) {
           throw error instanceof QueryError ? error : mapDatabaseError(error, "mssql", sql);
         } finally {
@@ -2227,8 +2289,8 @@ export class MSSQLProvider extends SQLBaseProvider {
         }
       });
 
-      const recordset = result.recordset || [];
-      convertZonelessValues(recordset);
+      const { rows, fields, columns } = result;
+      convertZonelessValues(rows, columns);
       // The ROW budget bounds DATA rows, and a plan's rows are not data: they are the
       // optimizer's nodes, one per operator. Measured on AdventureWorks2022, an ordinary
       // `SELECT TOP 10 *` over one shipped view compiles to 170 of them and the same view
@@ -2242,14 +2304,14 @@ export class MSSQLProvider extends SQLBaseProvider {
       // output at all (340 rows with `SET ROWCOUNT 50`), so a plan is bounded by the
       // statement's own complexity and then by the byte cap below, which is exactly how
       // PostgreSQL's one-row plan is bounded.
-      if (mode !== "estimate-plan" && recordset.length > budget.maxResultRows) {
+      if (mode !== "estimate-plan" && rows.length > budget.maxResultRows) {
         throw new QueryError(
-          `Read-only execution exceeded the row budget: ${recordset.length} rows > ${budget.maxResultRows} allowed`,
+          `Read-only execution exceeded the row budget: ${rows.length} rows > ${budget.maxResultRows} allowed`,
           "mssql",
           sql,
         );
       }
-      const resultBytes = measureResultBytes(recordset as unknown[]);
+      const resultBytes = measureResultBytes(rows);
       if (resultBytes > budget.maxResultBytes) {
         throw new QueryError(
           mode === "estimate-plan"
@@ -2260,18 +2322,12 @@ export class MSSQLProvider extends SQLBaseProvider {
         );
       }
 
-      const fields = recordset.columns
-        ? Object.keys(recordset.columns)
-        : recordset.length > 0
-          ? Object.keys(recordset[0])
-          : [];
-
       return {
-        rows: recordset as Record<string, unknown>[],
+        rows,
         fields,
-        rowCount: recordset.length,
+        rowCount: rows.length,
         executionTime,
-        ...mssqlColumnTypes(recordset.columns),
+        ...mssqlColumnTypes(columns),
       };
     });
   }
@@ -2355,9 +2411,9 @@ export class MSSQLProvider extends SQLBaseProvider {
    * unlikely and would be refused fail-closed, which is the right way round for a check
    * whose alternative is a wrong answer nobody can detect.
    */
-  private static assertNoValueWasCut(result: mssql.IResult, ceiling: number, sql: string): void {
+  private static assertNoValueWasCut(rows: Record<string, unknown>[], ceiling: number, sql: string): void {
     const unicodeCut = Math.floor(ceiling / 2);
-    for (const row of (result.recordset ?? []) as Record<string, unknown>[]) {
+    for (const row of rows) {
       for (const [column, value] of Object.entries(row)) {
         const size = typeof value === "string" ? value.length : Buffer.isBuffer(value) ? value.length : -1;
         if (size !== ceiling && size !== unicodeCut) continue;
@@ -2414,8 +2470,11 @@ export class MSSQLProvider extends SQLBaseProvider {
     transaction: mssql.Transaction,
     sql: string,
     deadlineMs: number,
+    arrayRowMode = false,
   ): Promise<mssql.IResult> {
     const request = new mssql.Request(transaction);
+    // The execution reads its rows positionally; the admission reads its plan by name.
+    request.arrayRowMode = arrayRowMode;
     // The timer records that IT fired, because tedious words every cancel the same way:
     // a statement this deadline ended arrives as `Canceled.`, which is also what a user
     // pressing stop produces, and a model told only that is given nothing to repair. The
@@ -2672,6 +2731,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
           const request = new mssql.Request(this.txTransaction!);
+          request.arrayRowMode = true;
           if (params && params.length > 0) {
             params.forEach((p, i) => {
               request.input(`p${i + 1}`, p);
@@ -2683,16 +2743,15 @@ export class MSSQLProvider extends SQLBaseProvider {
         }
       });
 
-      const recordset = result.recordset || [];
-      convertZonelessValues(recordset);
-      const fields = recordset.length > 0 ? Object.keys(recordset[0]) : [];
+      const { rows, fields, columns } = positionalResultSet(result.recordset);
+      convertZonelessValues(rows, columns);
 
       return {
-        rows: recordset as Record<string, unknown>[],
+        rows,
         fields,
-        rowCount: result.rowsAffected?.[0] ?? recordset.length,
+        rowCount: result.rowsAffected?.[0] ?? rows.length,
         executionTime,
-        ...mssqlColumnTypes(recordset.columns),
+        ...mssqlColumnTypes(columns),
       };
     });
   }

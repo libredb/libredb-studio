@@ -58,7 +58,63 @@ let mockTransactionHooks: { begin(): void; commit(): void; rollback(): void } = 
   rollback() {},
 };
 
+/** One column of a result the way `mssql` describes it in array row mode. */
+type ArrayModeColumn = { index: number; name: string; type?: unknown; scale?: number };
+
+/**
+ * What `mssql` answers when the request asked for array row mode, built from a fixture
+ * written the object way.
+ *
+ * In array row mode the driver hands each row back as an array of values in column order
+ * and hangs an ARRAY of column metadata off the recordset, where object mode keys both by
+ * column name (measured on SQL Server 2022, the probe in docs/providers/mssql.md section 5.1).
+ * Most fixtures here describe a result by name because that is the readable way to write
+ * one, so a set whose rows are objects is converted: its columns from the fixture's
+ * `columns` map, or from the first row's keys when the fixture gives none, and each row's
+ * values in that order. A set whose rows are already arrays, or that carries a column ARRAY,
+ * is passed through untouched: those are the fixtures that model what only the array shape
+ * can say, an unnamed column or two columns with one name.
+ *
+ * `recordset` stays the same object as `recordsets[0]`, as it is in the driver.
+ */
+function asArrayRowModeAnswer(answer: unknown): unknown {
+  if (answer === null || typeof answer !== "object") return answer;
+  const result = answer as { recordset?: unknown; recordsets?: unknown[] };
+  const converted = new Map<unknown, unknown>();
+  const convert = (set: unknown) => {
+    if (!Array.isArray(set)) return set;
+    const declared = (set as { columns?: unknown }).columns;
+    if (Array.isArray(declared) || set.some((row) => Array.isArray(row))) return set;
+    if (!converted.has(set)) {
+      const columns: ArrayModeColumn[] = declared
+        ? Object.entries(declared as Record<string, object>).map(([name, column], index) =>
+            Object.assign({}, column, { index, name }),
+          )
+        : Object.keys((set[0] as object | undefined) ?? {}).map((name, index) => ({ index, name }));
+      const rows = (set as Record<string, unknown>[]).map((row) => columns.map((column) => row[column.name]));
+      converted.set(set, Object.assign(rows, { columns }));
+    }
+    return converted.get(set);
+  };
+  return {
+    ...result,
+    ...("recordset" in result && { recordset: convert(result.recordset) }),
+    ...(result.recordsets && { recordsets: result.recordsets.map(convert) }),
+  };
+}
+
+/** A recordset the way `mssql` builds one in array row mode, for the shapes a name cannot carry. */
+function arrayModeSet(columns: Array<string | Omit<ArrayModeColumn, "index">>, rows: unknown[][]) {
+  return Object.assign(rows, {
+    columns: columns.map((column, index) =>
+      typeof column === "string" ? { index, name: column } : { ...column, index },
+    ),
+  });
+}
+
 class MockRequest {
+  /** Set by the provider per request; `null` is the driver's "take the pool's setting", which is object mode here. */
+  arrayRowMode: boolean | null = null;
   /** The Transaction this request was made on, `undefined` for a pool request. */
   readonly boundTo: unknown;
   /** What THIS request bound, as `mssql` hands it to the driver. */
@@ -77,11 +133,13 @@ class MockRequest {
   }
 
   async query(sql: string) {
-    return mockQueryFn(sql, this.inputs);
+    const answer = await mockQueryFn(sql, this.inputs);
+    return this.arrayRowMode ? asArrayRowModeAnswer(answer) : answer;
   }
 
   async batch(sql: string) {
-    return mockBatchFn(sql, this);
+    const answer = await mockBatchFn(sql, this);
+    return this.arrayRowMode ? asArrayRowModeAnswer(answer) : answer;
   }
 
   /** How an in-flight batch learns it was cancelled, which is what `cancel()` does here. */
@@ -2319,6 +2377,219 @@ describe("MSSQLProvider zoneless value types (#1132)", () => {
 
     expect(result.rows[0].t).toBe("10:30:00.1234567");
     await provider.rollbackTransaction();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Result column names: unnamed and repeated columns
+// ---------------------------------------------------------------------------
+
+/**
+ * SQL Server leaves every unaliased expression unnamed, and a join may project two columns
+ * with one name. Keyed by name, as the driver's object row mode keys them, `SELECT @@VERSION`
+ * answered `fields: [""]` (a grid column no table can take), `SELECT 1, 2` one column
+ * holding `[1, 2]`, and `SELECT 1 AS a, 2 AS a` the same. Each fixture below is the shape the
+ * driver answers in array row mode, measured on SQL Server 2022 (docs/providers/mssql.md
+ * section 5.1): the column list carries the empty or repeated name, and the row carries
+ * every value in column order.
+ */
+describe("MSSQLProvider result column names", () => {
+  let provider: MSSQLProvider;
+  /** The requests the provider made for user statements, so a test can see the mode it asked for. */
+  let requested: Array<boolean | null>;
+
+  const VERSION = "Microsoft SQL Server 2022 (RTM-CU27) (KB5104824) - 16.0.4295.3 (X64)";
+  const JSON_COLUMN = "JSON_F52E2B61-18A1-11d1-B105-00805F49916B";
+
+  function answer(...sets: unknown[][]) {
+    return { recordset: sets[0], recordsets: sets, rowsAffected: sets.map((set) => set.length) };
+  }
+
+  /** Answers every user statement with `sets`, and records whether it asked for array row mode. */
+  function answerWith(...sets: unknown[][]) {
+    mockQueryFn = async () => answer(...sets);
+  }
+
+  beforeEach(() => {
+    capturedInputs = [];
+    cancelShouldThrow = false;
+    requested = [];
+    provider = new MSSQLProvider(baseConfig);
+    const query = MockRequest.prototype.query;
+    spyOn(MockRequest.prototype, "query").mockImplementation(function (this: MockRequest, sql: string) {
+      requested.push(this.arrayRowMode);
+      return query.call(this, sql);
+    });
+  });
+
+  afterEach(async () => {
+    mock.restore();
+    mockQueryFn = async (sql: string) => defaultQuery(sql);
+    try {
+      await provider.disconnect();
+    } catch {
+      /* ignore */
+    }
+  });
+
+  test("an unnamed column is named (No column name) and keeps its value", async () => {
+    answerWith(arrayModeSet([{ name: "", type: { declaration: "nvarchar" } }], [[VERSION]]));
+    await provider.connect();
+    requested = [];
+
+    const result = await provider.query("SELECT @@VERSION");
+
+    expect(requested).toEqual([true]);
+    expect(result.fields).toEqual(["(No column name)"]);
+    expect(result.rows).toEqual([{ "(No column name)": VERSION }]);
+    expect(result.columnTypes).toEqual({ "(No column name)": "nvarchar" });
+  });
+
+  test("two unnamed columns are numbered and each keeps its own value", async () => {
+    answerWith(arrayModeSet(["", ""], [[1, 2]]));
+    await provider.connect();
+
+    const result = await provider.query("SELECT 1, 2");
+
+    expect(result.fields).toEqual(["(No column name)", "(No column name) (2)"]);
+    expect(result.rows).toEqual([{ "(No column name)": 1, "(No column name) (2)": 2 }]);
+  });
+
+  test("a repeated name is numbered, and the declared types are keyed by the names the rows use", async () => {
+    answerWith(
+      arrayModeSet(
+        [
+          { name: "a", type: { declaration: "int" } },
+          { name: "a", type: { declaration: "nvarchar" } },
+        ],
+        [
+          [1, "x"],
+          [2, "y"],
+        ],
+      ),
+    );
+    await provider.connect();
+
+    const result = await provider.query("SELECT 1 AS a, N'x' AS a");
+
+    expect(result.fields).toEqual(["a", "a (2)"]);
+    expect(result.rows).toEqual([
+      { a: 1, "a (2)": "x" },
+      { a: 2, "a (2)": "y" },
+    ]);
+    expect(result.columnTypes).toEqual({ a: "int", "a (2)": "nvarchar" });
+  });
+
+  test("a zoneless value is converted under its unique name", async () => {
+    answerWith(
+      arrayModeSet(
+        [
+          { name: "", type: { declaration: "datetime2" }, scale: 7 },
+          { name: "", type: { declaration: "datetimeoffset" }, scale: 7 },
+        ],
+        [[tediousDate(Date.UTC(2026, 9, 7, 10, 30, 0, 123), 0.0004567), new Date(Date.UTC(2026, 9, 7))]],
+      ),
+    );
+    await provider.connect();
+
+    const result = await provider.query("SELECT SYSDATETIME(), SYSDATETIMEOFFSET()");
+
+    expect(result.rows[0]["(No column name)"]).toBe("2026-10-07 10:30:00.1234567");
+    expect(result.rows[0]["(No column name) (2)"]).toBeInstanceOf(Date);
+  });
+
+  test("a FOR JSON result is one column holding the whole text, under the name the driver declares", async () => {
+    // Measured: in array row mode the driver still joins the chunks of a FOR JSON or FOR XML
+    // result into ONE object, keyed by the column's position rather than by its name.
+    const text = '[{"name":"sysrscols","object_id":3}]';
+    answerWith(arrayModeSet([{ name: JSON_COLUMN, type: { declaration: "nvarchar" } }], [{ 0: text } as never]));
+    await provider.connect();
+
+    const result = await provider.query("SELECT name, object_id FROM sys.objects FOR JSON PATH");
+
+    expect(result.fields).toEqual([JSON_COLUMN]);
+    expect(result.rows).toEqual([{ [JSON_COLUMN]: text }]);
+  });
+
+  test("each result set of a batch is named and keyed on its own", async () => {
+    answerWith(arrayModeSet(["a", "a"], [[1, 2]]), arrayModeSet(["", "b"], [[3, 4]]));
+    await provider.connect();
+
+    const result = await provider.query("SELECT 1 AS a, 2 AS a; SELECT 3, 4 AS b");
+
+    expect(result.fields).toEqual(["a", "a (2)"]);
+    expect(result.rows).toEqual([{ a: 1, "a (2)": 2 }]);
+    expect(result.resultSets).toEqual([
+      { rows: [{ a: 1, "a (2)": 2 }], fields: ["a", "a (2)"] },
+      { rows: [{ "(No column name)": 3, b: 4 }], fields: ["(No column name)", "b"] },
+    ]);
+  });
+
+  test("a statement that answers no result set answers no fields", async () => {
+    mockQueryFn = async () => ({ recordsets: [], rowsAffected: [3] });
+    await provider.connect();
+
+    const result = await provider.query("UPDATE t SET a = 1");
+
+    expect(result).toMatchObject({ rows: [], fields: [], rowCount: 3 });
+  });
+
+  test("a row whose value count is not the column count is refused, never shifted", async () => {
+    answerWith(arrayModeSet(["a", "b"], [[1]]));
+    await provider.connect();
+
+    await expect(provider.query("SELECT 1 AS a, 2 AS b")).rejects.toThrow(
+      "SQL Server answered a row of 1 value(s) for 2 column(s)",
+    );
+  });
+
+  test("an object row that is not the driver's joined FOR JSON or FOR XML text is refused", async () => {
+    answerWith(arrayModeSet(["a"], [{ a: 1 } as never]));
+    await provider.connect();
+
+    await expect(provider.query("SELECT 1 AS a")).rejects.toThrow(
+      "SQL Server answered a row of 1 value(s) for 1 column(s)",
+    );
+  });
+
+  test("a result set without the driver's column list is refused rather than named by guess", async () => {
+    answerWith([[1]]);
+    await provider.connect();
+
+    await expect(provider.query("SELECT 1")).rejects.toThrow(
+      "SQL Server answered a result set without its column list",
+    );
+  });
+
+  test("queryInTransaction() names and keys its columns the same way, zero rows included", async () => {
+    answerWith(arrayModeSet(["", "id", "id"], [[1, 2, 3]]));
+    await provider.connect();
+    await provider.beginTransaction();
+    requested = [];
+
+    const result = await provider.queryInTransaction("SELECT 1, o.id, c.id FROM o JOIN c ON c.id = o.c");
+
+    expect(requested).toEqual([true]);
+    expect(result.fields).toEqual(["(No column name)", "id", "id (2)"]);
+    expect(result.rows).toEqual([{ "(No column name)": 1, id: 2, "id (2)": 3 }]);
+
+    // The X9 residue: a zero-row result named no fields while its types were declared.
+    answerWith(arrayModeSet([{ name: "u", type: { declaration: "uniqueidentifier" } }], []));
+    const empty = await provider.queryInTransaction("SELECT u FROM t WHERE 1 = 0");
+
+    expect(empty.fields).toEqual(["u"]);
+    expect(empty.columnTypes).toEqual({ u: "uniqueidentifier" });
+    await provider.rollbackTransaction();
+  });
+
+  test("the provider's own catalog reads keep the driver's object rows", async () => {
+    await provider.connect();
+    requested = [];
+
+    await provider.getOverview();
+
+    expect(requested.length).toBeGreaterThan(0);
+    expect(requested.every((mode) => mode !== true)).toBe(true);
   });
 });
 
@@ -4807,6 +5078,7 @@ const MEASURED_STATEMENTS: readonly MeasuredStatement[] = [
 const PLANS_BY_STATEMENT = new Map(MEASURED_STATEMENTS.map((statement) => [statement.sql, statement.roots]));
 
 type ResultRow = Record<string, unknown>;
+const PLAN_COLUMNS = ["StmtText", "StmtId", "NodeId", "Parent", "Type"];
 /** A `mssql` recordset: an array of rows with the driver's column metadata hung off it. */
 type MockRecordset = ResultRow[] & { columns?: Record<string, unknown> };
 
@@ -4956,7 +5228,8 @@ class ShowplanSession {
         });
       }
     });
-    return toResult(rows);
+    // SHOWPLAN_ALL's own columns, named by SQL Server, each once; the fixture models the five the profile reads.
+    return toResult(rows, Object.fromEntries(PLAN_COLUMNS.map((name) => [name, { name }])));
   }
 
   async batch(sql: string, request: MockRequest) {
@@ -5587,6 +5860,51 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
     const result = await profiled.queryReadOnly(READ_SELECT.sql, budget());
 
     expect(result.rows[0].t).toBe("10:30:00.1234567");
+  });
+
+  /** Answers the statement itself, once admitted, with `set`, and records the row mode each batch asked for. */
+  function executeAnswers(set: unknown[]): Map<string, Array<boolean | null>> {
+    const modes = new Map<string, Array<boolean | null>>();
+    mockBatchFn = async (sql: string, request: MockRequest) => {
+      modes.set(sql, [...(modes.get(sql) ?? []), request.arrayRowMode]);
+      if (sql === READ_SELECT.sql && !engine.showplanAll) {
+        engine.batches.push({ sql, pinned: request.boundTo === lastTransaction });
+        return { recordset: set, recordsets: [set], rowsAffected: [set.length] };
+      }
+      return engine.batch(sql, request);
+    };
+    return modes;
+  }
+
+  test("an unnamed or repeated column served under the profile is named and keeps its value", async () => {
+    const profiled = await openProfiled();
+    const modes = executeAnswers(
+      arrayModeSet(
+        ["", { name: "id", type: { declaration: "int" } }, { name: "id", type: { declaration: "bigint" } }],
+        [[7, 1, 2]],
+      ),
+    );
+
+    const result = await profiled.queryReadOnly(READ_SELECT.sql, budget());
+
+    expect(result.fields).toEqual(["(No column name)", "id", "id (2)"]);
+    expect(result.rows).toEqual([{ "(No column name)": 7, id: 1, "id (2)": 2 }]);
+    expect(result.columnTypes).toEqual({ id: "int", "id (2)": "bigint" });
+    // Only the execution reads positionally: the admission compiled the statement in object
+    // mode, because the plan's rows are read by the names SQL Server gives them.
+    expect(modes.get(READ_SELECT.sql)).toEqual([false, true]);
+    expect(modes.get(PLAN_MODE_PROBE.sql)).toEqual([null]);
+  });
+
+  test("a cut value is refused under the name the caller is shown", async () => {
+    const profiled = await openProfiled();
+    executeAnswers(arrayModeSet(["v", "v"], [["short", "x".repeat(1025)]]));
+
+    const rejection = profiled.queryReadOnly(READ_SELECT.sql, budget({ maxResultBytes: 1024 }));
+
+    await expect(rejection).rejects.toThrow(
+      /^Read-only execution refused a value the server cut at the byte budget: v \(2\) came back/,
+    );
   });
 
   // -------------------------------------------------------------------------

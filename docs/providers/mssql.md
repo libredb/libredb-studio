@@ -203,7 +203,7 @@ schema; it is deleted. Row counts still come from `SUM(sys.partitions.rows)`.
 ### 3.4 `rowsAffected` is surfaced
 
 Unlike the MySQL/Oracle providers (which report `rows.length`), `query()` sets
-`rowCount = result.rowsAffected?.[0] ?? recordset.length` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)),
+`rowCount = result.rowsAffected?.[0] ?? rows.length` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)),
 and `queryInTransaction()` repeats the same expression, so a non-`SELECT` statement returns its real
 affected-row count.
 
@@ -346,8 +346,29 @@ to the newer name would change the wording on the form without changing a single
 `@p1`, `@p2`, … via `request.input()`, runs the query, and returns:
 
 ```ts
-{ rows: recordset, fields, rowCount: rowsAffected[0] ?? recordset.length, executionTime, columnTypes? }
+{ rows, fields, rowCount: rowsAffected[0] ?? rows.length, executionTime, columnTypes?, resultSets? }
 ```
+
+**Rows are read by position, so every column keeps its own name and value.**
+`query()`, `queryReadOnly()` and `queryInTransaction()` set `request.arrayRowMode = true` on the request that runs the user's statement, and only there: the provider's own catalog, monitoring and admission reads keep the driver's object rows, because they read columns the provider itself named.
+In array row mode the driver answers each row as its values in column order and the recordset's `columns` as a list, so `fields` is `uniqueFieldNames` ([`result-fields.ts`](../../src/lib/db/utils/result-fields.ts)) over the declared names and each row is keyed by those names, position by position.
+SQL Server leaves every unaliased expression unnamed, and such a column is named `(No column name)`, as SQL Server's own tools word it; a repeated name is numbered `name (2)`, `name (3)`.
+A row whose value count differs from the column count, or a result set without its column list, is refused with a `QueryError` rather than shifted or named by guess.
+Measured 2026-10-07 on SQL Server 2022 RTM-CU27 (16.0.4295.3) through `mssql` 12.7.2, through `query()`:
+
+| statement | in object row mode, before | `fields` now | row now |
+|---|---|---|---|
+| `SELECT @@VERSION` | `fields: [""]`, row `{ "": "Microsoft SQL Server 2022 …" }` | `["(No column name)"]` | `{ "(No column name)": "Microsoft SQL Server 2022 …" }` |
+| `SELECT 1, 2` | one column `""`, row `{ "": [1, 2] }` | `["(No column name)", "(No column name) (2)"]` | `{ "(No column name)": 1, "(No column name) (2)": 2 }` |
+| `SELECT 1 AS a, 2 AS a` | one column `a`, row `{ a: [1, 2] }` | `["a", "a (2)"]` | `{ a: 1, "a (2)": 2 }` |
+| `SELECT TOP 0 1 AS x, 2 AS x` | `fields: ["x"]` | `["x", "x (2)"]` | none |
+| `… FOR JSON PATH` | one column, the whole text | `["JSON_F52E2B61-18A1-11d1-B105-00805F49916B"]` | that name, holding the whole JSON text |
+| `… FOR XML PATH` | one column, the whole text | `["XML_F52E2B61-18A1-11d1-B105-00805F49916B"]` | that name, holding the whole XML text |
+
+The empty name crashed the results grid, which cannot build a column with an empty id, and its error boundary stayed failed until a page reload.
+A repeated name lost every value but one: object row mode merges the repeats into one array under one key.
+`FOR JSON` and `FOR XML` are the one shape the driver builds as an object even in array row mode: it joins the chunks of the text into a single row keyed by the column's position (`{ "0": text }`, `lib/tedious/request.js`), which the provider reads as the one value it is.
+Each set of a multi-result batch is named on its own: `SELECT 1 AS a, 2 AS a; SELECT 3, 4 AS b` answers `fields` `["a", "a (2)"]` and a second set with `["(No column name)", "b"]`.
 
 A text that returns several result sets still answers with its **first**, as `EXEC sp_help` always
 did, and carries every set in `resultSets` (#1312). `POST /api/db/query` and `POST /api/db/transaction` do not send that field; the
@@ -400,7 +421,7 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
   ISO instant, `CAST('10:30:00.1234567' AS time(7))` arrived as `1970-01-01T10:30:00.123Z`: a
   moment it does not hold, and four digits short. `query()`, `queryReadOnly()` and
   `queryInTransaction()` now rewrite the three declarations into the engine's text, keyed on
-  `recordset.columns` - the same map [§5.4](#54-declared-column-types) reads - and reconstruct
+  the result's column metadata by the names in `fields` - the same map [§5.4](#54-declared-column-types) reads - and reconstruct
   the fraction from the remainder the driver keeps on the value (`nanosecondsDelta`), so
   `time(7)` keeps all seven digits. `datetimeoffset` is deliberately untouched: it IS an
   instant. Measured 2026-09-28 on SQL Server 2022 CU27 (16.0.4295.3) through `mssql` 12.7.2 /
@@ -430,11 +451,14 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
 
 ### 5.4 Declared column types
 
-`mssql` attaches a `columns` map to the recordset, and each entry's `type` carries a `declaration` -
+`mssql` attaches its column metadata to the recordset, and each entry's `type` carries a `declaration` -
 T-SQL's own lowercase spelling. That is passed through into `QueryResult.columnTypes`
-([column-types.ts](../../src/lib/db/providers/sql/column-types.ts)) by both `query()` and
-`queryInTransaction()`, keyed by the column name. `type` is a factory FUNCTION for some of the
+([column-types.ts](../../src/lib/db/providers/sql/column-types.ts)) by `query()`, `queryReadOnly()` and
+`queryInTransaction()`, keyed by the column's name in `fields`. `type` is a factory FUNCTION for some of the
 driver's types and a plain object for others; `declaration` is on both.
+In the array row mode the user paths read with ([§5.1](#51-execution)) the metadata is a list in column order, so it is keyed by the unique names: `SELECT 1 AS a, N'x' AS a` declares `{ a: "int", "a (2)": "nvarchar" }`, and an unnamed column's type sits under `(No column name)`.
+Object row mode kept one map entry per distinct name, so a repeated column's type was lost with its value.
+A zero-row result names its columns and declares their types alike, on every path.
 
 Measured on SQL Server 2022 CU26 over the probe table:
 
@@ -1673,6 +1697,7 @@ Integration tests live in
 The `mssql` module is replaced with an in-process mock via `mock.module('mssql', …)` **before** the
 provider is imported — there is no live SQL Server in the suite. The mock's pool/request returns
 canned `{ recordset, rowsAffected }` results, exercising the same code paths as the real driver.
+A request the provider sets to array row mode gets the fixture converted to the driver's array shape (rows of values, a list of column metadata); a fixture that must say what only that shape can, an unnamed or repeated column, is written in it directly.
 
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide; files mocking different drivers
 > would cross-contaminate if they shared one. They never do: `bun run test` gives every test file its
