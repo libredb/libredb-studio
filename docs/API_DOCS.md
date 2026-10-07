@@ -2004,6 +2004,18 @@ It names apps and engine types only, never a host name or an environment value.
 `cookieSecureOff` is true when `AUTH_COOKIE_SECURE` is `false`, `off` or `0`, in any letter case.
 Both flags drive a display warning and never a security decision.
 
+#### GET /api/admin/seed-sources
+
+The status of the operator seed sources ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#diagnostics)), read by the admin Overview page.
+It goes through the shared route guard: `401` with no session, `403` for a non-admin.
+It answers `{ "sources": [{ "source", "location", "state", "checkedAt", "error": { "code", "message" } | null, "connected": [{ "id", "name", "type" }], "skipped": [{ "id", "origin", "reason", "variable"?, "field"? }], "notes": [...] }] }`, one entry per enabled source in load order, where `state` is `ok`, `empty`, `missing` or `error`.
+`source` names the variable that turned the source on; `location` is the file path for `SEED_CONFIG_PATH` and `SEED_CONFIG_DIR`, and `null` for a source read from the environment.
+`missing` is a file named explicitly in `SEED_CONFIG_PATH` that does not exist; the default path absent is `empty`.
+`error.code` is `unreadable`, `unparseable`, `invalid`, `duplicate-id` or `refused`.
+A note is `{ "kind": "ignored-variable", "name" }` or `{ "kind": "ignored-parameter", "origin", "name" }`.
+Every message, skip and note names files, variables, fields and ids only, never a value, and the answer never quotes a seed file.
+A source that fails is reported here with `state: "error"` while `GET /api/connections/managed` answers `500` with `reason: "seed-config-unreadable"`; this route answers `500` only when reading the status itself throws.
+
 ---
 
 > **Internal routes (not part of this public reference).** The frontend also calls several internal `/api/db/*` endpoints that mirror provider internals and change with the UI: `multi-query`, `transaction`, `cancel`, `disconnect`, `test-connection`, `monitoring`, `pool-stats`, `profile`, `provider-meta`, and the object-surface routes under `objects/` that are not documented above (`describe`, `edit-plan` and `edit-apply` are). They're auth-gated by the middleware like everything else; consult the route handlers in `src/app/api/db/` for their shapes.
