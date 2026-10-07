@@ -241,6 +241,29 @@ describe("AdminDashboard", () => {
       expect(localStorage.getItem("libredb_connections")).not.toBeNull();
     });
 
+    test("a sign-out the server refused says so, stays, and keeps the copy", async () => {
+      mockToastError.mockClear();
+      mockGlobalFetch({
+        "/api/auth/logout": { ok: false, status: 500, json: { error: "Server error" } },
+        "/api/storage/config": { json: { provider: "postgres", serverMode: true } },
+      });
+
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<AdminDashboard>content</AdminDashboard>);
+      });
+      await act(async () => {
+        fireEvent.click(renderResult!.getByText("Logout").closest("button")!);
+      });
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith("Failed to logout");
+      });
+
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+      expect(mockRouterPush).not.toHaveBeenCalled();
+      expect(localStorage.getItem("libredb_connections")).not.toBeNull();
+    });
+
     test("local mode: the copy stays", async () => {
       await clickLogout();
 

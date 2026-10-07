@@ -53,6 +53,7 @@ export function useAuth() {
       // session-ended path above clears nothing; the owner check every page that reads the copy
       // runs at the next sign-in covers a different account.
       const res = await releaseAccountWorkspace(() => appFetch("/api/auth/logout", { method: "POST" }));
+      if (!res.ok) throw new Error(`Sign-out refused: HTTP ${res.status}`);
       const data = await res.json();
       toast({ title: "Logged out", description: "You have been successfully logged out." });
 

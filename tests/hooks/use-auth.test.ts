@@ -381,7 +381,7 @@ describe("useAuth", () => {
 
   // ── Logout with non-ok response still navigates ───────────────────────────
 
-  test("handleLogout navigates even if logout API returns non-ok", async () => {
+  test("handleLogout says a refused sign-out did not complete and stays on the page", async () => {
     mockGlobalFetch({
       "/api/auth/me": { ok: true, json: { user: { role: "user" } } },
       "/api/storage/config": { ok: true, json: { provider: "local", serverMode: false } },
@@ -398,8 +398,9 @@ describe("useAuth", () => {
       await result.current.handleLogout();
     });
 
-    // The fetch didn't throw, so logout path should succeed
-    expect(mockRouterPush).toHaveBeenCalledWith("/login");
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Error", { description: "Failed to logout." });
   });
   test("auth hook sends requests under basePath and leaves Next router navigation logical", async () => {
     await withBasePathEnv("/~/libredb", async () => {

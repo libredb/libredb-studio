@@ -369,6 +369,20 @@ describe("the /launch page in a browser signed in as someone else", () => {
       expect(localStorage.getItem("libredb_workspace_owner")).toBeNull();
     });
 
+    test("server mode: a sign-out the server refused says so and keeps the copy", async () => {
+      serveConflict(async () => answer(500, { error: "Server error" }), true);
+      const view = render(<LaunchPage />);
+      fireEvent.click(await view.findByRole("button", { name: "Sign out" }));
+      expect(
+        await view.findByText(
+          "Studio could not sign you out. Sign out from the editor, then open Studio again from the platform.",
+        ),
+      ).not.toBeNull();
+      expect(view.queryByText(/You are signed out/)).toBeNull();
+      expect(localStorage.getItem("libredb_connections")).not.toBeNull();
+      expect(localStorage.getItem("libredb_workspace_owner")).toBe("ada@example.com");
+    });
+
     test("local mode: the copy stays", async () => {
       serveConflict(async () => answer(200, { success: true }));
       const view = render(<LaunchPage />);
