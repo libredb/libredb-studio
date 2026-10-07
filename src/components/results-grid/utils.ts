@@ -1,4 +1,4 @@
-import { UNNAMED_FIELD } from "@/lib/db/utils/result-fields";
+import { numberedRepeatBase, UNNAMED_FIELD } from "@/lib/db/utils/result-fields";
 import type { VectorColumn } from "@/lib/db/vector/types";
 import type { QueryWarning } from "@/lib/types";
 import { classifyValue } from "./renderers/classify";
@@ -6,8 +6,6 @@ import { getRenderer } from "./renderers/registry";
 import type { RenderContext } from "./renderers/types";
 
 const WARNING_FALLBACK_LABEL = "Warning";
-
-const NUMBERED_REPEAT = /^(.*) \((\d+)\)$/;
 
 /**
  * The columns of a result that carry a name the result made up rather than one the statement
@@ -24,8 +22,8 @@ export function generatedFieldNames(fields: readonly string[]): ReadonlySet<stri
   return new Set(
     fields.filter((field) => {
       if (field === UNNAMED_FIELD) return true;
-      const repeat = NUMBERED_REPEAT.exec(field);
-      return repeat !== null && present.has(repeat[1]);
+      const base = numberedRepeatBase(field);
+      return base !== null && present.has(base);
     }),
   );
 }

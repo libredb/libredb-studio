@@ -20,6 +20,7 @@ import {
   DEFAULT_MASKING_CONFIG,
   MASKING_CONFIG_KEY,
 } from "@/lib/data-masking";
+import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import type { MaskingPattern, MaskingConfig, MaskType } from "@/lib/data-masking";
 import {
   mockMaskingConfigEnabled,
@@ -210,6 +211,13 @@ describe("detectSensitiveColumnsFromConfig", () => {
     expect(detectSensitiveColumnsFromConfig(["email (2) (2)"], mockMaskingConfigEnabled).has("email (2) (2)")).toBe(
       true,
     );
+  });
+
+  // Pinned against the producer, so a change to the numbered form fails here and not only there.
+  test("every repeat uniqueFieldNames numbers is masked like the column it repeats", () => {
+    const fields = uniqueFieldNames(["email", "id", "email", "email", "id"]);
+    const result = detectSensitiveColumnsFromConfig(fields, DEFAULT_MASKING_CONFIG);
+    expect([...result.keys()]).toEqual(["email", "email (2)", "email (3)"]);
   });
 
   test("a numbered name whose base is not sensitive stays unmasked", () => {

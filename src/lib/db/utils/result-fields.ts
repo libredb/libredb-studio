@@ -53,6 +53,18 @@ export function uniqueFieldNames(declared: readonly string[]): string[] {
   });
 }
 
+const NUMBERED_REPEAT = /^(.*) \(\d+\)$/;
+
+/**
+ * The name a numbered name `name (N)` repeats, or null for a name not of that form: the one reader of the
+ * format `uniqueFieldNames` writes, so a change to the format changes its readers with it. Any digits count,
+ * and the base is read once (`a (2) (2)` gives `a (2)`). A statement may alias a column in this form itself;
+ * the caller decides what that means for it.
+ */
+export function numberedRepeatBase(name: string): string | null {
+  return NUMBERED_REPEAT.exec(name)?.[1] ?? null;
+}
+
 /**
  * Rows keyed by their own keys (a document store's), with the result's columns named as `QueryResult.fields`
  * promises. The keys of one object are already distinct, so the only name `uniqueFieldNames` changes is an

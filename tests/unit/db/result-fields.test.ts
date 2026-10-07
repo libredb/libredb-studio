@@ -5,7 +5,13 @@
  * name, or two columns with one name.
  */
 import { describe, expect, test } from "bun:test";
-import { UNNAMED_FIELD, unionFields, uniqueFieldNames, uniquelyKeyedRows } from "@/lib/db/utils/result-fields";
+import {
+  numberedRepeatBase,
+  UNNAMED_FIELD,
+  unionFields,
+  uniqueFieldNames,
+  uniquelyKeyedRows,
+} from "@/lib/db/utils/result-fields";
 
 describe("uniqueFieldNames", () => {
   test("names that are already unique and non-empty are kept as declared, in order", () => {
@@ -122,5 +128,27 @@ describe("uniquelyKeyedRows", () => {
     const [renamed] = uniquelyKeyedRows(["", "__proto__"], [row]).rows;
     expect(Object.keys(renamed)).toEqual([UNNAMED_FIELD, "__proto__"]);
     expect(Object.getPrototypeOf(renamed)).toBe(Object.prototype);
+  });
+});
+
+describe("numberedRepeatBase", () => {
+  test("reads every name uniqueFieldNames numbers back to the name it repeats", () => {
+    const declared = ["id", "id", "id", "", "", "a (2)", "a (2)"];
+    const named = uniqueFieldNames(declared);
+    expect(named).toEqual(["id", "id (2)", "id (3)", UNNAMED_FIELD, `${UNNAMED_FIELD} (2)`, "a (2)", "a (2) (2)"]);
+    expect(named.map(numberedRepeatBase)).toEqual([null, "id", "id", null, UNNAMED_FIELD, "a", "a (2)"]);
+  });
+
+  test("a name that is not the numbered form has no base", () => {
+    expect(numberedRepeatBase("price (usd)")).toBeNull();
+    expect(numberedRepeatBase("a(2)")).toBeNull();
+    expect(numberedRepeatBase("a (2) x")).toBeNull();
+    expect(numberedRepeatBase("(2)")).toBeNull();
+  });
+
+  test("any digits count, and the base may be empty", () => {
+    expect(numberedRepeatBase("a (1)")).toBe("a");
+    expect(numberedRepeatBase("a (02)")).toBe("a");
+    expect(numberedRepeatBase(" (2)")).toBe("");
   });
 });

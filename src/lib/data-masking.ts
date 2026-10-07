@@ -194,7 +194,7 @@ export function maskByType(value: string, pattern: MaskingPattern): string {
 
 // ─── Config-based Detection ──────────────────────────────────────────────────
 
-const NUMBERED_REPEAT = /^(.*) \(\d+\)$/;
+import { numberedRepeatBase } from "@/lib/db/utils/result-fields";
 
 /**
  * A field name and every name it may repeat: a result numbers a repeated column `name (2)`
@@ -204,9 +204,7 @@ const NUMBERED_REPEAT = /^(.*) \(\d+\)$/;
  */
 function namesToMatch(field: string): string[] {
   const names = [field];
-  for (let repeat = NUMBERED_REPEAT.exec(field); repeat !== null; repeat = NUMBERED_REPEAT.exec(repeat[1])) {
-    names.push(repeat[1]);
-  }
+  for (let base = numberedRepeatBase(field); base !== null; base = numberedRepeatBase(base)) names.push(base);
   return names;
 }
 

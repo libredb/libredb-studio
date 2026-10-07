@@ -6,6 +6,7 @@ import {
   generatedFieldNames,
   renderContextFor,
 } from "@/components/results-grid/utils";
+import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import type { VectorColumn } from "@/lib/db/vector/types";
 
 // =============================================================================
@@ -170,6 +171,16 @@ describe("generatedFieldNames", () => {
   // an `id` cannot be told from a numbered repeat, and neither is a column of the table.
   test("counts a numbered name as generated only when its base is in the result too", () => {
     expect([...generatedFieldNames(["total (2)", "a (3)", "a"])]).toEqual(["a (3)"]);
+  });
+
+  // Pinned against the producer, so a change to the numbered form fails here and not only there.
+  test("names every column uniqueFieldNames made up, and no column the statement named", () => {
+    const fields = uniqueFieldNames(["id", "", "id", "", "name", "id"]);
+    expect([...generatedFieldNames(fields)]).toEqual(["(No column name)", "id (2)", "(No column name) (2)", "id (3)"]);
+  });
+
+  test("counts any digits in the numbered form, as it always has", () => {
+    expect([...generatedFieldNames(["a", "a (1)", "a (02)", "a(2)"])]).toEqual(["a (1)", "a (02)"]);
   });
 
   test("leaves a result with no repeat and no unnamed column alone", () => {
