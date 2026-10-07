@@ -86,9 +86,11 @@ import {
   NO_TRANSACTION_OPENED,
 } from "../../errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
+import type { QueryResultSet } from "@/lib/types";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { sendPgCancelRequest, type PgCancelTarget } from "./pg-wire-cancel";
-import { postgresColumnTypes } from "./column-types";
+import { type PgFieldMetadata, postgresColumnTypes } from "./column-types";
+import { uniqueFieldNames } from "../../utils/result-fields";
 import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
@@ -285,6 +287,75 @@ function noticesAsWarnings({ kept, dropped }: NoticeBatch): { warnings?: QueryWa
   }));
   if (dropped > 0) warnings.push({ message: `${dropped} more notice${dropped === 1 ? "" : "s"} not shown` });
   return { warnings };
+}
+
+/**
+ * One `pg` answer read under `rowMode: "array"`: each row holds its values in the order `fields`
+ * declares the columns.
+ */
+interface PgArrayAnswer {
+  rows: unknown[][];
+  fields?: PgFieldMetadata[];
+  rowCount: number | null;
+}
+
+/**
+ * A user's statement as `pg` is asked to answer it: array rows, so two columns of one name keep two
+ * values. `pg`'s object rows key a value by its column's name and keep the last of two that share
+ * one: measured 2026-10-07 on PostgreSQL 16, a join projecting `id` from both tables answered the
+ * customer's id under both headers. The values go beside the config, so the protocol `pg` picks is
+ * the one a bare string and values got. `rowMode` changes the row's shape, not its parsers.
+ */
+function arrayRowsOf(text: string): QueryConfig {
+  return { text, rowMode: "array" } as QueryConfig;
+}
+
+/**
+ * One answer as a result set: its columns named by `uniqueFieldNames`, and each row keyed by those
+ * names by position. A row whose value count is not the column count is raised, not read.
+ */
+function pgResultSet(answer: PgArrayAnswer): QueryResultSet {
+  const declared = answer.fields ?? [];
+  const fields = uniqueFieldNames(declared.map((field) => field.name));
+  const rows = answer.rows.map((values) => {
+    if (values.length !== fields.length) {
+      throw new QueryError(
+        `PostgreSQL answered a row of ${values.length} values for ${fields.length} columns`,
+        "postgres",
+      );
+    }
+    // `Object.fromEntries` and not assignment, so a column named `__proto__` is a key like any other.
+    return Object.fromEntries(fields.map((name, index) => [name, values[index]]));
+  });
+  return {
+    rows,
+    fields,
+    ...postgresColumnTypes(declared.map((field, index) => ({ name: fields[index], dataTypeID: field.dataTypeID }))),
+  };
+}
+
+/**
+ * The result of what `pg` answered a user's text with.
+ *
+ * One statement answers one result. A text of several statements on the simple protocol answers
+ * one per statement, and a statement with no row description (an INSERT, a COMMIT) carries no
+ * result set. Then, as `QueryResult.resultSets` says, `rows`, `fields` and `columnTypes` are the
+ * first set's and `rowCount` the count of the statement that produced it, or of the first
+ * statement when none did; every set is listed when there are several. Before this read such a
+ * text answered no `rows` at all, because the answer was an array and was read as one result.
+ */
+function pgQueryResult(
+  answer: PgArrayAnswer | PgArrayAnswer[],
+): Pick<QueryResult, "rows" | "fields" | "columnTypes" | "rowCount" | "resultSets"> {
+  if (!Array.isArray(answer)) return { ...pgResultSet(answer), rowCount: answer.rowCount ?? 0 };
+  const producing = answer.filter((one) => (one.fields ?? []).length > 0);
+  const sets = producing.map(pgResultSet);
+  const [first] = sets;
+  return {
+    ...(first ?? { rows: [], fields: [] }),
+    rowCount: (producing[0] ?? answer[0])?.rowCount ?? 0,
+    ...(sets.length > 1 && { resultSets: sets }),
+  };
 }
 
 /**
@@ -2768,8 +2839,8 @@ export class PostgresProvider extends SQLBaseProvider {
             // Dropped first: a client fresh from the pool still holds its startup greeting, and
             // the PID read above is not the user's statement.
             takeNotices(client);
-            const res = await client.query(sql, params);
-            return { res, notices: takeNotices(client) };
+            const res = await client.query<unknown[]>(arrayRowsOf(sql), params);
+            return { res: res as unknown as PgArrayAnswer | PgArrayAnswer[], notices: takeNotices(client) };
           } finally {
             if (queryId) this.runningQueries.delete(queryId);
             // Read while this call still HOLDS the client, and before the release that
@@ -2787,10 +2858,7 @@ export class PostgresProvider extends SQLBaseProvider {
       });
 
       return {
-        rows: result.res.rows,
-        fields: result.res.fields?.map((f) => f.name) ?? [],
-        ...postgresColumnTypes(result.res.fields),
-        rowCount: result.res.rowCount ?? 0,
+        ...pgQueryResult(result.res),
         executionTime,
         ...noticesAsWarnings(result.notices),
       };
@@ -2896,7 +2964,7 @@ export class PostgresProvider extends SQLBaseProvider {
     }
 
     return this.trackQuery(async () => {
-      const { result, executionTime } = await this.measureExecution(async () => {
+      const { result: answered, executionTime } = await this.measureExecution(async () => {
         const client = await this.pool!.connect();
         try {
           await client.query("BEGIN READ ONLY");
@@ -2905,8 +2973,10 @@ export class PostgresProvider extends SQLBaseProvider {
           await client.query(`SET LOCAL statement_timeout = ${budget.statementTimeoutMs}`);
           // @types/pg does not model queryMode yet; the runtime supports it
           // since pg 8.11 (node_modules/pg/lib/query.js requiresPreparation).
-          const extendedQuery = { text: sql, queryMode: "extended" } as QueryConfig & { queryMode: "extended" };
-          return await client.query(extendedQuery);
+          const extendedQuery = { ...arrayRowsOf(sql), queryMode: "extended" } as QueryConfig & {
+            queryMode: "extended";
+          };
+          return await client.query<unknown[]>(extendedQuery);
         } catch (error) {
           throw mapDatabaseError(error, "postgres", sql);
         } finally {
@@ -2927,6 +2997,9 @@ export class PostgresProvider extends SQLBaseProvider {
         }
       });
 
+      // One statement on the extended protocol is one answer, never a list of them. The budgets are
+      // measured on the keyed rows, which are what the caller receives.
+      const result = pgQueryResult(answered as unknown as PgArrayAnswer);
       if (result.rows.length > budget.maxResultRows) {
         throw new QueryError(
           `Read-only execution exceeded the row budget: ${result.rows.length} rows > ${budget.maxResultRows} allowed`,
@@ -2943,13 +3016,7 @@ export class PostgresProvider extends SQLBaseProvider {
         );
       }
 
-      return {
-        rows: result.rows,
-        fields: result.fields?.map((f) => f.name) ?? [],
-        ...postgresColumnTypes(result.fields),
-        rowCount: result.rowCount ?? 0,
-        executionTime,
-      };
+      return { ...result, executionTime };
     });
   }
 
@@ -3227,8 +3294,8 @@ export class PostgresProvider extends SQLBaseProvider {
           // The held client is one session for the whole transaction, so what an earlier
           // statement left behind is dropped before this one runs.
           takeNotices(held);
-          const res = await held.query(sql, params);
-          return { res, notices: takeNotices(held) };
+          const res = await held.query<unknown[]>(arrayRowsOf(sql), params);
+          return { res: res as unknown as PgArrayAnswer | PgArrayAnswer[], notices: takeNotices(held) };
         } catch (error) {
           throw mapDatabaseError(error, "postgres", sql);
         } finally {
@@ -3243,10 +3310,7 @@ export class PostgresProvider extends SQLBaseProvider {
       });
 
       return {
-        rows: result.res.rows,
-        fields: result.res.fields?.map((f) => f.name) ?? [],
-        ...postgresColumnTypes(result.res.fields),
-        rowCount: result.res.rowCount ?? 0,
+        ...pgQueryResult(result.res),
         executionTime,
         ...noticesAsWarnings(result.notices),
       };

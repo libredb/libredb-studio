@@ -1320,8 +1320,31 @@ acquires a pooled client, optionally records its backend PID for cancellation, r
 (optionally parameterized — `$1`, `$2`, …) statement, and returns the standard envelope:
 
 ```ts
-{ rows, fields: string[], rowCount, executionTime, columnTypes?, warnings? }
+{ rows, fields: string[], rowCount, executionTime, columnTypes?, warnings?, resultSets? }
 ```
+
+#### Result columns: every column keeps its own value
+
+`query()`, `queryInTransaction()` and `queryReadOnly()` ask `pg` for array rows (`rowMode: "array"`), name the columns with `uniqueFieldNames` ([result-fields.ts](../../src/lib/db/utils/result-fields.ts)) and key each row by those names by position.
+`pg`'s object rows key a value by its column's name and keep the last of two columns that share one, so before this a repeated name lost a value with no error.
+`rowMode` changes the row's shape and nothing else: the pool's type parsers (§5.5) read every value as before.
+`columnTypes` is keyed by the same names.
+A row whose value count is not the column count raises a `QueryError` rather than being read.
+
+Measured on PostgreSQL 16 through `pg` 8.23.1 on 2026-10-07, before and after:
+
+| Statement | Before | After |
+|---|---|---|
+| `SELECT 1 AS a, 2 AS a` | fields `["a","a"]`, row `{"a":2}` | fields `["a","a (2)"]`, row `{"a":1,"a (2)":2}` |
+| `SELECT 1, 2` (unnamed columns, which PostgreSQL calls `?column?`) | fields `["?column?","?column?"]`, row `{"?column?":2}` | fields `["?column?","?column? (2)"]`, row `{"?column?":1,"?column? (2)":2}` |
+| `SELECT * FROM orders o JOIN customers c ON c.id = o.customer_id` | fields `["id","customer_id","item","id","name"]`, the customer's id under both `id` headers, the order's id gone | fields `["id","customer_id","item","id (2)","name"]`, the order's id under `id` and the customer's under `id (2)` |
+
+PostgreSQL never answers an empty column name: an unaliased expression is named by the server (`?column?`, `count`, `now`), so an unnamed column is only ever a repeated one here.
+
+A text of several statements sent as one simple query (`SELECT 1 AS a; SELECT 2 AS b, 3 AS b`) answers one result per statement.
+`rows`, `fields` and `columnTypes` are the first result set's, `rowCount` is the count of the statement that produced it (or of the first statement when none produced one), and `resultSets` lists every set when there are several; a statement with no row description (an INSERT, a COMMIT) is not a set.
+Measured the same day, that text answers `rows` `[{"a":1}]` and two `resultSets`, the second with fields `["b","b (2)"]`.
+Before, such a text answered no `rows` at all, because the list of answers was read as one answer.
 
 #### Server notices (#1401)
 

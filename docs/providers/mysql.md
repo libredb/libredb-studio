@@ -270,7 +270,7 @@ against three live servers:
 One behaviour does differ, and only for a connection that opted into `multipleStatements=true` in its
 connection string: a `;`-separated statement is rejected by the prepared protocol and accepted by the
 text one, which then answers an array of result sets. That is the shape `CALL <procedure>()` already
-answers today on both protocols, so nothing new reaches the envelope; the app splits multi-statement
+answers on both protocols, and the envelope reads it the same way ([§5.1](#51-execution)); the app splits multi-statement
 input itself (`POST /api/db/multi-query`) and issues one statement per call.
 
 `rowCount` is `rows.length` **only when the driver returns a row array** (i.e. `SELECT`); for a
@@ -656,8 +656,32 @@ standard envelope with the driver's own values
 ([§3.3](#33-blob--binary-values-reach-every-surface-as-bytes)):
 
 ```ts
-{ rows, fields: string[], rowCount: rows.length, executionTime, columnTypes? }
+{ rows, fields: string[], rowCount: rows.length, executionTime, columnTypes?, resultSets? }
 ```
+
+**Every column keeps its own value.**
+`query()` and `queryInTransaction()` ask `mysql2` for array rows (`rowsAsArray: true`, on the text protocol, the prepared one, the client-side binding and the utf8mb3 relabelling path alike), name the columns with `uniqueFieldNames` ([result-fields.ts](../../src/lib/db/utils/result-fields.ts)) and key each row by those names by position.
+`mysql2`'s object rows key a value by its column's name and keep the last of two columns that share one, so before this a repeated name lost a value with no error.
+`rowsAsArray` changes the row's shape and nothing else: `dateStrings`, `supportBigNumbers` and the relabelled decoding read every value as before.
+`columnTypes` is keyed by the same names.
+A row whose value count is not the column count raises a `QueryError` rather than being read.
+The provider's own reads (the object tree, monitoring, maintenance) keep object rows, because they read columns by names they wrote themselves.
+
+Measured on MySQL 8.4 through `mysql2` 3.24.5 on 2026-10-07, before and after:
+
+| Statement | Before | After |
+|---|---|---|
+| `SELECT 1 AS a, 2 AS a` | fields `["a","a"]`, row `{"a":2}` | fields `["a","a (2)"]`, row `{"a":1,"a (2)":2}` |
+| `SELECT 1, 1` (MySQL names an unaliased expression by its text) | fields `["1","1"]`, row `{"1":1}` | fields `["1","1 (2)"]`, row `{"1":1,"1 (2)":1}` |
+| `SELECT * FROM orders o JOIN customers c ON c.id = o.customer_id` | fields `["id","customer_id","item","id","name"]`, the customer's id under both `id` headers, the order's id gone | fields `["id","customer_id","item","id (2)","name"]`, the order's id under `id` and the customer's under `id (2)` |
+| `CALL sys.ps_setup_show_enabled(FALSE, FALSE)` | `TypeError: undefined is not an object (evaluating 'f.name')`, after the procedure had run | the first of its four result sets, and all four in `resultSets` |
+
+MySQL never answers an empty column name, so an unnamed column is only ever a repeated one here.
+
+**A `CALL` answers a list of result sets.**
+`mysql2` answers one result set per SELECT the procedure ran and the call's own OK packet last, with the field packets one list per set and `undefined` for each header.
+`rows`, `fields` and `columnTypes` are the first set's, `rowCount` its row count, and `resultSets` lists every set when there are several.
+A list with no result set in it, which only a connection that opted into `multipleStatements` can receive, answers the first header's `affectedRows`.
 
 Native `mysql2` errors are normalised via `mapDatabaseError()` into the shared
 [`errors.ts`](../../src/lib/db/errors.ts) classes.

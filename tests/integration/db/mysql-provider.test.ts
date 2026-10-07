@@ -108,10 +108,57 @@ function methodFor(fragment: string): string | undefined {
   return protocolCalls.find((c) => c.sql.toLowerCase().includes(fragment.toLowerCase()))?.method;
 }
 
+/** A mysql2 options object asking for array rows, which `query()` and `queryInTransaction()` send. */
+type MockStatement = string | { sql: string; rowsAsArray?: boolean };
+
+type MockField = { name: string };
+
+/** One result set's rows as mysql2 answers them under `rowsAsArray`: each row its values in column order. */
+function arrayRowsOf(rows: unknown[], declared: MockField[] | undefined): { rows: unknown[]; fields: MockField[] } {
+  const fields =
+    (declared ?? []).length > 0 || rows.length === 0 || Array.isArray(rows[0])
+      ? (declared ?? [])
+      : Object.keys(rows[0] as object).map((name) => ({ name }));
+  return {
+    rows: rows.map((row) => (Array.isArray(row) ? row : fields.map((f) => (row as Record<string, unknown>)[f.name]))),
+    fields,
+  };
+}
+
+/**
+ * What mysql2 answers under `rowsAsArray: true`. A fixture written with object rows is read in the
+ * order its fields declare, or its first row's key order when it declares none, as a real column
+ * definition would have said. A fixture that answers array rows is handed on unchanged, which is the
+ * only way to model two columns of one name. A header (no result set) and a CALL's list of result
+ * sets keep their shape, each set read the same way.
+ */
+function asRowsAsArray([rows, fields]: [unknown, unknown[] | undefined]): [unknown, unknown[] | undefined] {
+  if (!Array.isArray(rows)) return [rows, fields];
+  if (fields !== undefined && fields.some((set) => set === undefined || Array.isArray(set))) {
+    const sets = rows.map((set, index) =>
+      Array.isArray(set) ? arrayRowsOf(set, fields[index] as MockField[]).rows : set,
+    );
+    return [sets, fields];
+  }
+  const read = arrayRowsOf(rows, fields as MockField[] | undefined);
+  return [read.rows, fields === undefined ? fields : read.fields];
+}
+
+/** The statement's text for the fixtures, and its answer in the row shape the provider asked for. */
+function answerStatement(
+  method: "query" | "execute",
+  statement: MockStatement,
+  params?: unknown[],
+): Promise<[unknown, unknown[] | undefined]> {
+  if (typeof statement === "string") return recordCall(method, statement, params);
+  const answered = recordCall(method, statement.sql, params);
+  return statement.rowsAsArray === true ? answered.then(asRowsAsArray) : answered;
+}
+
 const mockConnection = {
   threadId: 42,
-  query: (sql: string, params?: unknown[]) => recordCall("query", sql, params),
-  execute: (sql: string, params?: unknown[]) => recordCall("execute", sql, params),
+  query: (sql: MockStatement, params?: unknown[]) => answerStatement("query", sql, params),
+  execute: (sql: MockStatement, params?: unknown[]) => answerStatement("execute", sql, params),
   release: () => {},
   beginTransaction: async () => {},
   commit: async () => {},
@@ -121,8 +168,8 @@ const mockConnection = {
 const mockPool = {
   getConnection: async () => mockConnection,
   end: async () => {},
-  query: (sql: string, params?: unknown[]) => recordCall("query", sql, params),
-  execute: (sql: string, params?: unknown[]) => recordCall("execute", sql, params),
+  query: (sql: MockStatement, params?: unknown[]) => answerStatement("query", sql, params),
+  execute: (sql: MockStatement, params?: unknown[]) => answerStatement("execute", sql, params),
 };
 
 /**
@@ -1895,7 +1942,13 @@ describe("MySQLProvider", () => {
       let callStatus = 3;
       mockExecuteFn = (sql: string) => {
         if (sql.startsWith("BEGIN")) return Promise.resolve([header(16387), undefined]);
-        if (sql.startsWith("CALL")) return Promise.resolve([[[{ id: 1 }], header(callStatus)], undefined]);
+        // `fields` holds one list per result set and `undefined` for the header, as mysql2 answers a CALL.
+        if (sql.startsWith("CALL")) {
+          return Promise.resolve([
+            [[{ id: 1 }], header(callStatus)],
+            [[{ name: "id" }], undefined],
+          ]);
+        }
         return defaultMockExecute(sql) as Promise<[unknown, unknown[] | undefined]>;
       };
       provider = new MySQLProvider(makeMySQLConfig());
@@ -3310,6 +3363,214 @@ describe("MySQLProvider declared column types", () => {
 
     expect(result.columnTypes).toEqual({ ts: "timestamp" });
     await provider.rollbackTransaction();
+    await provider.disconnect();
+  });
+});
+
+/**
+ * Every column keeps its own value (D3). mysql2's object rows key a value by its column's name, so of
+ * two columns one name declares, the row keeps only the last: measured 2026-10-07 on MySQL 8.4, the
+ * join below answered the customer's id under both `id` headers and the order's id nowhere. The
+ * provider asks for array rows and keys them by `uniqueFieldNames`, so a repeat is `id (2)`. The
+ * fixtures answer the array rows that run measured, so the mock cannot drop a value the driver kept.
+ */
+describe("MySQLProvider result columns", () => {
+  const int = { columnType: 3, characterSet: 63, columnLength: 11, decimals: 0, flags: 0 };
+  const text = { columnType: 252, characterSet: 255, columnLength: 262140, decimals: 0, flags: 16 };
+  const JOIN_SQL = "SELECT * FROM orders o JOIN customers c ON c.id = o.customer_id";
+  const join: [unknown, unknown[]] = [
+    [
+      [1, 100, "widget", 100, "Acme"],
+      [2, 200, "gadget", 200, "Globex"],
+    ],
+    [
+      { name: "id", ...int },
+      { name: "customer_id", ...int },
+      { name: "item", ...text },
+      { name: "id", ...int },
+      { name: "name", ...text },
+    ],
+  ];
+  const joinFields = ["id", "customer_id", "item", "id (2)", "name"];
+  const joinRows = [
+    { id: 1, customer_id: 100, item: "widget", "id (2)": 100, name: "Acme" },
+    { id: 2, customer_id: 200, item: "gadget", "id (2)": 200, name: "Globex" },
+  ];
+
+  async function connected() {
+    const provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    return provider;
+  }
+
+  test("query() asks mysql2 for array rows and keeps both values of a repeated name", async () => {
+    const query = spyOn(mockConnection, "query");
+    mockExecuteFn = () =>
+      Promise.resolve([
+        [[1, 2]],
+        [
+          { name: "a", ...int },
+          { name: "a", ...text },
+        ],
+      ]);
+    try {
+      const provider = await connected();
+      const result = await provider.query("SELECT 1 AS a, 2 AS a");
+      expect(query.mock.calls.at(-1)).toEqual([{ sql: "SELECT 1 AS a, 2 AS a", rowsAsArray: true }]);
+      expect(result.fields).toEqual(["a", "a (2)"]);
+      expect(result.rows).toEqual([{ a: 1, "a (2)": 2 }]);
+      expect(result.columnTypes).toEqual({ a: "int", "a (2)": "text" });
+      expect(result.rowCount).toBe(1);
+      await provider.disconnect();
+    } finally {
+      query.mockRestore();
+    }
+  });
+
+  test("query() keeps the order's id and the customer's id of a join apart, over the prepared protocol too", async () => {
+    const execute = spyOn(mockConnection, "execute");
+    mockExecuteFn = () => Promise.resolve(join);
+    try {
+      const provider = await connected();
+      for (const params of [undefined, [1]]) {
+        const result = await provider.query(JOIN_SQL, params);
+        expect(result.fields).toEqual(joinFields);
+        expect(result.rows).toEqual(joinRows);
+        expect(result.columnTypes).toEqual({
+          id: "int",
+          customer_id: "int",
+          item: "text",
+          "id (2)": "int",
+          name: "text",
+        });
+      }
+      expect(execute.mock.calls.at(-1)).toEqual([{ sql: JOIN_SQL, rowsAsArray: true }, [1]]);
+      await provider.disconnect();
+    } finally {
+      execute.mockRestore();
+    }
+  });
+
+  test("query() numbers the repeated name MySQL gives two unaliased literals", async () => {
+    mockExecuteFn = () =>
+      Promise.resolve([
+        [[1, 1]],
+        [
+          { name: "1", ...int },
+          { name: "1", ...int },
+        ],
+      ]);
+    const provider = await connected();
+    const result = await provider.query("SELECT 1, 1");
+    expect(result.fields).toEqual(["1", "1 (2)"]);
+    expect(result.rows).toEqual([{ "1": 1, "1 (2)": 1 }]);
+    await provider.disconnect();
+  });
+
+  test("queryInTransaction() reads the same way", async () => {
+    mockExecuteFn = (sql) =>
+      Promise.resolve(sql === JOIN_SQL ? join : [{ affectedRows: 0, serverStatus: 3 }, undefined]);
+    const provider = await connected();
+    await provider.beginTransaction();
+    const result = await provider.queryInTransaction(JOIN_SQL);
+    expect(result.fields).toEqual(joinFields);
+    expect(result.rows).toEqual(joinRows);
+    expect(provider.isInTransaction()).toBe(true);
+    await provider.rollbackTransaction();
+    await provider.disconnect();
+  });
+
+  /**
+   * A CALL answers one result set per SELECT the procedure ran and the call's own OK packet last.
+   * Measured 2026-10-07 on MySQL 8.4 with `CALL sys.ps_setup_show_enabled(FALSE, FALSE)`: four sets
+   * and a header, with `fields` one list per set and `undefined` for the header. Before, the list of
+   * sets was read as one set's rows, so the grid had a row per set and a column with no name.
+   */
+  test("a CALL answers its first result set, and every set when it has several", async () => {
+    mockExecuteFn = () =>
+      Promise.resolve([
+        [[[1]], [["EVENT", "%.%"]], { affectedRows: 0, serverStatus: 2 }],
+        [
+          [{ name: "performance_schema_enabled", ...int }],
+          [
+            { name: "object_type", ...text },
+            { name: "objects", ...text },
+          ],
+          undefined,
+        ],
+      ]);
+    const provider = await connected();
+    const result = await provider.query("CALL sys.ps_setup_show_enabled(FALSE, FALSE)");
+    expect(result.fields).toEqual(["performance_schema_enabled"]);
+    expect(result.rows).toEqual([{ performance_schema_enabled: 1 }]);
+    expect(result.rowCount).toBe(1);
+    expect(result.columnTypes).toEqual({ performance_schema_enabled: "int" });
+    expect(result.resultSets).toEqual([
+      {
+        rows: [{ performance_schema_enabled: 1 }],
+        fields: ["performance_schema_enabled"],
+        columnTypes: { performance_schema_enabled: "int" },
+      },
+      {
+        rows: [{ object_type: "EVENT", objects: "%.%" }],
+        fields: ["object_type", "objects"],
+        columnTypes: { object_type: "text", objects: "text" },
+      },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a CALL with one result set answers it alone, its repeated names numbered", async () => {
+    mockExecuteFn = () =>
+      Promise.resolve([
+        [[[1, 2]], { affectedRows: 0, serverStatus: 2 }],
+        [
+          [
+            { name: "a", ...int },
+            { name: "a", ...int },
+          ],
+          undefined,
+        ],
+      ]);
+    const provider = await connected();
+    const result = await provider.query("CALL two_a()");
+    expect(result.fields).toEqual(["a", "a (2)"]);
+    expect(result.rows).toEqual([{ a: 1, "a (2)": 2 }]);
+    expect(Object.hasOwn(result, "resultSets")).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("several statements that return no result set answer the first one's count", async () => {
+    // Only a connection string that opted into `multipleStatements=true` sends such a text whole.
+    mockExecuteFn = () =>
+      Promise.resolve([
+        [
+          { affectedRows: 3, serverStatus: 2 },
+          { affectedRows: 5, serverStatus: 2 },
+        ],
+        [undefined, undefined],
+      ]);
+    const provider = await connected();
+    const result = await provider.query("INSERT INTO t VALUES (1), (2), (3); DELETE FROM u");
+    expect(result.rows).toEqual([]);
+    expect(result.fields).toEqual([]);
+    expect(result.rowCount).toBe(3);
+    await provider.disconnect();
+  });
+
+  test("a row whose value count differs from the column count is an error, not a guess", async () => {
+    mockExecuteFn = () =>
+      Promise.resolve([
+        [[1]],
+        [
+          { name: "a", ...int },
+          { name: "b", ...int },
+        ],
+      ]);
+    const provider = await connected();
+    await expect(provider.query("SELECT a, b FROM t")).rejects.toThrow(
+      "MySQL answered a row of 1 values for 2 columns",
+    );
     await provider.disconnect();
   });
 });

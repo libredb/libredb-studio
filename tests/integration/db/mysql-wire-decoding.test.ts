@@ -53,6 +53,7 @@ interface ServerConnection {
   writeEof(warnings?: number, statusFlags?: number): void;
   writeColumns(columns: Record<string, unknown>[]): void;
   writeTextRow(values: string[]): void;
+  writeBinaryRow(values: string[]): void;
   writePacket(packet: unknown): void;
 }
 
@@ -176,6 +177,12 @@ const startServer = (textLabel: number, binding: Binding = "prepares"): Promise<
   ];
   const rows = [{ v: TEXT, b: "AB" }];
   const legacy = [definition({ name: "legacy", characterSet: UTF8MB3_GENERAL_CI, columnType: VAR_STRING, flags: 0 })];
+  // Two columns of one name, as `SELECT 1 AS a, 2 AS a` or a join of two tables that both have an `id`
+  // declares them. `writeTextResult` keys a row by column name and could not answer two values.
+  const repeated = [
+    definition({ name: "a", characterSet: textLabel, columnType: VAR_STRING, flags: 0 }),
+    definition({ name: "a", characterSet: textLabel, columnType: VAR_STRING, flags: 0 }),
+  ];
   server.on("connection", (connection) => {
     connection.serverHandshake({
       protocolVersion: 10,
@@ -224,6 +231,10 @@ const startServer = (textLabel: number, binding: Binding = "prepares"): Promise<
         );
       } else if (sql.startsWith("SELECT v, b")) {
         connection.writeTextResult(rows, result.map(definition));
+      } else if (sql.startsWith("SELECT a, a")) {
+        connection.writeColumns(repeated);
+        connection.writeTextRow(["first", "second"]);
+        connection.writeEof();
       } else if (sql.startsWith("SELECT legacy")) {
         connection.writeTextResult([{ legacy: TEXT }], legacy);
       } else if (/^(BEGIN|START TRANSACTION)/.test(sql)) {
@@ -276,6 +287,10 @@ const startServer = (textLabel: number, binding: Binding = "prepares"): Promise<
       if (prepared.get(statementId)?.startsWith("INSERT")) {
         // A prepared statement answering zero columns.
         connection.writeOk({ affectedRows: 2, insertId: 7, serverStatus: status() });
+      } else if (prepared.get(statementId)?.startsWith("SELECT a, a")) {
+        connection.writeColumns(repeated);
+        connection.writeBinaryRow(["first", "second"]);
+        connection.writeEof();
       } else {
         connection.writeTextResult(rows, result.map(definition), true);
       }
@@ -416,15 +431,12 @@ describe("a server that labels utf8mb4 text honestly (MySQL, MariaDB, TiDB)", ()
  */
 describe("statements that answer no result set, on both kinds of server", () => {
   /** The driver's own answer, as `buildQueryResult` received it. */
-  const driverAnswer = async (run: (provider: MySQLProvider) => Promise<unknown>, port: number, stub = false) => {
+  const driverAnswer = async (run: (provider: MySQLProvider) => Promise<unknown>, port: number) => {
     const provider = await connected(port);
     const build = spyOn(
       MySQLProvider.prototype as unknown as { buildQueryResult: (rows: unknown) => unknown },
       "buildQueryResult",
     );
-    // `buildQueryResult` reads one result set; a multi-result answer is read here at the driver
-    // seam instead, which is the part this file is about.
-    if (stub) build.mockImplementation(() => ({ rows: [], fields: [], rowCount: 0, executionTime: 0 }));
     try {
       const result = await run(provider);
       return { result, header: build.mock.calls.at(-1)?.[0] as unknown as Record<string, unknown>, provider };
@@ -479,16 +491,19 @@ describe("statements that answer no result set, on both kinds of server", () => 
    * relabel the other, and the connection has to survive all three.
    */
   test("a result set between two OK packets is still relabelled", async () => {
-    const relabelled = await driverAnswer((provider) => provider.query("CALL two_results()"), labelling33.port, true);
-    const plain = await driverAnswer((provider) => provider.query("CALL two_results()"), honest.port, true);
+    const relabelled = await driverAnswer((provider) => provider.query("CALL two_results()"), labelling33.port);
+    const plain = await driverAnswer((provider) => provider.query("CALL two_results()"), honest.port);
 
-    type Answer = [Record<string, unknown>, Record<string, unknown>[], Record<string, unknown>];
+    // The rows arrive as arrays, values in column order (`rowsAsArray`).
+    type Answer = [Record<string, unknown>, unknown[][], Record<string, unknown>];
     const [okRelabelled, rowsRelabelled, endRelabelled] = relabelled.header as unknown as Answer;
     const [okPlain, rowsPlain, endPlain] = plain.header as unknown as Answer;
     expect(okRelabelled.affectedRows).toBe(okPlain.affectedRows);
     expect(endRelabelled.affectedRows).toBe(endPlain.affectedRows);
-    expect(rowsRelabelled[0]?.legacy).toBe(TEXT);
-    expect(rowsPlain[0]?.legacy).toBe(TEXT.replace(EMOJI, "\uFFFD".repeat(4)));
+    expect(rowsRelabelled[0]?.[0]).toBe(TEXT);
+    expect(rowsPlain[0]?.[0]).toBe(TEXT.replace(EMOJI, "\uFFFD".repeat(4)));
+    // The one result set between the two OK packets is what the call answers.
+    expect(relabelled.result).toMatchObject({ fields: ["legacy"], rows: [{ legacy: TEXT }], rowCount: 1 });
 
     const after = await relabelled.provider.query("SELECT v, b FROM t");
     expect((after.rows[0] as Record<string, unknown>).v).toBe(TEXT);
@@ -657,5 +672,47 @@ describe("a server that refuses COM_STMT_PREPARE (Databend)", () => {
     expect((result.rows[0] as Record<string, unknown>).v).toBe(TEXT);
     expect(reads(preparing)).toEqual([]);
     expect(reads(refusing)).toEqual(["SELECT v, b FROM t WHERE v = 'x'"]);
+  });
+});
+
+/**
+ * Two columns of one name keep two values over the real driver (D3), on every path a user's statement
+ * takes: the text protocol and the prepared one, each through mysql2's promise wrapper (a server that
+ * labels honestly) and through the relabelling callback path (a server that labels utf8mb3), and the
+ * client-side binding a server that refuses to prepare gets. mysql2's object rows keep only the last.
+ */
+describe("a result with two columns of one name", () => {
+  const expected = { fields: ["a", "a (2)"], rows: [{ a: "first", "a (2)": "second" }], rowCount: 1 };
+
+  test.each([
+    ["the text protocol, promise path", () => honest.port, undefined],
+    ["the text protocol, relabelling path", () => labelling33.port, undefined],
+    ["the prepared protocol, promise path", () => honest.port, ["x"]],
+    ["the prepared protocol, relabelling path", () => labelling33.port, ["x"]],
+  ])("keeps both values over %s", async (_label, port, params) => {
+    const provider = await connected(port());
+    expect(await provider.query("SELECT a, a FROM t", params)).toMatchObject(expected);
+  });
+
+  test("and in a transaction", async () => {
+    const provider = await connected(honest.port);
+    await provider.beginTransaction();
+    const result = await provider.queryInTransaction("SELECT a, a FROM t");
+    await provider.rollbackTransaction();
+    expect(result).toMatchObject(expected);
+  });
+
+  test.each([
+    ["labels text utf8mb4", UTF8MB4_UNICODE_CI],
+    ["labels text utf8mb3", UTF8MB3_GENERAL_CI],
+  ])("keeps both values when the values are bound client-side (server %s)", async (_label, textLabel) => {
+    const server = await startServer(textLabel, "refuses-prepare");
+    try {
+      const provider = await connected(server.port);
+      expect(await provider.query("SELECT a, a FROM t WHERE v = ?", ["x"])).toMatchObject(expected);
+      expect(server.received).toContain("SELECT a, a FROM t WHERE v = 'x'");
+    } finally {
+      server.close();
+    }
   });
 });

@@ -92,7 +92,7 @@ function pgServerError(message: string, code: string): Error {
 }
 
 interface EngineAnswer {
-  readonly rows: Record<string, unknown>[];
+  readonly rows: Record<string, unknown>[] | unknown[][];
   readonly fields: { name: string }[];
   readonly rowCount: number;
 }
@@ -209,7 +209,18 @@ class PostgresEngineDouble {
   /** Statements that arrived OUTSIDE the read-only envelope. Must stay empty. */
   readonly unenveloped: string[] = [];
 
+  /**
+   * `pg` under `rowMode: "array"`, which the provider asks for on the user's statement: each row
+   * its values in the order `fields` declares.
+   */
   async query(arg: unknown): Promise<EngineAnswer> {
+    const answer = await this.answer(arg);
+    if (typeof arg === "string" || (arg as { rowMode?: string }).rowMode !== "array") return answer;
+    const rows = answer.rows as Record<string, unknown>[];
+    return { ...answer, rows: rows.map((row) => answer.fields.map((field) => row[field.name])) };
+  }
+
+  private async answer(arg: unknown): Promise<EngineAnswer> {
     const text = (typeof arg === "string" ? arg : (arg as { text: string }).text).trim();
 
     // The role-privilege probe the profile runs at open, before any transaction.

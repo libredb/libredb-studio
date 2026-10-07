@@ -130,48 +130,96 @@ function answerParseProbe(): Promise<{ rows: unknown[] }> {
   );
 }
 
+/**
+ * A `pg` config asking for array rows. `query()` and `queryInTransaction()` send the user's statement
+ * as `{ text, rowMode: "array" }` with the values beside it, and `queryReadOnly()` adds the
+ * same `rowMode` to its `queryMode: "extended"` config.
+ */
+interface MockRowModeConfig {
+  text: string;
+  rowMode: "array";
+  queryMode?: "extended";
+}
+
+type MockPgAnswer = { rows: unknown[]; fields?: { name: string; dataTypeID?: number }[]; rowCount?: number | null };
+
+/**
+ * What `pg` answers under `rowMode: "array"`: each row holds its values in column order, and one
+ * answer per statement for a multi-statement simple query. A fixture written with object rows is
+ * read in the order its `fields` declare, or in its first row's key order when it declares none,
+ * which is what a real server's row description would have said. A fixture that already answers
+ * array rows is handed on unchanged, which is the only way to model two columns of one name.
+ */
+function asRowModeArray(answer: MockPgAnswer | MockPgAnswer[]): MockPgAnswer | MockPgAnswer[] {
+  if (Array.isArray(answer)) return answer.map((one) => asRowModeArray(one) as MockPgAnswer);
+  const rows = answer.rows ?? [];
+  const declared = answer.fields ?? [];
+  const fields =
+    declared.length > 0 || rows.length === 0 || Array.isArray(rows[0])
+      ? declared
+      : Object.keys(rows[0] as object).map((name) => ({ name }));
+  return {
+    ...answer,
+    fields,
+    rows: rows.map((row) =>
+      Array.isArray(row) ? row : fields.map((field) => (row as Record<string, unknown>)[field.name]),
+    ),
+  };
+}
+
+/** The fixture server behind `mockClient.query`, answering what the provider sent. */
+function mockClientQuery(sql: string | MockParseConfig, params?: unknown[]): Promise<unknown> {
+  mockWire.push(sql);
+  // A config carrying a `name` is a NAMED prepared statement, which is the only way
+  // node-postgres reaches Parse, and it is answered the way the server answers a Parse (D76).
+  // A config with no name is `queryMode: "extended"`, which the read-only profile sends and
+  // which goes to `mockQueryFn` exactly as it always did.
+  if (typeof sql !== "string" && typeof sql.name === "string") return answerParseProbe();
+  // The two statements that end a transaction on the wire also end it here, so a
+  // test can observe the provider's rollback rather than only the call to it.
+  const ended = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(sql as string);
+  if (ended) mockTxStatus = "I";
+  // A bare BEGIN opens one, which PostgreSQL reports as "T" on the very next
+  // ReadyForQuery. `mockBeginOpens = false` is the server that accepts BEGIN and opens
+  // nothing, the way RisingWave does.
+  if (mockBeginOpens && /^\s*BEGIN\s*;?\s*$/i.test(sql as string)) mockTxStatus = "T";
+  // The aborted block the maintenance probe asks inside (#1387), as PostgreSQL keeps it: the
+  // poison aborts an open block, and every later statement but the ROLLBACK is refused with
+  // `25P02` after its parse, or with the grammar error a statement in `mockAbortedBlockRefusals`
+  // gets from a server that does not have it.
+  if (sql === "SELECT 1/0" && mockTxStatus === "T") {
+    mockTxStatus = "E";
+    return Promise.reject(Object.assign(new Error("division by zero"), { code: "22012" }));
+  }
+  if (typeof sql === "string" && mockTxStatus === "E" && !ended) {
+    const refusal = mockAbortedBlockRefusals[sql];
+    if (refusal === "resolves") return Promise.resolve({ rows: [] });
+    return Promise.reject(
+      refusal ??
+        Object.assign(new Error("current transaction is aborted, commands ignored until end of transaction block"), {
+          code: "25P02",
+        }),
+    );
+  }
+  const answer = mockQueryFn(sql as string, params);
+  if (typeof sql !== "string") return answer;
+  // One result per statement, which is what `pg` hands back for a multi-statement simple
+  // query and what the apply's post-condition counts.
+  const count = mockApplyResultCount;
+  return sql.startsWith(APPLY_UNIT_PREFIX) && count !== "not-an-array"
+    ? answer.then((result) => Array.from({ length: count }, () => result))
+    : answer;
+}
+
 const mockClient = {
-  query: (sql: string | MockParseConfig, params?: unknown[]) => {
-    mockWire.push(sql);
-    // A config carrying a `name` is a NAMED prepared statement, which is the only way
-    // node-postgres reaches Parse, and it is answered the way the server answers a Parse (D76).
-    // A config with no name is `queryMode: "extended"`, which the read-only profile sends and
-    // which goes to `mockQueryFn` exactly as it always did.
-    if (typeof sql !== "string" && typeof sql.name === "string") return answerParseProbe();
-    // The two statements that end a transaction on the wire also end it here, so a
-    // test can observe the provider's rollback rather than only the call to it.
-    const ended = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(sql as string);
-    if (ended) mockTxStatus = "I";
-    // A bare BEGIN opens one, which PostgreSQL reports as "T" on the very next
-    // ReadyForQuery. `mockBeginOpens = false` is the server that accepts BEGIN and opens
-    // nothing, the way RisingWave does.
-    if (mockBeginOpens && /^\s*BEGIN\s*;?\s*$/i.test(sql as string)) mockTxStatus = "T";
-    // The aborted block the maintenance probe asks inside (#1387), as PostgreSQL keeps it: the
-    // poison aborts an open block, and every later statement but the ROLLBACK is refused with
-    // `25P02` after its parse, or with the grammar error a statement in `mockAbortedBlockRefusals`
-    // gets from a server that does not have it.
-    if (sql === "SELECT 1/0" && mockTxStatus === "T") {
-      mockTxStatus = "E";
-      return Promise.reject(Object.assign(new Error("division by zero"), { code: "22012" }));
-    }
-    if (typeof sql === "string" && mockTxStatus === "E" && !ended) {
-      const refusal = mockAbortedBlockRefusals[sql];
-      if (refusal === "resolves") return Promise.resolve({ rows: [] });
-      return Promise.reject(
-        refusal ??
-          Object.assign(new Error("current transaction is aborted, commands ignored until end of transaction block"), {
-            code: "25P02",
-          }),
-      );
-    }
-    const answer = mockQueryFn(sql as string, params);
-    if (typeof sql !== "string") return answer;
-    // One result per statement, which is what `pg` hands back for a multi-statement simple
-    // query and what the apply's post-condition counts.
-    const count = mockApplyResultCount;
-    return sql.startsWith(APPLY_UNIT_PREFIX) && count !== "not-an-array"
-      ? answer.then((result) => Array.from({ length: count }, () => result))
-      : answer;
+  query: (sql: string | MockParseConfig | MockRowModeConfig, params?: unknown[]) => {
+    const arrayRows = typeof sql !== "string" && (sql as MockRowModeConfig).rowMode === "array";
+    // The user's statement on the simple protocol is unwrapped to the text it carries, so every
+    // fixture below keeps matching on the statement; the read-only profile's extended config is
+    // handed on whole, as it always was.
+    if (arrayRows && (sql as MockRowModeConfig).queryMode === undefined) sql = (sql as MockRowModeConfig).text;
+    const answered = mockClientQuery(sql as string | MockParseConfig, params);
+    return arrayRows ? answered.then((answer) => asRowModeArray(answer as MockPgAnswer | MockPgAnswer[])) : answered;
   },
   getTransactionStatus: () => mockTxStatus,
   // `pg`'s client is an EventEmitter; `runMaintenance` listens for the server's notices (#1387).
@@ -3397,8 +3445,9 @@ describe("PostgresProvider", () => {
         const built = new SessionClient(lastPoolConfig);
         for (const sent of startup) built.emit("notice", sent);
         session = Object.assign(built, {
-          query: async (sql: string, params?: unknown[]) => {
-            for (const sent of raised[sql] ?? []) built.emit("notice", sent);
+          query: async (sql: string | { text: string }, params?: unknown[]) => {
+            // The user's statement arrives as a `{ text, rowMode }` config, the provider's own as text.
+            for (const sent of raised[typeof sql === "string" ? sql : sql.text] ?? []) built.emit("notice", sent);
             return mockClient.query(sql, params);
           },
           getTransactionStatus: mockClient.getTransactionStatus,
@@ -4572,6 +4621,211 @@ describe("PostgresProvider declared column types", () => {
       "ROLLBACK",
       "DISCARD ALL",
     ]);
+    await provider.disconnect();
+  });
+});
+
+/**
+ * Every column keeps its own value (D3). `pg`'s object rows key a value by its column's name, so of two
+ * columns one name declares, the row keeps only the last: measured 2026-10-07 on PostgreSQL 16, the join
+ * below answered the customer's id under both `id` headers and the order's id nowhere. The provider asks
+ * for array rows and keys them by `uniqueFieldNames`, so a repeat is `id (2)`. The fixtures answer the
+ * array rows that run measured, so the mock cannot drop a value the driver would have kept.
+ */
+describe("PostgresProvider result columns", () => {
+  const join = {
+    rows: [
+      [1, 100, "widget", 100, "Acme"],
+      [2, 200, "gadget", 200, "Globex"],
+    ],
+    fields: [
+      { name: "id", dataTypeID: 23 },
+      { name: "customer_id", dataTypeID: 23 },
+      { name: "item", dataTypeID: 25 },
+      { name: "id", dataTypeID: 23 },
+      { name: "name", dataTypeID: 25 },
+    ],
+    rowCount: 2,
+  };
+  const JOIN_SQL = "SELECT * FROM orders o JOIN customers c ON c.id = o.customer_id";
+  const joinFields = ["id", "customer_id", "item", "id (2)", "name"];
+  const joinRows = [
+    { id: 1, customer_id: 100, item: "widget", "id (2)": 100, name: "Acme" },
+    { id: 2, customer_id: 200, item: "gadget", "id (2)": 200, name: "Globex" },
+  ];
+
+  async function connected() {
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    return provider;
+  }
+
+  test("query() asks pg for array rows and keeps both values of a repeated name", async () => {
+    const sent: unknown[] = [];
+    const query = spyOn(mockClient, "query");
+    mockQueryFn = (sql) =>
+      Promise.resolve(
+        sql === "SELECT 1 AS a, 2 AS a"
+          ? {
+              rows: [[1, 2]],
+              fields: [
+                { name: "a", dataTypeID: 23 },
+                { name: "a", dataTypeID: 25 },
+              ],
+              rowCount: 1,
+            }
+          : { rows: [], fields: [], rowCount: 0 },
+      );
+    try {
+      const provider = await connected();
+      const result = await provider.query("SELECT 1 AS a, 2 AS a", [7]);
+      sent.push(...query.mock.calls.at(-1)!);
+      expect(result.fields).toEqual(["a", "a (2)"]);
+      expect(result.rows).toEqual([{ a: 1, "a (2)": 2 }]);
+      expect(result.columnTypes).toEqual({ a: "integer", "a (2)": "text" });
+      expect(result.rowCount).toBe(1);
+      await provider.disconnect();
+    } finally {
+      query.mockRestore();
+    }
+    // The values still travel beside the config, so the protocol pg picks is the one it picked before.
+    expect(sent).toEqual([{ text: "SELECT 1 AS a, 2 AS a", rowMode: "array" }, [7]]);
+  });
+
+  test("query() keeps the order's id and the customer's id of a join apart", async () => {
+    mockQueryFn = () => Promise.resolve(join);
+    const provider = await connected();
+    const result = await provider.query(JOIN_SQL);
+    expect(result.fields).toEqual(joinFields);
+    expect(result.rows).toEqual(joinRows);
+    expect(result.columnTypes).toEqual({
+      id: "integer",
+      customer_id: "integer",
+      item: "text",
+      "id (2)": "integer",
+      name: "text",
+    });
+    await provider.disconnect();
+  });
+
+  test("query() numbers the unnamed columns PostgreSQL calls ?column?", async () => {
+    mockQueryFn = () =>
+      Promise.resolve({
+        rows: [[1, 2]],
+        fields: [
+          { name: "?column?", dataTypeID: 23 },
+          { name: "?column?", dataTypeID: 23 },
+        ],
+        rowCount: 1,
+      });
+    const provider = await connected();
+    const result = await provider.query("SELECT 1, 2");
+    expect(result.fields).toEqual(["?column?", "?column? (2)"]);
+    expect(result.rows).toEqual([{ "?column?": 1, "?column? (2)": 2 }]);
+    await provider.disconnect();
+  });
+
+  test("queryInTransaction() reads the same way", async () => {
+    mockQueryFn = (sql) => Promise.resolve(sql === JOIN_SQL ? join : { rows: [], fields: [], rowCount: 0 });
+    const provider = await connected();
+    await provider.beginTransaction();
+    const result = await provider.queryInTransaction(JOIN_SQL);
+    expect(result.fields).toEqual(joinFields);
+    expect(result.rows).toEqual(joinRows);
+    await provider.rollbackTransaction();
+    await provider.disconnect();
+  });
+
+  test("queryReadOnly() reads the same way, and measures its budget on the rows it answers", async () => {
+    const sent: unknown[] = [];
+    mockQueryFn = (arg) => {
+      sent.push(arg);
+      const text = typeof arg === "string" ? arg : (arg as unknown as { text: string }).text;
+      if (text === JOIN_SQL) return Promise.resolve(join);
+      return Promise.resolve({
+        rows: [
+          { is_superuser: false, reads_server_files: false, writes_server_files: false, executes_programs: false },
+        ],
+        fields: [],
+        rowCount: 1,
+      });
+    };
+    const provider = new PostgresProvider(makePgConfig(), {}, { readOnly: true });
+    await provider.connect();
+    const result = await provider.queryReadOnly(JOIN_SQL, {
+      statementTimeoutMs: 4500,
+      maxResultRows: 10,
+      maxResultBytes: 10_000,
+    } as ReadOnlyStatementBudget);
+    expect(result.fields).toEqual(joinFields);
+    expect(result.rows).toEqual(joinRows);
+    expect(sent).toContainEqual({ text: JOIN_SQL, queryMode: "extended", rowMode: "array" });
+
+    // The byte budget is measured on the keyed rows, which are what the agent receives.
+    const tight = { statementTimeoutMs: 4500, maxResultRows: 10, maxResultBytes: 60 } as ReadOnlyStatementBudget;
+    await expect(provider.queryReadOnly(JOIN_SQL, tight)).rejects.toThrow("exceeded the byte budget");
+    await provider.disconnect();
+  });
+
+  test("a multi-statement text answers its first result set, and every set when it has several", async () => {
+    mockQueryFn = () =>
+      Promise.resolve([
+        { rows: [], fields: [], rowCount: 3 },
+        join,
+        { rows: [[7]], fields: [{ name: "n", dataTypeID: 20 }], rowCount: 1 },
+        { rows: [], fields: [], rowCount: null },
+      ] as never);
+    const provider = await connected();
+    const result = await provider.query("INSERT INTO t SELECT 1; SELECT * FROM j; SELECT 7 AS n; COMMIT");
+    expect(result.fields).toEqual(joinFields);
+    expect(result.rows).toEqual(joinRows);
+    expect(result.rowCount).toBe(2);
+    expect(result.columnTypes?.["id (2)"]).toBe("integer");
+    expect(result.resultSets).toEqual([
+      {
+        rows: joinRows,
+        fields: joinFields,
+        columnTypes: { id: "integer", customer_id: "integer", item: "text", "id (2)": "integer", name: "text" },
+      },
+      { rows: [{ n: 7 }], fields: ["n"], columnTypes: { n: "bigint" } },
+    ]);
+    await provider.disconnect();
+  });
+
+  test("a multi-statement text with one result set answers it alone", async () => {
+    mockQueryFn = () =>
+      Promise.resolve([{ rows: [], fields: [], rowCount: 1 }, join, { rows: [], fields: [], rowCount: null }] as never);
+    const provider = await connected();
+    await provider.beginTransaction();
+    const result = await provider.queryInTransaction("INSERT INTO t VALUES (1); SELECT * FROM j; COMMIT");
+    expect(result.fields).toEqual(joinFields);
+    expect(result.rows).toEqual(joinRows);
+    expect(result.rowCount).toBe(2);
+    expect(Object.hasOwn(result, "resultSets")).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("a multi-statement text with no result set answers its first statement's count", async () => {
+    mockQueryFn = () =>
+      Promise.resolve([
+        { rows: [], fields: [], rowCount: 2 },
+        { rows: [], fields: [], rowCount: 5 },
+      ] as never);
+    const provider = await connected();
+    const result = await provider.query("INSERT INTO t VALUES (1), (2); DELETE FROM u");
+    expect(result.rows).toEqual([]);
+    expect(result.fields).toEqual([]);
+    expect(result.rowCount).toBe(2);
+    expect(Object.hasOwn(result, "resultSets")).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("a row whose value count differs from the column count is an error, not a guess", async () => {
+    mockQueryFn = () => Promise.resolve({ rows: [[1]], fields: [{ name: "a" }, { name: "b" }], rowCount: 1 });
+    const provider = await connected();
+    await expect(provider.query("SELECT a, b FROM t")).rejects.toThrow(
+      "PostgreSQL answered a row of 1 values for 2 columns",
+    );
     await provider.disconnect();
   });
 });
