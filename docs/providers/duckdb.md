@@ -49,8 +49,8 @@ is a native N-API addon carrying a 70 MB shared library rather than a runtime bu
 
 It is a separate type-id from `sqlite`, not a relative of it, for the same reason libSQL is: the
 execution layer has nothing in common. `bun:sqlite` is synchronous and returns JavaScript values;
-`@duckdb/node-api` is asynchronous, returns a reader, and can only be serialised through
-`getRowObjectsJson()` (§3.2). Every catalog statement differs. Every maintenance statement differs.
+`@duckdb/node-api` is asynchronous, returns a reader, and can only be serialised through its
+JSON readers (§3.2). Every catalog statement differs. Every maintenance statement differs.
 Sharing an id would mean one document describing two sets of measurements.
 
 ### 1.1 Deployment constraint
@@ -103,7 +103,7 @@ src/lib/db/providers/sql/duckdb/
 ```
 
 The driver seam is narrow by construction: `DuckDBInstance` / `DuckDBConnection` and the reader API
-(`runAndReadAll`, `getRowObjectsJson`, `columnNames`, `columnTypes`, `rowsChanged`, `interrupt`) are
+(`runAndReadAll`, `getRowsJson`, `columnNames`, `columnTypes`, `rowsChanged`, `interrupt`) are
 vocabulary of `@duckdb/node-api` and stay inside **`client.ts`** — `duckdb-seam-guard.test.ts` fails
 the build when any of it appears in a sibling. The import of the driver is dynamic and lives inside
 the open function, never at module scope, so the ~70 MB `libduckdb.so` is not loaded into a process
@@ -131,7 +131,7 @@ scoped with `database_name = current_database()` rather than by name, and object
 qualifies `schema.table`. A user who hits the binder error in the editor is being told about their
 own file name, and the doc says so here rather than leaving it to be rediscovered.
 
-### 3.2 `getRowObjects()` is banned; rows come from `getRowObjectsJson()`
+### 3.2 `getRowObjects()` is banned; rows come from `getRowsJson()`
 
 `getRowObjects()` throws the moment a result is serialised:
 
@@ -141,8 +141,9 @@ JSON.stringify cannot serialize BigInt       (Bun 1.3.14)
 ```
 
 Wide integers arrive as JavaScript `BigInt` values in that shape, so a table with a `BIGINT` primary
-key would break the whole API response rather than one cell. `getRowObjectsJson()` is the
-only reader used on the API path, and it hands back values that are already JSON-safe.
+key would break the whole API response rather than one cell. The JSON readers hand back values that
+are already JSON-safe, and `getRowsJson()`, which answers each row as an array, is the only reader
+used ([Result column names](#result-column-names) says why the array form and not `getRowObjectsJson()`).
 
 For
 
@@ -173,7 +174,7 @@ Wide integers staying as strings is the engine protecting exactness, and the pro
 "repair" it: `Number("9223372036854775807")` is a different number, and a rounded key is a
 corruption nothing downstream can detect. The grid renders the string as measured.
 
-**Columns come from `columnNames()`, never from the rows.** `getRowObjectsJson()` returns `[]` for an
+**Columns come from `columnNames()`, never from the rows.** `getRowsJson()` returns `[]` for an
 empty result set and carries no column information, while `columnNames()` and `columnTypes()` answer
 regardless. `columnTypes().map(String)` gives DuckDB's own type text — `INTEGER`, `VARCHAR`,
 `INTEGER[]`, `STRUCT("x" INTEGER)`, `HUGEINT`, `INTERVAL`, `UUID` — which is what populates
@@ -657,13 +658,29 @@ Explicitly **not** supported, so that a reader does not go looking:
 `query(sql, params)` runs one statement and returns `{ rows, fields, rowCount, executionTime,
 columnTypes? }`.
 
-- **Rows** come from `getRowObjectsJson()`; `getRowObjects()` is never called (§3.2).
-- **`fields`** come from `columnNames()`, so an empty result still names its columns.
+- **Rows** come from `getRowsJson()`, keyed by position under `fields`; `getRowObjects()` is never called (§3.2).
+- **`fields`** come from `columnNames()`, so an empty result still names its columns, and a repeated name is numbered ([Result column names](#result-column-names)).
 - **`columnTypes`** carries `columnTypes().map(String)` — DuckDB's own type text — and the key is
   **omitted entirely** when there is nothing to publish, never emitted as `{}`.
 - **`rowCount`** is the row count for a read and `result.rowsChanged` for a write; the synthetic
   `Count` column is not surfaced (§3.4).
 - **Cancellation** calls `interrupt()` on the connection (§3.9).
+
+### Result column names
+
+Every result column comes back under a name that is non-empty and that no other column of the result has, with its own value.
+`client.ts` reads the rows as arrays (`getRowsJson()`) and keys them by position under `uniqueFieldNames(columnNames())` ([`result-fields.ts`](../../src/lib/db/utils/result-fields.ts)), and `columnTypes` is keyed by the same names.
+Measured 2026-10-07 in-process on @duckdb/node-api 1.5.5-r.4, pinned in `tests/integration/db/duckdb-provider.test.ts`:
+
+| Statement | `fields` | Row |
+|---|---|---|
+| `SELECT 1 AS a, 'x' AS a` | `a`, `a (2)` | `{ a: 1, "a (2)": "x" }`, typed `INTEGER` and `VARCHAR` |
+| `SELECT 2 AS "a:1", 3 AS a, 4 AS a, 4 + 5` | `a:1`, `a`, `a (2)`, `(4 + 5)` | every value under its own name |
+| `SELECT 1 AS ""` | none | the parser refuses it: *zero-length delimited identifier* |
+
+DuckDB names an unaliased expression by its text (`(4 + 5)`) and refuses an empty alias, so it never declares a column with no name.
+A repeated name was the defect: the driver's `getRowObjectsJson()` keys a repeat `a:1` while `columnNames()` lists `a` twice, so both grid headers showed the first value, and a column the statement itself named `a:1` was overwritten by the repeat.
+`queryReadOnly()` reads through the same client call.
 
 ### A transaction a statement left open
 
@@ -1559,7 +1576,7 @@ The reach described in this section is an admin editor's on an inline connection
 | No `REINDEX`, no integrity check | Neither statement exists on 1.5.5 | The engine's (§8) |
 | No analyze/timing plan, ever | `EXPLAIN (ANALYZE, FORMAT JSON)` **executes the statement** — measured, an `INSERT` explained three times inserted three rows | **Ours, and permanent.** A later DuckDB emitting valid analyze JSON makes this worse, not better: the plan would look usable while still running what the user asked only to see (§3.6) |
 | Sizes arrive as formatted strings | `pragma_database_size()` publishes no raw bytes | The engine's (§3.5) |
-| Wide integers render as strings | `getRowObjectsJson()` quotes them to stay exact | The engine's, and deliberate (§3.2) |
+| Wide integers render as strings | `getRowsJson()` quotes them to stay exact | The engine's, and deliberate (§3.2) |
 | A multi-statement string runs only its first statement | The driver's `runAndReadAll` behaviour | The driver's (§3.11) |
 | No `SERIAL`, no `IDENTITY`, no `AUTOINCREMENT` | None of the three exists; `GENERATED … AS IDENTITY` parses and is refused at execution | The engine's — the create-table form defaults from a sequence instead (§3.13) |
 |  ~140 MB of bindings on a Linux tree | glibc and musl packages both install | Ours to prune in the AppImage build (§11) |

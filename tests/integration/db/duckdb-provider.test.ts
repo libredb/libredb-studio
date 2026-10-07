@@ -826,7 +826,7 @@ describe("query()", () => {
     expect(result.columnTypes).toEqual({ a: "INTEGER", b: "VARCHAR" });
   });
 
-  test("wide types arrive in the shapes getRowObjectsJson produces", async () => {
+  test("wide types arrive in the shapes the JSON row reader produces", async () => {
     // Pinned because they are the reason `getRowObjects()` is banned: it throws on
     // JSON.stringify ("Do not know how to serialize a BigInt").
     provider = new DuckDBProvider(makeConfig());
@@ -854,6 +854,37 @@ describe("query()", () => {
     expect(result.rows).toEqual([]);
     expect(result.fields).toEqual(["id", "name"]);
     expect(result.columnTypes).toEqual({ id: "INTEGER", name: "VARCHAR" });
+  });
+
+  // DuckDB's own row objects key a repeat `a:1`, while `columnNames()` lists `a` twice, so
+  // both headers showed the first value; and a column the statement itself named `a:1`
+  // collided with that key and lost its value. The rows are read positionally now.
+  test("a repeated alias keeps both values under two names, with both types", async () => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+
+    const result = await provider.query("SELECT 1 AS a, 'x' AS a");
+
+    expect(result.fields).toEqual(["a", "a (2)"]);
+    expect(result.rows).toEqual([{ a: 1, "a (2)": "x" }]);
+    expect(result.columnTypes).toEqual({ a: "INTEGER", "a (2)": "VARCHAR" });
+  });
+
+  test("a column named like DuckDB's own repeat key keeps its value", async () => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+
+    const result = await provider.query('SELECT 2 AS "a:1", 3 AS a, 4 AS a, 4 + 5');
+
+    expect(result.fields).toEqual(["a:1", "a", "a (2)", "(4 + 5)"]);
+    expect(result.rows).toEqual([{ "a:1": 2, a: 3, "a (2)": 4, "(4 + 5)": 9 }]);
+  });
+
+  test("an empty alias is refused by the engine's parser, so no column comes back unnamed", async () => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+
+    await expect(provider.query('SELECT 1 AS ""')).rejects.toThrow(/zero-length delimited identifier/);
   });
 
   test("an INSERT reports the rows it changed and shows no Count grid", async () => {
@@ -1347,6 +1378,18 @@ describe("queryReadOnly()", () => {
     await provider.connect();
 
     await expect(provider.queryReadOnly("SELECT 1", GENEROUS_BUDGET)).rejects.toThrow(/agent read-only profile/);
+  });
+
+  test("a repeated alias keeps both values through the profiled handle", async () => {
+    provider = await readOnlyProvider();
+
+    const result = await provider.queryReadOnly("SELECT 1 AS id, id FROM users ORDER BY id", GENEROUS_BUDGET);
+
+    expect(result.fields).toEqual(["id", "id (2)"]);
+    expect(result.rows).toEqual([
+      { id: 1, "id (2)": 1 },
+      { id: 1, "id (2)": 2 },
+    ]);
   });
 
   test("reads answer normally through the profiled handle", async () => {
@@ -1960,7 +2003,7 @@ describe("a non-admin editor handle has no statement-level file or network reach
     await admin.connect();
     try {
       expect((await admin.query("SELECT current_setting('enable_external_access') AS v")).rows).toEqual([{ v: true }]);
-      // DuckDB's replacement scan returns untyped CSV columns as VARCHAR, so getRowObjectsJson
+      // DuckDB's replacement scan returns untyped CSV columns as VARCHAR, so getRowsJson
       // quotes them, matching the BARE_SCAN assertions elsewhere in this file.
       expect((await admin.query(`SELECT * FROM read_csv_auto('${input}')`)).rows).toEqual([{ a: "1", b: "2" }]);
       expect(String((await admin.query(`SELECT content FROM read_text('${secret}')`)).rows[0].content)).toContain(
@@ -4216,7 +4259,7 @@ describe("DuckDB object statements: what the fixture cannot show", () => {
 
   test("a count the driver cannot read leaves its seeded value rather than writing NaN", () => {
     // The `toNumber` seam is injected precisely so this can be driven: a DuckDB COUNT(*)
-    // is BIGINT and arrives as a decimal STRING through `getRowObjectsJson()`, so no live
+    // is BIGINT and arrives as a decimal STRING through `getRowsJson()`, so no live
     // read can produce an unreadable one. A driver change that did would otherwise write
     // `Number(undefined)`, and NaN renders as a blank badge that looks like a measurement.
     const counts = { table: { count: 0 }, macro: { count: 0 } };

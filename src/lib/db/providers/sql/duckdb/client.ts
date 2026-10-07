@@ -19,11 +19,16 @@
  * 2026-08-27, and recorded in `.duckdb-measured.md`):
  *
  * - `getRowObjects()` throws on `JSON.stringify` ("Do not know how to serialize a
- *   BigInt"), so `getRowObjectsJson()` is the only row reader used here. It is not a
+ *   BigInt"), so the JSON readers are the only row readers used here. It is not a
  *   preference: the API route serializes every result.
- * - `columnNames()` and `columnTypes()` answer even for an EMPTY row set, and
- *   `getRowObjectsJson()` carries no column information at all, so columns are read
- *   from the reader rather than from the first row.
+ * - `columnNames()` and `columnTypes()` answer even for an EMPTY row set, and the row
+ *   readers carry no column information at all, so columns are read from the reader
+ *   rather than from the first row.
+ * - `getRowObjectsJson()` keys a repeated column `a:1` (`deduplicatedColumnNames()`),
+ *   while `columnNames()` lists `a` twice, and a column the statement itself named `a:1`
+ *   collides with that key and loses its value (measured 2026-10-07, @duckdb/node-api
+ *   1.5.5-r.4). So the rows are read as arrays (`getRowsJson()`, the same per-value JSON
+ *   conversion) and keyed by position under `uniqueFieldNames`.
  * - `access_mode: 'READ_ONLY'` refuses writes to the attached database AND refuses to
  *   create a missing file, but on its own it is not a filesystem sandbox: `COPY ... TO`,
  *   `read_text('/etc/hostname')` and `glob('/etc/*')` all succeeded on a handle whose
@@ -43,6 +48,8 @@ import * as fs from "fs";
 import * as os from "os";
 import { join } from "path";
 import { ConnectionError } from "../../../errors";
+import { keyRowsByPosition } from "../../../utils/positional-rows";
+import { uniqueFieldNames } from "../../../utils/result-fields";
 
 // ============================================================================
 // Neutral result shape
@@ -51,13 +58,16 @@ import { ConnectionError } from "../../../errors";
 /**
  * One statement's outcome, in the vocabulary the rest of the provider speaks.
  *
- * `rows` are the JSON projections `getRowObjectsJson()` produces, which is the only
- * reader that survives serialization: BIGINT, HUGEINT and DECIMAL arrive as decimal
- * STRINGS, LIST as an array, STRUCT as an object, INTERVAL as
- * `{months, days, micros}` and UUID as a string.
+ * `rows` are the JSON projections `getRowsJson()` produces, which survive serialization:
+ * BIGINT, HUGEINT and DECIMAL arrive as decimal STRINGS, LIST as an array, STRUCT as an
+ * object, INTERVAL as `{months, days, micros}` and UUID as a string.
  */
 export interface DuckDBStatementResult {
-  /** Column order exactly as the engine declared it, present even for an empty row set. */
+  /**
+   * The names `rows` are keyed under, one per column in the order the engine declared them,
+   * present even for an empty row set: the declared names through `uniqueFieldNames`, so a
+   * repeated name comes back as `a`, `a (2)` and each column keeps its own value.
+   */
   columnNames: string[];
   /** DuckDB's own type text per column, positionally aligned with `columnNames`. */
   columnTypes: string[];
@@ -487,10 +497,11 @@ export async function openDuckDBClient(path: string, options: DuckDBOpenOptions)
           ? await connection.runAndReadAll(sql)
           : await connection.runAndReadAll(sql, params as Parameters<typeof connection.runAndReadAll>[1]);
 
+      const columnNames = uniqueFieldNames(reader.columnNames());
       return {
-        columnNames: reader.columnNames(),
+        columnNames,
         columnTypes: reader.columnTypes().map(String),
-        rows: reader.getRowObjectsJson() as Record<string, unknown>[],
+        rows: keyRowsByPosition(columnNames, reader.getRowsJson(), "duckdb", sql),
         rowsChanged: reader.rowsChanged,
       };
     },

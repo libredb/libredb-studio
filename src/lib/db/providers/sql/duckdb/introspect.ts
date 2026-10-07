@@ -120,7 +120,7 @@ const DATABASE_PATH_SQL = `SELECT path FROM duckdb_databases()
 // ============================================================================
 
 /**
- * Every 64-bit column arrives as a decimal STRING through `getRowObjectsJson()`, which
+ * Every 64-bit column arrives as a decimal STRING through `getRowsJson()`, which
  * is why the numeric fields below are typed `unknown` and read through `readCount`
  * rather than typed `number` and trusted.
  */

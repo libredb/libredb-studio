@@ -84,11 +84,10 @@ export function isWriteAcknowledgement(result: DuckDBStatementResult, leadingKey
 // ============================================================================
 
 /**
- * The engine's declared type per column, keyed by name.
+ * The engine's declared type per column, keyed by the name the rows use.
  *
- * Duplicate column names collapse to the last one, which is what the row objects
- * themselves do (`getRowObjectsJson()` builds plain objects), so the two agree. The
- * map is built even when it would be empty; the caller decides whether to emit it,
+ * The client has already made those names unique (`a`, `a (2)`), so a repeated column
+ * keeps its own type. The map is built even when it would be empty; the caller decides whether to emit it,
  * because `QueryResult.columnTypes` must be ABSENT rather than `{}` when there is
  * nothing to say.
  */
@@ -108,7 +107,7 @@ export function columnTypeMap(result: DuckDBStatementResult): Record<string, str
  * acknowledgement, not a projection, and the row count is the number the operator
  * asked for. A read reports what it selected, including the zero rows and the declared
  * columns of an empty result - `columnNames()` answers for an empty row set and
- * `getRowObjectsJson()` does not, which is why the columns never come from the rows.
+ * the row reader does not, which is why the columns never come from the rows.
  */
 export function toQueryResult(
   result: DuckDBStatementResult,
@@ -179,7 +178,7 @@ export function parseDuckDBSize(value: unknown): number | undefined {
 /**
  * A count DuckDB sent as a decimal string, or `undefined` when it sent something else.
  *
- * BIGINT arrives as a STRING through `getRowObjectsJson()` - `estimated_size`,
+ * BIGINT arrives as a STRING through `getRowsJson()` - `estimated_size`,
  * `total_blocks`, `block_id` and every other 64-bit column - so `Number(row.x)` is the
  * ordinary reading here rather than a defensive one. Non-finite input is absent for
  * the same reason `measuredNumber` treats it so: it is not a reading either.

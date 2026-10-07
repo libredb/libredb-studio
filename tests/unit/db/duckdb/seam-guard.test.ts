@@ -57,6 +57,7 @@ const DRIVER_TOKENS = [
   "runAndReadAll",
   "getRowObjectsJson",
   "getRowObjects",
+  "getRowsJson",
   "disconnectSync",
   "closeSync",
   "access_mode",
@@ -66,7 +67,7 @@ const SEAM_RULE = [
   `The DuckDB driver leaked out of ${CLIENT_FILE}.`,
   "",
   "`@duckdb/node-api` opens a DuckDBInstance, connects a DuckDBConnection, and answers a statement with a",
-  "DuckDBResultReader whose rows only survive serialization through getRowObjectsJson(). Issue #424 keeps all",
+  "DuckDBResultReader whose rows only survive serialization through its JSON readers. Issue #424 keeps all",
   "of that inside client.ts: provider logic reads the neutral DuckDBStatementResult (columnNames, columnTypes,",
   "rows, rowsChanged) through the DuckDBClient seam. That is what makes a second implementation - the Wasm",
   "build, a subprocess against the CLI - one new file rather than a rewrite of the provider and its",
@@ -169,7 +170,7 @@ describe("DuckDB driver seam", () => {
 
   // A detector that finds nothing anywhere is indistinguishable from a broken one, so
   // the file that is SUPPOSED to speak to the driver must light it up.
-  test.each(["@duckdb/node-api", "DuckDBInstance", "DuckDBConnection", "runAndReadAll", "getRowObjectsJson"])(
+  test.each(["@duckdb/node-api", "DuckDBInstance", "DuckDBConnection", "runAndReadAll", "getRowsJson"])(
     "the client itself uses %s, proving the detector reads real code",
     (token) => {
       const tokens = findLeaks(CLIENT_FILE, readProviderSource(CLIENT_FILE)).map((leak) => leak.token);
