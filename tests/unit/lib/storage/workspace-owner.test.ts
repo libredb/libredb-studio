@@ -6,7 +6,11 @@ if (typeof globalThis.window === "undefined") {
 }
 
 import { mockGlobalFetch, restoreGlobalFetch } from "../../../helpers/mock-fetch";
-import { claimWorkspaceForSignedInAccount, readSignedInUsername } from "@/lib/storage/workspace-owner";
+import {
+  claimWorkspaceForSignedInAccount,
+  readSignedInUsername,
+  SessionEndedError,
+} from "@/lib/storage/workspace-owner";
 import { SERVER_MIGRATED_KEY, WORKSPACE_OWNER_KEY } from "@/lib/storage/local-storage";
 
 const SERVER_MODE = { "/api/storage/config": { json: { provider: "postgres", serverMode: true } } };
@@ -96,6 +100,18 @@ describe("readSignedInUsername", () => {
   test("answers the username of GET /api/auth/me", async () => {
     mockGlobalFetch({ "/api/auth/me": { json: { user: { username: "user@libredb.org" } } } });
     expect(await readSignedInUsername()).toBe("user@libredb.org");
+  });
+
+  test("a 401 throws SessionEndedError: the session has ended", async () => {
+    mockGlobalFetch({ "/api/auth/me": { status: 401, json: { authenticated: false } } });
+    const failure = await readSignedInUsername().catch((err: unknown) => err);
+    expect(failure).toBeInstanceOf(SessionEndedError);
+  });
+
+  test("any other failure is not SessionEndedError", async () => {
+    mockGlobalFetch({ "/api/auth/me": { status: 503, json: { error: "down" } } });
+    const failure = await readSignedInUsername().catch((err: unknown) => err);
+    expect(failure).not.toBeInstanceOf(SessionEndedError);
   });
 
   test("an answer without a username throws", async () => {

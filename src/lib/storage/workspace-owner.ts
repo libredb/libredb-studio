@@ -9,9 +9,21 @@ import { appFetch } from "@/lib/config/base-path";
 import { claimAccountWorkspace, SERVER_MIGRATED_KEY, WORKSPACE_OWNER_KEY } from "./local-storage";
 import type { StorageConfigResponse } from "./types";
 
-/** The signed-in account's username, from GET /api/auth/me. Throws when it cannot be read. */
+/** GET /api/auth/me answered 401: there is no session any more, so no account is signed in. */
+export class SessionEndedError extends Error {
+  constructor() {
+    super("The session has ended");
+    this.name = "SessionEndedError";
+  }
+}
+
+/**
+ * The signed-in account's username, from GET /api/auth/me. Throws when it cannot be read:
+ * `SessionEndedError` when the session has ended, an ordinary error otherwise.
+ */
 export async function readSignedInUsername(): Promise<string> {
   const res = await appFetch("/api/auth/me");
+  if (res.status === 401) throw new SessionEndedError();
   if (!res.ok) throw new Error(`Could not read the signed-in account: HTTP ${res.status}`);
   const body = (await res.json()) as { user?: { username?: unknown } };
   const username = body.user?.username;

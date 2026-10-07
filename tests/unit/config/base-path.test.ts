@@ -7,6 +7,7 @@ import {
   appFetch,
   currentAppPath,
   onSessionEnded,
+  reportSessionEnded,
 } from "@/lib/config/base-path";
 import { sessionRequiredBody } from "@/lib/api/session-ended";
 
@@ -199,6 +200,14 @@ describe("appFetch session-ended notice", () => {
     const response = json(401, sessionRequiredBody("Authentication required"));
     await respondWith(response);
     expect(response.bodyUsed).toBe(false);
+  });
+
+  test("reportSessionEnded calls the registered handler, and does nothing without one", () => {
+    reportSessionEnded();
+    const handler = mock(() => {});
+    unregister = onSessionEnded(handler);
+    reportSessionEnded();
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
   test("unregistering removes only the handler it registered", async () => {

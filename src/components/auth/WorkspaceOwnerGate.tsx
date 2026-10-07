@@ -2,9 +2,14 @@
 
 import { type ReactNode, useEffect, useState } from "react";
 import { ViewLoading } from "@/components/LazyView";
+import { reportSessionEnded } from "@/lib/config/base-path";
 import { logger } from "@/lib/logger";
 import { WORKSPACE_OWNER_KEY } from "@/lib/storage/local-storage";
-import { claimWorkspaceForSignedInAccount, readSignedInUsername } from "@/lib/storage/workspace-owner";
+import {
+  claimWorkspaceForSignedInAccount,
+  readSignedInUsername,
+  SessionEndedError,
+} from "@/lib/storage/workspace-owner";
 
 /**
  * Renders a page that reads this browser's copy of the workspace only once the copy is the
@@ -16,7 +21,9 @@ import { claimWorkspaceForSignedInAccount, readSignedInUsername } from "@/lib/st
  * rendering and reloads, so the check runs again for the account signed in now. A sign-in can
  * also land where nothing records an owner (an unknown address), so whenever the tab is shown
  * again it asks which account is signed in, and reloads the same way when that is no longer the
- * account it rendered for. In local mode the page renders after the storage mode is known, with
+ * account it rendered for. A session that has ended, at the first check or when the tab is shown
+ * again, shows no page and no message: the tab goes to sign in, as every page does when the server
+ * reports an ended session. In local mode the page renders after the storage mode is known, with
  * the copy as it is.
  */
 export function WorkspaceOwnerGate({ children }: { children: ReactNode }) {
@@ -31,12 +38,16 @@ export function WorkspaceOwnerGate({ children }: { children: ReactNode }) {
         setState("ready");
         if (owner === null) return;
         let left = false;
-        const leave = () => {
-          if (left || cancelled) return;
+        /** Stops rendering the page, once; answers whether this call is the one that did. */
+        const drop = () => {
+          if (left || cancelled) return false;
           left = true;
           stopListening();
           setState("checking");
-          window.location.reload();
+          return true;
+        };
+        const leave = () => {
+          if (drop()) window.location.reload();
         };
         const onStorage = (event: StorageEvent) => {
           if (event.key !== null && event.key !== WORKSPACE_OWNER_KEY) return;
@@ -50,8 +61,13 @@ export function WorkspaceOwnerGate({ children }: { children: ReactNode }) {
               if (username !== owner) leave();
             },
             // Not knowing the account now says nothing about a switch: this page stays as it
-            // is, and the next request a page sends meets the session check as usual.
+            // is, and the next request a page sends meets the session check as usual. A session
+            // that has ended is known: the page goes, and the tab goes to sign in.
             (err: unknown) => {
+              if (err instanceof SessionEndedError) {
+                if (drop()) reportSessionEnded();
+                return;
+              }
               logger.warn("Could not ask which account is signed in when the tab was shown again", {
                 error: err instanceof Error ? err.message : String(err),
               });
@@ -66,10 +82,15 @@ export function WorkspaceOwnerGate({ children }: { children: ReactNode }) {
         };
       },
       (err: unknown) => {
+        if (cancelled) return;
+        if (err instanceof SessionEndedError) {
+          reportSessionEnded();
+          return;
+        }
         logger.warn("Could not match this browser's workspace to the signed-in account", {
           error: err instanceof Error ? err.message : String(err),
         });
-        if (!cancelled) setState("failed");
+        setState("failed");
       },
     );
     return () => {

@@ -3,6 +3,7 @@ import "../../setup-dom";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
+import { onSessionEnded } from "@/lib/config/base-path";
 
 import { WorkspaceOwnerGate } from "@/components/auth/WorkspaceOwnerGate";
 
@@ -73,6 +74,25 @@ describe("WorkspaceOwnerGate", () => {
     expect(alert.textContent).toContain("could not confirm the signed-in account");
     expect(seen).toEqual([]);
     expect(localStorage.getItem("libredb_workspace_owner")).toBe("admin@libredb.org");
+  });
+
+  test("server mode: a session that has ended sends the tab to sign in, with neither the page nor an alert", async () => {
+    mockGlobalFetch({ ...SERVER_MODE, "/api/auth/me": { status: 401, json: { authenticated: false } } });
+    const signIn = mock(() => {});
+    const unregister = onSessionEnded(signIn);
+    const seen: (string | null)[] = [];
+
+    const view = render(
+      <WorkspaceOwnerGate>
+        <CopyReader seen={seen} />
+      </WorkspaceOwnerGate>,
+    );
+
+    await waitFor(() => expect(signIn).toHaveBeenCalledTimes(1));
+    unregister();
+    expect(view.queryByRole("alert")).toBeNull();
+    expect(view.queryByText("workspace page")).toBeNull();
+    expect(seen).toEqual([]);
   });
 
   test("a storage mode that cannot be read shows why and renders no page for a copy bound to a server account", async () => {
@@ -331,6 +351,27 @@ describe("WorkspaceOwnerGate", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(reload).not.toHaveBeenCalled();
       expect(view.queryByText("workspace page")).not.toBeNull();
+    });
+
+    test("server mode: a session that has ended since then drops the page and sends the tab to sign in", async () => {
+      const signIn = mock(() => {});
+      const unregister = onSessionEnded(signIn);
+      const { view } = await renderPage({
+        ...SERVER_ROUTES,
+        "/api/auth/me": () =>
+          signedIn === null
+            ? { status: 401, json: { authenticated: false } }
+            : { json: { user: { username: signedIn } } },
+      });
+      signedIn = null;
+
+      shown();
+
+      await waitFor(() => expect(signIn).toHaveBeenCalledTimes(1));
+      unregister();
+      expect(view.queryByText("workspace page")).toBeNull();
+      expect(view.queryByRole("alert")).toBeNull();
+      expect(reload).not.toHaveBeenCalled();
     });
 
     test("server mode: an account that cannot be read now keeps the page as it is", async () => {

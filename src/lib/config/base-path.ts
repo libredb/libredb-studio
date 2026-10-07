@@ -56,6 +56,15 @@ export function onSessionEnded(handler: () => void): () => void {
 }
 
 /**
+ * Reports that the session has ended, from a check that is not an appFetch answer (GET
+ * /api/auth/me answering 401): the registered handler sends the tab to sign in. Nothing happens
+ * without one.
+ */
+export function reportSessionEnded(): void {
+  sessionEndedHandler?.();
+}
+
+/**
  * Calls the registered handler when `response` is the session-required answer. Keyed on the code,
  * not the status: 401 also reports a database refusing its credentials and a model provider
  * refusing its key, with the session intact. Reads a clone, so the caller can still read the body,
