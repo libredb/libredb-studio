@@ -23,8 +23,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { appFetch } from "@/lib/config/base-path";
-import { containerDepth, enumerableKinds } from "@/lib/db/object-kinds";
-import type { Container, DatabaseObject, KindCount, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
+import { containerDepth, enumerableKinds, isCountSampled, isCountUnavailable } from "@/lib/db/object-kinds";
+import type {
+  Container,
+  DatabaseObject,
+  KindCount,
+  ObjectDetail,
+  ObjectKindSpec,
+  ProviderCapabilities,
+} from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { collapseRows, filterRows, normalizeQuery, searchExpanded } from "./filter";
 import { containerRowId, flattenTree, pathKey, type TreeRowModel } from "./flatten";
@@ -123,6 +130,34 @@ interface TreeCache {
   readonly expanded: ReadonlySet<string>;
   /** Failures by slot key, so a retry clears exactly the read it re-issues. */
   readonly failures: Readonly<Record<string, TreeReadFailure>>;
+  /**
+   * Slot keys the filter's read action issued, so the status line can tell a read in flight from
+   * one nobody asked for. Thrown away with the cache on a connection change.
+   */
+  readonly searchIssued: ReadonlySet<string>;
+}
+
+/**
+ * How many reads one press of the filter's read action issues.
+ *
+ * Every object route meters into the shared `query` bucket, 120 requests per 60 seconds
+ * (`src/lib/api/rate-limit.ts`), which the SQL editor spends from too. A fifth of it per press
+ * leaves the editor its room, and a schema with hundreds of unread folders is read in steps the
+ * reader can see and stop.
+ */
+export const SEARCH_READ_BATCH = 24;
+
+export interface TreeSearch {
+  /** Matching object rows in the filtered view. */
+  readonly matches: number;
+  /** Reads the filter cannot see past and nobody has issued yet. */
+  readonly unread: number;
+  /** Reads the action issued that have not answered. */
+  readonly reading: number;
+  /** Reads that answered with a failure. Opening that folder retries it, as it always has. */
+  readonly failed: number;
+  /** Issue the next `SEARCH_READ_BATCH` unread reads. */
+  readUnread(): void;
 }
 
 export interface TreeNodes {
@@ -142,6 +177,8 @@ export interface TreeNodes {
   refresh(): void;
   /** Read the top of the tree again, keeping whatever the reader has opened. */
   loadContainers(): void;
+  /** Present exactly while a query is active. */
+  readonly search?: TreeSearch;
 }
 
 function slotKey(slot: ReadSlot): string {
@@ -163,6 +200,7 @@ function emptyCache(connectionId: string): TreeCache {
     details: {},
     expanded: new Set(),
     failures: {},
+    searchIssued: new Set(),
   };
 }
 
@@ -195,16 +233,21 @@ function rootRead(depth: 0 | 1 | 2): RootRead {
  * the fact the walk already computed rather than recomputing it, so this function stays free of
  * the spec.
  */
+function listRead(container: readonly string[], kind: string): TreeRead {
+  return { request: { route: "list", container, kind }, slot: { kind: "objects", key: pathKey([...container, kind]) } };
+}
+
+function childContainersRead(parent: readonly string[]): TreeRead {
+  return { request: { route: "containers", parent }, slot: { kind: "containers", key: pathKey(parent) } };
+}
+
 function readFor(row: TreeRowModel, depth: 0 | 1 | 2): TreeRead | undefined {
   // A folder row always carries its kind id (`flatten.ts` builds it from the kind's spec); the
   // field is optional on the row model because an object row's comes from the object instead.
   // Reading it here rather than asserting it is what keeps the request's `kind` a plain string.
-  if (row.kind === "folder" && row.kindId !== undefined) {
-    return {
-      request: { route: "list", container: row.path, kind: row.kindId },
-      slot: { kind: "objects", key: row.id },
-    };
-  }
+  // A folder row's id is `pathKey([...path, kindId])`, the key `listRead` builds, so the slot has
+  // one source whether a row or the filter's read action asks for it.
+  if (row.kind === "folder" && row.kindId !== undefined) return listRead(row.path, row.kindId);
   // An object row always carries its kind id, and reading it rather than asserting it is what
   // keeps the request's `kind` a plain string, exactly as the folder arm above does.
   if (row.kind === "object" && row.kindId !== undefined && row.expanded !== undefined) {
@@ -216,7 +259,7 @@ function readFor(row: TreeRowModel, depth: 0 | 1 | 2): TreeRead | undefined {
   if (row.kind === "container") {
     // A container above the deepest level holds containers; only the deepest one holds folders.
     return row.path.length < depth
-      ? { request: { route: "containers", parent: row.path }, slot: { kind: "containers", key: pathKey(row.path) } }
+      ? childContainersRead(row.path)
       : { request: { route: "counts", container: row.path }, slot: { kind: "counts", key: pathKey(row.path) } };
   }
   // A COLUMN row, which is a leaf and asks for nothing. Stated rather than reached by falling off
@@ -246,6 +289,45 @@ function openReads(groups: readonly (readonly TreeRowModel[])[], depth: 0 | 1 | 
 }
 
 const NO_IDS: ReadonlySet<string> = new Set();
+
+/**
+ * Everything the filter cannot see past: an unlisted container above the leaf level, and an unread
+ * folder under a known leaf container (D6).
+ *
+ * A folder whose count is an exact `0` holds nothing to find, and one the engine refused to count
+ * cannot be listed either, so neither is counted. A bounded count is a floor, `0+` included, so it
+ * is. Failed reads are counted apart and left out of `reads`, so the press does not hammer a slot
+ * that just answered 429.
+ */
+function unreadReads(
+  cache: TreeCache,
+  kinds: readonly ObjectKindSpec[],
+  depth: 0 | 1 | 2,
+): { readonly reads: readonly TreeRead[]; readonly failed: number } {
+  const reads: TreeRead[] = [];
+  let failed = 0;
+  const consider = (read: TreeRead) => {
+    if (isSlotFilled(cache, read.slot)) return;
+    if (cache.failures[slotKey(read.slot)] !== undefined) failed += 1;
+    else reads.push(read);
+  };
+  for (const container of cache.containers) {
+    if (container.path.length < depth) consider(childContainersRead(container.path));
+  }
+  const leaves =
+    depth === 0
+      ? [[]]
+      : cache.containers.filter((container) => container.path.length === depth).map((container) => container.path);
+  for (const path of leaves) {
+    const counts = cache.counts[pathKey(path)];
+    for (const spec of kinds) {
+      const count = counts?.[spec.id];
+      if (count !== undefined && (isCountUnavailable(count) || (!isCountSampled(count) && count.count === 0))) continue;
+      consider(listRead(path, spec.id));
+    }
+  }
+  return { reads, failed };
+}
 
 function isSlotFilled(cache: TreeCache, slot: ReadSlot): boolean {
   switch (slot.kind) {
@@ -608,6 +690,11 @@ export function useTreeNodes(
   }, [cache, collapsed, depth, kinds, needle, readsColumns]);
 
   const rows = filtered?.rows ?? treeRows;
+
+  const unread = useMemo(
+    () => (filtered === undefined ? undefined : unreadReads(cache, kinds, depth)),
+    [cache, depth, filtered, kinds],
+  );
   const readGroups = useMemo(
     () => (filtered === undefined ? [treeRows] : [treeRows, filtered.rows.filter((row) => row.kind === "object")]),
     [filtered, treeRows],
@@ -767,6 +854,30 @@ export function useTreeNodes(
 
   const loadContainers = useCallback(() => apply((current) => forgetRoot(current, root.slot)), [apply, root]);
 
+  const readUnread = useCallback(() => {
+    if (unread === undefined) return;
+    const batch = unread.reads
+      .filter((read) => !cache.searchIssued.has(slotKey(read.slot)))
+      .slice(0, SEARCH_READ_BATCH);
+    apply((current) => ({
+      ...current,
+      searchIssued: new Set([...current.searchIssued, ...batch.map((read) => slotKey(read.slot))]),
+    }));
+    for (const read of batch) void run(connectionId, connection, reader, read);
+  }, [apply, cache.searchIssued, connection, connectionId, reader, run, unread]);
+
+  const search = useMemo((): TreeSearch | undefined => {
+    if (filtered === undefined || unread === undefined) return undefined;
+    const reading = unread.reads.filter((read) => cache.searchIssued.has(slotKey(read.slot))).length;
+    return {
+      matches: filtered.matches,
+      unread: unread.reads.length - reading,
+      reading,
+      failed: unread.failed,
+      readUnread,
+    };
+  }, [cache.searchIssued, filtered, readUnread, unread]);
+
   return {
     rows,
     // A deferred tree is not loading. Nothing was asked for, so a spinner would report a
@@ -779,5 +890,6 @@ export function useTreeNodes(
     toggle,
     refresh,
     loadContainers,
+    search,
   };
 }

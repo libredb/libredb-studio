@@ -131,3 +131,81 @@ describe("useTreeNodes with a query", () => {
     expect(calls.filter((call) => call.route === "describe")).toHaveLength(1);
   });
 });
+
+describe("what the filter cannot see", () => {
+  test("is counted, never read on its own, and read on a press into the same cache", async () => {
+    const { calls, hook } = await mountWithReadTables();
+    hook.rerender({ query: "ord" });
+
+    // app/view (count 1) plus audit's two folders (counts unread). app/table is read.
+    expect(hook.result.current.search).toMatchObject({ matches: 1, unread: 3, reading: 0, failed: 0 });
+    const lists = () =>
+      calls.filter((call) => call.route === "list").map((call) => [call.body.container, call.body.kind]);
+    expect(lists()).toEqual([[["app"], "table"]]);
+
+    act(() => hook.result.current.search?.readUnread());
+
+    await waitFor(() => expect(hook.result.current.search).toMatchObject({ matches: 2, unread: 0, reading: 0 }));
+    expect(lists()).toEqual([
+      [["app"], "table"],
+      [["app"], "view"],
+      [["audit"], "table"],
+      [["audit"], "view"],
+    ]);
+    hook.rerender({ query: "" });
+    expect(hook.result.current.rows.find((row) => row.id === "app/view")?.expanded).toBe(false);
+  });
+
+  test("a folder whose count is an exact zero or a refusal is not counted as unread", async () => {
+    installFetch();
+    const zero = globalThis.fetch;
+    globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) =>
+      String(url).endsWith("/counts")
+        ? Response.json({ table: { count: 0 }, view: { unavailable: "not granted" } })
+        : zero(url, init),
+    ) as never;
+    const hook = renderHook(() => useTreeNodes(connectionOf("pg"), oneLevel, false, undefined, true, "x"));
+    await waitFor(() => expect(hook.result.current.search?.unread).toBe(2));
+  });
+
+  test("reads at most one batch per press", async () => {
+    const calls: Call[] = [];
+    const schemas = Array.from({ length: 30 }, (_, index) => ({ path: [`s${index}`], name: `s${index}`, level: 0 }));
+    globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
+      const route = String(url).slice(String(url).lastIndexOf("/") + 1);
+      calls.push({ route, body: JSON.parse(String(init?.body ?? "{}")) });
+      return Response.json(route === "containers" ? schemas : []);
+    }) as never;
+    const hook = renderHook(() => useTreeNodes(connectionOf("many"), oneLevel, false, undefined, true, "zzz"));
+    await waitFor(() => expect(hook.result.current.search?.unread).toBe(60));
+
+    act(() => hook.result.current.search?.readUnread());
+    // The fetch is issued inside an async read, so it is waited for rather than read synchronously.
+    await waitFor(() => expect(calls.filter((call) => call.route === "list")).toHaveLength(24));
+
+    await waitFor(() => expect(hook.result.current.search).toMatchObject({ unread: 36, reading: 0 }));
+    act(() => hook.result.current.search?.readUnread());
+    await waitFor(() => expect(calls.filter((call) => call.route === "list")).toHaveLength(48));
+  });
+
+  test("a read that failed is counted apart, and is not re-issued by the press", async () => {
+    installFetch();
+    const ok = globalThis.fetch;
+    globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) =>
+      String(url).endsWith("/list") ? Response.json({ error: "rate limited" }, { status: 429 }) : ok(url, init),
+    ) as never;
+    const hook = renderHook(() => useTreeNodes(connectionOf("pg"), oneLevel, false, undefined, true, "x"));
+    await waitFor(() => expect(hook.result.current.search?.unread).toBe(4));
+
+    act(() => hook.result.current.search?.readUnread());
+
+    await waitFor(() => expect(hook.result.current.search).toMatchObject({ unread: 0, reading: 0, failed: 4 }));
+  });
+
+  test("is absent when nothing is typed", async () => {
+    installFetch();
+    const hook = renderHook(() => useTreeNodes(connectionOf("pg"), oneLevel));
+    await waitFor(() => expect(hook.result.current.rows.length).toBeGreaterThan(0));
+    expect(hook.result.current.search).toBeUndefined();
+  });
+});
