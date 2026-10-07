@@ -4,6 +4,8 @@
  * Supports configurable patterns, RBAC, per-cell reveal, and persistence.
  */
 
+import { numberedRepeatBase } from "@/lib/db/utils/result-fields";
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type MaskType = "email" | "phone" | "card" | "ssn" | "full" | "partial" | "ip" | "date" | "financial" | "custom";
@@ -193,8 +195,6 @@ export function maskByType(value: string, pattern: MaskingPattern): string {
 }
 
 // ─── Config-based Detection ──────────────────────────────────────────────────
-
-import { numberedRepeatBase } from "@/lib/db/utils/result-fields";
 
 /**
  * A field name and every name it may repeat: a result numbers a repeated column `name (2)`

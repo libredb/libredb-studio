@@ -50,8 +50,8 @@ export function lazyRetry<T>(load: () => Promise<T>): () => Promise<T> {
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
       try {
         return await load();
-      } catch (second) {
-        throw ChunkLoadError.from(second);
+      } catch (retryError) {
+        throw ChunkLoadError.from(retryError);
       }
     }
   };

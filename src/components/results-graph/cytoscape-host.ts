@@ -54,8 +54,8 @@ export const loadCytoscape: CytoscapeFactory = async () => {
   const [{ default: cytoscape }, { default: fcose }] = await Promise.all([
     import("cytoscape"),
     import("cytoscape-fcose"),
-  ]).catch((failure: unknown) => {
-    throw ChunkLoadError.from(failure);
+  ]).catch((error: unknown) => {
+    throw ChunkLoadError.from(error);
   });
   cytoscape.use(fcose);
   return (options) => cytoscape(options);

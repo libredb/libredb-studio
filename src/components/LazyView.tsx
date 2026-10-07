@@ -61,7 +61,7 @@ interface ChunkBoundaryState {
 
 function sameKeys(a: readonly unknown[] | undefined, b: readonly unknown[] | undefined): boolean {
   if (a === b) return true;
-  if (a === undefined || b === undefined || a.length !== b.length) return false;
+  if (a === undefined || a.length !== b?.length) return false;
   return a.every((key, index) => Object.is(key, b[index]));
 }
 
