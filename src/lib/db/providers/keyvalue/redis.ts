@@ -568,6 +568,16 @@ function stringifyReply(reply: unknown): string {
 const ZSET_RANGE_COMMANDS: ReadonlySet<string> = new Set(["ZRANGE", "ZREVRANGE", "ZRANGEBYSCORE", "ZREVRANGEBYSCORE"]);
 
 /**
+ * True when the caller passed `option`, read case-insensitively from the command's
+ * own arguments. `WITHSCORES`, `NOVALUES` and `NOSCORES` all change the shape of a
+ * reply, so each one is read from the args rather than inferred from the command
+ * name, which cannot tell `ZSCAN board 0` from `ZSCAN board 0 NOSCORES`.
+ */
+function hasReplyOption(args: readonly string[], option: string): boolean {
+  return args.some((arg) => arg.toUpperCase() === option);
+}
+
+/**
  * The two column names a flat `[name, value, ...]` reply is read into, or `null`
  * when the command's list is not a list of pairs (#1454).
  *
@@ -581,7 +591,7 @@ function flatPairColumns(command: string, args: readonly string[]): readonly [st
   if (command === "HGETALL") return ["field", "value"];
   if (command === "CONFIG") return args[0]?.toUpperCase() === "GET" ? ["parameter", "value"] : null;
   if (ZSET_RANGE_COMMANDS.has(command)) {
-    return args.some((arg) => arg.toUpperCase() === "WITHSCORES") ? ["member", "score"] : null;
+    return hasReplyOption(args, "WITHSCORES") ? ["member", "score"] : null;
   }
   return null;
 }
@@ -599,31 +609,51 @@ function flatPairRows(
   return { rows, fields: [first, second], rowCount: rows.length };
 }
 
+/** The entry-id column of a stream reply, and the header a stream field of that name gets instead. */
+const STREAM_ID_COLUMN = "id";
+const STREAM_ID_FIELD_COLUMN = `${STREAM_ID_COLUMN} (field)`;
+
 /**
  * `XRANGE`/`XREVRANGE`: one `[id, [field, value, ...]]` entry per row, and the
  * header is `id` plus every field name the page used, in first-seen order.
  *
  * Redis does not require the entries of a stream to share fields, so the header
  * is the union of the page's fields and an entry missing one gets an empty cell
- * rather than the column being dropped for the entries that do have it. The
- * entry id is written LAST, so a stream field that happens to be called `id`
- * cannot replace the one value the row is addressed by.
+ * rather than the column being dropped for the entries that do have it.
+ *
+ * A row is built on a null-prototype object because a stream field name is
+ * arbitrary and attacker-influenced. On a plain object `__proto__` would set the
+ * prototype instead of a cell, so its value would vanish, and `constructor` would
+ * read the inherited function where the entry has no such field. The entry id has
+ * its own column, so a stream field also called `id` is shown beside it under
+ * `id (field)` rather than overwriting the value that addresses the row.
+ *
+ * A malformed entry raises. Redis always answers `[id, [field, value, ...]]` with
+ * an even field list, so an entry that is not that shape is a reply this reader
+ * cannot describe, and inventing a row for it would report fields the server never
+ * sent.
  */
 function streamEntryRows(result: readonly unknown[]): Omit<QueryResult, "executionTime"> {
-  const fields: string[] = ["id"];
+  const fields: string[] = [STREAM_ID_COLUMN];
   const rows: Record<string, unknown>[] = [];
   for (const entry of result) {
-    const pair = Array.isArray(entry) ? entry : [];
-    const row: Record<string, unknown> = {};
-    const values = pair[1];
-    if (Array.isArray(values)) {
-      for (let index = 0; index + 1 < values.length; index += 2) {
-        const field = String(values[index]);
-        if (!fields.includes(field)) fields.push(field);
-        row[field] = String(values[index + 1]);
-      }
+    if (!Array.isArray(entry) || !Array.isArray(entry[1]) || entry[0] === undefined || entry[0] === null) {
+      throw new Error(`Malformed stream entry: expected [id, [field, value, ...]], received ${stringifyReply(entry)}`);
     }
-    row.id = String(pair[0]);
+    const values = entry[1] as readonly unknown[];
+    if (values.length % 2 !== 0) {
+      throw new Error(
+        `Malformed stream entry ${String(entry[0])}: its field list has an odd length (${values.length})`,
+      );
+    }
+    const row: Record<string, unknown> = Object.create(null);
+    for (let index = 0; index < values.length; index += 2) {
+      const field = String(values[index]);
+      const header = field === STREAM_ID_COLUMN ? STREAM_ID_FIELD_COLUMN : field;
+      if (!fields.includes(header)) fields.push(header);
+      row[header] = String(values[index + 1]);
+    }
+    row[STREAM_ID_COLUMN] = String(entry[0]);
     rows.push(row);
   }
   for (const row of rows) {
@@ -635,15 +665,25 @@ function streamEntryRows(result: readonly unknown[]): Omit<QueryResult, "executi
 }
 
 /**
- * The columns of a cursor reply. `SCAN` and `SSCAN` list one element per row;
- * `HSCAN` and `ZSCAN` list pairs (#1454).
+ * The columns of a cursor reply, or `null` when the command's reply is not a
+ * cursor page. `SCAN` and `SSCAN` list one element per row; `HSCAN` and `ZSCAN`
+ * list pairs, unless the caller asked for `NOVALUES` or `NOSCORES`, which drop
+ * the second half and leave one element per row (#1454).
  */
-const SCAN_REPLY_COLUMNS: Record<string, readonly string[]> = {
-  SCAN: ["cursor", "key"],
-  SSCAN: ["cursor", "member"],
-  HSCAN: ["cursor", "field", "value"],
-  ZSCAN: ["cursor", "member", "score"],
-};
+function scanReplyColumns(command: string, args: readonly string[]): readonly string[] | null {
+  switch (command) {
+    case "SCAN":
+      return ["cursor", "key"];
+    case "SSCAN":
+      return ["cursor", "member"];
+    case "HSCAN":
+      return hasReplyOption(args, "NOVALUES") ? ["cursor", "field"] : ["cursor", "field", "value"];
+    case "ZSCAN":
+      return hasReplyOption(args, "NOSCORES") ? ["cursor", "member"] : ["cursor", "member", "score"];
+    default:
+      return null;
+  }
+}
 
 /**
  * `SCAN` and its siblings answer `[cursor, elements]`, and the cursor is not a
@@ -653,16 +693,27 @@ const SCAN_REPLY_COLUMNS: Record<string, readonly string[]> = {
  * A page with no elements still answers one row. A non-zero cursor with no keys
  * is a real reply, and the cursor column exists to be read - a zero-row reply
  * would hide the one value the reader needs to continue the walk.
+ *
+ * An element list that does not fill its columns raises rather than leaving a
+ * blank cell: `HSCAN` and `ZSCAN` answer pairs, so an odd list is a reply this
+ * reader cannot describe.
  */
-function scanRows(result: readonly unknown[], columns: readonly string[]): Omit<QueryResult, "executionTime"> {
+function scanRows(
+  command: string,
+  result: readonly unknown[],
+  columns: readonly string[],
+): Omit<QueryResult, "executionTime"> {
   const [cursorColumn, ...elementColumns] = columns;
   const cursor = String(result[0]);
   const list = Array.isArray(result[1]) ? (result[1] as unknown[]) : [];
+  if (list.length % elementColumns.length !== 0) {
+    throw new Error(`Malformed ${command} reply: ${list.length} elements do not fill ${elementColumns.length} columns`);
+  }
   const rows: Record<string, unknown>[] = [];
   for (let index = 0; index < list.length; index += elementColumns.length) {
     const row: Record<string, unknown> = { [cursorColumn]: cursor };
     elementColumns.forEach((column, offset) => {
-      row[column] = String(list[index + offset] ?? "");
+      row[column] = String(list[index + offset]);
     });
     rows.push(row);
   }
@@ -1609,9 +1660,9 @@ export class RedisProvider extends BaseDatabaseProvider {
       // `SCAN` and its siblings answer `[cursor, elements]`. The generic mapping
       // below would make the cursor a row of its own and the elements one JSON
       // string, which is not the shape the reply has (#1454).
-      const scanColumns = SCAN_REPLY_COLUMNS[command];
+      const scanColumns = scanReplyColumns(command, args);
       if (scanColumns) {
-        return scanRows(result, scanColumns);
+        return scanRows(command, result, scanColumns);
       }
 
       // Regular array result
