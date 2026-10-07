@@ -57,7 +57,9 @@ LibreDB Studio supports three storage modes. Pick the one that fits your use cas
 
 Server storage (`sqlite` or `postgres`) gives each person their own private workspace by partitioning connections, saved queries, and settings by the login username.
 For a team of three or more, pair server storage with Single Sign-On via [OIDC](OIDC.md) to provide individual logins, personal workspaces, and an audit trail that attributes actions to each user.
+In server storage the browser copy belongs to the signed-in account: signing out clears this browser's copy, open editor tabs included, and signing in as a different account starts from that account's server data.
 The default `local` mode stores data in the browser and does not isolate workspaces between people using the same browser profile.
+In `local` mode the next account to sign in on that browser profile sees, and can open, the connections saved there before it, saved credentials included.
 
 ---
 
@@ -449,6 +451,7 @@ When you switch from local mode to SQLite or PostgreSQL, **existing browser data
 **No manual steps required.** Just change the env var and restart.
 
 > If multiple users were sharing a browser in local mode, only the data from the user who migrates first will be sent. Each user's server storage is isolated by their login email.
+> From then on the browser copy belongs to that account (`libredb_workspace_owner`), and a different account signing in on the same browser starts from its own server data.
 
 For the full migration lifecycle and the underlying merge semantics, see [Migration Flow](#10-migration-flow) in Part 2.
 
@@ -1203,6 +1206,17 @@ App Mount
   │   └─ serverMode: true ──┐
   │                          │
   │   ┌──────────────────────▼──────────────────────┐
+  │   │ Owner: GET /api/auth/me → username          │
+  │   │  ├─ Unreadable → syncError, isReady stays   │
+  │   │  │   false, nothing is pulled or pushed     │
+  │   │  ├─ libredb_workspace_owner = username      │
+  │   │  │   → keep the browser copy                │
+  │   │  ├─ No owner, never migrated → keep it      │
+  │   │  │   (local-mode data, migrated below)      │
+  │   │  └─ Otherwise → clear the browser copy      │
+  │   └──────────────────────┬──────────────────────┘
+  │                          │
+  │   ┌──────────────────────▼──────────────────────┐
   │   │ Check libredb_server_migrated flag          │
   │   │  ├─ Not migrated → POST /api/storage/migrate│
   │   │  │   (send all localStorage → server merge) │
@@ -1213,6 +1227,7 @@ App Mount
   │   ┌──────────────────────▼──────────────────────┐
   │   │ Pull: GET /api/storage                      │
   │   │  → Write server data into localStorage      │
+  │   │  → Set libredb_workspace_owner = username   │
   │   │  → Components re-render from localStorage   │
   │   └──────────────────────┬──────────────────────┘
   │                          │
@@ -1237,6 +1252,21 @@ When any `storage.*` mutation fires:
    - Reads each pending collection from `localStorage`
    - Sends `PUT /api/storage/[collection]` for each
 
+### The Browser Copy Belongs to the Signed-In Account
+
+In server mode the browser copy is bound to the account that signed in: `libredb_workspace_owner` holds its username, and the lifecycle above compares it with `GET /api/auth/me` before anything is migrated, pulled or pushed.
+The copy is every synced collection, the editor tabs (never stored on the server), the object-source drafts, the agent thread hint, the migration flag and the owner key itself; per-browser preferences such as the theme and line numbers are not part of it.
+`clearAccountWorkspace()` in `src/lib/storage/local-storage.ts` holds that list.
+
+- **Same account:** the copy is kept, and the pull overwrites each collection the server holds; a collection the server does not hold yet stays local.
+- **A different account, or a copy with no owner that was already migrated:** the copy is cleared first, so the account starts from its own server data.
+- **A copy with no owner that was never migrated:** local-mode data, migrated into the signed-in account as described in [Migration Flow](#10-migration-flow).
+- **Sign-out** (the editor, the admin dashboard and the launch page): pending collections are pushed while the session is still valid, then the copy is cleared, then `POST /api/auth/logout` ends the session.
+  When a pending push does not land, the sign-out fails and the copy stays, so no unsaved change is dropped.
+- **A session that ended on its own** (expiry, a disabled account) clears nothing; the owner check at the next sign-in covers a different account.
+
+In local mode none of this runs: the browser copy is the only copy, it stays on sign-out, and no owner is recorded.
+
 ### Graceful Degradation
 
 - If `/api/storage/config` fails → stays in localStorage-only mode
@@ -1251,15 +1281,19 @@ When a user first enables server mode (or a new user logs in for the first time)
 
 ```
 1. Hook detects serverMode = true
-2. Checks localStorage('libredb_server_migrated') flag
-3. If not migrated:
+2. Reads the signed-in username (GET /api/auth/me) and clears a browser copy that belongs to another account
+3. Checks localStorage('libredb_server_migrated') flag
+4. If not migrated:
    a. Reads whichever of the 13 collections exist in localStorage (a fresh browser with none simply sets the flag and skips)
    b. POST /api/storage/migrate with the collected payload
    c. Server calls provider.mergeData() — upserts each collection as a whole blob in one transaction
    d. Sets 'libredb_server_migrated' flag in localStorage
-4. Pull: GET /api/storage → overwrite localStorage with server data
-5. Subsequent mutations sync normally via push
+5. Pull: GET /api/storage → overwrite localStorage with server data
+6. Sets 'libredb_workspace_owner' to the username
+7. Subsequent mutations sync normally via push
 ```
+
+Step 2 is described in [The Browser Copy Belongs to the Signed-In Account](#the-browser-copy-belongs-to-the-signed-in-account).
 
 This ensures existing localStorage data is preserved when transitioning to server mode.
 
