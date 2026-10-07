@@ -551,6 +551,42 @@
       }
     },
     {
+      "id": "ornith-1.5:35b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults, every cell on its first attempt. Investigate 17s · Optimize 2:20 · Assess 3:03 · Operate 27s · Analyze 53s · Plan 33s (medians of the passing runs). Re-verified against this branch's head after the roster moved: the lock does not depend on the code it was first taken with.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      }
+    },
+    {
+      "id": "ornith-1.5:9b",
+      "measured": "6/6 modes locked, 30/30 runs passed. `suppressPlanReasoning` carries two cells here. Plan reads 1/5 at the defaults: four of its five losses land in a four-second band at 141-145s, all `model-timeout` with zero tool calls - the second turn dies on the 90s ceiling after the plan-statement notice, and the suppression removes the turn that was being spent. Optimize reads 3/5 at the defaults and 5/5 with the same setting, on the third roll; `retryUnreadStop`, `unreportedCallCeiling: 6`, `turnTimeoutMs: 150000` and `retryEmptyTurn` were each measured alone on that cell and none reached 5/5. Its 35b sibling needs no setting at all.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": true,
+        "refusalExamples": false
+      }
+    },
+    {
       "id": "ornith:35b",
       "measured": "6/6 modes locked, 30/30 runs passed with the two suppressions below. Investigate 97s · Optimize 55s · Assess 50s · Operate 16s · Analyze 28s · Plan 37s (medians of the passing runs), slowest run 150s. Its plan cell read 0/5 twice at the defaults and locked on the third attempt once both suppressions were on. The other four surfaces had cleared at the defaults, and were read AGAIN under the same pair rather than shipped under a configuration no run had used: assess, operate and analyze read 5/5 on that pass, and optimize read 4/5 and then 5/5 on the re-roll. The slowest model here that still clears every surface.",
       "settings": {
@@ -764,6 +800,24 @@
       }
     },
     {
+      "id": "qwen3.5:35b",
+      "measured": "6/6 modes locked, 30/30 runs passed. `suppressPlanReasoning` is the one setting this model needs and plan is why: at the defaults that cell reads 4/5, and its single loss is a turn spent reasoning with no plan emitted (`unmet=[no-plan]`, zero tool calls). Raising `turnTimeoutMs` to the shipped maximum made it WORSE, 1/5, with the losses clustered at 157s - the ceiling was not the bound, the thinking was. A passing plan run emits in 59-72s whatever the ceiling is. Measured one variable at a time against these defaults, so the credit belongs to this setting alone.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": true,
+        "refusalExamples": false
+      }
+    },
+    {
       "id": "qwen3.5:4b",
       "measured": "6/6 locked, 30/30. Five surfaces cleared at the shipped defaults and were never touched; plan was the whole of the work and took two separate fixes. At the defaults its plan turns ended model-timeout with a zero-event ledger - the turn spent thinking, and plan mode holds no tools, so thinking time is the only thing that can fail. suppressPlanReasoning turned every one of those into a finished turn and the cell moved 0/5 to 1/5. The remaining four losses were not settings at all: the run wrote a correct refusal, naming the two views whose columns the inventory cannot derive and asking the one question that would unblock it, and opened it `NO STATEMENT AT ALL:` - a phrase this product's own planning rule put in front of the marker it was teaching. With that wording corrected the cell read 5/5 on its first pass. LOCKED but MARGINAL on data-analysis, and a later sweep is why that is written here: the same cell re-read 3/5 on a second sitting, its two losses `answer-uncited` and `no-answer`. The passing runs answer in two or three tool calls and the losing ones wander to ten and eleven, so the cell turns on whether the run settles early rather than on any setting. Recorded rather than re-measured away, because a figure that reads steadier than the model is worse than one that says where it is thin.",
       "settings": {
@@ -937,6 +991,24 @@
     {
       "id": "qwen3:30b",
       "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults with no tuning layered over them (every run's driver-resolved event records tuning origin \"bundled\"). Investigate 12s · Optimize 1m21s · Assess 54s · Operate 34s · Analyze 32s · Plan 34s (medians of the passing runs) — 4m07s of model time for the whole sweep. A size qwen3 did not have here: 4b, 8b and 14b shipped, and the 30b MoE is the first of the family measured above 14b. Slower than the small models by an order of magnitude - optimize 81s, four minutes for the whole sweep - and it closed all six cells in a single sitting without a retry.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      }
+    },
+    {
+      "id": "qwen3:32b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults, every cell on its first attempt. Investigate 41s · Optimize 1:33 · Assess 1:52 · Operate 23s · Analyze 1:54 · Plan 26s (medians of the passing runs). Its optimize cell read 4/5 and then 1/5 while two measurement runners raced on the same machine; with one runner it is 5/5, so the lower readings measured the rig, not the model.",
       "settings": {
         "sampling": {
           "temperature": 0,
