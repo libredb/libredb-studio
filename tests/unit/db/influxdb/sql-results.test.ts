@@ -174,6 +174,8 @@ describe("shapeJsonlBody, a column named twice", () => {
       "host",
     ],
     ["a repeat on a later line", '{"a":1}\n{"b":2,"a":1,"b":3}\n', "b"],
+    // Measured: a three-way self join names the key three times.
+    ["three columns of one name", '{"host":"a","host":"a","host":"a"}\n', "host"],
   ])("%s is a repeated-column shape error naming the column", (_, text, column) => {
     const error = shapeError(text);
     expect(error.fault).toBe("repeated-column");

@@ -379,7 +379,7 @@ describe("influxdb, connect and query", () => {
     expectError(
       mapped(new InfluxAnswerShapeError("repeated-column", "usage"), SQL3),
       QueryError,
-      "InfluxDB 3 answered with two columns named usage, and its answer cannot say which value belongs to which column, so nothing was shown; give one of them an alias with AS.",
+      "InfluxDB 3 answered with more than one column named usage, and its answer cannot say which value belongs to which column, so nothing was shown; give one of them an alias with AS.",
     );
   });
 

@@ -138,7 +138,7 @@ const SENTENCES = Object.freeze({
     "InfluxDB failed while running this query after accepting it, so its reason did not reach Studio; it is in the server log. Common causes: a division by zero, a failed cast.",
   notReadableRow: "InfluxDB 3 answered with a line Studio cannot read as a row.",
   repeatedColumn: (column: string) =>
-    `InfluxDB 3 answered with two columns named ${column}, and its answer cannot say which value belongs to which column, so nothing was shown; give one of them an alias with AS.`,
+    `InfluxDB 3 answered with more than one column named ${column}, and its answer cannot say which value belongs to which column, so nothing was shown; give one of them an alias with AS.`,
   noSqlOnVersion: (version: string) =>
     `This server is ${version}, which has no SQL endpoint: connect with InfluxDB (InfluxQL).`,
   pingForbiddenNoDatabase:
