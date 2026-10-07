@@ -39,7 +39,7 @@ function parseFailure(err: unknown, format: SeedConfigFormat): string {
 /**
  * YAML text to a value, with a warning treated as a failure. `parse` from `yaml` hands every warning to
  * process.emitWarning, which prints it to stderr outside the logger, quoting the source line: an unquoted
- * `password: !Passw0rd` is an unresolved tag, its warning names the password, and the value silently becomes "".
+ * `password: !TEST_PASSWORD` is an unresolved tag, its warning names the password, and the value silently becomes "".
  * `logLevel: "error"` keeps the warnings in `doc.warnings` and prints none.
  */
 function parseYAMLText(text: string): unknown {

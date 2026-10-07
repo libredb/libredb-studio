@@ -116,6 +116,7 @@ describe("parseSeedConfigText", () => {
   // `parse` from `yaml` hands a warning to process.emitWarning, which prints the quoted source line to stderr outside
   // the logger; an unquoted password that starts with "!" is an unresolved tag, and its warning names the password.
   it("fails on a YAML warning, names its code and position only, and prints nothing", () => {
+    const TEST_PASSWORD = "TEST_PASSWORD";
     const emitWarning = spyOn(process, "emitWarning").mockImplementation(() => {});
     const consoleWarn = spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -126,7 +127,7 @@ describe("parseSeedConfigText", () => {
         "    name: Tagged",
         "    type: postgres",
         "    host: db.internal",
-        "    password: !Passw0rd",
+        `    password: !${TEST_PASSWORD}`,
         "",
       ].join("\n");
       const error = sourceErrorOf(() => parseSeedConfigText(text, "/seed/tagged.yaml", "yaml"));
@@ -135,7 +136,7 @@ describe("parseSeedConfigText", () => {
       expect(error.message).toBe(
         "Failed to parse seed config at /seed/tagged.yaml: TAG_RESOLVE_FAILED at line 7, column 15",
       );
-      expect(error.message).not.toContain("Passw0rd");
+      expect(error.message).not.toContain(TEST_PASSWORD);
       expect(emitWarning).not.toHaveBeenCalled();
       expect(consoleWarn).not.toHaveBeenCalled();
     } finally {
