@@ -1601,6 +1601,18 @@ describe("ElasticsearchProvider query", () => {
     expect(result.columnTypes).toEqual({ a: "integer", "a (3)": "long", "a (2)": "integer" });
   });
 
+  test("shows a column declared with no name, or an empty one, as an unnamed column", async () => {
+    // Measured never to happen: the engine names an unaliased expression with its own text.
+    // A declaration without one still gets a name the grid can key, never "undefined".
+    const provider = await connectProvider();
+    overrideSql(ok('{"columns":[{"type":"integer"},{"name":"","type":"long"}],"rows":[[1,2]]}'));
+
+    const result = await provider.query("SELECT 1, 2");
+
+    expect(result.fields).toEqual(["(No column name)", "(No column name) (2)"]);
+    expect(result.rows).toEqual([{ "(No column name)": 1, "(No column name) (2)": 2 }]);
+  });
+
   // A row whose value count differs from the declaration cannot be read by position:
   // padding a short one invents nulls and cutting a long one drops values, both silently.
   test.each<[string, string]>([

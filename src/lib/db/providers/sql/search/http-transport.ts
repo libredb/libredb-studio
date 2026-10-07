@@ -712,7 +712,7 @@ function describeColumns(
   const fieldNames = uniqueFieldNames(
     columns.map((column) => {
       const alias = spec.aliasKey === null ? undefined : (column as Record<string, unknown>)[spec.aliasKey];
-      return String(typeof alias === "string" && alias.length > 0 ? alias : column.name);
+      return String(typeof alias === "string" && alias.length > 0 ? alias : (column.name ?? ""));
     }),
   );
 
