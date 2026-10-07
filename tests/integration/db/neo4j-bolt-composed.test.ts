@@ -44,6 +44,7 @@ const VALUES = "MATCH p = (a)-[r]->(b) RETURN 1 AS one, a, r, p";
 const MANY = "UNWIND range(1, 100000) AS x RETURN x";
 const FAILING = "UNWIND [1, 1, 0] AS x RETURN 1 / x AS y";
 const SLOW = "UNWIND range(1, 2000000000) AS x RETURN count(x) AS n";
+const UNNAMED = "RETURN 1 AS ``, 2 AS b";
 
 const alice = new Node(neo4j.int(1), ["Person"], { name: "Alice", big: neo4j.int("9007199254740993") }, "4:db:1");
 const team = new Node(neo4j.int(2), ["Team"], { name: "Platform" }, "4:db:2");
@@ -85,6 +86,7 @@ const SERVED: Readonly<Record<string, Served>> = {
   [MANY]: { keys: ["x"], count: 100_000, record: (index) => [neo4j.int(index + 1)], queryType: "r" },
   [FAILING]: { keys: ["y"], count: 3, record: () => [neo4j.int(1)], queryType: "r", failAfter: 2 },
   [SLOW]: { keys: ["n"], count: 1, record: () => [neo4j.int(0)], queryType: "r", hang: true },
+  [UNNAMED]: { keys: ["", "b"], count: 1, record: () => [neo4j.int(1), neo4j.int(2)], queryType: "r" },
 };
 
 interface RunLog {
@@ -213,6 +215,14 @@ describe("Neo4jProvider over the real Bolt client (SR21)", () => {
     expect(result.columnTypes).toEqual({ a: "Node", r: "Relationship", p: "Path" });
     expect(runOf(runs, `EXPLAIN ${VALUES}`).summaryReads).toBe(1);
     expect(runOf(runs, VALUES)).toMatchObject({ yielded: 1, summaryReads: 1, closed: true });
+    await provider.disconnect();
+  });
+
+  test("an empty output name reaches the grid as (No column name), keyed under that name", async () => {
+    const { provider } = await composed();
+    const result = await provider.query(UNNAMED);
+    expect(result.fields).toEqual(["(No column name)", "b"]);
+    expect(result.rows).toEqual([{ "(No column name)": 1, b: 2 }]);
     await provider.disconnect();
   });
 

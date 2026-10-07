@@ -438,6 +438,19 @@ describe("run", () => {
     });
   });
 
+  test("an empty output name, which Neo4j 5.26 answers for RETURN 1 AS ``, is named and keyed as (No column name)", async () => {
+    const { lib } = fakeLib({ records: [{ "": 1, b: 2 }] });
+    const result = await buildBoltClient(BASE, lib).run("RETURN 1 AS ``, 2 AS b", RUN);
+    expect(result.fields).toEqual(["(No column name)", "b"]);
+    expect(result.rows).toEqual([{ "(No column name)": 1, b: 2 }]);
+  });
+
+  test("an empty result names an empty key from the result's keys too", async () => {
+    const { lib } = fakeLib({ keys: ["", "b"] });
+    const result = await buildBoltClient(BASE, lib).run("MATCH (n) RETURN n.x AS ``, 1 AS b", RUN);
+    expect(result.fields).toEqual(["(No column name)", "b"]);
+  });
+
   test("a query type the driver does not document is left out", async () => {
     const { lib } = fakeLib({ queryType: "x" });
     const result = await buildBoltClient(BASE, lib).run("RETURN 1", RUN);

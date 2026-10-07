@@ -36,6 +36,7 @@ import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import neo4j, { type AuthToken, type Config, type SessionMode } from "neo4j-driver-lite";
+import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import {
   type BoltClientConfig,
   type GraphClient,
@@ -226,7 +227,9 @@ async function readResult(result: BoltResult, maxRows: number): Promise<GraphRun
   let truncated = false;
 
   for await (const record of result) {
-    fields ??= record.keys.map(String);
+    // Neo4j refuses two output columns of one name but answers an empty one (`RETURN 1 AS \`\``, measured on
+    // 5.26), so the names go through `uniqueFieldNames`; each value is read by position below.
+    fields ??= uniqueFieldNames(record.keys.map(String));
     if (rows.length === maxRows) {
       truncated = true;
       break;
@@ -246,7 +249,7 @@ async function readResult(result: BoltResult, maxRows: number): Promise<GraphRun
   // Reading the summary drains the stream, so a cut result never asks for it.
   const queryType = truncated ? undefined : (await result.summary()).queryType;
   return {
-    fields: fields ?? (await result.keys()).map(String),
+    fields: fields ?? uniqueFieldNames((await result.keys()).map(String)),
     rows,
     truncated,
     ...(queryType !== undefined && QUERY_TYPES.has(queryType) ? { queryType: queryType as GraphQueryType } : {}),

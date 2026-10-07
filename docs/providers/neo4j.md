@@ -266,6 +266,8 @@ Every value is converted on the server before it leaves the transport, so the re
 The deprecated numeric `identity` is never emitted, and `elementId` is stable only within one transaction: do not keep one to find the same node later.
 `columnTypes` names `Node`, `Relationship` or `Path` for a column whose every non-null value has that form, `Mixed` when graph forms mix or meet other values, and nothing for a scalar column; the grid shows it in the header.
 The `"~graph"` tag is how the Graph tab finds graph values in any result without a provider change (section 5.6).
+Neo4j refuses two output columns of one name, so a repeated column never reaches the grid: measured on 5.26, `RETURN 1 AS a, 2 AS a` and `MATCH (n) RETURN n.x, n.x` both fail with `Neo.ClientError.Statement.SyntaxError` "Multiple result columns with the same name are not supported".
+An empty output name is accepted (``` RETURN 1 AS `` ``` answers the key `""`), and the transport names that column `(No column name)` through `uniqueFieldNames`, reading each value by its position in the record.
 
 ### 5.3 Bounds
 
