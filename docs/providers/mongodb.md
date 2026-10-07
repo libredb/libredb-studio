@@ -295,7 +295,7 @@ pool is configured from `ProviderOptions.pool`:
 | `minPoolSize` | `pool.min` |
 | `maxIdleTimeMS` | `pool.idleTimeout` |
 | `connectTimeoutMS` | `pool.acquireTimeout` |
-| `serverSelectionTimeoutMS` | `MONGODB_SERVER_SELECTION_TIMEOUT_MS`, 30 s, the driver's default, not the pool's |
+| `serverSelectionTimeoutMS` | 30 s, a constant in `mongodb.ts` (`MONGODB_SERVER_SELECTION_TIMEOUT_MS`), not configurable |
 
 The database name comes from `config.database`, else from the connection string's path (after the authority, so `mongodb://host:27017` names none), else
 defaults to `test`, the driver's own default; it is the database a statement with no `database` key reads.
@@ -317,8 +317,8 @@ refused connection fails its attempt at once.
 30 s is the driver's own default and sits above the election window, so a write issued right after
 an unplanned primary loss waits the election out instead of failing at the deadline. It is a
 ceiling under abnormal discovery, not a latency budget: a healthy deployment selects a server well
-before it, and a genuinely dead one is reported as the refusal it is instead of after a wait the
-reader reads as a hang. The value is a constant in
+before it, and a closed port is still reported only once the 30 s have passed, half the old
+minute. The value is a constant in
 [`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts) rather than a second pool field,
 because it governs the whole client and not only the connect; `connectTimeoutMS` keeps following
 `pool.acquireTimeout` for the pool's own dial.
