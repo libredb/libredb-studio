@@ -12,9 +12,10 @@ import { CENSUS_CONNECTION } from "../../helpers/census-connection";
  * The two connection-string records of Spec A section 7, each held equal to its source of truth.
  *
  * Both are static because their readers decide before anything is built: the seed schema refuses a
- * `connectionString` at load where `CONNECTION_STRING_ACCEPTED` answers false, and the seed layer keeps a
- * pasted URI verbatim only where `CONNECTION_FORM_URI_MODE` answers true. The server cannot read
- * `DB_UI_CONFIG` itself, because `src/lib/db-ui-config.ts` value-imports the React icon components.
+ * `connectionString` at load where `CONNECTION_STRING_ACCEPTED` answers false, and the environment-URL source
+ * of PR A2 will keep a pasted URI verbatim only where `CONNECTION_FORM_URI_MODE` answers true. The seed layer
+ * must not read `DB_UI_CONFIG` itself, because `src/lib/db-ui-config.ts` value-imports the React icon
+ * components.
  *
  * Nothing here connects: `createDatabaseProvider` is a switch over dynamic imports and a constructor, the
  * reading `CENSUS_CONNECTION` documents.

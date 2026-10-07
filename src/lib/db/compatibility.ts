@@ -356,9 +356,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
 /**
  * Which shipped engines' connection form offers a URI mode (Spec A section 7): the answer
  * `DB_UI_CONFIG[type].showConnectionStringToggle` gives in `src/lib/db-ui-config.ts`. Kept here because the seed
- * layer reads it on the server, where `db-ui-config.ts` cannot be loaded: it value-imports the React icon
- * components, the reason `src/lib/db/credential-warnings.ts` exists. A pasted URI is kept verbatim only where
- * this answers true, as the form's paste keeps it.
+ * layer must not load `db-ui-config.ts`: it value-imports the React icon components, the reason
+ * `src/lib/db/credential-warnings.ts` exists. No seed module reads it yet; the environment-URL source of PR A2
+ * will, to keep a pasted URI verbatim only where this answers true, as the form's paste keeps it.
  *
  * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering,
  * frozen like the records above it, and held equal to the form's own answer for every type by
@@ -410,7 +410,8 @@ export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> =
 export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: true,
   mysql: true,
-  // Declared false, read as the database file path: sqlite.ts getDatabasePath, docs/providers/sqlite.md.
+  // The provider's supportsConnectionString flag is false, yet it opens this field as the database file path:
+  // sqlite.ts getDatabasePath, docs/providers/sqlite.md.
   sqlite: true,
   libsql: true,
   duckdb: false,

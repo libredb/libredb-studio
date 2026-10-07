@@ -264,7 +264,8 @@ async function operatorSeedIds(): Promise<ReadonlySet<string>> {
   try {
     return (await loadOperatorSources()).declaredIds;
   } catch {
-    // An operator source's failure is reported by GET /api/connections/managed and the admin seed-sources card; here it only means no id is taken.
+    // An operator source's failure is reported by GET /api/connections/managed and the admin seed-sources card;
+    // here it only means no id is taken.
     return new Set<string>();
   }
 }

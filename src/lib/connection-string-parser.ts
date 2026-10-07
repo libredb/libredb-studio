@@ -127,7 +127,7 @@ export const ENGINE_URI_SCHEMES: Partial<Record<DatabaseType, string>> = {
  * Schemes, matched case-sensitively on the trimmed input: postgres://, postgresql://, mysql://,
  * mongodb://, mongodb+srv://, rediss://, redis://, oracle://, mssql://, sqlserver://, db2://,
  * couchbases://, couchbase://, libsql://, clickhouse://, and http:// and https:// (both ClickHouse),
- * plus the ADO.NET form `Server=...;` (SQL Server).
+ * plus the ADO.NET form `Server=...;` (SQL Server), whose `Server=` key is matched case-insensitively.
  */
 export function parseConnectionString(input: string): ParsedConnection | null {
   const trimmed = input.trim();

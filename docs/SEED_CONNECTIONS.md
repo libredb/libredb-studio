@@ -1184,7 +1184,7 @@ seed-connections.yaml (SEED_CONFIG_PATH)
   └─────┬──────────────┘
         │
   ┌─────▼──────────────┐
-  │ ConnectionFilter    │  Role filter + defaults merge → ManagedConnection[]
+  │ ConnectionFilter    │  Role filter → ManagedConnection[]; defines mergeDefaults, which the sources apply
   └─────┬──────────────┘
         │         ┌───────────────────────────────────────┐
         ├─────────┤ Platform discovery (discovery-*.ts,    │  Appended after the file seeds when
@@ -1223,7 +1223,7 @@ seed-connections.yaml (SEED_CONFIG_PATH)
 | `sources/registry.ts` | The enabled operator sources, in their fixed order |
 | `credential-resolver.ts` | `${ENV_VAR}` resolution (eager) + `${vault:...}` resolution (lazy, per connection) |
 | `vault-client.ts` | HashiCorp Vault KV v2 reads: env config, Kubernetes auth, per-path TTL cache |
-| `connection-filter.ts` | Role filter + defaults merge |
+| `connection-filter.ts` | Role filter, and `mergeDefaults`, which each operator source applies to its own connections (`sources/config-text.ts`) |
 | `resolve-connection.ts` | Shared utility for all API routes |
 | `libredb-sample.ts` | Built-in "Sample (LibreDB)" connection: file seeding + descriptor |
 | `sqlite-sample.ts` | Built-in "Sample (Employees)" connection: vendored template copy + descriptor |

@@ -861,10 +861,10 @@ for (const { type, secret } of [
 
 /**
  * A connection string the type's provider does not read (Spec A section 7, defect 2). Before this refusal the
- * schema accepted `connectionString` on every type, and a provider whose `supportsConnectionString` is false
- * dropped it in silence, so a seed listed a connection that opened somewhere else than its file said, or not
- * at all. Read from `CONNECTION_STRING_ACCEPTED`, never a type-id branch, and refused naming the connection
- * and the type, never the value.
+ * schema accepted `connectionString` on every type, and a provider that does not read it dropped it in silence,
+ * so a seed listed a connection that opened somewhere else than its file said, or not at all. Read from
+ * `CONNECTION_STRING_ACCEPTED`, never a type-id branch, and refused naming the connection and the type, never
+ * the value.
  */
 describe("SeedConnectionSchema: a connectionString the provider does not read (Spec A section 7)", () => {
   const seed = (type: string, connectionString = "scheme://db.internal:1/app") => ({

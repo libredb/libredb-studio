@@ -150,8 +150,7 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   // finds one call site in each but auth/passkey and auth/totp, which have one per method, two
   // each, so twenty-six call sites): admin/accounts, admin/accounts/[email], admin/discovery,
   // admin/fleet-health, admin/seed-sources, auth/passkey, auth/totp, db/cancel, db/disconnect,
-  // db/health,
-  // db/maintenance, db/maintenance/preview, db/monitoring, db/multi-query, db/pool-stats,
+  // db/health, db/maintenance, db/maintenance/preview, db/monitoring, db/multi-query, db/pool-stats,
   // db/profile, db/provider-meta, db/query, db/test-connection, db/transaction, mcp/token, and the
   // three storage routes (storage, storage/[collection], storage/migrate). Note db/health: only its
   // POST is metered, because the GET is the container health probe and takes no connection. mcp/token
