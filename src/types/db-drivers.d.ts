@@ -36,6 +36,7 @@ declare module "oracledb" {
     readonly STRING: number;
     readonly BUFFER: number;
     readonly OUT_FORMAT_OBJECT: number;
+    readonly OUT_FORMAT_ARRAY: number;
     /** Process-wide defaults the provider sets once, in its constructor. */
     outFormat: number;
     autoCommit: number | boolean;
@@ -80,6 +81,8 @@ declare module "oracledb" {
       outFormat?: number;
       autoCommit?: boolean;
       fetchTypeHandler?: FetchTypeHandler;
+      /** Whether the statement stays in the connection's statement cache after this call (default true). */
+      keepInStmtCache?: boolean;
     }
 
     /**

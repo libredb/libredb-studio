@@ -6,6 +6,8 @@
 import oracledb from "oracledb";
 import { SQLBaseProvider } from "./sql-base";
 import { oracleColumnTypes } from "./column-types";
+import { uniqueFieldNames } from "../../utils/result-fields";
+import { keyRowsByPosition } from "../../utils/positional-rows";
 import {
   type DatabaseConnection,
   type QueryResult,
@@ -1457,8 +1459,8 @@ const formatIntervalDS = (value: oracledb.IntervalDS): string => {
   return `${sign}${pad2(value.days)} ${clock}${fraction === "" ? "" : `.${fraction}`}`;
 };
 
-/** How one column's interval values are spelled, paired with the column's name. */
-type IntervalColumn = readonly [name: string, format: (value: unknown) => string];
+/** How one column's interval values are spelled, paired with the column's position. */
+type IntervalColumn = readonly [position: number, format: (value: unknown) => string];
 
 /**
  * Oracle's two interval types, normalised to their own literals at the driver
@@ -1486,30 +1488,28 @@ type IntervalColumn = readonly [name: string, format: (value: unknown) => string
  */
 const intervalColumns = (metaData: readonly oracledb.Metadata[] | undefined): IntervalColumn[] => {
   const columns: IntervalColumn[] = [];
-  for (const column of metaData ?? []) {
+  (metaData ?? []).forEach((column, position) => {
     if (column.dbType === oracledb.DB_TYPE_INTERVAL_YM) {
-      columns.push([column.name, (value) => formatIntervalYM(value as oracledb.IntervalYM)]);
+      columns.push([position, (value) => formatIntervalYM(value as oracledb.IntervalYM)]);
     }
     if (column.dbType === oracledb.DB_TYPE_INTERVAL_DS) {
-      columns.push([column.name, (value) => formatIntervalDS(value as oracledb.IntervalDS)]);
+      columns.push([position, (value) => formatIntervalDS(value as oracledb.IntervalDS)]);
     }
-  }
+  });
   return columns;
 };
 
-const normalizeIntervals = (
-  rows: Record<string, unknown>[],
-  metaData: readonly oracledb.Metadata[] | undefined,
-): Record<string, unknown>[] => {
+/** The array rows with each interval spelled, by position, before the rows are keyed by name. */
+const normalizeIntervals = (rows: unknown[][], metaData: readonly oracledb.Metadata[] | undefined): unknown[][] => {
   const columns = intervalColumns(metaData);
   if (columns.length === 0) return rows;
 
   return rows.map((row) => {
-    const normalized = { ...row };
-    for (const [name, format] of columns) {
-      const value = normalized[name];
-      // A NULL interval stays null: the column is absent from the row, not zero.
-      if (value !== null && value !== undefined) normalized[name] = format(value);
+    const normalized = [...row];
+    for (const [position, format] of columns) {
+      const value = normalized[position];
+      // A NULL interval stays null, not zero.
+      if (value !== null && value !== undefined) normalized[position] = format(value);
     }
     return normalized;
   });
@@ -1561,6 +1561,43 @@ const rowFetchTypeHandler: oracledb.FetchTypeHandler = (metaData) => {
     return { converter: (value) => (value instanceof Date ? formatZonelessDate(value, withFraction) : value) };
   }
   return lobFetchTypeHandler(metaData);
+};
+
+/**
+ * The per-call handler of a user result, plus the names the statement declared for its columns.
+ *
+ * node-oracledb numbers a repeated column name itself, in `metaData` (`_setup` in
+ * `oracledb/lib/impl/resultset.js`, 6.10.0): `SELECT 1 AS a, 2 AS a, 3 AS a_1 FROM dual` answers
+ * `A`, `A_2`, `A_1`, so the declared name of a repeat is gone by the time the result arrives, and a
+ * statement's own `A_1` cannot be told from a repeat. It hands each column to the call's
+ * `fetchTypeHandler` first, under the name the statement gave it, and only then renames it in place, so
+ * the handler records that name against the column's own metadata object. The rows can then be named
+ * through `uniqueFieldNames` like every other SQL provider's: `A`, `A (2)`, `A_1`, which masking and the
+ * inline-edit refusal read back.
+ *
+ * Only a statement prepared on this call is set up afresh: one served from the connection's statement
+ * cache comes with the metadata the driver already renamed (measured on Oracle XE on 2026-10-07: the
+ * handler saw `A_2` on the second run), so the two user paths run with `keepInStmtCache: false`.
+ */
+const declaredNameRecorder = () => {
+  const declared = new Map<oracledb.Metadata, string>();
+  const fetchTypeHandler: oracledb.FetchTypeHandler = (column) => {
+    if (!declared.has(column)) declared.set(column, column.name);
+    return rowFetchTypeHandler(column);
+  };
+  const declaredNames = (metaData: readonly oracledb.Metadata[], sql: string): string[] =>
+    metaData.map((column, position) => {
+      const name = declared.get(column);
+      if (name === undefined) {
+        throw new QueryError(
+          `The driver did not show column ${position + 1} of the result to the fetch type handler, so its declared name is unknown`,
+          "oracle",
+          sql,
+        );
+      }
+      return name;
+    });
+  return { fetchTypeHandler, declaredNames };
 };
 
 // ============================================================================
@@ -1921,7 +1958,12 @@ export class OracleProvider extends SQLBaseProvider {
    * with an empty grid and the engine's own count, and states no column types because
    * there is no metadata to state them from.
    */
-  private buildQueryResult(result: oracledb.Result, executionTime: number): QueryResult {
+  private buildQueryResult(
+    result: oracledb.Result,
+    executionTime: number,
+    declaredNames: ReturnType<typeof declaredNameRecorder>["declaredNames"],
+    sql: string,
+  ): QueryResult {
     if (!result.rows) {
       return {
         rows: [],
@@ -1931,20 +1973,25 @@ export class OracleProvider extends SQLBaseProvider {
       };
     }
 
-    const rows = normalizeIntervals(result.rows as Record<string, unknown>[], result.metaData);
+    const metaData = result.metaData ?? [];
+    const fields = uniqueFieldNames(declaredNames(metaData, sql));
+    const rows = keyRowsByPosition(fields, normalizeIntervals(result.rows as unknown[][], metaData), "oracle", sql);
 
     return {
       rows,
-      fields: result.metaData?.map((m) => m.name) ?? [],
+      fields,
       rowCount: rows.length,
       executionTime,
-      ...oracleColumnTypes(result.metaData),
+      ...oracleColumnTypes(
+        metaData.map((column, position) => ({ name: fields[position], dbTypeName: column.dbTypeName })),
+      ),
     };
   }
 
   public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     this.ensureConnected();
 
+    const { fetchTypeHandler, declaredNames } = declaredNameRecorder();
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         let conn: oracledb.Connection | undefined;
@@ -1957,9 +2004,10 @@ export class OracleProvider extends SQLBaseProvider {
 
           const bindParams = params || [];
           const res = await conn.execute(sql, bindParams, {
-            outFormat: oracledb.OUT_FORMAT_OBJECT,
+            outFormat: oracledb.OUT_FORMAT_ARRAY,
             autoCommit: true,
-            fetchTypeHandler: rowFetchTypeHandler,
+            fetchTypeHandler,
+            keepInStmtCache: false,
           });
 
           return res;
@@ -1977,7 +2025,7 @@ export class OracleProvider extends SQLBaseProvider {
         }
       });
 
-      return this.buildQueryResult(result, executionTime);
+      return this.buildQueryResult(result, executionTime, declaredNames, sql);
     });
   }
 
@@ -2081,20 +2129,22 @@ export class OracleProvider extends SQLBaseProvider {
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
     if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "oracle");
 
+    const { fetchTypeHandler, declaredNames } = declaredNameRecorder();
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
           return await this.txConn!.execute(sql, params || [], {
-            outFormat: oracledb.OUT_FORMAT_OBJECT,
+            outFormat: oracledb.OUT_FORMAT_ARRAY,
             autoCommit: false,
-            fetchTypeHandler: rowFetchTypeHandler,
+            fetchTypeHandler,
+            keepInStmtCache: false,
           });
         } catch (error) {
           throw mapDatabaseError(error, "oracle", sql);
         }
       });
 
-      return this.buildQueryResult(result, executionTime);
+      return this.buildQueryResult(result, executionTime, declaredNames, sql);
     });
   }
 
