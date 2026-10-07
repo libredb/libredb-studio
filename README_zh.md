@@ -795,7 +795,7 @@ helm install libredb libredb/libredb-studio \
 **特性：**
 - 基于角色的访问控制（`admin`、`user`、`*` 通配符）
 - 混合模式：`managed: true`（由管理员控制，界面中不可编辑）或 `managed: false`（给用户一份可编辑的副本）
-- 凭据通过 `${ENV_VAR}` 语法注入，绝不存放在配置文件里
+- 凭据通过 `${ENV_VAR}` 语法注入；配置文件中的明文密码仍可使用，但会记录一条警告
 - 热重载：配置改动 60 秒内生效，无需重启
 - 适用于 Docker、docker-compose 和 Kubernetes（Helm）
 

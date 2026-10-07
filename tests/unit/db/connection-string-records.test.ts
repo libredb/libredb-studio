@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONNECTION_FORM_URI_MODE, CONNECTION_STRING_ACCEPTED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -185,5 +185,20 @@ describe("CONNECTION_STRING_ACCEPTED against each provider's own declaration (Sp
       (type) => CONNECTION_FORM_URI_MODE[type] && !CONNECTION_STRING_ACCEPTED[type],
     );
     expect(formOnly).toEqual([]);
+  });
+});
+
+describe("docs/SEED_CONNECTIONS.md names the types CONNECTION_STRING_ACCEPTED answers (Spec A section 7)", () => {
+  const doc = readFileSync(join(import.meta.dir, "../../../docs/SEED_CONNECTIONS.md"), "utf8");
+  const list = (types: readonly string[]) => `${types.slice(0, -1).join(", ")} and ${types[types.length - 1]}`;
+
+  test("the accepting types, in registry order", () => {
+    const accepting = SHIPPED_DATABASE_TYPES.filter((type) => CONNECTION_STRING_ACCEPTED[type]);
+    expect(doc).toContain(`The types whose provider reads it are ${list(accepting)}.`);
+  });
+
+  test("the refusing types, with their count, in registry order", () => {
+    const refusing = SHIPPED_DATABASE_TYPES.filter((type) => !CONNECTION_STRING_ACCEPTED[type]);
+    expect(doc).toContain(`The ${refusing.length} that refuse it are ${list(refusing)}.`);
   });
 });
