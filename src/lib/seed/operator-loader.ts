@@ -12,8 +12,8 @@
  *
  * A source that throws fails the fill: its error status is recorded, the sources after it still run for their
  * status only, so the admin view shows every enabled source, and the first error is rethrown once all have run.
- * The failure is never cached, so the next call reads again. A fill that resetCache() or a fill for the other
- * literal mode superseded while it ran stores neither its load nor its status.
+ * The failure is never cached and drops the previous load, so the next call reads again. A fill that resetCache()
+ * or a fill for the other literal mode superseded while it ran stores neither its load nor its status.
  */
 import { logger } from "@/lib/logger";
 import { resolveConnectionCredentials, seedValuesAreLiteral, UndefinedSeedVariableError } from "./credential-resolver";
@@ -201,8 +201,10 @@ async function runFill(fill: Fill, now: number): Promise<OperatorLoad> {
 
   if (failure !== null) {
     // Every enabled source has its report, so the admin view shows the sources after the failing one too; the load
-    // itself fails and is never cached.
+    // itself fails and is never cached. The previous load goes too: a clock that steps back into its TTL, or a flip back
+    // to its literal mode, must read the source again rather than serve it while the status reports this failure.
     if (inflight === fill) {
+      cache = null;
       statusCache = reports;
       inflight = null;
     }

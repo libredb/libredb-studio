@@ -272,6 +272,51 @@ describe("operator-loader with the file source", () => {
     }
   });
 
+  it("drops the previous cache when a fill fails, so a clock that steps back reads the broken file again", async () => {
+    const file = writeSeed([pg("first", "plain")]);
+    process.env.SEED_CONFIG_PATH = file;
+    let clock = T0;
+    const now = spyOn(Date, "now").mockImplementation(() => clock);
+    try {
+      await loadOperatorSources();
+      copyFileSync(path.join(FIXTURES, "invalid-config.yaml"), file);
+
+      clock = T0 + 60_000;
+      expect(await loadOperatorSources().catch((thrown: unknown) => thrown)).toBeInstanceOf(OperatorSourceError);
+
+      // Inside the first fill's TTL again: the old connections must not come back while the status reports the error.
+      clock = T0 + 30_000;
+      const failure = await loadOperatorSources().catch((thrown: unknown) => thrown);
+      expect(failure).toBeInstanceOf(OperatorSourceError);
+      expect((failure as OperatorSourceError).code).toBe("unparseable");
+      expect((await getOperatorSourceStatus()).map((report) => report.state)).toEqual(["error"]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("drops the previous cache when a fill for the other literal mode fails, so flipping back reads again", async () => {
+    const file = writeSeed([pg("first", "plain")]);
+    process.env.SEED_CONFIG_PATH = file;
+    const now = spyOn(Date, "now").mockImplementation(() => T0);
+    try {
+      await loadOperatorSources();
+      copyFileSync(path.join(FIXTURES, "invalid-config.yaml"), file);
+
+      process.env.SEED_LITERAL_VALUES = "true";
+      expect(await loadOperatorSources().catch((thrown: unknown) => thrown)).toBeInstanceOf(OperatorSourceError);
+
+      // Back to the first fill's mode inside its TTL: the old non-literal cache must not answer.
+      process.env.SEED_LITERAL_VALUES = "false";
+      const failure = await loadOperatorSources().catch((thrown: unknown) => thrown);
+      expect(failure).toBeInstanceOf(OperatorSourceError);
+      expect((failure as OperatorSourceError).code).toBe("unparseable");
+      expect((await getOperatorSourceStatus()).map((report) => report.state)).toEqual(["error"]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("reports an explicit path that does not exist as missing and the absent default file as empty", async () => {
     const absent = path.join(dir, "absent.yaml");
     process.env.SEED_CONFIG_PATH = absent;
