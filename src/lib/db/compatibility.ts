@@ -354,6 +354,93 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
 });
 
 /**
+ * Which shipped engines' connection form offers a URI mode (Spec A section 7): the answer
+ * `DB_UI_CONFIG[type].showConnectionStringToggle` gives in `src/lib/db-ui-config.ts`. Kept here because the seed
+ * layer reads it on the server, where `db-ui-config.ts` cannot be loaded: it value-imports the React icon
+ * components, the reason `src/lib/db/credential-warnings.ts` exists. A pasted URI is kept verbatim only where
+ * this answers true, as the form's paste keeps it.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering,
+ * frozen like the records above it, and held equal to the form's own answer for every type by
+ * `tests/unit/db/connection-string-records.test.ts`.
+ */
+export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  mysql: false,
+  sqlite: false,
+  libsql: true,
+  duckdb: false,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: true,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: true,
+  couchbase: true,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  libredb: false,
+});
+
+/**
+ * The types whose provider reads `connectionString` (Spec A section 7):
+ * getCapabilities().supportsConnectionString, except sqlite (declares false, opens the field as the file path)
+ * and mssql (declares true for the form's paste, builds from the fields only). Static for the reason
+ * `READ_ONLY_ENFORCED` is: the seed schema decides at load, before any provider exists, and refuses a
+ * `connectionString` where this answers false, naming the connection and the type, because a provider that
+ * ignores the string would list a connection that opens somewhere else than the file says.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, held equal to every
+ * other shipped provider's declaration by the census in `tests/unit/db/connection-string-records.test.ts`, and
+ * pinned there for the two exceptions by behavioural tests: sqlite opens the file a `file:` string names, and
+ * mssql builds a string-only config against localhost.
+ */
+export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: true,
+  mysql: true,
+  // Declared false, read as the database file path: sqlite.ts getDatabasePath, docs/providers/sqlite.md.
+  sqlite: true,
+  libsql: true,
+  duckdb: false,
+  oracle: true,
+  db2: true,
+  // Declared true for the form's paste, documented UI-only, while buildConfig builds from the fields only, so a
+  // seed carrying only connectionString would open localhost: mssql.ts buildConfig, docs/providers/mssql.md.
+  mssql: false,
+  clickhouse: true,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: true,
+  couchbase: true,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  libredb: false,
+});
+
+/**
  * How much of the product works against a wire-compatible engine.
  *
  * - `full` - every introspection surface answered. Caveats may still record data
