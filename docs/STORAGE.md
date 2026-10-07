@@ -1257,7 +1257,7 @@ When any `storage.*` mutation fires:
 ### The Browser Copy Belongs to the Signed-In Account
 
 In server mode the browser copy is bound to the account that signed in: `libredb_workspace_owner` holds its username, and it is compared with `GET /api/auth/me` before any page reads the copy.
-Every page that reads it (the editor, the admin dashboard and the monitoring page) renders inside `WorkspaceOwnerGate`, which runs that check first; the lifecycle above runs it again before anything is migrated, pulled or pushed.
+Every page that reads it (the editor, the admin dashboard and the monitoring page) renders inside `WorkspaceOwnerGate`, which runs that check first; the lifecycle above runs it again when it starts, before anything is migrated or pulled, and from then on every request names the owner (see below).
 The settings pages (`/settings/mcp`, `/settings/authenticator`) do not read the copy but render inside the gate too, because a sign-in can land on them, and the gate records the owner there.
 While the check runs, those pages show a loading indicator; when the signed-in account cannot be read, they show a message instead of the copy.
 They show it too when `GET /api/storage/config` cannot be read and the copy carries an owner or the migration flag, both written only in server mode; a copy with neither renders as it is, so local mode does not change.
@@ -1269,7 +1269,7 @@ The copy is every synced collection, the editor tabs (never stored on the server
 - **A copy with no owner that was never migrated:** local-mode data, recorded as the signed-in account's and migrated into that account as described in [Migration Flow](#10-migration-flow).
   A different account that signs in before the migration ran finds it owned by the first account, so the copy is cleared for it.
 - **Sign-out** (the editor, the admin dashboard and the launch page): the signing-out tab's pending collections are pushed while the session is still valid, then `POST /api/auth/logout` ends the session, and only then is the copy cleared.
-  A change still waiting in another open tab is not pushed; it does not reach the server.
+  Only the signing-out tab's pending collections are pushed first: a change waiting in another open tab reaches the server only if that tab pushes it before the session ends, and is refused after.
   The cleared copy keeps the migration flag and no owner, so whatever is written to it afterwards is cleared at the next sign-in rather than migrated.
   A pending push that does not land does not stop the sign-out: when it failed because the session had already ended, the copy is cleared and the tab goes to sign in; otherwise (server storage unreachable) the session still ends, the copy stays for this account, protected by its owner key, and the sign-out says so; the next sign-in of a different account clears it.
   When the server refuses the sign-out, or its answer is lost, the tab asks `GET /api/auth/me`: with no session left the sign-out counts as done and the copy is cleared, and while the session goes on the copy stays, the sync goes on, and the sign-out says it did not complete.
@@ -1279,7 +1279,8 @@ The copy is every synced collection, the editor tabs (never stored on the server
 - **Every request names the account:** once a page has matched the copy, every request it sends names that account in the `X-LibreDB-Workspace-Owner` header, and the server refuses one that names an account other than the signed-in one with `409 WORKSPACE_OWNER_MISMATCH` before any route runs ([API_DOCS.md](API_DOCS.md#storage-api)).
   The page then reloads, and the owner check runs again for the account signed in now, so a push, a pull or a migration a page sends after another tab signed in as a different account never reaches that account's server data, also in a tab that stays visible.
   In the browser the same rule holds: a page writes the copy (the storage facade, its editor tabs, its object-source drafts, and each collection of a pull) only while the owner key still names the account it claimed, so a page that has not reloaded yet writes nothing into the copy another tab claimed.
-- **A session that ended on its own** (expiry, a disabled account) clears nothing; the owner check covers a different account on the first of these pages it opens, and an open tab when it is shown again.
+- **A session that ended on its own** (expiry, a disabled account) clears nothing: the copy stays until the next sign-in's owner check, which covers a different account on the first of these pages it opens.
+  A page inside `WorkspaceOwnerGate` that finds no session when it opens, or when its tab is shown again, shows neither the copy nor a message and goes to sign in.
   It does not cover a copy written while `GET /api/storage/config` could not be read on a browser profile that had no owner and no migration flag yet: such a copy is treated as local-mode data, so the next account to sign in records it as its own and migrates it.
 - **The first sign-in after upgrading to a release that records the owner:** a browser that was already migrated has no owner yet, so its copy is cleared once, for the same account too, and that sign-in starts from the account's server data.
   Open editor tabs from before the upgrade are not kept, since they are never stored on the server, and neither are object-source drafts or any change that had not reached the server.
