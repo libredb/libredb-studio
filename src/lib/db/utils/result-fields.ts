@@ -43,12 +43,19 @@ export const UNNAMED_FIELD = "(No column name)";
 export function uniqueFieldNames(declared: readonly string[]): string[] {
   const declaredNames = new Set(declared);
   const given = new Set<string>();
+  // The next number to try for each base. A numbered name skipped once stays taken (it is declared, or already
+  // given), so each base's numbers are tried once in all, and the whole call is linear in the columns.
+  const nextRepeat = new Map<string, number>();
   return declared.map((name) => {
     const base = name === "" ? UNNAMED_FIELD : name;
-    // A column keeps its own declared name the first time; any other name must be one nothing declares.
-    const free = (candidate: string) => !given.has(candidate) && (candidate === name || !declaredNames.has(candidate));
+    // A column keeps its own declared name the first time; a name it did not declare must be one nothing declares.
     let unique = base;
-    for (let repeat = 2; !free(unique); repeat += 1) unique = `${base} (${repeat})`;
+    if (given.has(base) || (base !== name && declaredNames.has(base))) {
+      let repeat = nextRepeat.get(base) ?? 2;
+      while (given.has(`${base} (${repeat})`) || declaredNames.has(`${base} (${repeat})`)) repeat += 1;
+      unique = `${base} (${repeat})`;
+      nextRepeat.set(base, repeat + 1);
+    }
     given.add(unique);
     return unique;
   });

@@ -4,7 +4,7 @@
  * And the names a result's columns are keyed under when a driver declares a column with no
  * name, or two columns with one name.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
   numberedRepeatBase,
   UNNAMED_FIELD,
@@ -48,6 +48,33 @@ describe("uniqueFieldNames", () => {
     expect(uniqueFieldNames(["a", "a (2)", "a"])).toEqual(["a", "a (2)", "a (3)"]);
     expect(uniqueFieldNames(["a", "a", "a (2)"])).toEqual(["a", "a (3)", "a (2)"]);
     expect(uniqueFieldNames(["", "(No column name)"])).toEqual(["(No column name) (2)", "(No column name)"]);
+  });
+
+  test("many repeats of one name are numbered in one pass, never by counting up from 2 for each", () => {
+    // Counting up from 2 for every repeat checks n²/2 candidates for n repeats (about 2 million here); a next number
+    // kept per name checks a bounded few per column. The checks are Set lookups, counted while the helper runs.
+    const count = 2_000;
+    const has = spyOn(Set.prototype, "has");
+    let names: string[];
+    try {
+      names = uniqueFieldNames(Array.from({ length: count }, () => ""));
+      expect(has.mock.calls.length).toBeLessThan(10 * count);
+    } finally {
+      has.mockRestore();
+    }
+    expect(names[0]).toBe("(No column name)");
+    expect(names[count - 1]).toBe(`(No column name) (${count})`);
+    expect(new Set(names).size).toBe(count);
+    // A number the result declares is skipped, wherever it sits among the repeats.
+    expect(uniqueFieldNames(["a", "a", "a (3)", "a", "a"])).toEqual(["a", "a (2)", "a (3)", "a (4)", "a (5)"]);
+    expect(uniqueFieldNames(["a", "a", "a", "a (2)", "b", "a"])).toEqual([
+      "a",
+      "a (3)",
+      "a (4)",
+      "a (2)",
+      "b",
+      "a (5)",
+    ]);
   });
 
   test("names differing only in letter case are different columns, as row keys are", () => {
