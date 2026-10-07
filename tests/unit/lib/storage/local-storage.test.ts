@@ -220,12 +220,23 @@ describe("local-storage: claimAccountWorkspace", () => {
     expect(localStorage.getItem(workspaceTabsKey("default"))).toBe("[]");
   });
 
-  test("a copy with no owner that was never handed to a server account is kept, still unowned", () => {
+  test("a copy with no owner that was never handed to a server account is kept for the signed-in account", () => {
     claimAccountWorkspace("user@libredb.org");
 
     expect(localStorage.getItem(getKey("connections"))).not.toBeNull();
-    expect(localStorage.getItem(WORKSPACE_OWNER_KEY)).toBeNull();
+    expect(localStorage.getItem(WORKSPACE_OWNER_KEY)).toBe("user@libredb.org");
     expect(localStorage.getItem(SERVER_MIGRATED_KEY)).toBeNull();
+  });
+
+  test("a copy the first account kept and wrote to belongs to it, so a different account starts empty", () => {
+    localStorage.clear();
+    claimAccountWorkspace("admin@libredb.org");
+    localStorage.setItem(getKey("threshold_config"), '{"slowQueryMs":10}');
+
+    claimAccountWorkspace("user@libredb.org");
+
+    expect(localStorage.getItem(getKey("threshold_config"))).toBeNull();
+    expect(localStorage.getItem(WORKSPACE_OWNER_KEY)).toBe("user@libredb.org");
   });
 
   test("another owner's copy is cleared and the signed-in account becomes its owner", () => {

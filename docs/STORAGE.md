@@ -1211,8 +1211,9 @@ App Mount
   │   │  │   false, nothing is pulled or pushed     │
   │   │  ├─ libredb_workspace_owner = username      │
   │   │  │   → keep the browser copy                │
-  │   │  ├─ No owner, never migrated → keep it      │
-  │   │  │   (local-mode data, migrated below)      │
+  │   │  ├─ No owner, never migrated → keep it,     │
+  │   │  │   owner = username (local-mode data,     │
+  │   │  │   migrated below into this account only) │
   │   │  └─ Otherwise → clear the browser copy,     │
   │   │      mark it migrated, owner = username     │
   │   └──────────────────────┬──────────────────────┘
@@ -1263,7 +1264,8 @@ The copy is every synced collection, the editor tabs (never stored on the server
 
 - **Same account:** the copy is kept, and the pull overwrites each collection the server holds; a collection the server does not hold yet stays local.
 - **A different account, or a copy with no owner that was already migrated:** the copy is cleared first and recorded as this account's, so the account starts from its own server data.
-- **A copy with no owner that was never migrated:** local-mode data, migrated into the signed-in account as described in [Migration Flow](#10-migration-flow).
+- **A copy with no owner that was never migrated:** local-mode data, recorded as the signed-in account's and migrated into that account as described in [Migration Flow](#10-migration-flow).
+  A different account that signs in before the migration ran finds it owned by the first account, so the copy is cleared for it.
 - **Sign-out** (the editor, the admin dashboard and the launch page): pending collections are pushed while the session is still valid, then `POST /api/auth/logout` ends the session, and only then is the copy cleared.
   The cleared copy keeps the migration flag and no owner, so whatever is written to it afterwards is cleared at the next sign-in rather than migrated.
   When the storage mode cannot be read or a pending push does not land, the sign-out fails and the copy stays, so no unsaved change is dropped; when the server refuses the sign-out, the copy stays and the sync goes on.

@@ -177,14 +177,17 @@ export function resetAccountWorkspace(owner: string | null): void {
 /**
  * Server storage mode: keep the browser copy only for the account it belongs to, before anything
  * reads it. The same owner keeps it. A copy with no owner that was never handed to a server
- * account is local-mode data, kept for `useStorageSync` to migrate into this account
- * (docs/STORAGE.md). Anything else is cleared, and the signed-in account starts from its own
- * server data.
+ * account is local-mode data: it now belongs to the signed-in account and is kept for
+ * `useStorageSync` to migrate into that account alone (docs/STORAGE.md). Anything else is
+ * cleared, and the signed-in account starts from its own server data.
  */
 export function claimAccountWorkspace(username: string): void {
   if (!isClient()) return;
   const owner = localStorage.getItem(WORKSPACE_OWNER_KEY);
   if (owner === username) return;
-  if (owner === null && localStorage.getItem(SERVER_MIGRATED_KEY) === null) return;
+  if (owner === null && localStorage.getItem(SERVER_MIGRATED_KEY) === null) {
+    localStorage.setItem(WORKSPACE_OWNER_KEY, username);
+    return;
+  }
   resetAccountWorkspace(username);
 }
