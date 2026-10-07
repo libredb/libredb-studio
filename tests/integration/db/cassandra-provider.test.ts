@@ -770,6 +770,17 @@ describe("query", () => {
     });
   });
 
+  test("two result columns of one name surface as a query error naming the column", async () => {
+    const twice = "SELECT id AS x, name AS x FROM probe.customers";
+    // What cassandra-driver hands over for that statement: two declared columns and a row
+    // object holding only the last one's value.
+    const answer = result(declare(["x", INT], ["x", TEXT]), [{ x: "a" }]);
+    const { provider } = await connectedProvider(healthyReplies({ [twice]: answer }));
+
+    await expect(provider.query(twice)).rejects.toThrow(QueryError);
+    await expect(provider.query(twice)).rejects.toThrow('The result has two columns named "x"');
+  });
+
   test("a write reports no columns and no invented row count", async () => {
     const insert = "INSERT INTO probe.customers (id, name) VALUES (1, 'a')";
     const { provider } = await connectedProvider(healthyReplies({ [insert]: VOID_RESULT }));

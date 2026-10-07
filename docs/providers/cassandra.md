@@ -580,6 +580,11 @@ The **declaration** drives the row shape, not the row's own keys: it is the only
 the statement projected. `fieldNames: null` (a write) and `fieldNames: []` are kept apart at the
 seam and both collapse to no columns for the grid.
 
+A column declared with an empty name comes back as `(No column name)` (`uniqueFieldNames` in [`result-fields.ts`](../../src/lib/db/utils/result-fields.ts)), so the grid always has a key for it.
+Two columns of one name (`SELECT id AS x, name AS x`) are refused with a query error naming the column: cassandra-driver 4.10.0 builds each row as `row[column.name] = value` (`lib/streams.js`, `parseRows`), so the earlier column's value is already gone when the row reaches this provider, and a second header would only repeat the last value.
+Give each column its own alias.
+This is read from the driver source and pinned with the driver's row shape in `tests/unit/db/cassandra/wire.test.ts` and `tests/integration/db/cassandra-provider.test.ts`; it was not measured against a live cluster in this change, so whether a given server version accepts a repeated name at all is not stated here.
+
 `columnTypes` carries the wire's declared type per column. Note that `text` reads back as `varchar`
 and a column declared `varchar` reads back as `text` — they are one type on the wire — so this is
 whatever the protocol declared rather than the DDL word. The schema tree reads

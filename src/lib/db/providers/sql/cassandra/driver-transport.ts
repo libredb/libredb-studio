@@ -36,6 +36,7 @@
 
 import { Client, types, type ClientOptions, type QueryOptions } from "cassandra-driver";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import {
   type CassandraExecuteOptions,
   type CassandraQueryResult,
@@ -314,20 +315,40 @@ export function normalizeCassandraValue(value: unknown): unknown {
  * ResultSet with no declaration and no rows - and it is carried through as `null`
  * rather than flattened to an empty list, so the provider can tell "no columns"
  * from "no rows".
+ *
+ * The names are the declared ones through `uniqueFieldNames`, so a column declared with
+ * an empty name is keyed `(No column name)` rather than `""`. Two columns of ONE name are
+ * refused: the driver builds each row as `row[column.name] = value` (cassandra-driver
+ * 4.10.0, `lib/streams.js` `parseRows`), so the earlier column's value is gone before the
+ * row reaches this seam, and numbering the second header would only show the last value
+ * twice.
  */
 export function toCassandraResult(result: CassandraResultSetLike): CassandraQueryResult {
   const pageState = result.pageState ?? null;
   const columns = result.columns ?? null;
   if (columns === null) return { rows: [], fieldNames: null, columnTypes: null, pageState };
 
+  const declared = columns.map((column) => column.name);
+  const repeated = declared.find((name, index) => declared.indexOf(name) !== index);
+  if (repeated !== undefined) {
+    throw new CassandraTransportError(
+      `The result has two columns named "${repeated}", and the Cassandra driver keeps one value per column name, so one of them cannot be shown. Give each column its own alias.`,
+      "invalid",
+      null,
+    );
+  }
+  const fieldNames = uniqueFieldNames(declared);
+
   const rows: CassandraRow[] = (result.rows ?? []).map((row) =>
-    Object.fromEntries(columns.map((column) => [column.name, normalizeCassandraValue(row[column.name])])),
+    Object.fromEntries(columns.map((column, index) => [fieldNames[index], normalizeCassandraValue(row[column.name])])),
   );
 
   return {
     rows,
-    fieldNames: columns.map((column) => column.name),
-    columnTypes: Object.fromEntries(columns.map((column) => [column.name, describeColumnType(column.type)])),
+    fieldNames,
+    columnTypes: Object.fromEntries(
+      columns.map((column, index) => [fieldNames[index], describeColumnType(column.type)]),
+    ),
     pageState,
   };
 }

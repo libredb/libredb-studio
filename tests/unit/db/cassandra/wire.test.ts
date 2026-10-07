@@ -249,6 +249,39 @@ describe("toCassandraResult", () => {
     expect(result.pageState).toBeNull();
   });
 
+  test("a column declared with an empty name is named, so the grid can key it", () => {
+    const result = toCassandraResult({
+      columns: [
+        { name: "", type: { code: 9, info: null } },
+        { name: "id", type: { code: 9, info: null } },
+      ],
+      rows: [{ "": 7, id: 1 }],
+      pageState: null,
+    });
+
+    expect(result.fieldNames).toEqual(["(No column name)", "id"]);
+    expect(result.rows).toEqual([{ "(No column name)": 7, id: 1 }]);
+    expect(result.columnTypes).toEqual({ "(No column name)": "int", id: "int" });
+  });
+
+  test("two columns of one name are refused, because the driver kept only the last value", () => {
+    // cassandra-driver 4.10.0 builds each row as `row[column.name] = value`
+    // (lib/streams.js parseRows), so `SELECT a AS x, b AS x` reaches this seam as one key
+    // holding b. Showing both headers would show b twice; the first value is gone.
+    const read = () =>
+      toCassandraResult({
+        columns: [
+          { name: "x", type: { code: 9, info: null } },
+          { name: "x", type: { code: 13, info: null } },
+        ],
+        rows: [{ x: "b" }],
+        pageState: null,
+      });
+
+    expect(read).toThrow(CassandraTransportError);
+    expect(read).toThrow('The result has two columns named "x"');
+  });
+
   test("a void result declares no columns at all", () => {
     // Measured: an INSERT, an ALTER and a `USE` all answer a ResultSet whose
     // `columns` is null - not an empty array - and whose rows are empty.
