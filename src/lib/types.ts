@@ -594,10 +594,9 @@ export interface QueryResult {
    * values by these names, so no two columns read one value.
    * Providers keep the names apart in one of three ways. Most name the columns through `uniqueFieldNames`
    * (`src/lib/db/utils/result-fields.ts`): a SQL provider reads its rows positionally and keys them by those
-   * names, and a document store renames an empty key (`uniquelyKeyedRows`); Oracle's driver renames a repeat
-   * itself (`ID_1`), so that provider names its columns from the declared names its fetch type handler
-   * records. Cassandra refuses a result with a repeated name, because its driver has already kept only one
-   * of the values.
+   * names, and a document store renames an empty key (`uniquelyKeyedRows`). Oracle's driver numbers a repeat
+   * itself (`ID_1`). Cassandra refuses a result with a repeated name, because its driver has already kept
+   * only one of the values.
    */
   fields: string[];
   rowCount: number;

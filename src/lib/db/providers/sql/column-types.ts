@@ -49,9 +49,9 @@ export function declaredColumnTypes(
 ): Pick<QueryResult, "columnTypes"> {
   const declared = new Map<string, string>();
   for (const [name, type] of pairs) {
-    // The names arrive unique: the result's own `fields` (`uniqueFieldNames`). A repeated
-    // name here would mean a caller passed the declared names instead; the last one's type
-    // is then the one kept.
+    // The names arrive unique: the result's own `fields` (`uniqueFieldNames`), or Oracle's,
+    // whose driver numbers a repeat itself. A repeated name here would mean a caller passed
+    // the declared names instead; the last one's type is then the one kept.
     if (type !== undefined) declared.set(name, type);
   }
   return declared.size > 0 ? { columnTypes: Object.fromEntries(declared) } : {};

@@ -48,7 +48,7 @@ providers, with several Oracle-isms that are worth knowing before reading the co
 ### Thin mode
 
 The constructor ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) uses pure-JS Thin mode by
-default, sets `outFormat = OUT_FORMAT_OBJECT` (rows as objects, for the catalog and monitoring reads; the two user paths ask for array rows per call, [§5.1](#51-execution)), and `autoCommit = true` globally.
+default, sets `outFormat = OUT_FORMAT_OBJECT` (rows as objects), and `autoCommit = true` globally.
 Thin mode means **no native Oracle client** has to be installed in the container — a real deployment
 win.
 
@@ -501,33 +501,28 @@ addition.
 
 `query(sql, params?, queryId?)` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) checks
 out a pooled connection, optionally stores the **connection object** under `queryId` for
-cancellation, runs `conn.execute(sql, binds, { outFormat: OUT_FORMAT_ARRAY, autoCommit: true, fetchTypeHandler, keepInStmtCache: false })`
-([§5.3](#53-what-each-oracle-type-arrives-as) says what the handler is for, and the paragraph below why the statement stays out of the cache),
+cancellation, runs `conn.execute(sql, binds, { outFormat: OUT_FORMAT_OBJECT, autoCommit: true, fetchTypeHandler })`
+([§5.3](#53-what-each-oracle-type-arrives-as) says what the handler is for),
 and returns:
 
 ```ts
-{ rows, fields: uniqueFieldNames(declared names), rowCount: rows.length, executionTime, columnTypes? }
+{ rows, fields: metaData.map(m => m.name), rowCount: rows.length, executionTime, columnTypes? }
 ```
 
-Each array row is keyed by `fields`, by position (`keyRowsByPosition`, which raises a row whose value count is not the column count), and `columnTypes` is keyed by the same names.
-
-**Column names.** Every column reaches the grid named, and under a name no other column of the result has, through `uniqueFieldNames` as on the other SQL providers.
+**Column names.** Every column reaches the grid named, and under a name no other column of the result has, by the driver's own doing.
 An unaliased expression is named by its text (`SELECT 1+1 FROM dual` answers `1+1`), and an empty alias is refused by the server (`SELECT 1 AS "" FROM dual` fails with `ORA-01741: illegal zero-length identifier`).
-node-oracledb numbers a repeated name itself, in `metaData` (`_setup` in `oracledb/lib/impl/resultset.js`, 6.10.0): a repeat takes `NAME_1`, `NAME_2`, skipping a name the statement declares, so a repeat cannot be told from a column the statement itself names `NAME_1`.
-It hands each column to the call's `fetchTypeHandler` first, under the declared name, and renames it only afterwards; the handler of the two user paths records that name against the column's metadata object, and the provider names the columns from those declared names.
-A statement served from the connection's statement cache arrives with the metadata already renamed, so the handler would see `A_2` on its second run; `query()` and `queryInTransaction()` therefore run with `keepInStmtCache: false`, and an editor statement is parsed on every run.
-A column the handler was never shown is refused with a `QueryError` rather than named from the renamed metadata.
-Measured on 2026-10-07 against Oracle XE with that driver, through the provider (both paths, run twice on one connection):
+A repeated name is numbered by node-oracledb itself, in `metaData` and before any row is keyed (`_setup` in `oracledb/lib/impl/resultset.js`, 6.10.0): the first column keeps the name, a repeat takes `NAME_1`, `NAME_2`, and a number skips a name the statement declares.
+Measured on 2026-10-07 against Oracle XE with that driver, the same in `OUT_FORMAT_OBJECT` and `OUT_FORMAT_ARRAY`:
 
-| statement | driver `metaData` names | `fields` | row |
-|---|---|---|---|
-| `SELECT 1 AS a, 2 AS a FROM dual` | `A`, `A_1` | `A`, `A (2)` | `{ A: 1, "A (2)": 2 }` |
-| `SELECT 1 AS a, 2 AS a, 3 AS a_1 FROM dual` | `A`, `A_2`, `A_1` | `A`, `A (2)`, `A_1` | `{ A: 1, "A (2)": 2, A_1: 3 }` |
-| a join projecting `user_id` from both sides of `all_users` | `USER_ID`, `USER_ID_1` | `USER_ID`, `USER_ID (2)` | both values |
-| `SELECT 1+1, 1+1 FROM dual` | `1+1`, `1+1_1` | `1+1`, `1+1 (2)` | both values |
+| statement | names | row |
+|---|---|---|
+| `SELECT 1 AS a, 2 AS a FROM dual` | `A`, `A_1` | `{ A: 1, A_1: 2 }` |
+| `SELECT 1 AS a, 2 AS a, 3 AS a_1 FROM dual` | `A`, `A_2`, `A_1` | `{ A: 1, A_2: 2, A_1: 3 }` |
+| a join projecting `user_id` from both sides of `all_users` | `USER_ID`, `USER_ID_1` | both values |
+| `SELECT 1+1, 1+1 FROM dual` | `1+1`, `1+1_1` | both values |
 
-A repeated DATE, TIMESTAMP, INTERVAL, CLOB, BLOB or RAW column is converted as its first column is, each under its own name.
-Because a repeat reads `NAME (2)`, data masking applies the base column's rule to it and the inline edit refuses it, as on the other SQL providers.
+So no value is lost, and the provider keys rows by the names the driver gives rather than through `uniqueFieldNames`.
+The driver discards the declared name of a repeat, so the shared `name (2)` form cannot be rebuilt here: a repeat reads `NAME_1`, and a column the statement itself names `NAME_1` is indistinguishable from one.
 
 A `SELECT` answers with a `rows` array and `rowCount` is `rows.length`. A non-`SELECT`
 (INSERT/UPDATE/DELETE/DDL/PL/SQL) carries **no `rows` array at all**, and that absence is what

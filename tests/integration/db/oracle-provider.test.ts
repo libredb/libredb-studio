@@ -35,51 +35,10 @@ let lastPoolAttrs: Record<string, unknown> = {};
 // nowhere else: it is a per-call option and the provider keeps no copy.
 let lastExecuteOpts: Record<string, unknown> = {};
 
-const OUT_FORMAT_ARRAY = 4001;
-
-type MockColumn = { name: string; [key: string]: unknown };
-
-/**
- * What node-oracledb 6.10.0 does with a result before the provider sees it, for a call that asks for
- * array rows (`_setup` in `oracledb/lib/impl/resultset.js`): it hands each column's metadata to the
- * per-call `fetchTypeHandler` in order, and only then numbers a repeated name in place (`A`, `A_1`,
- * skipping a name the statement declares). A mock answer keyed by name is turned into array rows by its
- * declared names, so the answers written for the object format still read the same; an answer with no
- * `metaData` takes its columns from the first row, and one that already carries arrays keeps them. The
- * metadata is copied first, because the renaming writes into it and several tests share one array.
- */
-function asDriverArrayAnswer(answer: unknown, opts: Record<string, unknown>): unknown {
-  const { handlerSkipped, ...result } = answer as { rows?: unknown[]; metaData?: MockColumn[]; handlerSkipped?: true };
-  if (!result.rows) return answer;
-  const metaData: MockColumn[] = (
-    result.metaData ?? Object.keys((result.rows[0] as object | undefined) ?? {}).map((name) => ({ name }))
-  ).map((column) => Object.assign({}, column));
-  const declared = metaData.map((column) => column.name);
-  const handler = opts.fetchTypeHandler as ((column: MockColumn, all: MockColumn[]) => unknown) | undefined;
-  const names = new Map<string, number>();
-  declared.forEach((name, index) => {
-    if (!names.has(name)) names.set(name, index);
-  });
-  metaData.forEach((column, index) => {
-    if (!handlerSkipped) handler?.(column, metaData);
-    if (names.get(column.name) === index) return;
-    let seq = 0;
-    let name = column.name;
-    while (names.has(name)) name = `${column.name}_${(seq += 1)}`;
-    names.set(name, index);
-    column.name = name;
-  });
-  const rows = result.rows.map((row) =>
-    Array.isArray(row) ? row : declared.map((name) => (row as Record<string, unknown>)[name]),
-  );
-  return { ...result, rows, metaData };
-}
-
 const createMockConnection = () => ({
-  execute: async (sql: string, params?: unknown[], opts?: unknown) => {
+  execute: (sql: string, params?: unknown[], opts?: unknown) => {
     lastExecuteOpts = (opts ?? {}) as Record<string, unknown>;
-    const answer = await mockExecuteFn(sql, params, opts);
-    return lastExecuteOpts.outFormat === OUT_FORMAT_ARRAY ? asDriverArrayAnswer(answer, lastExecuteOpts) : answer;
+    return mockExecuteFn(sql, params, opts);
   },
   close: () => mockConnCloseFn(),
   break: () => mockBreakFn(),
@@ -126,7 +85,6 @@ const BUFFER = 2005;
 mock.module("oracledb", () => {
   const oracledbMock = {
     OUT_FORMAT_OBJECT: 4002,
-    OUT_FORMAT_ARRAY,
     DB_TYPE_CLOB,
     DB_TYPE_NCLOB,
     DB_TYPE_BLOB,
@@ -979,96 +937,20 @@ describe("OracleProvider", () => {
       expect(typeof result.executionTime).toBe("number");
     });
 
-    // node-oracledb 6.10 numbers a repeated column in `metaData` itself, after it has handed the column to
-    // the call's `fetchTypeHandler` (`_setup` in `lib/impl/resultset.js`). Measured against Oracle XE on
-    // 2026-10-07: `SELECT 1 AS a, 2 AS a, 3 AS a_1 FROM dual` shows the handler A, A, A_1 and answers
-    // `metaData` A, A_2, A_1. The provider names the columns from what the handler saw, as every other
-    // SQL provider does, so a repeat reads `A (2)` and the statement's own `A_1` keeps its name.
-    describe("result column names", () => {
-      beforeEach(async () => {
-        await provider.connect();
+    // node-oracledb 6.10 numbers a repeated column in `metaData` itself, before any row is keyed
+    // (`lib/impl/resultset.js` `_setup`), and skips a name the statement declares. Measured against
+    // Oracle XE on 2026-10-07: `SELECT 1 AS a, 2 AS a, 3 AS a_1 FROM dual` answers the names
+    // A, A_2, A_1 and the row { A: 1, A_2: 2, A_1: 3 } in both out formats, so no value is lost and
+    // the names reach the grid as the driver numbered them.
+    test("a repeated column arrives numbered by the driver, each value under its own name", async () => {
+      mockExecuteFn = async () => ({
+        rows: [{ A: 1, A_2: 2, A_1: 3 }],
+        metaData: [{ name: "A" }, { name: "A_2" }, { name: "A_1" }],
       });
-
-      test("a repeated column is named from the declared names, each value under its own name", async () => {
-        mockExecuteFn = async () => ({
-          rows: [[1, "two", 3]],
-          metaData: [
-            { name: "A", dbTypeName: "NUMBER" },
-            { name: "A", dbTypeName: "VARCHAR2" },
-            { name: "A_1", dbTypeName: "NUMBER" },
-          ],
-        });
-        const result = await provider.query("SELECT 1 AS a, 'two' AS a, 3 AS a_1 FROM dual");
-        expect(result.fields).toEqual(["A", "A (2)", "A_1"]);
-        expect(result.rows).toEqual([{ A: 1, "A (2)": "two", A_1: 3 }]);
-        expect(result.columnTypes).toEqual({ A: "NUMBER", "A (2)": "VARCHAR2", A_1: "NUMBER" });
-      });
-
-      test("a join projecting one name from both sides keeps both values", async () => {
-        mockExecuteFn = async () => ({
-          rows: [
-            [100, 7, 7, "Ada"],
-            [101, 8, 8, "Grace"],
-          ],
-          metaData: [{ name: "ID" }, { name: "CUSTOMER_ID" }, { name: "ID" }, { name: "NAME" }],
-        });
-        const result = await provider.query("SELECT * FROM orders o JOIN customers c ON c.id = o.customer_id");
-        expect(result.fields).toEqual(["ID", "CUSTOMER_ID", "ID (2)", "NAME"]);
-        expect(result.rows).toEqual([
-          { ID: 100, CUSTOMER_ID: 7, "ID (2)": 7, NAME: "Ada" },
-          { ID: 101, CUSTOMER_ID: 8, "ID (2)": 8, NAME: "Grace" },
-        ]);
-      });
-
-      // A statement kept in the connection's statement cache comes back with the metadata the driver
-      // already renamed, so the handler would see `A_2` on the second run (measured on Oracle XE,
-      // 2026-10-07). The two user paths therefore keep their statements out of the cache.
-      test("query() asks for array rows and keeps the statement out of the statement cache", async () => {
-        await provider.query("SELECT 1 FROM dual");
-        expect(lastExecuteOpts.outFormat).toBe(OUT_FORMAT_ARRAY);
-        expect(lastExecuteOpts.keepInStmtCache).toBe(false);
-      });
-
-      test("queryInTransaction() names a repeat the same way, outside the statement cache", async () => {
-        mockExecuteFn = async () => ({ rows: [[1, 2]], metaData: [{ name: "A" }, { name: "A" }] });
-        await provider.beginTransaction();
-        const result = await provider.queryInTransaction("SELECT 1 AS a, 2 AS a FROM dual");
-        expect(result.fields).toEqual(["A", "A (2)"]);
-        expect(result.rows).toEqual([{ A: 1, "A (2)": 2 }]);
-        expect(lastExecuteOpts.outFormat).toBe(OUT_FORMAT_ARRAY);
-        expect(lastExecuteOpts.keepInStmtCache).toBe(false);
-        await provider.rollbackTransaction();
-      });
-
-      test("an INTERVAL repeat is spelled under its own name", async () => {
-        mockExecuteFn = async () => ({
-          rows: [
-            [
-              { years: 3, months: 7 },
-              { years: -1, months: -2 },
-            ],
-          ],
-          metaData: [
-            { name: "I", dbType: DB_TYPE_INTERVAL_YM },
-            { name: "I", dbType: DB_TYPE_INTERVAL_YM },
-          ],
-        });
-        const result = await provider.query("SELECT i, i FROM d19_probe");
-        expect(result.rows).toEqual([{ I: "+03-07", "I (2)": "-01-02" }]);
-      });
-
-      test("a column the driver never showed the handler is refused, with the statement", async () => {
-        mockExecuteFn = async () => ({ rows: [[1]], metaData: [{ name: "A" }], handlerSkipped: true });
-        const error = await provider.query("SELECT 1 AS a FROM dual").catch((caught: unknown) => caught);
-        expect(error).toBeInstanceOf(QueryError);
-        expect((error as QueryError).message).toContain("column 1");
-        expect((error as QueryError).query).toBe("SELECT 1 AS a FROM dual");
-      });
-
-      test("a row whose value count is not the column count is refused", async () => {
-        mockExecuteFn = async () => ({ rows: [[1, 2]], metaData: [{ name: "A" }] });
-        await expect(provider.query("SELECT 1 AS a FROM dual")).rejects.toThrow(QueryError);
-      });
+      await provider.connect();
+      const result = await provider.query("SELECT 1 AS a, 2 AS a, 3 AS a_1 FROM dual");
+      expect(result.fields).toEqual(["A", "A_2", "A_1"]);
+      expect(result.rows).toEqual([{ A: 1, A_2: 2, A_1: 3 }]);
     });
 
     // oracledb answers a non-SELECT with no `rows` array at all and its own
@@ -1341,20 +1223,19 @@ describe("OracleProvider", () => {
         await provider.rollbackTransaction();
       });
 
-      // A result with no interval column has its values handed on as the driver built them:
-      // the rows are keyed by position, and no value is copied or spelled on the way.
+      // A result with no interval column is handed on as the driver built it - the
+      // same array, not a copy - so the common query pays nothing for this.
       test("a result with no interval column is not rewritten", async () => {
-        const raw = Buffer.from([1, 2]);
+        const rows = [{ ID: 1, NAME: "a" }];
         mockExecuteFn = async () => ({
-          rows: [[1, raw]],
+          rows,
           metaData: [
             { name: "ID", dbTypeName: "NUMBER" },
-            { name: "R", dbType: DB_TYPE_RAW, dbTypeName: "RAW" },
+            { name: "NAME", dbTypeName: "VARCHAR2" },
           ],
         });
-        const result = await provider.query("SELECT id, r FROM r5_types");
-        expect(result.rows).toEqual([{ ID: 1, R: raw }]);
-        expect((result.rows[0] as Record<string, unknown>).R).toBe(raw);
+        const result = await provider.query("SELECT id, name FROM r5_types");
+        expect(result.rows).toBe(rows);
       });
     });
 
