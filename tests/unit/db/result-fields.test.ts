@@ -5,7 +5,7 @@
  * name, or two columns with one name.
  */
 import { describe, expect, test } from "bun:test";
-import { UNNAMED_FIELD, unionFields, uniqueFieldNames } from "@/lib/db/utils/result-fields";
+import { UNNAMED_FIELD, unionFields, uniqueFieldNames, uniquelyKeyedRows } from "@/lib/db/utils/result-fields";
 
 describe("uniqueFieldNames", () => {
   test("names that are already unique and non-empty are kept as declared, in order", () => {
@@ -93,5 +93,34 @@ describe("unionFields", () => {
     expect(fields.length).toBe(1200);
     expect(fields.slice(0, 201)).toEqual([...Array.from({ length: 200 }, (_, key) => `k${key}`), "own0"]);
     expect(fields.at(-1)).toBe("own999");
+  });
+});
+
+describe("uniquelyKeyedRows", () => {
+  test("rows whose keys are already non-empty are answered as they are, under the same names", () => {
+    const rows = [{ _id: "1", name: "Ada" }, { _id: "2" }];
+    const result = uniquelyKeyedRows(["_id", "name"], rows);
+    expect(result.fields).toEqual(["_id", "name"]);
+    expect(result.rows).toBe(rows);
+  });
+
+  test("an empty key is named and every row carrying it is keyed under that name", () => {
+    // A document `{ "": 1 }`: keyed by "", the grid cannot take the column at all.
+    const result = uniquelyKeyedRows(["_id", ""], [{ _id: "1", "": 1 }, { _id: "2" }]);
+    expect(result.fields).toEqual(["_id", UNNAMED_FIELD]);
+    expect(result.rows).toEqual([{ _id: "1", [UNNAMED_FIELD]: 1 }, { _id: "2" }]);
+  });
+
+  test("the name an empty key takes is not one another key already uses", () => {
+    const result = uniquelyKeyedRows(["", UNNAMED_FIELD], [{ "": 1, [UNNAMED_FIELD]: 2 }]);
+    expect(result.fields).toEqual([`${UNNAMED_FIELD} (2)`, UNNAMED_FIELD]);
+    expect(result.rows).toEqual([{ [`${UNNAMED_FIELD} (2)`]: 1, [UNNAMED_FIELD]: 2 }]);
+  });
+
+  test("a renamed row keeps a __proto__ key as a plain key", () => {
+    const row = JSON.parse('{"": 1, "__proto__": 2}') as Record<string, unknown>;
+    const [renamed] = uniquelyKeyedRows(["", "__proto__"], [row]).rows;
+    expect(Object.keys(renamed)).toEqual([UNNAMED_FIELD, "__proto__"]);
+    expect(Object.getPrototypeOf(renamed)).toBe(Object.prototype);
   });
 });

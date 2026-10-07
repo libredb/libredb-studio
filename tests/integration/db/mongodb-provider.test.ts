@@ -1064,6 +1064,21 @@ describe("MongoDBProvider", () => {
       expect(result.rows.length).toBe(3);
     });
 
+    // BSON carries an empty key (`BSON.deserialize(BSON.serialize({ "": 1 }))` answers `{ "": 1 }`,
+    // measured in-process 2026-10-07), and a grid column cannot take an empty id.
+    test("a document key that is empty is answered under a name of its own", async () => {
+      mockDocumentsByNs["testdb.blank"] = [
+        { _id: new MockObjectId("b1"), "": "blank" },
+        { _id: new MockObjectId("b2"), name: "B" },
+      ];
+      const result = await provider.query(JSON.stringify({ collection: "blank", operation: "find", filter: {} }));
+      expect(result.fields).toEqual(["_id", "(No column name)", "name"]);
+      expect(result.rows).toEqual([
+        { _id: "b1", "(No column name)": "blank" },
+        { _id: "b2", name: "B" },
+      ]);
+    });
+
     test("an empty find answers no columns", async () => {
       mockDocumentsByNs["testdb.empty"] = [];
       const result = await provider.query(JSON.stringify({ collection: "empty", operation: "find", filter: {} }));

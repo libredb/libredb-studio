@@ -62,7 +62,7 @@ import {
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { applyQueryLimit, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
-import { unionFields } from "@/lib/db/utils/result-fields";
+import { unionFields, uniquelyKeyedRows } from "@/lib/db/utils/result-fields";
 import { CouchbaseHttpTransport } from "./http-transport";
 import { CATALOG_TIMEOUT_MS, inferColumns, inferColumnsEach } from "./introspect";
 import { COUCHBASE_DEFAULT_SCOPE, keyspaceFromDisplayName, keyspacePath, quoteIdentifier } from "./keyspace";
@@ -540,12 +540,14 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
    */
   private toQueryResult(result: CouchbaseQueryResult, measuredMs: number): QueryResult {
     const reportedMs = Math.round(result.executionTimeMs);
-    const rows = result.rows.map(normalizeRow);
+    const normalized = result.rows.map(normalizeRow);
+    // `SELECT *` nests whole documents under the keyspace name and advertises only a
+    // wildcard signature (`fieldNames` null), so the columns are the keys the rows carry.
+    // Either way an empty key is named, and the rows carrying it keyed under that name.
+    const { fields, rows } = uniquelyKeyedRows(result.fieldNames ?? unionFields(normalized), normalized);
     return {
       rows,
-      // `SELECT *` nests whole documents under the keyspace name and advertises only a
-      // wildcard signature (`fieldNames` null), so the columns are the keys the rows carry.
-      fields: result.fieldNames ?? unionFields(rows),
+      fields,
       // A mutation returns no rows; its row count is what it changed.
       rowCount: rows.length > 0 ? rows.length : result.mutationCount,
       executionTime: reportedMs > 0 ? reportedMs : measuredMs,

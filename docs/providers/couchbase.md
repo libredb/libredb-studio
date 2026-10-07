@@ -562,10 +562,15 @@ operator — and a statement ending in a `#` run is returned unbounded rather th
 | Source field | `QueryResult` field | Notes |
 |--------------|---------------------|-------|
 | result rows | `rows` | JSON objects exactly as the cluster returned them, except that an integer past 2^53 arrives as its exact digits (see below) |
-| signature | `fields` | `null` for a wildcard signature, in which case columns are the union of the keys the rows carry, first seen first |
+| signature | `fields` | `null` for a wildcard signature, in which case columns are the union of the keys the rows carry, first seen first; an empty key, from either source, is named `(No column name)` and the rows carrying it are keyed under that name (see below) |
 | — | `rowCount` | `rows.length`, or the mutation count when a statement returned no rows |
 | metrics `executionTime` | `executionTime` | The cluster's own time (excludes network latency); falls back to the measured wall clock when the cluster reported none |
 | `warnings` | `warnings` | The notices the cluster attached to a statement it completed, each carrying its message and the cluster's own code **when it reported one** — an entry with no code arrives without one rather than with a substituted `0`, which is itself a legal code. **Absent** when the cluster reported no warnings at all — never an empty array, so the result UI decides from the field's presence alone (issue #273) |
+
+**An empty key is a column named `(No column name)`.**
+JSON carries an empty key, and the transport's `JSON.parse` keeps it, so a document `{"": 1}` or a signature `{"": "number"}` would otherwise answer a column `""`, which the grid cannot take.
+[`uniquelyKeyedRows`](../../src/lib/db/utils/result-fields.ts) names it through `uniqueFieldNames`, numbered past any key the rows already use, and keys every row carrying it under that name.
+Not measured on a live cluster; the rule is pinned by the provider's integration tests.
 
 **An integer past 2^53 is handed over as its digits.** The query service sends a document's number
 as the **unquoted** literal it was stored as, and `JSON.parse` rounds one past 2^53 with no error:

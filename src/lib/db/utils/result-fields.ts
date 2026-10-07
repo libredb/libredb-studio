@@ -52,3 +52,29 @@ export function uniqueFieldNames(declared: readonly string[]): string[] {
     return unique;
   });
 }
+
+/**
+ * Rows keyed by their own keys (a document store's), with the result's columns named as `QueryResult.fields`
+ * promises. The keys of one object are already distinct, so the only name `uniqueFieldNames` changes is an
+ * empty key, which a grid column cannot take: every row carrying it is keyed under the new name instead.
+ *
+ * Rows no name changed for are answered as they are, without a copy. A renamed row is rebuilt with
+ * `Object.fromEntries`, so a `__proto__` key stays a plain key.
+ */
+export function uniquelyKeyedRows(
+  declared: readonly string[],
+  rows: Record<string, unknown>[],
+): { fields: string[]; rows: Record<string, unknown>[] } {
+  const fields = uniqueFieldNames(declared);
+  const renamed = new Map<string, string>();
+  declared.forEach((name, position) => {
+    if (fields[position] !== name) renamed.set(name, fields[position]);
+  });
+  if (renamed.size === 0) return { fields, rows };
+  return {
+    fields,
+    rows: rows.map((row) =>
+      Object.fromEntries(Object.entries(row).map(([key, value]) => [renamed.get(key) ?? key, value])),
+    ),
+  };
+}

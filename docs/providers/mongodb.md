@@ -402,6 +402,11 @@ carried from the grid and from those exports (the JSON export kept them). A unif
 answers exactly the first document's keys in their order. The union covers top-level keys only:
 a subdocument stays one column.
 
+**An empty top-level key is a column named `(No column name)`, and the rows carrying it are keyed under that name.**
+BSON carries an empty key: `BSON.deserialize(BSON.serialize({ "": 1 }))` answers `{ "": 1 }` (measured in-process with the bundled driver on 2026-10-07; a live server was not measured).
+Keyed by `""`, the grid could not take the column at all, so [`uniquelyKeyedRows`](../../src/lib/db/utils/result-fields.ts) names it through `uniqueFieldNames`, numbered past any key the documents already use (`(No column name) (2)` when one is literally called `(No column name)`).
+Every other key, and every document without an empty key, is answered as read.
+
 **`options` handling differs per operation** (a real source of surprise — see
 [Known limitations](#13-known-limitations--future-work)):
 

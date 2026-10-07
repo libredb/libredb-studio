@@ -572,6 +572,27 @@ describe("CouchbaseProvider query", () => {
     expect(result.fields).toEqual(["hotel", "__id"]);
   });
 
+  // JSON carries an empty key, and a grid column cannot take an empty id.
+  test("names an empty key the rows carry and keys those rows under that name", async () => {
+    const provider = await connectProvider();
+    queryHandler = () => queryPayload([{ "": 1, city: "Bursa" }, { city: "Izmir" }]);
+
+    const result = await provider.query("SELECT * FROM `travel`.`inventory`.`hotel`");
+
+    expect(result.fields).toEqual(["(No column name)", "city"]);
+    expect(result.rows).toEqual([{ "(No column name)": 1, city: "Bursa" }, { city: "Izmir" }]);
+  });
+
+  test("names an empty key the signature declares", async () => {
+    const provider = await connectProvider();
+    queryHandler = () => queryPayload([{ "": 1, a: 2 }], { signature: { "": "number", a: "number" } });
+
+    const result = await provider.query("SELECT 1 AS ``, 2 AS a");
+
+    expect(result.fields).toEqual(["(No column name)", "a"]);
+    expect(result.rows).toEqual([{ "(No column name)": 1, a: 2 }]);
+  });
+
   test("wraps SELECT RAW scalars so the grid gets one honest column", async () => {
     // SELECT RAW / SELECT VALUE return bare scalars, not objects. Handing those
     // through unchanged makes the column union call Object.keys on a string, which
