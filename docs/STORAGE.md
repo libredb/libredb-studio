@@ -59,7 +59,7 @@ Server storage (`sqlite` or `postgres`) gives each person their own private work
 For a team of three or more, pair server storage with Single Sign-On via [OIDC](OIDC.md) to provide individual logins, personal workspaces, and an audit trail that attributes actions to each user.
 In server storage the browser copy belongs to the signed-in account: signing out clears this browser's copy, open editor tabs included, and signing in as a different account starts from that account's server data.
 The default `local` mode stores data in the browser and does not isolate workspaces between people using the same browser profile.
-In `local` mode the next account to sign in on that browser profile sees, and can open, the connections saved there before it, saved credentials included.
+In `local` mode the next account to sign in on that browser profile sees, and can open, the connections saved there before it.
 
 ---
 
@@ -1213,7 +1213,8 @@ App Mount
   │   │  │   → keep the browser copy                │
   │   │  ├─ No owner, never migrated → keep it      │
   │   │  │   (local-mode data, migrated below)      │
-  │   │  └─ Otherwise → clear the browser copy      │
+  │   │  └─ Otherwise → clear the browser copy,     │
+  │   │      mark it migrated, owner = username     │
   │   └──────────────────────┬──────────────────────┘
   │                          │
   │   ┌──────────────────────▼──────────────────────┐
@@ -1254,16 +1255,20 @@ When any `storage.*` mutation fires:
 
 ### The Browser Copy Belongs to the Signed-In Account
 
-In server mode the browser copy is bound to the account that signed in: `libredb_workspace_owner` holds its username, and the lifecycle above compares it with `GET /api/auth/me` before anything is migrated, pulled or pushed.
+In server mode the browser copy is bound to the account that signed in: `libredb_workspace_owner` holds its username, and it is compared with `GET /api/auth/me` before any page reads the copy.
+Every page that reads it (the editor, the admin dashboard and the monitoring page) renders inside `WorkspaceOwnerGate`, which runs that check first; the lifecycle above runs it again before anything is migrated, pulled or pushed.
+When the signed-in account cannot be read, those pages show a message instead of the copy.
 The copy is every synced collection, the editor tabs (never stored on the server), the object-source drafts, the agent thread hint, the migration flag and the owner key itself; per-browser preferences such as the theme and line numbers are not part of it.
 `clearAccountWorkspace()` in `src/lib/storage/local-storage.ts` holds that list.
 
 - **Same account:** the copy is kept, and the pull overwrites each collection the server holds; a collection the server does not hold yet stays local.
-- **A different account, or a copy with no owner that was already migrated:** the copy is cleared first, so the account starts from its own server data.
+- **A different account, or a copy with no owner that was already migrated:** the copy is cleared first and recorded as this account's, so the account starts from its own server data.
 - **A copy with no owner that was never migrated:** local-mode data, migrated into the signed-in account as described in [Migration Flow](#10-migration-flow).
-- **Sign-out** (the editor, the admin dashboard and the launch page): pending collections are pushed while the session is still valid, then the copy is cleared, then `POST /api/auth/logout` ends the session.
-  When a pending push does not land, the sign-out fails and the copy stays, so no unsaved change is dropped.
-- **A session that ended on its own** (expiry, a disabled account) clears nothing; the owner check at the next sign-in covers a different account.
+- **Sign-out** (the editor, the admin dashboard and the launch page): pending collections are pushed while the session is still valid, then `POST /api/auth/logout` ends the session, and only then is the copy cleared.
+  The cleared copy keeps the migration flag and no owner, so whatever is written to it afterwards is cleared at the next sign-in rather than migrated.
+  When the storage mode cannot be read or a pending push does not land, the sign-out fails and the copy stays, so no unsaved change is dropped; when the server refuses the sign-out, the copy stays and the sync goes on.
+- **A session that ended on its own** (expiry, a disabled account) clears nothing; the owner check at the next sign-in, on whichever of these pages it lands, covers a different account.
+- **The first sign-in after upgrading to a release that records the owner:** a browser that was already migrated has no owner yet, so its copy is cleared once, for the same account too; open editor tabs, object-source drafts and any change that had not reached the server start over.
 
 In local mode none of this runs: the browser copy is the only copy, it stays on sign-out, and no owner is recorded.
 

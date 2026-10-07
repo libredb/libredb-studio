@@ -582,7 +582,7 @@ These are real, current, and not oversights. Each is a decision with a reason.
 - **Browser `localStorage` holds your credentials in plaintext.** It is the rendering source, and
   encrypting it would require a master password and a recovery flow, changing what the product is.
   This is why 0.1 and 1.1 matter as much as they do.
-  In server storage mode the browser copy belongs to the signed-in account and is cleared on sign-out.
+  In server storage mode the browser copy belongs to the signed-in account: it is cleared on sign-out, and a different account signing in starts from its own server data.
   In local mode it stays, and the next account to sign in on that browser profile sees and can open the connections saved there.
 - **Anyone who can read the server's environment can read the stored credentials.** 3.1 protects a
   stolen database file or dump on its own; it is not a vault. For `STORAGE_PROVIDER=sqlite` with no
