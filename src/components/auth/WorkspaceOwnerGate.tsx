@@ -18,13 +18,13 @@ import {
  * a different account starts from that account's server data on every such page, not only the
  * editor. The copy is shared by every tab of the browser profile: when another tab records a
  * different owner or clears it (a sign-out, a different account signing in, or a claim for this
- * same account that cleared it first), this page stops rendering and reloads, so the check runs again for the account signed in now. A sign-in can
- * also land where nothing records an owner (an unknown address), so whenever the tab is shown
- * again it asks which account is signed in, and reloads the same way when that is no longer the
- * account it rendered for. A session that has ended, at the first check or when the tab is shown
- * again, shows no page and no message: the tab goes to sign in, as every page does when the server
- * reports an ended session. In local mode the page renders after the storage mode is known, with
- * the copy as it is.
+ * same account that cleared it first), this page stops rendering and reloads, so the check runs
+ * again for the account signed in now. A sign-in can also land where nothing records an owner (an
+ * unknown address), so whenever the tab is shown again it asks which account is signed in, and
+ * reloads the same way when that is no longer the account it rendered for. A session that has
+ * ended, at the first check or when the tab is shown again, shows no page and no message: the tab
+ * goes to sign in, as every page does when the server reports an ended session. In local mode the
+ * page renders after the storage mode is known, with the copy as it is.
  */
 export function WorkspaceOwnerGate({ children }: Readonly<{ children: ReactNode }>) {
   const [state, setState] = useState<"checking" | "ready" | "failed">("checking");
