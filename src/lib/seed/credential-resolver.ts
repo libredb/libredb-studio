@@ -86,6 +86,26 @@ export function resetPlaintextWarnings(): void {
   warnedPlaintext.clear();
 }
 
+/**
+ * A whole-value `${NAME}` whose variable is not defined. The operator loader drops that one connection and records
+ * the skip with these names (Spec A, section 5.2 step 4), so the admin view shows which variable a connection waits
+ * for. Names only: the message carries no value, as before.
+ */
+export class UndefinedSeedVariableError extends Error {
+  readonly variable: string;
+  readonly connectionId: string;
+  readonly field: string;
+  constructor(variable: string, connectionId: string, field: string) {
+    super(
+      `Environment variable ${variable} is not defined (required by seed connection "${connectionId}" field "${field}")`,
+    );
+    this.name = "UndefinedSeedVariableError";
+    this.variable = variable;
+    this.connectionId = connectionId;
+    this.field = field;
+  }
+}
+
 /** The values of `SEED_LITERAL_VALUES` that turn literal mode on, once trimmed and lowercased. */
 const LITERAL_MODE_ON = new Set(["true", "1", "on", "yes"]);
 
@@ -183,11 +203,7 @@ function resolveField(value: string | undefined, fieldName: string, connId: stri
 
   const envVar = match[1];
   const envValue = process.env[envVar];
-  if (envValue === undefined) {
-    throw new Error(
-      `Environment variable ${envVar} is not defined (required by seed connection "${connId}" field "${fieldName}")`,
-    );
-  }
+  if (envValue === undefined) throw new UndefinedSeedVariableError(envVar, connId, fieldName);
 
   return envValue;
 }
