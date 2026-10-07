@@ -12,6 +12,7 @@
  * with no module mock.
  */
 import type { BaseLayoutOptions, Core, CytoscapeOptions } from "cytoscape";
+import { ChunkLoadError } from "@/lib/lazy";
 
 /** The library's own types, re-exported so the rest of the view never names the package. */
 export type { Core, ElementDefinition, EventObject, StylesheetJson } from "cytoscape";
@@ -46,12 +47,16 @@ export const FIT_PADDING = 30;
 /**
  * Loads both packages and registers fcose. Registering again on a later call
  * replaces the layout with the same one, so a remounted view may call it freely.
+ * A package that cannot be imported is a chunk that never arrived, so that
+ * failure, and only that one, is a `ChunkLoadError`.
  */
 export const loadCytoscape: CytoscapeFactory = async () => {
   const [{ default: cytoscape }, { default: fcose }] = await Promise.all([
     import("cytoscape"),
     import("cytoscape-fcose"),
-  ]);
+  ]).catch((failure: unknown) => {
+    throw ChunkLoadError.from(failure);
+  });
   cytoscape.use(fcose);
   return (options) => cytoscape(options);
 };

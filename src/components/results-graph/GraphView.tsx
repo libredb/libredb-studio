@@ -12,8 +12,9 @@
  * The canvas library arrives through `loadCytoscape`, awaited inside an effect, so
  * nothing here touches `window` at module load or on the server. Tests pass a
  * factory of their own instead of mocking a module. A load that fails is rethrown
- * during render as a `ChunkLoadError`, so it lands in the panel's `ChunkBoundary`
- * like any other view whose chunk never arrived, and is named as one.
+ * during render into the panel's `ChunkBoundary`: `loadCytoscape` names a package
+ * that never arrived a `ChunkLoadError`, which the boundary offers Reload for like
+ * any other missing chunk, and any other failure shows as a render error.
  *
  * Keyboard: the canvas is focusable; `+` and `=` zoom in, `-` zooms out, `0` fits,
  * the arrow keys pan, and Escape clears the selection; a key held with Ctrl, Cmd or
@@ -59,7 +60,6 @@ import {
   paletteColor,
 } from "@/lib/db/graph/result-graph";
 import { downloadBlob } from "@/lib/export/download";
-import { ChunkLoadError } from "@/lib/lazy";
 import type { QueryResult } from "@/lib/types";
 
 /** How far one zoom step or one arrow key moves the view. */
@@ -177,7 +177,7 @@ export function GraphView({
         setReadyFor(graph);
       },
       (error: unknown) => {
-        if (!cancelled) setLoadError(ChunkLoadError.from(error));
+        if (!cancelled) setLoadError(error);
       },
     );
     return () => {

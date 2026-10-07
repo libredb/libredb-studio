@@ -19,6 +19,7 @@ import {
   loadCytoscape,
 } from "@/components/results-graph/cytoscape-host";
 import { ChunkBoundary } from "@/components/LazyView";
+import { ChunkLoadError } from "@/lib/lazy";
 import { chartTheme } from "@/lib/charts/palette";
 import { DEFAULT_MASKING_CONFIG, type MaskingConfig, maskingInForce } from "@/lib/data-masking";
 import type { GraphNodeJson, GraphRelationshipJson } from "@/lib/db/graph/values";
@@ -599,13 +600,30 @@ describe("GraphView: lifecycle", () => {
   test("a library that fails to load reaches the panel's chunk boundary", async () => {
     const quiet = spyOn(console, "error").mockImplementation(() => {});
     try {
-      const failing: CytoscapeFactory = () => Promise.reject(new Error("chunk failed"));
+      // `loadCytoscape` names a failed fetch of either package a `ChunkLoadError`.
+      const failing: CytoscapeFactory = () => Promise.reject(ChunkLoadError.from(new Error("chunk failed")));
       const { findByTestId } = render(
         <ChunkBoundary label="The graph">{view({ loadCytoscape: failing })}</ChunkBoundary>,
       );
       const notice = await findByTestId("chunk-error");
       expect(notice.textContent).toContain("The graph could not be loaded.");
       expect(notice.textContent).toContain("Reload");
+    } finally {
+      quiet.mockRestore();
+    }
+  });
+
+  test("a load that fails after both packages arrived is a render error, not a missing chunk", async () => {
+    const quiet = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const failing: CytoscapeFactory = () => Promise.reject(new Error("fcose did not register"));
+      const { findByTestId, queryByTestId } = render(
+        <ChunkBoundary label="The graph">{view({ loadCytoscape: failing })}</ChunkBoundary>,
+      );
+      const notice = await findByTestId("render-error");
+      expect(notice.textContent).toContain("The graph could not be displayed.");
+      expect(notice.textContent).toContain("fcose did not register");
+      expect(queryByTestId("chunk-error")).toBeNull();
     } finally {
       quiet.mockRestore();
     }
