@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D240, U17 · 144
+- [Drivers and connections](#drivers-and-connections) — D1-D243, U17 · 147
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U93 · 84
@@ -1160,10 +1160,10 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 49 hits, re-measured 2026-10-07.
-Sixteen of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 51 hits, re-measured 2026-10-07.
+Eighteen of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
 Thirty write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
-The remaining two write a shorter stub of their own, one with two keys and one with a single `getSession`.
+The remaining three write a shorter stub of their own, two with two keys and one with a single `getSession`.
 
 `src/lib/auth.ts` exports nine names. The four no hand-written stub carries are
 `shouldMarkCookieSecure`, `resetCookieSecurityWarning`, `readCookieSecureOverride` and
@@ -1832,11 +1832,11 @@ The editor and agent paths reach this function the same way.
 
 ### D127. Two seed-loading paths drop a connection without telling the caller
 
-`resolveAllCredentials` skips a seed whose credentials fail to resolve and only logs it (`src/lib/seed/credential-resolver.ts:133-143`).
-The built-in samples are left out on a filesystem error by an empty `catch` (`src/lib/seed/index.ts:57-59`, `:68-70`).
+An undefined variable now drops only that connection, and `src/lib/seed/operator-loader.ts` records the skip with a named reason that an admin reads through `GET /api/admin/seed-sources` and the Seed sources card.
+The built-in samples are left out on a filesystem error by an empty `catch` (`src/lib/seed/index.ts:82-84`, `:93-95`).
 Both reach the caller as a shorter list with no reason: `GET /api/connections/managed` and MCP's `list_connections` show fewer connections and say nothing.
 
-**Done when:** each failure reaches the caller as a named reason, in the shape of `SEED_CONFIG_UNREADABLE_REASON` (`src/app/api/connections/managed/route.ts:17-33`), or a recorded decision says why a partial list is the right answer.
+**Done when:** each failure reaches the caller as a named reason, in the shape of `SEED_CONFIG_UNREADABLE_REASON` (`src/app/api/connections/managed/route.ts:36-43`), or a recorded decision says why a partial list is the right answer.
 
 ### D128. A read-only statement cannot be cancelled, so a cancelled or timed-out MCP query keeps running
 
@@ -2581,6 +2581,40 @@ Test Connection and the agent's operations reads borrow the open handle instead,
 Found while fixing the review findings on the non-admin DuckDB file-access change.
 
 **Done when:** a second record naming a file the cache already holds is served without a second read-write handle, or is refused with a sentence that names the open one, measured on Linux and on Windows.
+
+### D241. A postgres seed with a `connectionString` inherits `pg`'s reading of `sslmode`
+
+A seed connection of type `postgres` that sets `connectionString` reaches `buildPoolConfig` in `src/lib/db/providers/sql/postgres.ts`, which hands the string to `pg`, and `pg`'s `ConnectionParameters` lays what `pg-connection-string` parses from it over the configuration object, so the URI's `sslmode` decides TLS rather than the seed's `ssl.mode`.
+`pg-connection-string` 2.14.1, under `pg` 8.23.1, reads `sslmode=prefer`, `require` and `verify-ca` as aliases for `verify-full` and emits a deprecation warning, so a seed URI that asks for `require` verifies the chain and the host name, which `ssl.mode: require` on the same seed's fields does not.
+That warning announces that `pg-connection-string` 3.0.0 and `pg` 9.0.0 adopt libpq semantics, where `require` does not verify, so the same seed changes meaning again at that upgrade.
+The connection form never sends a postgres `connectionString`, so this reaches seed files and API callers that send an inline connection with one.
+
+Deferred by Spec A (seed sources), which refuses a connection string only where the provider ignores it, not where the driver reads it differently.
+
+**Done when:** a postgres seed's TLS is decided by Studio's own `ssl.mode` whichever `pg` version is installed, either by mapping the URI's `sslmode` onto `ssl.mode` before the pool is built or by refusing a URI that carries one, with a test per mode that pins the `ssl` option the pool receives, and `docs/SEED_CONNECTIONS.md` says which of the two wins.
+
+### D242. `supportsConnectionString` means two things, so two providers declare the opposite of what they read
+
+`ProviderCapabilities.supportsConnectionString` in `src/lib/db/types.ts` has no docblock and no reader in `src` outside the providers, so each provider has given it its own meaning.
+mssql declares `true` in `src/lib/db/providers/sql/mssql.ts` because the connection form splits a pasted `mssql://` or `sqlserver://` URI into fields, while its `buildConfig` never reads `connectionString` and defaults the server to `localhost` (`docs/providers/mssql.md` section 4.4).
+sqlite declares `false` in `src/lib/db/providers/sql/sqlite.ts` while its `getDatabasePath` opens `connectionString` as the database file path, with a `file:` prefix removed.
+`CONNECTION_STRING_ACCEPTED` in `src/lib/db/compatibility.ts` follows what each provider reads, so it carries both as declared exceptions to the flag, each pinned by a behavioural test in `tests/unit/db/connection-string-records.test.ts` instead of by the census there.
+
+Deferred by Spec A (seed sources), which needed the providers' reading for its refusal and left both flags as they are.
+
+**Done when:** the flag means one thing, either split into a form capability and a provider capability or kept as the provider's reading with mssql and sqlite declaring what they read, and the census in `tests/unit/db/connection-string-records.test.ts` covers every shipped type with no exception list.
+
+### D243. Redis reply shaping matches an option against every argument, and two edges still lose or mislabel a value
+
+`hasReplyOption` in `src/lib/db/providers/keyvalue/redis.ts` looks for `WITHSCORES`, `NOVALUES` and `NOSCORES` in every argument, the key and a `MATCH` pattern included.
+So `HSCAN novalues 0` on a hash whose key is `novalues` renders its fields and values interleaved under one `field` column, and `ZSCAN noscores 0` does the same with members and scores, measured 2026-10-07 on redis 8.10.0 and valkey 9.1.1; a zset key named `withscores` under `ZRANGE` should pair a plain member list the same way (read in code, not probed).
+In `streamEntryRows`, a stream field named `id` is shown as `id (field)` (`STREAM_ID_FIELD_COLUMN`), so an entry that also carries a real field named `id (field)` keeps only one of the two values, and across entries the two fields share one column.
+`scanRows` still turns a cursor reply whose second element is not an array into an empty page (`Array.isArray(result[1]) ? ... : []`) instead of raising, as the stream path now does.
+`docs/providers/redis.md` section 5.2 lists `ZSCAN ... NOSCORES` with no engine note, while Redis 8.10 refuses the option with `ERR syntax error` and only Valkey answers it.
+
+Found in the round-2 review of #1552, which introduced the first two edges; the last two predate it.
+
+**Done when:** each option is read only from its option position (after the key and cursor for the scan family, skipping the values of `MATCH`, `COUNT` and `TYPE`), the renamed stream header cannot collide with a field of the same page, a malformed cursor reply raises, and the provider doc says `NOSCORES` is a Valkey option, each with a failing test first in `tests/integration/db/redis-provider.test.ts`.
 
 ## Value interpolation
 
@@ -4513,13 +4547,14 @@ Not fixed there: the etcd PR touches no other script.
 
 ### REL6. Five dynamic file reads make Turbopack trace the whole repository into the server output
 
-`bun run build` prints "Turbopack build encountered 5 warnings", each "Dynamic filesystem access causes tracing of the whole project", at `resolveAgentLedgerDirectory` in `src/lib/agent/config.ts`, `getDatabasePath` in `src/lib/db/providers/sql/duckdb/index.ts` and in `src/lib/db/providers/sql/sqlite.ts`, `loadConfig` in `src/lib/seed/config-loader.ts` and `kubernetesLogin` in `src/lib/seed/vault-client.ts`.
+`bun run build` prints "Turbopack build encountered 5 warnings", each "Dynamic filesystem access causes tracing of the whole project", at `resolveAgentLedgerDirectory` in `src/lib/agent/config.ts`, `reservedStoragePaths` and `canonicalPath` in `src/lib/data-dir.ts`, `getDatabasePath` in `src/lib/db/providers/sql/sqlite.ts` and `kubernetesLogin` in `src/lib/seed/vault-client.ts`.
+Re-measured 2026-10-07 with the operator seed sources in place: the seed file read in `src/lib/seed/sources/file.ts` and DuckDB's `getDatabasePath` are no longer reported, and `src/lib/data-dir.ts` now is, twice.
 The trace of `/api/db/query` then lists 2,662 project files outside `node_modules` and `.next`, `src/`, `tests/`, `operator/`, `research/` and `docs/` among them, and `scripts/lib/prune-standalone-payload.sh` removes only what its deny-list names, so a payload built from the committed tree still carries `operator/`, `CONTRIBUTORS.md` and the seven translated READMEs into the release tarball the `npx` launcher downloads.
-Measured 2026-10-01 on a build of the committed tree: marking the five calls `/*turbopackIgnore: true*/` in a scratch copy removed all five warnings and cut that trace to one project file, `seed-assets/sqlite/employee.db`.
-The warnings are printed on every run of the required check, where a sixth is easy to miss; `main`'s CI prints the same five.
+Measured 2026-10-01 on a build of the committed tree, when the five warnings were those reported before the re-measure above, the seed file read and DuckDB's `getDatabasePath` among them: marking those five calls `/*turbopackIgnore: true*/` in a scratch copy removed all five warnings and cut that trace to one project file, `seed-assets/sqlite/employee.db`.
+The warnings are printed on every run of the required check, where a sixth is easy to miss; `main`'s CI printed the same five on 2026-10-01.
 
 Found while building the etcd provider (#1089), whose diff touches none of the five files, and measured again by its review.
-Not fixed there: none of the five is an etcd file.
+Not fixed there: none of the five files reported on 2026-10-01 is an etcd file.
 
 **Done when:** `bun run build` prints no tracing warning, because each of the five reads tells Turbopack what it reaches or is marked as outside the trace, and a payload built from the committed tree holds at its root only what the server runs, `LICENSE` and `README.md`.
 

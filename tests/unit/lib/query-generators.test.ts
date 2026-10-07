@@ -1064,8 +1064,18 @@ describe("generateTableQuery — Redis dialect", () => {
     expect(generateTableQuery(["counter"], redisCaps, typeCols("string, hash"))).toBe("TYPE counter");
   });
 
-  test('bare key, unrecognised sample ("stream") -> TYPE', () => {
-    expect(generateTableQuery(["counter"], redisCaps, typeCols("stream"))).toBe("TYPE counter");
+  test("bare key, stream sample -> XRANGE k - + COUNT 100", () => {
+    expect(generateTableQuery(["counter"], redisCaps, typeCols("stream"))).toBe("XRANGE counter - + COUNT 100");
+  });
+
+  test("bare key, ReJSON-RL sample -> JSON.GET", () => {
+    expect(generateTableQuery(["counter"], redisCaps, typeCols("ReJSON-RL"))).toBe("JSON.GET counter");
+  });
+
+  test('bare key, no longer-unrecognised sample ("none") -> TYPE', () => {
+    // `TYPE` answers `none` for a key that vanished mid-walk, which is not a value
+    // type and keeps the unknown-bucket reader.
+    expect(generateTableQuery(["counter"], redisCaps, typeCols("none"))).toBe("TYPE counter");
   });
 
   test('bare key, empty sample ("") -> TYPE', () => {
@@ -1139,7 +1149,7 @@ describe("generateSelectQuery — Redis dialect", () => {
         '# Redis commands for "user:*" — select a line and Run Selected.',
         "",
         "# List keys under this prefix — ONE scan iteration, not the whole set.",
-        "# 0 is the start cursor; the reply's first row is the next cursor. Re-run",
+        "# 0 is the start cursor; the reply's cursor column holds the next one. Re-run",
         "# with that value in place of 0 until it comes back 0 (a page may be empty).",
         "SCAN 0 MATCH user:* COUNT 50",
         "",
@@ -1167,7 +1177,7 @@ describe("generateSelectQuery — Redis dialect", () => {
         '# Redis commands for "session:*" — select a line and Run Selected.',
         "",
         "# List keys under this prefix — ONE scan iteration, not the whole set.",
-        "# 0 is the start cursor; the reply's first row is the next cursor. Re-run",
+        "# 0 is the start cursor; the reply's cursor column holds the next one. Re-run",
         "# with that value in place of 0 until it comes back 0 (a page may be empty).",
         "SCAN 0 MATCH session:* COUNT 50",
         "",
@@ -1243,6 +1253,30 @@ describe("generateSelectQuery — Redis dialect", () => {
       "TTL score:1",
       "DEL score:1",
     ]);
+  });
+
+  test("stream prefix group emits XRANGE / XADD", () => {
+    expect(commandLines(generateSelectQuery(["events:*"], typeCols("stream"), redisCaps))).toEqual([
+      "SCAN 0 MATCH events:* COUNT 50",
+      "TYPE events:1",
+      "XRANGE events:1 - + COUNT 100",
+      "XADD events:1 * field example",
+      "TTL events:1",
+      "DEL events:1",
+    ]);
+  });
+
+  test("ReJSON-RL prefix group emits JSON.GET / JSON.SET", () => {
+    const lines = commandLines(generateSelectQuery(["doc:*"], typeCols("ReJSON-RL"), redisCaps));
+    expect(lines.slice(0, 4)).toEqual([
+      "SCAN 0 MATCH doc:* COUNT 50",
+      "TYPE doc:1",
+      "JSON.GET doc:1",
+      // The JSON value carries a quote, so that line alone falls back to the
+      // lossless command form (#427) rather than the plain tokenizer mangling it.
+      '{"command":"JSON.SET","args":["doc:1","$","{\\"example\\":true}"]}',
+    ]);
+    expect(lines.slice(4)).toEqual(["TTL doc:1", "DEL doc:1"]);
   });
 
   test("mixed-type prefix group omits the read and write blocks", () => {
@@ -1337,7 +1371,7 @@ describe("generateSelectQuery — Redis dialect", () => {
   test("the SCAN comment says one iteration is not the whole set (#427)", () => {
     const out = generateSelectQuery(["user:*"], typeCols("string"), redisCaps);
     expect(out).toContain("ONE scan iteration");
-    expect(out).toContain("the reply's first row is the next cursor");
+    expect(out).toContain("the reply's cursor column holds the next one");
   });
 });
 

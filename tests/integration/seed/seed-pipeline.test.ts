@@ -117,32 +117,35 @@ describe("seed pipeline integration", () => {
     expect(conns[0].password).toBe("kafka-secret");
   });
 
-  it("a seeded mechanism written as an environment reference refuses the file, naming the field", async () => {
+  it("a seeded mechanism written as an environment reference refuses the file, naming the file and the field", async () => {
     // A mechanism names no credential and no address, so no reference is resolved in it, and the
     // file is validated before anything is resolved: the refusal names the field.
-    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "kafka-mechanism-reference.yaml");
+    const file = path.join(FIXTURES, "kafka-mechanism-reference.yaml");
+    process.env.SEED_CONFIG_PATH = file;
     process.env.TEST_KAFKA_MECHANISM = "SCRAM-SHA-512";
     process.env.TEST_KAFKA_PASSWORD = "kafka-secret";
 
-    await expect(getManagedConnections(["admin"])).rejects.toThrow(
-      /^Invalid seed config: connections\.0\.saslMechanism: /,
-    );
+    const error = (await getManagedConnections(["admin"]).catch((thrown: unknown) => thrown)) as Error;
+    expect(error.message).toStartWith(`Invalid seed config at ${file}: connections.0.saslMechanism: `);
   });
 
-  it("a seeded read-only mode written as an environment reference refuses the file, naming the field", async () => {
+  it("a seeded read-only mode written as an environment reference refuses the file, naming the file and the field", async () => {
     // The mode names no credential and no address, so no reference is resolved in it (#1089), and the
     // file is validated before anything is resolved: the refusal names the field.
-    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "readonly-reference.yaml");
+    const file = path.join(FIXTURES, "readonly-reference.yaml");
+    process.env.SEED_CONFIG_PATH = file;
     process.env.TEST_READ_ONLY = "true";
 
-    await expect(getManagedConnections(["admin"])).rejects.toThrow(/^Invalid seed config: connections\.0\.readOnly: /);
+    const error = (await getManagedConnections(["admin"]).catch((thrown: unknown) => thrown)) as Error;
+    expect(error.message).toStartWith(`Invalid seed config at ${file}: connections.0.readOnly: `);
   });
 
-  it("a read-only mode in defaults refuses the file, naming the per-connection rule", async () => {
-    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "readonly-defaults.yaml");
+  it("a read-only mode in defaults refuses the file, naming the file and the per-connection rule", async () => {
+    const file = path.join(FIXTURES, "readonly-defaults.yaml");
+    process.env.SEED_CONFIG_PATH = file;
 
     await expect(getManagedConnections(["admin"])).rejects.toThrow(
-      "Invalid seed config: defaults.readOnly: readOnly is set per connection and never in defaults: add readOnly: true to each seed connection that must refuse writes",
+      `Invalid seed config at ${file}: defaults.readOnly: readOnly is set per connection and never in defaults: add readOnly: true to each seed connection that must refuse writes`,
     );
   });
 });

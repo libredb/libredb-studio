@@ -1,5 +1,13 @@
 import { describe, it, expect } from "bun:test";
-import { MCP_EXPOSABLE, READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { parse as parseYaml } from "yaml";
+import {
+  CONNECTION_STRING_ACCEPTED,
+  MCP_EXPOSABLE,
+  READ_ONLY_ENFORCED,
+  SHIPPED_DATABASE_TYPES,
+} from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { refuseMcpWhereNotOffered, SeedConnectionSchema, SeedConfigSchema, SeedDefaultsSchema } from "@/lib/seed/types";
 
@@ -170,6 +178,25 @@ describe("SeedConfigSchema", () => {
       ],
     });
     expect(result.success).toBe(false);
+  });
+
+  it("names the repeated id once, at the path of its first repeat", () => {
+    const result = SeedConfigSchema.safeParse({
+      version: "1",
+      connections: [
+        { id: "pg", name: "A", type: "postgres", host: "h", roles: ["*"] },
+        { id: "other", name: "B", type: "mysql", host: "h", roles: ["*"] },
+        { id: "pg", name: "C", type: "postgres", host: "h", roles: ["*"] },
+        { id: "pg", name: "D", type: "postgres", host: "h", roles: ["*"] },
+        { id: "other", name: "E", type: "mysql", host: "h", roles: ["*"] },
+      ],
+    });
+    if (result.success) throw new Error("the premise: repeated ids are refused");
+
+    expect(result.error.issues.map((issue) => ({ path: issue.path, message: issue.message }))).toEqual([
+      { path: ["connections", 2, "id"], message: 'Connection id "pg" is declared more than once' },
+      { path: ["connections", 4, "id"], message: 'Connection id "other" is declared more than once' },
+    ]);
   });
 
   it("rejects empty connections array", () => {
@@ -831,3 +858,117 @@ for (const { type, secret } of [
     });
   });
 }
+
+/**
+ * A connection string the type's provider does not read (Spec A section 7, defect 2). Before this refusal the
+ * schema accepted `connectionString` on every type, and a provider that does not read it dropped it in silence,
+ * so a seed listed a connection that opened somewhere else than its file said, or not at all. Read from
+ * `CONNECTION_STRING_ACCEPTED`, never a type-id branch, and refused naming the connection and the type, never
+ * the value.
+ */
+describe("SeedConnectionSchema: a connectionString the provider does not read (Spec A section 7)", () => {
+  const seed = (type: string, connectionString = "scheme://db.internal:1/app") => ({
+    id: `conn-${type}`,
+    name: `Conn ${type}`,
+    type,
+    host: "db.internal",
+    connectionString,
+    roles: ["admin"],
+  });
+
+  const refusal = (type: string) =>
+    `Seed connection "conn-${type}" sets connectionString, which the ${type} provider does not read: move the value into host, port, user, password and database`;
+
+  const accepting = SHIPPED_DATABASE_TYPES.filter((type) => CONNECTION_STRING_ACCEPTED[type]);
+  const refusing = SHIPPED_DATABASE_TYPES.filter((type) => !CONNECTION_STRING_ACCEPTED[type]);
+
+  it("covers both populations, so neither loop below can pass empty", () => {
+    expect(accepting).toContain("postgres");
+    expect(accepting).toContain("mongodb");
+    expect(accepting).toContain("sqlite");
+    expect(refusing).toContain("redis");
+    expect(refusing).toContain("mssql");
+    expect(accepting.length + refusing.length).toBe(SHIPPED_DATABASE_TYPES.length);
+  });
+
+  it.each(accepting)("accepts a connectionString on %s, whose provider reads it", (type) => {
+    const result = SeedConnectionSchema.safeParse(seed(type));
+    expect(result.success).toBe(true);
+    expect(result.data?.connectionString).toBe("scheme://db.internal:1/app");
+  });
+
+  it.each(refusing)("refuses a connectionString on %s, naming the connection and the type", (type) => {
+    const result = SeedConnectionSchema.safeParse(seed(type));
+    expect(result.error?.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
+      ["connectionString", refusal(type)],
+    ]);
+  });
+
+  // design 3.9: sqlite's flag says false, but its provider opens the string as the database file path, so a
+  // seed that works on main keeps working.
+  it("still loads a sqlite seed whose connectionString names its database file", () => {
+    const result = SeedConnectionSchema.safeParse({
+      id: "app-file",
+      name: "App file",
+      type: "sqlite",
+      connectionString: "file:/data/app.db",
+      roles: ["admin"],
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.connectionString).toBe("file:/data/app.db");
+  });
+
+  // design 3.9: mssql's flag says true, but its provider builds from the fields only, so before this refusal a
+  // seed like this one loaded, passed validate(), and opened localhost instead of db.example.
+  it("refuses an mssql seed whose connectionString the provider would ignore, naming the connection, mssql and the fix", () => {
+    const result = SeedConnectionSchema.safeParse({
+      id: "orders-mssql",
+      name: "Orders",
+      type: "mssql",
+      connectionString: "mssql://sa:pw@db.example:1433/app",
+      roles: ["admin"],
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
+      [
+        "connectionString",
+        'Seed connection "orders-mssql" sets connectionString, which the mssql provider does not read: move the value into host, port, user, password and database',
+      ],
+    ]);
+  });
+
+  it("never quotes the connection string in the refusal", () => {
+    const result = SeedConnectionSchema.safeParse(seed("redis", "redis://:SEED-TYPES-CANARY-91c2@cache.internal:6379"));
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).not.toContain("SEED-TYPES-CANARY-91c2");
+  });
+
+  it("refuses an empty string and an unresolved reference the same way, because a set field is a set field", () => {
+    for (const value of ["", "${REDIS_URL}"]) {
+      const result = SeedConnectionSchema.safeParse(seed("redis", value));
+      expect(result.error?.issues.map((issue) => issue.message)).toEqual([refusal("redis")]);
+    }
+  });
+
+  it("leaves a connection without connectionString alone on a type that refuses one", () => {
+    const withoutString: Record<string, unknown> = seed("redis");
+    delete withoutString.connectionString;
+    expect(SeedConnectionSchema.safeParse(withoutString).success).toBe(true);
+  });
+
+  it("fails the whole file, naming the connection's index and field", () => {
+    const result = SeedConfigSchema.safeParse({ version: "1", connections: [seed("postgres"), seed("redis")] });
+    expect(result.error?.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
+      ["connections.1.connectionString", refusal("redis")],
+    ]);
+  });
+
+  it.each(["valid-config.yaml", "managed-secrets-config.yaml"])(
+    "still loads %s, whose MongoDB connection carries a connectionString reference",
+    (fixture) => {
+      const file = path.resolve(import.meta.dir, "../../fixtures/seed-connections", fixture);
+      const result = SeedConfigSchema.safeParse(parseYaml(readFileSync(file, "utf8")));
+      expect(result.success).toBe(true);
+    },
+  );
+});

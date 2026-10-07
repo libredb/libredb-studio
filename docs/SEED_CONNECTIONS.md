@@ -41,6 +41,57 @@ docker run \
 
 ---
 
+## Sources
+
+Studio builds the managed list from operator sources first, then adds the connections [platform discovery](#platform-discovery-caprover) finds, then the [built-in samples](#built-in-sample-connections).
+The operator sources are read in a fixed order; in this version there is one, the seed file.
+Two connections with one id inside the seed file fail it as an invalid config, and the error names the repeated id.
+Two operator sources that declare one id stop the whole list, naming the id and where each one was declared, because neither may shadow the other.
+A discovered connection whose id an operator source declares is dropped and reported as skipped, with the reason "id taken by the seed file".
+
+### The seed file
+
+`SEED_CONFIG_PATH` names a YAML or JSON file, and `/app/config/seed-connections.yaml` when it is unset or empty.
+No file at the default path means no seed connections and no error.
+A file named explicitly in `SEED_CONFIG_PATH` that does not exist also leaves Studio running without seed connections, and the [Seed sources card](#diagnostics) reports it as "Not found" with the path.
+Any other read error, a parse error or a schema error fails the whole list (see [Error Handling](#error-handling)).
+
+### Literal values
+
+When `SEED_LITERAL_VALUES` turns literal mode on, every connection the seed file declares is used as written, as [Literal values written by a platform](#literal-values-written-by-a-platform) describes.
+Each fill of the [operator cache](#the-operator-cache) runs with one reading of the switch, so every connection of one fill agrees.
+A request that reads the switch with another value does not take the cached fill and starts a new one, so a change takes effect at the next request.
+Discovered connections are always literal, whatever the switch says.
+
+### The operator cache
+
+The operator sources are read together at most once per `SEED_CACHE_TTL_MS` (default 60000), and concurrent requests share one read.
+`${ENV_VAR}` references are resolved in that read, so a changed environment variable takes effect at the next one.
+A read that fails is never cached: the next request reads again.
+Tests clear the cache, and every source's own state, with `resetCache()` from `@/lib/seed`.
+
+### The connection string refusal
+
+A connection that sets `connectionString` on a type whose provider does not read it is refused when the file loads, and the whole file fails with `Seed connection "<id>" sets connectionString, which the <type> provider does not read: move the value into host, port, user, password and database`.
+Earlier versions accepted such a file and the provider ignored the string, so the connection opened whatever the other fields said; a file that relied on that no longer loads.
+An mssql seed that carried only a `connectionString`, for example, loaded and opened `localhost`, and is now refused.
+The types whose provider reads it are postgres, mysql, sqlite, libsql, oracle, db2, clickhouse, mongodb and couchbase.
+sqlite reads it as the database file path, with a `file:` prefix removed, although its provider's capability flag says it does not ([docs/providers/sqlite.md](./providers/sqlite.md)).
+mssql does not read it, although its provider's capability flag says it does: the flag covers the connection form, which splits a pasted URI into fields, and the provider builds from those fields only ([docs/providers/mssql.md](./providers/mssql.md#44-connection-string-nuance)).
+The 18 that refuse it are duckdb, mssql, druid, trino, cassandra, elasticsearch, opensearch, redis, prometheus, kafka, etcd, neo4j, milvus, qdrant, influxdb, influxdb3, oxia and libredb.
+To fix a refused file, move the value into `host`, `port`, `user`, `password` and `database`, and remove `connectionString`.
+
+### Diagnostics
+
+The admin Overview page (`/admin/overview`) shows a Seed sources card, fed by `GET /api/admin/seed-sources` (admin only, [`docs/API_DOCS.md`](./API_DOCS.md#get-apiadminseed-sources)).
+For each operator source it shows the state (Loaded, Empty, Not found or Failed), the file path, the error with its code, the connections it listed, the connections it skipped with their reasons, and the names it ignored.
+A connection skipped for an undefined `${ENV_VAR}` is listed with the variable in its reason, and the endpoint's record of the skip also names the field.
+Every message names files, variables, fields and ids only, never a value, and never quotes a seed file.
+The card hides itself when every source is empty with nothing skipped or ignored, which is an install with no seed file, and it refreshes once a minute.
+`GET /api/connections/managed` carries no status, because every role can read it.
+
+---
+
 ## Config File Format
 
 The config file is YAML (`.yaml`, `.yml`) or JSON (`.json`). Format is auto-detected by file extension.
@@ -242,7 +293,7 @@ connections:
 | `connections[].ssl.caCert` | No | absent | The CA certificate as PEM, or a `${ENV_VAR}` or `${vault:...}` reference that resolves to it, so a Kubernetes Secret can carry it into the environment ([providers/etcd.md](providers/etcd.md), section 12) |
 | `connections[].ssl.clientCert` | No | absent | The client certificate as PEM, or a reference, resolved like `password` |
 | `connections[].ssl.clientKey` | No | absent | The client key as PEM, or a reference; an unset reference skips the connection naming `ssl.clientKey`. Never inline a private key in a ConfigMap |
-| `connections[].connectionString` | No | — | Full connection string (use `${ENV_VAR}`). Druid and Trino have no URI form this build parses — those connections need `host` and are addressed by host and port only |
+| `connections[].connectionString` | No | - | Full connection string (use `${ENV_VAR}`). Read only by postgres, mysql, sqlite (as the database file path), libsql, oracle, db2, clickhouse, mongodb and couchbase; every other type, mssql included, refuses it when the file loads, naming the connection and the type ([The connection string refusal](#the-connection-string-refusal)) |
 | `connections[].roles` | Yes | — | Access control: `["*"]`, `["admin"]`, `["user"]`, `["admin", "user"]` |
 | `connections[].managed` | No | from defaults | `true` = admin-controlled: not editable in the UI, its secrets stay on the server; `false` = an editable copy for the user |
 | `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL) and Oxia); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
@@ -367,10 +418,10 @@ connections:
 ```
 
 **How it works:**
-1. Config file is read from disk (YAML/JSON)
-2. `${VARIABLE_NAME}` patterns are resolved from `process.env`
-3. If an env var is undefined, that connection is **skipped** (others continue working)
-4. Plaintext passwords trigger a warning log (but still work)
+1. The config file is read from disk (YAML/JSON) and validated as a whole.
+2. `${VARIABLE_NAME}` patterns are resolved from `process.env` when the [operator cache](#the-operator-cache) is filled.
+3. If a variable is undefined, that connection is **skipped**, the others are listed, and the [Seed sources card](#diagnostics) names the variable, with the field in the endpoint's record.
+4. A literal password is used as written and logs a warning once per connection.
 5. With `SEED_LITERAL_VALUES=true`, steps 2 to 4 do not happen: every value is used as written (see [Literal values written by a platform](#literal-values-written-by-a-platform))
 
 **Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`, `apiKeyId`, `apiKeySecret`, and the TLS material under `ssl`: `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey`.
@@ -920,6 +971,8 @@ While the request reached Studio over plain HTTP, or `AUTH_COOKIE_SECURE` is `fa
 > The Studio session cookie can travel over plain HTTP, and it unlocks every discovered database.
 > Enable HTTPS and Force HTTPS for this app in CapRover, then set AUTH_COOKIE_SECURE to true and restart.
 
+The operator sources have a card of their own beside this one, described under [Diagnostics](#diagnostics); it shows whether or not discovery is on.
+
 ### In an open tab
 
 After its first successful load, an open tab refetches the managed list every `max(SEED_CACHE_TTL_MS, 5000)` milliseconds, at most 60 seconds, while the tab is visible, and at once when the window regains focus or the tab becomes visible again.
@@ -937,15 +990,21 @@ Pages that use the lighter connection list (the admin Overview and Operations ta
 
 | Scenario | Behavior |
 |----------|----------|
-| Config file not found | App runs normally, no seed connections. The warning is logged once for that path, and again only after the file has appeared and gone, so a short `SEED_CACHE_TTL_MS` does not repeat it on every re-read. |
-| Invalid YAML/JSON | Endpoint returns 500. Error logged with details. |
-| Invalid config (Zod validation fails) | Endpoint returns a generic 500. Validation errors are logged server-side, not returned in the response body. |
+| Config file not found at the default path | App runs normally, no seed connections. The warning is logged once for that path, and again only after the file has appeared and gone, so a short `SEED_CACHE_TTL_MS` does not repeat it on every re-read. |
+| `SEED_CONFIG_PATH` set explicitly to a file that does not exist | App runs normally, no seed connections. The same once-per-path warning is logged, and the Seed sources card shows "Not found" with the path. |
+| Config file unreadable (for example the path is a directory) | Endpoint returns a generic 500 with `reason: "seed-config-unreadable"`; the Seed sources card shows Failed with code `unreadable`. |
+| `Failed to parse seed config at <path>: TAG_RESOLVE_FAILED at line L, column C` | A value YAML reads as a tag: it starts with `!`, or carries a tag such as `!!int` on text. Quote the value. Studio refuses the file as `unparseable` instead of loading the value as empty or as other text, and never prints the line; earlier versions loaded such a file with the value changed. |
+| `connectionString` on a type whose provider does not read it | The whole file fails like any invalid config, and the error names the connection and the type ([The connection string refusal](#the-connection-string-refusal)). |
+| Two connections with the same id in the seed file | The whole file fails like any invalid config, and the error names the repeated id, for example `connections.1.id: Connection id "pg" is declared more than once`. |
+| Two operator sources declaring the same id | The whole list fails, and the error names the id and both origins. |
+| Invalid YAML/JSON | `GET /api/connections/managed` returns a generic 500 with `reason: "seed-config-unreadable"` and logs the details server-side. `GET /api/admin/seed-sources` returns the parse message to an admin, and the Seed sources card shows it with code `unparseable`; a YAML error names its code and, where the parser has one, its line and column, and a JSON error says the file is not valid JSON; neither quotes a value. |
+| Invalid config (Zod validation fails) | `GET /api/connections/managed` returns a generic 500 with `reason: "seed-config-unreadable"` and logs the validation errors server-side. `GET /api/admin/seed-sources` returns the validation message to an admin, and the Seed sources card shows it with code `invalid`; the message names the fields, never a value. |
 | `mcp` that is not a boolean, or `mcp` in `defaults` | The whole file fails like any invalid config; every MCP tool answers that the connection configuration could not be read |
 | `readOnly: true` on a connection whose type does not enforce it, on a connection whose effective `managed` is false, or `readOnly` in `defaults` | The whole file fails like any invalid config, and the error names the connection, the field and the reason |
 | `readOnly: true` on a connection whose literal credential matches a default its type declares, or with no password where its type declares it accepts none | The whole file fails like any invalid config, and the error names the connection and `password`, never the value; a `${ENV}` or `${vault:...}` reference is checked once it resolves, and the connection is refused before anything is dialled |
 | `mcp: true` on an etcd or Oxia connection | The whole file fails like any invalid config, and the error names `mcp` and the type, `etcd` or `oxia` |
 | Unrecognized `version` | Endpoint returns 500. Future versions require code update. |
-| `${ENV_VAR}` not defined | That connection is **skipped**. Others work normally. Error logged. |
+| `${ENV_VAR}` not defined | That connection is **skipped**. Others work normally. Error logged, and the Seed sources card lists the skip with the variable; the endpoint's record also names the field. |
 | `${vault:...}` reference, Vault unreachable / path or key missing / token refused | The connection fails with an explicit error **when it is opened**. Listing connections is unaffected, and so is every other connection. |
 | `${vault:...}` reference with no `#key`, or a v1-shaped path | Fails with an error naming the expected KV v2 shape. The value is never treated as a literal. |
 | `${vault:...}` reference with `VAULT_ADDR` unset | Fails with a message naming the missing variable. |
@@ -963,7 +1022,10 @@ Pages that use the lighter connection list (the admin Overview and Operations ta
 | An app is named in "Apps to skip" (`DISCOVERY_EXCLUDE` of the exporter) | Never listed, and reported as skipped with the reason "listed in Apps to skip" while the export is fresh. |
 | An unexpected exception inside the discovery source | No discovered connections and state `error` with code `discovery_failed`; file seeds and samples are unaffected. |
 
-**Design principle:** One broken connection never breaks the others. Each connection is resolved independently.
+**Design principle:** a problem in the seed configuration fails the whole operator list, so a file read in part never lists a subset that looks complete.
+A parse error, a schema error in any one connection, or two operator connections with one id make `GET /api/connections/managed` answer 500, and the Seed sources card shows the error.
+The one exception is an undefined `${ENV_VAR}`: it skips only the connection that names it, and the card lists the skip.
+Discovered connections are validated one by one, and a bad one never fails the list.
 
 ---
 
@@ -1110,18 +1172,19 @@ This is expected: deleting a `managed: false` connection adds its seed ID to `li
 ## Architecture
 
 ```
-seed-connections.yaml (volume mount)
-        │
-  ┌─────▼──────────┐
-  │  ConfigLoader   │  Read + YAML/JSON parse + Zod validate + TTL cache
-  └─────┬──────────┘
+seed-connections.yaml (SEED_CONFIG_PATH)
         │
   ┌─────▼──────────────┐
-  │ CredentialResolver  │  ${ENV_VAR} → process.env + plaintext warning
+  │ Operator sources    │  sources/file.ts: read + YAML/JSON parse + Zod validate + its own defaults
   └─────┬──────────────┘
         │
   ┌─────▼──────────────┐
-  │ ConnectionFilter    │  Role filter + defaults merge → ManagedConnection[]
+  │ OperatorLoader      │  Fixed order + id collisions + ${ENV_VAR} → process.env (CredentialResolver)
+  │                     │  + recorded skips + TTL cache + status for GET /api/admin/seed-sources
+  └─────┬──────────────┘
+        │
+  ┌─────▼──────────────┐
+  │ ConnectionFilter    │  Role filter → ManagedConnection[]; defines mergeDefaults, which the sources apply
   └─────┬──────────────┘
         │         ┌───────────────────────────────────────┐
         ├─────────┤ Platform discovery (discovery-*.ts,    │  Appended after the file seeds when
@@ -1148,19 +1211,23 @@ seed-connections.yaml (volume mount)
   └──────────────────────────┘
 ```
 
-**Module:** `src/lib/seed/` (13 files)
+**Module:** `src/lib/seed/` (17 files)
 
 | File | Responsibility |
 |------|---------------|
 | `types.ts` | Zod schemas + TypeScript types |
-| `config-loader.ts` | File read + parse + validate + cache |
+| `operator-loader.ts` | Reads the operator sources in order: id collisions, `${ENV_VAR}` resolution with recorded skips, the TTL cache, one read at a time, and the status the admin card shows |
+| `sources/types.ts` | The operator source contract: entries, skips, notes, reports and `OperatorSourceError` |
+| `sources/config-text.ts` | Parse and validate one seed config text, naming its origin in every message, and merge its own `defaults` |
+| `sources/file.ts` | The `SEED_CONFIG_PATH` source |
+| `sources/registry.ts` | The enabled operator sources, in their fixed order |
 | `credential-resolver.ts` | `${ENV_VAR}` resolution (eager) + `${vault:...}` resolution (lazy, per connection) |
 | `vault-client.ts` | HashiCorp Vault KV v2 reads: env config, Kubernetes auth, per-path TTL cache |
-| `connection-filter.ts` | Role filter + defaults merge |
+| `connection-filter.ts` | Role filter, and `mergeDefaults`, which each operator source applies to its own connections (`sources/config-text.ts`) |
 | `resolve-connection.ts` | Shared utility for all API routes |
 | `libredb-sample.ts` | Built-in "Sample (LibreDB)" connection: file seeding + descriptor |
 | `sqlite-sample.ts` | Built-in "Sample (Employees)" connection: vendored template copy + descriptor |
-| `index.ts` | Public API: `getManagedConnections()` |
+| `index.ts` | Public API: `getManagedConnections()`, `getPendingSeeds()`, `getSeedConnectionById()`, `getSeedConnectionByIdUnfiltered()` and `resetCache()` |
 | `discovery-export.ts` | Zod schema and parser of the platform discovery export file, with its 2 MiB cap |
 | `discovery-fingerprint.ts` | Image repository parsing, engine detection and credential mapping of discovered services |
 | `discovery-probe.ts` | TCP probe for environment-matched candidates: 1 s timeout, 30 s positive cache, 16 at a time |

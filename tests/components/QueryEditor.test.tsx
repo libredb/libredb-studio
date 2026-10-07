@@ -1053,6 +1053,58 @@ describe("QueryEditor", () => {
     window.removeEventListener("execute-query", handler);
   });
 
+  // #1414: a selection was sent exactly as selected, so a selected line ending in `;` reached an
+  // engine whose grammar takes no terminator (Elasticsearch: `extraneous input ';'`), while the
+  // same line run from the caret went through the splitter and lost it.
+  describe("a selection on an engine that takes no statement terminator (#1414)", () => {
+    const noTerminator = { ...defaultCapabilities, statementTerminator: "none" as const };
+
+    const runSelection = (selected: string, capabilities: typeof defaultCapabilities) => {
+      mockUseMonacoReturn = {
+        Range: class {
+          constructor(
+            public startLineNumber: number,
+            public startColumn: number,
+            public endLineNumber: number,
+            public endColumn: number,
+          ) {}
+        },
+      };
+      mockSelectionReturn = { isEmpty: () => false };
+      mockSelectedText = selected;
+      let eventDetail: { query: string } | null = null;
+      const handler = ((e: CustomEvent) => {
+        eventDetail = e.detail;
+      }) as EventListener;
+      window.addEventListener("execute-query", handler);
+      render(React.createElement(QueryEditor, createDefaultProps({ value: selected, capabilities })));
+      act(() => {
+        capturedCommands[0].handler();
+      });
+      window.removeEventListener("execute-query", handler);
+      return eventDetail!.query;
+    };
+
+    test("a single selected statement is sent without its trailing ;", () => {
+      expect(runSelection("SELECT customer FROM orders WHERE qty = 1 LIMIT 2;", noTerminator)).toBe(
+        "SELECT customer FROM orders WHERE qty = 1 LIMIT 2",
+      );
+    });
+
+    test("a ; inside a string literal is kept", () => {
+      expect(runSelection("SELECT 'a;b' AS x;", noTerminator)).toBe("SELECT 'a;b' AS x");
+    });
+
+    test("a multi-statement selection is sent as selected", () => {
+      const selected = "SELECT 1 AS a;\nSELECT 2 AS b;";
+      expect(runSelection(selected, noTerminator)).toBe(selected);
+    });
+
+    test("an engine with a terminator still gets the selection exactly as selected", () => {
+      expect(runSelection("SELECT 1;", defaultCapabilities)).toBe("SELECT 1;");
+    });
+  });
+
   // -----------------------------------------------------------------------
   // flashHighlight — decoration creation and cleanup
   // -----------------------------------------------------------------------

@@ -47,7 +47,7 @@ export function mcpUrlFor(hostname, port) {
  * SEED_CONFIG_PATH=./seed-connections.yaml used to skip the seed connections as "not found".
  * Each entry was checked where it is read:
  *
- * - SEED_CONFIG_PATH: src/lib/seed/config-loader.ts
+ * - SEED_CONFIG_PATH: src/lib/seed/sources/file.ts
  * - SEED_DISCOVERY_PATH: src/lib/seed/discovery-loader.ts
  * - STORAGE_SQLITE_PATH: src/lib/data-dir.ts and the sqlite storage provider
  * - SQLITE_EMBEDDED_SAMPLE_PATH, SQLITE_EMBEDDED_SAMPLE_TEMPLATE: src/lib/seed/sqlite-sample.ts

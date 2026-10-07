@@ -3,6 +3,7 @@
 import { appFetch } from "@/lib/config/base-path";
 import { useEffect, useState } from "react";
 import { PlatformDiscoveryCard } from "@/components/admin/PlatformDiscoveryCard";
+import { SeedSourcesCard } from "@/components/admin/SeedSourcesCard";
 import { OverviewTab, type AdminUser } from "@/components/admin/tabs/OverviewTab";
 
 export default function AdminOverviewPage() {
@@ -21,11 +22,12 @@ export default function AdminOverviewPage() {
       });
   }, []);
 
-  // The discovery card sits above OverviewTab, not inside it, so it shows on both of OverviewTab's
+  // The two status cards sit above OverviewTab, not inside it, so they show on both of OverviewTab's
   // branches: the empty state it returns early when there is no connection at all, and the full overview.
   return (
     <div data-testid="admin-content-overview" className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
       <PlatformDiscoveryCard />
+      <SeedSourcesCard />
       <OverviewTab user={user} />
     </div>
   );

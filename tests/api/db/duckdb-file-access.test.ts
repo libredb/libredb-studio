@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
-import { resetCache as resetSeedCache } from "@/lib/seed/config-loader";
+import { resetCache as resetSeedCache } from "@/lib/seed";
 
 /**
  * The end-to-end non-admin DuckDB file access reproduction, through the real route and the real DuckDB engine.

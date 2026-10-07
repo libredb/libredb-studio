@@ -46,7 +46,7 @@ const mockGetSession = mock(
 mock.module("@/lib/auth", () => ({ ...realAuth, getSession: mockGetSession }));
 
 const { clearRateLimitState } = await import("@/lib/api/rate-limit");
-const { resetCache } = await import("@/lib/seed/config-loader");
+const { resetCache } = await import("@/lib/seed");
 const { CUSTOM_CONNECTIONS_DISABLED_MESSAGE } = await import("@/lib/config/custom-connections");
 
 /** The body every route answers a refused connection with, beside `statusCode: 403`. */

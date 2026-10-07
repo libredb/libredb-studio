@@ -19,7 +19,7 @@
  */
 import { open } from "fs/promises";
 import { logger } from "@/lib/logger";
-import { loadConfig } from "./config-loader";
+import { loadOperatorSources } from "./operator-loader";
 import {
   DISCOVERY_FILE_MAX_BYTES,
   parseDiscoveryExport,
@@ -209,7 +209,7 @@ async function buildCandidates(
   data: DiscoveryExport,
   deps: DiscoveryDeps,
 ): Promise<{ connections: SeedConnection[]; skipped: Skipped[] }> {
-  const taken = await (deps.fileSeedIds ?? fileSeedIdsFromConfig)();
+  const taken = await (deps.fileSeedIds ?? operatorSeedIds)();
   const probe = deps.probe ?? probeWithDefault;
   const skipped: Skipped[] = [];
   const candidates: Candidate[] = [];
@@ -243,7 +243,7 @@ async function buildCandidates(
   );
   const connections: SeedConnection[] = [];
   // appNameOf strips srv-captain--, so a service named srv-captain--foo and one named foo share an id.
-  // The seed-file loader refuses duplicate ids, so here the first one in the export's order keeps it.
+  // The operator loader refuses duplicate ids, so here the first one in the export's order keeps it.
   const accepted = new Set<string>();
   candidates.forEach((candidate, index) => {
     if (!answers[index]) {
@@ -260,12 +260,12 @@ async function buildCandidates(
   return { connections, skipped };
 }
 
-async function fileSeedIdsFromConfig(): Promise<ReadonlySet<string>> {
+async function operatorSeedIds(): Promise<ReadonlySet<string>> {
   try {
-    const config = await loadConfig();
-    return new Set<string>(config?.connections.map((conn) => conn.id));
+    return (await loadOperatorSources()).declaredIds;
   } catch {
-    // The seed file's own failure is reported by GET /api/connections/managed; here it only means no id is taken.
+    // An operator source's failure is reported by GET /api/connections/managed and the admin seed-sources card;
+    // here it only means no id is taken.
     return new Set<string>();
   }
 }

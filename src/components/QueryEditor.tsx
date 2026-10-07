@@ -407,6 +407,17 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       if (selection) {
         const selectedText = model.getValueInRange(selection);
         if (selectedText && selectedText.trim().length > 0) {
+          // An engine whose grammar takes no terminator refuses a trailing `;` (Elasticsearch
+          // answers `extraneous input ';'`), and a selection is sent as written while the caret
+          // path below reads its statement through the splitter, which drops it (#1414). So a
+          // selection that is ONE statement is read the same way there; a multi-statement one,
+          // and every other engine, is still sent exactly as selected.
+          if (language === "sql" && capabilities?.statementTerminator === "none") {
+            const statements = splitCursorTargets(selectedText, resolveSqlGrammar(databaseType));
+            if (statements.length === 1 && statements[0]) {
+              return { query: statements[0].sql, range: selection };
+            }
+          }
           return { query: selectedText, range: selection };
         }
       }

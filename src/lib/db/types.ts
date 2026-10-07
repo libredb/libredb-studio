@@ -1207,9 +1207,12 @@ export interface ProviderCapabilities {
    * `SELECT * FROM app_customers FETCH FIRST 50 ROWS ONLY;` answers ORA-00933 "SQL command
    * not properly ended" and the same statement without the `;` returns the rows (#789).
    *
-   * This bounds the GENERATORS only. A user who types a `;` still has it stripped
-   * by the editor's statement reader before the statement is sent, and the raw API
-   * passes text through untouched - neither of those is this field's business.
+   * It bounds the generators, and it also tells the editor to read a one-statement
+   * SELECTION through the statement splitter, which drops its trailing `;` (#1414): a
+   * selection is otherwise sent exactly as selected, and a selected line ending in `;`
+   * answered that same `extraneous input ';'` on Elasticsearch 9.5.3. With the caret
+   * in a statement the editor reads it through the splitter on every engine, so that
+   * path does not consult this field. The raw API passes text through untouched.
    */
   statementTerminator?: "none";
   /**

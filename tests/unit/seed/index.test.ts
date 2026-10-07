@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "path";
 import { getManagedConnections, getSeedConnectionById, getSeedConnectionByIdUnfiltered, resetCache } from "@/lib/seed";
-import { resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
+import { resetLiteralModeNotices, resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
 import { getDiscoveredConnections, resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import { SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
 import { logger } from "@/lib/logger";
@@ -69,6 +69,25 @@ describe("seed/index orchestrator", () => {
     resetCache();
     const conns = await getManagedConnections(["admin"]);
     expect(conns).toHaveLength(0);
+  });
+
+  it("marks every operator entry literal on both lookups while SEED_LITERAL_VALUES is on, and resolves none", async () => {
+    resetLiteralModeNotices();
+    process.env.SEED_LITERAL_VALUES = "true";
+    try {
+      const admin = await getManagedConnections(["admin"]);
+      expect(admin.map((c) => [c.seedId, c.password, c.literal])).toEqual([
+        ["admin-only", "${ADMIN_PG_PASS}", true],
+        ["everyone", "${SHARED_PG_PASS}", true],
+        ["admin-and-user", "${BOTH_PG_PASS}", true],
+      ]);
+
+      const unfiltered = await getSeedConnectionByIdUnfiltered("user-only");
+      expect(unfiltered?.password).toBe("${USER_MYSQL_PASS}");
+      expect(unfiltered?.literal).toBe(true);
+    } finally {
+      delete process.env.SEED_LITERAL_VALUES;
+    }
   });
 });
 
@@ -218,6 +237,37 @@ describe("seed/index with discovered connections", () => {
 
     const seedIds = (await getManagedConnections(["admin"])).map((c) => c.seedId);
     expect(seedIds).toEqual([SQLITE_SAMPLE_SEED_ID]);
+  });
+
+  it("drops a discovered id that only an operator entry dropped for an undefined variable declares", async () => {
+    // Fills the discovery cache: the export's service is listed.
+    await getManagedConnections(["admin"]);
+
+    const seedFile = path.join(scratch, "seed-connections.json");
+    writeFileSync(
+      seedFile,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          {
+            id: "caprover-pg",
+            name: "File PG",
+            type: "postgres",
+            host: "file-pg.internal",
+            password: "${SEED_INDEX_UNSET_PASSWORD}",
+            roles: ["admin"],
+          },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = seedFile;
+    resetCache();
+    // Control: the discovery cache, which this test did not reset, still lists the id.
+    expect((await getDiscoveredConnections()).map((c) => c.id)).toEqual(["caprover-pg"]);
+
+    const seedIds = (await getManagedConnections(["admin"])).map((c) => c.seedId);
+    expect(seedIds).toEqual([SQLITE_SAMPLE_SEED_ID]);
+    expect(await getSeedConnectionByIdUnfiltered("caprover-pg")).toBeNull();
   });
 
   it("gives a standard user none of the discovered connections", async () => {

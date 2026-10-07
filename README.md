@@ -846,7 +846,7 @@ Pre-configure database connections via a YAML config file so users see them imme
 **Features:**
 - Role-based access control (`admin`, `user`, `*` wildcard)
 - Hybrid model: `managed: true` (admin-controlled, not editable in the UI) or `managed: false` (editable copy for user)
-- Credentials injected via `${ENV_VAR}` syntax — never stored in config file
+- Credentials injected via `${ENV_VAR}` syntax; a literal password in the file still works and logs a warning
 - Hot-reload: config changes apply within 60s without restart
 - Works with Docker, docker-compose, and Kubernetes (Helm)
 

@@ -475,10 +475,11 @@ function libredbExampleValue(columns: readonly ColumnSchema[]): string {
 
 /**
  * Redis key types this generator can produce a read/write command for. `TYPE`
- * also replies `stream` and `none`; both fall into the unknown bucket, which
- * emits `TYPE <key>` rather than guessing a reader (#427).
+ * also replies `none`, which falls into the unknown bucket and emits
+ * `TYPE <key>` rather than guessing a reader (#427). `stream` and the
+ * `ReJSON-RL` reply a RedisJSON key gives have their own readers (#1454).
  */
-type RedisKeyType = "string" | "hash" | "list" | "set" | "zset";
+type RedisKeyType = "string" | "hash" | "list" | "set" | "zset" | "stream" | "rejson-rl";
 
 /**
  * The read and write command each key type gets, with the use-case comment that
@@ -518,6 +519,18 @@ const REDIS_COMMANDS: Record<
     read: (key) => ["ZRANGE", key, "0", "-1", "WITHSCORES"],
     writeComment: "# Add a member with a score",
     write: (key) => ["ZADD", key, "1", "example"],
+  },
+  stream: {
+    readComment: "# Read the first entries of the stream",
+    read: (key) => ["XRANGE", key, "-", "+", "COUNT", "100"],
+    writeComment: "# Append an entry to the stream",
+    write: (key) => ["XADD", key, "*", "field", "example"],
+  },
+  "rejson-rl": {
+    readComment: "# Read the JSON document",
+    read: (key) => ["JSON.GET", key],
+    writeComment: "# Create or update the JSON document",
+    write: (key) => ["JSON.SET", key, "$", '{"example":true}'],
   },
 };
 
@@ -967,7 +980,7 @@ function redisCheatsheet(tableName: string, columns: readonly ColumnSchema[]): s
     // rather than pretend the first reply is the whole answer (#427).
     lines.push(
       "# List keys under this prefix — ONE scan iteration, not the whole set.",
-      "# 0 is the start cursor; the reply's first row is the next cursor. Re-run",
+      "# 0 is the start cursor; the reply's cursor column holds the next one. Re-run",
       "# with that value in place of 0 until it comes back 0 (a page may be empty).",
       redisScan(base),
       "",

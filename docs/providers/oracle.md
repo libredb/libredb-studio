@@ -181,10 +181,12 @@ with no `;`, which is the half of that measurement the engine cares about. The O
 was removed with the bound, because once there is no `FETCH FIRST` to spell it did nothing the
 shared return does not already do.
 
-It bounds the GENERATORS only. A `;` a user types after a plain statement is still stripped by the
-editor's statement reader before the statement is sent, and the raw API passes text through untouched.
-The one `;` the reader keeps is the one after a PL/SQL unit's `END`, which is part of the unit
-([§5.1](#51-execution)).
+It bounds the generators, and it also tells the editor to read a one-statement selection through
+the statement reader (#1414). A `;` a user types after a plain statement is stripped by that reader
+before the statement is sent: with the caret in the statement on every engine, and, because of this
+declaration, also when the statement is selected; a multi-statement selection is still sent as
+selected. The raw API passes text through untouched. The one `;` the reader keeps is the one after a
+PL/SQL unit's `END`, which is part of the unit ([§5.1](#51-execution)).
 
 ### 3.3 Schema introspection reads the `ALL_*` views, and is not owner-scoped
 

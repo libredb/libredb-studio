@@ -239,6 +239,8 @@ const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
   "admin/audit": "reads/writes the in-process audit ring buffer only; no database or LLM provider",
   "admin/discovery":
     "reads the CapRover discovery status for the admin Overview card: an export file on disk, plus a bare TCP reachability probe for built-image candidates, and never a database or LLM provider (GET, no POST export). It still calls guardRoute with the query bucket and answers 403 to a non-admin (tests/api/admin/discovery.test.ts)",
+  "admin/seed-sources":
+    "reads the operator seed sources' status for the admin Overview card: seed files on disk and the process environment, and never a database or LLM provider (GET, no POST export). It still calls guardRoute with the query bucket and answers 403 to a non-admin (tests/api/admin/seed-sources.test.ts)",
   "agent/config":
     "answers whether the agent runtime is enabled, from process.env alone; no database or LLM provider (GET, no POST export). It still requires a session — a bare getSession() like connections/managed, because metering a visibility probe out of the ai bucket would spend a run's budget on rendering a panel — and tests/api/agent/config.test.ts proves an unauthenticated caller learns nothing about the flag",
   "agent/drive":
@@ -476,6 +478,8 @@ describe("routes that reach a provider require a session", () => {
       "reads seed connection metadata from config and the CapRover discovery export; its only network use is a bare node:net reachability probe for built-image candidates, through ./discovery-loader, never a database or LLM provider",
     "@/lib/seed/discovery-loader":
       "reads the CapRover discovery export file and builds its status; its only network use is a bare node:net reachability probe for built-image candidates, never a database or LLM provider",
+    "@/lib/seed/operator-loader":
+      "reads the operator seed sources (seed files on disk and the process environment), resolves ${ENV} references and keeps the result and its status in process memory; never a database or LLM provider",
     "@/lib/storage/connection-secrets":
       "the credential field classification; withoutSecretFields copies a connection record without its secrets and opens nothing",
     "@/lib/storage/factory": "the app's own storage backend (STORAGE_PROVIDER), not a user database",

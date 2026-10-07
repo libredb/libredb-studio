@@ -10,7 +10,7 @@ process.env.SHARED_PG_PASS = "shared-secret";
 process.env.BOTH_PG_PASS = "both-secret";
 
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
-import { resetCache } from "@/lib/seed/config-loader";
+import { resetCache } from "@/lib/seed";
 import { logger } from "@/lib/logger";
 
 /*

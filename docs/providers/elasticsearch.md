@@ -661,8 +661,14 @@ into the `limit` execution option, so the generated statement is now `SELECT * F
 no `LIMIT`, no `;`. The terminator measurement above is unaffected and still the reason for the
 declaration.
 
-A semicolon a **user** types is unaffected by that declaration and still runs, because the editor's
-statement reader strips the terminator before the statement is sent. The raw `POST /api/db/query`
+A semicolon a **user** types still runs, because the editor's statement reader strips the terminator
+before the statement is sent. With the caret in a statement that holds on every engine. For a
+**selection** it holds because of this declaration (#1414): a selection used to be sent exactly as
+selected, so selecting `SELECT customer FROM orders WHERE qty = 1 LIMIT 2;` with its `;` answered
+HTTP 400 `extraneous input ';' expecting <EOF>` (Elasticsearch 9.5.3) while the same line run from
+the caret worked. On an engine with `statementTerminator: "none"` a selection that is one statement
+is now read through the same splitter; a `;` inside a literal is kept, and a multi-statement
+selection is still sent as selected. The raw `POST /api/db/query`
 passes text through untouched, so a `;` sent there is refused by the engine — which is the honest
 answer for an API that promises no rewriting.
 

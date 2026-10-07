@@ -9,10 +9,10 @@ mock.module("@/lib/logger", () => ({
 }));
 
 import {
-  resolveAllCredentials,
   resolveConnectionCredentials,
   resolveVaultCredentials,
   resetPlaintextWarnings,
+  UndefinedSeedVariableError,
 } from "@/lib/seed/credential-resolver";
 import { resetVaultCache, VaultError } from "@/lib/seed/vault-client";
 import type { SeedConnection } from "@/lib/seed/types";
@@ -338,26 +338,28 @@ describe("credential-resolver vault scheme", () => {
       expect(captured).not.toContain("must-not-be-logged");
     });
 
-    it("skips, at load, a connection whose ssl reference is unset, logging the variable and ssl.clientKey and no value", () => {
+    it("raises, at load, an UndefinedSeedVariableError for an unset ssl reference, naming the variable and ssl.clientKey and no value", () => {
       process.env.SEED_TLS_CA = "CA-must-not-be-logged";
 
-      const resolved = resolveAllCredentials([
-        {
+      let failure: unknown;
+      try {
+        resolveConnectionCredentials({
           ...baseConn,
           id: "cluster",
           ssl: { mode: "verify-full", caCert: "${SEED_TLS_CA}", clientKey: "${SEED_TLS_KEY}" },
-        },
-        { ...baseConn, id: "other" },
-      ]);
+        });
+      } catch (err) {
+        failure = err;
+      }
 
-      expect(resolved.map((conn) => conn.id)).toEqual(["other"]);
-      expect(error).toHaveBeenCalledTimes(1);
-      const [message, failure, context] = error.mock.calls[0] as unknown as [string, Error, Record<string, unknown>];
-      expect(message).toBe("Seed connection skipped due to credential resolution failure");
-      expect(failure.message).toBe(
+      expect(failure).toBeInstanceOf(UndefinedSeedVariableError);
+      expect(failure).toMatchObject({ variable: "SEED_TLS_KEY", connectionId: "cluster", field: "ssl.clientKey" });
+      expect((failure as Error).message).toBe(
         'Environment variable SEED_TLS_KEY is not defined (required by seed connection "cluster" field "ssl.clientKey")',
       );
-      expect(context).toEqual({ route: "seed/credential-resolver", connectionId: "cluster" });
+      expect((failure as Error).message).not.toContain("CA-must-not-be-logged");
+      // The resolver logs nothing itself: the operator loader records the skip and logs it.
+      expect(error).not.toHaveBeenCalled();
     });
   });
 });

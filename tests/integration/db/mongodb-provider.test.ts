@@ -313,13 +313,20 @@ const defaultDbStats = () => ({
 
 let mockDbStats: () => Record<string, unknown> = defaultDbStats;
 
+/**
+ * Per-collection `collStats` answers, for a test that has to drive the ROW BYTES rather
+ * than the one shared fixture below. A collection the map does not name keeps answering
+ * `{ size: 1024, totalIndexSize: 512, count: 42 }`.
+ */
+let mockCollStatsByCollection: Record<string, { size: number; totalIndexSize: number; count: number }> = {};
+
 const createMockDb = (dbName = "testdb") => ({
   command: async (cmd: Record<string, unknown>) => {
     if (cmd.ping) return { ok: 1 };
     if (cmd.collStats) {
-      if (isMockView(String(cmd.collStats), dbName))
-        throw commandNotSupportedOnView("collStats", String(cmd.collStats));
-      return { size: 1024, totalIndexSize: 512, count: 42 };
+      const collName = String(cmd.collStats);
+      if (isMockView(collName, dbName)) throw commandNotSupportedOnView("collStats", collName);
+      return mockCollStatsByCollection[collName] ?? { size: 1024, totalIndexSize: 512, count: 42 };
     }
     if (cmd.validate || cmd.compact) {
       const name = String(cmd.validate ?? cmd.compact);
@@ -673,6 +680,7 @@ describe("MongoDBProvider", () => {
     mockCurrentOps = [];
     mockServerStatus = defaultServerStatus;
     mockDbStats = defaultDbStats;
+    mockCollStatsByCollection = {};
     resetObjectSurfaceMocks();
     provider = new MongoDBProvider({ ...baseConfig });
   });
@@ -885,6 +893,34 @@ describe("MongoDBProvider", () => {
       await provider.connect();
       await provider.connect(); // should not throw
       expect(provider.isConnected()).toBe(true);
+    });
+
+    // #1458: server selection is a retry loop the driver runs until its own deadline, and
+    // `serverSelectionTimeoutMS` is a client option it applies to every query and write,
+    // so the bound has to clear a replica set election as well as the initial dial. The
+    // defect was handing it `pool.acquireTimeout` - 60000 by default - which made Test
+    // Connection to a port nothing listens on spin for a minute before the `ECONNREFUSED`
+    // it already had. `connectTimeoutMS` did not bound it: that caps one TCP attempt, and a
+    // refusal fails that attempt at once.
+    test("server selection carries its own bound, not the pool acquire timeout", async () => {
+      await provider.connect();
+      expect(lastMongoOptions.serverSelectionTimeoutMS).toBe(30000);
+      expect(lastMongoOptions.connectTimeoutMS).toBe(60000);
+    });
+
+    test("a configured pool still reaches the driver, and does not move the selection bound", async () => {
+      provider = new MongoDBProvider(
+        { ...baseConfig },
+        { pool: { min: 1, max: 4, idleTimeout: 12000, acquireTimeout: 25000 } },
+      );
+      await provider.connect();
+      expect(lastMongoOptions).toMatchObject({
+        minPoolSize: 1,
+        maxPoolSize: 4,
+        maxIdleTimeMS: 12000,
+        connectTimeoutMS: 25000,
+        serverSelectionTimeoutMS: 30000,
+      });
     });
   });
 
@@ -1472,6 +1508,31 @@ describe("MongoDBProvider", () => {
       expect((await provider.getHealth()).databaseSize).toBe("0 B");
     });
 
+    test("getHealth publishes the same database size the overview does", async () => {
+      // The admin fleet view prints each row's `getHealth().databaseSize` and adds up
+      // `getOverview().databaseSizeBytes` as its total, and the Monitoring Overview's DB Size
+      // card reads the overview figure. While `getHealth()` still published `dataSize` alone,
+      // one MongoDB read two sizes side by side: a data-only row against a data+index total.
+      mockDbStats = () => ({ dataSize: 2048, indexSize: 1024, storageSize: 4096 });
+      const health = await provider.getHealth();
+      const overview = await provider.getOverview();
+
+      expect(health.databaseSize).toBe(overview.databaseSize);
+      expect(health.databaseSize).toBe("3 KB");
+    });
+
+    test("getHealth omits the database size when either addend is missing", async () => {
+      // The same omit-when-either-is-missing rule the overview follows: a sum of one reading
+      // and a guess is not a reading, and `indexSize` alone is no more a database size than
+      // `dataSize` alone was.
+      mockDbStats = () => ({ dataSize: 2048, storageSize: 4096 });
+      const health = await provider.getHealth();
+      const overview = await provider.getOverview();
+
+      expect(health.databaseSize).toBe("N/A");
+      expect(overview.databaseSize).toBe("N/A");
+    });
+
     test("maps in-progress operations to active sessions", async () => {
       mockCurrentOps = [
         {
@@ -1744,6 +1805,89 @@ describe("MongoDBProvider", () => {
       // Everything the same read DID answer still arrives - this is not a failed read.
       expect(overview.tableCount).toBe(2);
       expect(overview.activeConnections).toBe(5);
+    });
+
+    test("the published size is the same measure as the table rows the Storage tab divides", async () => {
+      // The Storage tab's shares are `figure / overview.databaseSizeBytes`, and the figures
+      // that go into them are this provider's own: a collection's row is
+      // `collStats.size + collStats.totalIndexSize`, and the Indexes card sums
+      // `totalIndexSize` (`getTableStats()`). Publishing `dbStats.dataSize` alone - the
+      // documents, uncompressed - put index bytes in the numerator and left them out of the
+      // denominator, so the Indexes share and every collection carrying an index read over
+      // 100% (measured on MongoDB 8.2: 1062.8% for Indexes, 354.7% for `customers`).
+      mockDbStats = () => ({ dataSize: 2048, indexSize: 1024, storageSize: 4096 });
+      const overview = await provider.getOverview();
+      const tables = await provider.getTableStats();
+
+      // Both dbStats measures the collection rows are built from, summed once.
+      expect(overview.databaseSizeBytes).toBe(3072);
+      expect(overview.databaseSize).toBe("3 KB");
+
+      const total = overview.databaseSizeBytes ?? 0;
+      const dataBytes = tables.reduce((sum, t) => sum + (t.tableSizeBytes ?? 0), 0);
+      const indexBytes = tables.reduce((sum, t) => sum + (t.indexSizeBytes ?? 0), 0);
+      // `collStats` answers 1024 + 512 for each of the two collections.
+      expect(dataBytes).toBe(2048);
+      expect(indexBytes).toBe(1024);
+      // And every figure the tab divides now sits inside the total it divides by.
+      expect((dataBytes / total) * 100).toBeLessThanOrEqual(100);
+      expect((indexBytes / total) * 100).toBeLessThanOrEqual(100);
+      for (const table of tables) {
+        expect(((table.totalSizeBytes ?? 0) / total) * 100).toBeLessThanOrEqual(100);
+      }
+    });
+
+    test("a dbStats answer carrying only one of the two measures publishes no byte figure", async () => {
+      // The published size is a sum of two readings now, and one reading plus a guess is not
+      // a reading: `dataSize` alone is exactly the state the shares were wrong in, and 0 for
+      // the index bytes the answer never carried would be the same fabrication one step
+      // further in. The absence the optional field carries is unchanged by that.
+      mockDbStats = () => ({ dataSize: 2048, storageSize: 4096 });
+      const overview = await provider.getOverview();
+
+      expect("databaseSizeBytes" in overview).toBe(false);
+      expect(overview.databaseSize).toBe("N/A");
+      // What the same read did answer still arrives - this is not a failed read.
+      expect(overview.tableCount).toBe(2);
+    });
+
+    test("a time series collection is counted once, without its internal bucket collection", async () => {
+      // `listCollections` answers a time series collection TWICE: the collection itself
+      // (`type: "timeseries"`) and the server's own bucket collection
+      // `system.buckets.<name>`, and `collStats` answers the same bytes for both. Counting
+      // both put the collection's bytes into the rows twice, so Tables + Indexes summed past
+      // the database total and the Storage tab's "Other (unattributed)" remainder went
+      // negative (#1455). The numbers here are the `mongo:8` measurement the reviewer took:
+      // 110334 B of rows against a 105066 B total, the 5268 B time series collection counted
+      // twice.
+      mockCollections = [
+        { name: "weather", type: "timeseries" },
+        { name: "system.buckets.weather", type: "collection" },
+        { name: "sensors", type: "collection" },
+      ];
+      mockCollStatsByCollection = {
+        weather: { size: 5000, totalIndexSize: 268, count: 12 },
+        "system.buckets.weather": { size: 5000, totalIndexSize: 268, count: 12 },
+        sensors: { size: 99798, totalIndexSize: 0, count: 900 },
+      };
+      mockDbStats = () => ({ dataSize: 104798, indexSize: 268, storageSize: 4096 });
+
+      const overview = await provider.getOverview();
+      const tables = await provider.getTableStats();
+
+      const total = overview.databaseSizeBytes ?? 0;
+      expect(total).toBe(105066);
+      const dataBytes = tables.reduce((sum, t) => sum + (t.tableSizeBytes ?? 0), 0);
+      const indexBytes = tables.reduce((sum, t) => sum + (t.indexSizeBytes ?? 0), 0);
+      // The rows are the sums `dbStats` reports, each collection counted once...
+      expect(dataBytes).toBe(104798);
+      expect(indexBytes).toBe(268);
+      // ...so the figures the tab divides add up to the total they divide by and the
+      // remainder is not negative. Before the fix this pair read 110334 against 105066.
+      expect(dataBytes + indexBytes).toBe(total);
+      expect(total - dataBytes - indexBytes).toBeGreaterThanOrEqual(0);
+      // The internal bucket collection is not a second table.
+      expect(tables.map((t) => t.tableName).sort()).toEqual(["sensors", "weather"]);
     });
   });
 

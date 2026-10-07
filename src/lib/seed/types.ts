@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { CONNECTION_STRING_ACCEPTED, MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import { isCredentialReference } from "./credential-resolver";
@@ -223,6 +223,19 @@ export const SeedConnectionSchema = z
       message: `Seed connection "${conn.id}": ${refusal} readOnly: true is refused with this credential, because the mode would promise a boundary the server does not keep. Give this connection a credential of its own, or remove readOnly.`,
       path: ["password"],
     });
+  })
+  // A connection string the type's provider does not read (Spec A section 7): the provider would drop it in
+  // silence and open whatever the other fields say, so the seed would be listed as one database and reach
+  // another, or none. Read from CONNECTION_STRING_ACCEPTED, never a type-id branch. Any set value counts, a
+  // reference included, because the file is validated before anything is resolved. The message names the
+  // connection and the type, never the value.
+  .superRefine((conn, ctx) => {
+    if (conn.connectionString === undefined || CONNECTION_STRING_ACCEPTED[conn.type]) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Seed connection "${conn.id}" sets connectionString, which the ${conn.type} provider does not read: move the value into host, port, user, password and database`,
+      path: ["connectionString"],
+    });
   });
 
 /**
@@ -244,8 +257,24 @@ export const SeedConfigSchema = z
     defaults: SeedDefaultsSchema.optional(),
     connections: z.array(SeedConnectionSchema).min(1, "At least one connection is required"),
   })
-  .refine((cfg) => new Set(cfg.connections.map((c) => c.id)).size === cfg.connections.length, {
-    message: "Connection IDs must be unique",
+  // One issue per repeated id, at the path of its first repeat, so the error names the id. A seed id is a name, not
+  // a value, so naming it is allowed.
+  .superRefine((cfg, ctx) => {
+    const seen = new Set<string>();
+    const reported = new Set<string>();
+    cfg.connections.forEach((conn, index) => {
+      if (!seen.has(conn.id)) {
+        seen.add(conn.id);
+        return;
+      }
+      if (reported.has(conn.id)) return;
+      reported.add(conn.id);
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Connection id "${conn.id}" is declared more than once`,
+        path: ["connections", index, "id"],
+      });
+    });
   })
   // Here and not on SeedConnectionSchema, because `defaults.managed` is merged only after parsing
   // (connection-filter.ts): the effective value is the connection's own, else the default, else true,
@@ -273,8 +302,9 @@ export interface ManagedConnection extends DatabaseConnection {
   /** Visible to MCP clients (#246); absent on the built-in samples, which never opt in. */
   mcp?: boolean;
   /**
-   * Set in code after the role filter, by the discovery source on every discovered connection and, while
-   * SEED_LITERAL_VALUES is on, on every seed-file connection; never read from a file;
+   * Set in code after the role filter, by the discovery source on every discovered connection and, for an
+   * operator entry, by src/lib/seed/index.ts when the operator loader's fill read it as literal (every
+   * file-like entry while SEED_LITERAL_VALUES is on); never read from a file;
    * stripped by GET /api/connections/managed. A connection carrying it is used with its values as
    * written: no `${NAME}` or `${vault:...}` in it is resolved.
    */

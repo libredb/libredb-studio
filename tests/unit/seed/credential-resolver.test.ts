@@ -3,8 +3,8 @@ import { createPrivateKey, generateKeyPairSync } from "node:crypto";
 import { mergeDefaults } from "@/lib/seed/connection-filter";
 import {
   resolveConnectionCredentials,
-  resolveAllCredentials,
   resetPlaintextWarnings,
+  UndefinedSeedVariableError,
 } from "@/lib/seed/credential-resolver";
 import type { SeedConnection } from "@/lib/seed/types";
 
@@ -15,6 +15,16 @@ const baseConn: SeedConnection = {
   host: "localhost",
   roles: ["*"],
 };
+
+/** What `run` throws; a run that throws nothing fails the test. */
+function thrownBy(run: () => unknown): Error {
+  try {
+    run();
+  } catch (err) {
+    return err as Error;
+  }
+  throw new Error("expected a throw, and nothing was thrown");
+}
 
 describe("credential-resolver", () => {
   beforeEach(() => {
@@ -78,9 +88,25 @@ describe("credential-resolver", () => {
     expect(resolved.dataServers).toBe("a.internal:6648,b.internal:6648");
   });
 
-  it("throws when env var is not defined", () => {
-    const conn = { ...baseConn, password: "${NONEXISTENT_VAR}" };
-    expect(() => resolveConnectionCredentials(conn)).toThrow(/NONEXISTENT_VAR/);
+  it("throws an UndefinedSeedVariableError naming the variable, the connection and the field", () => {
+    const error = thrownBy(() => resolveConnectionCredentials({ ...baseConn, password: "${NONEXISTENT_VAR}" }));
+
+    expect(error).toBeInstanceOf(UndefinedSeedVariableError);
+    expect(error).toMatchObject({
+      name: "UndefinedSeedVariableError",
+      variable: "NONEXISTENT_VAR",
+      connectionId: "test",
+      field: "password",
+    });
+    expect(error.message).toBe(
+      'Environment variable NONEXISTENT_VAR is not defined (required by seed connection "test" field "password")',
+    );
+  });
+
+  it("resolves a variable defined as the empty string to the empty string", () => {
+    process.env.MY_PASSWORD = "";
+
+    expect(resolveConnectionCredentials({ ...baseConn, password: "${MY_PASSWORD}" }).password).toBe("");
   });
 
   it("leaves fields without ${} pattern unchanged", () => {
@@ -90,17 +116,23 @@ describe("credential-resolver", () => {
     expect(resolved.port).toBe(5432);
   });
 
-  it("resolveAllCredentials skips connections with unresolvable vars", () => {
+  it("resolves each connection on its own: an undefined variable in one leaves the next untouched", () => {
     process.env.MY_PASSWORD = "good";
     const connections: SeedConnection[] = [
       { ...baseConn, id: "good", password: "${MY_PASSWORD}" },
       { ...baseConn, id: "bad", password: "${MISSING}" },
       { ...baseConn, id: "also-good", host: "static" },
     ];
-    const resolved = resolveAllCredentials(connections);
-    expect(resolved).toHaveLength(2);
-    expect(resolved[0].id).toBe("good");
-    expect(resolved[1].id).toBe("also-good");
+
+    const outcomes = connections.map((conn) => {
+      try {
+        return resolveConnectionCredentials(conn).id;
+      } catch (err) {
+        return err instanceof UndefinedSeedVariableError ? `skipped ${err.connectionId}` : "another error";
+      }
+    });
+
+    expect(outcomes).toEqual(["good", "skipped bad", "also-good"]);
   });
 
   it("does not throw for plaintext passwords, just warns", () => {
@@ -196,6 +228,15 @@ describe("credential-resolver: the TLS material under ssl (#1089)", () => {
     );
   });
 
+  it("carries the variable, the connection and ssl.clientKey on the error", () => {
+    const error = thrownBy(() =>
+      resolveConnectionCredentials(withSsl({ mode: "verify-full", clientKey: "${ETCD_CLIENT_KEY}" })),
+    );
+
+    expect(error).toBeInstanceOf(UndefinedSeedVariableError);
+    expect(error).toMatchObject({ variable: "ETCD_CLIENT_KEY", connectionId: "cluster", field: "ssl.clientKey" });
+  });
+
   it("leaves a connection with no ssl object unchanged", () => {
     expect(resolveConnectionCredentials(baseConn)).toStrictEqual(baseConn);
   });
@@ -224,7 +265,7 @@ describe("credential-resolver: the TLS material under ssl (#1089)", () => {
     // The premise: one object, shared.
     expect(merged[0].ssl).toBe(merged[1].ssl);
 
-    const resolved = resolveAllCredentials(merged);
+    const resolved = merged.map((conn) => resolveConnectionCredentials(conn));
 
     expect(resolved.map((conn) => conn.ssl?.clientKey)).toEqual(["CLIENT-KEY", "CLIENT-KEY"]);
     expect(defaults.ssl).toStrictEqual({ mode: "verify-full", clientKey: "${ETCD_CLIENT_KEY}" });

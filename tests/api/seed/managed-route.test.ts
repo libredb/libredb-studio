@@ -17,7 +17,7 @@ mock.module("@/lib/auth", () => ({
 }));
 
 import { GET } from "@/app/api/connections/managed/route";
-import { resetCache } from "@/lib/seed/config-loader";
+import { resetCache } from "@/lib/seed";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import { getSession } from "@/lib/auth";
 import { setSqliteSampleSeedState, SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
@@ -317,6 +317,27 @@ describe("GET /api/connections/managed", () => {
     const body = (await res.json()) as { error: string; reason?: string };
     expect(body.error).toBe("Failed to load managed connections");
     expect(body.reason).toBeUndefined();
+  });
+
+  it("strips the literal marker from operator entries in literal mode and keeps the response shape", async () => {
+    process.env.SEED_LITERAL_VALUES = "true";
+    resetCache();
+    try {
+      const res = await GET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds"]);
+      expect(data.connections.map((c: { seedId: string }) => c.seedId)).toEqual([
+        "admin-only",
+        "everyone",
+        "admin-and-user",
+      ]);
+      expect(data.connections.filter((c: object) => "literal" in c)).toEqual([]);
+    } finally {
+      delete process.env.SEED_LITERAL_VALUES;
+      resetCache();
+    }
   });
 
   // Discovered connections (CapRover auto-connect spec 9.5 and 10): every role can read this route, so the

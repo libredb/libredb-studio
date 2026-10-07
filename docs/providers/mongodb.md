@@ -295,11 +295,33 @@ pool is configured from `ProviderOptions.pool`:
 | `minPoolSize` | `pool.min` |
 | `maxIdleTimeMS` | `pool.idleTimeout` |
 | `connectTimeoutMS` | `pool.acquireTimeout` |
-| `serverSelectionTimeoutMS` | `pool.acquireTimeout` |
+| `serverSelectionTimeoutMS` | 30 s, a constant in `mongodb.ts` (`MONGODB_SERVER_SELECTION_TIMEOUT_MS`), not configurable |
 
 The database name comes from `config.database`, else from the connection string's path (after the authority, so `mongodb://host:27017` names none), else
 defaults to `test`, the driver's own default; it is the database a statement with no `database` key reads.
 After connecting, a `{ ping: 1 }` command validates the connection.
+
+**Server selection is bounded at 30 seconds, and the bound is not connect-only (#1458).**
+`serverSelectionTimeoutMS` is a `MongoClient` option, so the driver reads it when the client
+connects and again for every query and write for the life of that client
+(`mongodb/lib/sdam/topology.js`, `mongodb/lib/operations/execute_operation.js`). It therefore has
+to clear a replica set election, not only the initial dial: MongoDB documents the median election
+after an unplanned primary loss as up to 12 seconds and notes that network latency can extend it.
+This provider used to hand that option `pool.acquireTimeout`, whose default is 60000
+([`types.ts`](../../src/lib/db/types.ts)), so Test Connection to a host and port where nothing
+listens held the spinner for a minute (`Test Connection` passes `queryTimeout: 10000`, which
+`connect()` does not read). Measured here against a closed port on 127.0.0.1: 60.0 s before, 30.0 s
+after. `connectTimeoutMS` did not bound it and does not: that option caps ONE TCP attempt, and a
+refused connection fails its attempt at once.
+
+30 s is the driver's own default and sits above the election window, so a write issued right after
+an unplanned primary loss waits the election out instead of failing at the deadline. It is a
+ceiling under abnormal discovery, not a latency budget: a healthy deployment selects a server well
+before it, and a closed port is still reported only once the 30 s have passed, half the old
+minute. The value is a constant in
+[`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts) rather than a second pool field,
+because it governs the whole client and not only the connect; `connectTimeoutMS` keeps following
+`pool.acquireTimeout` for the pool's own dial.
 
 ### 4.1 SSL / TLS
 
@@ -870,12 +892,12 @@ Every method is wrapped in try/catch. Degradation reports the absence rather tha
 
 | Method | Source | Notes |
 |--------|--------|-------|
-| `getHealth()` | `serverStatus`, `dbStats`, `currentOp`, `system.profile` | connections (**omitted**, never `0`, when the server publishes none — [§7.2](#72-a-connection-count-nobody-published-is-absent-not-zero)), data size (**`"N/A"`**, never `"0 B"`, when `db.stats()` answers without `dataSize` — [§7.3](#73-a-database-size-nobody-published-is-absent-not-0-b)), WiredTiger cache-hit % (`"N/A"` when unmeasurable, [§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)), current ops; slow queries need the profiler (placeholder row if disabled) |
-| `getOverview()` | `serverStatus`, `buildInfo`, `dbStats`, `listCollections` | version, uptime, connections (**omitted**, never `0`, on the same two paths as `getHealth()` — [§7.2](#72-a-connection-count-nobody-published-is-absent-not-zero)), database size (`databaseSizeBytes` **omitted**, never `0`, on those same two paths — [§7.3](#73-a-database-size-nobody-published-is-absent-not-0-b)), collection/index counts. `maxConnections` is `connections.current + connections.available`, or `0` — the repo's spelling of *no limit published* — when the server publishes no headroom |
+| `getHealth()` | `serverStatus`, `dbStats`, `currentOp`, `system.profile` | connections (**omitted**, never `0`, when the server publishes none, [§7.2](#72-a-connection-count-nobody-published-is-absent-not-zero)), data size (**`dataSize + indexSize`**, the same sum `getOverview()` publishes; **`"N/A"`**, never `"0 B"`, when `db.stats()` answers without either addend, [§7.3](#73-a-database-size-nobody-published-is-absent-not-0-b)), WiredTiger cache-hit % (`"N/A"` when unmeasurable, [§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)), current ops; slow queries need the profiler (placeholder row if disabled) |
+| `getOverview()` | `serverStatus`, `buildInfo`, `dbStats`, `listCollections` | version, uptime, connections (**omitted**, never `0`, on the same two paths as `getHealth()`, [§7.2](#72-a-connection-count-nobody-published-is-absent-not-zero)), database size (**`dataSize + indexSize`**, the database-level sums of the per-collection `collStats.size` and `totalIndexSize` the rows are built from, so a share's numerator and denominator are the same pair; `databaseSizeBytes` **omitted**, never `0`, when either addend is unpublished, [§7.3](#73-a-database-size-nobody-published-is-absent-not-0-b)), collection/index counts. `maxConnections` is `connections.current + connections.available`, or `0` (the repo's spelling of *no limit published*) when the server publishes no headroom |
 | `getPerformanceMetrics()` | `serverStatus` (WiredTiger + opcounters) | cache-hit %, **ops/sec** (`query`+`insert`+`update`+`delete` opcounters ÷ uptime — *total operations, not just queries*), buffer-pool % (cache bytes), `deadlocks: 0`. **Every field is optional**: each one is present only if its reading was, and a failed `serverStatus` reports `{}` ([§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)) |
 | `getSlowQueries()` | `system.profile` | per-op time/returned; **`[]` if the profiler isn't enabled** (`db.setProfilingLevel(1)`); sorted by `millis` (slowest) — note `getHealth()`'s slow-query block instead sorts by `ts` (most recent) and emits a placeholder row when disabled |
 | `getActiveSessions()` | `currentOp` | opid, ns, lock waits, duration — ⚠️ the **`user` field is populated from `op.client`** (the client `host:port`), **not** an authenticated user |
-| `getTableStats()` | `collStats` per collection | row count + data/index/total sizes, `totalIndexSize` carried as the byte figure `indexSizeBytes` and not only as formatted text |
+| `getTableStats()` | `collStats` per collection | row count + data/index/total sizes, `totalIndexSize` carried as the byte figure `indexSizeBytes` and not only as formatted text; a time series collection is **one** row, because the server's internal `system.buckets.<name>` duplicate is skipped rather than summed beside it |
 | `getIndexStats()` | `$indexStats` + `indexes()` | **real `scans`** (`accesses.ops`); `indexSize` `N/A`; **`indexType` only distinguishes `text` vs `btree`** — `hashed`/`2dsphere`/`2d`/wildcard/clustered are all mislabelled `btree` |
 | `getStorageStats()` | `dbStats` + WiredTiger | Data / Indexes / Storage / WiredTiger cache (with usage %) |
 
@@ -978,14 +1000,30 @@ fabrication. Both outlived the round that fixed the count, one field over in the
   `try`, so a user without `clusterMonitor` reaches it - and `DatabaseOverview.databaseSizeBytes` is
   **optional** precisely so that a provider with no byte figure can say so. The key is now omitted;
 - both success paths formatted `dbStats.dataSize || 0`, which cannot tell a database that measures
-  0 bytes from a `db.stats()` that answered without `dataSize`. Both are now
-  `measuredNumber(dbStats.dataSize)`: absent, the overview omits `databaseSizeBytes` and reports
-  `databaseSize: "N/A"`; measured, a real `0` still formats as `"0 B"`. MongoDB's own
+  0 bytes from a `db.stats()` that answered without `dataSize`. Both are now `measuredNumber(...)`:
+  absent, the field is omitted and `databaseSize` reads `"N/A"`; measured, a real `0` still formats
+  as `"0 B"`. MongoDB's own
   [`dbStats` reference](https://www.mongodb.com/docs/manual/reference/command/dbStats/) documents
   `dataSize` unconditionally - the only output fields it gates are `freeStorageSize`,
   `indexFreeStorageSize` and `totalFreeStorageSize`, on the command's `freeStorage: 1` option - so
   this arm is **not** a deployment measured in this repo; it is the input `|| 0` could not
   distinguish, and the optional field exists to carry it.
+
+**What `getOverview()` publishes is a sum**, `dataSize + indexSize`, and the reason is field parity
+rather than a shared unit: `dbStats.dataSize` and `dbStats.indexSize` are documented as the
+database-level sums of the collection-level `collStats.size` and `collStats.totalIndexSize`, which
+are the two fields `getTableStats()` builds each row from, so the database figure is exactly the sum
+of the row figures. That figure is the denominator of every share on the Storage tab and the
+numerators carry both measures: a collection's row is `collStats.size + collStats.totalIndexSize`
+and the *Indexes* card sums `totalIndexSize`. `dataSize` alone left index bytes in the numerator
+only, so on MongoDB 8.2 the *Indexes* card read 1062.8% of the database and a `customers` collection
+read 354.7% (#1455). `dbStats.totalSize` is the other candidate and the wrong one: it is
+`storageSize + indexSize`, and `storageSize` is the on-disk footprint including pre-allocated space,
+so it is not the measure the rows are in. When either addend is unpublished the key is omitted
+rather than filled in: a sum of one reading and one guess is not a reading, and `dataSize` alone is
+exactly the state the shares were wrong in. `getHealth()`'s `databaseSize` publishes the same sum,
+because the admin fleet view prints it per row beside the overview's byte total, and both are one
+database's size.
 
 **What the absence buys is a whole panel.**
 [`StorageTab.tsx`](../../src/components/monitoring/tabs/StorageTab.tsx) keys its entire breakdown off
