@@ -1057,6 +1057,32 @@ describe("AnswerCard — a run that failed", () => {
     expect(getByTestId("agent-answer-failure").textContent).toContain("names no reason");
     expect(queryByTestId("agent-answer-retry")).toBeNull();
   });
+
+  // The loop ends these runs itself, with a stop reason and no failure reason (#1461).
+  const stoppedBy = (stopReason: "model-timeout" | "deadline-exceeded" | "turn-limit") =>
+    event({ kind: "run-finished", atMs: 1_020, status: "failed", stopReason });
+
+  test("a run cut off by a model timeout says so, not that its record names no reason", () => {
+    const timeline = foldLedgerEntries([opened("agent"), started("agent"), stoppedBy("model-timeout")]);
+    const { getByTestId } = render(<AnswerCard timeline={timeline} />);
+    expect(getByTestId("agent-answer-failure").textContent).toBe(
+      "The model did not answer in time. Starting the run again is reasonable.",
+    );
+  });
+
+  test("a run that reached its deadline says that", () => {
+    const timeline = foldLedgerEntries([opened("agent"), started("agent"), stoppedBy("deadline-exceeded")]);
+    const { getByTestId } = render(<AnswerCard timeline={timeline} />);
+    expect(getByTestId("agent-answer-failure").textContent).toBe("The run reached its time limit before it finished.");
+  });
+
+  // The timeline's turn-limit sentence ends "What it had gathered is above.", which is true
+  // of the timeline entry and points the wrong way from this card, above the timeline.
+  test("a run that reached its step limit says that, without pointing above itself", () => {
+    const timeline = foldLedgerEntries([opened("agent"), started("agent"), stoppedBy("turn-limit")]);
+    const { getByTestId } = render(<AnswerCard timeline={timeline} />);
+    expect(getByTestId("agent-answer-failure").textContent).toBe("The run reached its step limit before it finished.");
+  });
 });
 
 /*

@@ -166,6 +166,7 @@ export class MilvusProvider extends BaseDatabaseProvider {
       supportsCreateTable: false,
       supportsTransactions: false,
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       supportsResultPagination: false,
       supportsExternalQueryLimiting: false,
       supportsConnectionString: false,

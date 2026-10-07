@@ -1455,7 +1455,7 @@ setups still publish the rest:
 | `OPERATOR_CATALOG_TOKEN` | The `submit-catalogs` job in `operator-release.yml`: bundle PRs to `k8s-operatorhub/community-operators` and `redhat-openshift-ecosystem/community-operators-prod`. Classic PAT with `public_repo` on an account in the operator's upstream `ci.yaml` reviewers list, because that login is what upstream authorizes | Catalog submission skipped with a notice |
 | `AUR_SSH_PRIVATE_KEY` | The aur job: render, build and `git push` of `libredb-studio-bin` to `ssh://aur@aur.archlinux.org/libredb-studio-bin.git`. The private half of the SSH key registered on the project's AUR account (`channels@libredb.org`). Runs only while the `aur` channel is `live` | AUR push skipped |
 | `WINGETCREATE_GITHUB_TOKEN` | The winget job: `wingetcreate update --submit` PRs to `microsoft/winget-pkgs`. Classic PAT with `public_repo` scope — wingetcreate does not support fine-grained PATs | winget submission skipped |
-| `CAPROVER_CATALOG_TOKEN` | `caprover-fork.yml`: fast-forwarding the `libredb/one-click-apps` fork, creating it first when `update.fork.mode` is `create_or_update`, and pushing the `libredb-studio-<version>` branch a member opens the CapRover catalog PR from. For `mode: update`, a fine-grained PAT with access to `libredb/one-click-apps` only and Contents read and write; `create_or_update` also needs GitHub's fork endpoint (Administration write on the org's repositories). See [Staging an upstream catalog change on a fork](#staging-an-upstream-catalog-change-on-a-fork) | The workflow validates the templates and pushes nothing |
+| `CAPROVER_CATALOG_TOKEN` | `caprover-fork.yml`: fast-forwarding the `libredb/caprover-one-click-apps` fork, creating it first when `update.fork.mode` is `create_or_update`, and pushing the `libredb-studio-<version>` branch a member opens the CapRover catalog PR from. For `mode: update`, a fine-grained PAT with access to `libredb/caprover-one-click-apps` only and Contents read and write; `create_or_update` also needs GitHub's fork endpoint (Administration write on the org's repositories). See [Staging an upstream catalog change on a fork](#staging-an-upstream-catalog-change-on-a-fork) | The workflow validates the templates and pushes nothing |
 
 The chocolatey and winget jobs run strictly **after** `publish-release`: both channels download
 the zip from the release URL, which is public only once the release is published. A failure there
@@ -1767,15 +1767,14 @@ versions behind the catalog before anyone noticed
 ([#268](https://github.com/libredb/libredb-studio/issues/268)), and `chart:bump` now moves them with
 every release. **Dokploy**, **Kubero** and **Cosmos** keep only a README there -
 their descriptors are authored in the upstream catalog repo, so all three are pinned `remote_file`
-and a bump is an upstream PR with nothing to change here. **Eight catalog channels keep no
+and a bump is an upstream PR with nothing to change here. **Several catalog channels keep no
 descriptor here at all.** Two of them are pinned `remote_file` against the repository that does
 hold it — the Sealos template in `labring-actions/templates`, the Unraid CA template in
 `libredb/unraid-templates` — and both are documented under
 [App catalogs](#app-catalogs-unraid-sealos); TrueNAS SCALE is pinned the same way against
 `truenas/apps`, and CasaOS against `IceWhaleTech/CasaOS-AppStore`. The three open submissions (Umbrel, Easypanel, Portainer) have nothing to
 pin until their upstream PR merges, and each entry's note names the pin to add on that day.
-[Google Cloud Marketplace](#google-cloud-marketplace) is the one with nothing to pin even in
-principle: its artefacts are held in Google's Producer Portal and a private Artifact Registry.
+[Google Cloud Marketplace](#google-cloud-marketplace) and [Railyard](https://railyard.run/templates/libredb-studio) have nothing to pin even in principle: Google holds the artefacts in its Producer Portal and a private Artifact Registry, and Railyard keeps the template on its own side and says it builds `main` at deploy time.
 Neither Fly.io nor
 Render has a marketplace or template gallery to publish into, which is why the repo file itself is the
 deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none` for
@@ -1806,7 +1805,7 @@ The set of channels that carry it is `FORK_STAGED_CHANNEL_IDS` in [`scripts/dist
 ```
 
 CapRover is the one such channel.
-Its catalog's maintainer keeps bumps manual ([caprover/one-click-apps#1334](https://github.com/caprover/one-click-apps/pull/1334#issuecomment-5717266315)), so [`caprover-fork.yml`](../.github/workflows/caprover-fork.yml) stages both templates on `libredb/one-click-apps` after each release, and a member opens the pull request after testing them; [deploy/caprover/README.md](../deploy/caprover/README.md#releasing-to-the-official-catalog) has the steps.
+Its catalog's maintainer keeps bumps manual ([caprover/one-click-apps#1334](https://github.com/caprover/one-click-apps/pull/1334#issuecomment-5717266315)), so [`caprover-fork.yml`](../.github/workflows/caprover-fork.yml) stages both templates on `libredb/caprover-one-click-apps` after each release, and a member opens the pull request after testing them; [deploy/caprover/README.md](../deploy/caprover/README.md#releasing-to-the-official-catalog) has the steps.
 `docker-build-push.yml` dispatches it once the release images passed their channel E2E.
 The workflow reads the settings with `distribution-check.mjs --fork-outputs caprover-official`, pushes only for a `live` channel, and needs the `CAPROVER_CATALOG_TOKEN` secret; without it a run validates and pushes nothing.
 It stages the release tag's templates unchanged, because `chart:bump` moves their version with `package.json` and `chart:check` holds every commit to it.

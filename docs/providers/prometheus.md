@@ -592,7 +592,7 @@ A direct call of `runMaintenance` is refused with a `QueryError` saying that com
 ### `getCapabilities()` ([`index.ts`](../../src/lib/db/providers/timeseries/prometheus/index.ts))
 
 - `queryLanguage: "promql"`, no `queryDialect`.
-- `supportsExplain`, `supportsCreateTable`, `supportsTransactions`, `supportsMaintenance`, `supportsInlineRowEdit`, `supportsResultPagination`, `supportsExternalQueryLimiting`, `supportsConnectionString`: all `false`.
+- `supportsExplain`, `supportsCreateTable`, `supportsTransactions`, `supportsMaintenance`, `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsResultPagination`, `supportsExternalQueryLimiting`, `supportsConnectionString`: all `false`.
 - `declaresForeignKeys: false`, `statementTerminator: "none"`, `defaultPort: 9090`, `containerLevels: []`, `maintenanceOperations: []`, and the six object kinds of [§6.1](#61-the-object-surface-789).
 - `schemaRefreshPattern: "(?!)"`, the empty lookahead, which matches nothing: no PromQL statement changes what the tree shows, because the provider calls read endpoints only and the metric catalogue moves with what the server scrapes.
 

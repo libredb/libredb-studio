@@ -1,6 +1,7 @@
 /**
  * The Cypher generators (spec 6.5, E11, SR5): the exact statements a tree click writes, the limit
- * bound, the segment arm, and a round trip of every output through the lexer and the read policy.
+ * bound, the segment arm, a round trip of every output through the lexer and the read policy, and the
+ * quoting and the policy agreeing on which names hold a unicode escape (#1295).
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -9,6 +10,7 @@ import {
   cypherSelectLabel,
   cypherSelectRelationship,
 } from "@/lib/db/graph/cypher/generators";
+import { CypherNameError, quoteCypherName } from "@/lib/db/graph/cypher/quote";
 import { checkCypherRead } from "@/lib/db/graph/cypher/read-policy";
 import { graphObjectSegment } from "@/lib/db/graph/objects";
 import type { GraphPolicyProfile } from "@/lib/db/graph/profile";
@@ -68,6 +70,56 @@ describe("cypherSelectLabel and cypherSelectRelationship", () => {
         // The whole generated text is the one statement the lexer read, so nothing was split off.
         expect(verdict.statement.text).toBe(text);
       }
+    }
+  });
+});
+
+/**
+ * Every spelling of a backslash run before a u or a U, bare and inside a name, with and without the hex
+ * digits that complete an escape.
+ */
+const ESCAPE_NAMES: readonly string[] = [0, 1, 2, 3, 4].flatMap((run) =>
+  ["u", "U"].flatMap((letter) =>
+    ["0060", "0061", "00e9", "006", ""].flatMap((digits) => {
+      const spelled = `${"\\".repeat(run)}${letter}${digits}`;
+      return [spelled, `a${spelled}b`, `Back\`tick ${spelled}`];
+    }),
+  ),
+);
+
+describe("the quoting and the read policy agree on unicode escapes (#1295)", () => {
+  test("quoteCypherName refuses a name exactly when the policy refuses it backticked as a unicode escape", () => {
+    expect(ESCAPE_NAMES.length).toBe(150);
+    let refused = 0;
+    for (const name of [...ESCAPE_NAMES, ...NAMES]) {
+      // The name backticked by hand, as quoteCypherName would write it were it accepted.
+      const text = `MATCH (n:\`${name.replaceAll("`", "``")}\`) RETURN n LIMIT 1`;
+      const verdict = checkCypherRead(text, TEST_PROFILE);
+      const policyRefuses = !verdict.allowed && verdict.refusal.code === "unicode-escape";
+      let quotingRefuses = false;
+      try {
+        quoteCypherName(name);
+      } catch (error) {
+        if (!(error instanceof CypherNameError)) throw error;
+        quotingRefuses = true;
+      }
+      expect([name, quotingRefuses]).toEqual([name, policyRefuses]);
+      if (quotingRefuses) refused += 1;
+    }
+    // Both arms are exercised: odd runs before a lower-case u are refused, everything else is accepted.
+    expect(refused).toBeGreaterThan(0);
+    expect(refused).toBeLessThan(ESCAPE_NAMES.length);
+  });
+
+  test("a tree click on a name holding an escape raises the name refusal, not a statement the policy refuses", () => {
+    for (const name of ["\\u0061", "x\\u0060y", "Caf\\u00e9"]) {
+      expect(() => cypherSelectLabel(name)).toThrow(CypherNameError);
+      expect(() => cypherSelectRelationship(name)).toThrow(CypherNameError);
+      expect(() => cypherForSegment(graphObjectSegment("label", name))).toThrow(CypherNameError);
+    }
+    for (const name of ["\\\\u0061", "\\U0061"]) {
+      const text = cypherSelectLabel(name);
+      expect(checkCypherRead(text, TEST_PROFILE).allowed).toBe(true);
     }
   });
 });

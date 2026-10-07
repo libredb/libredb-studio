@@ -597,6 +597,7 @@ describe("TrinoProvider metadata", () => {
 
     expect(capabilities.declaresForeignKeys).toBe(false);
     expect(capabilities.supportsInlineRowEdit).toBe(false);
+    expect(capabilities.supportsTestDataGeneration).toBe(false);
     // `OFFSET m LIMIT n`: Trino refuses the other order, so the provider transposes
     // what the limiter emitted (#816).
     expect(capabilities.supportsResultPagination).toBe(true);

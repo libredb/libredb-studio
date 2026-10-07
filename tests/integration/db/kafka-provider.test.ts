@@ -1520,6 +1520,7 @@ describe("declarations", () => {
       supportsTransactions: false,
       supportsMaintenance: false,
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       supportsResultPagination: false,
       supportsExternalQueryLimiting: false,
       supportsConnectionString: false,

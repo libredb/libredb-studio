@@ -917,6 +917,7 @@ attached database, exactly as `sqlite.ts` does.
 | `explainFormat` | `"sqlite-queryplan"` | SQLite's 4-column `id/parent/notused/detail` query plan strategy |
 | `supportsConnectionString` | `true` | `libsql://<database>-<org>.turso.io?authToken=<jwt>` |
 | `supportsInlineRowEdit` | `true` | Results grid inline edits supported |
+| `supportsTestDataGeneration` | `true` | Generate Test Data offered on tables (one multi-row `INSERT INTO ... VALUES`) |
 | `supportsResultPagination` | `true` | `LIMIT n OFFSET m`, the grammar it shares with SQLite (#816) |
 | `supportsTransactions` | `false` | Stateless request stream closed with each statement; no interactive session held |
 | `maintenanceOperations` | `["reindex", "check"]` | Only `REINDEX` and `PRAGMA integrity_check` are permitted by server allowlist |

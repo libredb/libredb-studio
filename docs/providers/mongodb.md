@@ -189,6 +189,25 @@ Caveats baked into this approach:
   it, and the profiler reads a dotted column by walking the sampled document, so `address.city` is
   profiled from its real values rather than as absent. A top-level key that literally contains a
   dot is walked the same way, as a nested path, so it profiles as absent.
+- **Generated test data reconstructs nested paths.** Both row menus offer Generate Test Data on a
+  collection, because the provider declares `supportsTestDataGeneration: true` ([§9](#9-capabilities--labels)),
+  and the dialog writes one `insertMany`. It treats dotted
+  inferred columns as nested paths: when `address`, `address.city`, and `address.geo.lat` are
+  present, only the leaf fields are generated and the resulting document is rebuilt as
+  `{ address: { city, geo: { lat } } }`. A parent path with listed descendants does not receive a
+  scalar value. An `object` field with no listed descendants is generated as `{}`.
+  The generator is picked by the **leaf** of the path, so `address.city` is a city and
+  `address.zip` a postal code rather than two street addresses, and the value takes the JSON type
+  the inferred type names: `number`, `int` and `double` as JSON numbers, `boolean` as a boolean,
+  `array` as `[]`, `null` as `null`, and `date`, `objectId`, `uuid`, `long` and `decimal` as the
+  `$date`, `$oid`, `$uuid`, `$numberLong` and `$numberDecimal` wrappers, which the query reader
+  ([§3.1](#extended-json-in-the-query)) turns into those BSON types. A `mixed(...)` field is written as its first non-null type.
+  The driver reads both int32 and double as a JS number, so sampling reports `number` for both, and a `number`
+  field is written as an integer (BSON int32) unless its leaf name picks a decimal-valued generator such as `price`.
+  `_id` is left to the server. Measured on `mongo:7` on 2026-10-06: the generated command ran
+  through the provider and `$type` read back `int`, `double`, `long`, `decimal`, `bool`, `array`,
+  `date`, `objectId`, `binData` (UUID subtype 4) and `null`.
+
 - **Arrays are named and left closed.** `items.sku` addresses one value *per array entry*, so it
   does not mean on an array what the same syntax means on a subdocument; listing it in a flat field
   list would invite exactly that confusion. Date, ObjectId, Binary, Decimal128 and every other
@@ -203,6 +222,18 @@ Caveats baked into this approach:
   60 subdocuments of 10 fields each is 661 rows in the schema tree and 661 lines in an agent run's
   context window, for one collection.
 - A field with multiple observed types is reported as `mixed(a|b)`. `_id` is marked primary.
+- **Nullable means "absent or `null` in at least one sampled document"** (#1456). MongoDB declares
+  no nullability, and a field is empty in two ways, so inference counts in how many sampled
+  documents each path is present and marks it nullable when that is fewer than the sample, or when
+  a `null` was seen. `_id` follows the same rule: in an ordinary collection it is present and
+  non-null in every document, so it reads not nullable, but a collection holding `{_id: null}`, or
+  a `$group` view whose `_id` is `null`, reads nullable, because that is what the sample shows.
+  Before #1456 only a `null` counted, so a field most documents lack read "Nullable: No" in Docs and
+  `NN` in the ERD.
+- **The profiler counts the same two cases as null.** In Profile Collection a sampled value that
+  is absent or `null` adds to `nullCount`, and `null` is not a distinct value. The samples still
+  show an explicit null, as `NULL`. Before #1456 documents `{a: 1}`, `{a: null}`, `{}` reported
+  1 null and 2 distinct values for `a`; they now report 2 nulls and 1.
 
 ### 3.4 `find` is capped at 100; `aggregate` is not
 
@@ -448,7 +479,8 @@ The `hasSource` column is [§6 Object source](#object-source-789).
 `acceptsRowWrites` on `collection` is the **per-kind** half and is deliberately not conjoined with
 this provider's engine-wide `supportsInlineRowEdit: false` ([§9](#9-capabilities--labels)). That flag
 is about the results grid's `UPDATE … SET`, which has no MongoDB spelling; an import into a
-collection is an ordinary `insertMany`. A view carries no such declaration: the server reports
+collection is an ordinary `insertMany`, and so is Generate Test Data, which the engine declares on
+its own with `supportsTestDataGeneration: true`. A view carries no such declaration: the server reports
 `info.readOnly: true` on every one, on the same call that classifies it.
 
 #### What is not declared, and why each absence is a measurement
@@ -1000,11 +1032,19 @@ uses `getDatabaseName()`, the name `connect()` opened - a connection-string conn
 
 | Type | MongoDB action |
 |------|----------------|
-| `analyze` | `validate` (one collection, or every collection) |
-| `vacuum` / `optimize` | `compact` (one collection, or best-effort all) |
+| `analyze` | `validate` (one collection, or every collection; views skipped) |
+| `vacuum` / `optimize` | `compact` (one collection, or every collection; views skipped) |
 | `check` | `dbCheck` (**requires** a collection target) |
 | `kill` | `killOp` (**requires** an opid) |
 | `reindex` | **unsupported** — returns a message (the `reIndex` command was removed in MongoDB 6.0+) |
+
+Without a target, `validate` and `compact` run on every entry `listCollections()` answers except
+views, which the server refuses for both (#1408). A time series collection is attempted, not
+dropped: the test is view versus everything else, as in the object tree. A refusal from one
+collection is collected rather than ending the run, and the result names it:
+`Validated 3 collections; skipped 1 view; failed on 1: users (<server message>)`, with `success`
+false whenever anything failed. Before #1408 the first view aborted the validate loop with a 500,
+and the compact loop swallowed every error into a bare "Compacted collections".
 
 `getCapabilities().maintenanceOperations = ['vacuum', 'analyze', 'check']` — so the UI surfaces those
 three, though `runMaintenance` also accepts `optimize`/`kill`/`reindex` when invoked directly.
@@ -1045,6 +1085,7 @@ request here.
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — the query language is JSON commands, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
+| `supportsTestDataGeneration` | `true` - a separate fact from the flag above: the Generate Test Data dialog writes one `insertMany` command, which a collection takes ([§3.3](#33-sampling-based-schema-inference-nested-to-three-levels)), so both row menus offer it (#1468) |
 | `supportsResultPagination` | `false` — `prepareQuery` pins `offset` to 0 and returns the command untouched, so page two would be page one. The find document's own `limit` stays the bound here (#816) |
 | `supportsTransactions` | `false` — multi-document transactions need a client session this provider does not hold, so BEGIN/COMMIT/ROLLBACK and SANDBOX are not offered; they used to be, and answered HTTP 400 (#464) |
 | `declaresForeignKeys` | `false` — MongoDB has no foreign key constraint at all, so an empty `foreignKeys` list here is the engine's model and not this database's shape |

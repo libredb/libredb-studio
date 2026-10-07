@@ -1,14 +1,14 @@
 name: CapRover Catalog Fork
 
-# Stages a release's CapRover one-click templates on libredb/one-click-apps, the
-# libredb fork of the official catalog (caprover/one-click-apps), as branch
-# libredb-studio-<version>, and stops there. It never opens the pull request:
-# the catalog's maintainer keeps version bumps manual ("When someone sends a PR
-# we know that version works", caprover/one-click-apps#1334), and the catalog's
-# pull request template asks for a test on a CapRover dashboard. A member
-# installs the staged templates, then opens the pull request from the link in
-# this run's summary (deploy/caprover/README.md, "Releasing to the official
-# catalog").
+# Stages a release's CapRover one-click templates on
+# libredb/caprover-one-click-apps, the libredb fork of the official catalog
+# (caprover/one-click-apps), as branch libredb-studio-<version>, and stops
+# there. It never opens the pull request: the catalog's maintainer keeps
+# version bumps manual ("When someone sends a PR we know that version works",
+# caprover/one-click-apps#1334), and the catalog's pull request template asks
+# for a test on a CapRover dashboard. A member installs the staged templates,
+# then opens the pull request from the link in this run's summary
+# (deploy/caprover/README.md, "Releasing to the official catalog").
 #
 # docker-build-push.yml dispatches it on the release tag with trigger=release,
 # once the images are published and passed their channel E2E. A member runs it
@@ -31,12 +31,13 @@ name: CapRover Catalog Fork
 #
 # CAPROVER_CATALOG_TOKEN pushes to the fork; the workflow's GITHUB_TOKEN cannot
 # write to another repository. For mode update a fine-grained personal access
-# token is enough: resource owner libredb, access to libredb/one-click-apps
-# only, Contents read and write (GitHub lists merge-upstream under Contents
-# write, and every token reads public repositories). Mode create_or_update also
-# calls GitHub's fork endpoint, listed under Administration write and Contents
-# read, so its token needs the libredb org's repositories, not one fork. Without
-# the secret a run validates and pushes nothing.
+# token is enough: resource owner libredb, access to
+# libredb/caprover-one-click-apps only, Contents read and write (GitHub lists
+# merge-upstream under Contents write, and every token reads public
+# repositories). Mode create_or_update also calls GitHub's fork endpoint,
+# listed under Administration write and Contents read, so its token needs the
+# libredb org's repositories, not one fork. Without the secret a run validates
+# and pushes nothing.
 #
 # No third-party code runs here. The catalog's own npm checks would execute
 # another repository's scripts and dependencies on the release tag's ref, and
@@ -69,7 +70,7 @@ concurrency:
 
 env:
   UPSTREAM: caprover/one-click-apps
-  FORK: libredb/one-click-apps
+  FORK: libredb/caprover-one-click-apps
 
 jobs:
   validate:
@@ -196,7 +197,7 @@ jobs:
           fi
 
   push:
-    name: Push the branch to libredb/one-click-apps
+    name: Push the branch to libredb/caprover-one-click-apps
     needs: validate
     if: needs.validate.outputs.write == 'true' && needs.validate.outputs.changed == 'true'
     runs-on: ubuntu-latest
@@ -219,7 +220,9 @@ jobs:
               echo "::error::${FORK} does not exist and update.fork.mode is '${MODE}'. Create the fork, or set mode: create_or_update for caprover-official in distribution/channels.yaml."
               exit 1
             fi
-            gh api -X POST "repos/${UPSTREAM}/forks" -f organization="${FORK%%/*}" -F default_branch_only=true --jq .full_name
+            # GitHub names a new fork after its upstream unless told otherwise,
+            # and this fork's name is not the catalog's.
+            gh api -X POST "repos/${UPSTREAM}/forks" -f organization="${FORK%%/*}" -f name="${FORK##*/}" -F default_branch_only=true --jq .full_name
             # GitHub answers at once and copies the git data in the background,
             # so wait for the fork's default branch, not only the repository.
             READY=false

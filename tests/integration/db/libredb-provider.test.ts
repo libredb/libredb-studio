@@ -109,6 +109,54 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
     expect(provider.isConnected()).toBe(false);
   });
 
+  // #1450: `path.resolve(":memory:")` named a file `:memory:` in the server's working directory,
+  // and Test Connection answered "Connected successfully" for it.
+  test("refuses :memory: and leaves no file behind", async () => {
+    const stray = path.join(process.cwd(), ":memory:");
+    const existedBefore = fs.existsSync(stray);
+    const provider = new LibreDBProvider(makeConn(":memory:"));
+    expect(() => provider.validate()).toThrow(/no in-memory mode/);
+    await expect(provider.connect()).rejects.toThrow(/no in-memory mode/);
+    expect(provider.isConnected()).toBe(false);
+    expect(fs.existsSync(stray)).toBe(existedBefore);
+  });
+
+  // #1450: the kernel opens its `.lock` sidecar first, so a missing directory read as an ENOENT
+  // about a `.lock` file the user never named.
+  test("a path under a missing directory names the directory, not a .lock file", async () => {
+    const missingDir = path.join(os.tmpdir(), `libredb-missing-${Math.random().toString(36).slice(2)}`, "sub");
+    const provider = new LibreDBProvider(makeConn(path.join(missingDir, "missing.libredb")));
+    const error = await provider.connect().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(
+      `The directory ${missingDir} does not exist. Create it, or choose a file in an existing directory.`,
+    );
+    expect((error as Error).message).not.toContain(".lock");
+    expect(provider.isConnected()).toBe(false);
+    expect(fs.existsSync(missingDir)).toBe(false);
+  });
+
+  // The built-in sample connection lives under the default `./data`, so a relative path must
+  // keep opening, resolved against the server's working directory.
+  test("a relative path in an existing directory still opens", async () => {
+    const cwd = process.cwd();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "libredb-rel-"));
+    try {
+      process.chdir(dir);
+      const provider = new LibreDBProvider(makeConn("relative.libredb"));
+      await provider.connect();
+      expect(provider.isConnected()).toBe(true);
+      await provider.disconnect();
+      expect(fs.existsSync(path.join(dir, "relative.libredb"))).toBe(true);
+    } finally {
+      process.chdir(cwd);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("connect() then disconnect() against a real file", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
@@ -127,6 +175,7 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
     // The query language is a small JSON command grammar, not SQL, so the inline
     // row editor's `UPDATE ... SET` cannot be expressed here (#269).
     expect(caps.supportsInlineRowEdit).toBe(false);
+    expect(caps.supportsTestDataGeneration).toBe(false);
     // No `prepareQuery` override here, so the base one echoes the requested offset back
     // while applying nothing - the silent page-one answer #816 exists to prevent.
     expect(caps.supportsResultPagination).toBe(false);

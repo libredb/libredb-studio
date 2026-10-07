@@ -558,8 +558,15 @@ interface Expected {
   readonly target?: string;
   readonly category?: EtcdErrorCategory;
   readonly tlsFailure?: EtcdTlsFailure;
-  /** The gRPC code the runtime gave, which the adapter's EtcdError keeps (spec E5). */
-  readonly grpcCode?: number;
+  /**
+   * The gRPC code the runtime gave, which the adapter's EtcdError keeps (spec E5).
+   *
+   * MORE THAN ONE where the code turns on something outside this repo (#1511): a name that
+   * does not resolve answers 14 where the resolver says so before grpc-js gives up, and 4
+   * where it does not. Listing both keeps the code constrained without pinning the test to
+   * one machine's DNS.
+   */
+  readonly grpcCode?: number | readonly number[];
   /** The runtime's or grpc-js's own text, as its channel rejected the call. */
   readonly text?: RegExp;
   /** The sentence of spec 5.6 that leads the message; the runtime's words follow it in parentheses. */
@@ -713,10 +720,17 @@ const CASES: readonly CaseDefinition[] = [
       }),
       expected: (ports) => () => ({
         outcome: "failed",
+        // What E1 is about, and the one thing here that is this repo's own: the adapter built a
+        // `dns:` target instead of handing `unix:` to grpc-js's Unix-socket resolver.
         target: `dns:${host}:${ports.unixName}`,
         category: "not-connected",
-        grpcCode: 14,
-        text: new RegExp(`^Name resolution failed for target dns:${host}:${ports.unixName}$`),
+        // 14 with its "Name resolution failed for target ..." where the resolver answers before
+        // grpc-js's deadline, 4 with "Deadline exceeded ... waiting for name resolution" where it
+        // does not. Which one arrives is the local resolver's, not ours (#1511): measured on
+        // Arch with systemd-resolved and a search domain, `getent hosts unix` took 8s, so NXDOMAIN
+        // landed long after the 3s deadline and every one of these four cases read 4.
+        grpcCode: [14, 4],
+        text: /name resolution/i,
         sentence: noPlaintextAnswer(`${host}:${ports.unixName}`),
       }),
     }),
@@ -884,8 +898,12 @@ const CASES: readonly CaseDefinition[] = [
         : {
             outcome: "failed",
             category: "not-connected",
-            grpcCode: 14,
-            text: /Last error: Failed to connect/,
+            // 14 with "Last error: Failed to connect" where Bun surfaces the TLS alert before the
+            // call's deadline, 4 with "Deadline exceeded ... Waiting for LB pick" where it does not.
+            // Which one arrives is Bun's, not ours (#1511 precedent): the loaded Windows CI runner
+            // reported 4 for both client-certificate refusals while the same file passed on macOS.
+            grpcCode: [14, 4],
+            text: /Last error: Failed to connect|Deadline exceeded/,
             sentence: noTlsAnswer("bun", `localhost:${ports.alerting}`, false),
           },
   ),
@@ -911,8 +929,10 @@ const CASES: readonly CaseDefinition[] = [
         : {
             outcome: "failed",
             category: "not-connected",
-            grpcCode: 14,
-            text: /Last error: Failed to connect/,
+            // Same as the no-client-certificate case above: 14 where Bun surfaces the alert in
+            // time, 4 where the call's deadline lands first on the loaded Windows runner.
+            grpcCode: [14, 4],
+            text: /Last error: Failed to connect|Deadline exceeded/,
             sentence: noTlsAnswer("bun", `localhost:${ports.alerting}`, true),
           },
   ),
@@ -1155,8 +1175,16 @@ function expectCase(run: Run | undefined, runtime: Runtime, name: string): void 
     return;
   }
   if (outcome.outcome !== "failed") return;
-  // Spec E5: the code the runtime gave, and its text.
-  expect({ shown, code: outcome.raw?.code }).toEqual({ shown, code: expected.grpcCode });
+  // Spec E5: the code the runtime gave, and its text. Guarded like `target` and `text` above,
+  // because `grpcCode` is declared optional and asserting an absent one as `undefined` would
+  // mean no case could ever leave it out. Where a case names several codes the received one is
+  // reported as the first of them once it is one of them, so a code outside the list still
+  // shows itself in the diff rather than passing as "one of".
+  if (expected.grpcCode !== undefined) {
+    const codes = typeof expected.grpcCode === "number" ? [expected.grpcCode] : expected.grpcCode;
+    const code = outcome.raw?.code;
+    expect({ shown, code: codes.includes(code as number) ? codes[0] : code }).toEqual({ shown, code: codes[0] });
+  }
   if (expected.text !== undefined) expect(outcome.raw?.details).toMatch(expected.text);
   if (made.via === "control") return;
   // The adapter's classification, which keeps the runtime's code.

@@ -16,7 +16,7 @@
  * left to keep. `StoredObject` below is the one shape that still has the absences, and it
  * is persisted data rather than a reading.
  */
-import { findKind, kindAcceptsRowWrites } from "@/lib/db/object-kinds";
+import { declaredKinds, findKind, kindAcceptsRowWrites } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
 import type { DatabaseObject, ObjectDetail, ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
@@ -88,15 +88,42 @@ export function relationObjects(
 }
 
 /**
+ * How many relations a header names, counted BY KIND in the provider's own words (#1466).
+ *
+ * A view, a materialized view and a collection share the `relation` role with a table, so a
+ * bare `N tables` called a view a table. Each declared kind is counted under its own `label` /
+ * `labelPlural`, in declaration order, so "4 tables, 1 view" needs no kind id here and a new
+ * engine's relation kinds are named without a change.
+ *
+ * Capabilities that have not loaded yet name no kind, and an empty list has nothing to group,
+ * so both keep the old wording rather than inventing a noun.
+ */
+export function relationCountLabel(
+  relations: readonly DetailedObject[],
+  capabilities: ProviderCapabilities | undefined,
+): string {
+  const parts =
+    capabilities === undefined
+      ? []
+      : declaredKinds(capabilities).flatMap((kind) => {
+          const count = relations.filter((object) => object.kind === kind.id).length;
+          if (count === 0) return [];
+          return [`${count} ${(count === 1 ? kind.label : kind.labelPlural).toLowerCase()}`];
+        });
+  return parts.length > 0 ? parts.join(", ") : `${relations.length} tables`;
+}
+
+/**
  * The objects an import or a row write may target.
  *
  * `kindAcceptsRowWrites` and nothing else, which standing ruling 4 is explicit about: the
  * engine-wide `supportsInlineRowEdit` is a SEPARATE fact about the results grid's inline
  * editor, and MongoDB, Couchbase and Cassandra declare it false while declaring a kind
  * that genuinely takes row writes. Conjoining the two here would refuse an import all
- * three engines support today. The conjunction belongs at the callers that need both
- * facts, the two row menus (`src/components/object-tree/row-actions.ts` and, since
- * #1085 (decision D-M), `src/components/schema-explorer/TableItem.tsx`), spelled out there.
+ * three engines support today. The two row menus ask a different conjunction for
+ * Generate Test Data, `offersTestDataGeneration` in `src/lib/db/object-kinds.ts`, which
+ * combines `acceptsRowWrites` with `supportsTestDataGeneration`, not with
+ * `supportsInlineRowEdit` (#1468).
  *
  * A view is the case this exists for: it has columns, it is a relation, and on most
  * engines an insert into it is meaningless, so only the provider's own

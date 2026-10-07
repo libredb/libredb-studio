@@ -881,6 +881,9 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // The query language is JSON commands, not SQL, so the inline row editor's
       // `UPDATE ... SET` has nothing here to run against (issue #269).
       supportsInlineRowEdit: false,
+      // A different question from the flag above: the Generate Test Data dialog writes one
+      // `insertMany` command, which a collection takes (#1468).
+      supportsTestDataGeneration: true,
       // `prepareQuery` pins `offset` to 0 and returns the command untouched, so page two
       // would be page one. The find document's own `limit` stays the bound here.
       supportsResultPagination: false,
@@ -1323,9 +1326,16 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
   private inferSchemaFromDocuments(docs: Document[]): ColumnSchema[] {
     const fieldTypes = new Map<string, Set<string>>();
+    // In how many sampled documents each path is present. MongoDB declares no
+    // nullability, so a field is empty in two ways: absent, or present as `null`.
+    // Counting only the second marked a field most documents lack as NOT NULL (#1456).
+    // `_id` follows the same rule: present and non-null in every document of an ordinary
+    // collection, so not nullable there, but a `{_id: null}` document or a `$group` view
+    // answers null, and a fixed "never nullable" would contradict the sample.
+    const fieldPresence = new Map<string, number>();
 
     for (const doc of docs) {
-      this.extractFieldTypes(doc, "", fieldTypes);
+      this.extractFieldTypes(doc, "", fieldTypes, fieldPresence);
     }
 
     const columns: ColumnSchema[] = [];
@@ -1337,7 +1347,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       columns.push({
         name: fieldName,
         type,
-        nullable: types.has("null") || types.has("undefined"),
+        nullable: (fieldPresence.get(fieldName) ?? 0) < docs.length || types.has("null") || types.has("undefined"),
         isPrimary: fieldName === "_id",
         defaultValue: undefined,
       });
@@ -1359,13 +1369,21 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     return columns.slice(0, MAX_INFERRED_FIELDS);
   }
 
-  private extractFieldTypes(doc: Document, prefix: string, fieldTypes: Map<string, Set<string>>, depth = 1): void {
+  private extractFieldTypes(
+    doc: Document,
+    prefix: string,
+    fieldTypes: Map<string, Set<string>>,
+    fieldPresence: Map<string, number>,
+    depth = 1,
+  ): void {
     for (const [key, value] of Object.entries(doc)) {
       const fieldName = prefix ? `${prefix}.${key}` : key;
 
       if (!fieldTypes.has(fieldName)) {
         fieldTypes.set(fieldName, new Set());
       }
+      // Once per document: keys are unique within a (sub)document and arrays are not descended.
+      fieldPresence.set(fieldName, (fieldPresence.get(fieldName) ?? 0) + 1);
 
       const type = this.getMongoType(value);
       fieldTypes.get(fieldName)!.add(type);
@@ -1384,7 +1402,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // on an array what the same syntax means on a subdocument, and listing it
       // beside the others would invite exactly that confusion.
       if (type === "object" && depth < MAX_NESTED_FIELD_DEPTH) {
-        this.extractFieldTypes(value as Document, fieldName, fieldTypes, depth + 1);
+        this.extractFieldTypes(value as Document, fieldName, fieldTypes, fieldPresence, depth + 1);
       }
     }
   }
@@ -1533,6 +1551,44 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     }
   }
 
+  /**
+   * Runs `validate` or `compact` on every entry `listCollections()` answers, for the
+   * whole-database actions that name no target (#1408).
+   *
+   * Views are skipped: the server refuses both commands on a view, and the first view
+   * used to abort the validate loop with a 500, so neither the collections before it
+   * nor the ones after it were reported. The test is view versus everything else, as in
+   * `mongoObjectKind`, so a time series collection is attempted rather than
+   * dropped. A refusal from any one collection is collected and named in the result
+   * instead of ending the run, and the compact loop no longer swallows it into a bare
+   * success.
+   */
+  private async maintainEachCollection(
+    command: "validate" | "compact",
+    verb: string,
+  ): Promise<Omit<MaintenanceResult, "executionTime">> {
+    const collections = await this.db!.listCollections().toArray();
+    let done = 0;
+    let views = 0;
+    const failed: string[] = [];
+    for (const coll of collections) {
+      if (readText(coll.type) === MONGODB_VIEW_TYPE) {
+        views++;
+        continue;
+      }
+      try {
+        await this.db!.command({ [command]: coll.name });
+        done++;
+      } catch (error) {
+        failed.push(`${coll.name} (${error instanceof Error ? error.message : String(error)})`);
+      }
+    }
+    const parts = [`${verb} ${done} ${done === 1 ? "collection" : "collections"}`];
+    if (views > 0) parts.push(`skipped ${views} ${views === 1 ? "view" : "views"}`);
+    if (failed.length > 0) parts.push(`failed on ${failed.length}: ${failed.join(", ")}`);
+    return { success: failed.length === 0, message: parts.join("; ") };
+  }
+
   public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.assertContainerIsBound(container);
     this.ensureConnected();
@@ -1551,11 +1607,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
               await this.db!.command({ validate: target });
               return { success: true, message: `Validated collection: ${target}` };
             } else {
-              const collections = await this.db!.listCollections().toArray();
-              for (const coll of collections) {
-                await this.db!.command({ validate: coll.name });
-              }
-              return { success: true, message: `Validated ${collections.length} collections` };
+              return await this.maintainEachCollection("validate", "Validated");
             }
 
           case "reindex":
@@ -1572,15 +1624,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
               await this.db!.command({ compact: target });
               return { success: true, message: `Compacted collection: ${target}` };
             } else {
-              const collections = await this.db!.listCollections().toArray();
-              for (const coll of collections) {
-                try {
-                  await this.db!.command({ compact: coll.name });
-                } catch {
-                  // Some collections might not be compactable
-                }
-              }
-              return { success: true, message: `Compacted collections` };
+              return await this.maintainEachCollection("compact", "Compacted");
             }
 
           case "check": {

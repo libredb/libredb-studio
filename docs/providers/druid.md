@@ -1601,6 +1601,7 @@ Both halves of that are real constraints, not scope cuts made lightly:
 | `supportsExternalQueryLimiting` | `true` | `LIMIT n` / `LIMIT n OFFSET m` are both correct Druid SQL |
 | `supportsCreateTable` | **`false`** | `CREATE` is not in the grammar; a datasource is created by ingestion ([§3.11](#311-the-three-false-capabilities-are-each-impossible-not-merely-unimplemented)) |
 | `supportsInlineRowEdit` | **`false`** | `UPDATE t SET ...` answers `Unsupported SQL statement [UPDATE]`; Druid SQL has no row-level DML ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)) |
+| `supportsTestDataGeneration` | **`false`** | Druid SQL has no `INSERT ... VALUES` for the Generate Test Data dialog to emit, and no kind here declares a row write |
 | `supportsResultPagination` | **`true`** | Druid SQL takes both clauses; the shared limiter emits `LIMIT n OFFSET m` (#816) |
 | `supportsTransactions` | **`false`** | Druid SQL has no DML at all, so there is nothing for a transaction to hold; the trio and SANDBOX are withheld instead of answering HTTP 400 (#464) |
 | `declaresForeignKeys` | **`false`** | Druid has no constraints — no primary key either — and a datasource cannot reference another, so an empty relations list is the engine and not the schema |

@@ -536,9 +536,13 @@ SELECT * FROM probe.orders WHERE amount > 5 LIMIT 3 ALLOW FILTERING   -> 3 rows
 SELECT * FROM probe.orders WHERE amount > 5 ALLOW FILTERING LIMIT 3   -> line 1:60 mismatched input 'LIMIT'
 ```
 
-The limiter appends, so the two clauses are **transposed** — with the writer's own spacing preserved.
-This is strictly better than declining to bound the statement, which is the shape a user writes
-precisely when a scan is about to happen.
+The clause is declared in the dialect grammar as one that must FOLLOW the row bound, so the shared
+limiter places the bound before it and re-attaches it with the writer's own spacing — and reads
+`… LIMIT 3 ALLOW FILTERING` as the existing bound it is, which the old after-the-fact transposition
+did not, emitting `LIMIT 3 LIMIT 500 ALLOW FILTERING` instead. ScyllaDB's `BYPASS CACHE` and
+`USING TIMEOUT 5s`, which share this type-id, come from the same declaration. This is strictly
+better than declining to bound the statement, which is the shape a user writes precisely when a
+scan is about to happen.
 
 **3. A line comment must be closed by a newline — and CQL has a third comment form.**
 
@@ -644,7 +648,7 @@ generators used to write here (#1410), and the provider now declares both away.
 `supportsConstantPredicate: false` makes **Generate Query** (on a table or a materialized view) write
 `SELECT <columns> FROM <keyspace>.<table> LIMIT 100;` with no `WHERE 1=1`, and
 `supportsMultiRowInsert: false` makes the **CSV/JSON import** into an existing table, and the
-**Test Data Generator**, write one `INSERT` per row, which the editor sends through `/api/db/multi-query` one statement at a time.
+**Test Data Generator** (not offered by the row menus, `supportsTestDataGeneration: false`, BACKLOG U93), write one `INSERT` per row, which the editor sends through `/api/db/multi-query` one statement at a time.
 Measured on 5.0.9 on 2026-10-04 through the provider and the multi-query splitter: the generated
 select on a table runs, and a two-row import inserts both rows. ScyllaDB shares the provider and
 the declaration, and was not re-measured. An import into a **new** table stays withheld by `supportsCreateTable: false`.
@@ -1196,6 +1200,7 @@ because there are no table statistics to list at all.)
   supportsExternalQueryLimiting: true,
   supportsCreateTable: false,        // the modal cannot emit valid CQL, and a diff cannot derive the partition key (§5.5)
   supportsInlineRowEdit: false,      // one guessed key column is not a CQL primary key (§5.5)
+  supportsTestDataGeneration: false, // the row menus never offered the generator here; not measured (#1468)
   supportsResultPagination: false,   // CQL has no OFFSET; prepareQuery throws rather than answer page two with page one (#816)
   supportsTransactions: false,       // CQL has no transaction; BATCH is not one (#464)
   declaresForeignKeys: false,        // the clause does not exist (§6.2)

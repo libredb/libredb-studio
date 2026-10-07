@@ -823,7 +823,7 @@ be given.
 
 - `Profile Table` and `Generate Test Data` profile an object and insert rows into it, and neither is offered on a `user:*` row rather than left to answer HTTP 400 (#427).
   Profile is hidden wherever `tablesAreDerivedGroupings` is true, and since #1085 by the language gate `offersColumnProfiling` as well, because the profile route refuses JSON in a dialect of its own.
-  Generate Test Data is withheld by the row-write rule, which the desktop tree has always asked and the mobile menu asks instead of the flag since #1085 (decision D-M), because `keyspace` declares no `acceptsRowWrites` and the engine declares `supportsInlineRowEdit: false`.
+  Generate Test Data is withheld by the row-write rule, which the desktop tree has always asked and the mobile menu asks instead of the flag since #1085 (decision D-M), because `keyspace` declares no `acceptsRowWrites` and the engine declares `supportsTestDataGeneration: false` (#1468).
 - `Generate Count Query` is withheld by `offersCountQuery`, which both row menus and the generator ask (#702).
   The command grammar has no count statement to write, the JSON carries a dialect of its own, and a derived grouping has nothing to count.
   The row's badge is absent as well, because the object surface reports no `rowCount` for a prefix.
@@ -1781,6 +1781,7 @@ no control offers it.
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — Redis commands are not SQL, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
+| `supportsTestDataGeneration` | `false` - no kind here declares a row write, and Redis commands have no multi-row insert for the Generate Test Data dialog to emit |
 | `supportsResultPagination` | `false` — `prepareQuery` pins both `limit` and `offset`: a Redis read is a command, not a statement whose bound this layer can advance (#816) |
 | `supportsTransactions` | `false` — `MULTI`/`EXEC` exists in Redis and is not exposed through this provider, so the transaction trio and SANDBOX are not offered (#464). A `MULTI` a script sends anyway is ended by `endOpenQueryTransaction()`, which BOTH query routes now call in a `finally`, `POST /api/db/multi-query` and `POST /api/db/query`, so an editor run ends its own too (D74, D87) ([§5.2a](#52a-a-multi-a-statement-left-open-d75)) |
 | `declaresForeignKeys` | `false` — Redis has no constraints at all, and the "tables" here are key prefixes this provider grouped rather than objects anyone declared |

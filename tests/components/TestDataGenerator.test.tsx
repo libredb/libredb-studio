@@ -3,7 +3,7 @@ import "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
 
 import React from "react";
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { TestDataGenerator } from "@/components/TestDataGenerator";
 import type { DetailedObject } from "@/lib/db/detailed-object";
@@ -379,6 +379,115 @@ describe("TestDataGenerator", () => {
     expect(text).toContain('"operation": "insertMany"');
     expect(text).toContain('"documents"');
     expect(text).not.toContain("INSERT INTO");
+  });
+
+  test("rebuilds MongoDB dotted columns as nested documents", () => {
+    const nestedSchema: DetailedObject = {
+      name: "customers",
+      kind: "table",
+      path: ["shop", "customers"],
+      indexes: [],
+      columns: [
+        { name: "_id", type: "OBJECTID", nullable: false, isPrimary: true },
+        { name: "name", type: "VARCHAR(100)", nullable: false, isPrimary: false },
+        { name: "address", type: "object", nullable: true, isPrimary: false },
+        { name: "address.city", type: "VARCHAR(100)", nullable: true, isPrimary: false },
+        { name: "address.geo", type: "object", nullable: true, isPrimary: false },
+        { name: "address.geo.lat", type: "DOUBLE", nullable: true, isPrimary: false },
+      ],
+    };
+    const onExecuteQuery = mock((q: string) => {
+      void q;
+    });
+
+    const { queryByText } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["shop", "customers"]}
+        tableSchema={nestedSchema}
+        capabilities={jsonCaps}
+        onExecuteQuery={onExecuteQuery}
+      />,
+    );
+
+    fireEvent.click(queryByText("Execute")!);
+    const raw = onExecuteQuery.mock.calls[0][0] as string;
+    const doc = (JSON.parse(raw) as { documents: Record<string, unknown>[] }).documents[0];
+    const address = doc.address as Record<string, unknown>;
+    const geo = address.geo as Record<string, unknown>;
+
+    expect(address.city).toBeDefined();
+    expect(geo.lat).toBeDefined();
+    expect(Object.keys(doc).some((key) => key.includes("."))).toBe(false);
+    expect(doc.address).not.toBe("value_0");
+  });
+
+  test("treats __proto__ as a normal MongoDB field", () => {
+    const nestedSchema: DetailedObject = {
+      name: "profiles",
+      kind: "table",
+      path: ["shop", "profiles"],
+      indexes: [],
+      columns: [
+        { name: "__proto__", type: "object", nullable: true, isPrimary: false },
+        { name: "__proto__.isAdmin", type: "BOOLEAN", nullable: true, isPrimary: false },
+      ],
+    };
+    const onExecuteQuery = mock((q: string) => {
+      void q;
+    });
+
+    expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
+
+    const { queryByText } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["shop", "profiles"]}
+        tableSchema={nestedSchema}
+        capabilities={jsonCaps}
+        onExecuteQuery={onExecuteQuery}
+      />,
+    );
+
+    fireEvent.click(queryByText("Execute")!);
+    const raw = onExecuteQuery.mock.calls[0][0] as string;
+    const doc = (JSON.parse(raw) as { documents: Record<string, unknown>[] }).documents[0];
+
+    expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
+    expect(doc).toHaveProperty("__proto__");
+    expect(doc["__proto__"]).toEqual({ isAdmin: expect.any(Boolean) });
+  });
+
+  test("generates an empty object for a standalone MongoDB object field", () => {
+    const nestedSchema: DetailedObject = {
+      name: "profiles",
+      kind: "table",
+      path: ["shop", "profiles"],
+      indexes: [],
+      columns: [{ name: "metadata", type: "object", nullable: true, isPrimary: false }],
+    };
+    const onExecuteQuery = mock((q: string) => {
+      void q;
+    });
+
+    const { queryByText } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["shop", "profiles"]}
+        tableSchema={nestedSchema}
+        capabilities={jsonCaps}
+        onExecuteQuery={onExecuteQuery}
+      />,
+    );
+
+    fireEvent.click(queryByText("Execute")!);
+    const raw = onExecuteQuery.mock.calls[0][0] as string;
+    const doc = (JSON.parse(raw) as { documents: Record<string, unknown>[] }).documents[0];
+
+    expect(doc.metadata).toEqual({});
   });
 
   // ── Copy button writes to clipboard ─────────────────────────────────────────
@@ -771,13 +880,18 @@ describe("TestDataGenerator", () => {
     );
     fireEvent.click(queryByText("Execute")!);
     const raw = onExecuteQuery.mock.calls[0][0] as string;
-    const doc = (JSON.parse(raw) as { documents: Record<string, string>[] }).documents[0];
+    const doc = (JSON.parse(raw) as { documents: Record<string, unknown>[] }).documents[0];
 
-    expect(doc.birth_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // A date and a UUID are written as the Extended JSON the provider reads into those BSON types (#1468).
+    expect(doc.birth_date).toEqual({ $date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) });
     expect(doc.updated_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
-    expect(doc.record_uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(doc.record_uuid).toEqual({
+      $uuid: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
+    });
     expect(doc.metadata).toBe("{}");
-    expect(["Sample text", "Test data", "Example value", "Test content", "Placeholder"]).toContain(doc.misc_value);
+    expect(["Sample text", "Test data", "Example value", "Test content", "Placeholder"]).toContain(
+      doc.misc_value as string,
+    );
   });
 
   // ── The address the statement names (#789, Task 35) ────────────────────────
@@ -862,3 +976,263 @@ describe("TestDataGenerator", () => {
     expect(text).not.toContain('"collection": "sample_shop');
   });
 });
+
+/**
+ * A deterministic `Math.random` and clock, so a generated statement can be compared byte for byte.
+ * A small linear congruential generator rather than a short cycle, so no two rows repeat.
+ */
+function withDeterministicRandom<T>(run: () => T): T {
+  let seed = 1468;
+  const random = spyOn(Math, "random").mockImplementation(() => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  });
+  const now = spyOn(Date, "now").mockReturnValue(Date.UTC(2026, 9, 6, 12, 0, 0));
+  try {
+    return run();
+  } finally {
+    random.mockRestore();
+    now.mockRestore();
+  }
+}
+
+/** Renders the dialog and returns the statement Execute hands over. */
+function executed(tableSchema: DetailedObject, capabilities: ProviderCapabilities | undefined): string {
+  const onExecuteQuery = mock((query: string) => {
+    void query;
+  });
+  const { queryByText } = render(
+    <TestDataGenerator
+      isOpen
+      onClose={mock(() => {})}
+      tablePath={tableSchema.path}
+      tableSchema={tableSchema}
+      databaseType={capabilities === jsonCaps ? "mongodb" : "postgres"}
+      capabilities={capabilities}
+      onExecuteQuery={onExecuteQuery}
+    />,
+  );
+  fireEvent.click(queryByText("Execute")!);
+  return onExecuteQuery.mock.calls[0][0] as string;
+}
+
+describe("TestDataGenerator value typing (#1468)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  /**
+   * Every SQL column the JSON arm's rules could have reached, dotted names included: in SQL a dot is
+   * part of a quoted column name and never a document path, so `address.zip` keeps the `address`
+   * generator it always had. The expected text was captured from the generator before #1468 changed
+   * the JSON arm, so any change to the SQL arm's output fails here.
+   */
+  const sqlEverything: DetailedObject = {
+    name: "everything",
+    kind: "table",
+    path: ["public", "everything"],
+    indexes: [],
+    columns: [
+      { name: "id", type: "SERIAL", nullable: false, isPrimary: true },
+      { name: "address.zip", type: "VARCHAR(20)", nullable: true, isPrimary: false },
+      { name: "geo.lat", type: "DOUBLE PRECISION", nullable: true, isPrimary: false },
+      { name: "email", type: "VARCHAR(255)", nullable: false, isPrimary: false },
+      { name: "city", type: "TEXT", nullable: true, isPrimary: false },
+      { name: "active", type: "BOOLEAN", nullable: true, isPrimary: false },
+      { name: "qty", type: "INTEGER", nullable: true, isPrimary: false },
+      { name: "price", type: "NUMERIC(10,2)", nullable: true, isPrimary: false },
+      { name: "born", type: "DATE", nullable: true, isPrimary: false },
+      { name: "created_at", type: "TIMESTAMP", nullable: true, isPrimary: false },
+      { name: "ref", type: "UUID", nullable: true, isPrimary: false },
+      { name: "tags", type: "TEXT[]", nullable: true, isPrimary: false },
+      { name: "meta", type: "JSONB", nullable: true, isPrimary: false },
+    ],
+  };
+
+  test("the SQL arm's statement is byte for byte what it was before the JSON arm was typed", () => {
+    const statement = withDeterministicRandom(() => executed(sqlEverything, postgresCaps));
+    expect(statement).toBe(SQL_EVERYTHING_BEFORE_1468);
+  });
+
+  test("a dotted SQL column keeps the generator its whole name picks", () => {
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={sqlEverything.path}
+        tableSchema={sqlEverything}
+        capabilities={postgresCaps}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    expect(container.textContent).toContain("address.zip: address");
+  });
+
+  /** A collection as `inferSchemaFromDocuments` reports it, with its own type spellings. */
+  const customers: DetailedObject = {
+    name: "customers",
+    kind: "collection",
+    path: ["shop", "customers"],
+    indexes: [],
+    columns: [
+      { name: "_id", type: "objectId", nullable: false, isPrimary: true },
+      { name: "address", type: "object", nullable: true, isPrimary: false },
+      { name: "address.city", type: "string", nullable: true, isPrimary: false },
+      { name: "address.zip", type: "string", nullable: true, isPrimary: false },
+      { name: "address.street", type: "string", nullable: true, isPrimary: false },
+      { name: "address.geo", type: "object", nullable: true, isPrimary: false },
+      { name: "address.geo.lat", type: "number", nullable: true, isPrimary: false },
+      { name: "email", type: "string", nullable: true, isPrimary: false },
+    ],
+  };
+
+  test("a dotted MongoDB path picks its generator by its leaf, not by an ancestor's name", () => {
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={customers.path}
+        tableSchema={customers}
+        capabilities={jsonCaps}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    const text = container.textContent || "";
+    // Before #1468 every one of these matched the `address` name rule and got a street address.
+    expect(text).toContain("address.city: city");
+    expect(text).toContain("address.zip: zipCode");
+    expect(text).toContain("address.street: address");
+    expect(text).toContain("address.geo.lat: integer");
+    expect(text).toContain("email: email");
+  });
+
+  test("a dotted MongoDB path is generated from its leaf's generator", () => {
+    const doc = (
+      JSON.parse(withDeterministicRandom(() => executed(customers, jsonCaps))) as {
+        documents: Record<string, Record<string, unknown>>[];
+      }
+    ).documents[0];
+    const address = doc.address;
+    expect(address.street).toMatch(/^\d+ \w+ St$/);
+    expect(address.city).not.toMatch(/ St$/);
+    expect(address.zip).toMatch(/^\d{5}$/);
+    expect(typeof (address.geo as Record<string, unknown>).lat).toBe("number");
+    // `_id` is left to the server, as the SQL arm leaves a serial column to the engine.
+    expect(doc).not.toHaveProperty("_id");
+  });
+
+  /** One field per type spelling `getMongoType` answers that the dialog writes a typed value for. */
+  const typed: DetailedObject = {
+    name: "typed",
+    kind: "collection",
+    path: ["shop", "typed"],
+    indexes: [],
+    columns: [
+      { name: "qty", type: "number", nullable: true, isPrimary: false },
+      { name: "price", type: "number", nullable: true, isPrimary: false },
+      { name: "phone", type: "number", nullable: true, isPrimary: false },
+      { name: "count", type: "int", nullable: true, isPrimary: false },
+      { name: "ratio", type: "double", nullable: true, isPrimary: false },
+      { name: "views", type: "long", nullable: true, isPrimary: false },
+      { name: "balance", type: "decimal", nullable: true, isPrimary: false },
+      { name: "active", type: "boolean", nullable: true, isPrimary: false },
+      { name: "tags", type: "array", nullable: true, isPrimary: false },
+      { name: "createdAt", type: "date", nullable: true, isPrimary: false },
+      { name: "owner", type: "objectId", nullable: true, isPrimary: false },
+      { name: "ref", type: "uuid", nullable: true, isPrimary: false },
+      { name: "gone", type: "null", nullable: true, isPrimary: false },
+      { name: "note", type: "mixed(null|string)", nullable: true, isPrimary: false },
+      { name: "score", type: "mixed(undefined|number|string)", nullable: true, isPrimary: false },
+      { name: "nothing", type: "mixed(null|undefined)", nullable: true, isPrimary: false },
+      { name: "pattern", type: "regex", nullable: true, isPrimary: false },
+    ],
+  };
+
+  test("MongoDB values are written in the JSON type their inferred field type names", () => {
+    const docs = (JSON.parse(executed(typed, jsonCaps)) as { documents: Record<string, unknown>[] }).documents;
+    expect(docs).toHaveLength(10);
+    for (const doc of docs) {
+      expect(typeof doc.qty).toBe("number");
+      expect(Number.isInteger(doc.qty)).toBe(true);
+      expect(typeof doc.price).toBe("number");
+      // A name generator whose text is not a number gives way to the field's own type.
+      expect(typeof doc.phone).toBe("number");
+      expect(Number.isInteger(doc.count)).toBe(true);
+      expect(typeof doc.ratio).toBe("number");
+      expect(doc.views).toEqual({ $numberLong: expect.stringMatching(/^\d+$/) });
+      expect(doc.balance).toEqual({ $numberDecimal: expect.stringMatching(/^\d+\.\d{2}$/) });
+      expect(typeof doc.active).toBe("boolean");
+      expect(doc.tags).toEqual([]);
+      const createdAt = doc.createdAt as { $date: string };
+      expect(Object.keys(createdAt)).toEqual(["$date"]);
+      expect(Number.isNaN(Date.parse(createdAt.$date))).toBe(false);
+      expect(createdAt.$date).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(doc.owner).toEqual({ $oid: expect.stringMatching(/^[0-9a-f]{24}$/) });
+      expect(doc.ref).toEqual({
+        $uuid: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+      });
+      expect(doc.gone).toBeNull();
+      expect(typeof doc.note).toBe("string");
+      expect(typeof doc.score).toBe("number");
+      expect(doc.nothing).toBeNull();
+      // A type with no typed spelling here keeps the text value it always had.
+      expect(typeof doc.pattern).toBe("string");
+    }
+  });
+
+  test("MongoDB ObjectId and UUID values come from crypto.getRandomValues, not Math.random", () => {
+    const original = Math.random;
+    Math.random = () => 0;
+    try {
+      const docs = (JSON.parse(executed(typed, jsonCaps)) as { documents: Record<string, unknown>[] }).documents;
+      const oids = new Set(docs.map((doc) => (doc.owner as { $oid: string }).$oid));
+      const uuids = new Set(docs.map((doc) => (doc.ref as { $uuid: string }).$uuid));
+      expect(oids.size).toBe(docs.length);
+      expect(uuids.size).toBe(docs.length);
+      for (const uuid of uuids) {
+        expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      }
+    } finally {
+      Math.random = original;
+    }
+  });
+
+  test("the column chips name the generator each MongoDB value is written with", () => {
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={typed.path}
+        tableSchema={typed}
+        capabilities={jsonCaps}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    const text = container.textContent || "";
+    expect(text).toContain("qty: integer");
+    expect(text).toContain("price: price");
+    expect(text).toContain("phone: integer");
+    expect(text).toContain("ratio: decimal");
+    expect(text).toContain("active: boolean");
+    expect(text).toContain("tags: array");
+    expect(text).toContain("createdAt: datetime");
+    expect(text).toContain("owner: objectId");
+    expect(text).toContain("ref: uuid");
+    expect(text).toContain("gone: null");
+  });
+});
+
+const SQL_EVERYTHING_BEFORE_1468 = [
+  'INSERT INTO public.everything ("address.zip", "geo.lat", email, city, active, qty, price, born, created_at, ref, tags, meta)',
+  "VALUES",
+  "  ('100 Oak St', 877.24, 'user1@example.com', 'London', true, 7897, 271.39, '2026-04-18', '2025-12-17 16:51:09', 'c8f14acf-8414-4c79-a317-7c5479e9d9f7', 'Sample text', '{}'),",
+  "  ('200 Maple St', 186.30, 'user2@example.com', 'Chicago', true, 9269, 968.47, '2025-11-11', '2026-08-25 04:26:46', '6a56b0f2-84dc-4c73-806d-1ff3ffa79cd1', 'Test data', '{}'),",
+  "  ('300 Elm St', 815.66, 'user3@example.com', 'Tokyo', false, 2207, 166.56, '2026-07-14', '2026-05-12 08:35:11', '4c20d6f5-0601-4aab-9eae-8117f063d979', 'Sample text', '{}'),",
+  "  ('400 Oak St', 112.23, 'user4@example.com', 'London', true, 4658, 944.72, '2026-05-29', '2026-03-22 06:19:26', '110a9192-4f10-4ebd-a7e2-e55f0514120a', 'Test data', '{}'),",
+  "  ('500 Maple St', 385.34, 'user5@example.com', 'Los Angeles', false, 7661, 62.15, '2026-04-21', '2026-04-13 00:05:38', 'b63dd27d-a3ef-4143-a4ae-53a97afc5b80', 'Example value', '{}'),",
+  "  ('600 Main St', 317.50, 'user6@example.com', 'London', true, 6378, 431.86, '2026-06-30', '2026-07-22 04:39:24', '7ec9df1a-3f31-4376-9359-32493e9e15d4', 'Example value', '{}'),",
+  "  ('700 Oak St', 315.43, 'user7@example.com', 'Sydney', true, 3984, 206.11, '2026-01-27', '2026-03-26 10:55:41', '2122e045-40c7-4d68-8b64-8485ab416e45', 'Sample text', '{}'),",
+  "  ('800 Elm St', 604.01, 'user8@example.com', 'London', false, 2995, 621.84, '2026-04-01', '2026-03-26 10:05:48', '5435446f-5577-4f4c-8b2a-09e2aeb103ce', 'Test data', '{}'),",
+  "  ('900 Pine St', 670.53, 'user9@example.com', 'Sydney', true, 293, 387.18, '2026-02-15', '2026-06-05 07:36:01', '2f0f31ca-24f8-467d-86b4-7bb10a7b6274', 'Test data', '{}'),",
+  "  ('1000 Elm St', 800.76, 'user10@example.com', 'Berlin', false, 9696, 390.98, '2026-07-05', '2026-08-14 05:52:04', 'be2fe558-2ff0-4123-9174-763827c9f36e', 'Test data', '{}');",
+].join("\n");

@@ -578,7 +578,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     probedVersion: "Percona Server for MySQL 8.4.11-11 (version() reports 8.4.11-11)",
     caveats: [
       "Behaves as MySQL throughout: all fifteen surfaces answer, row counts and sizes are correct (2000 rows read as 2000, 114688 bytes as 114688), indexes and a foreign key are read back, and Analyze, Optimize and Check all succeed.",
-      "Nothing on screen says Percona: version() answers a bare 8.4.11-11 and the product name lives in @@version_comment (Percona Server (GPL), Release 11), which the provider does not read - so the overview is indistinguishable from a stock MySQL 8.4.",
+      "version() answers a bare 8.4.11-11 and the product name lives only in @@version_comment (Percona Server (GPL), Release 11), so the overview reads that comment and names the server Percona Server 8.4.11-11 (#1444); before that it was indistinguishable from a stock MySQL 8.4.",
     ],
   },
   {

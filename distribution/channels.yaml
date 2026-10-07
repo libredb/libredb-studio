@@ -466,7 +466,7 @@ channels:
       method: upstream_pr
       sla: on_demand
       # .github/workflows/caprover-fork.yml stages both CapRover templates on
-      # libredb/one-click-apps for each release; a member opens the PR.
+      # libredb/caprover-one-click-apps for each release; a member opens the PR.
       fork:
         mode: update
         push: auto
@@ -480,13 +480,13 @@ channels:
       strategy: remote_file
       url: https://raw.githubusercontent.com/caprover/one-click-apps/master/public/v4/apps/libredb-studio.yml
       extract: "defaultValue:\\s*[\"']?(\\d+\\.\\d+\\.\\d+)"
-      note: The single CapRover row. A LibreDB-owned 3rd-party repo
-        (libredb/caprover-one-click-apps) served the app while this submission was in review and was
-        retired once it merged; it had its own inventory entry until that duplicated CapRover in the
-        coverage matrix as one live and one dead route to the same platform, with the dead one's URL
-        no longer published. Its record lives in deploy/caprover/README.md, which is where a
-        maintainer bumping the template already looks. Users install from the official catalog only -
-        no third-party repo to add.
+      note: The plain CapRover entry; caprover-autoconnect below is the second. A LibreDB-owned
+        3rd-party repo served the app while this submission was in review and was retired once it
+        merged; it had its own inventory entry until that duplicated CapRover in the coverage matrix
+        as one live and one dead route to the same platform. Its address no longer serves a list,
+        and the repo is archived as libredb/caprover-one-click-apps-legacy. Its record lives in
+        deploy/caprover/README.md, which is where a maintainer bumping the template already looks.
+        Users install from the official catalog only - no third-party repo to add.
 
   - id: caprover-autoconnect
     name: CapRover official one-click apps (auto-connect)
@@ -824,7 +824,7 @@ channels:
   - id: zopdev-helm-charts
     name: ZopDev Helm Charts (helm.zop.dev, ZopDay)
     short_name: ZopDev Helm Charts
-    status: pending
+    status: live
     category: kubernetes-operators
     platforms: [kubernetes]
     runtime: channel_supplied
@@ -835,15 +835,18 @@ channels:
       sla: on_demand
     links:
       first_pr: https://github.com/zopdev/helm-charts/pull/322
+      catalog: https://helm.zop.dev
       upstream_repo: https://github.com/zopdev/helm-charts
     pin:
-      strategy: none
-      note: PR zopdev/helm-charts#322 is open, so nothing is listed yet. It is a chart of its own in their
-        repo, not a copy of ours, suggested by the ZopDay team (#1183). On merge, flip to live, add catalog
-        https://helm.zop.dev, and add a remote_file pin on
-        https://raw.githubusercontent.com/zopdev/helm-charts/main/charts/libredb-studio/Chart.yaml with
-        extract 'appVersion:\s*"(\d+\.\d+\.\d+)"'. A bump there is appVersion plus version, a Helm 3
-        package into docs/ and a regenerated docs/index.yaml.
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/zopdev/helm-charts/main/charts/libredb-studio/Chart.yaml
+      extract: 'appVersion:\s*"(\d+\.\d+\.\d+)"'
+      note: Merged in zopdev/helm-charts#322 (6 Oct 2026); chart v0.0.1 is served from
+        https://helm.zop.dev. It is a chart of its own in their repo, not a copy of ours, suggested by the
+        ZopDay team (#1183). The image tag comes from the top-level `version` value, which falls back to
+        appVersion, so a bump PR changes appVersion, `version` in values.yaml, values.schema.json and the
+        chart README, plus the chart version, then a Helm 3 package into docs/ and a regenerated
+        docs/index.yaml.
 
   - id: yunohost
     name: YunoHost app catalog
@@ -923,6 +926,33 @@ channels:
       docs: deploy/koyeb/CATALOG_SUBMISSION.md
     pin:
       strategy: none
+
+  - id: railyard
+    name: Railyard template catalog
+    status: live
+    category: paas-catalogs
+    platforms: [cloud]
+    runtime: channel_supplied
+    tier: 4
+    kind: paas-template
+    update:
+      method: manual_ui
+      sla: on_demand
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/pull/1546
+      catalog: https://railyard.run/templates/libredb-studio
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: none
+      note: Listed on 2026-10-06 by Railyard, which added the template at the maintainer's request (#1546)
+        and keeps it on its own side. There is no upstream repository or pull request, and the template's
+        settings are not public, so they can only be checked on a deploy. Railyard says it builds this
+        repo's Dockerfile from main at deploy time, so there is no image tag or template version to pin,
+        and a deploy can carry commits no release has shipped yet, the same as the Render Blueprint.
+        Railyard offered to pin it to release tags instead; that change is theirs to make, not ours. On
+        2026-10-06 the reference deploy at libredb-studio.apps.railyard.run answered /api/storage/config
+        with provider local, so it did not use the Postgres the template provisions; check storage on a
+        fresh deploy.
 
   - id: digitalocean
     name: DigitalOcean Marketplace

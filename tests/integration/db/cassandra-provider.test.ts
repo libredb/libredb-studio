@@ -473,6 +473,7 @@ describe("capabilities", () => {
     // amount = 1 WHERE customer_id = 3` - a plausible guess on a real table - is
     // "Some partition key parts are missing: id".
     expect(capabilities.supportsInlineRowEdit).toBe(false);
+    expect(capabilities.supportsTestDataGeneration).toBe(false);
     // CQL has no OFFSET clause and `prepareQuery` throws on a positive offset, so the
     // control that would provoke that refusal is never rendered (#816).
     expect(capabilities.supportsResultPagination).toBe(false);
@@ -899,7 +900,8 @@ describe("prepareQuery", () => {
   test("the bound goes BEFORE a trailing ALLOW FILTERING, where CQL accepts it", () => {
     // Measured both ways: `… LIMIT 3 ALLOW FILTERING` returns rows, while
     // `… ALLOW FILTERING LIMIT 3` is "line 1:60 mismatched input 'LIMIT' expecting
-    // EOF". The shared limiter appends, so the two clauses are transposed.
+    // EOF". The clause is declared in the grammar as one that must follow the row
+    // bound, so the shared limiter places the bound before it (#1398).
     const prepared = provider.prepareQuery("SELECT * FROM probe.orders WHERE amount > 5 ALLOW FILTERING", {
       limit: 500,
     });
@@ -914,6 +916,34 @@ describe("prepareQuery", () => {
     });
 
     expect(prepared.query).toBe("SELECT * FROM probe.orders WHERE amount > 5 LIMIT 10 ALLOW  FILTERING");
+  });
+
+  // ScyllaDB, which shares this type-id, has two more clauses that must follow the
+  // row bound (measured 2026-10-03/04 on 2026.3.2, #1398): with the bound appended
+  // after `BYPASS CACHE` the statement is "line 1:38 : Syntax error", and after
+  // `USING TIMEOUT 5s` it is "line 1:42". Both come from the same grammar
+  // declaration as `ALLOW FILTERING` above, not from any branch in this provider.
+  test("the bound goes BEFORE a trailing BYPASS CACHE", () => {
+    const prepared = provider.prepareQuery("SELECT * FROM shop.e2e_t BYPASS CACHE", { limit: 500 });
+
+    expect(prepared.query).toBe("SELECT * FROM shop.e2e_t LIMIT 500 BYPASS CACHE");
+    expect(prepared.wasLimited).toBe(true);
+  });
+
+  test("the bound goes BEFORE a trailing USING TIMEOUT", () => {
+    const prepared = provider.prepareQuery("SELECT * FROM shop.e2e_t USING TIMEOUT 5s", { limit: 500 });
+
+    expect(prepared.query).toBe("SELECT * FROM shop.e2e_t LIMIT 500 USING TIMEOUT 5s");
+    expect(prepared.wasLimited).toBe(true);
+  });
+
+  test("an existing bound followed by a ScyllaDB clause is recognised, not doubled", () => {
+    // On the old path this was read as unbounded, so a second bound was appended
+    // and the engine refused the pair.
+    const prepared = provider.prepareQuery("SELECT * FROM shop.e2e_t LIMIT 10 BYPASS CACHE", { limit: 500 });
+
+    expect(prepared.query).toBe("SELECT * FROM shop.e2e_t LIMIT 10 BYPASS CACHE");
+    expect(prepared.wasLimited).toBe(false);
   });
 
   test("a statement ending in a `--` comment is not rewritten", () => {

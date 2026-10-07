@@ -1433,3 +1433,184 @@ describe("analyzeQuery: a mention in a comment or a literal is not the statement
     expect(analyzeQuery(commented, "postgres").hasLimit).toBe(true);
   });
 });
+
+// ─── clauses that must follow the bound (#1398) ─────────────────────────────
+
+/*
+  Materialize's `AS OF` and ScyllaDB's `BYPASS CACHE` / `USING TIMEOUT` are written
+  AFTER the row bound, so the dialect grammar declares them as trailing clauses and
+  the limiter places the bound BEFORE the run and recognises an existing bound
+  followed by one. `ALLOW FILTERING` was transposed after the fact by the Cassandra
+  provider's own regex, and `LIMIT 3 ALLOW FILTERING` - an existing bound followed
+  by a trailing clause - was not read as bounded at all, so the old path emitted
+  `LIMIT 3 LIMIT 500 ALLOW FILTERING`. All four now come from the one declaration.
+*/
+describe("a declared trailing clause keeps its place after the bound (#1398)", () => {
+  test("Materialize AS OF AT LEAST: the bound goes before it", () => {
+    const result = applyQueryLimit("SELECT * FROM ui_mv AS OF AT LEAST 0", 500, 0, {}, "postgres");
+    expect(result.sql).toBe("SELECT * FROM ui_mv LIMIT 500 AS OF AT LEAST 0");
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("Materialize AS OF a literal: the bound goes before it", () => {
+    const result = applyQueryLimit("SELECT * FROM ui_mv AS OF '2026-01-01 00:00:00'", 500, 0, {}, "postgres");
+    expect(result.sql).toBe("SELECT * FROM ui_mv LIMIT 500 AS OF '2026-01-01 00:00:00'");
+  });
+
+  test("ScyllaDB BYPASS CACHE: the bound goes before it", () => {
+    const result = applyQueryLimit("SELECT * FROM shop.e2e_t BYPASS CACHE", 500, 0, {}, "cassandra");
+    expect(result.sql).toBe("SELECT * FROM shop.e2e_t LIMIT 500 BYPASS CACHE");
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("ScyllaDB USING TIMEOUT: the bound goes before it", () => {
+    const result = applyQueryLimit("SELECT * FROM shop.e2e_t USING TIMEOUT 5s", 500, 0, {}, "cassandra");
+    expect(result.sql).toBe("SELECT * FROM shop.e2e_t LIMIT 500 USING TIMEOUT 5s");
+  });
+
+  test("both ScyllaDB clauses in one statement: the bound goes before the run", () => {
+    const result = applyQueryLimit("SELECT * FROM shop.e2e_t USING TIMEOUT 5s BYPASS CACHE", 500, 0, {}, "cassandra");
+    expect(result.sql).toBe("SELECT * FROM shop.e2e_t LIMIT 500 USING TIMEOUT 5s BYPASS CACHE");
+  });
+
+  test("ALLOW FILTERING: the bound goes before it, the writer's spacing preserved", () => {
+    const result = applyQueryLimit(
+      "SELECT * FROM probe.orders WHERE amount > 5 ALLOW FILTERING",
+      500,
+      0,
+      {},
+      "cassandra",
+    );
+    expect(result.sql).toBe("SELECT * FROM probe.orders WHERE amount > 5 LIMIT 500 ALLOW FILTERING");
+  });
+
+  test("an existing bound followed by a trailing clause is recognised and left alone", () => {
+    for (const [sql, type] of [
+      ["SELECT * FROM shop.e2e_t LIMIT 10 BYPASS CACHE", "cassandra"],
+      ["SELECT * FROM probe.orders WHERE amount > 5 LIMIT 3 ALLOW FILTERING", "cassandra"],
+      ["SELECT * FROM ui_mv LIMIT 10 AS OF AT LEAST 0", "postgres"],
+    ] as const) {
+      const result = applyQueryLimit(sql, 500, 0, {}, type);
+      expect(result.wasLimited).toBe(false);
+      expect(result.sql).toBe(sql);
+      expect(analyzeQuery(sql, type).hasLimit).toBe(true);
+    }
+  });
+
+  test("forceLimit replaces the bound once, keeping the clause after it", () => {
+    const result = applyQueryLimit(
+      "SELECT * FROM shop.e2e_t LIMIT 10 BYPASS CACHE",
+      20,
+      0,
+      { forceLimit: true },
+      "cassandra",
+    );
+    expect(result.sql).toBe("SELECT * FROM shop.e2e_t LIMIT 20 BYPASS CACHE");
+  });
+
+  test("forceLimit strips an OFFSET bound before the clause too", () => {
+    const result = applyQueryLimit(
+      "SELECT * FROM shop.e2e_t LIMIT 10 OFFSET 5 BYPASS CACHE",
+      20,
+      0,
+      { forceLimit: true },
+      "cassandra",
+    );
+    expect(result.sql).toBe("SELECT * FROM shop.e2e_t LIMIT 20 BYPASS CACHE");
+  });
+
+  test("trailing trivia is still re-attached after the clause", () => {
+    const result = applyQueryLimit("SELECT * FROM shop.e2e_t BYPASS CACHE; -- note", 500, 0, {}, "cassandra");
+    expect(result.sql).toBe("SELECT * FROM shop.e2e_t LIMIT 500 BYPASS CACHE; -- note");
+  });
+
+  test("the clause words inside a literal are not a clause", () => {
+    const result = applyQueryLimit("SELECT * FROM t WHERE note = 'BYPASS CACHE'", 500, 0, {}, "cassandra");
+    expect(result.sql).toBe("SELECT * FROM t WHERE note = 'BYPASS CACHE' LIMIT 500");
+  });
+
+  test("an alias spelled OF is not a trailing clause", () => {
+    // `SELECT a AS of FROM t` carries the words `AS OF` and then more statement:
+    // the trailing-clause reading must not eat the FROM.
+    const result = applyQueryLimit("SELECT a AS of FROM t", 500, 0, {}, "postgres");
+    expect(result.sql).toBe("SELECT a AS of FROM t LIMIT 500");
+  });
+
+  test("a dialect without the clause is untouched by its words", () => {
+    // The same BYPASS CACHE words under MySQL's grammar: no trailing clause is
+    // declared there, so the statement is treated as ending with a column named
+    // CACHE and the bound is appended, which the engine refuses either way.
+    const result = applyQueryLimit("SELECT * FROM shop.e2e_t BYPASS CACHE", 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT * FROM shop.e2e_t BYPASS CACHE LIMIT 500");
+  });
+});
+
+describe("the clause patterns keep their guards (#1398)", () => {
+  // The argument is restricted to a number, a single-quoted literal or one bare
+  // token, and the pattern must reach `\s*` to the end, so a `)` after the
+  // argument ends the match: an `AS OF` written inside a subquery is not the
+  // statement's trailing clause, and the bound keeps its place at the end.
+  test("an AS OF inside a subquery is not the statement's trailing clause", () => {
+    const result = applyQueryLimit("SELECT * FROM (SELECT * FROM s AS OF 123) t", 500, 0, {}, "postgres");
+    expect(result.sql).toBe("SELECT * FROM (SELECT * FROM s AS OF 123) t LIMIT 500");
+  });
+
+  test("an AS OF inside a subquery that ends the statement is not either", () => {
+    const result = applyQueryLimit("SELECT * FROM (SELECT * FROM s AS OF '2026-01-01')", 500, 0, {}, "postgres");
+    expect(result.sql).toBe("SELECT * FROM (SELECT * FROM s AS OF '2026-01-01') LIMIT 500");
+  });
+
+  test("a USING TIMEOUT followed by a parenthesis is not the clause", () => {
+    const result = applyQueryLimit(
+      "SELECT * FROM t WHERE id IN (SELECT id FROM u USING TIMEOUT 5s)",
+      500,
+      0,
+      {},
+      "cassandra",
+    );
+    expect(result.sql).toBe("SELECT * FROM t WHERE id IN (SELECT id FROM u USING TIMEOUT 5s) LIMIT 500");
+  });
+});
+
+// ─── a comment before a trailing clause keeps the bound in code (#1398 review) ─
+//
+// The clause patterns match from `\s+`, which also takes the newline that CLOSES a
+// line comment, so the clause run once started at that newline and the stripped
+// body ended inside the comment: the bound was written INTO the comment while
+// `wasLimited: true` was reported, and a commented-out bound read as real. The
+// stripped body is now cut at its code end, so the comment sits BETWEEN the bound
+// and the clause and the probes read code only.
+describe("a comment before a trailing clause keeps the bound in code (#1398 review)", () => {
+  test("-- note before ALLOW FILTERING: the bound is written before the comment", () => {
+    const result = applyQueryLimit("SELECT * FROM big -- note\nALLOW FILTERING", 500, 0, {}, "cassandra");
+    expect(result.sql).toBe("SELECT * FROM big LIMIT 500 -- note\nALLOW FILTERING");
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("// note before BYPASS CACHE: the bound is written before the comment", () => {
+    const result = applyQueryLimit("SELECT * FROM shop.e2e_t // note\nBYPASS CACHE", 500, 0, {}, "cassandra");
+    expect(result.sql).toBe("SELECT * FROM shop.e2e_t LIMIT 500 // note\nBYPASS CACHE");
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("-- note before AS OF: the bound is written before the comment", () => {
+    const result = applyQueryLimit("SELECT * FROM ui_mv -- note\nAS OF AT LEAST 0", 500, 0, {}, "postgres");
+    expect(result.sql).toBe("SELECT * FROM ui_mv LIMIT 500 -- note\nAS OF AT LEAST 0");
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("a commented-out bound before the clause is not read as real", () => {
+    const info = analyzeQuery("SELECT * FROM big -- LIMIT 5\nALLOW FILTERING", "cassandra");
+    expect(info.hasLimit).toBe(false);
+
+    const result = applyQueryLimit("SELECT * FROM big -- LIMIT 5\nALLOW FILTERING", 500, 0, {}, "cassandra");
+    expect(result.sql).toBe("SELECT * FROM big LIMIT 500 -- LIMIT 5\nALLOW FILTERING");
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("a real bound before a comment before the clause is still recognised", () => {
+    const result = applyQueryLimit("SELECT * FROM big LIMIT 5 -- note\nALLOW FILTERING", 500, 0, {}, "cassandra");
+    expect(result.wasLimited).toBe(false);
+    expect(result.sql).toBe("SELECT * FROM big LIMIT 5 -- note\nALLOW FILTERING");
+  });
+});

@@ -334,6 +334,7 @@ A label with no property has no columns.
 Its indexes are the index rows whose entity type and labels or types name it.
 The property and index reads answer every object at once, so they are shared by concurrent callers and kept for 60 seconds, then read again: a schema change shows in the tree within a minute, and listing the container drops the cache at once.
 A tree click on a label writes `` MATCH (n:`Label`) RETURN n LIMIT 100 ``, and on a relationship type `` MATCH (a)-[r:`TYPE`]->(b) RETURN a, r, b LIMIT 100 ``, with every name backticked and every backtick doubled, so a name with a space, a backtick or non-ASCII letters reads back as itself; an index and a constraint have no click action.
+An object whose name holds a unicode escape, a backslash then `u` at the end of an odd run of backslashes, such as `Caf\u00e9`, is listed but cannot be opened: the quoting refuses the name with the read policy's own pattern, `CYPHER_UNICODE_ESCAPE`, since the server would decode the escape and read another name, so the click answers that the name cannot be written as a Cypher identifier and sends nothing (#1295).
 The schema diagram is not offered on a `queryLanguage: "cypher"` connection (`offersSchemaDiagram` in `src/lib/db/types.ts`): relationship types are not tables, and the diagram's `_id` heuristic would invent edges.
 
 ### 6.2 Object source (#789)
@@ -462,6 +463,7 @@ Each line is one run.
 ## 13. Known limitations and risks
 
 - The policy is a word scan, not a parser, so it refuses some valid reads: a property named `set` must be backticked, and the refusal says how.
+- A name holding a unicode escape has no literal spelling that reaches it, and the statements carry no parameters in this version, so such a label or relationship type is listed but cannot be opened, and the table stats leave such a label out.
 - `EXPLAIN` adds a round trip to every statement, and the gate stays whatever it costs.
 - READ mode on 5.26 is measured, not documented as a guarantee, so it is the third layer and never the only one.
 - `db.schema.nodeTypeProperties()` scans data on a large graph, measured at 708 ms at 2 million nodes in the design's research; it runs when a label is described, the cache keeps its answer for up to a minute per database, and a tree refresh or a reconnect drops the cache, so the next describe reads it again; the inventory a plan run reads when it starts reads it once.

@@ -25,7 +25,7 @@ import {
   type AgentPlanStatementView,
   type AgentRunTimeline,
   type AgentTimelineItem,
-  describeFailureReason,
+  describeRunFailure,
 } from "./timeline";
 
 /**
@@ -595,7 +595,7 @@ function FailureNote({
       </p>
       {/* The same map the timeline entry reads, so the two cannot disagree. */}
       <p data-testid="agent-answer-failure" className="mt-1 text-[0.625rem] text-fg-tertiary">
-        {timeline.failureReason === null ? UNCLASSIFIED_FAILURE_NOTE : describeFailureReason(timeline.failureReason)}
+        {describeRunFailure(timeline) ?? UNCLASSIFIED_FAILURE_NOTE}
       </p>
       {onRetry !== undefined && (
         <button

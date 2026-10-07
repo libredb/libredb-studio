@@ -20,6 +20,8 @@
  * The export half reads the two columns through the provider under Istanbul, puts the rows
  * through JSON the way `POST /api/db/query` does, builds the SQL INSERT export, replays it
  * into an empty copy of the table and lets the SERVER compare the copy against the source.
+ * It replays the two zoned columns the same way (#1224): over JSON their `Date` is its ISO
+ * text, which the export used to quote and Oracle refused with ORA-01843.
  *
  * It creates and drops two throwaway tables (`LIBREDB_ZL_<hex>` and `LIBREDB_ZL_<hex>_R`) in
  * the connecting user's schema.
@@ -85,20 +87,22 @@ async function probeServer(): Promise<string[]> {
   try {
     const version = (await run(`SELECT BANNER FROM V$VERSION WHERE ROWNUM = 1`)).rows?.[0] as { BANNER: string };
     console.log(`=== ${version.BANNER} ===`);
-    await run(`CREATE TABLE ${table} (id NUMBER, d DATE, ts TIMESTAMP(6), ttz TIMESTAMP(6) WITH TIME ZONE)`);
+    await run(`CREATE TABLE ${table} (id NUMBER, d DATE, ts TIMESTAMP(6), ttz TIMESTAMP(6) WITH TIME ZONE,
+         tltz TIMESTAMP(6) WITH LOCAL TIME ZONE)`);
     await run(
       `INSERT INTO ${table} VALUES (1, DATE '2026-09-01', TIMESTAMP '2026-09-01 10:30:00',
-         TIMESTAMP '2026-09-01 10:30:00 +03:00')`,
+         TIMESTAMP '2026-09-01 10:30:00 +03:00', TIMESTAMP '2026-09-01 10:30:00 +03:00')`,
     );
     await run(
       `INSERT INTO ${table} VALUES (2, TO_DATE('2026-08-24 10:11:12', 'YYYY-MM-DD HH24:MI:SS'),
-         TIMESTAMP '2026-09-01 10:30:00.345', NULL)`,
+         TIMESTAMP '2026-09-01 10:30:00.345',
+         TIMESTAMP '1999-01-01 10:04:05.006 -08:00', TIMESTAMP '1999-01-01 10:04:05.006 -08:00')`,
     );
     await run(
       `INSERT INTO ${table} VALUES (3, TO_DATE('-0044-03-15 00:00:00', 'SYYYY-MM-DD HH24:MI:SS'),
-         TIMESTAMP '2026-09-01 10:30:00.5', NULL)`,
+         TIMESTAMP '2026-09-01 10:30:00.5', NULL, NULL)`,
     );
-    await run(`INSERT INTO ${table} VALUES (4, NULL, NULL, NULL)`);
+    await run(`INSERT INTO ${table} VALUES (4, NULL, NULL, NULL, NULL)`);
 
     // The engine's own text, which is the only authority on what the provider must answer.
     const engineRows = (
@@ -165,13 +169,14 @@ async function probeServer(): Promise<string[]> {
     }
 
     // The export half, under a zone east of UTC, over JSON as `POST /api/db/query` hands it on.
-    // There the old export quoted the shifted ISO text, and Oracle refused it with ORA-01861.
+    // There the old export quoted the shifted ISO text, and Oracle refused it with ORA-01861,
+    // and quoted the zoned columns' ISO text, which Oracle refused with ORA-01843 (#1224).
     process.env.TZ = "Europe/Istanbul";
-    await run(`CREATE TABLE ${replay} AS SELECT id, d, ts FROM ${table} WHERE 1 = 0`);
+    await run(`CREATE TABLE ${replay} AS SELECT id, d, ts, ttz, tltz FROM ${table} WHERE 1 = 0`);
     const provider = new OracleProvider(connection);
     try {
       await provider.connect();
-      const read = await provider.query(`SELECT id, d, ts FROM ${table} ORDER BY id`);
+      const read = await provider.query(`SELECT id, d, ts, ttz, tltz FROM ${table} ORDER BY id`);
       const file = buildResultExport("sql-insert", {
         rows: JSON.parse(JSON.stringify(read.rows)) as Record<string, unknown>[],
         fields: read.fields,
@@ -191,16 +196,17 @@ async function probeServer(): Promise<string[]> {
       await run(
         `SELECT s.id,
                 CASE WHEN s.d = r.d OR (s.d IS NULL AND r.d IS NULL) THEN 'EQUAL' ELSE 'DIFF' END AS d_eq,
-                CASE WHEN s.ts = r.ts OR (s.ts IS NULL AND r.ts IS NULL) THEN 'EQUAL' ELSE 'DIFF' END AS ts_eq
+                CASE WHEN s.ts = r.ts OR (s.ts IS NULL AND r.ts IS NULL) THEN 'EQUAL' ELSE 'DIFF' END AS ts_eq,
+                CASE WHEN s.ttz = r.ttz OR (s.ttz IS NULL AND r.ttz IS NULL) THEN 'EQUAL' ELSE 'DIFF' END AS ttz_eq,
+                CASE WHEN s.tltz = r.tltz OR (s.tltz IS NULL AND r.tltz IS NULL) THEN 'EQUAL' ELSE 'DIFF' END AS tltz_eq
          FROM ${table} s LEFT JOIN ${replay} r ON r.id = s.id ORDER BY s.id`,
       )
-    ).rows as { ID: number; D_EQ: string; TS_EQ: string }[];
+    ).rows as { ID: number; D_EQ: string; TS_EQ: string; TTZ_EQ: string; TLTZ_EQ: string }[];
     for (const row of compared) {
-      console.log(`replayed id=${row.ID}: D ${row.D_EQ}, TS ${row.TS_EQ}`);
-      if (row.D_EQ !== "EQUAL" || row.TS_EQ !== "EQUAL") {
-        failures.push(
-          `replay id=${row.ID}: the server compared the replayed row and found D ${row.D_EQ}, TS ${row.TS_EQ}.`,
-        );
+      const found = `D ${row.D_EQ}, TS ${row.TS_EQ}, TTZ ${row.TTZ_EQ}, TLTZ ${row.TLTZ_EQ}`;
+      console.log(`replayed id=${row.ID}: ${found}`);
+      if ([row.D_EQ, row.TS_EQ, row.TTZ_EQ, row.TLTZ_EQ].some((eq) => eq !== "EQUAL")) {
+        failures.push(`replay id=${row.ID}: the server compared the replayed row and found ${found}.`);
       }
     }
   } finally {
@@ -222,6 +228,6 @@ if (failures.length > 0) {
 }
 console.log(
   "DATE and TIMESTAMP read as the engine's own text in every zone, TIMESTAMP WITH TIME ZONE stayed an instant, " +
-    "the export replayed to the same values, and the raw driver value is still the shifted Date the conversion " +
+    "the export over JSON replayed to the same values, zoned columns included, and the raw driver value is still the shifted Date the conversion " +
     "compensates for.",
 );

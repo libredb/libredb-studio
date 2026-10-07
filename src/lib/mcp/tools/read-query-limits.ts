@@ -78,7 +78,12 @@ export function fenceRefusalText(code: string): string {
 }
 
 export function profileRefusalText(message: string, engines: string): string {
-  return `run_read_query cannot run on this connection: ${message}. It runs on ${engines}; inspect_schema works on every engine.`;
+  // #1462: inspect_schema runs under the same role-checking profile on PostgreSQL, so
+  // it is not true that inspect_schema works on every engine; and an ExecutionProfileError
+  // message (postgres.ts's assertAgentRoleIsUnprivileged) already ends in a period, so
+  // appending unconditionally produced a double period. Strip any trailing ones first.
+  const sentence = message.replace(/\.+$/, "");
+  return `run_read_query cannot run on this connection: ${sentence}. It runs on ${engines}.`;
 }
 
 export type Raced<T> =

@@ -92,6 +92,7 @@ const sqlCaps = caps({
   queryLanguage: "sql",
   objectKinds: [tableKind, viewKind],
   supportsInlineRowEdit: true,
+  supportsTestDataGeneration: true,
   supportsMaintenance: true,
   maintenanceOperations: ["vacuum", "analyze"],
 });
@@ -1063,7 +1064,8 @@ describe("TableItem", () => {
    *
    * `src/components/object-tree/row-actions.ts` gates Profile on the derived-grouping flag and
    * on `offersColumnProfiling`, Generate Code on `offersCodeGeneration`, and Generate Test Data
-   * on the row's kind accepting row writes AND the engine declaring the grid's row edit. This
+   * on `offersTestDataGeneration`: the row's kind accepting row writes AND the engine declaring
+   * `supportsTestDataGeneration` (#1468), the grid's row edit before that. This
    * menu asked only the grouping flag, so it offered the generator on every view and on every
    * engine the tree withholds it from. Each negative below is read from a menu that still
    * carries the actions that name the row, and each test carries its own control: a
@@ -1072,7 +1074,10 @@ describe("TableItem", () => {
   describe("the row actions ask what the desktop tree asks (#1085, D-M)", () => {
     const ROW_ACTIONS = ["Profile Table", "Generate Code", "Generate Test Data"] as const;
 
-    /** MongoDB-shaped: a collection takes a document write, and the engine declares no grid row edit. */
+    /**
+     * MongoDB-shaped: a collection takes a document write, the engine declares the generator,
+     * and it declares no grid row edit, since the grid has no `UPDATE ... SET` to emit (#1468).
+     */
     const collectionKind = {
       id: "collection",
       role: "relation",
@@ -1080,7 +1085,12 @@ describe("TableItem", () => {
       labelPlural: "Collections",
       acceptsRowWrites: true,
     } as const;
-    const mongoCaps = caps({ queryLanguage: "json", objectKinds: [collectionKind], supportsInlineRowEdit: false });
+    const mongoCaps = caps({
+      queryLanguage: "json",
+      objectKinds: [collectionKind],
+      supportsInlineRowEdit: false,
+      supportsTestDataGeneration: true,
+    });
     const collection: DetailedObject = { ...largeTable, name: "orders", kind: "collection", path: ["shop", "orders"] };
 
     /** Prometheus-shaped: PromQL, a metric kind that takes no row write, no grid row edit, no maintenance. */
@@ -1119,16 +1129,23 @@ describe("TableItem", () => {
       expect(offered(menuOf(largeTable, sqlCaps))).toContain("Generate Test Data");
     });
 
-    test("a kind that takes row writes is not offered Generate Test Data on an engine with no grid row edit", () => {
-      // MongoDB, Couchbase, Cassandra, ClickHouse, Druid, Trino and both search engines declare
-      // `supportsInlineRowEdit: false`, and the desktop tree has always withheld the item there.
-      expect(offered(menuOf(collection, mongoCaps))).toEqual(["Profile Table", "Generate Code"]);
-      // The control: the same declaration with the engine half switched on.
-      expect(offered(menuOf(collection, { ...mongoCaps, supportsInlineRowEdit: true }))).toEqual([
+    test("a MongoDB collection is offered Generate Test Data although its grid edits no row (#1468)", () => {
+      expect(offered(menuOf(collection, mongoCaps))).toEqual(["Profile Table", "Generate Code", "Generate Test Data"]);
+      // The control: the same declaration with the engine's generator flag switched off.
+      expect(offered(menuOf(collection, { ...mongoCaps, supportsTestDataGeneration: false }))).toEqual([
         "Profile Table",
         "Generate Code",
-        "Generate Test Data",
       ]);
+    });
+
+    test("a writer whose grid edits rows but which does not declare the generator is not offered it", () => {
+      // Couchbase, Cassandra, Trino and both search engines hold a kind that takes row writes and
+      // declare no generator; the grid's flag no longer stands in for it in either direction.
+      expect(offered(menuOf(largeTable, { ...sqlCaps, supportsTestDataGeneration: undefined }))).toEqual([
+        "Profile Table",
+        "Generate Code",
+      ]);
+      expect(offered(menuOf(largeTable, sqlCaps))).toContain("Generate Test Data");
     });
 
     test("a Redis-shaped declaration keeps Generate Code and nothing else of the three", () => {
@@ -1204,7 +1221,7 @@ describe("TableItem", () => {
       expect(within(menu).queryByText("Copy Name")).not.toBeNull();
       // The control, in the one field under test: the same declaration with the dialect removed is
       // MongoDB's JSON, which is profiled and generates code. Generate Test Data stays withheld there
-      // too, because the topic kind declares no row writes and the engine no grid row edit.
+      // too, because the topic kind declares no row writes and the engine no generator.
       const jsonMenu = menuOf(topic, { ...kafkaCaps, queryDialect: undefined });
       expect(offered(jsonMenu)).toEqual(["Profile Table", "Generate Code"]);
       expect(jsonMenu.querySelectorAll("hr")).toHaveLength(1);

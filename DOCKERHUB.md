@@ -151,7 +151,7 @@ Twenty-eight further engines speak the wire protocol of one of the twenty-six dr
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
-| MariaDB · Percona Server for MySQL | `mysql` | Full - both are drop-in builds: all fifteen surfaces answer and the numbers are correct. Nothing on screen says Percona, though: `version()` answers a bare 8.4.11-11 and the product name is only in `@@version_comment` |
+| MariaDB · Percona Server for MySQL | `mysql` | Full - both are drop-in builds: all fifteen surfaces answer and the numbers are correct. Percona's `version()` answers a bare 8.4.11-11, so the overview names it from `@@version_comment` |
 | Percona Distribution for PostgreSQL | `postgres` | Full — behaves as PostgreSQL throughout, with correct row counts and sizes, and unlike the MySQL build it names itself in `version()` |
 | ParadeDB | `postgres` | Full — correct numbers, but its nine extensions put 41 objects in the object browser for 2 user tables, and agent plan mode fails on a stock install because 539 non-system columns exceed the grounding capture's ceiling. `version()` names PostgreSQL only |
 | OrioleDB | `postgres` | Full — clean object browser and exact row counts, but its own storage is invisible to PostgreSQL's size functions, so every index reads 0 bytes and the cache hit ratio reads N/A. Nightly images only |

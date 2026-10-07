@@ -2106,6 +2106,19 @@ describe("SchemaDiagram kind filtering", () => {
     expect(container.querySelector('[data-testid="mock-react-flow"]')).toBeNull();
   });
 
+  test("the header counts each relation kind under its own name (#1466)", () => {
+    const tablesAndViews: DetailedObject[] = [
+      ...["employees", "departments", "salaries", "titles"].map((name) => ({ ...inventory[0], name, path: [name] })),
+      { ...inventory[1], name: "current_dept", path: ["current_dept"] },
+    ];
+    const { container } = render(
+      <SchemaDiagram schema={tablesAndViews} capabilities={capabilities} onClose={() => {}} />,
+    );
+
+    expect(within(container).queryByText("4 tables, 1 view")).not.toBeNull();
+    expect(within(container).queryByText("5 tables")).toBeNull();
+  });
+
   test("with no declaration yet, every entry is drawn", () => {
     const { container } = render(<SchemaDiagram schema={inventory} onClose={() => {}} />);
 

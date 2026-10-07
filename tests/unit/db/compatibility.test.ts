@@ -221,8 +221,8 @@ describe("wire-compatibility registry", () => {
     // trap Garnet's row records and it lands on only one of the pair: Percona for
     // PostgreSQL puts its own name in `version()` ("PostgreSQL 18.6 - Percona Server for
     // PostgreSQL 18.6.1"), so the product displays it, while Percona Server for MySQL
-    // answers a bare `8.4.11-11` and keeps its identity in `@@version_comment`, which the
-    // provider does not read - so that one is indistinguishable from stock MySQL on screen.
+    // answers a bare `8.4.11-11` and keeps its identity in `@@version_comment` - which the
+    // overview reads since #1444, the only way to tell it from stock MySQL on screen.
     const mysqlSide = compatibleEnginesFor("mysql").find((e) => e.name === "Percona Server for MySQL");
     const pgSide = compatibleEnginesFor("postgres").find((e) => e.name === "Percona Distribution for PostgreSQL");
     expect(mysqlSide?.tier).toBe("full");

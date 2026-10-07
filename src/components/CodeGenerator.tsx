@@ -83,101 +83,286 @@ export function toSnakeCase(str: string): string {
     .replace(/^_/, "");
 }
 
-export function mapSqlTypeToTS(sqlType: string): string {
-  const t = sqlType.toLowerCase();
+/**
+ * What a declared type IS, decided once and mapped by every language (#1446).
+ *
+ * The mappers below used to test substrings in their own order, which is how the
+ * defects came in: `Array(Int32)` and `Map(String, Int32)` contain `int`, so the int
+ * test won before any container was considered and a list of numbers was typed as
+ * one number; a type spelled `number` (LibreDB) or `NUMBER` (Oracle) matched no arm
+ * at all and fell to the string default. One classification, decided here, ends the
+ * divergence: every mapper below maps a class, so a new type family has to be added
+ * once rather than six times in the same order.
+ */
+type TypeClass =
+  | { kind: "array"; element?: TypeClass }
+  | { kind: "map"; key?: TypeClass; value?: TypeClass }
+  | { kind: "int64" }
+  | { kind: "integer" }
+  | { kind: "float" }
+  | { kind: "double" }
+  | { kind: "boolean" }
+  | { kind: "datetime" }
+  | { kind: "json" }
+  | { kind: "uuid" }
+  | { kind: "string" };
+
+const classifySqlType = (sqlType: string): TypeClass => {
+  // The original spelling is kept beside the lowercased one: the width-explicit
+  // integer family below is read case-sensitively, because `Int8` and `int8` are
+  // different types - ClickHouse's 8-bit integer and PostgreSQL's 64-bit one -
+  // and the two readings agree on no language's type.
+  let original = sqlType.trim();
+  let t = original.toLowerCase();
+  // ClickHouse's `Nullable(...)` wrapper names nullability, which the column's own
+  // `nullable` flag carries; unwrapping it keeps the inner type visible to the
+  // container test below, so `Nullable(Array(String))` is a list of strings.
+  while (t.startsWith("nullable(") && t.endsWith(")")) {
+    original = original.slice(9, -1);
+    t = t.slice(9, -1);
+  }
+  // PostgreSQL's own array spelling, from `format_type`: a trailing `[]` makes the
+  // type an array of whatever precedes it (`integer[]`, `timestamp with time
+  // zone[]`), and a second `[]` nests. The internal `_text` spelling and the word
+  // `ARRAY` name no element, so those keep the bare-array treatment below.
+  if (t.endsWith("[]")) return { kind: "array", element: classifySqlType(original.slice(0, -2)) };
+  // Containers FIRST, before any numeric word: an `Array(Int32)` contains `int`,
+  // and the int test used to win. The element sits between the first `(` and the
+  // last `)` of the whole spelling, which also holds for one nested level
+  // (`Array(Nullable(String))`). A spelling with no parentheses (PostgreSQL's
+  // `_text ARRAY`, Cassandra's `list<timestamp>`) names no element, and a tuple
+  // names several, so all of them stay bare.
+  // The element is sliced from the ORIGINAL spelling, so a ClickHouse `Int32`
+  // inside `Array(Int32)` reaches the case-sensitive width test below as `Int32`
+  // and not as the lowercased `int32`, which is a different type's spelling.
+  const container = /\b(array|list|map|tuple)\b/.exec(t);
+  if (container !== null) {
+    const open = t.indexOf("(");
+    const close = t.lastIndexOf(")");
+    const inner = open >= 0 && close > open ? original.slice(open + 1, close) : null;
+    if (container[1] === "map") {
+      const comma = inner === null ? -1 : inner.indexOf(",");
+      if (inner !== null && comma > 0) {
+        return {
+          kind: "map",
+          key: classifySqlType(inner.slice(0, comma)),
+          value: classifySqlType(inner.slice(comma + 1)),
+        };
+      }
+      return { kind: "map" };
+    }
+    if (container[1] !== "tuple" && inner !== null) return { kind: "array", element: classifySqlType(inner) };
+    return { kind: "array" };
+  }
+  // ClickHouse's width-explicit family, spelled CamelCase and read
+  // case-sensitively: `Int8`, `Int16` and `Int32` are 8/16/32-bit integers, while
+  // `Int64`, `UInt64` and the wider ones are the 64-bit class. A lowercase `int8`
+  // is PostgreSQL's spelling of BIGINT and is read by the token test below, which
+  // is why the two are not one rule.
+  const width = /\bU?Int(\d+)\b/.exec(original);
+  if (width !== null) return Number(width[1]) >= 64 ? { kind: "int64" } : { kind: "integer" };
+  // Integer spellings are WHOLE TOKENS, never a substring: `point`, `interval`
+  // and `geo_point` each carry `int` as characters and none is an integer type,
+  // and the substring test typed them `int`/`Integer`/`Int` in three languages
+  // (#1446 review). DuckDB's unsigned and 128-bit spellings (`UINTEGER`, `UBIGINT`,
+  // `HUGEINT`) are whole tokens of their own and join the family they widen.
+  if (/\b(u?bigint|u?hugeint|int8|int64|uint64|bigserial|serial8)\b/.test(t)) return { kind: "int64" };
   if (
-    t.includes("int") ||
-    t.includes("float") ||
-    t.includes("double") ||
-    t.includes("decimal") ||
-    t.includes("numeric") ||
-    t.includes("real") ||
-    t.includes("serial")
-  )
-    return "number";
-  if (t.includes("bool")) return "boolean";
-  if (t.includes("date") || t.includes("time")) return "Date";
-  if (t.includes("json")) return "Record<string, unknown>";
-  if (t.includes("uuid")) return "string";
-  if (t.includes("array")) return "unknown[]";
-  return "string";
+    /\b(int|u?integer|int2|int4|u?smallint|u?tinyint|mediumint|serial|serial2|serial4|smallserial|varint)\b/.test(t)
+  ) {
+    return { kind: "integer" };
+  }
+  // Two numeric families, because Go and Java spell them differently: the
+  // single-precision family (float, real) and the wide one (double, decimal,
+  // numeric, and a type spelled `number`, which is LibreDB's and Oracle's word).
+  if (t.includes("float") || t.includes("real")) return { kind: "float" };
+  if (t.includes("double") || t.includes("decimal") || t.includes("numeric") || /\bnumber\b/.test(t)) {
+    return { kind: "double" };
+  }
+  if (t.includes("bool")) return { kind: "boolean" };
+  if (t.includes("date") || t.includes("time")) return { kind: "datetime" };
+  if (t.includes("json")) return { kind: "json" };
+  if (t.includes("uuid")) return { kind: "uuid" };
+  return { kind: "string" };
+};
+
+const tsType = (type: TypeClass): string => {
+  switch (type.kind) {
+    case "array":
+      return type.element === undefined ? "unknown[]" : `${tsType(type.element)}[]`;
+    case "map":
+      return type.value === undefined ? "Record<string, unknown>" : `Record<string, ${tsType(type.value)}>`;
+    case "int64":
+      return "bigint";
+    case "integer":
+    case "float":
+    case "double":
+      return "number";
+    case "boolean":
+      return "boolean";
+    case "datetime":
+      return "Date";
+    case "json":
+      return "Record<string, unknown>";
+    case "uuid":
+    case "string":
+      return "string";
+  }
+};
+
+const zodType = (type: TypeClass): string => {
+  switch (type.kind) {
+    case "array":
+      return `z.array(${type.element === undefined ? "z.unknown()" : zodType(type.element)})`;
+    case "map":
+      return `z.record(${type.value === undefined ? "z.unknown()" : zodType(type.value)})`;
+    case "int64":
+      return "z.bigint()";
+    case "integer":
+    case "float":
+    case "double":
+      return "z.number()";
+    case "boolean":
+      return "z.boolean()";
+    case "datetime":
+      return "z.date()";
+    case "json":
+      return "z.record(z.unknown())";
+    case "uuid":
+      return "z.string().uuid()";
+    case "string":
+      return "z.string()";
+  }
+};
+
+const prismaType = (type: TypeClass): string => {
+  switch (type.kind) {
+    // Prisma's scalar lists are a connector conditional (PostgreSQL and CockroachDB
+    // alone) and it has no map type at all, and this generator serves every engine,
+    // so a container is Json there rather than a list only one connector accepts.
+    case "array":
+    case "map":
+    case "json":
+      return "Json";
+    case "int64":
+      return "BigInt";
+    case "integer":
+      return "Int";
+    case "float":
+    case "double":
+      return "Float";
+    case "boolean":
+      return "Boolean";
+    case "datetime":
+      return "DateTime";
+    case "uuid":
+    case "string":
+      return "String";
+  }
+};
+
+const goType = (type: TypeClass): string => {
+  switch (type.kind) {
+    case "array":
+      return type.element === undefined ? "[]interface{}" : `[]${goType(type.element)}`;
+    case "map":
+      return `map[${type.key === undefined ? "string" : goType(type.key)}]${
+        type.value === undefined ? "interface{}" : goType(type.value)
+      }`;
+    case "int64":
+      return "int64";
+    case "integer":
+      return "int";
+    case "float":
+      return "float32";
+    case "double":
+      return "float64";
+    case "boolean":
+      return "bool";
+    case "datetime":
+      return "time.Time";
+    case "json":
+    case "uuid":
+    case "string":
+      return "string";
+  }
+};
+
+const pythonType = (type: TypeClass): string => {
+  switch (type.kind) {
+    case "array":
+      return type.element === undefined ? "list" : `list[${pythonType(type.element)}]`;
+    case "map":
+      return type.key === undefined || type.value === undefined
+        ? "dict"
+        : `dict[${pythonType(type.key)}, ${pythonType(type.value)}]`;
+    case "int64":
+    case "integer":
+      return "int";
+    case "float":
+    case "double":
+      return "float";
+    case "boolean":
+      return "bool";
+    case "datetime":
+      return "datetime";
+    case "json":
+      return "dict";
+    case "uuid":
+    case "string":
+      return "str";
+  }
+};
+
+const javaType = (type: TypeClass): string => {
+  switch (type.kind) {
+    case "array":
+      return type.element === undefined ? "Object[]" : `${javaType(type.element)}[]`;
+    case "map":
+      return `Map<${type.key === undefined ? "String" : javaType(type.key)}, ${
+        type.value === undefined ? "Object" : javaType(type.value)
+      }>`;
+    case "int64":
+      return "Long";
+    case "integer":
+      return "Integer";
+    case "float":
+      return "Float";
+    case "double":
+      return "Double";
+    case "boolean":
+      return "Boolean";
+    case "datetime":
+      return "LocalDateTime";
+    case "json":
+    case "uuid":
+    case "string":
+      return "String";
+  }
+};
+
+export function mapSqlTypeToTS(sqlType: string): string {
+  return tsType(classifySqlType(sqlType));
 }
 
 export function mapSqlTypeToZod(sqlType: string): string {
-  const t = sqlType.toLowerCase();
-  if (
-    t.includes("int") ||
-    t.includes("float") ||
-    t.includes("double") ||
-    t.includes("decimal") ||
-    t.includes("numeric") ||
-    t.includes("real") ||
-    t.includes("serial")
-  )
-    return "z.number()";
-  if (t.includes("bool")) return "z.boolean()";
-  if (t.includes("date") || t.includes("time")) return "z.date()";
-  if (t.includes("json")) return "z.record(z.unknown())";
-  if (t.includes("uuid")) return "z.string().uuid()";
-  return "z.string()";
+  return zodType(classifySqlType(sqlType));
 }
 
 export function mapSqlTypeToPrisma(sqlType: string): string {
-  const t = sqlType.toLowerCase();
-  if (t.includes("serial") || t === "integer" || t === "int" || t === "int4") return "Int";
-  if (t.includes("bigint") || t.includes("int8")) return "BigInt";
-  if (
-    t.includes("float") ||
-    t.includes("double") ||
-    t.includes("decimal") ||
-    t.includes("numeric") ||
-    t.includes("real")
-  )
-    return "Float";
-  if (t.includes("bool")) return "Boolean";
-  if (t.includes("timestamp") || t.includes("datetime")) return "DateTime";
-  if (t.includes("date")) return "DateTime";
-  if (t.includes("json")) return "Json";
-  return "String";
+  return prismaType(classifySqlType(sqlType));
 }
 
 export function mapSqlTypeToGo(sqlType: string): string {
-  const t = sqlType.toLowerCase();
-  if (t.includes("serial") || t === "integer" || t === "int" || t === "int4") return "int";
-  if (t.includes("bigint") || t.includes("int8")) return "int64";
-  if (t.includes("float") || t.includes("real")) return "float32";
-  if (t.includes("double") || t.includes("decimal") || t.includes("numeric")) return "float64";
-  if (t.includes("bool")) return "bool";
-  if (t.includes("date") || t.includes("time")) return "time.Time";
-  return "string";
+  return goType(classifySqlType(sqlType));
 }
 
 export function mapSqlTypeToPython(sqlType: string): string {
-  const t = sqlType.toLowerCase();
-  if (t.includes("int") || t.includes("serial")) return "int";
-  if (
-    t.includes("float") ||
-    t.includes("double") ||
-    t.includes("decimal") ||
-    t.includes("numeric") ||
-    t.includes("real")
-  )
-    return "float";
-  if (t.includes("bool")) return "bool";
-  if (t.includes("date") || t.includes("time")) return "datetime";
-  if (t.includes("json")) return "dict";
-  return "str";
+  return pythonType(classifySqlType(sqlType));
 }
 
 export function mapSqlTypeToJava(sqlType: string): string {
-  const t = sqlType.toLowerCase();
-  if (t.includes("serial") || t === "integer" || t === "int" || t === "int4") return "Integer";
-  if (t.includes("bigint") || t.includes("int8")) return "Long";
-  if (t.includes("float") || t.includes("real")) return "Float";
-  if (t.includes("double") || t.includes("decimal") || t.includes("numeric")) return "Double";
-  if (t.includes("bool")) return "Boolean";
-  if (t.includes("date") || t.includes("time")) return "LocalDateTime";
-  return "String";
+  return javaType(classifySqlType(sqlType));
 }
 
 /**
@@ -193,6 +378,66 @@ export function mapSqlTypeToJava(sqlType: string): string {
  */
 const decidableType = (column: ColumnSchema): string => column.baseType ?? column.type;
 
+/** A key or name that every language here accepts: a letter (Unicode), then letters, digits, `_` or `$`. */
+const IDENTIFIER = /^[\p{L}_$][\p{L}\p{N}_$]*$/u;
+
+/** Python drops `$` from that union. */
+const PYTHON_IDENTIFIER = /^[\p{L}_][\p{L}\p{N}_]*$/u;
+
+/** A name inside a string literal, with the two characters a double-quoted literal cannot carry raw. */
+const stringLiteral = (text: string): string => text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+/**
+ * A field NAME for the languages that have no quoted key (#1446): the same rule as
+ * `toIdentifier` — punctuation runs become word boundaries, the segments PascalCase,
+ * Unicode letters kept — without the trailing-`s` strip, because a field keeps the
+ * column's name (#1138), and with a `Field` fallback rather than `Record`, which
+ * names a type, not a field.
+ */
+const fieldIdentifier = (str: string): string => {
+  const result = toPascalCase(str.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_|_$/g, ""));
+  if (!/^\p{L}/u.test(result)) return result ? `T${result}` : "Field";
+  return result;
+};
+
+/**
+ * A field key as TypeScript and Zod write it (#1446): the styled name when that is an
+ * identifier, and the column's own name quoted when it is not — `toCamelCase` kept
+ * every non-`_`/`-` character, so a nested Elasticsearch field emitted
+ * `address.city: string | null;`, which does not parse. The quoted key is the
+ * column's own name, because that is the key the row carries.
+ */
+const tsFieldKey = (name: string): string => {
+  const styled = toCamelCase(name);
+  return IDENTIFIER.test(styled) ? styled : `"${stringLiteral(name)}"`;
+};
+
+/**
+ * A Go field name: the styled name when it is an identifier, `fieldIdentifier`
+ * otherwise. The tag beside it already carries the column's own name, so a
+ * sanitised field name loses nothing.
+ */
+const goFieldName = (name: string): string => {
+  const styled = toPascalCase(name);
+  return IDENTIFIER.test(styled) ? styled : fieldIdentifier(name);
+};
+
+/**
+ * A Java field name: the styled name when it is an identifier, `fieldIdentifier`
+ * camel-cased otherwise, with `@JsonProperty` carrying the column's own name.
+ */
+const javaFieldName = (name: string): string => {
+  const styled = toCamelCase(name);
+  return IDENTIFIER.test(styled) ? styled : toCamelCase(fieldIdentifier(name));
+};
+
+/** A Prisma field name: the column's own name when Prisma accepts it, else the closest sanitised spelling. */
+const prismaField = (name: string): string => {
+  if (/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) return name;
+  const sanitised = name.replace(/[^A-Za-z0-9_]/g, "_").replace(/^_+/, "");
+  return /^[A-Za-z]/.test(sanitised) ? sanitised : `t${sanitised}`;
+};
+
 export function generateCode(lang: Language, table: DetailedObject): string {
   // The type, model or struct NAME is for a person to read, so it is derived from the display
   // label. The Prisma `@@map` below is not: it is what Prisma addresses the table by, so it
@@ -205,7 +450,7 @@ export function generateCode(lang: Language, table: DetailedObject): string {
       const fields = columns.map((c) => {
         const tsType = mapSqlTypeToTS(decidableType(c));
         const nullable = c.nullable ? " | null" : "";
-        return `  ${toCamelCase(c.name)}: ${tsType}${nullable};`;
+        return `  ${tsFieldKey(c.name)}: ${tsType}${nullable};`;
       });
       return `export interface ${name} {\n${fields.join("\n")}\n}`;
     }
@@ -213,7 +458,7 @@ export function generateCode(lang: Language, table: DetailedObject): string {
       const fields = columns.map((c) => {
         let zodType = mapSqlTypeToZod(decidableType(c));
         if (c.nullable) zodType += ".nullable()";
-        return `  ${toCamelCase(c.name)}: ${zodType},`;
+        return `  ${tsFieldKey(c.name)}: ${zodType},`;
       });
       return `import { z } from 'zod';\n\nexport const ${name}Schema = z.object({\n${fields.join("\n")}\n});\n\nexport type ${name} = z.infer<typeof ${name}Schema>;`;
     }
@@ -223,7 +468,9 @@ export function generateCode(lang: Language, table: DetailedObject): string {
         const nullable = c.nullable ? "?" : "";
         const pk = c.isPrimary ? " @id" : "";
         const auto = decidableType(c).toLowerCase().includes("serial") ? " @default(autoincrement())" : "";
-        return `  ${c.name}  ${prismaType}${nullable}${pk}${auto}`;
+        const mapped = prismaField(c.name);
+        const map = mapped === c.name ? "" : ` @map("${stringLiteral(c.name)}")`;
+        return `  ${mapped}  ${prismaType}${nullable}${pk}${auto}${map}`;
       });
       return `model ${name} {\n${fields.join("\n")}\n\n  @@map("${objectSegment(table.path)}")\n}`;
     }
@@ -231,12 +478,14 @@ export function generateCode(lang: Language, table: DetailedObject): string {
       const fields = columns.map((c) => {
         const goType = mapSqlTypeToGo(decidableType(c));
         const nullable = c.nullable ? "*" : "";
-        const fieldName = toPascalCase(c.name);
-        return `\t${fieldName} ${nullable}${goType} \`json:"${c.name}" db:"${c.name}"\``;
+        return `\t${goFieldName(c.name)} ${nullable}${goType} \`json:"${c.name}" db:"${c.name}"\``;
       });
-      const needsTime = columns.some(
-        (c) => decidableType(c).toLowerCase().includes("date") || decidableType(c).toLowerCase().includes("time"),
-      );
+      // The import follows the MAPPED type, not the declared string: a container
+      // the classifier cannot see into (Cassandra's `list<timestamp>`, ClickHouse's
+      // `Tuple(DateTime, Int32)`) maps to `[]interface{}` and `map[string]interface{}`,
+      // and an import decided from the raw text was emitted beside a type that never
+      // uses it, which `go build` refuses (#1446 review).
+      const needsTime = columns.some((c) => mapSqlTypeToGo(decidableType(c)).includes("time.Time"));
       const imports = needsTime ? '\nimport "time"\n' : "";
       return `package models${imports}\n\ntype ${name} struct {\n${fields.join("\n")}\n}`;
     }
@@ -244,13 +493,16 @@ export function generateCode(lang: Language, table: DetailedObject): string {
       const fields = columns.map((c) => {
         const pyType = mapSqlTypeToPython(decidableType(c));
         const optional = c.nullable ? `Optional[${pyType}]` : pyType;
-        return `    ${toSnakeCase(c.name)}: ${optional}`;
+        const styled = toSnakeCase(c.name);
+        if (PYTHON_IDENTIFIER.test(styled)) return `    ${styled}: ${optional}`;
+        const sanitised = toSnakeCase(fieldIdentifier(c.name));
+        return `    ${sanitised}: ${optional} = field(metadata={"alias": "${stringLiteral(c.name)}"})`;
       });
+      const aliased = columns.some((c) => !PYTHON_IDENTIFIER.test(toSnakeCase(c.name)));
       const needsOptional = columns.some((c) => c.nullable);
-      const needsDatetime = columns.some(
-        (c) => decidableType(c).toLowerCase().includes("date") || decidableType(c).toLowerCase().includes("time"),
-      );
-      const imports: string[] = ["from dataclasses import dataclass"];
+      // Mapped type, for the same reason as Go's `time` import above.
+      const needsDatetime = columns.some((c) => mapSqlTypeToPython(decidableType(c)).includes("datetime"));
+      const imports: string[] = [`from dataclasses import ${aliased ? "dataclass, field" : "dataclass"}`];
       if (needsOptional) imports.push("from typing import Optional");
       if (needsDatetime) imports.push("from datetime import datetime");
       return `${imports.join("\n")}\n\n\n@dataclass\nclass ${name}:\n${fields.join("\n")}`;
@@ -258,13 +510,22 @@ export function generateCode(lang: Language, table: DetailedObject): string {
     case "java": {
       const fields = columns.map((c) => {
         const javaType = mapSqlTypeToJava(decidableType(c));
-        return `    private ${javaType} ${toCamelCase(c.name)};`;
+        const styled = toCamelCase(c.name);
+        if (IDENTIFIER.test(styled)) return `    private ${javaType} ${styled};`;
+        return `    @JsonProperty("${stringLiteral(c.name)}")\n    private ${javaType} ${javaFieldName(c.name)};`;
       });
-      const needsLocalDateTime = columns.some(
-        (c) => decidableType(c).toLowerCase().includes("date") || decidableType(c).toLowerCase().includes("time"),
-      );
-      const imports = needsLocalDateTime ? "import java.time.LocalDateTime;\n\n" : "";
-      return `${imports}public class ${name} {\n${fields.join("\n")}\n}`;
+      // Mapped type, like Go's `time` and Python's `datetime` above, and like
+      // `needsMap` already was: a container that maps to `Object[]` or
+      // `Map<String, Object>` names no LocalDateTime, whatever its element text.
+      const needsLocalDateTime = columns.some((c) => mapSqlTypeToJava(decidableType(c)).includes("LocalDateTime"));
+      const needsMap = columns.some((c) => mapSqlTypeToJava(decidableType(c)).startsWith("Map<"));
+      const needsJsonProperty = columns.some((c) => !IDENTIFIER.test(toCamelCase(c.name)));
+      const imports: string[] = [];
+      if (needsJsonProperty) imports.push("import com.fasterxml.jackson.annotation.JsonProperty;");
+      if (needsLocalDateTime) imports.push("import java.time.LocalDateTime;");
+      if (needsMap) imports.push("import java.util.Map;");
+      const importBlock = imports.length > 0 ? `${imports.join("\n")}\n\n` : "";
+      return `${importBlock}public class ${name} {\n${fields.join("\n")}\n}`;
     }
   }
 }

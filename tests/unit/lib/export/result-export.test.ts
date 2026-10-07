@@ -1276,6 +1276,92 @@ describe("buildResultExport - Oracle date and timestamp literals", () => {
       );
     });
   });
+
+  // A zoned column still reaches the export as the driver's `Date` in-process, but over
+  // HTTP the row has been through JSON, so the same cell arrives as the text
+  // `Date#toISOString` wrote. Quoted, Oracle refuses it on replay with ORA-01843 (#1224).
+  describe("a zoned timestamp's ISO text, as it arrives over HTTP (#1224)", () => {
+    const fromTz = `VALUES (FROM_TZ(TO_TIMESTAMP('2026-08-24 17:11:12.345', 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC'));`;
+
+    test("writes the text as the same FROM_TZ literal the Date of that instant gets", () => {
+      for (const declared of [
+        "TIMESTAMP WITH TIME ZONE",
+        "TIMESTAMP WITH LOCAL TIME ZONE",
+        "timestamp(6) with time zone",
+        "TIMESTAMP(9) WITH LOCAL TIME ZONE",
+      ]) {
+        const overHttp = oracle({ at: declared }, instant.toISOString());
+        expect(overHttp).toContain(fromTz);
+        expect(overHttp).toBe(oracle({ at: declared }, instant));
+      }
+    });
+
+    test("pads the fields of an early year the way the Date path does", () => {
+      expect(oracle({ at: "TIMESTAMP WITH TIME ZONE" }, "0099-01-02T03:04:05.006Z")).toContain(
+        `VALUES (FROM_TZ(TO_TIMESTAMP('0099-01-02 03:04:05.006', 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC'));`,
+      );
+    });
+
+    // The declaration is what makes the text an instant, as it is for #1131's text.
+    test("leaves the same text quoted in a column not declared a zoned timestamp", () => {
+      const text = instant.toISOString();
+      for (const columnTypes of [{ at: "TIMESTAMP" }, { at: "TIMESTAMP(6)" }, { at: "DATE" }, { at: "VARCHAR2" }]) {
+        expect(oracle(columnTypes, text)).toContain(`VALUES ('2026-08-24T17:11:12.345Z');`);
+      }
+      expect(oracle(undefined, text)).toContain(`VALUES ('2026-08-24T17:11:12.345Z');`);
+      // Ending in `TIME ZONE`, or in the whole zoned name, is not being a zoned timestamp: the
+      // Date path's fallback reads both as zoned, but only the declared type takes this path.
+      expect(oracle({ at: "VARCHAR2 TIME ZONE" }, text)).toContain(`VALUES ('2026-08-24T17:11:12.345Z');`);
+      expect(oracle({ at: "VARCHAR2 TIMESTAMP WITH TIME ZONE" }, text)).toContain(
+        `VALUES ('2026-08-24T17:11:12.345Z');`,
+      );
+    });
+
+    // Only the exact form `Date#toISOString` writes is an instant the driver handed over.
+    test("leaves zoned text that is not exactly the ISO form quoted", () => {
+      for (const text of [
+        "2026-08-24T17:11:12.345+00:00",
+        "2026-08-24T17:11:12Z",
+        "2026-08-24T17:11:12.345678Z",
+        "2026-08-24 17:11:12.345Z",
+        "2026-08-24T17:11:12.345z",
+        "2026-08-24 10:11:12.345 -07:00",
+      ]) {
+        expect(oracle({ at: "TIMESTAMP WITH TIME ZONE" }, text)).toContain(`VALUES ('${text}');`);
+      }
+    });
+
+    // The form fits, but no `Date` writes it: there is no 30 February, and `24:00` is the
+    // next day's `00:00` to `toISOString`.
+    test("leaves text in the ISO form that is not a real instant quoted", () => {
+      for (const text of ["2026-02-30T00:00:00.000Z", "2026-09-01T24:00:00.000Z", "2026-13-01T00:00:00.000Z"]) {
+        expect(oracle({ at: "TIMESTAMP WITH TIME ZONE" }, text)).toContain(`VALUES ('${text}');`);
+      }
+    });
+
+    // `toISOString` writes a year outside 0000-9999 with a sign and six digits. Oracle has
+    // no year after 9999, and a BC instant does not replay through the Date path either,
+    // so both stay quoted rather than taking a literal the Date path does not write.
+    test("leaves a six-digit signed year quoted", () => {
+      for (const text of ["-000044-03-15T10:30:00.000Z", "+012026-09-01T07:30:00.000Z"]) {
+        expect(oracle({ at: "TIMESTAMP WITH TIME ZONE" }, text)).toContain(`VALUES ('${text}');`);
+      }
+    });
+
+    // The literal is built from the parsed instant, and the match has to cover the whole
+    // cell: a valid ISO instant with anything before or after it is ordinary text.
+    test("leaves an ISO instant with text before or after it quoted and escaped", () => {
+      expect(oracle({ at: "TIMESTAMP WITH TIME ZONE" }, "2026-08-24T17:11:12.345Z'); DROP TABLE x; --")).toContain(
+        `VALUES ('2026-08-24T17:11:12.345Z''); DROP TABLE x; --');`,
+      );
+      expect(oracle({ at: "TIMESTAMP WITH TIME ZONE" }, "x'); DROP TABLE x; -- 2026-08-24T17:11:12.345Z")).toContain(
+        `VALUES ('x''); DROP TABLE x; -- 2026-08-24T17:11:12.345Z');`,
+      );
+      expect(oracle({ at: "TIMESTAMP WITH TIME ZONE" }, "2026-08-24T17:11:12.345Z\n")).toContain(
+        `VALUES ('2026-08-24T17:11:12.345Z\n');`,
+      );
+    });
+  });
 });
 
 describe("buildResultExport: a cell whose literal depends on its declared type (#1386)", () => {
@@ -1658,5 +1744,34 @@ describe("resultExportFileName", () => {
   test("caps how much of a run id reaches the name", () => {
     const name = resultExportFileName("csv", "r".repeat(200));
     expect(name).toBe(`agent_run_${"r".repeat(64)}_export.csv`);
+  });
+});
+
+describe("buildResultExport — markdown and html", () => {
+  test("writes a Markdown table with the shared mime type and extension", () => {
+    const file = buildResultExport("markdown", source());
+    expect(file.content).toBe("| id | name |\n| --- | --- |\n| 1 | Ada |");
+    expect(file.mimeType).toBe("text/markdown;charset=utf-8");
+    expect(file.extension).toBe("md");
+  });
+
+  test("writes an HTML table with the shared mime type and extension", () => {
+    const file = buildResultExport("html", source());
+    expect(file.content).toContain("<tr><th>id</th><th>name</th></tr>");
+    expect(file.content).toContain("<tr><td>1</td><td>Ada</td></tr>");
+    expect(file.mimeType).toBe("text/html;charset=utf-8");
+    expect(file.extension).toBe("html");
+  });
+
+  test("ignores the dialect for the two text formats, which name no engine", () => {
+    const markdown = buildResultExport("markdown", source({ dialect: "oracle" }));
+    const html = buildResultExport("html", source({ dialect: "mssql" }));
+    expect(markdown.content).toBe("| id | name |\n| --- | --- |\n| 1 | Ada |");
+    expect(html.content).toContain("<tr><td>1</td><td>Ada</td></tr>");
+  });
+
+  test("returns text content, never a binary blob", () => {
+    expect(typeof buildResultExport("markdown", source()).content).toBe("string");
+    expect(typeof buildResultExport("html", source()).content).toBe("string");
   });
 });

@@ -605,6 +605,7 @@ describe("Db2Provider: declaration", () => {
     const capabilities = makeProvider().getCapabilities();
 
     expect(capabilities.supportsInlineRowEdit).toBe(true);
+    expect(capabilities.supportsTestDataGeneration).toBe(true);
     expect(capabilities.supportsCreateTable).toBe(false);
     expect(capabilities.objectKinds?.filter((kind) => kind.acceptsRowWrites === true).map((kind) => kind.id)).toEqual([
       "table",

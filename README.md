@@ -31,6 +31,7 @@
 </p>
 <p align="center">
   Also listed in official
+  <a href="https://planet.mysql.com/showcase/?search=LibreDB">MySQL</a>,
   <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>,
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>,
   <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>,
@@ -38,6 +39,7 @@
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
   <a href="https://docs.yugabyte.com/stable/integrations/tools/libredb-studio/">YugabyteDB</a>,
   <a href="https://www.dragonflydb.io/docs/integrations/libredb-studio">DragonflyDB</a>,
+  <a href="https://microsoft.github.io/garnet/docs/welcome/compatibility#gui-tools">Garnet</a>,
   <a href="https://opensearch.org/community-projects/#:~:text=LibreDB%20Studio">OpenSearch</a>,
   <a href="https://duckdb.org/docs/preview/guides/sql_editors/libredb_studio">DuckDB</a>,
   <a href="https://docs.starrocks.io/docs/integrations/IDE_integrations/LibreDB_Studio/">StarRocks</a>,
@@ -751,12 +753,13 @@ LibreDB Studio is published in the official [CapRover One-Click Apps](https://gi
 
 1. **Open your CapRover dashboard** → **Apps → One-Click Apps/Databases**
 2. **Search** for **LibreDB Studio**
-3. **Fill in the variables** (admin/user credentials, `JWT_SECRET`, optional AI/storage settings)
+3. **Fill in the variables** (admin/user credentials, optional AI settings)
 4. **Deploy!**
 
 The app runs the prebuilt `ghcr.io/libredb/libredb-studio` image. As with Railway, Docker-image templates require a manual version bump on each release.
 
-A second template, [`deploy/caprover/libredb-studio-autoconnect.yml`](deploy/caprover/libredb-studio-autoconnect.yml), adds a discovery app that reads the Docker socket so Studio connects itself to the PostgreSQL, MySQL, MongoDB and Redis databases CapRover runs; read [Platform discovery (CapRover)](docs/SEED_CONNECTIONS.md#platform-discovery-caprover) before choosing it.
+The same search also lists **LibreDB Studio (auto-connect)**, from a second template, [`deploy/caprover/libredb-studio-autoconnect.yml`](deploy/caprover/libredb-studio-autoconnect.yml).
+It adds a discovery app that reads the Docker socket so Studio connects itself to the PostgreSQL, MySQL, MariaDB, Percona, MongoDB, Redis, Valkey, KeyDB and Dragonfly databases CapRover runs; read [Platform discovery (CapRover)](docs/SEED_CONNECTIONS.md#platform-discovery-caprover) before choosing it.
 
 ### Kubero
 

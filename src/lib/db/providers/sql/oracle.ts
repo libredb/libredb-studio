@@ -1634,6 +1634,8 @@ export class OracleProvider extends SQLBaseProvider {
       supportsExplain: false,
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
+      // The Generate Test Data dialog's multi-row `INSERT INTO ... VALUES` (#1468).
+      supportsTestDataGeneration: true,
       // `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, built by this provider's own
       // `prepareQuery` override; page one is `FETCH FIRST n ROWS ONLY`.
       supportsResultPagination: true,

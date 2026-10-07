@@ -268,22 +268,35 @@ export function assertContainerPathShape(
 /**
  * Whether THIS KIND accepts a row write. Absent and undeclared both read as false.
  *
- * Deliberately NOT conjoined with the engine-wide `supportsInlineRowEdit`, and the name
- * says `kind` so a caller cannot mistake the scope. That flag gates the results grid's
- * inline row editor (`canEditRows` in `src/components/Studio.tsx`), and the two row
- * menus, which need both facts for Generate Test Data, conjoin it with this function at
- * the call site. Folding it in here would answer false for three engines
- * that do take row writes: MongoDB, Couchbase and Cassandra all declare
- * `supportsInlineRowEdit: false` in `getCapabilities()` (`src/lib/db/providers/document/mongodb.ts`,
+ * Deliberately NOT conjoined with any engine-wide flag, and the name says `kind` so a caller
+ * cannot mistake the scope. The engine-wide `supportsInlineRowEdit` gates the results grid's
+ * inline row editor (`canEditRows` in `src/components/Studio.tsx`), and folding it in here
+ * would answer false for three engines that do take row writes: MongoDB, Couchbase and
+ * Cassandra all declare `supportsInlineRowEdit: false` in `getCapabilities()`
+ * (`src/lib/db/providers/document/mongodb.ts`,
  * `src/lib/db/providers/document/couchbase/index.ts` and `src/lib/db/providers/sql/cassandra/index.ts`),
  * and #789 declares a kind that accepts a row write on
  * each of the three, so a conjunction would silently drop all three out of the import
  * target list.
  *
- * A caller that needs both facts writes both, which is now visible at the call site.
+ * A caller that needs an engine fact as well asks a predicate that names both, such as
+ * `offersTestDataGeneration` below.
  */
 export function kindAcceptsRowWrites(capabilities: ProviderCapabilities, id: string): boolean {
   return findKind(capabilities, id)?.acceptsRowWrites === true;
+}
+
+/**
+ * Whether the row menus offer Generate Test Data on an object of THIS KIND: the kind accepts
+ * row writes AND the engine declares `supportsTestDataGeneration` (#1468).
+ *
+ * The one question both row menus ask (`src/components/object-tree/row-actions.ts` and
+ * `src/components/schema-explorer/TableItem.tsx`), so the two cannot disagree. The results
+ * grid's `supportsInlineRowEdit` is not part of it: that flag is about an `UPDATE ... SET`,
+ * and the generator writes an `INSERT` or an `insertMany`.
+ */
+export function offersTestDataGeneration(capabilities: ProviderCapabilities, id: string): boolean {
+  return capabilities.supportsTestDataGeneration === true && kindAcceptsRowWrites(capabilities, id);
 }
 
 /**

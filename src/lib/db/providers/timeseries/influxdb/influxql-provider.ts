@@ -216,6 +216,7 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
       supportsExternalQueryLimiting: false,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       // `prepareQuery` applies no offset, so there is no page two.
       supportsResultPagination: false,
       supportsTransactions: false,

@@ -1200,6 +1200,7 @@ stays absent, and that card never renders either.
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — SQL++ has `UPDATE <keyspace> SET ... WHERE ...`, but the shared editor's `WHERE <pk> = <value>` would filter on `__id`, the key **projection alias**, which is not a document field ([§13](#13-known-limitations--future-work)) |
+| `supportsTestDataGeneration` | `false` - a collection takes a document write, but the Generate Test Data dialog's `INSERT INTO ... VALUES` was never measured against SQL++, so the row menus do not offer it (#1468) |
 | `supportsResultPagination` | `true` — SQL++ takes `LIMIT n OFFSET m`, and this provider's `prepareQuery` routes through the shared limiter to emit it (#816) |
 | `supportsTransactions` | `false` — the query service is reached over stateless HTTP and no session spans two requests, so the transaction trio and SANDBOX are not offered (#464) |
 | `declaresForeignKeys` | `false` — SQL++ has no referential constraint; collections are schemaless and the columns reported here are inferred from a document sample |

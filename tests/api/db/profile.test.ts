@@ -807,6 +807,45 @@ describe("POST /api/db/profile", () => {
     expect(byName.name).toMatchObject({ nullCount: 0, distinctCount: 5 });
   });
 
+  // #1456: MongoDB declares no nullability, so a field is empty when it is absent OR `null`.
+  // Only the absent case used to count, and a `null` was also counted as a distinct value.
+  test("MongoDB counts an absent field and an explicit null alike as null", async () => {
+    const mongoProvider = createMockProvider({
+      capabilities: {
+        queryLanguage: "json",
+        containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+      },
+    });
+    const rows = [{ a: 1 }, { a: null }, {}];
+    (mongoProvider.query as ReturnType<typeof mock>).mockImplementation(async (queryStr: string) => {
+      const parsed = JSON.parse(queryStr);
+      if (parsed.operation === "count")
+        return { rows: [{ count: 3 }], fields: ["count"], rowCount: 1, executionTime: 1 };
+      return { rows, fields: ["a"], rowCount: rows.length, executionTime: 1 };
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
+
+    const req = createMockRequest("/api/db/profile", {
+      method: "POST",
+      body: { connection: mongoConnection, tablePath: ["shop", "things"], columns: ["a"] },
+    });
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{
+      columns: { name: string; type: string; nullCount: number; distinctCount: number; sampleValues: string[] }[];
+    }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.columns[0]).toMatchObject({
+      name: "a",
+      type: "number",
+      nullCount: 2,
+      nullPercent: 67,
+      distinctCount: 1,
+    });
+    // The samples still show the explicit null, spelled as the SQL branch spells it.
+    expect(data.columns[0]?.sampleValues).toEqual(["1", "NULL"]);
+  });
+
   test("MongoDB with no column to profile answers 400 and sends nothing", async () => {
     // An empty list would build `$project: {}`, which MongoDB refuses; refused here as the
     // SQL branch refuses it.

@@ -713,6 +713,7 @@ abstract class SearchProvider extends SQLBaseProvider {
       // the inline editor's statement could only ever produce an error. False hides
       // the affordance instead of offering it (#269).
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       // DERIVED, not restated: this is the same fact `prepareQuery` below enforces, and
       // it is the one place the two products differ — OpenSearch SQL takes `OFFSET`,
       // Elasticsearch SQL does not and the override throws. One directory serves two

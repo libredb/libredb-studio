@@ -531,7 +531,7 @@ A direct call of `runMaintenance` is refused with a `QueryError`.
 ### `getCapabilities()` ([`index.ts`](../../src/lib/db/providers/stream/kafka/index.ts))
 
 - `queryLanguage: "json"`, `queryDialect: "kafka"`.
-- `supportsExplain`, `supportsCreateTable`, `supportsTransactions`, `supportsMaintenance`, `supportsInlineRowEdit`, `supportsResultPagination`, `supportsExternalQueryLimiting`, `supportsConnectionString`: all `false`.
+- `supportsExplain`, `supportsCreateTable`, `supportsTransactions`, `supportsMaintenance`, `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsResultPagination`, `supportsExternalQueryLimiting`, `supportsConnectionString`: all `false`.
 - `tablesAreDerivedGroupings: false`: a topic is a relation the broker holds, unlike a Redis key prefix.
 - `declaresForeignKeys: false`, `statementTerminator: "none"`, `defaultPort: 9092`, `containerLevels: []`, `maintenanceOperations: []`, and the three object kinds of [§6.1](#61-the-object-surface-789).
 - `schemaRefreshPattern: "(?!)"`, which matches nothing: no read request changes what the tree shows, and the base class's SQL pattern would reload the whole tree after a read of a topic named like `orders-drop`.

@@ -14,7 +14,7 @@ import { SYNTHETIC_ENTITY_CAPABILITIES } from "../../fixtures/maintenance-entity
  * What one object row may be offered, and why (U22, #789).
  *
  * Every gate here is a DECLARATION: the kind's `role`, the kind's `acceptsRowWrites`, the
- * engine-wide `supportsInlineRowEdit`, and what `maintenanceControl` answers for a single
+ * engine-wide `supportsTestDataGeneration`, and what `maintenanceControl` answers for a single
  * entity. None of them is the kind id and none is the database type id, which is what the
  * old flat menu could not avoid and what `CLAUDE.md` forbids one level up.
  */
@@ -28,6 +28,7 @@ type Model = Partial<
     | "queryDialect"
     | "objectKinds"
     | "supportsInlineRowEdit"
+    | "supportsTestDataGeneration"
     | "supportsCreateTable"
     | "supportsMaintenance"
     | "maintenanceOperations"
@@ -49,6 +50,7 @@ const routine = { id: "function", role: "routine", label: "Function", labelPlura
 const postgres = capabilitiesOf({
   objectKinds: [table, view, routine],
   supportsInlineRowEdit: true,
+  supportsTestDataGeneration: true,
   supportsCreateTable: true,
   supportsMaintenance: true,
   maintenanceOperations: ["vacuum", "analyze"],
@@ -189,22 +191,36 @@ describe("rowActions on an object row", () => {
     ]);
   });
 
-  test("the engine-wide row-edit flag is the other half of the gate, and is not implied by the kind", () => {
-    // Standing ruling 4: `kindAcceptsRowWrites` is deliberately NOT conjoined with
-    // `supportsInlineRowEdit`, because three engines declare the flag false while holding a
-    // kind that does take row writes. A caller that needs both facts writes both, and this
-    // is that caller, so each half is pinned on its own.
-    const noGridEdit = capabilitiesOf({ objectKinds: [table], supportsInlineRowEdit: false });
-    expect(idsFor(objectRow("table"), noGridEdit)).not.toContain("generate-test-data");
+  test("the engine-wide test-data flag is the other half of the gate, and is not implied by the kind", () => {
+    // `kindAcceptsRowWrites` answers for the kind only, and `offersTestDataGeneration` conjoins
+    // it with the engine's own declaration, so each half is pinned on its own.
+    const noGenerator = capabilitiesOf({ objectKinds: [table], supportsTestDataGeneration: false });
+    expect(idsFor(objectRow("table"), noGenerator)).not.toContain("generate-test-data");
 
     const noRowWrites = capabilitiesOf({
       objectKinds: [{ ...table, acceptsRowWrites: false }],
-      supportsInlineRowEdit: true,
+      supportsTestDataGeneration: true,
     });
     expect(idsFor(objectRow("table"), noRowWrites)).not.toContain("generate-test-data");
 
-    const both = capabilitiesOf({ objectKinds: [table], supportsInlineRowEdit: true });
+    const both = capabilitiesOf({ objectKinds: [table], supportsTestDataGeneration: true });
     expect(idsFor(objectRow("table"), both)).toContain("generate-test-data");
+  });
+
+  test("the results grid's row-edit flag no longer decides Generate Test Data, in either direction", () => {
+    // MongoDB-shaped: a collection takes the generator's `insertMany`, and the grid has no
+    // `UPDATE ... SET` to emit (#1468).
+    const mongodb = capabilitiesOf({
+      queryLanguage: "json",
+      objectKinds: [table],
+      supportsInlineRowEdit: false,
+      supportsTestDataGeneration: true,
+    });
+    expect(idsFor(objectRow("table"), mongodb)).toContain("generate-test-data");
+
+    // A writer whose grid edits rows but which does not declare the generator is not offered it.
+    const gridOnly = capabilitiesOf({ objectKinds: [table], supportsInlineRowEdit: true });
+    expect(idsFor(objectRow("table"), gridOnly)).not.toContain("generate-test-data");
   });
 
   test("an action the shell did not hand over is not offered", () => {
@@ -238,7 +254,7 @@ describe("rowActions on an object row", () => {
 
 describe("rowActions and maintenance", () => {
   test("an engine with no maintenance offers no maintenance item", () => {
-    const none = capabilitiesOf({ objectKinds: [table], supportsInlineRowEdit: true });
+    const none = capabilitiesOf({ objectKinds: [table], supportsTestDataGeneration: true });
     expect(idsFor(objectRow("table"), none)).toEqual([
       "generate-select",
       "profile",
@@ -638,6 +654,7 @@ describe("View Source is gated on the kind's declared source, and on nothing els
   const withSourceKinds = capabilitiesOf({
     objectKinds: [sourceTable, view, sourceRoutine, sourceTrigger, sequence],
     supportsInlineRowEdit: true,
+    supportsTestDataGeneration: true,
   });
 
   const objectOf = (kindId: string): DatabaseObject => ({ path: ["app", "x"], name: "x", kind: kindId });

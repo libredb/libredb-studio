@@ -66,6 +66,17 @@ import * as fs from "fs";
 import { isReservedStoragePath } from "@/lib/data-dir";
 import * as path from "path";
 
+/** SQLite's in-memory database name, which LibreDB does not have (#1450). */
+const LIBREDB_MEMORY_NAME = ":memory:";
+
+function isDirectory(dir: string): boolean {
+  try {
+    return fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * LibreDB's identity for the shared container-path renderer.
  *
@@ -370,6 +381,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // (get/put/delete/prefix/range), so there is no `UPDATE ... SET` for the
       // inline row editor to emit (issue #269).
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       // This provider adds no `prepareQuery` override, so it inherits the base one, which
       // ECHOES the requested offset back while applying nothing. A `true` here would be
       // the one silent failure #816 is about: a control whose every click re-reads page one.
@@ -461,6 +473,15 @@ export class LibreDBProvider extends BaseDatabaseProvider {
         "libredb",
       );
     }
+    // SQLite's in-memory name means nothing to LibreDB: `path.resolve()` turned it into a file
+    // literally named `:memory:` in the server's working directory, and Test Connection
+    // answered "Connected successfully" for a store nobody asked for (#1450).
+    if (this.config.database.trim() === LIBREDB_MEMORY_NAME) {
+      throw new DatabaseConfigError(
+        `LibreDB has no in-memory mode: "${LIBREDB_MEMORY_NAME}" would create a file of that name. Give the path of a .libredb file, e.g. /data/app.libredb`,
+        "libredb",
+      );
+    }
   }
 
   /**
@@ -494,6 +515,15 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   public async connect(): Promise<void> {
     this.validate(); // throws DatabaseConfigError if database path is missing
     const dbPath = this.resolveDatabasePath(); // resolves + rejects traversal/null-byte
+    // The kernel opens its `.lock` sidecar first, so a missing directory surfaced as an ENOENT
+    // about a `.lock` file the user never named (#1450). Said in the user's terms instead; the
+    // directory is not created, because a connection setting should not make directories.
+    const directory = path.dirname(dbPath);
+    if (!isDirectory(directory)) {
+      const reason = `The directory ${directory} does not exist. Create it, or choose a file in an existing directory.`;
+      this.setError(new Error(reason));
+      throw new ConnectionError(reason, "libredb");
+    }
     const lib = await loadLibreDB(); // DatabaseConfigError propagates if unavailable
     try {
       this.db = lib.open({ path: dbPath });

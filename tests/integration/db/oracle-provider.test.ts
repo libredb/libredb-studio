@@ -1479,6 +1479,7 @@ describe("OracleProvider", () => {
       // `UPDATE t SET c = v WHERE pk = v` is core Oracle DML — the shape the inline
       // row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
+      expect(caps.supportsTestDataGeneration).toBe(true);
       // `OFFSET m ROWS FETCH NEXT n ROWS ONLY` from this provider's own override; page
       // one is `FETCH FIRST n ROWS ONLY` (#816).
       expect(caps.supportsResultPagination).toBe(true);

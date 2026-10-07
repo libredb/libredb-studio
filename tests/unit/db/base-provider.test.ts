@@ -250,6 +250,9 @@ describe("BaseDatabaseProvider", () => {
       // none and POST /api/db/transaction refuses the call. Only the four providers
       // that hold a session for one declare `true` (#464).
       expect(caps.supportsTransactions).toBe(false);
+      // False too: a subclass that inherits the default has not said its engine takes the
+      // Generate Test Data dialog's rows, so the row menus do not offer it (#1468).
+      expect(caps.supportsTestDataGeneration).toBe(false);
       // Compile-time pin, checked by `bun run typecheck`: `ProviderCapabilities` is
       // published (`src/exports/types.ts`), so a capability added later must be
       // OPTIONAL or every external implementer of the type stops compiling. Omitting
@@ -268,6 +271,7 @@ describe("BaseDatabaseProvider", () => {
       };
       expect(externalImplementer.supportsInlineRowEdit).toBeUndefined();
       expect(externalImplementer.supportsTransactions).toBeUndefined();
+      expect(externalImplementer.supportsTestDataGeneration).toBeUndefined();
       expect(externalImplementer.declaresForeignKeys).toBeUndefined();
       // The conservative default for `containerPathShapes` lives in the kernel reader and never in a
       // base declaration: absent here, so every provider that declares a value declares it itself,

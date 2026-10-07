@@ -20,6 +20,7 @@
 
 import type { GraphPolicyProfile } from "../profile";
 import { CYPHER_KEYWORDS, CypherLexError, type CypherLexErrorReason, type CypherToken, lexCypher } from "./lexer";
+import { cypherUnicodeEscapeIn } from "./quote";
 import { type CypherStatement, splitCypherStatements } from "./statements";
 
 export type CypherRefusalCode =
@@ -66,9 +67,6 @@ const LEX_REASONS: Record<CypherLexErrorReason, string> = {
   "unexpected-character": "unexpected character",
 };
 
-/** A backslash-u at the end of an odd run of backslashes; the group is the escaping backslash and its u. */
-const UNICODE_ESCAPE = /(?<!\\)(?:\\\\)*(\\u)/;
-
 /** The words that end a SHOW form: the clauses that may follow any allowed form. */
 const SHOW_CLAUSE_WORDS: ReadonlySet<string> = new Set(["YIELD", "WHERE", "RETURN", "ORDER", "SKIP", "LIMIT"]);
 
@@ -113,10 +111,10 @@ export function checkCypherRead(text: string, profile: GraphPolicyProfile): Cyph
     refusal: { code, subject, message, ...(position === undefined ? {} : { position }) },
   });
 
-  const escape = UNICODE_ESCAPE.exec(text);
-  if (escape !== null) {
-    const position = escape.index + escape[0].length - 2;
-    const subject = text.slice(position, position + 6);
+  // The pattern lives with the quoting, so a name `quoteCypherName` accepts never holds an escape refused here.
+  const escape = cypherUnicodeEscapeIn(text);
+  if (escape !== undefined) {
+    const { position, escape: subject } = escape;
     return refuse(
       "unicode-escape",
       subject,

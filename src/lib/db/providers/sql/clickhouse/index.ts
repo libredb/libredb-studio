@@ -536,6 +536,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
       // `ALTER TABLE t UPDATE c = v WHERE ...`, an asynchronous mutation rather
       // than a statement the shared hook can emit, so the control is hidden here.
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       // `LIMIT n OFFSET m` from the shared limiter. A statement whose end the limiter
       // declines to rewrite - a trailing `FORMAT` or `SETTINGS` clause - comes back with
       // `wasLimited: false`, and the route's `hasMore` requires that, so those statements

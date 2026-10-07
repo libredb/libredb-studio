@@ -3,12 +3,13 @@
  * docker-build-push.yml, and scripts/stage-caprover-catalog.sh.
  *
  * Why a test for YAML: the workflow holds a personal access token that can push
- * to libredb/one-click-apps, and what matters is in its wiring. It must never
- * open the pull request (the catalog's maintainer keeps version bumps manual,
- * caprover/one-click-apps#1334, so a member opens it after testing), it must
- * run the catalog's own npm tooling only in the job that holds no secret, it
- * must do what update.fork in distribution/channels.yaml allows and no more,
- * and it must never push over a branch someone changed by hand.
+ * to libredb/caprover-one-click-apps, and what matters is in its wiring. It
+ * must never open the pull request (the catalog's maintainer keeps version
+ * bumps manual, caprover/one-click-apps#1334, so a member opens it after
+ * testing), it must run the catalog's own npm tooling only in the job that
+ * holds no secret, it must do what update.fork in distribution/channels.yaml
+ * allows and no more, and it must never push over a branch someone changed by
+ * hand.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -63,7 +64,7 @@ describe("the CapRover catalog fork workflow", () => {
     expect(workflow.permissions).toEqual({ contents: "read" });
     expect(workflow.concurrency?.group).toContain("github.ref");
     expect(workflow.concurrency?.["cancel-in-progress"]).toBe(false);
-    expect(workflow.env).toEqual({ UPSTREAM: "caprover/one-click-apps", FORK: "libredb/one-click-apps" });
+    expect(workflow.env).toEqual({ UPSTREAM: "caprover/one-click-apps", FORK: "libredb/caprover-one-click-apps" });
   });
 
   test("never opens a pull request", () => {
@@ -152,6 +153,14 @@ describe("the CapRover catalog fork workflow", () => {
     expect(ensure?.run).toContain('"$MODE" != "create_or_update"');
     expect(ensure?.run).toContain("HTTP 404");
     expect(ensure?.run).toContain(".parent.full_name");
+  });
+
+  // GitHub names a new fork after its upstream unless the request names it, and
+  // the fork is not called one-click-apps, so without the name the run would
+  // create libredb/one-click-apps and then wait for a fork that never appears.
+  test("creates a missing fork under the fork's own name", () => {
+    const ensure = stepRunning(push, /\/forks/);
+    expect(ensure?.run).toContain('-f name="${FORK##*/}"');
   });
 
   // GitHub answers the fork request at once and copies the git data after.

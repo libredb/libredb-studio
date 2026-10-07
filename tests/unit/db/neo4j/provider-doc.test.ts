@@ -21,7 +21,8 @@ import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { type GraphClient, GraphClientError, type GraphRunResult } from "@/lib/db/graph/bolt/client";
 import { MAX_CELL_DEPTH, MAX_CELL_JSON_BYTES } from "@/lib/db/graph/bolt/record-values";
 import { boltEndpointOf } from "@/lib/db/graph/bolt/uri";
-import { GRAPH_SAMPLE_LIMIT } from "@/lib/db/graph/cypher/generators";
+import { GRAPH_SAMPLE_LIMIT, cypherSelectLabel } from "@/lib/db/graph/cypher/generators";
+import { CYPHER_UNICODE_ESCAPE, CypherNameError } from "@/lib/db/graph/cypher/quote";
 import { checkCypherRead } from "@/lib/db/graph/cypher/read-policy";
 import { type ResultGraph, buildResultGraph, captionOf } from "@/lib/db/graph/result-graph";
 import { GRAPH_TAG } from "@/lib/db/graph/values";
@@ -633,6 +634,17 @@ describe("docs/providers/neo4j.md sections 6 and 7 quote the statements the cata
     const labels = neo4jLabels();
     expect(MONITORING).toContain(`"${labels.slowQueriesEmptyState}"`);
     expect(MONITORING).toContain(`"${labels.sessionsEmptyState}"`);
+  });
+
+  test("an object whose name holds a unicode escape is listed but cannot be opened (#1295)", () => {
+    const example = String.raw`Caf\u00e9`;
+    expect(SCHEMA).toContain(
+      `An object whose name holds a unicode escape, a backslash then \`u\` at the end of an odd run of backslashes, such as \`${example}\`, is listed but cannot be opened: the quoting refuses the name with the read policy's own pattern, \`CYPHER_UNICODE_ESCAPE\`,`,
+    );
+    expect(CYPHER_UNICODE_ESCAPE.test(example)).toBe(true);
+    expect(() => cypherSelectLabel(example)).toThrow(CypherNameError);
+    expect(() => cypherSelectLabel(example)).toThrow("cannot be written as a Cypher identifier");
+    expect(LIMITS).toContain("such a label or relationship type is listed but cannot be opened");
   });
 
   test("a label is never a source: the provider writes no readObjectSource", () => {

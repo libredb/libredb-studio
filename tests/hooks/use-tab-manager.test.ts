@@ -4,7 +4,7 @@ import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { renderHook, act, waitFor } from "@testing-library/react";
 
 // Shared mocks — process-wide singletons (no contamination)
-import { mockToastDefault, mockToastDismiss } from "../helpers/mock-sonner";
+import { mockToastDefault, mockToastDismiss, mockToastError } from "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
 
 import { useTabManager, PREVIEW_PAGE_SIZE } from "@/hooks/use-tab-manager";
@@ -13,6 +13,8 @@ import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
+import { graphObjectSegment } from "@/lib/db/graph/objects";
 import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
 import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
@@ -1636,6 +1638,81 @@ describe("useTabManager on an etcd connection (#1089)", () => {
 // ============================================================================
 // The click path is addressed by PATH (#789, Task 30)
 // ============================================================================
+
+describe("useTabManager on a Neo4j connection refuses a name the Cypher quoting refuses (#1295)", () => {
+  // The real provider's declaration; its constructor opens no connection.
+  const neo4jProvider = new Neo4jProvider(makeConnection({ type: "neo4j", port: 7687, database: "neo4j" }));
+  const neo4jMetadata: ProviderMetadata = {
+    capabilities: neo4jProvider.getCapabilities(),
+    labels: neo4jProvider.getLabels(),
+  };
+  // A label whose name is the literal text Caf\u00e9, the backslash and the u as written.
+  const escapedLabel = ["neo4j", graphObjectSegment("label", String.raw`Caf\u00e9`)];
+  const plainLabel = ["neo4j", graphObjectSegment("label", "Person")];
+  const firstToastErrorText = () => String((mockToastError.mock.calls[0] as unknown[])[0]);
+
+  const hook = () =>
+    renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ type: "neo4j", port: 7687, database: "neo4j" }),
+        metadata: neo4jMetadata,
+        schema: [],
+      }),
+    );
+
+  beforeEach(() => {
+    localStorage.clear();
+    mockToastDefault.mockClear();
+    mockToastError.mockClear();
+  });
+
+  test("a click on the label opens no tab, runs nothing, and one toast carries the name refusal", async () => {
+    const executeFn = mock(() => {});
+    const { result } = hook();
+
+    act(() => {
+      result.current.handleTableClick(escapedLabel, executeFn);
+    });
+
+    expect(result.current.tabs).toHaveLength(1);
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+    expect(firstToastErrorText()).toContain("cannot be written as a Cypher identifier");
+    expect(mockToastDefault).not.toHaveBeenCalled();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(executeFn).not.toHaveBeenCalled();
+  });
+
+  test("Generate on the label opens no tab, and one toast carries the name refusal", () => {
+    const { result } = hook();
+
+    act(() => {
+      result.current.handleGenerateSelect(escapedLabel);
+    });
+
+    expect(result.current.tabs).toHaveLength(1);
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+    expect(firstToastErrorText()).toContain("cannot be written as a Cypher identifier");
+  });
+
+  test("a label the quoting accepts still opens its tab, with no toast", () => {
+    const { result } = hook();
+
+    act(() => {
+      result.current.handleTableClick(
+        plainLabel,
+        mock(() => {}),
+      );
+      result.current.handleGenerateSelect(plainLabel);
+    });
+
+    expect(result.current.tabs.map((tab) => tab.query)).toEqual([
+      "",
+      "MATCH (n:`Person`) RETURN n LIMIT 100",
+      "MATCH (n:`Person`) RETURN n LIMIT 100",
+    ]);
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+});
 
 describe("useTabManager addresses an object by its path", () => {
   /**

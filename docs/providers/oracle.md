@@ -914,6 +914,7 @@ about which fields of the `Date` are the value:
 | `TIMESTAMP WITH TIME ZONE`, `TIMESTAMP WITH LOCAL TIME ZONE` | `FROM_TZ(TO_TIMESTAMP('2026-08-24 17:11:12.345', 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC')` — the **UTC** instant |
 | `DATE`, holding the provider's text (#1131) | `TO_DATE('2026-09-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS')`, the **text** itself |
 | `TIMESTAMP` or `TIMESTAMP(n)`, holding the provider's text (#1131) | `TO_TIMESTAMP('2026-09-01 10:30:00.345', 'YYYY-MM-DD HH24:MI:SS.FF')`, the **text** itself, `.FF` only when it has a fraction |
+| `TIMESTAMP[(n)] WITH [LOCAL] TIME ZONE`, holding a `Date`'s ISO text, as over HTTP (#1224) | `FROM_TZ(TO_TIMESTAMP('2026-08-24 17:11:12.345', 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC')`, the **same literal** the `Date` of that instant gets |
 
 - **The provider's own text for a naive column (#1131).** The provider reads a `DATE` and a `TIMESTAMP`
   as their wall clock ([§5.3](#a-date-and-a-timestamp-read-as-the-stored-wall-clock-in-every-server-time-zone-1131)),
@@ -926,7 +927,29 @@ about which fields of the `Date` are the value:
     text, and converting it would store the NLS rendering of a timestamp in its place.
   - A value not in that form, a `DATE` text with a fraction included.
 
-  So the `Date` rows above now apply only to a host that builds its rows itself.
+  So the naive `Date` rows above now apply only to a host that builds its rows itself.
+- **A zoned column's ISO text, over HTTP (#1224).** The provider leaves `TIMESTAMP WITH TIME ZONE` and
+  `WITH LOCAL TIME ZONE` as the driver's `Date`, so in-process the export gets the zoned `Date` row
+  above. Over HTTP the row has been through JSON (`POST /api/db/query`), and the cell is that `Date`'s
+  `toISOString` text, `2026-09-01T07:30:00.000Z`. Quoted, Oracle reads it through the session's
+  `NLS_TIMESTAMP_TZ_FORMAT` and refuses it: `ORA-01843: An invalid month was specified`. So for a
+  column declared `TIMESTAMP[(n)] WITH [LOCAL] TIME ZONE`, text in exactly that form
+  (`YYYY-MM-DDTHH:MM:SS.sssZ`) is parsed back to its `Date` and written by the same code as the `Date`,
+  but only when that `Date` writes the same text back. The literal is built from the parsed fields,
+  never from the text. The live script ([§12.4](#124-optional-verifying-against-a-live-oracle)) replays
+  both zoned types this way under `Europe/Istanbul`, and the server calls every row equal. Three things
+  stay quoted as text:
+  - The same text in a column not declared a zoned timestamp: `TIMESTAMP`, `DATE`, `VARCHAR2`, or no
+    declared type.
+  - Other text in a zoned column: `+00:00` in place of `Z`, no fraction or more than three digits of
+    one, a space in place of `T`, and text that has the form but is not what `toISOString` writes for
+    any instant, such as `2026-02-30T00:00:00.000Z` or `T24:00:00.000Z`.
+  - A year outside 0000–9999, which `toISOString` writes with a sign and six digits
+    (`-000044-03-15T10:30:00.000Z`, `+012026-…`). Oracle has no year after 9999, and a BC instant does
+    not replay through the `Date` path either: measured, its literal is
+    `FROM_TZ(TO_TIMESTAMP('0-44-03-15 10:30:00.000', …), 'UTC')`, refused with `ORA-01843`. So that
+    text stays quoted, and Oracle still refuses it (`ORA-01847`), rather than take a literal the `Date`
+    of the same instant does not get.
 - **Local fields for a naive column**, because that is the inverse of what the driver did: it built
   the `Date` by reading the stored wall clock in the *Node process's* zone. Measured above, a `DATE`
   holding `2026-08-24 10:11:12` arrives as `2026-08-24T07:11:12.000Z` from a process at `+03:00`, so
@@ -2136,6 +2159,7 @@ is what lets the Operations tab render those words and send an operation Oracle 
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core Oracle DML |
+| `supportsTestDataGeneration` | `true` - the row menus offer Generate Test Data on tables, which writes one multi-row `INSERT INTO ... VALUES` |
 | `supportsResultPagination` | `true` — `OFFSET m ROWS FETCH NEXT n ROWS ONLY` from this provider's own `prepareQuery` override; page one is `FETCH FIRST n ROWS ONLY` (#816) |
 | `supportsTransactions` | `true` — Oracle is always in a transaction and the held connection commits or rolls back, so the trio and the SANDBOX toggle are offered (#464) |
 | `implicitCommitStatements` | `ALTER`, `ANALYZE`, `ASSOCIATE`, `AUDIT`, `COMMENT`, `CREATE`, `DISASSOCIATE`, `DROP`, `FLASHBACK`, `GRANT`, `NOAUDIT`, `PURGE`, `RENAME`, `REVOKE`, `TRUNCATE`: Oracle's DDL, which "implicitly commits the current transaction before and after every DDL statement" (SQL Language Reference, "Types of SQL Statements"). Plus `BEGIN`, `DECLARE` and `CALL`: a PL/SQL block or a procedure can commit through `EXECUTE IMMEDIATE` or its own `COMMIT`. SANDBOX refuses all of these before sending, because a `ROLLBACK` after one answers success and can undo nothing, and this provider reads no transaction state back from the server to notice afterwards, so the declaration is the only guard here. `COMMIT`, `ROLLBACK` and `ABORT` are refused on every engine |
@@ -2276,7 +2300,8 @@ the `DATE`/`TIMESTAMP` reading against the server itself. It reads a throwaway t
 provider under `UTC`, `Europe/Istanbul` and `America/Los_Angeles` AND as the server's own `TO_CHAR`,
 and requires the two to agree. It also checks that `TIMESTAMP WITH TIME ZONE` stays an instant, that
 the raw driver value is still the shifted `Date` the conversion compensates for, and that the SQL
-INSERT export of the read replays to values the server calls equal. Supply the password configured on
+INSERT export of the read, put through JSON as over HTTP, replays to values the server calls equal,
+`TIMESTAMP WITH TIME ZONE` and `WITH LOCAL TIME ZONE` included (#1224). Supply the password configured on
 the container:
 
 ```bash

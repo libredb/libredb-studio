@@ -17,7 +17,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { kindAcceptsRowWrites } from "@/lib/db/object-kinds";
+import { offersTestDataGeneration } from "@/lib/db/object-kinds";
 import {
   declaredEntityOperations,
   maintenanceControl,
@@ -114,18 +114,15 @@ function renderMenuItems({
   // `src/components/object-tree/row-actions.ts`, so the two menus cannot disagree about
   // what a provider declared (#1085, decision D-M). Profile needs a language
   // `POST /api/db/profile` can profile as well as an addressable row. Generate Code needs a
-  // language whose columns model a stored record. Generate Test Data writes rows, so it needs
-  // both row-write facts: the row's KIND accepts row writes, and the engine takes the grid's
-  // row edit. This menu used to ask only the grouping flag for it, which offered the
-  // generator on every view and on every engine the tree withholds it from. Unknown
+  // language whose columns model a stored record. Generate Test Data writes rows, so it asks
+  // `offersTestDataGeneration`: the row's KIND accepts row writes, and the engine declares
+  // `supportsTestDataGeneration` (#1468). This menu used to ask only the grouping flag for it,
+  // which offered the generator on every view and on every engine the tree withholds it from. Unknown
   // capabilities offer none of the three: `/api/db/provider-meta` answers with nothing both
   // while it is in flight and when it failed.
   const offersProfile = rowsAreAddressable && offersColumnProfiling(capabilities);
   const offersCode = offersCodeGeneration(capabilities);
-  const offersTestData =
-    capabilities !== undefined &&
-    kindAcceptsRowWrites(capabilities, table.kind) &&
-    capabilities.supportsInlineRowEdit === true;
+  const offersTestData = capabilities !== undefined && offersTestDataGeneration(capabilities, table.kind);
 
   // The SAME question the monitoring Tables tab and the admin Operations tab ask, so
   // that three surfaces cannot disagree about what a provider declared (#496). Gating

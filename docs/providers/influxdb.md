@@ -471,6 +471,7 @@ None: InfluxDB compacts its own storage and keeps no statistics to update.
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` |
+| `supportsTestDataGeneration` | `false` |
 | `supportsResultPagination` | `false` |
 | `supportsTransactions` | `false` |
 | `declaresForeignKeys` | `false` |

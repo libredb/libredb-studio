@@ -1442,6 +1442,7 @@ rather than silent.
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — a bare `UPDATE ... SET` is code `48` `NOT_IMPLEMENTED` here ([§13](#13-known-limitations--future-work)) |
+| `supportsTestDataGeneration` | `false` - no kind here declares a row write, so the row menus would not offer Generate Test Data either way |
 | `supportsResultPagination` | `true` — `LIMIT n OFFSET m` from the shared limiter. A statement ending in `FORMAT` or `SETTINGS` comes back `wasLimited: false` and is therefore offered no Load More, which is the intended answer and needs no branch of its own (#816) |
 | `supportsTransactions` | `false` — reached over stateless HTTP, and ClickHouse has no general transaction to wrap anyway, so the trio and SANDBOX are not offered (#464) |
 | `declaresForeignKeys` | `false` — `REFERENCES` parses in a column definition and enforces nothing, and `system.*` holds no constraint catalog to read one back from |

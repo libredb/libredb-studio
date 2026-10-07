@@ -947,10 +947,12 @@ const OVERVIEW_DATABASE_SIZE_SQL = `
         WHERE TABLE_SCHEMA = ?;
       `;
 
-const OVERVIEW_OBJECT_COUNTS_SQL = `
-        SELECT
-          COUNT(DISTINCT TABLE_NAME) as table_count,
-          COUNT(DISTINCT INDEX_NAME) as index_count
+// INDEX_NAME is unique per table only, so a database-wide COUNT(DISTINCT INDEX_NAME)
+// collapses every table's PRIMARY (and any other index name two tables share) into
+// one. Counting distinct (TABLE_NAME, INDEX_NAME) pairs instead counts each table's
+// indexes separately, which is what "N indexes" in the overview means.
+const OVERVIEW_INDEX_COUNT_SQL = `
+        SELECT COUNT(DISTINCT TABLE_NAME, INDEX_NAME) as index_count
         FROM information_schema.STATISTICS
         WHERE TABLE_SCHEMA = ?;
       `;
@@ -1115,15 +1117,29 @@ const SELF_IDENTIFYING_VERSION = /mariadb|tidb|vitess|oceanbase/i;
 const DORIS_VERSION_COMMENT = /doris version (?:doris-)?(\S+)/i;
 
 /**
+ * Percona Server for MySQL answers `VERSION()` with a bare MySQL-style number
+ * (`8.4.11-11`) and keeps its name in `@@version_comment`:
+ * `"Percona Server (GPL), Release 11"`, measured against
+ * `percona/percona-server:latest` 8.4.11-11. Anchored at the start, because
+ * MySQL's own comment ("MySQL Community Server - GPL") and MariaDB's
+ * ("mariadb.org binary distribution") must not match (#1444).
+ */
+const PERCONA_VERSION_COMMENT = /^Percona Server\b/i;
+
+/**
  * How the overview names the server: the string as the server gave it when
  * that already names a vendor, Doris's own build string extracted from
  * `@@version_comment` when the fictitious `VERSION()` number is the only
- * other option, `MySQL <version>` otherwise.
+ * other option, `Percona Server <version>` when `@@version_comment` names
+ * Percona, `MySQL <version>` otherwise.
  */
 function labelServerVersion(version: string, versionComment?: string): string {
   if (SELF_IDENTIFYING_VERSION.test(version)) return version;
   const doris = versionComment?.match(DORIS_VERSION_COMMENT);
   if (doris) return `Apache Doris ${doris[1]}`;
+  if (versionComment !== undefined && PERCONA_VERSION_COMMENT.test(versionComment)) {
+    return `Percona Server ${version}`;
+  }
   return `MySQL ${version}`;
 }
 
@@ -2777,6 +2793,8 @@ export class MySQLProvider extends SQLBaseProvider {
       ...(this.measuredExplainFormat === undefined ? {} : { explainFormat: this.measuredExplainFormat }),
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
+      // The Generate Test Data dialog's multi-row `INSERT INTO ... VALUES` (#1468).
+      supportsTestDataGeneration: true,
       // `LIMIT n OFFSET m`, applied by the shared limiter in `SQLBaseProvider.prepareQuery`.
       supportsResultPagination: true,
       // BEGIN over one held connection (`beginTransaction()` below).
@@ -4046,7 +4064,7 @@ export class MySQLProvider extends SQLBaseProvider {
       const databaseSize = databaseSizeBytes === undefined ? "N/A" : formatBytes(databaseSizeBytes);
 
       // Get table and index count
-      const [countRows] = await runStatement(conn, OVERVIEW_OBJECT_COUNTS_SQL, [this.config.database]);
+      const [countRows] = await runStatement(conn, OVERVIEW_INDEX_COUNT_SQL, [this.config.database]);
 
       const [tableCountRows] = await runStatement(conn, OVERVIEW_TABLE_COUNT_SQL, [this.config.database]);
 

@@ -31,6 +31,7 @@
 </p>
 <p align="center">
   同时列入
+  <a href="https://planet.mysql.com/showcase/?search=LibreDB">MySQL</a>、
   <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>、
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>、
   <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>、
@@ -38,6 +39,7 @@
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>、
   <a href="https://docs.yugabyte.com/stable/integrations/tools/libredb-studio/">YugabyteDB</a>、
   <a href="https://www.dragonflydb.io/docs/integrations/libredb-studio">DragonflyDB</a>、
+  <a href="https://microsoft.github.io/garnet/docs/welcome/compatibility#gui-tools">Garnet</a>、
   <a href="https://opensearch.org/community-projects/#:~:text=LibreDB%20Studio">OpenSearch</a>、
   <a href="https://duckdb.org/docs/preview/guides/sql_editors/libredb_studio">DuckDB</a>、
   <a href="https://docs.starrocks.io/docs/integrations/IDE_integrations/LibreDB_Studio/">StarRocks</a>、
@@ -705,7 +707,7 @@ LibreDB Studio 已发布在官方 [CapRover One-Click Apps](https://github.com/c
 
 1. **打开你的 CapRover 面板** → **Apps → One-Click Apps/Databases**
 2. **搜索** **LibreDB Studio**
-3. **填写变量**（管理员/用户凭据、`JWT_SECRET`，以及可选的 AI/存储设置）
+3. **填写变量**（管理员/用户凭据，以及可选的 AI 设置）
 4. **部署！**
 
 应用运行预构建的 `ghcr.io/libredb/libredb-studio` 镜像。与 Railway 一样，Docker 镜像模板每次发版都需要手动升版本号。

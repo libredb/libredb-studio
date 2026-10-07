@@ -5,7 +5,12 @@
  */
 import { describe, expect, test } from "bun:test";
 import { lexCypher } from "@/lib/db/graph/cypher/lexer";
-import { CypherNameError, quoteCypherName, quoteCypherString } from "@/lib/db/graph/cypher/quote";
+import {
+  CypherNameError,
+  cypherUnicodeEscapeIn,
+  quoteCypherName,
+  quoteCypherString,
+} from "@/lib/db/graph/cypher/quote";
 import { CYPHER_CORPUS } from "../../../fixtures/graph/cypher-corpus";
 
 function nameErrorOf(name: string): CypherNameError {
@@ -23,8 +28,8 @@ const corpusTokens = CYPHER_CORPUS.flatMap((corpusCase) => lexCypher(corpusCase.
 const corpusNames = corpusTokens
   .filter((token) => token.kind === "word" || token.kind === "backtick")
   .map((token) => (token.kind === "word" ? token.text : token.value))
-  // The corpus spells the escape backslash-u0060 inside backtick names to test the read policy, and quoting refuses it.
-  .filter((name) => !/\\u0060/i.test(name));
+  // The corpus spells unicode escapes inside backtick names to test the read policy, and quoting refuses them.
+  .filter((name) => cypherUnicodeEscapeIn(name) === undefined);
 const corpusStrings = corpusTokens.filter((token) => token.kind === "string").map((token) => token.value);
 
 const NAME_SAMPLES: readonly string[] = [
@@ -43,8 +48,11 @@ const NAME_SAMPLES: readonly string[] = [
   "a;b",
   "a'b\"c",
   "a\\b",
-  "\\u0061",
-  "\\u006",
+  "\\\\u0061",
+  "a\\\\\\\\u0060b",
+  "\\U0061",
+  "\\U0060",
+  "u0060",
   "\\x60",
   "/* not a comment */",
   "// nor this",
@@ -110,18 +118,31 @@ describe("quoteCypherName", () => {
     expect(nameErrorOf("line\nbreak").message).toContain("control character");
   });
 
-  test("refuses a backslash-u0060 escape sequence in any case, anywhere in the name", () => {
-    for (const name of ["\\u0060", "a\\u0060b", "\\U0060", "x\\u0060", "\\u0060\\u0060"]) {
+  test("refuses a unicode escape, a backslash-u ending an odd run of backslashes, anywhere in the name", () => {
+    const refused: readonly [string, string][] = [
+      ["\\u0060", "\\u0060"],
+      ["a\\u0060b", "\\u0060"],
+      ["x\\u0060", "\\u0060"],
+      ["\\u0060\\u0060", "\\u0060"],
+      // The server would read this name as `a`: it is refused like the backtick, not quoted as written (#1295).
+      ["\\u0061", "\\u0061"],
+      ["Caf\\u00e9", "\\u00e9"],
+      ["\\u006", "\\u006"],
+      ["\\\\\\u0061", "\\u0061"],
+    ];
+    for (const [name, escape] of refused) {
       const error = nameErrorOf(name);
       expect(error.name_).toBe(name);
-      expect(error.message).toContain("\\u0060");
+      expect(error.message).toContain(`it holds the escape ${escape}, which the server decodes`);
     }
   });
 
-  test("accepts near misses of the escape sequence", () => {
-    expect(quoteCypherName("\\u0061")).toBe("`\\u0061`");
+  test("accepts an even run of backslashes before u, an upper-case U, and a u with no backslash", () => {
+    expect(quoteCypherName("\\\\u0061")).toBe("`\\\\u0061`");
+    expect(quoteCypherName("a\\\\\\\\u0060b")).toBe("`a\\\\\\\\u0060b`");
+    expect(quoteCypherName("\\U0061")).toBe("`\\U0061`");
+    expect(quoteCypherName("\\U0060")).toBe("`\\U0060`");
     expect(quoteCypherName("u0060")).toBe("`u0060`");
-    expect(quoteCypherName("\\u006")).toBe("`\\u006`");
   });
 
   test("round trip: every accepted sample lexes to one backtick token whose value is the name", () => {

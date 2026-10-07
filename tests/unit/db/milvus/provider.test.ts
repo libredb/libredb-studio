@@ -111,6 +111,7 @@ describe("the declarations, with no client", () => {
       supportsCreateTable: false,
       supportsTransactions: false,
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       supportsResultPagination: false,
       supportsExternalQueryLimiting: false,
       supportsConnectionString: false,

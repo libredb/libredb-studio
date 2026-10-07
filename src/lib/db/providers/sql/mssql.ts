@@ -1579,6 +1579,8 @@ export class MSSQLProvider extends SQLBaseProvider {
       supportsExplain: false,
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
+      // The Generate Test Data dialog's multi-row `INSERT INTO ... VALUES` (#1468).
+      supportsTestDataGeneration: true,
       // `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, built by this provider's own
       // `prepareQuery` override. Page one is `SELECT TOP n`, so the two pages are
       // structurally different statements, and page two carries the `ORDER BY (SELECT

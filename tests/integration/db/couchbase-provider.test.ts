@@ -297,6 +297,7 @@ describe("CouchbaseProvider metadata", () => {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       // SQL++ takes `LIMIT n OFFSET m`, and this provider's `prepareQuery` routes
       // through the shared limiter to emit it (#816).
       supportsResultPagination: true,

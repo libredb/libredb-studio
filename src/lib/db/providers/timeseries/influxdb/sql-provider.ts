@@ -228,6 +228,7 @@ export class InfluxDB3Provider extends SQLBaseProvider {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       supportsResultPagination: true,
       supportsTransactions: false,
       declaresForeignKeys: false,

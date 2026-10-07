@@ -284,6 +284,38 @@ Appending after the trivia instead put the bound **inside** a trailing line comm
 the statement unbounded while the badge reported it as capped, and the re-appended `;` ended up
 inside the comment as well.
 
+#### Clauses that must follow the bound
+
+Some dialects have a clause that is written **after** the row bound and refused before it
+(#1398). The dialect grammar declares them — `AS OF [AT LEAST] <t>` for Materialize's
+`postgres` route, `ALLOW FILTERING`, `BYPASS CACHE` and `USING TIMEOUT <duration>` for the
+`cassandra` type-id (Apache Cassandra and ScyllaDB) — and the bound is placed **before** the
+declared run, which is re-attached verbatim:
+
+| Statement | Emitted SQL |
+|-----------|-------------|
+| `SELECT * FROM ui_mv AS OF AT LEAST 0` (Materialize) | `SELECT * FROM ui_mv LIMIT 500 AS OF AT LEAST 0` |
+| `SELECT * FROM t BYPASS CACHE` (ScyllaDB) | `SELECT * FROM t LIMIT 500 BYPASS CACHE` |
+| `SELECT * FROM t USING TIMEOUT 5s` (ScyllaDB) | `SELECT * FROM t LIMIT 500 USING TIMEOUT 5s` |
+| `SELECT * FROM t ALLOW FILTERING` (CQL) | `SELECT * FROM t LIMIT 500 ALLOW FILTERING` |
+| `SELECT * FROM t -- note` ⏎ `ALLOW FILTERING` (CQL) | `SELECT * FROM t LIMIT 500 -- note` ⏎ `ALLOW FILTERING` |
+
+A comment the writer put between the code and the clause stays between the bound and
+the clause, its own closing newline kept, so the bound is written in code rather than
+inside the comment - and a commented-out bound behind one (`-- LIMIT 5` ⏎
+`ALLOW FILTERING`) does not answer for the statement.
+
+The same reading answers "is this statement already bounded": `LIMIT 10 BYPASS CACHE` is an
+existing bound followed by a declared clause, so it is detected, honoured and never doubled. On
+the old path it read as unbounded — the bound was not at the end — and a second one was appended,
+which the engine refuses.
+
+A dialect with no declared clause keeps today's answer for its words: the bound is appended after
+them and the engine refuses the statement, which it refused before the bound was there too. The
+clause patterns accept word-runs, a number, a single-quoted literal or one bare token as the
+argument, so a clause-shaped run inside a literal (`… WHERE note = 'BYPASS CACHE'`) and an alias
+followed by statement text (`SELECT a AS of FROM t`) do not read as the clause.
+
 The same reading of the end answers "is this statement already bounded". The `LIMIT n`,
 `FETCH FIRST n ROWS ONLY` and `OFFSET n` probes are anchored at the end of the **statement**
 (`src/lib/sql/statement-end.ts`), so:

@@ -43,6 +43,7 @@ const oneLevel = {
     ],
   }),
   supportsInlineRowEdit: true,
+  supportsTestDataGeneration: true,
   supportsCreateTable: true,
 } as ProviderCapabilities;
 

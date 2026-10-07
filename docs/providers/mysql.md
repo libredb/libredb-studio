@@ -61,7 +61,11 @@ answer with a plain MySQL number and give nothing to key on. Apache Doris is the
 (a fixed `5.7.99`), but it does put its real build in `@@version_comment`
 (`doris version doris-4.1.3-rc02-7126cf65d96`), which the same query now reads alongside `VERSION()`,
 so `labelServerVersion()` shows `Apache Doris 4.1.3-rc02-7126cf65d96` there instead of the fictitious
-number.
+number. Percona Server for MySQL answers `VERSION()` with a bare `8.4.11-11` and names itself only in
+`@@version_comment` (`Percona Server (GPL), Release 11`, measured on `percona/percona-server:latest`),
+so a comment starting with `Percona Server` labels it `Percona Server 8.4.11-11` (#1444); MySQL's own
+comment (`MySQL Community Server - GPL`) and MariaDB's (`mariadb.org binary distribution`) do not
+match.
 
 **`performance_schema` is OFF by default on MariaDB.** Measured on `mariadb:12.3`
 (`@@performance_schema` = 0, build `12.3.2-MariaDB-ubu2404`): the `performance_schema` tables exist,
@@ -2214,6 +2218,7 @@ gated on the literal `vacuum`, so MySQL's own wording was written and never show
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core MySQL DML |
+| `supportsTestDataGeneration` | `true` - the row menus offer Generate Test Data on tables, which writes one multi-row `INSERT INTO ... VALUES` |
 | `supportsResultPagination` | `true` — `LIMIT n OFFSET m` from the shared limiter (#816) |
 | `supportsTransactions` | `true`: the transaction runs on one held connection opened with `BEGIN` ([§6.0.1](#601-servers-that-report-no-transaction-state)), so the trio and the SANDBOX toggle are offered (#464) |
 | `implicitCommitStatements` | `ALTER`, `ANALYZE`, `BEGIN`, `CACHE`, `CHANGE`, `CHECK`, `CREATE`, `DROP`, `FLUSH`, `GRANT`, `INSTALL`, `LOCK`, `OPTIMIZE`, `RENAME`, `REPAIR`, `RESET`, `REVOKE`, `START`, `STOP`, `TRUNCATE`, `UNINSTALL`, `UNLOCK`: the statements MySQL commits implicitly, which SANDBOX refuses before sending ([§6.0](#60-what-the-server-says-about-the-transaction)) |

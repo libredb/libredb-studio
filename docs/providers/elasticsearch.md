@@ -1403,6 +1403,7 @@ refusal are the same value and cannot drift apart.
 | `supportsExternalQueryLimiting` | `true` | `LIMIT n` is correct here; the one form that is not is refused by `prepareQuery()` ([§5.5](#55-the-preparequery-override-there-is-no-second-page)) |
 | `supportsCreateTable` | **`false`** | Not in the grammar ([§5.6](#56-this-grammar-does-not-write)) |
 | `supportsInlineRowEdit` | **`false`** | `UPDATE` is not in the grammar, so the editor's statement could only ever produce an error (#269) |
+| `supportsTestDataGeneration` | **`false`** | An index takes a bulk document write, but the Generate Test Data dialog writes a SQL `INSERT`, which is not in the grammar either, so the row menus do not offer it (#1468) |
 | `supportsResultPagination` | **`false`** | Elasticsearch SQL has no `OFFSET` clause. `prepareQuery` throws rather than answer page two with page one, and this flag hides the control that would provoke it. OpenSearch, the same implementation, declares `true` (#816) |
 | `supportsTransactions` | **`false`** | `BEGIN` is not in the grammar and the surface is stateless HTTP; the trio and SANDBOX are withheld instead of answering HTTP 400 (#464) |
 | `declaresForeignKeys` | **`false`** | The engine has no such constraint in its model, so the empty `foreignKeys` means "impossible here" rather than "none declared, or none visible to this role" — the distinction #414 was about |

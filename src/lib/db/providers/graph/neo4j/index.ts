@@ -91,6 +91,7 @@ export class Neo4jProvider extends GraphBaseProvider {
       supportsExternalQueryLimiting: false,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       supportsResultPagination: false,
       supportsTransactions: false,
       declaresForeignKeys: false,

@@ -34,6 +34,7 @@ import {
   FALLBACK_TABLE_NAME,
   resultExportFileName,
   type ResultExportFormat,
+  type ResultExportSource,
 } from "@/lib/export/result-export";
 import { downloadText } from "@/lib/export/download";
 import { writeToClipboard } from "@/components/copy-button";
@@ -845,8 +846,8 @@ export default function Studio() {
    * `currentTab.result` wrote rows nobody was looking at. That is why the menu used to
    * be hidden over a hydrated view instead of retargeted.
    */
-  const buildResultFile = useCallback(
-    (format: ResultExportFormat, hydrated: AgentArtifactHydration | null, csvDelimiter?: CsvDelimiter) => {
+  const buildExportSource = useCallback(
+    (hydrated: AgentArtifactHydration | null): ResultExportSource | null => {
       const source = hydrated?.result ?? tabMgr.currentTab.result;
       if (!source) return null;
       // The columns the engine declared for THIS result. The writers read every row by
@@ -856,8 +857,7 @@ export default function Studio() {
       const fields = source.fields;
       const sensitiveColumns = detectSensitiveColumnsFromConfig(fields, maskingConfig);
       const rows = effectiveMasking ? applyMaskingToRows(source.rows, fields, sensitiveColumns) : source.rows;
-
-      return buildResultExport(format, {
+      return {
         rows,
         fields,
         // A run's rows did not come from this tab, so the SQL forms take the neutral
@@ -871,8 +871,7 @@ export default function Studio() {
         // The types the engine declared for THIS result, which is what the DDL form
         // writes when they are there — the only source for a computed column.
         columnTypes: source.columnTypes,
-        csvDelimiter,
-      });
+      };
     },
     [
       tabMgr.currentTab.result,
@@ -884,11 +883,21 @@ export default function Studio() {
     ],
   );
 
+  const buildResultFile = useCallback(
+    (format: ResultExportFormat, hydrated: AgentArtifactHydration | null, csvDelimiter?: CsvDelimiter) => {
+      const source = buildExportSource(hydrated);
+      if (source === null) return null;
+      return buildResultExport(format, { ...source, csvDelimiter });
+    },
+    [buildExportSource],
+  );
+
   const exportResults = useCallback(
     (format: ResultExportFormat, hydrated: AgentArtifactHydration | null = null, csvDelimiter?: CsvDelimiter) => {
+      const fileName = (extension: string) => resultExportFileName(extension, hydrated?.runId);
       const file = buildResultFile(format, hydrated, csvDelimiter);
       if (file === null) return;
-      downloadText(file.content, file.mimeType, resultExportFileName(file.extension, hydrated?.runId));
+      downloadText(file.content, file.mimeType, fileName(file.extension));
     },
     [buildResultFile],
   );

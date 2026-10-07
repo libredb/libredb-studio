@@ -76,7 +76,7 @@ import {
   type AgentPlanStatementView,
   type AgentTimelineItem,
   type AgentTimelineTone,
-  describeFailureReason,
+  describeRunFailure,
 } from "./timeline";
 import type { AgentPrefillRequest } from "./use-agent-prefill";
 import { useAgentRun, type AgentStartRefusalCode } from "./use-agent-run";
@@ -1938,6 +1938,9 @@ export const AgentRail = React.memo(function AgentRail({
        entry can carry `planStatementRecorded` for a card that is showing something else.
   */
   const answerState = answerCardState(run.timeline);
+  // The card's failure note and this line read the same fallback, so a run the loop ended on a
+  // model timeout is not explained on one and unexplained on the other (#1461).
+  const failureSentence = describeRunFailure(run.timeline);
   const answerItem = run.timeline.items.find((item) => item.isAnswer === true);
   const cardedAnswerId = answerState === "report" ? answerItem?.id : undefined;
   /*
@@ -2281,9 +2284,9 @@ export const AgentRail = React.memo(function AgentRail({
           starting another run. The words come from the same map the timeline entry
           uses, so the two can never disagree.
         */}
-        {run.timeline.failureReason !== null && (
+        {failureSentence !== null && (
           <p data-testid="agent-failure-reason" className="mt-2 text-[0.625rem] text-hue-rose-alt">
-            {describeFailureReason(run.timeline.failureReason)}
+            {failureSentence}
           </p>
         )}
 

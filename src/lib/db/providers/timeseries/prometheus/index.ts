@@ -206,6 +206,7 @@ export class PrometheusProvider extends BaseDatabaseProvider {
       supportsCreateTable: false,
       // Nothing this product offers writes to Prometheus (#1085 sections 2 and 4.5).
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       // An instant query has no row offset to advance; `prepareQuery` below pins it to 0.
       supportsResultPagination: false,
       supportsTransactions: false,

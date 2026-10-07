@@ -14,12 +14,11 @@
  *
  * - `role === "relation"` for anything that addresses rows: a routine is not selected from,
  *   not profiled and not analyzed.
- * - `acceptsRowWrites` AND the engine-wide `supportsInlineRowEdit` for the one action that
- *   writes rows. They are different questions and standing ruling 4 keeps them apart:
- *   MongoDB, Couchbase and Cassandra declare the engine flag false while declaring a kind
- *   that does take row writes, so a conjunction inside `kindAcceptsRowWrites` would answer
- *   for three engines that never asked. The conjunction belongs at each caller that needs
- *   both facts, this one and the mobile `TableItem.tsx`, spelled out.
+ * - `offersTestDataGeneration` for the one action that writes rows: the kind's
+ *   `acceptsRowWrites` AND the engine's own `supportsTestDataGeneration` (#1468). It used to
+ *   borrow the results grid's `supportsInlineRowEdit` for the engine half, which is about an
+ *   `UPDATE ... SET` and kept the generator off MongoDB, whose collection takes its
+ *   `insertMany`. The mobile `TableItem.tsx` asks the same predicate.
  * - `maintenanceControl(..., "perEntity")` for the two maintenance items, which is the same
  *   gate the admin Operations tab and the monitoring Tables tab ask (#496), so three
  *   surfaces cannot disagree about what a provider declared.
@@ -71,7 +70,7 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import { findKind, kindAcceptsRowWrites, kindHasSource } from "@/lib/db/object-kinds";
+import { findKind, kindAcceptsRowWrites, kindHasSource, offersTestDataGeneration } from "@/lib/db/object-kinds";
 import {
   declaredEntityOperations,
   maintenanceControl,
@@ -99,7 +98,7 @@ export interface TreeRowActionHandlers {
   readonly onGenerateCount?: (object: DatabaseObject) => void;
   readonly onProfileObject?: (object: DatabaseObject) => void;
   readonly onGenerateCode?: (object: DatabaseObject) => void;
-  /** Generates INSERTs and can run them, which is why it is gated on both row-write facts. */
+  /** Generates rows and can run them, which is why it is gated on `offersTestDataGeneration`. */
   readonly onGenerateTestData?: (object: DatabaseObject) => void;
   /** Deep-links to the maintenance surface with this object named. */
   readonly onOpenMaintenance?: (object: DatabaseObject) => void;
@@ -216,13 +215,9 @@ function objectActions(
     actions.push({ id: "generate-code", label: "Generate Code", icon: Code, run: () => generateCode(object) });
   }
 
-  // The row-write gate, both halves, at the caller that needs both.
+  // The kind takes row writes and the engine takes the generator's rows (#1468).
   const testData = handlers.onGenerateTestData;
-  if (
-    testData !== undefined &&
-    kindAcceptsRowWrites(capabilities, kind.id) &&
-    capabilities.supportsInlineRowEdit === true
-  ) {
+  if (testData !== undefined && offersTestDataGeneration(capabilities, kind.id)) {
     actions.push({
       id: "generate-test-data",
       label: "Generate Test Data",

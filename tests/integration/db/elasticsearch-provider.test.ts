@@ -999,6 +999,7 @@ describe("ElasticsearchProvider metadata", () => {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       // Elasticsearch SQL has no `OFFSET` clause: `prepareQuery` THROWS rather than
       // answer page two with page one, and this hides the control that would
       // provoke it. OpenSearch, the same implementation, declares true (#816).

@@ -97,6 +97,129 @@ function inferFakerType(colName: string, colType: string): { generator: string; 
   return { generator: "text", example: "Lorem ipsum" };
 }
 
+/** The generators whose text is a number, so a numeric MongoDB field can keep what its name picked. */
+const NUMERIC_GENERATORS: ReadonlySet<string> = new Set(["price", "age", "integer", "decimal", "zipCode"]);
+
+/**
+ * The type a MongoDB field is written as. `inferSchemaFromDocuments` in the provider reports a field
+ * seen with several types as `mixed(a|b)`; the first that is a value wins, and one seen only as
+ * null or absent is null.
+ */
+function documentFieldType(declared: string): string {
+  const type = declared.toLowerCase();
+  const mixed = /^mixed\((.*)\)$/.exec(type);
+  if (mixed === null) return type;
+  return mixed[1].split("|").find((member) => member !== "null" && member !== "undefined") ?? "null";
+}
+
+/**
+ * The generator for one field of a MongoDB document (#1468), where a dot in the name is a document
+ * path. Name rules read the LEAF, so `address.city` is a city rather than a street address because
+ * an ancestor is called `address`, and the type the provider inferred decides the JSON type of the
+ * value. Only `_id` is left to the server: it is the one field the engine fills in.
+ */
+function inferDocumentFakerType(path: string, declared: string): { generator: string; example: string } {
+  if (path === "_id") return { generator: "autoIncrement", example: "ObjectId" };
+  const type = documentFieldType(declared);
+  const leaf = path.slice(path.lastIndexOf(".") + 1);
+  const byName = inferFakerType(leaf, type);
+  const picked = byName.generator === "autoIncrement" ? { generator: "text", example: "Lorem ipsum" } : byName;
+  switch (type) {
+    case "object":
+      return { generator: "object", example: "{}" };
+    case "array":
+      return { generator: "array", example: "[]" };
+    case "null":
+    case "undefined":
+      return { generator: "null", example: "null" };
+    case "bool":
+    case "boolean":
+      return { generator: "boolean", example: "true" };
+    case "date":
+      return { generator: "datetime", example: '{"$date": "2024-03-15T14:30:00.000Z"}' };
+    case "objectid":
+      return { generator: "objectId", example: '{"$oid": "65f1a2b3c4d5e6f708192a3b"}' };
+    case "uuid":
+      return { generator: "uuid", example: '{"$uuid": "a1b2c3d4-e5f6-4890-abcd-ef1234567890"}' };
+    case "number":
+    case "int":
+    case "long":
+    case "double":
+    case "decimal":
+      if (NUMERIC_GENERATORS.has(picked.generator)) return picked;
+      return type === "double" || type === "decimal"
+        ? { generator: "decimal", example: "3.14" }
+        : { generator: "integer", example: "42" };
+    default:
+      return picked;
+  }
+}
+
+/**
+ * Random hex from `crypto.getRandomValues`, which every browser exposes on plain HTTP too. The
+ * values are fake, but an ObjectId and a UUID are identifiers, and CodeQL reads `Math.random`
+ * behind an identifier as a weak secret (js/insecure-randomness).
+ */
+function randomHex(bytes: number): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function randomUuidV4(): string {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const hex = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
+ * One generated value for a MongoDB field, in the JSON type its inferred type names. The command
+ * is read as Extended JSON by the provider, so a date, an ObjectId, a UUID, a 64-bit integer and a
+ * Decimal128 are written as their `$date`, `$oid`, `$uuid`, `$numberLong` and `$numberDecimal`
+ * wrappers and reach the server as those BSON types rather than as strings.
+ */
+function documentFieldValue(generator: string, declared: string, index: number): unknown {
+  const type = documentFieldType(declared);
+  switch (generator) {
+    case "object":
+      return {};
+    case "array":
+      return [];
+    case "null":
+      return null;
+    case "boolean":
+      return Math.random() > 0.5;
+    case "objectId":
+      return { $oid: randomHex(12) };
+    case "uuid":
+      return { $uuid: randomUuidV4() };
+  }
+  // A BSON date. Any other field whose name picked the datetime generator, such as a BSON
+  // Timestamp, keeps the text it had: a `$date` would change its type.
+  if (type === "date") return { $date: new Date(Date.now() - Math.random() * 365 * 86400000).toISOString() };
+  const text = FAKE[generator as keyof typeof FAKE](index);
+  if (type === "long") return { $numberLong: String(Math.trunc(Number(text))) };
+  if (type === "decimal") return { $numberDecimal: text };
+  if (NUMERIC_GENERATORS.has(generator) && (type === "number" || type === "int" || type === "double"))
+    return Number(text);
+  return text;
+}
+
+function setNestedValue(doc: Record<string, unknown>, path: string, value: unknown): void {
+  const parts = path.split(".");
+  let current = doc;
+
+  for (let index = 0; index < parts.length - 1; index++) {
+    const part = parts[index];
+    if (!Object.hasOwn(current, part) || typeof current[part] !== "object" || current[part] === null) {
+      current[part] = Object.create(null) as Record<string, unknown>;
+    }
+    current = current[part] as Record<string, unknown>;
+  }
+
+  current[parts[parts.length - 1]] = value;
+}
+
 // Lightweight fake data generators
 const FAKE = {
   autoIncrement: (i: number) => String(i + 1),
@@ -205,9 +328,14 @@ export function TestDataGenerator({
       // The FAMILY where the provider reports one, and the declaration otherwise (#1033):
       // MySQL and MariaDB report `enum('int','text')` in `type`, and every test below is a
       // substring test, so the declaration alone types an ENUM of two words as a number.
-      faker: inferFakerType(col.name, col.baseType ?? col.type),
+      // A JSON language's dotted name is a document path, and a SQL column's dot is part of
+      // its name, so only the JSON arm reads the leaf (#1468).
+      faker:
+        queryLanguage === "json"
+          ? inferDocumentFakerType(col.name, col.baseType ?? col.type)
+          : inferFakerType(col.name, col.baseType ?? col.type),
     }));
-  }, [tableSchema]);
+  }, [tableSchema, queryLanguage]);
 
   const generatedQuery = useMemo(() => {
     if (!tableSchema?.columns || columnConfigs.length === 0) return "";
@@ -219,11 +347,15 @@ export function TestDataGenerator({
     // for the address below; `queryLanguage` is the same field and stays in the deps.
     if (capabilities?.queryLanguage === "json") {
       // MongoDB insertMany
+      // The inferred schema contains parent paths alongside their dotted children.
+      // Generate values for leaves and rebuild those paths as nested objects.
+      const leafCols = cols.filter(
+        (col) => !cols.some((other) => other.name !== col.name && other.name.startsWith(`${col.name}.`)),
+      );
       const docs = Array.from({ length: rowCount }, (_, i) => {
-        const doc: Record<string, string> = {};
-        for (const col of cols) {
-          const gen = FAKE[col.faker.generator as keyof typeof FAKE];
-          doc[col.name] = gen ? gen(i) : `value_${i}`;
+        const doc = Object.create(null) as Record<string, unknown>;
+        for (const col of leafCols) {
+          setNestedValue(doc, col.name, documentFieldValue(col.faker.generator, col.baseType ?? col.type, i));
         }
         return doc;
       });

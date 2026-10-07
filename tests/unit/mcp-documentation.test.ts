@@ -119,6 +119,16 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toContain("A seed entry cannot carry a separate agent credential");
   });
 
+  // #1462: inspect_schema acquires under agent-operations, which carries the same
+  // readOnly: true execution context as run_read_query's agent-read-only, so the same
+  // role check refuses a privileged login there too - it does not get a free pass.
+  test("says inspect_schema needs the same least-privilege principal as run_read_query, not a free pass", () => {
+    expect(MCP_DOC).toContain(
+      "`inspect_schema` acquires its connection under the same read-only execution context as `run_read_query`",
+    );
+    expect(MCP_DOC).not.toContain("`inspect_schema` has no such requirement");
+  });
+
   test("says npx resolves a relative path variable against the directory it is run from", () => {
     expect(MCP_DOC).toContain(
       "The launcher resolves a relative path variable, such as `SEED_CONFIG_PATH`, against the directory you run `npx` from",

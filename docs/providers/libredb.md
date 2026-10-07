@@ -140,6 +140,18 @@ file path — the same pattern used by the SQLite provider. A missing `database`
 closes. This offers no durable value for a GUI tool, so the provider explicitly requires a file
 path and throws rather than silently opening an in-memory database.
 
+SQLite's in-memory name is refused too (#1450). `:memory:` used to go through `path.resolve()` like
+any path, so Test Connection answered "Connected successfully" and left a 0-byte file literally
+named `:memory:` in the server's working directory; `validate()` now throws a `DatabaseConfigError`
+saying LibreDB has no in-memory mode.
+
+A relative path is resolved against the server's working directory, which is where the built-in
+sample connection lives (`./data/sample.libredb` under the default data directory). A path whose
+parent directory does not exist is refused before the file is opened, with "The directory <dir>
+does not exist": the kernel opens its `.lock` sidecar first, so that case used to read as an ENOENT
+about a `<file>.libredb.lock` the user never named. The directory is not created, unlike the SQLite
+provider, because a connection setting should not make directories on the server.
+
 ### 3.3 Catalog-aware schema, with key-prefix grouping as the raw-kv fallback
 
 Since `@libredb/libredb` 0.0.2 a `.libredb` file carries a persisted **catalog**: the lenses
@@ -250,7 +262,7 @@ fields are ignored.
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `database` | Yes | Absolute path to the `.libredb` file on the Studio server's filesystem. Throws `DatabaseConfigError` if absent. |
+| `database` | Yes | Path to the `.libredb` file on the Studio server's filesystem, absolute or relative to the server's working directory; its directory must exist ([§3.2](#32-no-in-memory-connections)). Throws `DatabaseConfigError` if absent or `:memory:`. |
 
 No `host`, `port`, `user`, `password`, or `connectionString` fields are used. The `supportsConnectionString`
 capability is `false`.
@@ -457,7 +469,7 @@ a plausible, runnable `delete billing:2024` one **Run Selected** away (only `get
 
 Three menu actions are **not offered** on this provider.
 `Profile Table` and `Generate Test Data` address an object and insert rows into it; a `users:*` row is a prefix grouping this server derived from one bounded scan (`tablesAreDerivedGroupings`, see 9), not an object any command can be given, so both are hidden rather than left to answer HTTP 400 (#427).
-Since #1085 each is withheld by its own declaration: Profile by that flag and by the language gate `offersColumnProfiling`, because the profile route refuses JSON in a dialect of its own, and Generate Test Data by the row-write rule both row menus ask (decision D-M), because no kind here declares `acceptsRowWrites` and the engine declares `supportsInlineRowEdit: false`.
+Since #1085 each is withheld by its own declaration: Profile by that flag and by the language gate `offersColumnProfiling`, because the profile route refuses JSON in a dialect of its own, and Generate Test Data by the row-write rule both row menus ask (decision D-M), because no kind here declares `acceptsRowWrites` and the engine declares `supportsTestDataGeneration: false` (#1468).
 `Generate Count Query` is the third, withheld by `offersCountQuery` (#702): the five-verb grammar has no count, and a derived grouping has nothing to count.
 The per-row `Analyze` and `Vacuum`
 items are hidden as well: they call `onOpenMaintenance("tables", <row>)` and there is no
@@ -1032,6 +1044,7 @@ for a second reason: the rows are derived groupings, see 5.3.
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — the command grammar (`get`/`put`/`delete`/`prefix`/`range`) has no `UPDATE ... SET` for the results grid's inline editor to emit |
+| `supportsTestDataGeneration` | `false` - no kind here declares a row write, and the command grammar has no multi-row insert for the Generate Test Data dialog to emit |
 | `supportsResultPagination` | `false` — this provider adds no `prepareQuery` override, so it inherits the base one, which echoes the requested offset back while applying nothing. A `true` here would render a control whose every click re-reads page one (#816) |
 | `supportsTransactions` | `false` — the command grammar has no transaction verb at all, so the trio and SANDBOX are not offered (#464) |
 | `declaresForeignKeys` | `false` — the catalog declares namespaces and columns and nothing that references another namespace, so there is no foreign key to read |

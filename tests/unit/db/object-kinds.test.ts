@@ -11,6 +11,7 @@ import {
   findKind,
   keyBrowserKind,
   kindAcceptsRowWrites,
+  offersTestDataGeneration,
   kindCountIsListing,
   relationKindIds,
   isCountSampled,
@@ -180,6 +181,47 @@ describe("kindAcceptsRowWrites", () => {
       ],
     } as unknown as ProviderCapabilities;
     expect(kindAcceptsRowWrites(inlineEditRefused, "collection")).toBe(true);
+  });
+});
+
+describe("offersTestDataGeneration", () => {
+  const generating = { ...withKinds, supportsTestDataGeneration: true } as ProviderCapabilities;
+
+  test("a kind that takes row writes on an engine that declares the generator is offered it", () => {
+    expect(offersTestDataGeneration(generating, "table")).toBe(true);
+  });
+
+  test("an absent flag reads as not offered, even on a kind that takes row writes", () => {
+    expect(offersTestDataGeneration(withKinds, "table")).toBe(false);
+    expect(offersTestDataGeneration({ ...withKinds, supportsTestDataGeneration: false }, "table")).toBe(false);
+  });
+
+  test("the per-kind row-write rule still applies on top of the engine flag", () => {
+    expect(offersTestDataGeneration(generating, "view")).toBe(false);
+    expect(offersTestDataGeneration(generating, "package")).toBe(false);
+  });
+
+  // The generator writes `insertMany` on MongoDB, which has no `UPDATE ... SET` for the grid's
+  // inline editor, so the grid's flag must not decide it in either direction.
+  test("the results grid's supportsInlineRowEdit is not consulted", () => {
+    const collection = {
+      ...base,
+      objectKinds: [
+        { id: "collection", role: "relation", label: "Collection", labelPlural: "Collections", acceptsRowWrites: true },
+      ],
+    } as unknown as ProviderCapabilities;
+    expect(
+      offersTestDataGeneration(
+        { ...collection, supportsInlineRowEdit: false, supportsTestDataGeneration: true },
+        "collection",
+      ),
+    ).toBe(true);
+    expect(
+      offersTestDataGeneration(
+        { ...collection, supportsInlineRowEdit: true, supportsTestDataGeneration: false },
+        "collection",
+      ),
+    ).toBe(false);
   });
 });
 

@@ -4,6 +4,7 @@ import {
   machineColumns,
   sampledMark,
   objectAtPath,
+  relationCountLabel,
   relationObjects,
   rowWritableObjects,
   schemaContextOf,
@@ -39,6 +40,29 @@ const inventory: readonly DetailedObject[] = [
   object("order_total", "procedure"),
   object("order_seq", "sequence"),
 ];
+
+describe("relationCountLabel (#1466)", () => {
+  test("each declared relation kind is counted under its own label, in declaration order", () => {
+    const relations = [object("current_dept", "view"), ...["a", "b", "c", "d"].map((n) => object(n, "table"))];
+    expect(relationCountLabel(relations, capabilities)).toBe("4 tables, 1 view");
+  });
+
+  test("a count of one takes the singular label", () => {
+    expect(relationCountLabel([object("orders", "table")], capabilities)).toBe("1 table");
+  });
+
+  test("only tables reads as tables", () => {
+    expect(relationCountLabel([object("a", "table"), object("b", "table")], capabilities)).toBe("2 tables");
+  });
+
+  test("capabilities that have not loaded yet keep the old wording", () => {
+    expect(relationCountLabel(inventory, undefined)).toBe("4 tables");
+  });
+
+  test("an empty list keeps the old wording", () => {
+    expect(relationCountLabel([], capabilities)).toBe("0 tables");
+  });
+});
 
 describe("relationObjects", () => {
   test("a routine is refused, and it is refused by its declared role", () => {

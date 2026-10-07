@@ -1235,6 +1235,7 @@ falls back to `main`.
 | `supportsExplain` | `true` | Enables the Explain action. |
 | `explainFormat` | `duckdb-json` | The Explain view consumes DuckDB's JSON physical plan (§5). |
 | `supportsInlineRowEdit` | `true` | Enables inline row editing for writable table objects. |
+| `supportsTestDataGeneration` | `true` | The row menus offer Generate Test Data on writable table objects; it writes one multi-row `INSERT INTO ... VALUES`. |
 | `supportsResultPagination` | `true` | Enables Load More; the shared limiter emits `LIMIT n OFFSET m`. |
 | `supportsTransactions` | `false` | Hides the transaction controls; the provider exposes no transaction API. |
 | `singleWriterFile` | `true` | Lets callers treat an already-open DuckDB file as a single-writer resource (§3.8). |

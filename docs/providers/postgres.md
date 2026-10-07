@@ -1987,6 +1987,7 @@ Overrides the SQL base defaults:
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `true` |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core PostgreSQL DML |
+| `supportsTestDataGeneration` | `true` - the row menus offer Generate Test Data on tables, which writes one multi-row `INSERT INTO ... VALUES` |
 | `supportsResultPagination` | `true` — `LIMIT n OFFSET m` from the shared limiter (#816) |
 | `supportsTransactions` | `true`: `beginTransaction()` holds one pool client and runs `BEGIN` / `COMMIT` / `ROLLBACK` on it, so the editor's transaction trio and the auto-rolled-back SANDBOX toggle are offered here (#464). A relative whose `BEGIN` opens nothing (RisingWave) is refused at `beginTransaction()` rather than declared per type id ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)) |
 | `implicitCommitStatements` | `END`, `PREPARE TRANSACTION`: the two statements besides COMMIT and ROLLBACK that end the transaction. No DDL is listed, because PostgreSQL's DDL is transactional; a relative that commits DDL anyway (CockroachDB's `autocommit_before_ddl`) is caught after the statement instead ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)) |

@@ -3,7 +3,9 @@ import { isBareIdentifier, quoteIdentifier } from "@/lib/sql/identifier";
 import { quoteLiteral } from "@/lib/sql/values";
 import { asBytes, binaryText } from "./binary";
 import { cellOf, resolveColumns, toCsv, type CsvDelimiter } from "./csv";
+import { htmlTable } from "./html";
 import { binaryCellsAsHex, jsonText } from "./json";
+import { markdownTable } from "./markdown";
 import { resolveUpdateTarget } from "@/lib/sql/update-target";
 import { cqlFrozenNested, typedLiteral, UnwritableValue } from "./typed-literals";
 import { isNonFiniteWord, nonFiniteWord, type NonFiniteWord } from "@/lib/non-finite";
@@ -18,7 +20,7 @@ import { isNonFiniteWord, nonFiniteWord, type NonFiniteWord } from "@/lib/non-fi
  * masking) is decided by the caller and arrives here as `rows`.
  */
 
-export type ResultExportFormat = "csv" | "json" | "sql-insert" | "sql-ddl";
+export type ResultExportFormat = "csv" | "json" | "sql-insert" | "sql-ddl" | "markdown" | "html";
 
 export interface ResultExportSource {
   /** The rows to write, already masked if the caller masks. */
@@ -860,21 +862,31 @@ function oracleDateShape(declared: string | undefined): OracleDateShape {
 }
 
 /**
- * How one Oracle column's date cells are written: `shape` for a `Date`, and `text` for the
- * zone-less text the provider reads a DATE and a TIMESTAMP as (#1131).
+ * How one Oracle column's date cells are written: `shape` for a `Date`, and `text` for a
+ * cell that arrives as a string: the zone-less text the provider reads a DATE and a
+ * TIMESTAMP as (#1131), or, for a zoned column, the `Date#toISOString` text a row carries
+ * once it has been through JSON over HTTP (#1224).
  *
- * `text` is set only for a column DECLARED `DATE` or `TIMESTAMP`, never by the fallback
- * `shape` takes. A VARCHAR2 holding `2026-09-01 10:30:00` is text, and converting it would
- * store the NLS rendering of a timestamp where the characters belonged.
+ * `text` is set only for a column DECLARED `DATE`, `TIMESTAMP[(n)]` or
+ * `TIMESTAMP[(n)] WITH [LOCAL] TIME ZONE`, never by the fallback `shape` takes. A VARCHAR2
+ * holding `2026-09-01 10:30:00` is text, and converting it would store the NLS rendering
+ * of a timestamp where the characters belonged.
  */
 interface OracleDateColumn {
   shape: OracleDateShape;
-  text?: "date" | "timestamp";
+  text?: "date" | "timestamp" | "zoned";
 }
 
 function oracleDateColumn(declared: string | undefined): OracleDateColumn {
   const bare = declared?.trim().toUpperCase() ?? "";
-  const text = bare === "DATE" ? "date" : /^TIMESTAMP\s*(\(\d\))?$/.test(bare) ? "timestamp" : undefined;
+  const text =
+    bare === "DATE"
+      ? "date"
+      : /^TIMESTAMP\s*(\(\d\))?$/.test(bare)
+        ? "timestamp"
+        : /^TIMESTAMP\s*(\(\d\))?\s+WITH\s+(LOCAL\s+)?TIME\s+ZONE$/.test(bare)
+          ? "zoned"
+          : undefined;
   return { shape: oracleDateShape(declared), ...(text === undefined ? {} : { text }) };
 }
 
@@ -933,6 +945,36 @@ function oracleTextLiteral(text: string, type: "date" | "timestamp"): string | u
   const mask = `${sign === "" ? "YYYY" : "SYYYY"}-MM-DD HH24:MI:SS`;
   if (type === "date") return fraction === undefined ? `TO_DATE('${text}', '${mask}')` : undefined;
   return `TO_TIMESTAMP('${text}', '${mask}${fraction === undefined ? "" : ".FF"}')`;
+}
+
+/**
+ * The text `Date#toISOString` writes for a year from 0000 to 9999. A year outside that
+ * range is written with a sign and six digits (`-000044-…`, `+012026-…`) and does not
+ * match: Oracle has no year after 9999, and the `Date` path does not write a BC year
+ * Oracle reads back, so that text stays quoted instead of taking a literal the `Date`
+ * of the same instant would not get.
+ */
+const ISO_INSTANT_TEXT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/**
+ * A zoned column's cell as it arrives over HTTP (#1224), as the literal the `Date` of that
+ * instant gets, or `undefined` when it is not that text.
+ *
+ * The driver hands a `TIMESTAMP WITH [LOCAL] TIME ZONE` over as the `Date` of its instant,
+ * and `POST /api/db/query` answers with JSON, so by the time an export over HTTP sees the
+ * row the cell is that `Date`'s ISO text. Quoted, Oracle reads it through the session's
+ * `NLS_TIMESTAMP_TZ_FORMAT` and refuses it (`ORA-01843`). The text is parsed back to its
+ * `Date` and written by `oracleDateLiteral`, so the two paths cannot drift apart, and only
+ * when that `Date` writes the same text again: `2026-02-30T…` and `T24:00:00.000Z` fit the
+ * form but are not what `toISOString` writes for any instant. The literal is built from
+ * the parsed fields, never from the text.
+ */
+function oracleZonedTextLiteral(text: string): string | undefined {
+  if (!ISO_INSTANT_TEXT.test(text)) return undefined;
+  const instant = new Date(text);
+  return !Number.isNaN(instant.getTime()) && instant.toISOString() === text
+    ? oracleDateLiteral(instant, "zoned")
+    : undefined;
 }
 
 /**
@@ -1002,7 +1044,7 @@ function sqlValue(
     return quoteLiteral(value.toISOString(), dialect);
   }
   if (typeof value === "string" && oracle?.text !== undefined) {
-    const literal = oracleTextLiteral(value, oracle.text);
+    const literal = oracle.text === "zoned" ? oracleZonedTextLiteral(value) : oracleTextLiteral(value, oracle.text);
     if (literal !== undefined) return literal;
   }
   // Before the object branch, which used to write a `bytea`/`BLOB` cell as the quoted
@@ -1047,6 +1089,14 @@ function exportTableName(source: ResultExportSource): string {
 export function buildResultExport(format: ResultExportFormat, source: ResultExportSource): ResultExportFile {
   const { rows, dialect } = source;
   const columns = resolveColumns(rows, source.fields);
+
+  if (format === "markdown") {
+    return { content: markdownTable(rows, columns), mimeType: "text/markdown;charset=utf-8", extension: "md" };
+  }
+
+  if (format === "html") {
+    return { content: htmlTable(rows, columns), mimeType: "text/html;charset=utf-8", extension: "html" };
+  }
 
   if (format === "json") {
     return { content: jsonText(rows.map(binaryCellsAsHex), 2), mimeType: "application/json", extension: "json" };

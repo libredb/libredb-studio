@@ -7,12 +7,30 @@ import type { DatabaseObject } from "@/lib/db/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { generateTableQuery, generateSelectQuery, generateCountQuery, objectSegment } from "@/lib/query-generators";
+import { CypherNameError } from "@/lib/db/graph/cypher/quote";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import { resolveTabType } from "@/lib/editor/tab-language";
 import { logger } from "@/lib/logger";
 import { newLocalId } from "@/lib/ids";
 import { workspaceTabsKey } from "@/lib/storage/local-storage";
 import { useStableCallback } from "@/hooks/use-stable-callback";
+
+/**
+ * The statement `generate` writes, or undefined once a toast has said why there is none.
+ *
+ * A Cypher name holding a unicode escape cannot be written safely, so the quoting refuses it with a
+ * `CypherNameError` (#1295). Thrown out of a click handler, that left the user with no tab and no word;
+ * the toast carries the refusal instead, and nothing opens. Any other error is not this one and is raised.
+ */
+function generatedOrRefused(generate: () => string): string | undefined {
+  try {
+    return generate();
+  } catch (error) {
+    if (!(error instanceof CypherNameError)) throw error;
+    toast.error(error.message);
+    return undefined;
+  }
+}
 
 /** A tab `closeTab` removed, where it sat, and the workspace it sat in, so its Undo can put it back (#747). */
 interface ClosedTab {
@@ -460,9 +478,12 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       const table = schema.find((t) => pathKey(t.path) === key);
       const columns = columnsOverride ?? table?.columns ?? [];
       // A group's readable pieces ride on its schema entry, and only the etcd arm reads them (#1089 4.7).
-      const newQuery = capabilities
-        ? generateTableQuery(path, capabilities, columns, { readRanges: table?.readRanges })
-        : `SELECT * FROM ${path.join(".")};`;
+      const newQuery = generatedOrRefused(() =>
+        capabilities
+          ? generateTableQuery(path, capabilities, columns, { readRanges: table?.readRanges })
+          : `SELECT * FROM ${path.join(".")};`,
+      );
+      if (newQuery === undefined) return;
 
       const newId = newLocalId();
       const newTab: QueryTab = {
@@ -505,9 +526,12 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       // The group's readable pieces and the connection's own mode, which only the etcd arm reads (#1089 6.4):
       // on a read-only connection Generate Command writes the read alone.
       const scope = { readRanges: table?.readRanges, readOnly: activeConnection?.readOnly === true };
-      const newQuery = capabilities
-        ? generateSelectQuery(path, columns, capabilities, scope)
-        : `SELECT\n${columns.map((c) => `  ${c.name}`).join(",\n") || "  *"}\nFROM ${path.join(".")}\nWHERE 1=1\nLIMIT 100;`;
+      const newQuery = generatedOrRefused(() =>
+        capabilities
+          ? generateSelectQuery(path, columns, capabilities, scope)
+          : `SELECT\n${columns.map((c) => `  ${c.name}`).join(",\n") || "  *"}\nFROM ${path.join(".")}\nWHERE 1=1\nLIMIT 100;`,
+      );
+      if (newQuery === undefined) return;
 
       const tabType = resolveTabType(capabilities);
 

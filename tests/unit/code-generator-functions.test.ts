@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import ts from "typescript";
 import {
   toPascalCase,
   toIdentifier,
@@ -62,8 +63,8 @@ describe("mapSqlTypeToTS", () => {
   test("TIME → Date", () => expect(mapSqlTypeToTS("TIME")).toBe("Date"));
   test("JSONB → Record", () => expect(mapSqlTypeToTS("JSONB")).toBe("Record<string, unknown>"));
   test("UUID → string", () => expect(mapSqlTypeToTS("UUID")).toBe("string"));
-  test("ARRAY → unknown[]", () => expect(mapSqlTypeToTS("text[]")).toBe("string"));
-  // Note: 'INTEGER ARRAY' matches 'int' first due to includes check order, so returns 'number'
+  test("ARRAY → the element array", () => expect(mapSqlTypeToTS("text[]")).toBe("string[]"));
+  // PostgreSQL's `format_type` bracket spelling: an array of the element before it
   test("array keyword detected", () => expect(mapSqlTypeToTS("_text ARRAY")).toBe("unknown[]"));
   test("VARCHAR → string", () => expect(mapSqlTypeToTS("VARCHAR(255)")).toBe("string"));
   test("TEXT → string", () => expect(mapSqlTypeToTS("TEXT")).toBe("string"));
@@ -148,6 +149,107 @@ describe("mapSqlTypeToJava", () => {
   test("BOOLEAN → Boolean", () => expect(mapSqlTypeToJava("BOOLEAN")).toBe("Boolean"));
   test("TIMESTAMP → LocalDateTime", () => expect(mapSqlTypeToJava("TIMESTAMP")).toBe("LocalDateTime"));
   test("TEXT → String", () => expect(mapSqlTypeToJava("TEXT")).toBe("String"));
+});
+
+// ============================================================================
+// The single classification (#1446): containers before ints, 64-bit integers,
+// and `number` as a numeric
+// ============================================================================
+
+/*
+  Every mapper below used to test substrings in its own order, so `Array(Int32)`
+  matched `int` first and was typed a single number, `Map(String, Int32)` the same,
+  and a type spelled `number` matched nothing and fell to the string default. The
+  classification is decided once here and every mapper maps the class.
+*/
+describe("mapSqlTypeToTS classifies the declared type once (#1446)", () => {
+  test("Array(Int32) is a list of numbers, not one number", () =>
+    expect(mapSqlTypeToTS("Array(Int32)")).toBe("number[]"));
+  test("Array(Int64) is a list of bigints", () => expect(mapSqlTypeToTS("Array(Int64)")).toBe("bigint[]"));
+  test("Map(String, Int32) is a record of numbers", () =>
+    expect(mapSqlTypeToTS("Map(String, Int32)")).toBe("Record<string, number>"));
+  test("Map(String, Int64) is a record of bigints", () =>
+    expect(mapSqlTypeToTS("Map(String, Int64)")).toBe("Record<string, bigint>"));
+  test("a bare ARRAY stays unknown[]", () => expect(mapSqlTypeToTS("_text ARRAY")).toBe("unknown[]"));
+  test("a bracket spelling is an array of its element", () => expect(mapSqlTypeToTS("text[]")).toBe("string[]"));
+  test("ClickHouse Int64 is bigint, not number", () => expect(mapSqlTypeToTS("Int64")).toBe("bigint"));
+  test("ClickHouse UInt64 is bigint, not number", () => expect(mapSqlTypeToTS("UInt64")).toBe("bigint"));
+  test("BIGINT is bigint", () => expect(mapSqlTypeToTS("BIGINT")).toBe("bigint"));
+  test("LibreDB number is a number", () => expect(mapSqlTypeToTS("number")).toBe("number"));
+  test("Oracle NUMBER is a number", () => expect(mapSqlTypeToTS("NUMBER(10,2)")).toBe("number"));
+  test("a Unicode-letter field type stays reachable", () => expect(mapSqlTypeToTS("metin")).toBe("string"));
+  test("a bare map is a record of unknown", () => expect(mapSqlTypeToTS("map")).toBe("Record<string, unknown>"));
+  test("a tuple names several elements, so it stays a bare array", () =>
+    expect(mapSqlTypeToTS("Tuple(String, Int32)")).toBe("unknown[]"));
+  test("a Nullable wrapper is unwrapped, not typed", () =>
+    expect(mapSqlTypeToTS("Nullable(Array(String))")).toBe("string[]"));
+});
+
+describe("mapSqlTypeToZod classifies the declared type once (#1446)", () => {
+  test("Array(Int32) is an array of numbers", () =>
+    expect(mapSqlTypeToZod("Array(Int32)")).toBe("z.array(z.number())"));
+  test("a bare array is an array of unknown", () =>
+    expect(mapSqlTypeToZod("_text ARRAY")).toBe("z.array(z.unknown())"));
+  test("Map(String, Int32) is a record of numbers", () =>
+    expect(mapSqlTypeToZod("Map(String, Int32)")).toBe("z.record(z.number())"));
+  test("a bare map is a record of unknown", () => expect(mapSqlTypeToZod("map")).toBe("z.record(z.unknown())"));
+  test("ClickHouse Int64 is a bigint", () => expect(mapSqlTypeToZod("Int64")).toBe("z.bigint()"));
+  test("LibreDB number is a number", () => expect(mapSqlTypeToZod("number")).toBe("z.number()"));
+  test("Oracle NUMBER is a number", () => expect(mapSqlTypeToZod("NUMBER(10,2)")).toBe("z.number()"));
+  test("FLOAT is a number", () => expect(mapSqlTypeToZod("FLOAT")).toBe("z.number()"));
+});
+
+describe("mapSqlTypeToGo classifies the declared type once (#1446)", () => {
+  test("Array(Int32) is a slice of int", () => expect(mapSqlTypeToGo("Array(Int32)")).toBe("[]int"));
+  test("Array(String) is a slice of string", () => expect(mapSqlTypeToGo("Array(String)")).toBe("[]string"));
+  test("Map(String, Int32) is a map of int by string", () =>
+    expect(mapSqlTypeToGo("Map(String, Int32)")).toBe("map[string]int"));
+  test("a bare array is a slice of interface", () => expect(mapSqlTypeToGo("_text ARRAY")).toBe("[]interface{}"));
+  test("ClickHouse Int64 is int64", () => expect(mapSqlTypeToGo("Int64")).toBe("int64"));
+  test("ClickHouse UInt64 is int64", () => expect(mapSqlTypeToGo("UInt64")).toBe("int64"));
+  test("LibreDB number is float64", () => expect(mapSqlTypeToGo("number")).toBe("float64"));
+  test("Oracle NUMBER is float64", () => expect(mapSqlTypeToGo("NUMBER(10,2)")).toBe("float64"));
+  test("a bare map is a map of unknown by string", () => expect(mapSqlTypeToGo("map")).toBe("map[string]interface{}"));
+  test("JSON is a string", () => expect(mapSqlTypeToGo("JSON")).toBe("string"));
+  test("UUID is a string", () => expect(mapSqlTypeToGo("UUID")).toBe("string"));
+});
+
+describe("mapSqlTypeToPython classifies the declared type once (#1446)", () => {
+  test("Array(Int32) is a list of int", () => expect(mapSqlTypeToPython("Array(Int32)")).toBe("list[int]"));
+  test("Map(String, Int32) is a dict of int by str", () =>
+    expect(mapSqlTypeToPython("Map(String, Int32)")).toBe("dict[str, int]"));
+  test("a bare array is list", () => expect(mapSqlTypeToPython("_text ARRAY")).toBe("list"));
+  test("ClickHouse Int64 is int", () => expect(mapSqlTypeToPython("Int64")).toBe("int"));
+  test("ClickHouse UInt64 is int", () => expect(mapSqlTypeToPython("UInt64")).toBe("int"));
+  test("LibreDB number is float", () => expect(mapSqlTypeToPython("number")).toBe("float"));
+  test("Oracle NUMBER is float", () => expect(mapSqlTypeToPython("NUMBER(10,2)")).toBe("float"));
+  test("a bare map is dict", () => expect(mapSqlTypeToPython("map")).toBe("dict"));
+});
+
+describe("mapSqlTypeToJava classifies the declared type once (#1446)", () => {
+  test("Array(Int32) is an Integer array", () => expect(mapSqlTypeToJava("Array(Int32)")).toBe("Integer[]"));
+  test("Map(String, Int32) is a Map of Integer by String", () =>
+    expect(mapSqlTypeToJava("Map(String, Int32)")).toBe("Map<String, Integer>"));
+  test("a bare array is an Object array", () => expect(mapSqlTypeToJava("_text ARRAY")).toBe("Object[]"));
+  test("ClickHouse Int64 is Long", () => expect(mapSqlTypeToJava("Int64")).toBe("Long"));
+  test("ClickHouse UInt64 is Long", () => expect(mapSqlTypeToJava("UInt64")).toBe("Long"));
+  test("LibreDB number is Double", () => expect(mapSqlTypeToJava("number")).toBe("Double"));
+  test("Oracle NUMBER is Double", () => expect(mapSqlTypeToJava("NUMBER(10,2)")).toBe("Double"));
+  test("a bare map is a Map of Object by String", () => expect(mapSqlTypeToJava("map")).toBe("Map<String, Object>"));
+  test("JSON is a String", () => expect(mapSqlTypeToJava("JSON")).toBe("String"));
+  test("UUID is a String", () => expect(mapSqlTypeToJava("UUID")).toBe("String"));
+});
+
+describe("mapSqlTypeToPrisma classifies the declared type once (#1446)", () => {
+  // Prisma's scalar lists are a connector conditional (PostgreSQL and CockroachDB
+  // alone), and the generator serves every engine, so a container is Json there.
+  test("Array(Int32) is Json", () => expect(mapSqlTypeToPrisma("Array(Int32)")).toBe("Json"));
+  test("Map(String, Int32) is Json", () => expect(mapSqlTypeToPrisma("Map(String, Int32)")).toBe("Json"));
+  test("ClickHouse Int64 is BigInt", () => expect(mapSqlTypeToPrisma("Int64")).toBe("BigInt"));
+  test("ClickHouse UInt64 is BigInt", () => expect(mapSqlTypeToPrisma("UInt64")).toBe("BigInt"));
+  test("LibreDB number is Float", () => expect(mapSqlTypeToPrisma("number")).toBe("Float"));
+  test("Oracle NUMBER is Float", () => expect(mapSqlTypeToPrisma("NUMBER(10,2)")).toBe("Float"));
+  test("UUID is a String", () => expect(mapSqlTypeToPrisma("UUID")).toBe("String"));
 });
 
 // ============================================================================
@@ -333,6 +435,187 @@ describe("generateCode", () => {
     expect(code).toContain("export interface Empty");
     expect(code).toContain("{\n\n}");
   });
+
+  /*
+    Field names with `.` or `@` (#1446). `toCamelCase` and its siblings kept every
+    non-`_`/`-` character, so a nested Elasticsearch field and a data stream's
+    `@timestamp` produced `address.city: string | null;` and
+    `private LocalDateTime @timestamp;`, which do not parse. TypeScript and Zod
+    quote such a key; Go, Python, Java and Prisma sanitise the name and keep the
+    original in the tag, alias or annotation the language has.
+  */
+  describe("field names that are not identifiers (#1446)", () => {
+    const mappingSchema: DetailedObject = {
+      name: "events",
+      kind: "table",
+      path: ["events"],
+      indexes: [],
+      columns: [
+        { name: "@timestamp", type: "TIMESTAMP", nullable: true, isPrimary: false },
+        { name: "address.city", type: "VARCHAR(255)", nullable: true, isPrimary: false },
+        { name: "plain_field", type: "TEXT", nullable: false, isPrimary: false },
+      ],
+    };
+
+    test("TypeScript quotes the key and keeps a plain name bare", () => {
+      const code = generateCode("typescript", mappingSchema);
+      expect(code).toContain('  "@timestamp": Date | null;');
+      expect(code).toContain('  "address.city": string | null;');
+      expect(code).toContain("  plainField: string;");
+    });
+
+    test("Zod quotes the key and keeps a plain name bare", () => {
+      const code = generateCode("zod", mappingSchema);
+      expect(code).toContain('  "@timestamp": z.date().nullable(),');
+      expect(code).toContain('  "address.city": z.string().nullable(),');
+      expect(code).toContain("  plainField: z.string(),");
+    });
+
+    test("Go sanitises the field name and keeps the original in the tag", () => {
+      const code = generateCode("go", mappingSchema);
+      expect(code).toContain('\tTimestamp *time.Time `json:"@timestamp" db:"@timestamp"`');
+      expect(code).toContain('\tAddressCity *string `json:"address.city" db:"address.city"`');
+      expect(code).toContain('\tPlainField string `json:"plain_field" db:"plain_field"`');
+    });
+
+    test("Python sanitises the field name and keeps the original as the alias", () => {
+      const code = generateCode("python", mappingSchema);
+      expect(code).toContain("from dataclasses import dataclass, field");
+      expect(code).toContain('    timestamp: Optional[datetime] = field(metadata={"alias": "@timestamp"})');
+      expect(code).toContain('    address_city: Optional[str] = field(metadata={"alias": "address.city"})');
+      expect(code).toContain("    plain_field: str");
+    });
+
+    test("Java sanitises the field name and keeps the original in @JsonProperty", () => {
+      const code = generateCode("java", mappingSchema);
+      expect(code).toContain("import com.fasterxml.jackson.annotation.JsonProperty;");
+      expect(code).toContain('    @JsonProperty("@timestamp")\n    private LocalDateTime timestamp;');
+      expect(code).toContain('    @JsonProperty("address.city")\n    private String addressCity;');
+      expect(code).toContain("    private String plainField;");
+    });
+
+    test("Prisma sanitises the field name and keeps the original in @map", () => {
+      const code = generateCode("prisma", mappingSchema);
+      expect(code).toContain('  timestamp  DateTime? @map("@timestamp")');
+      expect(code).toContain('  address_city  String? @map("address.city")');
+      expect(code).toContain("  plain_field  String");
+    });
+
+    test("a name with a quote character is escaped, not emitted raw", () => {
+      const quoted: DetailedObject = {
+        name: "odd",
+        kind: "table",
+        path: ["odd"],
+        indexes: [],
+        columns: [{ name: 'say "hi"', type: "TEXT", nullable: false, isPrimary: false }],
+      };
+      expect(generateCode("typescript", quoted)).toContain('  "say \\"hi\\"": string;');
+      expect(generateCode("java", quoted)).toContain('    @JsonProperty("say \\"hi\\"")\n    private String sayHi;');
+    });
+
+    test("a name that is only punctuation does not collapse the output", () => {
+      const punct: DetailedObject = {
+        name: "punct",
+        kind: "table",
+        path: ["punct"],
+        indexes: [],
+        columns: [{ name: "@", type: "TEXT", nullable: false, isPrimary: false }],
+      };
+      expect(generateCode("typescript", punct)).toContain('  "@": string;');
+      expect(generateCode("go", punct)).toContain("\tField string ");
+      expect(generateCode("java", punct)).toContain("private String field;");
+    });
+  });
+
+  describe("container columns reach every language (#1446)", () => {
+    const clickhouse: DetailedObject = {
+      name: "ch",
+      kind: "table",
+      path: ["ch"],
+      indexes: [],
+      columns: [
+        { name: "big", type: "Int64", nullable: false, isPrimary: false },
+        { name: "ubig", type: "UInt64", nullable: false, isPrimary: false },
+        { name: "arr", type: "Array(Int32)", nullable: false, isPrimary: false },
+        { name: "m", type: "Map(String, Int32)", nullable: false, isPrimary: false },
+      ],
+    };
+
+    test("TypeScript", () => {
+      const code = generateCode("typescript", clickhouse);
+      expect(code).toContain("big: bigint;");
+      expect(code).toContain("ubig: bigint;");
+      expect(code).toContain("arr: number[];");
+      expect(code).toContain("m: Record<string, number>;");
+    });
+
+    test("Zod", () => {
+      const code = generateCode("zod", clickhouse);
+      expect(code).toContain("big: z.bigint(),");
+      expect(code).toContain("ubig: z.bigint(),");
+      expect(code).toContain("arr: z.array(z.number()),");
+      expect(code).toContain("m: z.record(z.number()),");
+    });
+
+    test("Go", () => {
+      const code = generateCode("go", clickhouse);
+      expect(code).toContain("Big int64");
+      expect(code).toContain("Ubig int64");
+      expect(code).toContain("Arr []int");
+      expect(code).toContain("M map[string]int");
+    });
+
+    test("Python", () => {
+      const code = generateCode("python", clickhouse);
+      expect(code).toContain("big: int");
+      expect(code).toContain("ubig: int");
+      expect(code).toContain("arr: list[int]");
+      expect(code).toContain("m: dict[str, int]");
+    });
+
+    test("Java", () => {
+      const code = generateCode("java", clickhouse);
+      expect(code).toContain("private Long big;");
+      expect(code).toContain("private Long ubig;");
+      expect(code).toContain("private Integer[] arr;");
+      expect(code).toContain("private Map<String, Integer> m;");
+      expect(code).toContain("import java.util.Map;");
+    });
+
+    test("Prisma", () => {
+      const code = generateCode("prisma", clickhouse);
+      expect(code).toContain("big  BigInt");
+      expect(code).toContain("ubig  BigInt");
+      expect(code).toContain("arr  Json");
+      expect(code).toContain("m  Json");
+    });
+  });
+
+  describe("generated TypeScript parses (#1446)", () => {
+    const parseErrors = (code: string): number => {
+      const source = ts.createSourceFile("generated.ts", code, ts.ScriptTarget.Latest, true);
+      return (source as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics.length;
+    };
+
+    const mappingSchema: DetailedObject = {
+      name: "events",
+      kind: "table",
+      path: ["events"],
+      indexes: [],
+      columns: [
+        { name: "@timestamp", type: "TIMESTAMP", nullable: true, isPrimary: false },
+        { name: "address.city", type: "VARCHAR(255)", nullable: true, isPrimary: false },
+        { name: "arr", type: "Array(Int32)", nullable: false, isPrimary: false },
+      ],
+    };
+
+    test("the interface with quoted keys parses", () =>
+      expect(parseErrors(generateCode("typescript", mappingSchema))).toBe(0));
+    test("the zod schema with quoted keys parses", () =>
+      expect(parseErrors(generateCode("zod", mappingSchema))).toBe(0));
+    test("the guard is not vacuous: an unquoted dotted key does not parse", () =>
+      expect(parseErrors("export interface A { address.city: string; }")).toBeGreaterThan(0));
+  });
 });
 
 // ============================================================================
@@ -439,4 +722,134 @@ describe("generateCode — non-identifier table names (#427)", () => {
       expect(generateCode(lang, unicodeSchema)).toContain(expected);
     });
   }
+});
+
+// ─── the review's three fixes (#1446) ─────────────────────────────────────────
+
+/*
+  1. The `time`, `datetime` and `LocalDateTime` imports are decided from the
+     MAPPED type, not the raw declared one, so a container the classifier cannot
+     see into (`list<timestamp>`, `map<text, timestamp>`, `Tuple(DateTime, Int32)`)
+     no longer emits an import nothing uses - `go build` failed on exactly that.
+*/
+describe("imports follow the mapped type, not the declared string (#1446 review)", () => {
+  const cassandraContainers: DetailedObject = {
+    name: "ch",
+    kind: "table",
+    path: ["ch"],
+    indexes: [],
+    columns: [
+      { name: "l", type: "list<timestamp>", nullable: false, isPrimary: false },
+      { name: "m", type: "map<text, timestamp>", nullable: false, isPrimary: false },
+      { name: "t", type: "Tuple(DateTime, Int32)", nullable: false, isPrimary: false },
+    ],
+  };
+
+  test("Go emits no time import for containers it maps to interface{}", () => {
+    const code = generateCode("go", cassandraContainers);
+    expect(code).not.toContain('import "time"');
+    expect(code).toContain("L []interface{}");
+    expect(code).toContain("M map[string]interface{}");
+    expect(code).toContain("T []interface{}");
+  });
+
+  test("Python emits no datetime import for them", () => {
+    const code = generateCode("python", cassandraContainers);
+    expect(code).not.toContain("from datetime import datetime");
+    expect(code).toContain("l: list");
+    expect(code).toContain("m: dict");
+  });
+
+  test("Java emits no LocalDateTime import for them", () => {
+    const code = generateCode("java", cassandraContainers);
+    expect(code).not.toContain("import java.time.LocalDateTime;");
+    expect(code).toContain("private Object[] l;");
+  });
+});
+
+/*
+  2. Integer spellings match as whole tokens, so `point`, `interval` and
+     `geo_point` (each carrying `int` as characters, none an integer type) are
+     not integers in any language, and ClickHouse's CamelCase `Int8` - an 8-bit
+     integer - is not PostgreSQL's `int8`, which is a 64-bit one.
+*/
+describe("integer spellings are whole tokens, not substrings (#1446 review)", () => {
+  for (const type of ["point", "interval", "geo_point"]) {
+    test(`${type} is not an integer in any language`, () => {
+      expect(mapSqlTypeToTS(type)).toBe("string");
+      expect(mapSqlTypeToZod(type)).toBe("z.string()");
+      expect(mapSqlTypeToGo(type)).toBe("string");
+      expect(mapSqlTypeToPython(type)).toBe("str");
+      expect(mapSqlTypeToJava(type)).toBe("String");
+      expect(mapSqlTypeToPrisma(type)).toBe("String");
+    });
+  }
+
+  test("ClickHouse Int8 is an 8-bit integer, not PostgreSQL's int8", () => {
+    expect(mapSqlTypeToTS("Int8")).toBe("number");
+    expect(mapSqlTypeToZod("Int8")).toBe("z.number()");
+    expect(mapSqlTypeToGo("Int8")).toBe("int");
+    expect(mapSqlTypeToJava("Int8")).toBe("Integer");
+    expect(mapSqlTypeToPrisma("Int8")).toBe("Int");
+  });
+
+  test("PostgreSQL's int8 stays the 64-bit one", () => {
+    expect(mapSqlTypeToTS("int8")).toBe("bigint");
+    expect(mapSqlTypeToGo("int8")).toBe("int64");
+    expect(mapSqlTypeToJava("int8")).toBe("Long");
+    expect(mapSqlTypeToPrisma("int8")).toBe("BigInt");
+  });
+
+  test("a modified integer keeps its family", () => {
+    expect(mapSqlTypeToTS("int(11)")).toBe("number");
+    expect(mapSqlTypeToTS("smallint")).toBe("number");
+    expect(mapSqlTypeToTS("varint")).toBe("number");
+    expect(mapSqlTypeToPython("varint")).toBe("int");
+  });
+
+  test("DuckDB's unsigned and huge integers keep their family", () => {
+    for (const type of ["UTINYINT", "USMALLINT", "UINTEGER"]) {
+      expect(mapSqlTypeToTS(type)).toBe("number");
+      expect(mapSqlTypeToGo(type)).toBe("int");
+    }
+    for (const type of ["UBIGINT", "HUGEINT", "UHUGEINT"]) {
+      expect(mapSqlTypeToTS(type)).toBe("bigint");
+      expect(mapSqlTypeToGo(type)).toBe("int64");
+      expect(mapSqlTypeToJava(type)).toBe("Long");
+    }
+  });
+});
+
+/*
+  3. A trailing `[]` is PostgreSQL's array spelling (format_type), so the element
+     is typed: `integer[]` is a list of numbers, not one number, and
+     `timestamp with time zone[]` reaches Go as []time.Time.
+*/
+describe("a trailing [] is an array of its element (#1446 review)", () => {
+  test("integer[] is a list of numbers", () => expect(mapSqlTypeToTS("integer[]")).toBe("number[]"));
+  test("text[] is a list of strings", () => expect(mapSqlTypeToTS("text[]")).toBe("string[]"));
+  test("timestamp with time zone[] is a list of Date", () =>
+    expect(mapSqlTypeToTS("timestamp with time zone[]")).toBe("Date[]"));
+  test("Go reads []time.Time for a zoned array", () =>
+    expect(mapSqlTypeToGo("timestamp with time zone[]")).toBe("[]time.Time"));
+  test("a two-dimensional array nests", () => expect(mapSqlTypeToTS("integer[][]")).toBe("number[][]"));
+  test("Zod and Python type the element too", () => {
+    expect(mapSqlTypeToZod("integer[]")).toBe("z.array(z.number())");
+    expect(mapSqlTypeToPython("integer[]")).toBe("list[int]");
+  });
+  test("the _text ARRAY spelling still names no element", () =>
+    expect(mapSqlTypeToTS("_text ARRAY")).toBe("unknown[]"));
+
+  test("generateCode writes the element type and no unused import", () => {
+    const schema: DetailedObject = {
+      name: "pg",
+      kind: "table",
+      path: ["pg"],
+      indexes: [],
+      columns: [{ name: "tags", type: "text[]", nullable: false, isPrimary: false }],
+    };
+    const code = generateCode("go", schema);
+    expect(code).toContain("Tags []string");
+    expect(code).not.toContain('import "time"');
+  });
 });

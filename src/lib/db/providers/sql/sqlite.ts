@@ -1071,6 +1071,8 @@ export class SQLiteProvider extends SQLBaseProvider {
       explainFormat: "sqlite-queryplan",
       supportsConnectionString: false,
       supportsInlineRowEdit: true,
+      // The Generate Test Data dialog's multi-row `INSERT INTO ... VALUES` (#1468).
+      supportsTestDataGeneration: true,
       // `LIMIT n OFFSET m`, applied by the shared limiter in `SQLBaseProvider.prepareQuery`.
       supportsResultPagination: true,
       // SQLite HAS transactions; this provider holds no session for one, so

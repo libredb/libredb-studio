@@ -198,6 +198,8 @@ export class LibSQLProvider extends SQLBaseProvider {
       explainFormat: "sqlite-queryplan",
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
+      // The Generate Test Data dialog's multi-row `INSERT INTO ... VALUES` (#1468).
+      supportsTestDataGeneration: true,
       // SQLite's grammar over the wire: `LIMIT n OFFSET m` from the shared limiter.
       supportsResultPagination: true,
       // libSQL HAS transactions - `BEGIN` is accepted and Hrana keeps an

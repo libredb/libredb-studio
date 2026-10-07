@@ -453,6 +453,8 @@ export class DuckDBProvider extends SQLBaseProvider {
       supportsExplain: true,
       explainFormat: "duckdb-json",
       supportsInlineRowEdit: true,
+      // The Generate Test Data dialog's multi-row `INSERT INTO ... VALUES` (#1468).
+      supportsTestDataGeneration: true,
       // `LIMIT n OFFSET m`, applied by the shared limiter in `SQLBaseProvider.prepareQuery`.
       supportsResultPagination: true,
       // DuckDB HAS transactions - `BEGIN`/`COMMIT` are accepted - but this provider

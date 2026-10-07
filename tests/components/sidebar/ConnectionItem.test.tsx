@@ -495,6 +495,23 @@ describe("ConnectionItem", () => {
   describe("the read-only marker (#1089)", () => {
     const title = "Writes, value edits and maintenance are refused on this connection";
 
+    test("keeps name space with compact read-only and environment badges (#1430)", () => {
+      const { getByText } = render(
+        <ConnectionItem
+          connection={{ ...mockPostgresConnection, name: "E2E Milvus RO", environment: "local", readOnly: true }}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+          onEdit={defaultOnEdit}
+        />,
+      );
+      expect(getByText("E2E Milvus RO").classList.contains("truncate")).toBe(true);
+      expect(getByText("E2E Milvus RO").classList.contains("min-w-[4ch]")).toBe(true);
+      expect(getByText("Read-only").classList.contains("sr-only")).toBe(true);
+      expect(getByText("Read-only").parentElement?.querySelector("svg")).not.toBeNull();
+      expect(getByText("LOCAL").classList.contains("truncate")).toBe(true);
+    });
+
     test("a read-only connection carries the marker, titled with what it refuses", () => {
       const { getByText } = render(
         <ConnectionItem
@@ -505,7 +522,7 @@ describe("ConnectionItem", () => {
         />,
       );
 
-      expect(getByText("Read-only").getAttribute("title")).toBe(title);
+      expect(getByText("Read-only").closest("[title]")?.getAttribute("title")).toBe(title);
     });
 
     test("a managed read-only seed shows it beside the managed lock", () => {
@@ -518,7 +535,9 @@ describe("ConnectionItem", () => {
         />,
       );
 
-      expect(getByText("Read-only").parentElement).toBe(getByTestId("managed-lock-prod").parentElement);
+      expect(getByText("Read-only").closest("[title]")?.parentElement).toBe(
+        getByTestId("managed-lock-prod").parentElement,
+      );
     });
 
     test("a connection that is not read-only carries none", () => {

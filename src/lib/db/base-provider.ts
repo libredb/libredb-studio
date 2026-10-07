@@ -341,6 +341,10 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
       // POST /api/db/transaction refuses the call. The four that hold a session for
       // one (postgres, mysql, oracle, mssql) override this.
       supportsTransactions: false,
+      // False for the same reason: a subclass that inherits this default has not said its
+      // engine takes the generator's rows, so the row menus do not offer it (#1468). The
+      // engines that do override this.
+      supportsTestDataGeneration: false,
       // The default is the SQL default: a relational engine has foreign keys whether
       // or not a given schema uses them. The engines that have none override this
       // (#414), which is the direction that carries the strong claim.

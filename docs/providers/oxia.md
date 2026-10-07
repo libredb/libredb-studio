@@ -591,6 +591,7 @@ Every capability is written, since the base's defaults are SQL's:
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` |
+| `supportsTestDataGeneration` | `false` |
 | `supportsResultPagination` | `false` |
 | `supportsTransactions` | `false` |
 | `declaresForeignKeys` | `false` |

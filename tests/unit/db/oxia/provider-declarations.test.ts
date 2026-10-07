@@ -30,6 +30,7 @@ describe("getCapabilities (SB2-9.1)", () => {
       supportsExternalQueryLimiting: false,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       supportsResultPagination: false,
       supportsTransactions: false,
       declaresForeignKeys: false,

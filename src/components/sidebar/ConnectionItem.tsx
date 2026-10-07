@@ -130,10 +130,13 @@ export const ConnectionItem = React.memo(function ConnectionItem({
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="truncate block font-medium text-xs">{conn.name}</span>
+          <span className="truncate min-w-[4ch] block font-medium text-xs" title={conn.name}>
+            {conn.name}
+          </span>
           {conn.environment && conn.environment !== "other" && (
             <span
-              className="text-[0.5rem] font-medium px-1.5 py-0.5 rounded-sm shrink-0"
+              className="text-[0.5rem] font-medium px-1.5 py-0.5 rounded-sm truncate"
+              title={ENVIRONMENT_LABELS[conn.environment]}
               style={{
                 color: conn.color || "#6b7280",
                 backgroundColor: `${conn.color || "#6b7280"}15`,
@@ -164,7 +167,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
             <Star strokeWidth={1.5} className={cn("w-3 h-3", isFavorite && "fill-current")} />
           </button>
         )}
-        {conn.readOnly === true && <ReadOnlyMarker />}
+        {conn.readOnly === true && <ReadOnlyMarker compact />}
         {onMoveToGroup && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

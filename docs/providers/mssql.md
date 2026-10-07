@@ -1367,6 +1367,7 @@ render those words and send an operation SQL Server declares (#496).
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core T-SQL DML |
+| `supportsTestDataGeneration` | `true` - the row menus offer Generate Test Data on tables, which writes one multi-row `INSERT INTO ... VALUES` |
 | `supportsResultPagination` | `true` — `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, built by this provider's own `prepareQuery` override. Page one is `SELECT TOP n`, so the two pages are structurally different statements, and page two carries the `ORDER BY (SELECT NULL)` T-SQL demands before `OFFSET` — which promises nothing about order (#816) |
 | `supportsTransactions` | `true` — the `mssql` package's `Transaction` over one held pool connection, so the trio and the SANDBOX toggle are offered (#464) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; read from `sys.foreign_keys`, so an empty list is about the schema or the role, not the engine |

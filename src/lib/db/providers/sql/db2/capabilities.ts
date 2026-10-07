@@ -68,6 +68,8 @@ export function db2Capabilities(base: ProviderCapabilities): ProviderCapabilitie
     // The grid's inline editor is a read-then-write-back, which db2-node 1.0.24 carries intact (K1
     // and K22 fixed; see `DB2_OBJECT_KINDS`).
     supportsInlineRowEdit: true,
+    // The Generate Test Data dialog's multi-row `INSERT INTO ... VALUES` (#1468).
+    supportsTestDataGeneration: true,
     // Except a CLOB, DBCLOB or BLOB column: db2-node writes nothing, and reports no error, for a
     // value bound to one declared 32768 bytes or longer (K24), and a result declares these columns
     // without their length, so the editor refuses every one of them.

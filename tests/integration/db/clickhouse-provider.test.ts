@@ -439,6 +439,7 @@ describe("ClickHouseProvider metadata", () => {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       // `LIMIT n OFFSET m` from the shared limiter (#816). A statement ending in
       // `FORMAT` or `SETTINGS` comes back `wasLimited: false`, and the route's
       // `hasMore` requires that, so those offer no Load More without a type branch.

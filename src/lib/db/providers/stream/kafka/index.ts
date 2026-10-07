@@ -124,6 +124,7 @@ export class KafkaProvider extends BaseDatabaseProvider {
       supportsTransactions: false,
       supportsMaintenance: false,
       supportsInlineRowEdit: false,
+      supportsTestDataGeneration: false,
       supportsResultPagination: false,
       supportsExternalQueryLimiting: false,
       supportsConnectionString: false,

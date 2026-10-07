@@ -176,6 +176,31 @@ export interface SqlGrammar {
    * while the route reported its first fragment `success`.
    */
   readonly script: ScriptGrammar;
+  /**
+   * Clauses that must FOLLOW the row bound on this dialect (#1398).
+   *
+   * Each entry is a pattern that matches ONE such clause at the very END of a
+   * statement - leading whitespace, the clause's own words, `\s*` to the end - and
+   * the shared limiter does two things with them: it places the bound BEFORE the
+   * run it matches, re-attaching the matched text verbatim, and it reads an
+   * existing bound followed by such a run as the bound it is. Without the
+   * declaration the limiter appends, so on the dialects that have one of these
+   * clauses every bounded read was refused outright: Materialize
+   * `Expected end of statement, found LIMIT`, ScyllaDB `line 1:38 : Syntax error`.
+   *
+   * The patterns accept word-runs alone, and where the clause carries an argument
+   * (Materialize's timestamp, ScyllaDB's duration) it is a number, a single-quoted
+   * literal or one bracket-free token - never a free expression - so a closing
+   * quote or a `)` after it always ends the match. That is what keeps a
+   * clause-shaped run inside a literal (`… WHERE note = 'BYPASS CACHE'`), an alias
+   * followed by statement text (`SELECT a AS of FROM t`) and a clause written
+   * inside a subquery (`… (SELECT … AS OF 123) t`) from reading as the clause.
+   *
+   * Empty everywhere but the two rows that carry it. A dialect without a clause
+   * keeps today's answer for its words: the limiter appends after them and the
+   * engine refuses the statement, which it refused before the bound was there too.
+   */
+  readonly trailingLimitClauses: readonly RegExp[];
 }
 
 /**
@@ -196,6 +221,7 @@ export const DEFAULT_SQL_GRAMMAR: SqlGrammar = {
   alternateQuoting: false,
   doubleSlashComment: false,
   script: { blocks: "none", separatorLine: null, unit: "statement" },
+  trailingLimitClauses: [],
 };
 
 /**
@@ -217,6 +243,7 @@ const MYSQL_GRAMMAR: SqlGrammar = {
   // its own client cuts with `DELIMITER`, and no reading of them was measured here, so the
   // default stays and the gap is BACKLOG S7.
   script: DEFAULT_SQL_GRAMMAR.script,
+  trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };
 const CLICKHOUSE_GRAMMAR: SqlGrammar = {
   hash: "comment",
@@ -240,6 +267,7 @@ const CLICKHOUSE_GRAMMAR: SqlGrammar = {
   // `… LIMIT 5 // note` and returns 5 (both measured).
   doubleSlashComment: true,
   script: DEFAULT_SQL_GRAMMAR.script,
+  trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };
 const POSTGRES_GRAMMAR: SqlGrammar = {
   hash: "code",
@@ -254,6 +282,16 @@ const POSTGRES_GRAMMAR: SqlGrammar = {
   // Established, and equal to the default: a routine body is a literal (`$$ … $$` or
   // `'…'`), which the span reader already holds whole, so no `;` inside one is code.
   script: DEFAULT_SQL_GRAMMAR.script,
+  // Materialize's `AS OF [AT LEAST] <t>`, which shares this type-id route (E2E pass
+  // of 2026-10-03/04, #1398): `SELECT * FROM ui_mv AS OF AT LEAST 0` sent with the
+  // bound appended is `Expected end of statement, found LIMIT`, and with the bound
+  // before the clause it returns rows. The timestamp is a number or a single-quoted
+  // literal - the forms the clause's own grammar documents - so `AS of` as an alias
+  // (its next word is a name, not a literal) and an `AS OF` inside a subquery (a
+  // `)` follows the timestamp) never match. Real PostgreSQL and RisingWave share
+  // this row and have no such clause: a statement of theirs ending in these words
+  // is one the server refuses bound or unbound, so the reading costs neither.
+  trailingLimitClauses: [/\s+AS\s+OF\s+(?:AT\s+LEAST\s+)?(?:\d+|'[^']*')\s*$/i],
 };
 /**
  * DuckDB, every fact measured on v1.5.5 through `@duckdb/node-api` 1.5.5-r.4.
@@ -283,6 +321,7 @@ const DUCKDB_GRAMMAR: SqlGrammar = {
   // `SELECT 1 AS a // note` is `Parser Error: syntax error at or near "//"`.
   doubleSlashComment: false,
   script: DEFAULT_SQL_GRAMMAR.script,
+  trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };
 const ORACLE_GRAMMAR: SqlGrammar = {
   hash: "code",
@@ -297,6 +336,7 @@ const ORACLE_GRAMMAR: SqlGrammar = {
   // existed: the procedure cut at its inner `;` was stored INVALID with PLS-00103, and the
   // unit is refused without the `;` after its `END`, so the splitter keeps that one.
   script: { blocks: "pl-sql", separatorLine: "/", unit: "statement" },
+  trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };
 /**
  * Db2 LUW, every fact probed 2026-10-03 on DB2/LINUXX8664 12.1.0.0 through db2-node 1.0.22, the
@@ -320,6 +360,7 @@ const DB2_GRAMMAR: SqlGrammar = {
   // `SELECT 1 AS a FROM SYSIBM.SYSDUMMY1 // note` is SQLCODE -104.
   doubleSlashComment: false,
   script: DEFAULT_SQL_GRAMMAR.script,
+  trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };
 const MSSQL_GRAMMAR: SqlGrammar = {
   hash: "code",
@@ -334,6 +375,7 @@ const MSSQL_GRAMMAR: SqlGrammar = {
   // Measured on 2025 RTM-CU9: `DECLARE @x INT = 5; SELECT @x * 2` sent as two requests is
   // `Must declare the scalar variable "@x"`, and as one batch answers 10.
   script: { blocks: "none", separatorLine: "GO", unit: "batch" },
+  trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };
 const SQLITE_GRAMMAR: SqlGrammar = {
   hash: "code",
@@ -348,6 +390,7 @@ const SQLITE_GRAMMAR: SqlGrammar = {
   // node:sqlite 3.50.4 before the fact existed: the trigger cut at its inner `;` was
   // `incomplete input`.
   script: { blocks: "trigger-body", separatorLine: null, unit: "statement" },
+  trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };
 
 /**
@@ -388,6 +431,7 @@ const ELASTICSEARCH_GRAMMAR: SqlGrammar = {
   // over-splits exactly as `cassandra`'s did.
   doubleSlashComment: DEFAULT_SQL_GRAMMAR.doubleSlashComment,
   script: DEFAULT_SQL_GRAMMAR.script,
+  trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };
 const OPENSEARCH_GRAMMAR: SqlGrammar = {
   // `#` really is a line comment, and this is where the fork's SQL plugin parts
@@ -413,6 +457,7 @@ const OPENSEARCH_GRAMMAR: SqlGrammar = {
   // NOT established, same reason and same stated cost as the Elasticsearch row above.
   doubleSlashComment: DEFAULT_SQL_GRAMMAR.doubleSlashComment,
   script: DEFAULT_SQL_GRAMMAR.script,
+  trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };
 /**
  * Established the same way and for the same reason as the two search rows: the engine
@@ -449,6 +494,7 @@ const TRINO_GRAMMAR: SqlGrammar = {
   // than hiding what follows.
   doubleSlashComment: false,
   script: DEFAULT_SQL_GRAMMAR.script,
+  trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };
 
 /**
@@ -485,6 +531,7 @@ const DATAFUSION_GRAMMAR: SqlGrammar = {
   // follows.
   doubleSlashComment: false,
   script: DEFAULT_SQL_GRAMMAR.script,
+  trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };
 
 /**
@@ -564,6 +611,24 @@ const CASSANDRA_GRAMMAR: SqlGrammar = {
   //        newline: a LINE comment, not a to-end-of-input one.
   doubleSlashComment: true,
   script: DEFAULT_SQL_GRAMMAR.script,
+  // Clauses that must follow the row bound (#1398), measured on ScyllaDB 2026.3.2
+  // (E2E pass of 2026-10-03/04), which shares this type-id:
+  //   `SELECT * FROM t BYPASS CACHE` -> rows; with the bound appended after it,
+  //     `line 1:38 : Syntax error`.
+  //   `SELECT * FROM t USING TIMEOUT 5s` -> rows; appended, `line 1:42`.
+  //   `SELECT * FROM t LIMIT 10 BYPASS CACHE` -> rows: the bound keeps its place
+  //     before the clause.
+  // `ALLOW FILTERING` is the one this row already knew (`… LIMIT 3 ALLOW FILTERING`
+  // returns rows, `… ALLOW FILTERING LIMIT 3` is "mismatched input 'LIMIT'"), which
+  // the Cassandra provider used to transpose after the fact; all three now come from
+  // this one declaration. `USING TIMEOUT` and `BYPASS CACHE` are ScyllaDB's, not
+  // Apache Cassandra 5.0's (measured there: `USING TIMEOUT 1ms` is `mismatched input
+  // 'USING' expecting EOF`), and the cost of declaring them on this shared row is
+  // none: a 5.0 statement ending in either is refused bound or unbound. The duration
+  // token excludes brackets, so a `)` after it ends the match: a `USING TIMEOUT` run
+  // followed by a closing parenthesis - a subquery's tail on a dialect that has one,
+  // or text the engine will refuse - is never read as the statement's own clause.
+  trailingLimitClauses: [/\s+ALLOW\s+FILTERING\s*$/i, /\s+BYPASS\s+CACHE\s*$/i, /\s+USING\s+TIMEOUT\s+[^()\s]+\s*$/i],
 };
 
 /**

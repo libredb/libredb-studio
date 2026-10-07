@@ -411,10 +411,16 @@ describe("failures", () => {
     }
   });
 
-  test("an in-memory SQLite database is refused by the profile, not served a writable handle", async () => {
+  // #1462: an ExecutionProfileError is Studio's own decision, not the engine's, so it
+  // reads in Studio's words - no untrusted-data notice, no "The database refused or
+  // failed the call:" prefix - exactly as run_read_query already answers one.
+  test("an in-memory SQLite database is refused by the profile, in Studio's own words with no untrusted-data notice", async () => {
     const result = await inspect({ connection_id: "seed:memory" });
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain("cannot target an in-memory SQLite database");
+    expect(result.content).toEqual([
+      { type: "text", text: "The agent read-only execution profile cannot target an in-memory SQLite database" },
+    ]);
+    expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
   });
 });
 

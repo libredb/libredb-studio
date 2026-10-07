@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D240, U17 · 144
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U92 · 84
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U93 · 84
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC18 · 15
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -3414,19 +3414,6 @@ Not fixed in #1085: the remedy is a guard or a refusal the whole shell shares, n
 
 **Done when:** no path writes a statement for a connection whose capabilities are unknown, the click waiting for them or refusing without them, with a test on the mobile path that taps a row before the metadata resolves.
 
-### U40. Generate Test Data is withheld on MongoDB, whose insertMany output the generator writes and the provider runs
-
-Both row menus offer Generate Test Data only where the row's kind declares `acceptsRowWrites` and the engine declares `supportsInlineRowEdit`: the desktop tree in `src/components/object-tree/row-actions.ts`, and since #1085 (decision D-M) the mobile menu in `src/components/schema-explorer/TableItem.tsx` by the same rule.
-MongoDB's `collection` kind declares `acceptsRowWrites: true` while the engine declares `supportsInlineRowEdit: false`, so neither menu offers the item there.
-Yet `src/components/TestDataGenerator.tsx` builds an `insertMany` command for a JSON connection, and the MongoDB provider runs `insertMany`, so the generator works where the gate withholds it.
-`README.md` and its five translations promise "INSERT statements or MongoDB insertMany JSON" in the Test Data Generator bullet, output no menu now reaches.
-Probably the same on ClickHouse and Trino, not measured: the generator writes one multi-row `INSERT ... VALUES`, `docs/providers/clickhouse.md` records a successful `INSERT`, and both engines declare `supportsInlineRowEdit: false`.
-
-Found 2026-09-23 while aligning the mobile gate with the desktop one for #1085 (section 3.2).
-Not fixed in #1085: the maintainer kept the desktop rule as it is for that PR (2026-09-23), and widening it is a product decision of its own.
-
-**Done when:** either Generate Test Data is offered wherever the row's kind accepts row writes and the generator's output runs, through a gate that says so rather than through `supportsInlineRowEdit`, which describes the grid editor, with a MongoDB test on both menus, or the README bullets stop promising insertMany output.
-
 ### U41. The LibreDB provider's comment on `tablesAreDerivedGroupings` names one reader of the flag where there are six
 
 The comment beside `tablesAreDerivedGroupings: true` in `src/lib/db/providers/embedded/libredb.ts` makes two claims the code no longer bears out.
@@ -3991,6 +3978,19 @@ Found 2026-10-05 by the final review of the platform integration branch.
 Not fixed there: it predates that work.
 
 **Done when:** the id is cleared when the last connection closes or is withdrawn, with a test.
+
+### U93. Generate Test Data is not declared on Cassandra, Couchbase, Trino and Elasticsearch/OpenSearch, whose kinds take row writes
+
+Since #1468 both row menus offer Generate Test Data through `offersTestDataGeneration` in `src/lib/db/object-kinds.ts`: the row's kind declares `acceptsRowWrites` and the engine declares `supportsTestDataGeneration`.
+That PR kept the set the menus offered before it, the eight SQL engines whose grid edits rows, and added MongoDB, whose `insertMany` arm was measured.
+Cassandra, Couchbase, Trino and Elasticsearch/OpenSearch each declare a kind that takes row writes and declare the flag false, because none of them was measured with the generator's output.
+Cassandra is the likeliest to work: `supportsMultiRowInsert: false` already makes the generator write one `INSERT` per row there (#1410), measured for the CSV import only.
+Couchbase gets the SQL arm's `INSERT INTO ... VALUES` with column names, which is not the SQL++ `INSERT` shape, Trino depends on the connector, and an Elasticsearch/OpenSearch index takes documents, not SQL `INSERT`.
+
+Found 2026-10-06 while giving the generator its own flag for #1468.
+Not fixed in #1468: the owner kept the offered set to the old one plus MongoDB.
+
+**Done when:** each of them either declares `supportsTestDataGeneration: true` with a live run of the generated statement recorded in its provider doc, or its provider doc says why the generator's output cannot run there.
 
 ## Dependencies
 

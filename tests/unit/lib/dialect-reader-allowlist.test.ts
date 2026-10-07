@@ -63,6 +63,12 @@ const ALLOWED: readonly Reader[] = [
   },
   {
     path: "src/components/TestDataGenerator.tsx",
+    text: 'queryLanguage === "json"',
+    owner:
+      "Generate Test Data: the insertMany arm's field typing, where a dotted name is a document path and the leaf picks the generator (#1468)",
+  },
+  {
+    path: "src/components/TestDataGenerator.tsx",
     text: 'if (capabilities?.queryLanguage === "json") {',
     owner:
       "Generate Test Data: MongoDB's insertMany, unreachable for a dialect since no dialect kind accepts row writes",
@@ -269,6 +275,7 @@ describe("planted readers fail by name", () => {
   test("a listed reader that is removed is reported as absent", () => {
     const findings = inPlantedRepository({ "src/components/TestDataGenerator.tsx": "export {};\n" }, allowlistFindings);
     expect(findings).toEqual([
+      'listed but absent src/components/TestDataGenerator.tsx: queryLanguage === "json" (Generate Test Data: the insertMany arm\'s field typing, where a dotted name is a document path and the leaf picks the generator (#1468))',
       'listed but absent src/components/TestDataGenerator.tsx: if (capabilities?.queryLanguage === "json") { (Generate Test Data: MongoDB\'s insertMany, unreachable for a dialect since no dialect kind accepts row writes)',
     ]);
   });
