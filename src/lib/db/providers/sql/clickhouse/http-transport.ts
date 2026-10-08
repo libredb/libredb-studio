@@ -25,6 +25,7 @@
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
+import { describeFetchFailure, networkFailureKind } from "@/lib/db/http/fetch-failure";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import {
@@ -376,9 +377,13 @@ function midstreamError(outcome: HttpOutcome): ClickHouseTransportError | null {
 }
 
 /** A failure that never reached the server, or never came back from it. */
-function transportError(cause: unknown): ClickHouseTransportError {
-  const reason = cause instanceof Error ? cause.message : String(cause);
-  return new ClickHouseTransportError(`ClickHouse request failed: ${reason}`, 0);
+function transportError(cause: unknown, url: string): ClickHouseTransportError {
+  return new ClickHouseTransportError(
+    `ClickHouse request failed: ${describeFetchFailure(cause, url)}`,
+    0,
+    undefined,
+    networkFailureKind(cause),
+  );
 }
 
 // ============================================================================
@@ -472,7 +477,7 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
       if (error instanceof DatabaseConfigError) throw error;
       // A refused socket, an abort and a truncated body all arrive here, and all
       // have to leave as the seam's own error type.
-      throw transportError(error);
+      throw transportError(error, url);
     }
 
     rejectRedirect(response, url);

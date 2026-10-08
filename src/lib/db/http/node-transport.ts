@@ -270,6 +270,11 @@ function isTlsCode(code: string, overTls: boolean): boolean {
   );
 }
 
+/** Whether a runtime error code is a TLS failure on a TLS connection; shared with `fetch-failure.ts` (#1431). */
+export function isTlsFailureCode(code: string): boolean {
+  return isTlsCode(code, true);
+}
+
 function ownCode(value: unknown): string | undefined {
   const code = typeof value === "object" && value !== null ? (value as { code?: unknown }).code : undefined;
   return typeof code === "string" && ERROR_CODE.test(code) ? code : undefined;

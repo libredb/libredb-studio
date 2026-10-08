@@ -19,6 +19,8 @@
  * Apart from the error type this file is purely structural: no I/O.
  */
 
+import type { NetworkFailureKind } from "@/lib/db/http/fetch-failure";
+
 /**
  * One result row.
  *
@@ -282,6 +284,10 @@ const MONITORING_UNAVAILABLE_CATEGORIES: readonly string[] = [
  * implementation. Spec section 5, point 1: the envelope's `error` field is a
  * discriminator whose value is the literal string `druidException`, so showing
  * it would print that to the user.
+ *
+ * `failure` says how a request that never got an answer failed (refused, timed
+ * out, ...). It is set only on the stand-in category, where the cluster named
+ * nothing.
  */
 export class DruidTransportError extends Error {
   constructor(
@@ -289,6 +295,7 @@ export class DruidTransportError extends Error {
     public readonly category: string = DRUID_TRANSPORT_FAILURE,
     public readonly errorCode: string = DRUID_TRANSPORT_FAILURE,
     public readonly persona: string | null = null,
+    public readonly failure?: NetworkFailureKind,
   ) {
     super(message);
     this.name = "DruidTransportError";

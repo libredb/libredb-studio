@@ -827,9 +827,15 @@ export class ClickHouseProvider extends SQLBaseProvider {
       return new ConnectionError(error.message, this.type, this.connection.host, this.connection.port);
     }
     if (error.code === CLICKHOUSE_FAILURE_CODES.NO_SERVER_CODE) {
-      // Nothing below the SQL layer answered, so there is no code to key on and
-      // the shared message-based mapping - which recognises a refused socket and
-      // a timeout - is the best classification available.
+      // A connection that never opened is a connection problem. Its message says
+      // "timed out", which the shared message-based mapping would read as a slow
+      // query and answer with query advice, so the transport's kind decides first.
+      if (error.failure === "timed-out") {
+        return new ConnectionError(error.message, this.type, this.connection.host, this.connection.port);
+      }
+      // Otherwise nothing below the SQL layer answered, so there is no code to key
+      // on and the shared message-based mapping - which recognises a refused socket
+      // and a query deadline - is the best classification available.
       return this.mapError(error, sql);
     }
 

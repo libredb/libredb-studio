@@ -1026,6 +1026,29 @@ describe("DruidProvider error mapping", () => {
     await expect(provider.query(CONNECT_PROBE)).rejects.toBeInstanceOf(TimeoutError);
   });
 
+  test("a connection that never opened stays a ConnectionError naming the address (#1431)", async () => {
+    // Node's connect timeout. Its text says "timed out", which the shared message-based mapping
+    // reads as a slow query; the transport's failure kind keeps it a connection problem.
+    const provider = await connectProvider();
+    networkFailure = connectTimeout();
+
+    const failure = provider.query(CONNECT_PROBE);
+
+    await expect(failure).rejects.toBeInstanceOf(ConnectionError);
+    await expect(failure).rejects.toThrow("127.0.0.1:8888");
+  });
+
+  test("connect reports a connection that never opened without query advice (#1431)", async () => {
+    networkFailure = connectTimeout();
+    const provider = new DruidProvider(makeConnection());
+
+    const failure = provider.connect();
+
+    await expect(failure).rejects.toBeInstanceOf(ConnectionError);
+    await expect(failure).rejects.toThrow("127.0.0.1:8888");
+    await expect(failure).rejects.not.toThrow(/query timeout/i);
+  });
+
   test("a truncated response reports the incomplete answer it is", async () => {
     // Live-reproduced: a large streamed result cancelled mid-flight answers 200,
     // streams megabytes and then simply stops. Druid signals it by withholding a
@@ -1077,6 +1100,17 @@ describe("DruidProvider error mapping", () => {
     await expect(failure).rejects.toThrow(JSON.parse(envelope).errorMessage as string);
   });
 });
+
+/** What Node's fetch throws when the TCP connect itself times out: the code on the cause. */
+function connectTimeout(): Error {
+  const cause = Object.assign(
+    new Error("Connect Timeout Error (attempted address: 127.0.0.1:8888, timeout: 10000ms)"),
+    {
+      code: "UND_ERR_CONNECT_TIMEOUT",
+    },
+  );
+  return new TypeError("fetch failed", { cause });
+}
 
 // ============================================================================
 // Query preparation (the OFFSET override)

@@ -309,6 +309,31 @@ engines, PostgreSQL included, where it correctly returns nothing; the driver ser
 engines nobody here has run, so an engine without `pg_depend` or `pg_extension` drops the
 clause through `withoutExtensionOwnershipTest()` and keeps the fixed list.
 
+The object browser asks the same question one level down, per object (#1429). An extension
+can put its routines and relations into a user's own schema, where no schema filter reaches
+them: `CREATE EXTENSION pgcrypto` and `hstore` add 97 functions to `public`, and
+`pg_stat_statements` adds three functions and two views. `extensionMemberExclusion()` drops every routine
+(`pg_proc`) and relation (`pg_class`) with a `pg_depend` row of `deptype = 'e'` from the
+folder counts, the listings and `describeObjects()`, which is the same relation test the
+agent's catalog read carries, so the two agree. A user's own object never has such a row.
+Measured 2026-10-08 with user objects seeded next to the extensions:
+
+| Engine | Catalog in `public` | Object browser |
+|---|---|---|
+| PostgreSQL 18.6, pgcrypto + hstore + pg_stat_statements | 102 functions, 3 views | 2 functions, 1 view |
+| TimescaleDB on PG 18.6 | 90 functions, 13 procedures | 2 functions, 0 procedures |
+| OrioleDB beta 19 on PG 18.6 | 80 functions, 5 views | 2 functions, 1 view |
+| Percona PostgreSQL 18.6.1, pg_stat_monitor | 15 functions, 2 views | 2 functions, 1 view |
+| AlloyDB Omni 17.9, as the image ships | 150 functions, 50 views | 2 functions, 1 view |
+| YugabyteDB 2026.1.2 (PG 15.12), pgcrypto + hstore | 98 functions | 1 function |
+| CockroachDB 26.3.2 | 1 function, 1 view, 1 table | the same; `pg_depend` answers nothing |
+| Materialize 26.45.1 | 1 view, 1 table | the same; `pg_depend` answers nothing |
+| RisingWave 3.1.0 | 1 view, 1 table | the same; `pg_depend` answers nothing |
+
+All nine accept the clause. The listings and counts retry without it on an engine that
+refuses `pg_depend` or `pg_extension`, through `queryListing()` and `queryCounts()`, and
+`describeObjects()` already runs through the fallback chain that drops it.
+
 The fixed list stays for schemas the *engine itself* builds in, which are not
 extension-owned: measured, CockroachDB's `crdb_internal` and Cloudberry's `pg_ext_aux`
 return nothing from `pg_depend`.

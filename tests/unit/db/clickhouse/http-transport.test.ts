@@ -1079,6 +1079,27 @@ describe("ClickHouseHttpTransport transport failures", () => {
     expect(error.message).toBe("ClickHouse request failed: fetch failed");
   });
 
+  // #1431: the reason Node keeps in `cause`, and Bun on the error itself, reaches the message.
+  test("a refused connection names the refusal and the address, on Node and on Bun", async () => {
+    handler = () => {
+      throw new TypeError("fetch failed", {
+        cause: { code: "ECONNREFUSED", address: "127.0.0.1", port: 18123 },
+      });
+    };
+    expect((await captureError(() => makeTransport().query("SELECT 1"))).message).toBe(
+      "ClickHouse request failed: connection refused at 127.0.0.1:18123",
+    );
+
+    handler = () => {
+      throw Object.assign(new TypeError("Unable to connect. Is the computer able to access the url?"), {
+        code: "ConnectionRefused",
+      });
+    };
+    expect((await captureError(() => makeTransport().query("SELECT 1"))).message).toBe(
+      "ClickHouse request failed: connection refused at 127.0.0.1:18123",
+    );
+  });
+
   test("normalizes an aborted request", async () => {
     handler = () => {
       const abort = new Error("The operation was aborted.");

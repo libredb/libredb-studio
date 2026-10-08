@@ -6230,6 +6230,107 @@ describe("PostgreSQL object listing and detail", () => {
 });
 
 /**
+ * Routines and relations an extension created inside a user's schema (#1429).
+ *
+ * Measured on PostgreSQL 18.6 after `CREATE EXTENSION pgcrypto; CREATE EXTENSION hstore;`
+ * with two user functions in `public`: `public` holds 99 functions and 97 of them have a
+ * `pg_depend` row with `deptype = 'e'`. `pg_stat_statements` installs its two views into
+ * `public` the same way. The mock stands in for that catalog and honours the ownership
+ * test only when the statement carries it for the right catalog and the right oid, so a
+ * statement without it answers the extension's objects exactly as the server did.
+ */
+describe("PostgreSQL extension-owned objects (#1429)", () => {
+  function makeProvider() {
+    return new PostgresProvider(makePgConfig());
+  }
+
+  const USER_FUNCTIONS = ["order_total", "touch_order"];
+  const EXTENSION_FUNCTIONS = ["crypt", "gen_salt", "hstore_to_json"];
+  const USER_VIEWS = ["order_summary"];
+  const EXTENSION_VIEWS = ["pg_stat_statements", "pg_stat_statements_info"];
+
+  function extensionCatalog(statements: string[], refuseOwnership = false) {
+    return async (sql: string) => {
+      statements.push(sql);
+      if (refuseOwnership && sql.includes("pg_depend")) {
+        throw Object.assign(new Error('relation "pg_depend" does not exist'), { code: "42P01" });
+      }
+      const functions = /p\.oid NOT IN \(SELECT d\.objid FROM pg_depend d [^)]*'pg_proc'::regclass/.test(sql)
+        ? USER_FUNCTIONS
+        : [...USER_FUNCTIONS, ...EXTENSION_FUNCTIONS];
+      const views = /c\.oid NOT IN \(SELECT d\.objid FROM pg_depend d [^)]*'pg_class'::regclass/.test(sql)
+        ? USER_VIEWS
+        : [...USER_VIEWS, ...EXTENSION_VIEWS];
+      if (sql.includes("GROUP BY kind")) {
+        return {
+          rows: [
+            { kind: "function", n: functions.length },
+            { kind: "view", n: views.length },
+          ],
+        };
+      }
+      if (sql.includes("described_columns")) {
+        return {
+          rows: views.map((name) => ({ name, columns: [], pk_columns: null, indexes: null, foreign_keys: null })),
+        };
+      }
+      if (sql.includes("prokind")) return { rows: functions.map((name) => ({ name, identity: `${name}()` })) };
+      if (sql.includes("relkind")) return { rows: views.map((name) => ({ name, row_count: null, size_bytes: null })) };
+      return { rows: [] };
+    };
+  }
+
+  test("the listing, the count and the bulk read leave out what an extension created", async () => {
+    mockQueryFn = extensionCatalog([]);
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect((await provider.listObjects(["public"], "function")).map((object) => object.name)).toEqual(USER_FUNCTIONS);
+    expect((await provider.listObjects(["public"], "view")).map((object) => object.name)).toEqual(USER_VIEWS);
+    const counts = await provider.countObjects(["public"]);
+    expect(counts.function).toEqual({ count: 2 });
+    expect(counts.view).toEqual({ count: 1 });
+    const batch = await provider.describeObjects(["public"], "view");
+    expect(batch.details.map((detail) => detail.path)).toEqual([["public", "order_summary"]]);
+    await provider.disconnect();
+  });
+
+  test("every relation kind carries the test, not only views", async () => {
+    const statements: string[] = [];
+    mockQueryFn = extensionCatalog(statements);
+    const provider = makeProvider();
+    await provider.connect();
+
+    for (const kind of ["table", "view", "materialized_view", "sequence"]) {
+      await provider.listObjects(["public"], kind);
+      expect(statements.at(-1)).toContain("'pg_class'::regclass");
+    }
+    await provider.disconnect();
+  });
+
+  test("an engine without pg_depend still lists, counts and describes, with the test dropped", async () => {
+    // The driver serves PostgreSQL-wire engines nobody here has run. Without the retry,
+    // one that has no pg_depend would lose every folder to a clause it cannot answer.
+    const statements: string[] = [];
+    mockQueryFn = extensionCatalog(statements, true);
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect(await provider.listObjects(["public"], "function")).toHaveLength(5);
+    expect(statements.at(-1)).not.toContain("pg_depend");
+    expect(await provider.listObjects(["public"], "view")).toHaveLength(3);
+    expect(statements.at(-1)).not.toContain("pg_depend");
+    const counts = await provider.countObjects(["public"]);
+    expect(counts.function).toEqual({ count: 5 });
+    expect(counts.view).toEqual({ count: 3 });
+    expect(statements.at(-1)).not.toContain("pg_depend");
+    expect((await provider.describeObjects(["public"], "view")).details).toHaveLength(3);
+    expect(statements.at(-1)).not.toContain("pg_depend");
+    await provider.disconnect();
+  });
+});
+
+/**
  * The fifth provider method (#789): every relation of one kind in one schema, described in
  * ONE round trip.
  *

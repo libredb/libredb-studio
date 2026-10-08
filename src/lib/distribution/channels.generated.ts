@@ -31,6 +31,7 @@ export const LIVE_CHANNELS: readonly ShowcaseChannel[] = [
   { id: "fly-io", label: "Fly.io launch config", group: "paas" },
   { id: "render", label: "Render Blueprint", group: "paas" },
   { id: "unraid-ca", label: "Unraid Community Apps", group: "paas" },
+  { id: "dokku-plugin", label: "Dokku plugin", group: "paas" },
   { id: "caprover-official", label: "CapRover official", group: "paas" },
   { id: "caprover-autoconnect", label: "CapRover auto-connect", group: "paas" },
   { id: "dokploy", label: "Dokploy template catalog", group: "paas" },

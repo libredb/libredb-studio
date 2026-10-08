@@ -32,6 +32,7 @@
 import { endpointUrl, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
+import { describeFetchFailure, networkFailureKind } from "@/lib/db/http/fetch-failure";
 import type { DatabaseConnection } from "@/lib/db/types";
 // Shared with `lib/explain/druid-native.ts`, which parses the EXPLAIN plan columns:
 // those arrive as JSON *text* inside this body, so the pass below correctly leaves
@@ -363,9 +364,14 @@ function envelopeError(payload: unknown, fallback: string): DruidTransportError 
 }
 
 /** A failure that never reached the cluster, or never came back from it. */
-function transportError(cause: unknown): DruidTransportError {
-  const reason = cause instanceof Error ? cause.message : String(cause);
-  return new DruidTransportError(`Druid request failed: ${reason}`);
+function transportError(cause: unknown, url: string): DruidTransportError {
+  return new DruidTransportError(
+    `Druid request failed: ${describeFetchFailure(cause, url)}`,
+    undefined,
+    undefined,
+    undefined,
+    networkFailureKind(cause),
+  );
 }
 
 /**
@@ -577,7 +583,7 @@ export class DruidHttpTransport implements DruidTransport {
       if (error instanceof DatabaseConfigError) throw error;
       // A refused socket, an abort and a truncated body all arrive here, and all
       // have to leave as the seam's own error type.
-      throw transportError(error);
+      throw transportError(error, this.endpoint);
     }
 
     rejectRedirect(response, this.endpoint);

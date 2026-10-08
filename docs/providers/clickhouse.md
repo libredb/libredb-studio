@@ -708,7 +708,8 @@ Two consequences worth stating plainly:
 - **A pasted `https://` URL keeps its TLS intent.** `parseConnectionString` returns
   `sslMode: "require"` for that scheme and the connection form applies it, because the parsed
   host/port fields alone cannot express TLS — without it the connection would go out as plaintext
-  HTTP to the TLS port and fail with a bare `fetch failed`.
+  HTTP to the TLS port, where the server drops it and the error reads
+  `ClickHouse request failed: connection to <host>:<port> was reset (...)`.
 
 
 ### 4.4 Endpoint validation and redirects

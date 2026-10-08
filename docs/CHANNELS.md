@@ -34,9 +34,9 @@ channel count.
 
 ## Coverage snapshot
 
-**44 channels · 37 live · 6 pending · 1 deprecated**
+**45 channels · 38 live · 6 pending · 1 deprecated**
 
-Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 6 · Kubernetes 5 · Cloud 15**
+Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 6 · Kubernetes 5 · Cloud 16**
 
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
@@ -45,7 +45,7 @@ Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 6 · K
 | Kubernetes & operators | 4 | 0 | 0 |
 | Package managers | 6 | 1 | 1 |
 | OS / desktop packages | 3 | 0 | 0 |
-| PaaS catalogs (listed) | 13 | 3 | 0 |
+| PaaS catalogs (listed) | 14 | 3 | 0 |
 | Deploy recipes | 3 | 0 | 0 |
 | Cloud marketplaces | 4 | 2 | 0 |
 
@@ -80,6 +80,7 @@ Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 6 · K
 | [CapRover official](https://github.com/caprover/one-click-apps) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/caprover/README.md](../deploy/caprover/README.md) |
 | [CasaOS App Store](https://github.com/IceWhaleTech/CasaOS-AppStore) | PaaS catalogs (listed) | Container | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Cosmos servapp marketplace](https://github.com/azukaar/cosmos-servapps-official) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/cosmos/README.md](../deploy/cosmos/README.md) |
+| [Dokku plugin](https://dokku.com/docs/community/plugins/) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Dokploy template catalog](https://templates.dokploy.com) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/dokploy/README.md](../deploy/dokploy/README.md) |
 | [Kubero template catalog](https://www.kubero.dev/templates) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/kubero/README.md](../deploy/kubero/README.md) |
 | [1Panel community store](https://github.com/okxlin/appstore/tree/localApps/apps/libredb-studio) | PaaS catalogs (listed) | Container | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
@@ -112,7 +113,6 @@ requests with `bun run distribution:matrix --check`.
 
 Not counted here, and why. **Alibaba Cloud** is not being pursued. **Coolify**
 declined the submission: its maintainers accept service templates only from
-projects above 1000 GitHub stars. **Dokku** has no application catalog to apply
-to. A row appears above as soon as there is something to track — a submission,
-or a descriptor in this repo that a workflow reads — and stays `pending` until
-the product can be installed from that channel, when it becomes `live`.
+projects above 1000 GitHub stars. A row appears above as soon as there is
+something to track — a submission, or a descriptor in this repo that a workflow
+reads — and stays `pending` until the product can be installed from that channel, when it becomes `live`.

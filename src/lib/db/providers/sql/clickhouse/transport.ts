@@ -17,6 +17,8 @@
  * Apart from the error type this file is purely structural: no I/O.
  */
 
+import type { NetworkFailureKind } from "@/lib/db/http/fetch-failure";
+
 /**
  * One result row, keyed by the names in `fieldNames`.
  *
@@ -203,12 +205,16 @@ const MONITORING_UNAVAILABLE_CODES: readonly number[] = [
  * symbol anyway - overriding the conventional class name - because it is the
  * vocabulary a ClickHouse user already reads in `clickhouse-client` output,
  * while the class itself stays recoverable through `instanceof`.
+ *
+ * `failure` says how a request that never got an answer failed (refused, timed
+ * out, ...). It is set only alongside code 0, where the server named nothing.
  */
 export class ClickHouseTransportError extends Error {
   constructor(
     message: string,
     public readonly code: number,
     name: string = CLICKHOUSE_UNKNOWN_ERROR_NAME,
+    public readonly failure?: NetworkFailureKind,
   ) {
     super(message);
     this.name = name;

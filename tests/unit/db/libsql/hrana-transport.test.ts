@@ -672,6 +672,25 @@ describe("LibSQLHranaTransport failures", () => {
     await expect(failure).rejects.toMatchObject({ status: 0 });
     await expect(failure).rejects.toThrow(/connect ECONNREFUSED/);
   });
+
+  // #1431: the reason Node keeps in `cause`, and Bun on the error itself, reaches the message.
+  test("a refused connection names the refusal and the address, on Node and on Bun", async () => {
+    globalThis.fetch = (() =>
+      Promise.reject(
+        new TypeError("fetch failed", { cause: { code: "ECONNREFUSED", address: "127.0.0.1", port: 18081 } }),
+      )) as unknown as typeof fetch;
+    await expect(transport().execute("SELECT 1")).rejects.toThrow(
+      "libSQL request failed: connection refused at 127.0.0.1:18081",
+    );
+
+    globalThis.fetch = (() =>
+      Promise.reject(
+        Object.assign(new TypeError("Unable to connect."), { code: "ConnectionRefused" }),
+      )) as unknown as typeof fetch;
+    await expect(transport().execute("SELECT 1")).rejects.toThrow(
+      "libSQL request failed: connection refused at 127.0.0.1:18081",
+    );
+  });
 });
 
 // ============================================================================

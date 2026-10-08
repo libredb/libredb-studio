@@ -451,6 +451,33 @@ channels:
         The `container` platform is deliberate and not a stand-in for cloud - the user installs a Docker
         container on their own Unraid server.
 
+  - id: dokku-plugin
+    name: Dokku community plugin (libredb/dokku-libredb-studio)
+    short_name: Dokku plugin
+    status: live
+    category: paas-catalogs
+    platforms: [cloud]
+    runtime: channel_supplied
+    tier: 2
+    kind: one-click-template
+    update:
+      method: commit
+      sla: on_demand
+    links:
+      first_pr: https://github.com/dokku/dokku/pull/9116
+      catalog: https://dokku.com/docs/community/plugins/
+      upstream_repo: https://github.com/libredb/dokku-libredb-studio
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/libredb/dokku-libredb-studio/main/config
+      extract: 'libredb-studio:(\d+\.\d+\.\d+)'
+      note: The plugin is LibreDB-owned, so a version bump is a commit (and a plugin release) in THAT
+        repo, as with unraid-ca. Dokku has no application catalog; its community plugins page is the
+        listing users find it from, added by dokku/dokku#9116 (merged 2026-10-08). The pinned value is
+        LIBREDB_STUDIO_DEFAULT_IMAGE in the plugin's config file, the image `libredb-studio:install`
+        deploys when no --image flag is given.
+
   # ---- Tier 3: upstream community catalogs, bumped via PR -----------------
 
   - id: caprover-official

@@ -444,6 +444,12 @@ export class DruidProvider extends SQLBaseProvider {
    * server named no exception code.
    */
   private mapDruidError(error: unknown, sql?: string): Error {
+    // A connection that never opened is a connection problem. Its message says
+    // "timed out", which the shared message-based mapping would read as a slow
+    // query and answer with query advice, so the transport's kind decides first.
+    if (error instanceof DruidTransportError && error.failure === "timed-out") {
+      return new ConnectionError(error.message, this.type, this.config.host, this.config.port);
+    }
     if (!(error instanceof DruidTransportError) || error.category === DRUID_TRANSPORT_FAILURE) {
       return this.mapError(error, sql);
     }

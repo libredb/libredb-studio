@@ -863,6 +863,20 @@ describe("DruidHttpTransport transport failures", () => {
     expect(error.errorCode).toBe(DRUID_TRANSPORT_FAILURE);
   });
 
+  // #1431: the reason Node keeps in `cause` reaches the message.
+  test("a refused connection names the refusal and the address", async () => {
+    handler = () => {
+      throw new TypeError("fetch failed", {
+        cause: { code: "ECONNREFUSED", address: "127.0.0.1", port: 8888 },
+      });
+    };
+
+    const error = await captureError(() => makeTransport().query("SELECT 1"));
+
+    expect(error.message).toBe("Druid request failed: connection refused at 127.0.0.1:8888");
+    expect(error.category).toBe(DRUID_TRANSPORT_FAILURE);
+  });
+
   test("normalizes an aborted request", async () => {
     handler = () => {
       const abort = new Error("The operation was aborted.");

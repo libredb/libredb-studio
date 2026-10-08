@@ -735,6 +735,23 @@ describe("CouchbaseHttpTransport error mapping", () => {
     expect(error.message).toContain("fetch failed");
   });
 
+  // #1431: the reason Node keeps in `cause` reaches the message.
+  test("a refused connection names the refusal and the address", async () => {
+    handler = () => {
+      throw new TypeError("fetch failed", {
+        cause: { code: "ECONNREFUSED", address: "127.0.0.1", port: 8093 },
+      });
+    };
+
+    const error = (await makeTransport()
+      .query("SELECT 1")
+      .catch((e: unknown) => e)) as CouchbaseError;
+
+    expect(error).toBeInstanceOf(CouchbaseError);
+    expect(error.retriable).toBe(true);
+    expect(error.message).toBe("Couchbase request failed: connection refused at 127.0.0.1:8093");
+  });
+
   test("wraps a non-Error network rejection", async () => {
     handler = () => Promise.reject("socket closed");
 

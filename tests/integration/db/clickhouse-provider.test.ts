@@ -1086,7 +1086,48 @@ describe("ClickHouseProvider error mapping", () => {
 
     await expect(provider.query("SELECT 1")).rejects.toThrow(/aborted/);
   });
+
+  test("a connection that never opened stays a ConnectionError naming the address (#1431)", async () => {
+    // Node's connect timeout. Its text says "timed out", which the shared message-based mapping
+    // reads as a slow query; the transport's failure kind keeps it a connection problem.
+    const provider = await connectProvider();
+    networkFailure = connectTimeout();
+
+    const failure = provider.query("SELECT 1");
+
+    await expect(failure).rejects.toBeInstanceOf(ConnectionError);
+    await expect(failure).rejects.toThrow("127.0.0.1:8123");
+  });
+
+  test("connect reports a connection that never opened without query advice (#1431)", async () => {
+    networkFailure = connectTimeout();
+    const provider = new ClickHouseProvider(makeConnection());
+
+    const failure = provider.connect();
+
+    await expect(failure).rejects.toBeInstanceOf(ConnectionError);
+    await expect(failure).rejects.toThrow("127.0.0.1:8123");
+    await expect(failure).rejects.not.toThrow(/query timeout/i);
+  });
+
+  test("a client-side deadline stays a TimeoutError", async () => {
+    const provider = await connectProvider();
+    networkFailure = new DOMException("The operation timed out.", "TimeoutError");
+
+    await expect(provider.query("SELECT 1")).rejects.toBeInstanceOf(TimeoutError);
+  });
 });
+
+/** What Node's fetch throws when the TCP connect itself times out: the code on the cause. */
+function connectTimeout(): Error {
+  const cause = Object.assign(
+    new Error("Connect Timeout Error (attempted address: 127.0.0.1:8123, timeout: 10000ms)"),
+    {
+      code: "UND_ERR_CONNECT_TIMEOUT",
+    },
+  );
+  return new TypeError("fetch failed", { cause });
+}
 
 // ============================================================================
 // Query preparation (the trailing-clause override)

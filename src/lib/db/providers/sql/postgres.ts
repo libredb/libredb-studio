@@ -563,6 +563,20 @@ function schemaExclusion(column: string): string {
   return `${column} NOT IN (${SYSTEM_SCHEMA_LIST}) AND ${column} NOT IN (${EXTENSION_OWNED_SCHEMAS_SQL})`;
 }
 
+// The same ownership test one level down, for a routine or a relation an extension put
+// into a user's own schema, where no schema filter reaches it (#1429). Measured on
+// PostgreSQL 18.6 after `CREATE EXTENSION pgcrypto; CREATE EXTENSION hstore;`: `public`
+// held 99 functions for 2 user functions, and the 97 others are exactly the ones with a
+// `pg_depend` row of `deptype = 'e'`. A user's own object never has one, so it always
+// survives. Free of parentheses inside, like the schema test, so the same fallback strips it.
+function extensionMemberExclusion(oidColumn: string, catalog: "pg_class" | "pg_proc"): string {
+  return (
+    `${oidColumn} NOT IN (SELECT d.objid FROM pg_depend d ` +
+    `JOIN pg_extension e ON e.oid = d.refobjid ` +
+    `WHERE d.classid = '${catalog}'::regclass AND d.deptype = 'e')`
+  );
+}
+
 // `kcu.column_name` is `information_schema.sql_identifier`, and node-postgres has no array
 // parser for `sql_identifier[]`: uncast, the list reached `objectDetailFromRow` as the text
 // `{id}`, where `includes()` became a substring test that flagged `i` and `d` as keys too,
@@ -726,9 +740,13 @@ function isMissingConstraintColumnUsageError(error: unknown): boolean {
 // YugabyteDB, Cloudberry, AlloyDB Omni, CockroachDB and Materialize among them, but
 // the driver serves engines nobody here has run. One that has no pg_depend or
 // pg_extension drops the clause and keeps the fixed list, which is what it filtered
-// on before ownership was asked at all.
+// on before ownership was asked at all. Both forms go: the schema test and the
+// per-object test `extensionMemberExclusion()` writes.
 function withoutExtensionOwnershipTest(sql: string): string {
-  return sql.replace(/\s+AND\s+[\w.]+ NOT IN \(SELECT n\.nspname FROM pg_namespace n JOIN pg_depend[^)]*\)/g, "");
+  return sql.replace(
+    /\s+AND\s+[\w.]+ NOT IN \(SELECT (?:n\.nspname FROM pg_namespace n|d\.objid FROM pg_depend d) JOIN pg_[^)]*\)/g,
+    "",
+  );
 }
 
 // tables_info lists relations from information_schema and then resolves each name to a
@@ -829,7 +847,8 @@ const COUNTS_RELATION_ARM = `
                  END AS kind
           FROM pg_catalog.pg_class c
           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-          WHERE n.nspname = $1 AND c.relkind IN ('r','p','v','m','S')`;
+          WHERE n.nspname = $1 AND c.relkind IN ('r','p','v','m','S')
+          AND ${extensionMemberExclusion("c.oid", "pg_class")}`;
 
 // `prokind` is a PostgreSQL 11 column. Everything that predates it, and the forks that
 // never grew it, refuse this arm - which is why it is separable at all. They do not agree
@@ -840,7 +859,8 @@ const COUNTS_ROUTINE_ARM = `
           SELECT CASE p.prokind WHEN 'f' THEN 'function' WHEN 'p' THEN 'procedure' END
           FROM pg_catalog.pg_proc p
           JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-          WHERE n.nspname = $1`;
+          WHERE n.nspname = $1
+          AND ${extensionMemberExclusion("p.oid", "pg_proc")}`;
 
 // `tgisinternal` excludes the triggers PostgreSQL creates for a foreign key or a
 // deferred unique constraint. A user never wrote them and cannot drop them on their own,
@@ -913,7 +933,8 @@ function hasColumns(kind: string): boolean {
 // every relation on CockroachDB and Materialize as 0 bytes. The size column is simply
 // dropped instead (`withSize: false`), so the row carries no `size_bytes` at all and
 // `measuredSizeBytes()` reads absence. Nothing else in this statement is repairable by
-// that chain: it has no `AS MATERIALIZED`, no `to_regclass` and no `pg_depend`.
+// that chain: it has no `AS MATERIALIZED` and no `to_regclass`, and its one `pg_depend`
+// clause, the extension ownership test, has its own repair in `queryListing()`.
 function listRelationsSql(relkinds: string): string {
   return `
         SELECT
@@ -922,7 +943,8 @@ function listRelationsSql(relkinds: string): string {
           pg_total_relation_size(c.oid) AS size_bytes
         FROM pg_catalog.pg_class c
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = $1 AND c.relkind IN (${relkinds})`;
+        WHERE n.nspname = $1 AND c.relkind IN (${relkinds})
+        AND ${extensionMemberExclusion("c.oid", "pg_class")}`;
 }
 
 const LIST_RELATIONS_SQL: Record<string, string> = Object.fromEntries(
@@ -972,7 +994,8 @@ const LIST_ROUTINES_SQL = `
           ${ROUTINE_IDENTITY_EXPR} AS identity
         FROM pg_catalog.pg_proc p
         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-        WHERE n.nspname = $1 AND p.prokind = $2`;
+        WHERE n.nspname = $1 AND p.prokind = $2
+        AND ${extensionMemberExclusion("p.oid", "pg_proc")}`;
 
 // A trigger name is unique per TABLE, not per schema - two tables in one schema may each
 // carry a trigger called `stamp_updated_at` - so the table is a path segment and not
@@ -1611,6 +1634,7 @@ function bulkDetailSql(relkinds: string, bound?: number): string {
           FROM pg_catalog.pg_class c
           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
           WHERE n.nspname = $1 AND c.relkind IN (${relkinds})
+          AND ${extensionMemberExclusion("c.oid", "pg_class")}
           ORDER BY c.relname${limit}
         ),
         described_columns AS (
@@ -3388,6 +3412,21 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   /**
+   * One count read, retried once without the extension ownership test on an engine that has
+   * no `pg_depend` or `pg_extension` (#1429). Any other refusal leaves raw rather than
+   * mapped, because `countObjects` files the server's own sentence and keys its routine
+   * retry on it.
+   */
+  private async queryCounts(client: PoolClient, sql: string, schema: string) {
+    try {
+      return await client.query(sql, [schema]);
+    } catch (error) {
+      if (!isMissingExtensionCatalogError(error)) throw error;
+      return client.query(withoutExtensionOwnershipTest(sql), [schema]);
+    }
+  }
+
+  /**
    * How many objects of each declared kind one schema holds.
    *
    * Three outcomes, and the type keeps all three apart. A kind the GROUP BY answered for
@@ -3416,7 +3455,7 @@ export class PostgresProvider extends SQLBaseProvider {
     const client = await this.pool!.connect();
     try {
       try {
-        applyKindCounts(counts, (await client.query(COUNTS_SQL, [schema])).rows);
+        applyKindCounts(counts, (await this.queryCounts(client, COUNTS_SQL, schema)).rows);
       } catch (error) {
         if (!isMissingProkindError(error)) {
           return unavailableCounts(
@@ -3427,7 +3466,7 @@ export class PostgresProvider extends SQLBaseProvider {
         const routines = declared.filter((kind) => kind.role === "routine");
         const rest = declared.filter((kind) => kind.role !== "routine");
         try {
-          applyKindCounts(counts, (await client.query(COUNTS_SQL_WITHOUT_ROUTINES, [schema])).rows);
+          applyKindCounts(counts, (await this.queryCounts(client, COUNTS_SQL_WITHOUT_ROUTINES, schema)).rows);
         } catch (retryError) {
           Object.assign(
             counts,
@@ -3458,7 +3497,8 @@ export class PostgresProvider extends SQLBaseProvider {
    * CockroachDB and Materialize do not have, and `pg_class.reltuples` is a column
    * RisingWave does not have. They are independent, an engine can refuse both, and each
    * repair is applied to whatever statement is current rather than to the original, so
-   * the order the refusals arrive in does not matter.
+   * the order the refusals arrive in does not matter. The extension ownership test is the
+   * third repair, for an engine without `pg_depend` or `pg_extension` (#1429).
    *
    * Every failure leaves by the same door quoting the statement the server actually
    * received, which after a repair is the rewritten one: quoting the original would
@@ -3468,6 +3508,7 @@ export class PostgresProvider extends SQLBaseProvider {
     const remainingFallbacks = [
       { matches: isMissingTotalRelationSizeError, apply: withoutSizeColumn },
       { matches: isMissingRowCountColumnError, apply: withoutRowCountColumn },
+      { matches: isMissingExtensionCatalogError, apply: withoutExtensionOwnershipTest },
     ];
     let currentSql = statement.sql;
     for (;;) {

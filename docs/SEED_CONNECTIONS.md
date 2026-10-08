@@ -127,6 +127,7 @@ connections:
     # instanceName: "MSSQL$"  # SQL Server only
     # localDataCenter: "datacenter1"  # Cassandra only - REQUIRED there
     # authSource: "admin"     # MongoDB only - the database the user was created in
+    # allowInsecureAuth: true # Db2 example - accept a password sent without TLS
     # saslMechanism: SCRAM-SHA-512  # Kafka only - PLAIN|SCRAM-SHA-256|SCRAM-SHA-512, a literal name
 
   - id: "dev-mysql"
@@ -286,6 +287,7 @@ connections:
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**) |
 | `connections[].schema` | No | — | Trino session schema, used to resolve unqualified table names inside the configured catalog |
+| `connections[].skipObjectScan` | No | absent | `true` reads no catalog when the connection opens, so the editor is usable immediately and the object tree offers a load action instead of scanning. Useful for large catalogs, including managed connections whose settings cannot be edited in the UI |
 | `connections[].user` | No | — | Username |
 | `connections[].password` | No | — | Password (use `${ENV_VAR}` syntax) |
 | `connections[].apiKeyId` | No | - | Elasticsearch only (#708): the API key's id, paired with `apiKeySecret` and preferred over `user` and `password` when both are set; every other engine refuses the pair when the file loads. Resolved like `password` |

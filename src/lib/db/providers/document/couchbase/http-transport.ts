@@ -24,6 +24,7 @@ import { request as httpsRequest, type RequestOptions as HttpsRequestOptions } f
 import { endpointUrl, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
+import { describeFetchFailure } from "@/lib/db/http/fetch-failure";
 import type { DatabaseConnection } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
@@ -260,9 +261,8 @@ function httpError(httpCode: number): CouchbaseError {
   );
 }
 
-function networkError(error: unknown): CouchbaseError {
-  const message = error instanceof Error ? error.message : String(error);
-  return new CouchbaseError(`Couchbase request failed: ${message}`, 0, true);
+function networkError(error: unknown, url: string): CouchbaseError {
+  return new CouchbaseError(`Couchbase request failed: ${describeFetchFailure(error, url)}`, 0, true);
 }
 
 function throwIfFailed(response: JsonResponse): void {
@@ -306,7 +306,7 @@ async function fetchJson(url: string, init: JsonRequestInit): Promise<JsonRespon
     });
   } catch (error) {
     if (error instanceof DatabaseConfigError) throw error;
-    throw networkError(error);
+    throw networkError(error, url);
   }
   const text = await response.text();
   rejectRedirect(response, url);
@@ -351,7 +351,7 @@ export function nodeRequestJson(url: string, init: JsonRequestInit, tls: Couchba
         : httpRequest(options as HttpRequestOptions, onResponse);
 
     clientRequest.on("error", (error: Error) =>
-      reject(error instanceof DatabaseConfigError ? error : networkError(error)),
+      reject(error instanceof DatabaseConfigError ? error : networkError(error, target.href)),
     );
     if (init.body !== undefined) clientRequest.write(init.body);
     clientRequest.end();
