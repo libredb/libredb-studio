@@ -31,6 +31,7 @@
 </p>
 <p align="center">
   साथ ही
+  <a href="https://node-oracledb.readthedocs.io/en/latest/user_guide/appendix_b.html#libredb-studio">Oracle</a>,
   <a href="https://planet.mysql.com/showcase/?search=LibreDB">MySQL</a>,
   <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>,
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>,

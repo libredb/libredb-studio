@@ -30,6 +30,7 @@
   <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
 </p>
 <p align="center">
+  <a href="https://node-oracledb.readthedocs.io/en/latest/user_guide/appendix_b.html#libredb-studio">Oracle</a>、
   <a href="https://planet.mysql.com/showcase/?search=LibreDB">MySQL</a>、
   <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>、
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>、
