@@ -26,8 +26,11 @@ async function portNothingListensOn(): Promise<number> {
 describe("MongoDB server selection bound (#1458)", () => {
   test("a closed port is refused well under a minute, not after the pool acquire timeout", async () => {
     const port = await portNothingListensOn();
-    // The shape `/api/db/test-connection` builds: a request's own query timeout, which
-    // `connect()` does not read, over the default pool `acquireTimeout` of 60000.
+    // The shape `/api/db/test-connection` builds: a request's own query timeout above
+    // the driver's 30 s selection bound, so the 30 s is what the measurement pins.
+    // `connect()` reads the request's timeout (#1573), but only the deadline below
+    // the driver's own 30 s changes the answer, and a 60000 mutant fails this test
+    // only if the read itself is gone - the deadline pin lives in the #1573 test below.
     const provider = new MongoDBProvider(
       {
         id: "closed-port",
@@ -38,7 +41,7 @@ describe("MongoDB server selection bound (#1458)", () => {
         database: "repro",
         createdAt: new Date(),
       },
-      { queryTimeout: 10000 },
+      { queryTimeout: 60000 },
     );
 
     const started = Date.now();
@@ -53,8 +56,8 @@ describe("MongoDB server selection bound (#1458)", () => {
     await provider.disconnect();
 
     expect(refusal).toContain("ECONNREFUSED");
-    // 45 s is the assertion and 30 s is the bound: the margin is there so a slow machine
-    // cannot fail a correct change. The defect answers at 60 s, so it fails here.
+    // 45 s is the assertion and 30 s is the driver's bound: the margin is there so a
+    // slow machine cannot fail a correct change. The old defect answered at 60 s.
     expect(elapsed).toBeLessThan(45_000);
   }, 90_000);
 

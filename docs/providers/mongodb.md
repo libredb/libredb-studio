@@ -310,14 +310,14 @@ after an unplanned primary loss as up to 12 seconds and notes that network laten
 This provider used to hand that option `pool.acquireTimeout`, whose default is 60000
 ([`types.ts`](../../src/lib/db/types.ts)), so Test Connection to a host and port where nothing
 listens held the spinner for a minute (`Test Connection` passes `queryTimeout: 10000`, which
-`connect()` does not read). Measured here against a closed port on 127.0.0.1: 60.0 s before, 30.0 s
+`connect()` did not read). Measured here against a closed port on 127.0.0.1: 60.0 s before, 30.0 s
 after. `connectTimeoutMS` did not bound it and does not: that option caps ONE TCP attempt, and a
 refused connection fails its attempt at once.
 
 30 s is the driver's own default and sits above the election window, so a write issued right after
 an unplanned primary loss waits the election out instead of failing at the deadline. It is a
 ceiling under abnormal discovery, not a latency budget: a healthy deployment selects a server well
-before it, and a closed port is still reported only once the 30 s have passed, half the old
+before it, and a closed port used to be reported only after the full 30 s, half the old
 minute. The value is a constant in
 [`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts) rather than a second pool field,
 because it governs the whole client and not only the connect; `connectTimeoutMS` keeps following
@@ -337,12 +337,14 @@ timeout. Two details the driver forces:
   a slow DNS lookup is a no-op. The client is closed again once the connect promise settles, so
   no socket outlives the request either way.
 - A failed `connect()` closes the client and clears it, rather than leaving `this.client` set
-  with `this.db` null: a later `connect()` used to find the half-open client and return as if it
-  were connected.
+  with `this.db` null: on main the `connect()` guard only checks `this.client && this.db`, so a
+  failed ping used to leave the half-open client behind and a later `connect()` returned as if
+  it were connected.
 
 Measured against a closed port on 127.0.0.1 with `queryTimeout: 10000`: the refusal
-(`connect ECONNREFUSED`) arrives in 10.0 s instead of 30.0, and a write issued right after an
-unplanned primary failure still succeeds, because the 30 s client-wide bound is unchanged.
+(`connect ECONNREFUSED`) arrives in 10.0 s instead of 30.0. The write path is unchanged: the
+30 s client-wide bound still governs every operation after the connect, and no failover was
+run to measure it here.
 
 ### 4.1 SSL / TLS
 

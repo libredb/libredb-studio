@@ -1019,11 +1019,14 @@ describe("MongoDBProvider", () => {
         await expect(deadlineProvider.connect()).rejects.toThrow(/ECONNREFUSED/);
         // The connect settles after the deadline (the SRV window: `_connect` resolves
         // SRV before it creates the topology, so a close during the lookup is a no-op)
-        // and the client is closed again once it does.
+        // and the client is closed again once it does: the close count goes from 1
+        // (the deadline path) to 2 (the settle), pinning the second close.
+        expect(mockClientCloses.length).toBe(1);
+        expect(mockClientCloses[0]).toBe(1);
         release?.();
         await new Promise((resolve) => setTimeout(resolve, 10));
         expect(mockClientCloses.length).toBe(1);
-        expect(mockClientCloses[0]).toBeGreaterThan(0);
+        expect(mockClientCloses[0]).toBe(2);
 
         // A fresh connect succeeds on the same provider, on a new client.
         mockConnectBehavior = undefined;
@@ -1032,6 +1035,30 @@ describe("MongoDBProvider", () => {
         expect(mockClientCloses.length).toBe(2);
 
         await deadlineProvider.disconnect();
+      }, 10_000);
+
+      test("a timed-out connect clears the provider's client so a later disconnect() closes nothing", async () => {
+        // Pins `this.client = null` on the timeout path (#1573). Deleting that clear
+        // leaves the timed-out client on the provider: every query is still refused
+        // (the state is not connected), but a later `disconnect()` finds the stale
+        // client and closes it a third time.
+        let release: (() => void) | undefined;
+        mockConnectBehavior = () => new Promise<void>((resolve) => (release = resolve));
+        mockHeartbeatFailure = new Error("connect ECONNREFUSED 127.0.0.1:27999");
+        const deadlineProvider = new MongoDBProvider({ ...baseConfig }, { queryTimeout: 25 });
+
+        await expect(deadlineProvider.connect()).rejects.toThrow(/ECONNREFUSED/);
+        release?.();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        // The deadline closed the client once and the settle closed it again.
+        expect(mockClientCloses.length).toBe(1);
+        expect(mockClientCloses[0]).toBe(2);
+
+        // With the clear, `disconnect()` is a no-op: the client it would close is
+        // already gone. Without it, the stale client takes a third close.
+        await deadlineProvider.disconnect();
+        expect(mockClientCloses.length).toBe(1);
+        expect(mockClientCloses[0]).toBe(2);
       }, 10_000);
 
       test("a failed connect leaves no half-open client behind", async () => {

@@ -1032,6 +1032,10 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     const onHeartbeatFailed = (event: mongodbDriver.ServerHeartbeatFailedEvent) => {
       lastRefusal = event.failure;
     };
+    // The client this connect created, for the second close on the deadline path:
+    // once the deadline has closed it, `this.client` is null and the settle handler
+    // in the race below would otherwise have nothing to close again.
+    let clientToClose: MongoClient | null = null;
 
     try {
       const connectionString = this.buildConnectionString();
@@ -1046,6 +1050,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
       this.client = new MongoClient(connectionString, options);
       this.client.on("serverHeartbeatFailed", onHeartbeatFailed);
+      clientToClose = this.client;
 
       // The request's own bound on this connect (#1573). `serverSelectionTimeoutMS`
       // is client-wide and has to clear a replica set election, so the driver holds
@@ -1060,7 +1065,22 @@ export class MongoDBProvider extends BaseDatabaseProvider {
           resolve("deadline");
         }, this.queryTimeout);
         // The connect settled first: the timer must not hold the process open.
-        connecting.finally(() => clearTimeout(timer)).catch(() => {});
+        // When the deadline had already won, the settled connect closes the
+        // client a second time: over `mongodb+srv` the first close can land
+        // before the topology exists (`MongoClient._connect` resolves SRV
+        // before it creates the topology and never checks `hasBeenClosed`),
+        // so the topology created afterwards stays open. `finally` covers both
+        // settle outcomes; the catch below owns the cleanup when the driver
+        // refuses before the deadline.
+        connecting
+          .finally(() => {
+            if (timedOut) {
+              void clientToClose?.close().catch(() => {});
+            } else {
+              clearTimeout(timer);
+            }
+          })
+          .catch(() => {});
       });
       const first = await Promise.race([connecting, deadline]);
       if (first !== "deadline" && !timedOut) {
@@ -1099,12 +1119,10 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     // out path, outside the catch above so the refusal is not wrapped twice.
     // Draining the selection wait queue with `MongoTopologyClosedError` is what
     // `Topology.close()` does (`topology.js:246-255`), so the in-flight connect
-    // rejects on its own. The SRV window is the reason this close is not
-    // `await`ed inline: `MongoClient._connect` resolves SRV before it creates
-    // the topology and never checks `hasBeenClosed` (`mongo_client.js:226-246`),
-    // so a close that lands during a slow DNS lookup is a no-op and the topology
-    // is created afterwards. The client is closed again once the connect
-    // settles, so no client and no socket outlives the request.
+    // rejects on its own. The client is closed again once the connect settles
+    // (`connecting.then` in the race above), so no client and no socket outlives
+    // the request even when the first close lands during the SRV window and is a
+    // no-op (`mongo_client.js`, see above).
     const refusal = lastRefusal?.message ?? `timed out after ${this.queryTimeout} ms`;
     const client = this.client;
     this.client = null;
