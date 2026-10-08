@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.79 \
+  --version 0.1.80 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -189,6 +189,26 @@ helm install libredb libredb/libredb-studio \
 ```
 
 `secrets.adminPassword` is not part of an OIDC install: the issuer authenticates every user, and the app still signs its own session cookie with `secrets.jwtSecret`. Strict mode (`config.authBootstrap=off`) therefore requires only the JWT secret here.
+
+### Trusting a private CA
+
+When the issuer (or Vault, or a database over TLS) uses a certificate from an internal CA, Node.js rejects it unless the CA is added to `NODE_EXTRA_CA_CERTS`. Mount the CA from a ConfigMap or Secret already in the namespace with `extraVolumes` and `extraVolumeMounts`, and point the variable at the file through `extraEnv`:
+
+```yaml
+extraVolumes:
+  - name: internal-ca
+    configMap:
+      name: internal-ca          # holds ca.crt
+extraVolumeMounts:
+  - name: internal-ca
+    mountPath: /etc/ssl/internal
+    readOnly: true
+extraEnv:
+  - name: NODE_EXTRA_CA_CERTS
+    value: /etc/ssl/internal/ca.crt
+```
+
+Without it the OIDC login fails with a TLS error such as `UNABLE_TO_VERIFY_LEAF_SIGNATURE`.
 
 ## AI Configuration
 
@@ -662,6 +682,9 @@ helm uninstall libredb
 | `podDisruptionBudget.maxUnavailable` | Max unavailable pods (unset minAvailable with `null` to use) | unset |
 | `networkPolicy.enabled` | Enable NetworkPolicy | `false` |
 | `postgresql.enabled` | Deploy PostgreSQL subchart | `false` |
+| `extraVolumes` | Additional pod volumes (Kubernetes `Volume` objects), such as a private CA from a ConfigMap or Secret | `[]` |
+| `extraVolumeMounts` | Additional volume mounts for the app container (Kubernetes `VolumeMount` objects). With a CA mounted, set `NODE_EXTRA_CA_CERTS` to the file through `extraEnv` so an OIDC issuer or Vault on an internal CA is trusted | `[]` |
+| `extraObjects` | Additional Kubernetes manifests deployed with the release, each rendered through `tpl` so it can use release values and the chart's helpers; a string item is taken as a template as it is | `[]` |
 | `global.compatibility.openshift.adaptSecurityContext` | Drop fixed UID/GID fields for the OpenShift SCC: `auto`, `force`, or `disabled` | `auto` |
 
 See [values.yaml](values.yaml) for the complete list of configurable parameters.

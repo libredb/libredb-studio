@@ -348,6 +348,9 @@ spec:
               mountPath: /app/model-tuning
               readOnly: true
             {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: next-cache
           emptyDir: {}
@@ -378,6 +381,9 @@ spec:
         - name: agent-model-tuning
           configMap:
             name: {{ get (get .Values.agent "modelTuning") "existingConfigMap" | default (printf "%s-agent-model-tuning" (include "libredb-studio.fullname" .)) }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

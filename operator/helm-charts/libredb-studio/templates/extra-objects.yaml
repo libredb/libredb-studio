@@ -1,0 +1,13 @@
+{{- /*
+Additional Kubernetes manifests shipped with the release. Each item is
+rendered through tpl, so it can use release values and the chart's helpers;
+a string item is taken as a template as it is.
+*/}}
+{{- range .Values.extraObjects }}
+---
+{{- if typeIs "string" . }}
+{{ tpl . $ }}
+{{- else }}
+{{ tpl (toYaml .) $ }}
+{{- end }}
+{{- end }}

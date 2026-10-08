@@ -593,6 +593,30 @@
       },
       "description": "Additional envFrom references (Kubernetes EnvFromSource objects)"
     },
+    "extraVolumes": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Additional pod volumes (Kubernetes Volume objects)"
+    },
+    "extraVolumeMounts": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Additional volume mounts for the app container (Kubernetes VolumeMount objects)"
+    },
+    "extraObjects": {
+      "type": "array",
+      "items": {
+        "type": [
+          "object",
+          "string"
+        ]
+      },
+      "description": "Additional Kubernetes manifests deployed with the release, each rendered through tpl (an object, or a string taken as a template)"
+    },
     "postgresql": {
       "type": "object",
       "properties": {

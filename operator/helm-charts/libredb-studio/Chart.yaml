@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting twenty-seven engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia and Databend
 type: application
-version: 0.1.79
+version: 0.1.80
 appVersion: "0.18.1"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -206,7 +206,10 @@ annotations:
   # people share a browser profile should read it; no chart template or value moves, so the
   # upgrade is the image. The chart's own edit names Databend in the description, the keywords
   # and the README.
-  artifacthub.io/containsSecurityUpdates: "true"
+  # False: 0.1.80 adds three values, extraVolumes, extraVolumeMounts and extraObjects (#1526),
+  # all empty by default, so every existing install renders exactly as before. They mount
+  # extra volumes into the app container and ship extra manifests with the release.
+  artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
       image: ghcr.io/libredb/libredb-studio:0.18.1
@@ -221,13 +224,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Security: with config.storageProvider sqlite or postgres, an account that signed in on a browser profile another account had signed out of received that account's browser copy of the workspace, the connections it had added with their saved credentials and its query history, from 0.8.0 through 0.18.0 (GHSA-jwvh-6phv-j9jh). The copy is now bound to the signed-in account, and the first sign-in after the upgrade starts from the account's server data. Such an install should upgrade"
-    - "Databend joins as a connection type of its own, over its HTTP query API, for self-hosted Databend and Databend Cloud warehouses; with a warehouse set, Studio sends no background check that would resume it"
-    - "A Seed sources card on the admin Overview page. A seed connectionString on a type that does not read it, and a seed file with a YAML warning, now fail the seed file at load: move the value into the connection fields, or quote it"
-    - "Query results export as Markdown or HTML, the object tree has a filter box, and a result column no longer loses its name or value to another column of the same name"
-    - "The image carries sharp 0.35.5 (GHSA-wq5f-xc86-pv6w)"
-    - "The chart description, keywords and README name Databend"
-    - "Track app release 0.18.1 (appVersion bump; default image tag follows)"
+    - "Three optional values, extraVolumes, extraVolumeMounts and extraObjects, mount extra volumes into the app container (such as a private CA, trusted by pointing NODE_EXTRA_CA_CERTS at it through extraEnv) and ship extra Kubernetes manifests with the release; all empty by default, so nothing changes when unset"
 dependencies:
   - name: postgresql
     version: "16.x.x"
