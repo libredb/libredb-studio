@@ -256,7 +256,26 @@ read whose other columns the engine answers, so each is dropped on its own
 would be a measurement nobody made ([D105](../BACKLOG.md)). Measured on RisingWave 3.1.0,
 which binds neither `pg_size_pretty()` nor `pg_total_relation_size()` but answers
 `pg_table_size(relid)` and `pg_indexes_size(relid)`: the panel now lists the tables with
-their table and index sizes and the total as `N/A`, where the whole read used to fail.
+their sizes, where the whole read used to fail.
+
+**The total is the one size that can be derived rather than dropped**, and
+`totalSizeBytes()` does. PostgreSQL defines `pg_total_relation_size()` as `pg_table_size()`
+plus `pg_indexes_size()`, so adding the two measured parts is the engine's own arithmetic and
+not this provider's guess. It has to be derived rather than left absent because
+`totalSizeBytes` is a **required** field: an absent total still has to carry a number, and the
+`N/A`-beside-`0` spelling the other providers use is only safe where nothing else on the row
+claims a size. The Tables tab's Size card and the Storage tab's share both gate on
+`tableSizeBytes` alone — until #1436 a measured table size always arrived with a measured
+total — so a row carrying one part and the placeholder got that `0` summed and drawn as a
+reading. Measured on RisingWave 3.1.0 on 2026-10-08, one table of two rows:
+`pg_table_size` 89, `pg_indexes_size` 0, `pg_total_relation_size` *function
+pg_total_relation_size(integer) does not exist*. The card read **0 B** over a table with
+bytes in it; it now reads **89 B**. Where a part is refused as well there is nothing to add
+up, and the row publishes no sizes at all, so those gates read the absence and answer `N/A`
+instead of summing the placeholder. No engine measured here does that — RisingWave refuses
+the total alone, CockroachDB answers NULL for all three — so that arm closes the shape rather
+than one seen.
+
 Materialize's outcome is unchanged, because its refusal is not the size call alone: it has
 no `pg_stat_user_tables` either, so the statement still has nothing to read FROM and the
 panel still carries that sentence.

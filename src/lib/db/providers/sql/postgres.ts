@@ -2165,6 +2165,30 @@ function sizeBytesOf(raw: unknown): number | undefined {
   return Number.isFinite(bytes) ? bytes : undefined;
 }
 
+/**
+ * The total a row can stand behind: the engine's own figure, or the two parts PostgreSQL
+ * defines it as when only the total was refused.
+ *
+ * `pg_total_relation_size` is documented as `pg_table_size` plus `pg_indexes_size`, so adding
+ * them is the engine's own arithmetic rather than this provider's guess. RisingWave 3.1.0
+ * refuses that one builtin alone, which left a row carrying a measured 44-byte table size
+ * beside a total of 0. Both the Tables tab's Size card and the Storage tab's share gate on
+ * `tableSizeBytes` by itself, because until now a measured table size always arrived with a
+ * measured total, so that 0 was summed and drawn as "0 B" over a table with bytes in it -
+ * the fabricated zero BACKLOG D105 is about, and the one this read exists to stop writing.
+ *
+ * `undefined` where either part is missing too: there is nothing to add up, and the caller
+ * drops the parts with it so those gates read the absence instead of summing the placeholder.
+ */
+function totalSizeBytesOf(
+  measured: number | undefined,
+  tableBytes: number | undefined,
+  indexBytes: number | undefined,
+): number | undefined {
+  if (measured !== undefined) return measured;
+  return tableBytes !== undefined && indexBytes !== undefined ? tableBytes + indexBytes : undefined;
+}
+
 // getIndexStats: per-index stats. A schema WHERE clause is interpolated
 // between the two fragments at the call site. `attname` is cast to `text` because
 // node-postgres parses no `name[]`: uncast, the column list arrived as the text
@@ -5354,19 +5378,32 @@ export class PostgresProvider extends SQLBaseProvider {
         // value and not only as a repair.
         const tableBytes = sizeBytesOf(r.table_size_bytes);
         const indexBytes = sizeBytesOf(r.index_size_bytes);
-        const totalBytes = sizeBytesOf(r.total_size_bytes);
+        const totalBytes = totalSizeBytesOf(sizeBytesOf(r.total_size_bytes), tableBytes, indexBytes);
+        // A part is published only where the row can also stand behind a total. Those two
+        // panels read `tableSizeBytes` as "this engine publishes per-table bytes at all", and
+        // a part without a total leaves the required `totalSizeBytes` carrying the 0 they
+        // would then sum, so an underivable total takes the parts with it. No engine measured
+        // here refuses a part AND the total - RisingWave refuses the total alone, CockroachDB
+        // answers NULL for all three - so this is the shape being closed rather than one seen.
+        const sized = totalBytes !== undefined;
         return {
           schemaName: r.schema_name,
           tableName: r.table_name,
           rowCount: parseInt(r.row_count || "0"),
           liveRowCount: parseInt(r.live_row_count || "0"),
           deadRowCount: parseInt(r.dead_row_count || "0"),
-          ...(tableBytes === undefined ? {} : { tableSize: formatBytes(tableBytes), tableSizeBytes: tableBytes }),
-          ...(indexBytes === undefined ? {} : { indexSize: formatBytes(indexBytes), indexSizeBytes: indexBytes }),
+          ...(sized && tableBytes !== undefined
+            ? { tableSize: formatBytes(tableBytes), tableSizeBytes: tableBytes }
+            : {}),
+          ...(sized && indexBytes !== undefined
+            ? { indexSize: formatBytes(indexBytes), indexSizeBytes: indexBytes }
+            : {}),
           // `totalSize` and `totalSizeBytes` are the two the type still demands, so an
           // unmeasured total is spelled the way the other providers spell it, "N/A" beside a 0
           // (`sqlite.ts`, `libsql/introspect.ts`). That residual 0 is D105's to remove, for
-          // every provider at once, and not this read's to invent a shape for.
+          // every provider at once, and not this read's to invent a shape for. It is only ever
+          // read beside an absent `tableSizeBytes` now, which is what makes those panels
+          // show "N/A" rather than add it up.
           totalSize: totalBytes === undefined ? "N/A" : formatBytes(totalBytes),
           totalSizeBytes: totalBytes ?? 0,
           lastVacuum: r.last_vacuum || r.last_autovacuum ? new Date(r.last_vacuum || r.last_autovacuum) : undefined,

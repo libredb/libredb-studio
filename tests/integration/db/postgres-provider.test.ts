@@ -3320,8 +3320,18 @@ describe("PostgresProvider", () => {
 
     // RisingWave 3.1.0's measured shape: pg_table_size and pg_indexes_size answer, and
     // pg_total_relation_size does not bind. The rows and the two sizes that ARE published
-    // survive, and the third is absent rather than a 0 nobody measured (BACKLOG D105).
-    test("a size builtin the engine refuses leaves that size unmeasured, keeping the rows", async () => {
+    // survive, and the total comes from PostgreSQL's own definition of it rather than from a
+    // 0 nobody measured (BACKLOG D105).
+    //
+    // Measured on RisingWave 3.1.0 on 2026-10-08, one table of two rows:
+    //   pg_table_size(relid)           -> 89
+    //   pg_indexes_size(relid)         -> 0
+    //   pg_total_relation_size(relid)  -> "function pg_total_relation_size(integer) does not exist"
+    //
+    // Before this, the row reached the Tables tab as tableSizeBytes 89 beside totalSizeBytes 0,
+    // and the Size card summed that 0 into "0 B" over a table with bytes in it, because the
+    // card and the Storage tab's share gate on `tableSizeBytes` alone.
+    test("a refused total is derived from the two parts the engine did publish", async () => {
       let attempts = 0;
       mockQueryFn = (sql: string) => {
         if (sql.includes("pg_total_relation_size")) {
@@ -3339,7 +3349,35 @@ describe("PostgresProvider", () => {
       const users = stats.find((s) => s.tableName === "users")!;
       expect(users.tableSizeBytes).toBe(65536);
       expect(users.indexSizeBytes).toBe(32768);
+      // pg_total_relation_size is documented as pg_table_size plus pg_indexes_size.
+      expect(users.totalSizeBytes).toBe(65536 + 32768);
+      expect(users.totalSize).toBe("96 KB");
+      // Never the placeholder beside a measured part, which is what drew "0 B".
+      expect(stats.every((s) => s.tableSizeBytes === undefined || s.totalSizeBytes > 0)).toBe(true);
+    });
+
+    // The shape no engine measured here produces, and the one the derivation cannot repair:
+    // with a part missing too there is nothing to add up. The parts go with the total, so the
+    // panels read the absence rather than summing the 0 the required field still carries.
+    test("a total that cannot be derived takes the measured part with it", async () => {
+      mockQueryFn = (sql: string) => {
+        for (const fn of ["pg_indexes_size", "pg_total_relation_size"]) {
+          if (sql.includes(`${fn}(relid)`)) {
+            return Promise.reject(new Error(`function "${fn}" does not exist`));
+          }
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const stats = await provider.getTableStats();
+      const users = stats.find((s) => s.tableName === "users")!;
+      expect(users.tableSizeBytes).toBeUndefined();
+      expect(users.indexSizeBytes).toBeUndefined();
       expect(users.totalSize).toBe("N/A");
+      // The rows are what the panel was opened for, and they are still there.
+      expect(users.liveRowCount).toBe(1000);
     });
 
     test("each size builtin is dropped on its own, so one absence does not cost the others", async () => {
