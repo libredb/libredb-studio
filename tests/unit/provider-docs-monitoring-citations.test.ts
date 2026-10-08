@@ -24,12 +24,16 @@
  * declarations, they are listed in the order the source declares them, both search docs name the
  * same eight, and the docs in scope carry no `:<line>` suffix.
  *
- * SCOPE, deliberately narrow: the whole of every document in `NAMED_CITATIONS`, plus the
- * monitoring seam of the two search docs, plus one file across every provider doc: `factory.ts`
- * is cited by its entry point and never by a line. The rest of `docs/providers/` still cites code
- * by line in quantity — a pre-existing backlog this round did not open — and the two search docs
- * are guarded only inside their monitoring section. Nothing here asserts that the uncovered
- * citations are correct; they are simply not measured yet.
+ * SCOPE: every document in `NAMED_CITATIONS`, whole, which as of #1547 is every doc under
+ * `docs/providers/` that ever cited a line — the two search docs were the last two, and they are
+ * now in the list like the rest rather than guarded only inside their monitoring section. Plus one
+ * file across every provider doc: `factory.ts` is cited by its entry point and never by a line.
+ *
+ * What is still NOT measured: a doc that cites no line at all is in none of these lists, so a NEW
+ * doc could introduce one and only the per-doc assertions above would miss it. Whether the names
+ * the uncovered docs cite are the right ones is also not asserted anywhere — these tests measure
+ * that a cited name exists and is listed in declaration order, never that it is the name the prose
+ * ought to have picked.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -459,6 +463,77 @@ const NAMED_CITATIONS = [
     source: "src/lib/db/providers/graph/neo4j/index.ts",
     methods: ["getLabels", "connect"],
   },
+  /**
+   * The two search docs, whole, and the last two docs under `docs/providers/` that cited by line
+   * (#1547). They were also the worst of them: of the 55 unique citations, 14 landed on a
+   * declaration, two named a line past the end of the file they cited, and `index.ts:625` for
+   * `query()` was 347 lines from the declaration it claimed. So the rewrite worked out what each
+   * citation MEANT rather than reading whatever sits on that line today, which is why several now
+   * name a module-level helper, a docblock or a table instead of a method on this class.
+   *
+   * One source for both, because one directory serves both type-ids (`sql/search/`). The lists
+   * differ by one name: `listObjects()` is cited in `opensearch.md` only, where the hyphen-and-dot
+   * shape of a query-insights index name is what the inventory is said not to quote.
+   */
+  {
+    doc: "docs/providers/elasticsearch.md",
+    source: SEARCH_PROVIDER,
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "prepareQuery",
+      "validate",
+      "connect",
+      "disconnect",
+      "deadline",
+      "query",
+      "mapSearchError",
+      "readKind",
+      "listContainers",
+      "describeObject",
+      "describeObjects",
+      "readObjectSource",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getIndexStats",
+      "getActiveSessions",
+      "getTableStats",
+      "getStorageStats",
+      "getHealth",
+      "runMaintenance",
+    ],
+  },
+  {
+    doc: "docs/providers/opensearch.md",
+    source: SEARCH_PROVIDER,
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "prepareQuery",
+      "validate",
+      "connect",
+      "disconnect",
+      "deadline",
+      "query",
+      "mapSearchError",
+      "readKind",
+      "listContainers",
+      "listObjects",
+      "describeObject",
+      "describeObjects",
+      "readObjectSource",
+      "getOverview",
+      "getPerformanceMetrics",
+      "getSlowQueries",
+      "getIndexStats",
+      "getActiveSessions",
+      "getTableStats",
+      "getStorageStats",
+      "getHealth",
+      "runMaintenance",
+    ],
+  },
 ] as const;
 
 const SEARCH_DOCS = ["docs/providers/elasticsearch.md", "docs/providers/opensearch.md"] as const;
@@ -653,6 +728,103 @@ describe("provider docs rewritten this round: code cited by name, whole file", (
       expect(read(doc), `${doc} cites a line inside factory.ts`).not.toMatch(/factory\.ts:\d/);
     }
     expect(read(FACTORY)).toMatch(/^export async function createDatabaseProvider\(/m);
+  });
+});
+
+/**
+ * The module-level names the search docs now cite, and the file each one must be declared in.
+ *
+ * `NAMED_CITATIONS` cannot reach any of these: `declarationLine` matches class members only, and
+ * #1547 replaced a line number with a module-level helper, constant, type or dialect-table member
+ * wherever the prose pointed at one rather than at a method. Without this list the rewrite would
+ * have traded a stale number for an unmeasured name, which is the same defect in a new spelling.
+ *
+ * A dialect-table MEMBER (`faults`, `syntaxTypePattern`) is matched as an object key, since it is
+ * declared inside `DIALECTS` rather than at the top level.
+ */
+const SEARCH_MODULE_CITATIONS = [
+  { name: "SEARCH_DEFAULT_PORT", source: SEARCH_PROVIDER },
+  { name: "SEARCH_SCHEMA_NAME", source: SEARCH_PROVIDER },
+  { name: "SEARCH_SCHEMA_REFRESH_PATTERN", source: SEARCH_PROVIDER },
+  { name: "SEARCH_CONTAINER_TYPES", source: "src/lib/db/providers/sql/search/introspect.ts" },
+  { name: "SearchProduct", source: SEARCH_PROVIDER },
+  { name: "OPENSEARCH_PRODUCT", source: SEARCH_PROVIDER },
+  { name: "toQueryResult", source: SEARCH_PROVIDER },
+  { name: "SearchDialectId", source: "src/lib/db/providers/sql/search/transport.ts" },
+  { name: "SearchQueryResult", source: "src/lib/db/providers/sql/search/transport.ts" },
+  { name: "SearchIndexInfo", source: "src/lib/db/providers/sql/search/transport.ts" },
+  { name: "SearchTransport", source: "src/lib/db/providers/sql/search/transport.ts" },
+  { name: "SearchTransportError", source: "src/lib/db/providers/sql/search/transport.ts" },
+  { name: "SearchHttpTransport", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "DIALECTS", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "MAX_PAGES", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "DEFAULT_PORT", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "DOT_PREFIXED", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "OPENSEARCH_QUERY_INSIGHTS", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "OPENSEARCH_DETAILS_FOOTER", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "toRow", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "rebuildRows", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "describeColumns", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "faultMessage", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "requestFailure", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "flattenProperties", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "toColumn", source: "src/lib/db/providers/sql/search/introspect.ts" },
+  { name: "toColumns", source: "src/lib/db/providers/sql/search/introspect.ts" },
+  { name: "isSystemIndex", source: "src/lib/db/providers/sql/search/introspect.ts" },
+  { name: "validateHost", source: "src/lib/db/http/endpoint.ts" },
+  { name: "httpOrigin", source: "src/lib/db/http/endpoint.ts" },
+  { name: "quoteIdentifier", source: "src/lib/sql/identifier.ts" },
+  { name: "LITERAL_ESCAPE", source: "src/lib/sql/values.ts" },
+  { name: "ELASTICSEARCH_GRAMMAR", source: "src/lib/sql/grammar.ts" },
+  { name: "OPENSEARCH_GRAMMAR", source: "src/lib/sql/grammar.ts" },
+] as const;
+
+/** Members of the dialect table rather than top-level declarations, so matched as object keys. */
+const DIALECT_TABLE_MEMBERS = ["faults", "syntaxTypePattern", "aliasKey"] as const;
+
+describe("search provider docs: the module-level names #1547 introduced", () => {
+  for (const { name, source } of SEARCH_MODULE_CITATIONS) {
+    test(`${name} is declared in ${source}`, () => {
+      expect(read(source)).toMatch(
+        new RegExp(
+          `^(?:export )?(?:declare )?(?:abstract )?(?:async )?(?:const|let|function|class|interface|type) ${name}\\b`,
+          "m",
+        ),
+      );
+    });
+  }
+
+  for (const member of DIALECT_TABLE_MEMBERS) {
+    test(`${member} is a member of the dialect table`, () => {
+      const table = read("src/lib/db/providers/sql/search/http-transport.ts");
+      const start = table.indexOf("const DIALECTS");
+      expect(start).toBeGreaterThan(-1);
+      expect(table.slice(start)).toMatch(new RegExp(`^\\s+${member}:`, "m"));
+    });
+  }
+
+  /**
+   * The per-name tests above pin what they name; this pins the LIST, so a citation added later
+   * cannot quietly go unmeasured. Scoped to a constant, type or class cited next to a link into
+   * `src/lib/db` or `src/lib/sql` — an initial capital is what separates those from the method and
+   * helper names, which the entries above and `NAMED_CITATIONS` already cover one by one.
+   */
+  test("both docs cite only names one of the two lists covers", () => {
+    const covered = new Set<string>([
+      ...SEARCH_MODULE_CITATIONS.map(({ name }) => name),
+      ...DIALECT_TABLE_MEMBERS,
+      ...NAMED_CITATIONS.filter(({ doc }) => SEARCH_DOCS.includes(doc as (typeof SEARCH_DOCS)[number])).flatMap(
+        ({ methods }) => methods as readonly string[],
+      ),
+    ]);
+    // The names the rewrite put next to a link into `search/`, which is the population it owns.
+    const introduced = SEARCH_DOCS.flatMap((doc) => [
+      ...read(doc).matchAll(/`([A-Z][A-Za-z0-9_]*)`[^\n]{0,40}\]\(\.\.\/\.\.\/src\/lib\/(?:db|sql)\//g),
+    ]).map((match) => match[1]);
+    expect(introduced.length).toBeGreaterThan(0);
+    for (const name of new Set(introduced)) {
+      expect(covered.has(name), `${name} is cited by a search doc but measured by neither list`).toBe(true);
+    }
   });
 });
 
