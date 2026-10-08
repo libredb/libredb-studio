@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D253, U17 · 157
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U102 · 94
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U103 · 95
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC18 · 15
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -4243,6 +4243,17 @@ The connection-change effect in `src/components/Studio.tsx` depends on `[conn.ac
 Found 2026-10-08 by the browser verification of the Databend provider (#1593); pre-existing for every engine.
 
 **Done when:** opening a connection sends one inventory request, with a test that makes a connection active, lets its metadata arrive and counts one `/api/db/objects/inventory` request, and the editor's tab type still follows the metadata.
+
+### U103. An Explain declined while a statement runs turns Cancel back into Run
+
+`executeQuery` in `src/hooks/use-query-execution.ts` marks the tab as executing before it decides whether an Explain may be sent, and the decline path then sets `isExecuting: false` and `isLoadingMore: false` on the tab, whatever else runs there.
+So an Explain declined while a statement runs on the same tab shows Run again, and that statement can no longer be cancelled from the editor; its rows still land when it ends.
+Measured 2026-10-08 on the CI image `sha-f280feb` of #1593 against self-hosted Databend: while `SELECT count(*) FROM numbers(3000000000) WHERE number % 7 = 3` ran, Explain on a statement with an optimizer hint was declined, and the toolbar showed Run until the statement ended about 2 seconds later.
+The decline path on `main` resets both flags the same way, for every engine.
+
+Found 2026-10-08 by the browser re-verification of the Databend provider (#1593); pre-existing.
+
+**Done when:** a declined Explain leaves a run in flight on its tab as it was, Cancel included, with a hook test that starts a run, has an Explain declined on the same tab before the run answers, and finds the tab executing until the run's answer.
 
 ## Dependencies
 

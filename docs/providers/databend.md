@@ -385,6 +385,7 @@ A probe, tree or monitoring read that outlasts its budget on a named warehouse i
 
 It is a `ConnectionError`, which Studio's routes answer with HTTP 503 and the sentence itself, so the object tree, the monitoring page and Test Connection show it as written.
 On the Personal plan a resume can take minutes, so a first Test Connection may meet this sentence and pass a minute later.
+Measured through Studio's UI on 2026-10-08, against the test tenant's warehouse while it was suspended: two runs of `SELECT 1` about 13 seconds apart, and the tree read the first one released, met this sentence, every request of them answered HTTP 503 with it 10 or 20 seconds after it was sent, and a `SELECT 1` sent 3 minutes later answered in 979 ms.
 A gateway's `ProvisionWarehouseTimeout` sends the POST again with the same ids (section 3.6).
 The gateway's other refusals name the field to check:
 
@@ -746,6 +747,7 @@ The panel offers the kill to every Studio admin, whatever the connection's SQL u
 Without SUPER, Databend refuses the kill with 1063 before it looks for the session, the statement keeps running, and an error toast shows Databend's refusal as Databend wrote it.
 Measured on the pinned image, `studio_reader`'s kill of another session's statement is refused with `Permission denied: privilege [Super] is required on *.* for user 'studio_reader'@'%' with roles [public,studio_ro]. Note: Please ensure that your current role have the appropriate permissions to create a new Object`, and the statement finished as if no kill had been sent.
 On Databend Cloud a SQL user whose roles do not hold SUPER was refused the same way (measured on 2026-10-08), so a kill from the Sessions panel needs a SQL user granted it, for example through `GRANT SUPER ON *.* TO ROLE <role>`.
+With SUPER granted to its role, the panel's kill stopped a running statement on the test tenant, and that statement's editor read "Aborted query, because the server is shutting down or the query was killed." (measured on 2026-10-08).
 Stop in the editor needs no privilege: it sends the statement's own kill link in the statement's own session (section 5.8).
 
 Any other operation sends nothing:
@@ -960,7 +962,9 @@ A seed takes the same fields, as [SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md) s
 - The SQL INSERT export cannot write `Array`, `Map`, `Tuple`, `Bitmap`, `Interval`, geo or `Vector` values: each such row is skipped by name.
 - Import Data has no target on Databend (section 9): load rows with `INSERT` or `COPY INTO` in the editor.
 - A kill stops the session's current statement, not the session, though the Sessions panel's dialog and toast speak of ending it ([U98](../BACKLOG.md)): a session of another client, such as BendSQL, runs its next statement.
-- Every budget was verified locally; through Databend Cloud's gateway, on one warehouse, only the 100,000-row read and the 16 MiB budget of answer text ran, and a cold start through Studio and multi-node paging are not run yet.
+- Every budget was verified locally; through Databend Cloud's gateway, on one warehouse, only the 100,000-row read and the 16 MiB budget of answer text ran, and multi-node paging is not run yet.
+- A first statement or Test Connection on a suspended Databend Cloud warehouse fails with the resuming sentence while the resume outlasts the 10-second connect budget, and passes once the warehouse runs (section 4.4).
+- One Studio process runs at most two Databend statements at a time, across every Databend connection and user, the tree, monitoring and connect reads included; a third waits for a slot up to its deadline, and a tree read that waited 10 seconds says the slots stayed busy (section 3.10).
 - In the browser a statement that reaches its deadline can run up to three times: the query route answers a run that timed out with HTTP 408, which Chromium sends again on a kept-alive connection ([X27](../BACKLOG.md)).
 - A seed edited to add a Warehouse while it is open keeps its pulse until the page is reloaded ([U97](../BACKLOG.md)).
 - The sign-in latch is one Studio process's: several replicas each send a refused password once per 15 minutes, so five or more can still lock a user under a password policy ([D252](../BACKLOG.md)).

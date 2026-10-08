@@ -406,7 +406,20 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     );
     const limits = flat(sectionOf(DOC, "## 13. Known limitations"));
     expect(limits).not.toContain("only paging was measured");
-    expect(limits).toContain("a cold start through Studio and multi-node paging are not run yet");
+    // A cold start through Studio's UI was measured after the live check, against the suspended warehouse.
+    expect(limits).not.toContain("a cold start through Studio");
+    expect(limits).toContain("and multi-node paging is not run yet");
+    // DATABEND_LIMITER_OPTIONS: one engine key for the process, which the tree, monitoring and probe reads share.
+    expect(DATABEND_LIMITER_OPTIONS.perEngine).toBe(2);
+    expect(limits).toContain(
+      "One Studio process runs at most two Databend statements at a time, across every Databend connection and user, the tree, monitoring and connect reads included; a third waits for a slot up to its deadline, and a tree read that waited 10 seconds says the slots stayed busy (section 3.10).",
+    );
+    expect(limits).toContain(
+      "A first statement or Test Connection on a suspended Databend Cloud warehouse fails with the resuming sentence while the resume outlasts the 10-second connect budget, and passes once the warehouse runs (section 4.4).",
+    );
+    expect(cloudSection).toContain(
+      "Measured through Studio's UI on 2026-10-08, against the test tenant's warehouse while it was suspended: two runs of `SELECT 1` about 13 seconds apart, and the tree read the first one released, met this sentence, every request of them answered HTTP 503 with it 10 or 20 seconds after it was sent, and a `SELECT 1` sent 3 minutes later answered in 979 ms.",
+    );
     // The live check's S3 and S3b are the two bounds it runs through the gateway; the bounds of one answer, the cell
     // budget and the warning bound ran locally only, so neither section may say every budget ran there or none did.
     const bounds = flat(sectionOf(DOC, "### 3.10 Bounds, and what they were measured against"));
@@ -570,6 +583,10 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     const refused = answerError({ id: "q", error: { code: 1063, message: refusal, detail: null } }, ctx, null);
     expect(refused.message).toBe(refusal);
     expect(maintenance).toContain("`GRANT SUPER ON *.* TO ROLE <role>`");
+    // The re-verification on the CI image of #1593, with SUPER granted for the run and revoked after it.
+    expect(maintenance).toContain(
+      "With SUPER granted to its role, the panel's kill stopped a running statement on the test tenant, and that statement's editor read \"Aborted query, because the server is shutting down or the query was killed.\" (measured on 2026-10-08).",
+    );
   });
 
   // "That message" is the provider's own kill message, so it follows that quote, and the privilege paragraph comes after
