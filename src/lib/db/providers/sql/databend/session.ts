@@ -7,9 +7,10 @@
  * client-chosen id as an existing session, writes no session meta for it without a temporary table, and keeps its
  * state per user (UC3).
  *
- * This module holds what that needs and does no I/O: the per-statement ids, the header value, the warnings a
- * statement's affect and echoed role give, and the end-open plan that closes what a statement left open (a
- * transaction with ROLLBACK, temporary tables with a logout, UC5). Ids and the clock are inputs.
+ * This module holds what that needs and does no I/O: the per-statement ids, the register of Studio's own statements
+ * in flight by query id, the header value, the warnings a statement's affect and echoed role give, and the end-open
+ * plan that closes what a statement left open (a transaction with ROLLBACK, temporary tables with a logout, UC5). Ids
+ * and the clock are inputs.
  */
 import { serverWords } from "./errors";
 import type { DatabendAffect, DatabendNotice } from "./transport";
@@ -35,6 +36,47 @@ export function statementIds(newId: () => string, random: number): StatementIds 
   const sessionId = newId();
   const nonce = String(Math.floor(random * 1_000_000)).padStart(6, "0");
   return { queryId, sessionId, routeHint: `rh:${newId()}:${nonce}` };
+}
+
+/**
+ * Studio's own provider statements in flight, by query id (design 5.5). `system.processes` lists every running
+ * statement under the query id it was sent with (`current_query_id`), and Studio draws each one from a random UUID,
+ * so the query ids of its own statements tell them apart from every other client's, which no statement text can.
+ */
+export interface OwnStatements {
+  /** Registers one statement's query id until its `end()`. */
+  begin(queryId: string): OwnStatement;
+}
+
+export interface OwnStatement {
+  /**
+   * Every query id registered at any moment since this one began, its own included: a read of running statements
+   * leaves out each, so a sibling that began before it, or ended before its answer arrived, is covered.
+   */
+  seen(): ReadonlySet<string>;
+  end(): void;
+}
+
+/** A register of the query ids in flight; each id is a fresh UUID's, so no two statements share one. */
+export function createOwnStatements(): OwnStatements {
+  const inFlight = new Set<string>();
+  /** One set per statement in flight: every query id registered since it began. */
+  const watching = new Set<Set<string>>();
+  return {
+    begin(queryId) {
+      inFlight.add(queryId);
+      for (const seen of watching) seen.add(queryId);
+      const seen = new Set(inFlight);
+      watching.add(seen);
+      return {
+        seen: () => new Set(seen),
+        end() {
+          inFlight.delete(queryId);
+          watching.delete(seen);
+        },
+      };
+    },
+  };
 }
 
 /**

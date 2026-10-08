@@ -13,13 +13,21 @@
  *
  * Sessions [X08]: Databend creates a session per HTTP request, so `system.processes` lists one row per running
  * statement of the whole warehouse, every user's included, and needs no grant (`user_grant.rs:27-51`). The kill target
- * is that row's `id`, a SESSION id: `KILL QUERY` by the HTTP query id answers 1053, so the query id is never read. A
- * row's state is the word the monitoring panels count, "active", for the command `Query`, and the command lower-cased
- * otherwise (`Aborting`). `KILL QUERY` on a session stops its current statement and needs global SUPER.
+ * is that row's `id`, a SESSION id Databend makes for the request, never the client session id Studio sends:
+ * `KILL QUERY` by the HTTP query id answers 1053, so the query id is never the target. A row's state is the word the
+ * monitoring panels count, "active", for the command `Query`, and the command lower-cased otherwise (`Aborting`).
+ * `KILL QUERY` on a session stops its current statement and needs global SUPER.
  *
- * Studio's own reads are not running work: `system.processes` lists the reading statement too, so both reads of it
- * leave out `connection_id()`, the reading row's own id (measured equal on the fixture), and a panel sends its reads
- * one at a time, so no read of one panel sees a sibling read in flight.
+ * Studio's own statements are not running work: `system.processes` lists every running statement, the reading one, a
+ * sibling panel's read and the object tree's included, since the panels are read at once, two statements at a time.
+ * Each row names the query id its statement was sent under (`current_query_id`), which Studio draws from a random
+ * UUID, and every provider statement's outcome names the query ids of the process's own in flight while it ran
+ * (`ownQueryIds`). So both reads of `system.processes` read the query id and leave out, here and never in SQL, every
+ * row whose query id is one of those: nothing is matched on statement text, which any client chooses. A user's
+ * statement, the editor's included, is never one, and another Studio process's statements are listed. Measured on the
+ * pinned image and on v1.2.881, a running statement is listed under an `id` other than its client session id and
+ * under its own query id, and a second statement sent under a running one's query id starts nothing; on the pinned
+ * image another user's is refused with "already exists".
  */
 import { QueryError } from "@/lib/db/errors";
 import type {
@@ -36,6 +44,7 @@ import type {
 } from "@/lib/db/types";
 import { formatBytes, formatDuration } from "@/lib/db/utils/pool-manager";
 import { quoteLiteral } from "@/lib/sql/values";
+import { DATABEND_LIMITER_OPTIONS } from "./connection-options";
 import {
   DATABEND_SURFACE_ROW_CUT,
   DATABEND_VERSION_SQL,
@@ -79,20 +88,33 @@ export const DATABEND_MONITORING_SENTENCES = Object.freeze({
 const BASE_TABLES =
   "FROM default.system.tables WHERE catalog = 'default' AND table_type = 'BASE TABLE' AND database NOT IN ('system', 'information_schema')";
 
+/**
+ * How many statements the process runs on Databend at once (design 2.3), and so how many of Studio's own a read of
+ * `system.processes` lists beside the rows it is for: the sessions read asks for this many rows past its limit.
+ */
+const OWN_ROWS = DATABEND_LIMITER_OPTIONS.perEngine;
+
+/** What a read whose answer names no statement of Studio's own leaves out: nothing. */
+const NO_OWN_STATEMENTS: ReadonlySet<string> = new Set();
+
 // ============================================================================
 // Statements
 // ============================================================================
 
 const DATABEND_OVERVIEW_TABLES_SQL = `SELECT count(*) AS table_count, sum(data_compressed_size) AS compressed_bytes, sum(index_size) AS index_bytes ${BASE_TABLES}`;
 
-/** `command` is `Query`, `Aborting` or `Idle` (`table_context.rs:137-151`) [X35]; the reading statement is not counted. */
-const DATABEND_ACTIVE_QUERIES_SQL =
-  "SELECT count(*) AS active_queries FROM default.system.processes WHERE command = 'Query' AND id <> connection_id()";
+/**
+ * The running statements' query ids, newest first, each beside Databend's count of them all: `command` is `Query`,
+ * `Aborting` or `Idle` (`table_context.rs:137-151`) [X35]. The count leaves Studio's own out by query id, and stays
+ * whole past the bound, where it leaves them out only among the newest.
+ */
+const DATABEND_ACTIVE_QUERIES_SQL = `SELECT current_query_id AS query_id, count(*) OVER () AS running FROM default.system.processes WHERE command = 'Query' ORDER BY created_time DESC LIMIT ${DATABEND_MAX_MONITORING_LIMIT}`;
 
 const DATABEND_INDEX_COUNT_SQL = "SELECT count(*) AS index_count FROM default.system.indexes";
 
+/** Every session running a statement, with the query id it was sent under, past `limit` by Studio's own at most. */
 export function databendSessionsSql(limit: number): string {
-  return `SELECT id AS session_id, \`user\` AS user_name, host, database AS database_name, command, extra_info AS query_text, created_time, time AS elapsed_seconds FROM default.system.processes WHERE command <> 'Idle' AND id <> connection_id() ORDER BY created_time LIMIT ${limit}`;
+  return `SELECT id AS session_id, current_query_id AS query_id, \`user\` AS user_name, host, database AS database_name, command, extra_info AS query_text, created_time, time AS elapsed_seconds FROM default.system.processes WHERE command <> 'Idle' ORDER BY created_time LIMIT ${limit + OWN_ROWS}`;
 }
 
 /** `log_type` 2 is a finished statement; rows arrive through an ETL batch, so the newest lag. */
@@ -169,6 +191,41 @@ async function readPanelRow(runner: DatabendStatementRunner, sql: string): Promi
   return rows[0] ?? null;
 }
 
+/** One read of `system.processes`: its rows, and the query ids of Studio's own statements in flight while it ran. */
+interface RunningRead {
+  readonly rows: readonly Record<string, unknown>[];
+  readonly own: ReadonlySet<string>;
+}
+
+/** A panel read of `system.processes`, or null when the surface is not available here. */
+async function readRunning(runner: DatabendStatementRunner, sql: string, surface: string): Promise<RunningRead | null> {
+  const answered: { own?: ReadonlySet<string> } = {};
+  const rows = await readPanelRows(
+    async (statement, rowCut) => {
+      const outcome = await runner(statement, rowCut);
+      answered.own = outcome.ownQueryIds ?? NO_OWN_STATEMENTS;
+      return outcome;
+    },
+    sql,
+    surface,
+  );
+  return answered.own === undefined ? null : { rows, own: answered.own };
+}
+
+/** The rows of a read of `system.processes` that are not Studio's own, by the query id each was sent under. */
+function othersOf(read: RunningRead): Record<string, unknown>[] {
+  return read.rows.filter((row) => !read.own.has(readText(row.query_id)));
+}
+
+/**
+ * The running statements less Studio's own: Databend's count of them all, less Studio's own among the newest the read
+ * listed. Nothing running lists no row.
+ */
+function activeCount(read: RunningRead): number {
+  const running = readNumber(read.rows[0]?.running) ?? 0;
+  return running - (read.rows.length - othersOf(read).length);
+}
+
 /** Bytes as a formatted size and its number, each omitted when Databend reported no figure. */
 function sizeFields<K extends string>(key: K, bytes: number | undefined) {
   return bytes === undefined ? {} : { [key]: formatBytes(bytes), [`${key}Bytes`]: bytes };
@@ -180,15 +237,15 @@ function sizeFields<K extends string>(key: K, bytes: number | undefined) {
 
 /** The default catalog's overview; uptime and a connection ceiling are not published, and the size is compressed. */
 export async function getOverview(runner: DatabendStatementRunner): Promise<DatabaseOverview> {
-  // One at a time, so the active count never includes a sibling read.
+  // One at a time, holding one statement slot; the active count leaves Studio's own statements out by query id.
   const version = await readPanelRow(runner, DATABEND_VERSION_SQL);
   const tables = await readPanelRow(runner, DATABEND_OVERVIEW_TABLES_SQL);
-  const active = await readPanelRow(runner, DATABEND_ACTIVE_QUERIES_SQL);
+  const active = await readRunning(runner, DATABEND_ACTIVE_QUERIES_SQL, "overview");
   const indexes = await readPanelRow(runner, DATABEND_INDEX_COUNT_SQL);
   // An empty catalog sums to NULL, which is a measured zero; a degraded read is no figure at all.
   const sizeBytes =
     tables === null ? undefined : (readNumber(tables.compressed_bytes) ?? 0) + (readNumber(tables.index_bytes) ?? 0);
-  const activeQueries = readNumber(active?.active_queries);
+  const activeQueries = active === null ? undefined : activeCount(active);
   return {
     version: version === null ? DATABEND_UNKNOWN_TEXT : readText(version.server_version),
     uptime: DATABEND_UNKNOWN_TEXT,
@@ -236,13 +293,14 @@ function sessionState(command: string): string {
   return command === "Query" ? "active" : command.toLowerCase();
 }
 
-/** Every running statement of the warehouse, keyed by its session id [X08]. */
+/** Every running statement of the warehouse but Studio's own, keyed by its session id [X08]. */
 export async function getActiveSessions(
   runner: DatabendStatementRunner,
   options: { limit?: number } = {},
 ): Promise<ActiveSessionDetails[]> {
   const limit = clampMonitoringLimit(options.limit, DATABEND_DEFAULT_SESSION_LIMIT);
-  const rows = await readPanelRows(runner, databendSessionsSql(limit), "sessions");
+  const read = await readRunning(runner, databendSessionsSql(limit), "sessions");
+  const rows = read === null ? [] : othersOf(read).slice(0, limit);
   return rows.map((row) => {
     const host = readText(row.host);
     const queryStart = readInstant(row.created_time);
@@ -341,7 +399,7 @@ function toActiveSession(session: ActiveSessionDetails): ActiveSession {
 
 /** Size, active queries, slow queries and sessions; Databend publishes no cache ratio. */
 export async function getHealth(runner: DatabendStatementRunner): Promise<HealthInfo> {
-  // One at a time, so neither the count nor the sessions list Studio's own sibling reads.
+  // One at a time, holding one statement slot; neither the count nor the sessions list Studio's own statements.
   const overview = await getOverview(runner);
   const slow = await getSlowQueries(runner, { limit: HEALTH_LIMIT });
   const sessions = await getActiveSessions(runner, { limit: HEALTH_LIMIT });

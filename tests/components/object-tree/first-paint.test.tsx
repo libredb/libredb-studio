@@ -5,6 +5,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ObjectTree } from "@/components/object-tree";
+import { BILLED_COMPUTE_HOLD } from "@/components/object-tree/ObjectTree";
 import { useTreeNodes } from "@/components/object-tree/use-tree-nodes";
 import type { Container, ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
@@ -425,5 +426,34 @@ describe("the no-scan escape hatch", () => {
 
     expect(await screen.findByTestId("tree-deferred")).toBeTruthy();
     expect(screen.queryByTestId("tree-load")).toBeNull();
+  });
+
+  /**
+   * CL-CORE-2: a connection the page opened by itself, whose every request can resume billed compute, is held the same
+   * way, and the panel says why in place of the escape hatch's own sentence, still offering the load.
+   */
+  test("held for billed compute, the panel says so, reads nothing, and still offers the load", async () => {
+    const calls = installFetch({
+      "/api/db/objects/containers": ownerContainers,
+      "/api/db/objects/counts": { table: { count: 2 } },
+    });
+    const onLoad = mock(() => {});
+
+    render(
+      <ObjectTree
+        connection={connectionOf()}
+        capabilities={oneLevel}
+        deferred
+        deferredForBilledCompute
+        onLoad={onLoad}
+      />,
+    );
+
+    const panel = await screen.findByTestId("tree-deferred");
+    expect(panel.textContent).toContain(BILLED_COMPUTE_HOLD);
+    expect(panel.textContent).not.toContain("opens without reading its catalog");
+    await userEvent.click(screen.getByTestId("tree-load"));
+    expect(onLoad).toHaveBeenCalledTimes(1);
+    expect(catalogPaths(calls)).toEqual([]);
   });
 });

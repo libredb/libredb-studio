@@ -20,9 +20,11 @@
  * statement's deadline, and a deadline or a cancel that ends the wait sends nothing [X16].
  *
  * A user statement runs under its run in `createRunRegistry()` with the connection's query timeout, so `cancelQuery`
- * reaches it by id; every provider statement runs under the surface deadline. Every deadline is the injected
- * `deadline(ms)` of the transport deps, so no test waits on a real timer. `disconnect()` aborts every statement,
- * waiting or running, and the transport's close then kills each running one under its own 5 s [X31].
+ * reaches it by id; every provider statement runs under the surface deadline. The registry answers a cancel as soon as
+ * it aborts a run, before Databend has said anything, so `cancelQuery` waits for the run to end and answers true only
+ * when it ended `cancelled` [X02]. Every deadline is the injected `deadline(ms)` of the transport deps, so no test
+ * waits on a real timer. `disconnect()` aborts every statement, waiting or running, and the transport's close then
+ * kills each running one under its own 5 s [X31].
  *
  * The constructor never dials or throws, so a census can build the provider unconnected; every refusal of the
  * connection comes from `connect()`, before any socket.
@@ -163,6 +165,12 @@ export const DATABEND_PROVIDER_SENTENCES = Object.freeze({
     `Databend has no "${operation}" operation in Studio: the only one it runs is stopping a session's current statement (kill).`,
 });
 
+/**
+ * The closes a stopped run may still send, each under its own close timeout: the kill, then the ROLLBACK and the
+ * logout of the end-open (design 3.4). A cancel waits no longer than these for the run to end.
+ */
+const CLOSES_AFTER_STOP = 3;
+
 /** Below the last container level nothing nests: an answer, not a refusal. */
 const CONTAINER_DEPTH = 2;
 
@@ -288,6 +296,8 @@ export class DatabendProvider extends SQLBaseProvider {
   private cautions: QueryWarning[] = [];
   private readonly limiter: ProviderLimiter = databendLimiter();
   private readonly runs: RunRegistry = createRunRegistry();
+  /** Each registered run's end, by its `queryId`: whether it ended `cancelled`, and how long its closes may take. */
+  private readonly runEnds = new Map<string, { readonly cancelled: Promise<boolean>; readonly closesMs: number }>();
   private readonly deadline: (ms: number) => AbortSignal;
 
   /** Validates nothing and opens nothing: the connection's rules run in `connect()`, before any socket. */
@@ -492,9 +502,10 @@ export class DatabendProvider extends SQLBaseProvider {
         sql,
         origin === "user" ? session.options.callTimeoutMs : session.options.surfaceTimeoutMs,
       );
-      // Nothing was sent, so neither the warehouse nor the statement is to blame for the wait.
+      // Nothing was sent, so neither the warehouse nor the statement is to blame for the wait, and no statement timed
+      // out: the slots were not available in time, `unavailable` as a resuming warehouse is, so a route shows this.
       if (!isDeadline(statementSignal.reason)) throw unsentStopError("cancel", context);
-      throw new DatabendError("timeout", DATABEND_PROVIDER_SENTENCES.slotsBusy(String(context.timeoutMs / 1000)));
+      throw new DatabendError("unavailable", DATABEND_PROVIDER_SENTENCES.slotsBusy(String(context.timeoutMs / 1000)));
     }
     try {
       return await session.transport.run({ sql, origin, rowCut, signal: statementSignal });
@@ -532,7 +543,8 @@ export class DatabendProvider extends SQLBaseProvider {
 
   /**
    * One statement, as the editor sends it: bound parameters and a text the guard refuses never reach a socket
-   * (design 5.3). The run is registered under `queryId` with the query timeout, so `cancelQuery` reaches it.
+   * (design 5.3). The run is registered under `queryId` with the query timeout, so `cancelQuery` reaches it, and its
+   * end is kept beside it until it ends, so `cancelQuery` can read whether it ended `cancelled`.
    */
   public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     if (params !== undefined && params.length > 0) {
@@ -543,21 +555,45 @@ export class DatabendProvider extends SQLBaseProvider {
     if (refusal !== null) throw new QueryError(refusal, this.type, sql);
     const { options } = session;
     const handle = this.runs.begin(queryId, this.deadline(options.callTimeoutMs));
+    const ended = Promise.withResolvers<boolean>();
+    const runEnd = { cancelled: ended.promise, closesMs: CLOSES_AFTER_STOP * options.closeTimeoutMs };
+    if (queryId !== undefined) this.runEnds.set(queryId, runEnd);
+    let cancelled = false;
     try {
       const { result, executionTime } = await this.trackQuery(() =>
         this.measureExecution(() => this.statement(session, sql, "user", MAX_UNLIMITED_ROWS, handle.signal)),
       );
       return toQueryResult(result, sql, executionTime);
     } catch (error) {
+      cancelled = error instanceof DatabendError && error.category === "cancelled";
       throw this.failure(error, this.context(options, "user", sql, options.callTimeoutMs));
     } finally {
       handle.end();
+      // Only this run's own entry: once it ended, the same id may name a newer run.
+      if (queryId !== undefined && this.runEnds.get(queryId) === runEnd) this.runEnds.delete(queryId);
+      ended.resolve(cancelled);
     }
   }
 
-  /** Aborts a running or waiting run by its id; an unknown id answers false and sends nothing. */
+  /**
+   * Stops a running or waiting run by its id, and answers true only once the run ended `cancelled`: Databend
+   * acknowledged its kill or reported 1043, or nothing had been sent [X02]. A kill that got no answer, one Databend
+   * refused, and a statement that finished first each answer false, which the editor shows as a cancel not confirmed.
+   * The wait is bounded by the closes the run may still send, so a cancel never waits longer than the run can close.
+   * An unknown id answers false and sends nothing.
+   */
   public async cancelQuery(queryId: string): Promise<boolean> {
-    return this.runs.cancel(queryId);
+    const runEnd = this.runEnds.get(queryId);
+    if (runEnd === undefined || !this.runs.cancel(queryId)) return false;
+    const expiry = this.deadline(runEnd.closesMs);
+    const expired = Promise.withResolvers<boolean>();
+    const expire = () => expired.resolve(false);
+    expiry.addEventListener("abort", expire, { once: true });
+    try {
+      return await Promise.race([runEnd.cancelled, expired.promise]);
+    } finally {
+      expiry.removeEventListener("abort", expire);
+    }
   }
 
   // ==========================================================================

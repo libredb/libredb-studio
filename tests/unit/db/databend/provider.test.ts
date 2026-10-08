@@ -10,8 +10,9 @@
  * Every provider a test builds is disconnected after it, so no permit of the process-wide `databend` limiter is
  * left held for the next test.
  */
-import { afterEach, describe, expect, test } from "bun:test";
-import { DatabaseConfigError, QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { createErrorResponse } from "@/lib/api/errors";
+import { ConnectionError, DatabaseConfigError, QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
 import {
   type NodeRequest,
   type NodeResponse,
@@ -94,9 +95,10 @@ const SQL = {
   columns: (object: string) =>
     `SELECT name AS column_name, data_type, is_nullable, default_kind, default_expression, comment FROM \`default\`.system.columns WHERE database = 'libredb_demo' AND \`table\` = '${object}'`,
   materializedSource: (object: string) => `SHOW CREATE MATERIALIZED VIEW \`default\`.\`libredb_demo\`.\`${object}\``,
+  overviewVersion: "SELECT version() AS server_version",
   overviewTables: `SELECT count(*) AS table_count, sum(data_compressed_size) AS compressed_bytes, sum(index_size) AS index_bytes ${BASE_TABLES}`,
   activeQueries:
-    "SELECT count(*) AS active_queries FROM default.system.processes WHERE command = 'Query' AND id <> connection_id()",
+    "SELECT current_query_id AS query_id, count(*) OVER () AS running FROM default.system.processes WHERE command = 'Query' ORDER BY created_time DESC LIMIT 500",
   indexCount: "SELECT count(*) AS index_count FROM default.system.indexes",
   tableStats: (database: string) =>
     `SELECT database AS schema_name, name AS table_name, num_rows, data_compressed_size, index_size ${BASE_TABLES} AND database = '${database}' ORDER BY data_compressed_size DESC`,
@@ -135,7 +137,7 @@ interface FakeServer {
 /**
  * `answer` decides each statement POST by its text (the connect reads answer as above unless it says otherwise);
  * `page` decides each page GET, which hangs by default. A ROLLBACK answers that the transaction ended; a kill, a final
- * and a logout answer 200 unless `close` says otherwise.
+ * and a logout answer 200 unless `close` says otherwise, later when it answers a promise, or never when it hangs.
  */
 function fakeDatabend({
   answer = () => ({}),
@@ -145,7 +147,7 @@ function fakeDatabend({
 }: {
   readonly answer?: (sql: string) => Reply | Promise<Reply>;
   readonly page?: (path: string, queryId: string) => Reply | Promise<Reply>;
-  readonly close?: (path: string) => NodeResponse;
+  readonly close?: (path: string) => NodeResponse | Promise<NodeResponse> | "hang";
   /** The session fields a ROLLBACK answers with. */
   readonly rollback?: Fields;
 } = {}): FakeServer {
@@ -175,7 +177,8 @@ function fakeDatabend({
           } else if (path.includes("/page/")) {
             decided = page(path, queryId);
           } else {
-            return close(path);
+            const closed = close(path);
+            decided = closed === "hang" ? closed : Promise.resolve(closed).then((reply) => ({ reply }));
           }
           const statement = request.method === "POST";
           if (statement) {
@@ -246,10 +249,17 @@ function withConnect(answers: (sql: string) => Reply | Promise<Reply> | undefine
   return (sql: string): Reply | Promise<Reply> => answers(sql) ?? connectAnswer(sql) ?? {};
 }
 
-const opened: DatabendProvider[] = [];
+const opened: { readonly provider: DatabendProvider; readonly time: ReturnType<typeof transportDeps> }[] = [];
 
 afterEach(async () => {
-  await Promise.allSettled(opened.splice(0).map((provider) => provider.disconnect()));
+  await Promise.allSettled(
+    opened.splice(0).map(({ provider, time }) => {
+      const closing = provider.disconnect();
+      // A close a failed test left unanswered ends on its own budget, so the disconnect cannot hang.
+      time.fire(5_000);
+      return closing;
+    }),
+  );
 });
 
 /** A provider over `fake` with injected time; `overrides` go onto the loopback test connection. */
@@ -260,7 +270,7 @@ function build(fake: FakeServer, overrides: Record<string, unknown> = {}, queryT
     { queryTimeout },
     { ...time.deps, createNodeTransport: fake.factory },
   );
-  opened.push(provider);
+  opened.push({ provider, time });
   return { provider, time };
 }
 
@@ -523,7 +533,8 @@ describe("connect", () => {
     await until(() => fake.requests.length === 1);
     time.fire(10_000);
     const failure = await connecting;
-    expect(failure).toBeInstanceOf(TimeoutError);
+    // A ConnectionError, so Test Connection shows the sentence itself (GAP-CL-1).
+    expect(failure).toBeInstanceOf(ConnectionError);
     expect((failure as Error).message).toBe(DATABEND_ERROR_SENTENCES.resuming("wh-1", "10"));
     expect(provider.isConnected()).toBe(false);
   });
@@ -549,17 +560,26 @@ describe("connect", () => {
       await until(() => fake.requests.length === 1);
       time.fire(10_000);
       const failure = await connecting;
-      expect(failure).toBeInstanceOf(TimeoutError);
       expect(headers).toHaveLength(1);
-      return { message: (failure as Error).message, header: headers[0]["x-databend-warehouse"] };
+      return {
+        name: (failure as Error).name,
+        message: (failure as Error).message,
+        header: headers[0]["x-databend-warehouse"],
+      };
     };
-    expect(await probe({})).toEqual({ message: DATABEND_ERROR_SENTENCES.resuming("eric", "10"), header: undefined });
+    expect(await probe({})).toEqual({
+      name: "ConnectionError",
+      message: DATABEND_ERROR_SENTENCES.resuming("eric", "10"),
+      header: undefined,
+    });
     expect(await probe({ warehouse: "wh-1" })).toEqual({
+      name: "ConnectionError",
       message: DATABEND_ERROR_SENTENCES.resuming("wh-1", "10"),
       header: "wh-1",
     });
     // The gateway host carries no warehouse, so nothing is named: its own refusal asks for Warehouse (section 4.4).
     expect(await probe({ host: "tn3ftqihs.gw.aws-us-east-2.default.databend.com" })).toEqual({
+      name: "TimeoutError",
       message: DATABEND_ERROR_SENTENCES.deadline("10"),
       header: undefined,
     });
@@ -791,6 +811,148 @@ describe("query", () => {
   });
 });
 
+// ============================================================================
+// cancelQuery() answers what Databend did with the kill (design 3.10) [X02]
+// ============================================================================
+
+describe("cancelQuery answers true only for a run that ended cancelled", () => {
+  const KILL = /^GET \/v1\/query\/\w+\/kill$/;
+
+  /** A connected provider running `SELECT sleep(9)` under `q-1`, its first answer read and its page held open. */
+  async function running(close: (path: string) => NodeResponse | Promise<NodeResponse> | "hang" = () => EMPTY_OK) {
+    const fake = fakeDatabend({
+      answer: withConnect((sql) => (sql === "SELECT sleep(9)" ? { state: "Running", next_uri: "PAGE" } : undefined)),
+      close,
+    });
+    const built = build(fake);
+    await built.provider.connect();
+    const run = built.provider.query("SELECT sleep(9)", undefined, "q-1").catch((error: unknown) => error);
+    await until(() => pagesOpened(fake) === 1);
+    return { fake, ...built, run };
+  }
+
+  /** The cancel's answer as it settles, read without waiting for it. */
+  function watch(cancel: Promise<boolean>): { answer(): boolean | undefined } {
+    let answered: boolean | undefined;
+    void cancel.then((value) => {
+      answered = value;
+    });
+    return { answer: () => answered };
+  }
+
+  test("a kill Databend acknowledges answers true, and only once the run has ended cancelled", async () => {
+    const kill = gate<NodeResponse>();
+    const { provider, fake, run } = await running((path) => (path.endsWith("/kill") ? kill.promise : EMPTY_OK));
+    const cancelling = provider.cancelQuery("q-1");
+    const cancel = watch(cancelling);
+    await until(() => fake.events.some((event) => KILL.test(event)));
+    await settle();
+    expect(cancel.answer()).toBeUndefined();
+    kill.open(EMPTY_OK);
+    expect(await cancelling).toBe(true);
+    expect(await run).toBeInstanceOf(QueryCancelledError);
+  });
+
+  test("a kill that gets no answer within its 5 s answers false: the statement may still finish", async () => {
+    const { provider, fake, time, run } = await running((path) => (path.endsWith("/kill") ? "hang" : EMPTY_OK));
+    const cancelling = provider.cancelQuery("q-1");
+    const cancel = watch(cancelling);
+    await until(() => fake.events.some((event) => KILL.test(event)));
+    await settle();
+    expect(cancel.answer()).toBeUndefined();
+    time.fire(5_000);
+    expect(await cancelling).toBe(false);
+    const outcome = (await run) as Error;
+    expect(outcome).toBeInstanceOf(ConnectionError);
+    expect(outcome.message).toBe(DATABEND_ERROR_SENTENCES.cancelUnanswered);
+  });
+
+  const REFUSALS: readonly (readonly [string, NodeResponse])[] = [
+    [
+      "an HTTP 404 for a query id the node does not know",
+      { status: 404, contentType: "text/plain", retryAfter: null, text: "Query ID q not found on node n" },
+    ],
+    [
+      "a gateway's refusal over HTTP 200",
+      {
+        status: 200,
+        contentType: "application/json",
+        retryAfter: null,
+        text: JSON.stringify({ error: { kind: "ForbiddenAccessUser", message: "Permission denied" } }),
+      },
+    ],
+  ];
+
+  test.each(REFUSALS)("a kill Databend refuses answers false: %s", async (_case, refusal) => {
+    const { provider, run } = await running((path) => (path.endsWith("/kill") ? refusal : EMPTY_OK));
+    expect(await provider.cancelQuery("q-1")).toBe(false);
+    const outcome = (await run) as Error;
+    expect(outcome).toBeInstanceOf(ConnectionError);
+    expect(outcome.message).toBe(DATABEND_ERROR_SENTENCES.cancelUnanswered);
+  });
+
+  test("a run that ended before the cancel answers false and sends nothing", async () => {
+    const fake = fakeDatabend({ answer: withConnect() });
+    const { provider } = build(fake);
+    await provider.connect();
+    await provider.query("SELECT 1", undefined, "q-1");
+    const before = fake.requests.length;
+    expect(await provider.cancelQuery("q-1")).toBe(false);
+    expect(fake.requests).toHaveLength(before);
+  });
+
+  test("a run whose statement finished while its final is still out answers false once it ends", async () => {
+    const final = gate<NodeResponse>();
+    const fake = fakeDatabend({
+      answer: withConnect((sql) =>
+        sql === "SELECT 2" ? { schema: [column("n", "UInt8")], data: [["2"]], next_uri: "FINAL" } : undefined,
+      ),
+      close: (path) => (path.endsWith("/final") ? final.promise : EMPTY_OK),
+    });
+    const { provider } = build(fake);
+    await provider.connect();
+    const run = provider.query("SELECT 2", undefined, "q-1");
+    await until(() => fake.requests.some((request) => request.path.endsWith("/final")));
+    const cancelling = provider.cancelQuery("q-1");
+    const cancel = watch(cancelling);
+    await settle();
+    expect(cancel.answer()).toBeUndefined();
+    final.open(EMPTY_OK);
+    expect(await cancelling).toBe(false);
+    expect((await run).rows).toEqual([{ n: 2 }]);
+    expect(fake.events.some((event) => KILL.test(event))).toBe(false);
+  });
+
+  test("a run still closing past its kill, ROLLBACK and logout budgets answers false at 15 s", async () => {
+    const { provider, fake, time, run } = await running((path) => (path.endsWith("/kill") ? "hang" : EMPTY_OK));
+    const cancelling = provider.cancelQuery("q-1");
+    await until(() => fake.events.some((event) => KILL.test(event)));
+    expect(time.deadlines.filter((deadline) => deadline.ms === 15_000)).toHaveLength(1);
+    time.fire(15_000);
+    expect(await cancelling).toBe(false);
+    // The run itself still ends on its own kill's budget.
+    time.fire(5_000);
+    expect(await run).toBeInstanceOf(ConnectionError);
+  });
+
+  test("a run stopped while it waits for a permit answers true: nothing was sent", async () => {
+    const fake = fakeDatabend({ answer: withConnect((sql) => (sql === SQL.catalogs ? "hang" : undefined)) });
+    const { provider } = build(fake);
+    await provider.connect();
+    const holding = [provider.listContainers(), provider.listContainers()].map((call) =>
+      call.catch((error: unknown) => error),
+    );
+    await until(() => fake.inflight === 2);
+    const queued = provider.query("SELECT 3", undefined, "q-3").catch((error: unknown) => error);
+    await settle();
+    expect(await provider.cancelQuery("q-3")).toBe(true);
+    expect(await queued).toBeInstanceOf(QueryCancelledError);
+    expect(fake.sqls()).not.toContain("SELECT 3");
+    await provider.disconnect();
+    await Promise.all(holding);
+  });
+});
+
 /** The page GETs the fake has received. */
 function pagesOpened(fake: FakeServer): number {
   return fake.requests.filter((request) => request.path.includes("/page/")).length;
@@ -932,7 +1094,8 @@ describe("the limiter over every statement", () => {
     await until(() => time.deadlines.some((deadline) => deadline.ms === 60_000));
     time.fire(60_000);
     const failure = await queued;
-    expect(failure).toBeInstanceOf(TimeoutError);
+    // Nothing was sent, so this is no statement's timeout: a ConnectionError, whose sentence a route shows (GAP-CL-1).
+    expect(failure).toBeInstanceOf(ConnectionError);
     expect((failure as Error).message).toBe(DATABEND_PROVIDER_SENTENCES.slotsBusy("60"));
     expect(fake.sqls()).not.toContain("SELECT 1");
     await provider.disconnect();
@@ -955,13 +1118,84 @@ describe("the limiter over every statement", () => {
     // The holding reads were sent, so theirs is the resuming sentence; the queued one sent nothing.
     time.fire(10_000);
     const failure = await queued;
-    expect(failure).toBeInstanceOf(TimeoutError);
+    expect(failure).toBeInstanceOf(ConnectionError);
     expect((failure as Error).message).toBe(DATABEND_PROVIDER_SENTENCES.slotsBusy("10"));
     // The two sent reads are killed; the queued third never posts.
     expect(fake.sqls().filter((sql) => sql === SQL.catalogs)).toHaveLength(2);
     for (const held of await Promise.all(holding)) {
+      expect(held).toBeInstanceOf(ConnectionError);
       expect((held as Error).message).toBe(DATABEND_ERROR_SENTENCES.resuming("wh-1", "10"));
     }
+  });
+});
+
+// ============================================================================
+// What a route answers for a read that ran out of time (GAP-CL-1) [X07]
+// ============================================================================
+
+describe("a route shows the resuming and slot-wait sentences as they are", () => {
+  let quiet: { mockRestore(): void }[] = [];
+
+  beforeEach(() => {
+    quiet = (["info", "warn", "error"] as const).map((level) => spyOn(console, level).mockImplementation(() => {}));
+  });
+
+  afterEach(() => {
+    for (const spy of quiet) spy.mockRestore();
+  });
+
+  /** What `createErrorResponse`, the answer every Studio route gives a failure, makes of one. */
+  async function routeAnswer(failure: unknown): Promise<{ readonly status: number; readonly error: string }> {
+    const response = createErrorResponse(failure);
+    const body = (await response.json()) as { readonly error: string };
+    return { status: response.status, error: body.error };
+  }
+
+  test("a tree read past its budget on a named warehouse answers HTTP 503 with the resuming sentence", async () => {
+    const fake = fakeDatabend({ answer: withConnect((sql) => (sql === SQL.catalogs ? "hang" : undefined)) });
+    const { provider, time } = build(fake, { warehouse: "wh-1" });
+    await provider.connect();
+    const reading = provider.listContainers().catch((error: unknown) => error);
+    await until(() => fake.sqls().includes(SQL.catalogs));
+    time.fire(10_000);
+    expect(await routeAnswer(await reading)).toEqual({
+      status: 503,
+      error: DATABEND_ERROR_SENTENCES.resuming("wh-1", "10"),
+    });
+  });
+
+  test("a statement that waited for a permit past its deadline answers HTTP 503 with the slot sentence", async () => {
+    const fake = fakeDatabend({ answer: withConnect((sql) => (sql === SQL.catalogs ? "hang" : undefined)) });
+    const { provider, time } = build(fake, { warehouse: "wh-1" });
+    await provider.connect();
+    const holding = [provider.listContainers(), provider.listContainers()].map((call) =>
+      call.catch((error: unknown) => error),
+    );
+    await until(() => fake.inflight === 2);
+    const queued = provider.query("SELECT 1").catch((error: unknown) => error);
+    await until(() => time.deadlines.some((deadline) => deadline.ms === 60_000));
+    time.fire(60_000);
+    expect(await routeAnswer(await queued)).toEqual({
+      status: 503,
+      error: DATABEND_PROVIDER_SENTENCES.slotsBusy("60"),
+    });
+    await provider.disconnect();
+    await Promise.all(holding);
+  });
+
+  test("a user statement's own deadline on a named warehouse stays the route's timeout, HTTP 408 (X27)", async () => {
+    const fake = fakeDatabend({
+      answer: withConnect((sql) => (sql === "SELECT sleep(9)" ? { state: "Running", next_uri: "PAGE" } : undefined)),
+    });
+    const { provider, time } = build(fake, { warehouse: "wh-1" });
+    await provider.connect();
+    const running = provider.query("SELECT sleep(9)").catch((error: unknown) => error);
+    await until(() => pagesOpened(fake) === 1);
+    time.fire(60_000);
+    const failure = await running;
+    expect(failure).toBeInstanceOf(TimeoutError);
+    expect((failure as Error).message).toBe(DATABEND_ERROR_SENTENCES.deadline("60"));
+    expect((await routeAnswer(failure)).status).toBe(408);
   });
 });
 
@@ -1090,7 +1324,7 @@ describe("the object surface and monitoring delegate to objects.ts and introspec
     [
       "getOverview",
       (p: DatabendProvider) => p.getOverview(),
-      [DATABEND_VERSION_SQL, SQL.overviewTables, SQL.activeQueries, SQL.indexCount],
+      [SQL.overviewVersion, SQL.overviewTables, SQL.activeQueries, SQL.indexCount],
     ],
     ["getSlowQueries", (p: DatabendProvider) => p.getSlowQueries({ limit: 5 }), [databendSlowQueriesSql(5)]],
     [
@@ -1113,7 +1347,7 @@ describe("the object surface and monitoring delegate to objects.ts and introspec
     const { provider, sent } = await connected();
     const health = await provider.getHealth();
     expect(health.cacheHitRatio).toBe("N/A");
-    expect(sent().slice(0, 4)).toEqual([DATABEND_VERSION_SQL, SQL.overviewTables, SQL.activeQueries, SQL.indexCount]);
+    expect(sent().slice(0, 4)).toEqual([SQL.overviewVersion, SQL.overviewTables, SQL.activeQueries, SQL.indexCount]);
     expect(sent()).toHaveLength(6);
   });
 
@@ -1220,5 +1454,129 @@ describe("the object surface and monitoring delegate to objects.ts and introspec
       DATABEND_PROVIDER_SENTENCES.maintenanceRefused("vacuum"),
     );
     expect(sent()).toHaveLength(1);
+  });
+});
+
+// ============================================================================
+// Studio's own statements in the Sessions panel and the active count (design 5.5, CL-OPS-1)
+// ============================================================================
+
+describe("Studio's own statements are left out of the Sessions panel and the active count by query id", () => {
+  /** One running statement as `system.processes` lists it: its session id, the query id it was sent under, its text. */
+  interface Listed {
+    readonly session: string;
+    readonly queryId: string;
+    readonly text: string;
+  }
+
+  const SESSIONS_SQL = databendSessionsSql(DATABEND_DEFAULT_SESSION_LIMIT);
+  const SESSION_COLUMNS = [
+    column("session_id"),
+    column("query_id"),
+    column("user_name"),
+    column("host", "Nullable(String)"),
+    column("database_name"),
+    column("command"),
+    column("query_text"),
+    column("created_time", "Timestamp"),
+    column("elapsed_seconds", "UInt64"),
+  ];
+  /** A user's statement of another client, which no text tells from Studio's: only its query id is not Studio's. */
+  const USER: Listed = { session: "user-session", queryId: "0f".repeat(16), text: "SELECT sleep(2) AS user_statement" };
+  /** A user's statement led by a literal, which no text rule may take for Studio's. */
+  const LITERAL_LED: Listed = {
+    session: "literal-session",
+    queryId: "1e".repeat(16),
+    text: "SELECT 'studio' AS marker, sleep(2) AS listed",
+  };
+
+  /**
+   * A fake whose `system.processes` lists `running()` and, last, the reading statement itself under the query id its
+   * request carried, as Databend lists a running read: both reads answer from it as the pinned image does.
+   */
+  function processesServer(running: (fake: FakeServer) => Listed[], held: Record<string, Promise<Reply>> = {}) {
+    const fake: FakeServer = fakeDatabend({
+      answer: withConnect((sql) => {
+        if (held[sql] !== undefined) return held[sql];
+        if (sql !== SESSIONS_SQL && sql !== SQL.activeQueries) return undefined;
+        const reading = fake.requests.at(-1) as Seen;
+        const listed = [...running(fake), { session: "reading-session", queryId: reading.queryId, text: sql }];
+        if (sql === SQL.activeQueries) {
+          return {
+            schema: [column("query_id"), column("running", "UInt64")],
+            data: listed.map((row) => [row.queryId, String(listed.length)]),
+          };
+        }
+        return {
+          schema: SESSION_COLUMNS,
+          data: listed.map((row) => [
+            row.session,
+            row.queryId,
+            TEST_USER,
+            "172.20.0.1",
+            "default",
+            "Query",
+            row.text,
+            "2026-10-08 13:00:00.000000",
+            "1",
+          ]),
+        };
+      }),
+    });
+    return fake;
+  }
+
+  /** The query id the fake saw `sql` sent under. */
+  const queryIdOf = (fake: FakeServer, sql: string) => fake.requests.find((request) => request.sql === sql)?.queryId;
+
+  test("an idle server lists no session and counts no active statement: the reads themselves are Studio's own", async () => {
+    const fake = processesServer(() => []);
+    const { provider } = build(fake);
+    await provider.connect();
+    expect(await provider.getActiveSessions()).toEqual([]);
+    expect((await provider.getOverview()).activeConnections).toBe(0);
+  });
+
+  test("the tree's read in flight beside the panel is left out; a user's statements stay, one led by a literal included", async () => {
+    const tree = gate();
+    const fake = processesServer(
+      (server) => [
+        USER,
+        { session: "tree-session", queryId: queryIdOf(server, SQL.catalogs) ?? "", text: SQL.catalogs },
+        LITERAL_LED,
+      ],
+      { [SQL.catalogs]: tree.promise },
+    );
+    const { provider } = build(fake);
+    await provider.connect();
+    const listing = provider.listContainers();
+    // Settled by the disconnect after the test when an assertion fails first.
+    listing.catch(() => {});
+    await until(() => fake.sqls().includes(SQL.catalogs));
+    expect((await provider.getActiveSessions()).map((session) => session.pid)).toEqual([
+      USER.session,
+      LITERAL_LED.session,
+    ]);
+    expect((await provider.getOverview()).activeConnections).toBe(2);
+    tree.open({ schema: [column("catalog_name")], data: [["default"]] });
+    expect((await listing).map((container) => container.name)).toEqual(["default"]);
+  });
+
+  test("the editor's statement is a user's: listed and counted while it runs", async () => {
+    const editor = "SELECT sleep(2) AS editor_statement";
+    const answer = gate();
+    const fake = processesServer(
+      (server) => [{ session: "editor-session", queryId: queryIdOf(server, editor) ?? "", text: editor }],
+      { [editor]: answer.promise },
+    );
+    const { provider } = build(fake);
+    await provider.connect();
+    const running = provider.query(editor, undefined, "q-editor");
+    running.catch(() => {});
+    await until(() => fake.sqls().includes(editor));
+    expect((await provider.getActiveSessions()).map((session) => session.query)).toEqual([editor]);
+    expect((await provider.getOverview()).activeConnections).toBe(1);
+    answer.open({ schema: [column("editor_statement", "UInt8")], data: [["0"]] });
+    expect((await running).rowCount).toBe(1);
   });
 });

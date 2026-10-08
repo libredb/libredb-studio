@@ -37,7 +37,11 @@
  * - A cancel before the first answer can miss the statement, so a kill answered 404 is sent again at 250, 500 and
  *   1000 ms; after the first answer a cancel is `cancelled`, and a user statement's deadline `timeout`, only when
  *   Databend acknowledged the kill or an answer reported 1043, and otherwise the statement may still finish [X02]; a
- *   statement Studio sends itself is `timeout` at its deadline whatever the kill answered.
+ *   statement Studio sends itself is `timeout` at its deadline whatever the kill answered, or `unavailable`, the
+ *   resuming outcome, on a named warehouse.
+ * - A statement Studio sends itself is the process's own from before anything is sent until its last close ends,
+ *   under its query id, and its outcome names every own statement in flight meanwhile, its own included, which a
+ *   read of running statements leaves out (design 5.5); a user statement is never one.
  *
  * Time, sleep, randomness, ids and deadlines are injected deps with production defaults, so no test waits on a real
  * timer [X16]. Every request goes through `createNodeTransport`, the one socket path.
@@ -82,6 +86,7 @@ import {
 import { type RetryRequest, retryDecision } from "./retry";
 import { acceptNextUri, finalPath, killPath, LOGOUT_PATH, QUERY_PATH } from "./routes";
 import {
+  createOwnStatements,
   endOpenPlan,
   newQueryId,
   rollbackBody,
@@ -106,7 +111,7 @@ import {
 
 /**
  * What failed when a page gave no answer within its attempt timer twice with statement time left (design 3.11): not
- * the statement deadline, which is `timeout`.
+ * the statement deadline.
  */
 export const DATABEND_PAGE_UNANSWERED = "a page of the result did not arrive in two attempts";
 
@@ -175,6 +180,12 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
     signal.addEventListener("abort", done, { once: true });
   });
 }
+
+/**
+ * The query ids of this process's provider statements in flight, shared by every Databend provider as the latch is:
+ * Studio's own, which a read of running statements leaves out (design 5.5).
+ */
+const OWN_STATEMENTS = createOwnStatements();
 
 const PRODUCTION_DEPS: DatabendHttpTransportDeps = {
   createNodeTransport,
@@ -345,7 +356,23 @@ class StatementRun {
     this.bounds = { rows: pageRows(request), columns: options.cellBudget };
   }
 
+  /**
+   * The run; a statement Studio sends itself is the process's own from before anything is sent until its last close
+   * ends, and its outcome names every own statement in flight meanwhile (design 5.5).
+   */
   async run(): Promise<StatementOutcome & { readonly role: string | null }> {
+    if (this.request.origin === "user") return this.signedIn();
+    const own = OWN_STATEMENTS.begin(this.ids.queryId);
+    try {
+      const outcome = await this.signedIn();
+      return { ...outcome, ownQueryIds: own.seen() };
+    } finally {
+      own.end();
+    }
+  }
+
+  /** The statement under the sign-in latch's hold (design 3.5), released after its last close. */
+  private async signedIn(): Promise<StatementOutcome & { readonly role: string | null }> {
     let hold: AuthAttempt;
     try {
       hold = await this.deps.latch.acquire(this.options.latchKey, this.signal);

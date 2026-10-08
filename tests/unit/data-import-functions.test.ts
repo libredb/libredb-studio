@@ -6,6 +6,7 @@ import {
   inferSqlType,
   escapeSQL,
   generateImportSQL,
+  IMPORT_NO_TARGET,
   importRefusal,
   offersNewTableImport,
   type ImportTarget,
@@ -312,12 +313,21 @@ describe("generateImportSQL", () => {
     } as unknown as ProviderCapabilities;
     expect(() =>
       generateImportSQL(sampleData, { kind: "existing", path: ["APP", "ORDERS"] }, {}, "db2", db2Shaped),
-    ).toThrow("takes no imported data");
+    ).toThrow(IMPORT_NO_TARGET);
     expect(() => generateImportSQL(sampleData, { kind: "new", name: "T" }, {}, "db2", db2Shaped)).toThrow(
-      "takes no imported data",
+      IMPORT_NO_TARGET,
     );
-    expect(importRefusal(db2Shaped)).toContain("no table an import may create");
+    expect(importRefusal(db2Shaped)).toBe(IMPORT_NO_TARGET);
     expect(importRefusal(undefined)).toBeNull();
+  });
+
+  // D4: "This connection takes no imported data" read, on Databend, as the engine refusing data, while an INSERT typed
+  // in the editor ran there. What has no target is Studio's import, and the sentence says that.
+  test("the refusal names Studio's import as what has no target, never the engine as taking no data", () => {
+    expect(IMPORT_NO_TARGET.startsWith("Studio's import has no target on this connection:")).toBe(true);
+    expect(IMPORT_NO_TARGET).toContain("no existing table here to write into");
+    expect(IMPORT_NO_TARGET).toContain("cannot create one");
+    expect(IMPORT_NO_TARGET).not.toContain("takes no imported data");
   });
 
   test("refuses a new table where the engine declares no create-table, and keeps existing targets (#786)", () => {

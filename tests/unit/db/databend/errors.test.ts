@@ -605,12 +605,13 @@ describe("latchesSignIn, the one latching rule that refusalError and the latch b
 });
 
 describe("a stop before anything was sent (a latch wait cut short, I18)", () => {
-  test("our cancel is cancelled and our deadline is timeout, never outcome-unknown, since nothing can still run", () => {
+  test("our cancel is cancelled and our deadline timeout or the resuming outcome, never outcome-unknown, since nothing can still run", () => {
     expectRow(unsentStopError("cancel", context()), "cancelled", QueryCancelledError, S.cancelled);
     expectRow(unsentStopError("deadline", context()), "timeout", TimeoutError, S.deadline("60"));
     const ctx = context({ origin: "provider", warehouse: "wh", timeoutMs: 10_000 });
     expectRow(unsentStopError("cancel", ctx), "cancelled", QueryCancelledError, S.cancelled, ctx);
-    expectRow(unsentStopError("deadline", ctx), "timeout", TimeoutError, S.resuming("wh", "10"), ctx);
+    // On a named warehouse Studio's own read is the resuming outcome, never a timeout (GAP-CL-1).
+    expectRow(unsentStopError("deadline", ctx), "unavailable", ConnectionError, S.resuming("wh", "10"), ctx);
   });
 });
 
@@ -756,10 +757,13 @@ describe("our cancel and our deadline (X02, X07)", () => {
     );
   });
 
-  test("with Warehouse set a probe or surface timeout gives the resuming sentence", () => {
+  // A `ConnectionError`, so Studio's routes answer it with HTTP 503 and the sentence itself, where a `TimeoutError` is
+  // answered with HTTP 408 and the route's own sentence (GAP-CL-1).
+  test("with Warehouse set a probe or surface timeout is the resuming outcome, a ConnectionError", () => {
     const ctx = context({ origin: "provider", warehouse: "wh", timeoutMs: 10_000 });
-    expectRow(stopError("deadline", unanswered, ctx), "timeout", TimeoutError, S.resuming("wh", "10"), ctx);
-    expectRow(stopError("deadline", answered, ctx), "timeout", TimeoutError, S.resuming("wh", "10"), ctx);
+    expectRow(stopError("deadline", unanswered, ctx), "unavailable", ConnectionError, S.resuming("wh", "10"), ctx);
+    expectRow(stopError("deadline", answered, ctx), "unavailable", ConnectionError, S.resuming("wh", "10"), ctx);
+    expectRow(stopError("deadline", acknowledged, ctx), "unavailable", ConnectionError, S.resuming("wh", "10"), ctx);
     expect(S.resuming("wh", "10")).toBe(
       'Warehouse "wh" did not answer within 10 seconds; it may be resuming. Try again in a minute, or resume it in the Databend Cloud console.',
     );

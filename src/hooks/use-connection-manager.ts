@@ -1,7 +1,7 @@
 "use client";
 
 import { appFetch, SESSION_REQUIRED_CODE } from "@/lib/config/base-path";
-import { useState, useEffect, useCallback, useMemo, useRef, type SetStateAction } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import { detailedObjects, schemaContextOf, type DetailedObject } from "@/lib/db/detailed-object";
 import { relationKindIds } from "@/lib/db/object-kinds";
@@ -97,13 +97,21 @@ export function useConnectionManager(storageReady = false) {
    */
   const pendingLinkIdRef = useRef<string | null>(null);
   /**
-   * The setter the shell picks connections with. A selection of the reader's own cancels a pending
-   * link, so a refresh that lists the linked connection later does not switch away from the
-   * reader's choice and discard its editor state. The hook's own selections use the raw setter.
+   * The connection the person has used in this page, by id: picked it, loaded its objects, or sent it a statement.
+   *
+   * A connection the page made active by itself (the one open last time at sign-in or on a reload, a linked one, a
+   * fallback) has not been used, and while it has not, a connection whose provider declares `resumesBilledCompute`
+   * reads nothing past its declaration (CL-CORE-2): measured on Databend Cloud, a sign-in with no click read the
+   * inventory twice, and each read resumes a suspended warehouse, which is billed while it runs. The ref is what a read
+   * already in flight asks, so a pick made while it waits for the declaration is honoured by it.
    */
-  const selectConnection = useCallback((next: SetStateAction<DatabaseConnection | null>) => {
-    pendingLinkIdRef.current = null;
-    setActiveConnection(next);
+  const [usedId, setUsedId] = useState<string | null>(null);
+  const usedIdRef = useRef<string | null>(null);
+  /** The connection whose catalog read stopped at its declaration for the reason above, to be read once it is used. */
+  const heldIdRef = useRef<string | null>(null);
+  const markUsed = useCallback((id: string | null) => {
+    usedIdRef.current = id;
+    setUsedId(id);
   }, []);
   /**
    * The server's own seed descriptors, kept alongside the merged list rather than
@@ -196,6 +204,7 @@ export function useConnectionManager(storageReady = false) {
     async (conn: DatabaseConnection) => {
       /** Whether this read is still the one on screen. Every write below asks first. */
       const isCurrent = reads.begin();
+      heldIdRef.current = null;
       setIsLoadingSchema(true);
 
       const payload = conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : { connection: conn };
@@ -211,6 +220,18 @@ export function useConnectionManager(storageReady = false) {
           throw new Error(body.error || `The provider metadata could not be read (${metaRes.status})`);
         }
         const { capabilities } = (await metaRes.json()) as { capabilities: ProviderCapabilities };
+        // The declaration opens no connection; the inventory does, and on a connection whose every request can resume
+        // compute billed while it runs, it is read only once the person uses the connection (`usedIdRef` above).
+        if (capabilities.resumesBilledCompute === true && usedIdRef.current !== conn.id) {
+          if (isCurrent()) {
+            heldIdRef.current = conn.id;
+            // Nothing was read for THIS connection, so the previous one's objects may not stay as its own (D31).
+            setSchema([]);
+            setDefaultContainer(undefined);
+            setSchemaError(null);
+          }
+          return;
+        }
         const kinds = relationKindIds(capabilities);
         // A true statement about the engine rather than a failure: nothing declared a kind whose
         // rows this list renders, so there is nothing to ask for and nothing to show. It is not
@@ -331,9 +352,52 @@ export function useConnectionManager(storageReady = false) {
   const loadObjects = useCallback(() => {
     const conn = visibleActive;
     if (conn === null) return;
+    markUsed(conn.id);
     setScanRequested(conn.id);
     void readSchema(conn);
-  }, [visibleActive, readSchema]);
+  }, [visibleActive, readSchema, markUsed]);
+
+  /**
+   * The setter the shell picks connections with. A selection of the reader's own cancels a pending
+   * link, so a refresh that lists the linked connection later does not switch away from the
+   * reader's choice and discard its editor state. The hook's own selections use the raw setter.
+   *
+   * A pick is a use of the connection. Picking the one already active changes nothing the shell's
+   * connection effect reads, so the read a restore held for it is taken here.
+   */
+  const selectConnection = useCallback(
+    (next: DatabaseConnection | null) => {
+      pendingLinkIdRef.current = null;
+      markUsed(next?.id ?? null);
+      setActiveConnection(next);
+      if (next !== null && next === activeConnectionRef.current && heldIdRef.current === next.id) {
+        void fetchSchema(next);
+      }
+    },
+    [fetchSchema, markUsed],
+  );
+
+  /**
+   * The setter the shell makes a connection active with when the person deleted the active one: the
+   * first one left is the page's choice, not the person's, so it is not marked used, and a connection
+   * whose requests resume billed compute is held as a restored one is (CL-CORE-2). The delete is the
+   * person's own act, though, so it cancels a pending link as a pick does.
+   */
+  const activateFallback = useCallback((next: DatabaseConnection | null) => {
+    pendingLinkIdRef.current = null;
+    setActiveConnection(next);
+  }, []);
+
+  /**
+   * The person sent the active connection a statement, which uses it as a pick does: the read a
+   * restore held for it is taken now, while the statement already wakes its compute.
+   */
+  const markActiveUsed = useCallback(() => {
+    const conn = visibleActive;
+    if (conn === null || usedIdRef.current === conn.id) return;
+    markUsed(conn.id);
+    if (heldIdRef.current === conn.id) void fetchSchema(conn);
+  }, [visibleActive, markUsed, fetchSchema]);
 
   /**
    * The schema as the AI panels and the agent rail are handed it.
@@ -754,6 +818,16 @@ export function useConnectionManager(storageReady = false) {
      */
     objectScanDeferred: visibleActive !== null && scanDeferred(visibleActive),
     loadObjects,
+    /**
+     * Whether the page made the active connection active by itself, at sign-in, on a reload, from a
+     * link or as a fallback, and the person has not used it since. While it is, a connection whose
+     * provider declares `resumesBilledCompute` reads nothing past its declaration: this hook holds
+     * the inventory, and the shell holds the object tree with the same answer. False with no active
+     * connection.
+     */
+    activeAwaitsUse: visibleActive !== null && usedId !== visibleActive.id,
+    markActiveUsed,
+    activateFallback,
     schemaContext,
     defaultContainer,
     /**

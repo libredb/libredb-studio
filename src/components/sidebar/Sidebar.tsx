@@ -4,6 +4,7 @@ import React from "react";
 import { DatabaseConnection } from "@/lib/types";
 import { keyScanShape, offersSchemaDiagram, type DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import { connectionPulseTitle, type ConnectionPulse } from "@/hooks/use-connection-pulse";
 import { Plus, Zap, Layers, LoaderCircle, CircleAlert } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ObjectTree, type ObjectSource, type TreeRowActionHandlers } from "@/components/object-tree";
@@ -64,6 +65,12 @@ interface SidebarProps {
   onRetryMetadata?: () => void;
   /** The active connection reads no catalog until asked (#765). */
   objectScanDeferred?: boolean;
+  /**
+   * Why, when it is not the connection's own `skipObjectScan`: the shell holds a connection the page opened by
+   * itself whose every request can resume billed compute, until the person uses it (CL-CORE-2). Handed to the tree,
+   * which says so in its deferred panel.
+   */
+  deferredForBilledCompute?: boolean;
   /** Perform the read the active connection deferred. */
   onLoadObjects?: () => void;
   /**
@@ -98,6 +105,14 @@ interface SidebarProps {
    */
   objectRefreshToken?: number;
   /**
+   * The active connection's pulse, the same state the header reads, handed through by the standalone shell.
+   *
+   * `not-checked` draws the footer still and neutral, as the header draws it: Studio sends that connection no health
+   * check, so a pulsing "Connected" under it claimed what nothing measured (CL-CORE-4). Every other state, and its
+   * absence in the embedded workspace, which has no pulse, keeps the footer as it was.
+   */
+  connectionPulse?: ConnectionPulse | null;
+  /**
    * A key the reader activated in the key browser, with the type the panel already knows for it.
    *
    * Handed through rather than acted on here: the sidebar mounts the panel and joins neither
@@ -131,14 +146,17 @@ export const Sidebar = React.memo(function Sidebar({
   metadataError = null,
   onRetryMetadata,
   objectScanDeferred = false,
+  deferredForBilledCompute,
   onLoadObjects,
   objectActions,
   objectSource,
   objectReadsColumns,
   objectRefreshToken,
+  connectionPulse,
   onOpenKey,
 }: SidebarProps) {
   const appVersion = getAppVersion();
+  const notChecked = connectionPulse === "not-checked";
   /**
    * Which reading of the active connection the panel below shows.
    *
@@ -388,6 +406,7 @@ export const Sidebar = React.memo(function Sidebar({
                     capabilities={metadata.capabilities}
                     labels={metadata.labels}
                     deferred={objectScanDeferred}
+                    deferredForBilledCompute={deferredForBilledCompute}
                     onLoad={onLoadObjects}
                     onObjectClick={onObjectClick}
                     actions={actions}
@@ -431,9 +450,20 @@ export const Sidebar = React.memo(function Sidebar({
 
       <div className="p-3 border-t border-border bg-card/50 backdrop-blur-md">
         <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-muted/30 border border-border/50">
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-hue-green-tint animate-pulse" />
-            <span className="text-xs font-medium text-muted-foreground">Connected</span>
+          <div
+            className="flex items-center gap-2"
+            data-testid="sidebar-connection-status"
+            title={notChecked ? connectionPulseTitle("not-checked") : undefined}
+          >
+            <div
+              className={cn(
+                "w-1.5 h-1.5 rounded-full",
+                notChecked ? "bg-fg-subtle" : "bg-hue-green-tint animate-pulse",
+              )}
+            />
+            <span className="text-xs font-medium text-muted-foreground">
+              {notChecked ? "Not checked" : "Connected"}
+            </span>
           </div>
           <div className="flex items-center gap-2">
             {/*

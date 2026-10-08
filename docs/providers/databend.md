@@ -92,7 +92,7 @@ The transport never goes through an `http_proxy` or `https_proxy` variable and n
 Databend's `/v1/query` runs one statement per request, and when the first of several is an INSERT or REPLACE it drops the rest without an error.
 So the provider refuses text with more than one statement, and text with none, before any request.
 The same guard refuses every place where Databend's lexer ends a construct somewhere Studio's reading does not, because there the confirmation gate would have read a different statement from the one that runs: section 5.2 lists each with its sentence.
-Run All splits a script under the same grammar row and sends each statement on its own.
+In the editor, a selection of several statements goes to Studio's multi-statement route, which splits it under the same grammar row and sends each statement on its own.
 
 ### 3.2 The loop ends on the absence of a link
 
@@ -252,7 +252,8 @@ The bounds were measured together (L9) in the container image under its 384 MiB 
 The server cuts a page at about 4 MiB of block memory, and display text multiplies it: a page of 1,024 rows of 8 columns of 512 control characters each is 24 MiB of JSON, past the 16 MiB answer cap at any page of more than about 650 rows, so such a result fails as too large, by design; a bounded statement whose row cut keeps the page smaller is shown (600 rows were 14.1 MiB).
 400 Boolean columns at 10,000 rows are 15.3 MiB, under the cap; 420 or more would also be too large at a full page.
 The cap stays at 16 MiB by the owner's decision.
-Every budget was verified on the local fixture; through the Databend Cloud gateway only paging was measured, so the budgets there are not verified yet.
+Every budget was verified on the local fixture.
+Through the Databend Cloud gateway the live check read 100,000 rows whole over the page chain and cut a statement at the 16 MiB budget of answer text; the bounds of one answer, the cell budget and the warning bound were not run there.
 No SQL provider bounds the statement text it is handed ([D249](../BACKLOG.md)).
 
 ## 4. Connection
@@ -369,15 +370,20 @@ A Databend DSN's `sslmode=require` is not this mode: it verifies the certificate
 A Databend Cloud connection names its warehouse, sent as `x-databend-warehouse` on every request; a self-hosted server ignores the header unless its cluster routes by warehouse (it logs one WARN line per request, measured, UC4).
 A suspended warehouse resumes on any request and is billed while it runs, and opening the connection is a request: it runs the version probe and then reads the object tree.
 So with Warehouse set the provider declares `resumesBilledCompute`, and Studio sends the connection no background health checks: no connection pulse and no fleet check, only what a person asks for.
+Nor does Studio open it by itself: the connection Studio makes active at sign-in or on a reload, from a link, when the server changes the connection list or when the person deletes the open connection reads nothing past its declaration, which opens no connection, until the person picks it, loads its objects, opens the Schema tab of the phone layout or runs a statement; until then the AI assistant has no schema of it, and its object tree says:
+
+> Studio opened this connection without reading it, because any request to it can resume compute that is billed while it runs. The editor is ready to use.
+
 A host under `databend.com`, `databend.cn` or `tidbcloud.com` is Databend Cloud's, and the provider declares `resumesBilledCompute` for it with Warehouse empty too.
-BendSQL and databend-jdbc count the same three domains as Databend Cloud's when they choose their presign mode for uploads, not for billing, and Databend's Cloud guides name the service TiDB Cloud Lake in their data-integration pages; declaring the capability stops the background checks, so a host under `tidbcloud.com` that does not serve Databend loses its pulse and its fleet check, and its monitoring page shows the billed-compute note; nothing else changes.
+BendSQL and databend-jdbc count the same three domains as Databend Cloud's when they choose their presign mode for uploads, not for billing, and Databend's Cloud guides name the service TiDB Cloud Lake in their data-integration pages; declaring the capability stops the background checks, so a host under `tidbcloud.com` that does not serve Databend loses its pulse and its fleet check, is not read when Studio makes it active by itself, and its monitoring page shows the billed-compute note; nothing else changes.
 The older host form `<tenant>--<warehouse>.gw.<region>.default.databend.com` names a warehouse and reaches it with no `x-databend-warehouse` header (measured on the test tenant, 2026-10-08), so a pulse would resume it and bill it.
 For such a host the sentences of this section and of section 10 name the warehouse the host carries, as they name a Warehouse, while only the Warehouse field is sent as the header; a DSN paste of that form fills Warehouse from the host unless the DSN has `warehouse=` (section 4.1).
 Databend's docs show that form under `databend.com` and `databend.cn` only, so Studio reads no warehouse from a host under `tidbcloud.com`.
-A probe or tree read that outlasts its budget on a named warehouse is most likely a resume, and reads:
+A probe, tree or monitoring read that outlasts its budget on a named warehouse is most likely a resume, and reads:
 
 > Warehouse "[warehouse]" did not answer within [seconds] seconds; it may be resuming. Try again in a minute, or resume it in the Databend Cloud console.
 
+It is a `ConnectionError`, which Studio's routes answer with HTTP 503 and the sentence itself, so the object tree, the monitoring page and Test Connection show it as written.
 On the Personal plan a resume can take minutes, so a first Test Connection may meet this sentence and pass a minute later.
 A gateway's `ProvisionWarehouseTimeout` sends the POST again with the same ids (section 3.6).
 The gateway's other refusals name the field to check:
@@ -455,8 +461,8 @@ It reads the text under the Databend grammar row and refuses, with these sentenc
 
 | Statement | Refusal |
 |---|---|
-| `SELECT 1; SELECT 2` | Databend runs one statement per request, and when the first is an INSERT or REPLACE it drops the rest without an error. Run the statements one at a time, or use Run All. |
-| `INSERT INTO t VALUES (1); DELETE FROM t` | Databend runs one statement per request, and when the first is an INSERT or REPLACE it drops the rest without an error. Run the statements one at a time, or use Run All. |
+| `SELECT 1; SELECT 2` | Databend runs one statement per request, and when the first is an INSERT or REPLACE it drops the rest without an error. Run the statements one at a time. |
+| `INSERT INTO t VALUES (1); DELETE FROM t` | Databend runs one statement per request, and when the first is an INSERT or REPLACE it drops the rest without an error. Run the statements one at a time. |
 | `-- only a comment` | There is no statement to run: the text holds only comments. |
 | `SELECT 'x` | A quote or comment in this text never closes, so Studio cannot tell where the statement ends. |
 | `SELECT 1 -- c\fSELECT 2` | This text holds a form feed, which ends a -- comment in Databend but not in Studio's reading. Remove it and run again. |
@@ -558,6 +564,32 @@ A form feed, an optimizer hint, a tagged dollar run, a stage name holding a back
 An `@` that ends a `<@` operator opens no stage name here either.
 Without the decline and the guard, the stage row's subquery runs hidden: measured on v1.2.951, `EXPLAIN SELECT * FROM @~/--, numbers((SELECT count(*) FROM numbers(7)))` planned a `numbers` scan of 7 rows, so Databend ran the argument subquery that Studio reads as a comment after the user stage `@~/`.
 Over the generated queries of the other dialects, 3 of 50 SELECT-shaped texts got no estimate, all three the SQL Server row's bracketed names, which Databend reads as code.
+When the Explain button declines a statement that leads with SELECT or WITH, its toast says why in one of these sentences, [word] being MATERIALIZED or PIVOT, [construct] a MATERIALIZED CTE or a PIVOT, and [name] the declined name in lower case; the automatic estimate declines without a word:
+
+> This statement names [word], and Databend can run part of a statement with [construct] while it plans it, so Studio does not ask Databend for this statement's plan.
+
+> This statement names [name], which writes or acts when Databend runs it, and Databend can run part of a statement while it plans it, so Studio does not ask Databend for this statement's plan.
+
+> This statement has an optimizer hint (/*+ ... */), which Databend reads as code and Studio as a comment, so Studio cannot check what Databend would run while planning it and does not ask Databend for this statement's plan.
+
+> A stage name (@...) in this statement holds a backslash or runs into a comment, a dollar quote or a bracket, which Databend reads as part of the name, so Studio cannot check what Databend would run while planning it and does not ask Databend for this statement's plan.
+
+> This statement holds a form feed, which ends a -- comment in Databend but not in Studio's reading, so Studio cannot check what Databend would run while planning it and does not ask Databend for this statement's plan.
+
+> A dollar-quoted run in this statement is tagged ($name$), which Databend reads as a variable and not a quote, so Studio cannot check what Databend would run while planning it and does not ask Databend for this statement's plan.
+
+> A quote or comment in this statement never closes, so Studio cannot check what Databend would run while planning it and does not ask Databend for this statement's plan.
+
+The first two name a word the statement holds anywhere in its code, a column or an alias included, not a construct Studio found.
+The hint, form feed and tagged run sentences end with the advice below only when the statement with that one hint or form feed taken out, or that run quoted with `$$`, would get a plan; otherwise the sentence stands alone:
+
+> Remove the hint to see the plan.
+
+> Remove the form feed to see the plan.
+
+> Use $$ quoting to see the plan.
+
+A statement that leads with neither is told that only SELECT statements can be explained, and after any decline the Explain tab shows no plan, never the plan of the statement before.
 The plan is drawn as a tree from the one `explain` column, a node's properties as its detail and `estimated rows` as its row estimate; the raw tab shows the text as Databend printed it.
 
 ### 5.7 What the SQL INSERT export writes
@@ -579,6 +611,11 @@ A kill that does not answer reads:
 
 A cancel before the first answer can miss a statement that is already running, so a kill answered 404 is sent again at 250, 500 and 1,000 ms, and the run reports that the statement may have run, with "cancelled before its first answer" as the cause.
 A Stop or the deadline while the POST waits to be sent again after a Databend Cloud `ProvisionWarehouseTimeout` sends no kill and no logout, and the run reads as cancelled or timed out, since the gateway forwarded none of the attempts (section 3.6).
+
+Stop also ends the editor's wait for the run's own answer, so the editor reads the outcome from the cancel route, which waits for the stopped run to end, at most 15 seconds, the 5 seconds each of the kill, ROLLBACK and logout it may still send.
+The route answers `cancelled: true` only when the run read as cancelled, or was stopped before anything was sent, and the editor shows "Query Cancelled".
+A kill that got no answer, a kill Databend refused and a statement that finished before the kill reached it answer `cancelled: false`, and the editor shows "Cancel Not Confirmed": the statement may still be running, or it finished first.
+
 The query timeout is sent as `max_execute_time_in_seconds` and is also Studio's deadline; when it passes Studio kills the statement, and when Databend acknowledged the kill, or an answer reported code 1043, the run reads:
 
 > The statement did not finish within [seconds] seconds, so Studio cancelled it.
@@ -589,10 +626,12 @@ For a user statement, after the first answer, a kill that Databend did not ackno
 > The statement did not finish within [seconds] seconds, and Databend did not acknowledge Studio's request to stop it, so it may still finish: check before running it again.
 
 With no first answer by then the cause reads "no first answer within [seconds] seconds".
-The first of these sentences reaches a caller of the provider itself, such as an embedded host's route; Studio's own query route answers a run that timed out with HTTP 408 and its own sentence, "Query timed out. Please try a simpler query or increase timeout.", and Chromium sends a POST answered 408 on a kept-alive connection again, so in the browser a statement that reaches its deadline can run up to three times, each with its kill ([X27](../BACKLOG.md)).
-A statement that waits for a permit longer than its deadline sends nothing:
+The first of these sentences reaches a caller of the provider itself, such as an embedded host's route; Studio's own routes answer it with HTTP 408 and their own sentence, "Query timed out. Please try a simpler query or increase timeout.", and Chromium sends a POST answered 408 on a kept-alive connection again, so in the browser a statement that reaches its deadline can run up to three times, each with its kill ([X27](../BACKLOG.md)).
+A statement that waits for a statement slot longer than its deadline sends nothing:
 
 > Studio's Databend statement slots stayed busy for [seconds] seconds, so nothing was sent. Try again when a running statement finishes.
+
+The resuming sentence of section 4.4 and the slot wait above are no statement's timeout: each is a `ConnectionError`, which Studio's routes answer with HTTP 503 and the sentence itself.
 
 ## 6. Schema introspection
 
@@ -655,19 +694,25 @@ Databend has `ALTER TABLE ... MODIFY COLUMN`, which changes type, nullability an
 Every panel is a provider statement under the surface deadline, and every read covers the default catalog only: walking every external catalog for one panel would cost a statement per catalog.
 When Databend answers one of the codes 1003, 1025, 1063, 1112, 1119 or 1002 (an unknown database, an unknown table, a permission denied, a licence denied, an unknown catalog, not implemented), the panel is empty; any other error propagates, so a timeout is never hidden behind an empty panel.
 
-- Overview: the version is `version()`; uptime is "unknown" and the connection limit 0, because Databend publishes neither; the size is the compressed data plus index size of the default catalog's base tables, "N/A" when that read degraded; the active count is the running statements of `system.processes`, Studio's reading statement left out.
+- Overview: the version is `version()`; uptime is "unknown" and the connection limit 0, because Databend publishes neither; the size is the compressed data plus index size of the default catalog's base tables, "N/A" when that read degraded; the active count is the running statements of `system.processes`, Studio's own statements left out (below).
 - Sessions: one row per running statement of the server or warehouse, every user's included, from `system.processes`, which needs no grant, since Databend creates a session per HTTP request.
   The kill target is the row's session id.
   Its state is "active" while it runs a statement (`command` `Query`), the word the Active card and the Overview count, and "aborting" (`Aborting`) while a `KILL CONNECTION` or a server shutdown ends its session; the panel's own kill, a `KILL QUERY`, leaves it "active" until the statement stops.
   Databend's query id of the statement is not shown: a session row of the panel has no field for one.
-  The reading statement itself is left out by `connection_id()`.
+  Studio's own statements are left out (below).
 - Slow queries: `system_history.query_history`, the finished statements of the last 24 hours, slowest first.
 - Table and storage statistics: the default catalog's base tables, largest first, and one row per database.
 - Index statistics: `default.system.indexes`; no size per index and no scan counter exist, so the size is "N/A" and the scans 0.
 - Performance: every figure absent, never a fabricated zero.
 - Health: the overview, the 10 slowest queries and 10 sessions; the cache hit ratio is "N/A".
 
-A panel sends its reads one at a time, so no read of one panel sees a sibling read in flight.
+Studio reads the panels at once, two statements at a time, so `system.processes` lists Studio's own statements beside the ones the panels are for: the reading one, a sibling panel's read, the object tree's.
+The Sessions panel and the active count leave out, by the query id it was sent under (`current_query_id`), every statement this Studio process wrote itself and had in flight while the read ran: a tree, describe, source, connect, monitoring or kill statement, from before its request until its last close ended.
+Studio generates each query id from a random UUID, so another client can neither predict one nor run a statement under one while Studio's runs: measured on the pinned image, a statement another user sent under a running statement's query id was refused with `query_id [query id] already exists`, and one the same user sent started nothing.
+Nothing is matched on statement text, so a user's statement is listed and counted whatever it says, the editor's statements included, and so is every statement of another Studio process, its monitoring reads included.
+The row's `id`, the kill target, is a session id Databend makes for each request, not the client session id Studio sends: measured on the pinned image and on v1.2.881, a running statement was listed under an `id` other than its client session id, and under its own query id as `current_query_id`.
+The Sessions panel asks Databend for 2 rows past its limit, as many statements as Studio runs at once, so that leaving Studio's own out still fills it, and shows at most its limit.
+The active count reads the query ids of the 500 newest running statements beside Databend's count of them all, so the count is whole past 500, and leaves Studio's own out only among those 500.
 The empty states and caption say what each list covers:
 
 On the measured Cloud tenant `system_history.query_history` answered 1003, so the slow-query panel was empty there.
@@ -696,6 +741,12 @@ A kill Databend accepts is answered with the provider's own message, which the m
 The Sessions panel does not show that message, and words a kill its own way for every engine ([U98](../BACKLOG.md)).
 Its kill button opens a "Terminate Session?" dialog, which says the action "will forcefully end the connection and may cause data loss if the session has uncommitted transactions", and a kill that went through is toasted "Session [session id] terminated successfully".
 On Databend the session is not ended: only the statement it is running is stopped, and a session of another client, such as BendSQL, runs its next statement.
+
+The panel offers the kill to every Studio admin, whatever the connection's SQL user holds.
+Without SUPER, Databend refuses the kill with 1063 before it looks for the session, the statement keeps running, and an error toast shows Databend's refusal as Databend wrote it.
+Measured on the pinned image, `studio_reader`'s kill of another session's statement is refused with `Permission denied: privilege [Super] is required on *.* for user 'studio_reader'@'%' with roles [public,studio_ro]. Note: Please ensure that your current role have the appropriate permissions to create a new Object`, and the statement finished as if no kill had been sent.
+On Databend Cloud a SQL user whose roles do not hold SUPER was refused the same way (measured on 2026-10-08), so a kill from the Sessions panel needs a SQL user granted it, for example through `GRANT SUPER ON *.* TO ROLE <role>`.
+Stop in the editor needs no privilege: it sends the statement's own kill link in the statement's own session (section 5.8).
 
 Any other operation sends nothing:
 
@@ -736,6 +787,11 @@ The analyze and vacuum cards are never drawn, and are worded true all the same:
 `resumesBilledCompute` is declared when Warehouse is set or the host is Databend Cloud's (section 4.4).
 `schemaRefreshPattern` re-reads the tree after a statement that leads with `CREATE`, `DROP`, `ALTER`, `RENAME`, `UNDROP`, `TRUNCATE` or `REPLACE`.
 MCP's metadata tools and plan mode work; agent execution and MCP `run_read_query` do not run a statement on this type ([B103](../BACKLOG.md)).
+Import Data has no target on Databend: Studio draws the IMPORT control for every connection, and its dialog writes only into an existing object of a kind that declares `acceptsRowWrites`, which no Databend kind does (section 6.3), or into a table it creates, which `supportsCreateTable: false` withholds, so it offers only Close and says:
+
+> Studio's import has no target on this connection: it offers no existing table here to write into and cannot create one.
+
+Load rows with `INSERT` or `COPY INTO` in the editor instead.
 
 | Label | Value |
 |---|---|
@@ -754,7 +810,7 @@ Every server text passes `serverText` with the connection's secret forms (the pa
 
 | What happened | What Studio says |
 |---|---|
-| An in-body error over HTTP 200 | the server's text; with `--> SQL:<line>:<col>` the editor marks the position |
+| An in-body error over HTTP 200 | the server's text, and the results panel shows it under "The query failed."; when the text points into the statement with `--> SQL:<line>:<col>`, Databend's own excerpt in it marks the position with a caret, the editor marks nothing, and the error carries it as `position`, the character it names counted from 1 (8 for `SELECT nope`), which the query route returns in its answer's `details` |
 | An in-body 1003 unknown database on a user statement | the server's text, then "Database is the current database for unqualified names: check it, or leave it empty." |
 | A fail-to-start answer (nothing ran) | the server's text, then "Nothing ran." |
 | A sign-in refused, or locked | Databend refused the sign-in for this user. (section 4.2) |
@@ -778,6 +834,7 @@ A user statement whose connection drops gets the no-answer sentence rather than 
 The [fault] of the protocol sentence is one of: "a 200 answer that is not JSON", "a body that does not parse as JSON", "a key named __proto__", "the field [field] of the wrong type", "a cell that is neither text nor null", "a row of [cells] cells for [columns] columns", "a link Studio does not follow", "a next_uri link of a shape Studio does not follow", "an answer for another statement", "an answer for another session", "an answer for another session; a proxy may drop the X-DATABEND-SESSION header", "a later page with another schema" and "more answers than one statement may take".
 An answer past a bound of section 3.10 names what was too large: "more rows than the page Studio asked for", "a schema larger than a result can keep", "more values than one answer may hold" or "nesting deeper than one answer may have".
 Each category becomes a house class at the provider's boundary: `auth` an `AuthenticationError`, `config` a `DatabaseConfigError`, `timeout` a `TimeoutError`, `cancelled` a `QueryCancelledError`, a statement error or a too-large answer a `QueryError`, and the rest a `ConnectionError`.
+Studio's own read that outlasts its deadline on a named warehouse, and a statement that waited for a statement slot past its deadline, are `unavailable`, as a gateway's `ProvisionWarehouseTimeout` is, so Studio's routes show their sentences with HTTP 503 rather than the sentence of a timeout (section 5.8).
 
 ## 11. Testing
 
@@ -884,14 +941,14 @@ A seed takes the same fields, as [SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md) s
 - Studio lists no stage, and a stage or `COPY` statement makes Databend itself read or write the storage it names with the server's own credentials, outside the HTTP egress guard; Studio works with stages and `COPY` only as statements a person writes.
 - A materialized view's internal `_mv_source_row_id` is left out of its columns; a materialized view needs a build newer than v1.2.881.
 - Databend lists no columns for a view that no longer plans, such as one over a dropped table, so Studio shows it with no column list rather than as complete.
-- Studio's own monitoring reads leave out only the reading statement itself, so another Studio connection's reads show among the running statements.
+- Studio's own monitoring reads are left out only by the Studio process that sent them, so another Studio process's reads show among the running statements; past 500 running statements, the active count leaves Studio's own out only among the 500 newest.
 - The Sessions panel shows no query id for a running statement, since its session row has no field for one; `system.processes` holds it as `current_query_id`.
 - One HTTP answer over 16 MiB fails as too large, so a result of very wide display text, such as many columns of control characters, fails when its page is large rather than being shown; the result's own budget of answer text is 16 MiB too.
 - A result wider than 250,000 columns fails as a protocol fault rather than being shown with no row, and a refusal longer than 65,536 characters is read by its HTTP status alone, its code and kind unread (section 3.10).
 - The sign-in latch holds 256 keys: with every one latched and live, a successful sign-in on another key is not recorded, so that key's statements go one at a time until a latch expires.
 - A statement shows its first 100 different server warnings, and one more warning counts those Databend sent past them, which are not shown (section 3.10).
 - A server older than v1.2.881 is not refused: the result says the display mode was not confirmed, and some values may read differently.
-- EXPLAIN gives no plan for the shapes of section 5.6, and the Explain button's argument subqueries run as reads while binding.
+- EXPLAIN gives no plan for the shapes of section 5.6, and the Explain button says which reason declined it; the Explain button's argument subqueries run as reads while binding.
 - Every user's running statements on the server or warehouse are in the Sessions panel, and a running `CREATE USER` or `ALTER USER` with `IDENTIFIED BY` shows its password unmasked there, because Databend masks only `PASSWORD = '...'`.
 - Studio's client-chosen session ids mean Databend writes no `login_history` row for a successful sign-in; failed sign-ins and every statement in `query_history` are still recorded.
 - A cluster that forwards a request to another node (a sticky node or a warehouse route) forwards it, `Authorization` included, over plain HTTP unless that node's HTTP handler has TLS.
@@ -901,8 +958,9 @@ A seed takes the same fields, as [SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md) s
 - No path-prefixed reverse proxy: Databend's links are origin-relative, so the server must answer at the root of its host and port, with no path prefix.
 - The monitoring panels and sums cover the default catalog only.
 - The SQL INSERT export cannot write `Array`, `Map`, `Tuple`, `Bitmap`, `Interval`, geo or `Vector` values: each such row is skipped by name.
+- Import Data has no target on Databend (section 9): load rows with `INSERT` or `COPY INTO` in the editor.
 - A kill stops the session's current statement, not the session, though the Sessions panel's dialog and toast speak of ending it ([U98](../BACKLOG.md)): a session of another client, such as BendSQL, runs its next statement.
-- Every budget was verified locally and through Databend Cloud's gateway on one warehouse; a cold start through Studio and multi-node paging are not run yet.
+- Every budget was verified locally; through Databend Cloud's gateway, on one warehouse, only the 100,000-row read and the 16 MiB budget of answer text ran, and a cold start through Studio and multi-node paging are not run yet.
 - In the browser a statement that reaches its deadline can run up to three times: the query route answers a run that timed out with HTTP 408, which Chromium sends again on a kept-alive connection ([X27](../BACKLOG.md)).
 - A seed edited to add a Warehouse while it is open keeps its pulse until the page is reloaded ([U97](../BACKLOG.md)).
 - The sign-in latch is one Studio process's: several replicas each send a refused password once per 15 minutes, so five or more can still lock a user under a password policy ([D252](../BACKLOG.md)).

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
+import { DATABEND_LIMITER_OPTIONS } from "@/lib/db/providers/sql/databend/connection-options";
 import {
   DATABEND_DEFAULT_SESSION_LIMIT,
   DATABEND_DEFAULT_SLOW_QUERY_LIMIT,
@@ -23,7 +24,6 @@ import {
 import {
   DATABEND_OBJECT_SENTENCES,
   DATABEND_SURFACE_ROW_CUT,
-  DATABEND_VERSION_SQL,
   type DatabendStatementRunner,
 } from "@/lib/db/providers/sql/databend/objects";
 import {
@@ -69,6 +69,7 @@ function failure(code: number): DatabendError {
 /** The sessions read's columns as the fixture answered them (measured 2026-10-08 on v1.2.951-nightly). */
 const SESSION_SCHEMA = [
   ["session_id", "String"],
+  ["query_id", "String"],
   ["user_name", "String"],
   ["host", "Nullable(String)"],
   ["database_name", "String"],
@@ -80,6 +81,7 @@ const SESSION_SCHEMA = [
 
 const SESSION_ROW = [
   "5c00e52f-34c2-4cab-8ba8-c1f1121157bf",
+  "8fea4d81679744d097a29a9e964dd563",
   "studio_reader",
   "172.20.0.1",
   "libredb_demo",
@@ -96,12 +98,16 @@ const SLOW_SCHEMA = [
   ["result_rows", "UInt64"],
 ] as const;
 
-/** The design 5.5 statements, written out; the tests below hold each panel to them. */
+/**
+ * The design 5.5 statements, written out; the tests below hold each panel to them. No read matches on statement text:
+ * both reads of `system.processes` read the query id each statement was sent under, which Studio's own are left out by.
+ */
 const BASE_TABLES =
   "FROM default.system.tables WHERE catalog = 'default' AND table_type = 'BASE TABLE' AND database NOT IN ('system', 'information_schema')";
+const VERSION_SQL = "SELECT version() AS server_version";
 const OVERVIEW_TABLES_SQL = `SELECT count(*) AS table_count, sum(data_compressed_size) AS compressed_bytes, sum(index_size) AS index_bytes ${BASE_TABLES}`;
 const ACTIVE_QUERIES_SQL =
-  "SELECT count(*) AS active_queries FROM default.system.processes WHERE command = 'Query' AND id <> connection_id()";
+  "SELECT current_query_id AS query_id, count(*) OVER () AS running FROM default.system.processes WHERE command = 'Query' ORDER BY created_time DESC LIMIT 500";
 const INDEX_COUNT_SQL = "SELECT count(*) AS index_count FROM default.system.indexes";
 const STORAGE_SQL = `SELECT database AS database_name, sum(data_compressed_size) AS compressed_bytes, sum(index_size) AS index_bytes ${BASE_TABLES} GROUP BY database ORDER BY database`;
 const tableStatsSql = (scope = "") =>
@@ -120,7 +126,7 @@ async function sentBy(read: (runner: DatabendStatementRunner) => Promise<unknown
 }
 
 const OVERVIEW_ANSWERS = {
-  [DATABEND_VERSION_SQL]: outcome([["server_version", "String"]], [["8.0.26-v1.2.951-nightly"]]),
+  [VERSION_SQL]: outcome([["server_version", "String"]], [["8.0.26-v1.2.951-nightly"]]),
   [OVERVIEW_TABLES_SQL]: outcome(
     [
       ["table_count", "UInt64"],
@@ -129,7 +135,13 @@ const OVERVIEW_ANSWERS = {
     ],
     [["2", "14915", "3389"]],
   ),
-  [ACTIVE_QUERIES_SQL]: outcome([["active_queries", "UInt64"]], [["1"]]),
+  [ACTIVE_QUERIES_SQL]: outcome(
+    [
+      ["query_id", "String"],
+      ["running", "UInt64"],
+    ],
+    [["8fea4d81679744d097a29a9e964dd563", "1"]],
+  ),
   [INDEX_COUNT_SQL]: outcome([["index_count", "UInt64"]], [["4"]]),
 };
 
@@ -138,19 +150,23 @@ describe("the design 5.5 statements, exactly, as each panel sends them", () => {
     expect(OVERVIEW_TABLES_SQL).toBe(
       "SELECT count(*) AS table_count, sum(data_compressed_size) AS compressed_bytes, sum(index_size) AS index_bytes FROM default.system.tables WHERE catalog = 'default' AND table_type = 'BASE TABLE' AND database NOT IN ('system', 'information_schema')",
     );
+    expect(ACTIVE_QUERIES_SQL).toBe(
+      `SELECT current_query_id AS query_id, count(*) OVER () AS running FROM default.system.processes WHERE command = 'Query' ORDER BY created_time DESC LIMIT ${DATABEND_MAX_MONITORING_LIMIT}`,
+    );
     const { runner, calls } = routed(OVERVIEW_ANSWERS);
     await getOverview(runner);
     expect(calls.map((call) => call.sql)).toEqual([
-      DATABEND_VERSION_SQL,
+      VERSION_SQL,
       OVERVIEW_TABLES_SQL,
       ACTIVE_QUERIES_SQL,
       INDEX_COUNT_SQL,
     ]);
   });
 
-  test("the sessions read covers every non-idle session of the warehouse", () => {
+  test("the sessions read covers every non-idle session of the warehouse, past its limit by Studio's own at most", () => {
+    expect(DATABEND_LIMITER_OPTIONS.perEngine).toBe(2);
     expect(databendSessionsSql(7)).toBe(
-      "SELECT id AS session_id, `user` AS user_name, host, database AS database_name, command, extra_info AS query_text, created_time, time AS elapsed_seconds FROM default.system.processes WHERE command <> 'Idle' AND id <> connection_id() ORDER BY created_time LIMIT 7",
+      "SELECT id AS session_id, current_query_id AS query_id, `user` AS user_name, host, database AS database_name, command, extra_info AS query_text, created_time, time AS elapsed_seconds FROM default.system.processes WHERE command <> 'Idle' ORDER BY created_time LIMIT 9",
     );
   });
 
@@ -170,6 +186,209 @@ describe("the design 5.5 statements, exactly, as each panel sends them", () => {
     expect(await sentBy((runner) => getIndexStats(runner, { schema: "d'" }))).toEqual([
       indexStatsSql(" WHERE database = 'd'''"),
     ]);
+  });
+});
+
+/** One running statement as `system.processes` lists it: its session id, the query id it was sent under, its text. */
+interface Running {
+  readonly id: string;
+  readonly queryId: string;
+  readonly text: string;
+  readonly command?: string;
+}
+
+/** Each column a read of `system.processes` may select, its declared type, and its value for one listed statement. */
+const PROCESS_COLUMNS: Readonly<Record<string, readonly [string, (row: Running, position: number) => string]>> = {
+  id: ["String", (row) => row.id],
+  current_query_id: ["String", (row) => row.queryId],
+  "`user`": ["String", () => "studio_reader"],
+  host: ["Nullable(String)", () => "172.20.0.1"],
+  database: ["String", () => "default"],
+  command: ["String", (row) => row.command ?? "Query"],
+  extra_info: ["String", (row) => row.text],
+  // Databend's display text of a Timestamp, one second apart in the order they were listed.
+  created_time: [
+    "Timestamp",
+    (_row, position) =>
+      new Date(Date.UTC(2026, 9, 8, 13, 0, position)).toISOString().replace("T", " ").replace("Z", "000"),
+  ],
+  time: ["UInt64", () => "1"],
+};
+
+const READ_OF_PROCESSES =
+  /^SELECT (.+) FROM default\.system\.processes WHERE (.+?)(?: ORDER BY (\w+)( DESC)?)?(?: LIMIT (\d+))?$/;
+
+/** A LIKE pattern as a regular expression: `%` any run, `_` one character, everything else itself. */
+function likePattern(pattern: string): RegExp {
+  const parts = [...pattern].map((char) => {
+    if (char === "%") return "[\\s\\S]*";
+    if (char === "_") return "[\\s\\S]";
+    return char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  });
+  return new RegExp(`^${parts.join("")}$`);
+}
+
+/** Whether one listed statement passes one predicate of a read's WHERE clause, as Databend evaluates it. */
+function holds(predicate: string, row: Running, reading: Running): boolean {
+  if (predicate === "id <> connection_id()") return row.id !== reading.id;
+  const compared = /^(\w+) (=|<>) '([^']*)'$/.exec(predicate);
+  if (compared !== null) {
+    const value = PROCESS_COLUMNS[compared[1]][1](row, 0);
+    return compared[2] === "=" ? value === compared[3] : value !== compared[3];
+  }
+  const unlike = /^extra_info NOT LIKE '((?:[^']|'')*)'$/.exec(predicate);
+  if (unlike !== null) return !likePattern(unlike[1].replaceAll("''", "'")).test(row.text);
+  throw new Error(`a predicate this fake does not evaluate: ${predicate}`);
+}
+
+/**
+ * A runner standing for a server whose `system.processes` lists `listed` and, last, the reading statement itself, as
+ * Databend lists a running read: under a session id and a query id of its own, with its own text. A read of the table
+ * is answered as Databend evaluates it, its WHERE predicates, order, limit and select list (a column, a literal,
+ * `count(*)` and `count(*) OVER ()`) included, and carries `ownQueryIds` as the transport sets it on a provider
+ * statement: the query ids `own` names, the reading statement's own added. Any other statement answers no row.
+ */
+function processes(listed: readonly Running[], own: readonly string[] = []) {
+  const sent: string[] = [];
+  const runner: DatabendStatementRunner = async (sql) => {
+    sent.push(sql);
+    const read = READ_OF_PROCESSES.exec(sql);
+    if (read === null) return outcome([], []);
+    const [, list, where, order, descending, limit] = read;
+    const reading: Running = {
+      id: `reading-session-${sent.length}`,
+      queryId: `reading-query-${sent.length}`,
+      text: sql,
+    };
+    const rows = [...listed, reading];
+    const kept = rows.filter((row) => where.split(" AND ").every((predicate) => holds(predicate, row, reading)));
+    if (order !== undefined && order !== "created_time") throw new Error(`an order this fake does not read: ${order}`);
+    if (descending !== undefined) kept.reverse();
+    const items = list.split(", ").map((item) => {
+      const [, expression, alias] = /^(.+?)(?: AS (\w+))?$/.exec(item) as RegExpExecArray;
+      return { expression, name: alias ?? expression };
+    });
+    const answer = { ownQueryIds: new Set([...own, reading.queryId]) };
+    if (items.some((item) => item.expression === "count(*)")) {
+      // An aggregate: one row over every statement the predicates kept.
+      const values = items.map((item) => {
+        if (item.expression === "count(*)") return ["UInt64", String(kept.length)] as const;
+        if (item.expression.startsWith("'")) return ["String", item.expression.slice(1, -1)] as const;
+        throw new Error(`a column this fake does not aggregate: ${item.expression}`);
+      });
+      const schema = items.map((item, index) => [item.name, values[index][0]] as const);
+      return { ...outcome(schema, [values.map(([, value]) => value)]), ...answer };
+    }
+    const shown = limit === undefined ? kept : kept.slice(0, Number(limit));
+    const cells = items.map((item) => {
+      if (item.expression === "count(*) OVER ()") return ["UInt64", () => String(kept.length)] as const;
+      if (item.expression.startsWith("'")) return ["String", () => item.expression.slice(1, -1)] as const;
+      const column = PROCESS_COLUMNS[item.expression];
+      if (column === undefined) throw new Error(`a column this fake does not list: ${item.expression}`);
+      return [column[0], (row: Running) => column[1](row, rows.indexOf(row))] as const;
+    });
+    const schema = items.map((item, index) => [item.name, cells[index][0]] as const);
+    return {
+      ...outcome(
+        schema,
+        shown.map((row) => cells.map(([, cell]) => cell(row))),
+      ),
+      ...answer,
+    };
+  };
+  return { runner, sent };
+}
+
+/** A user's statement of another client, as `system.processes` lists it. */
+function userStatement(n: number, text = `SELECT sleep(2) AS user_statement_${n}`): Running {
+  return { id: `user-session-${n}`, queryId: `user-query-${n}`, text };
+}
+
+describe("Studio's own statements are left out by the query id Studio sent them under, never by their text (CL-OPS-1)", () => {
+  test("a user's statement is listed and counted whatever literal it starts with", async () => {
+    const led = userStatement(1, "SELECT 'studio' AS marker, sleep(2) AS listed");
+    const plain = userStatement(2);
+    const { runner } = processes([led, plain]);
+    expect((await getActiveSessions(runner)).map((session) => session.query)).toEqual([led.text, plain.text]);
+    expect((await getOverview(runner)).activeConnections).toBe(2);
+  });
+
+  test("Studio's own statements in flight while the read ran are left out by query id, the reading one included", async () => {
+    // The object tree's read beside the panel, which no text would tell from a user's.
+    const tree = {
+      id: "tree-session",
+      queryId: "tree-query",
+      text: "SELECT name AS catalog_name FROM system.catalogs ORDER BY name",
+    };
+    const user = userStatement(1);
+    const { runner } = processes([tree, user], [tree.queryId]);
+    expect((await getActiveSessions(runner)).map((session) => session.pid)).toEqual([user.id]);
+    expect((await getOverview(runner)).activeConnections).toBe(1);
+  });
+
+  test("another Studio process's statements are listed and counted, its monitoring reads included", async () => {
+    const elsewhere = {
+      id: "other-studio-session",
+      queryId: "other-studio-query",
+      text: databendSessionsSql(50),
+    };
+    const { runner } = processes([elsewhere]);
+    expect((await getActiveSessions(runner)).map((session) => session.pid)).toEqual([elsewhere.id]);
+    expect((await getOverview(runner)).activeConnections).toBe(1);
+  });
+
+  test("no read matches on statement text, and none carries a literal for one to match", async () => {
+    const { runner, sent } = processes([]);
+    await getOverview(runner);
+    await getSlowQueries(runner);
+    await getActiveSessions(runner);
+    await getTableStats(runner, { schema: "d" });
+    await getStorageStats(runner);
+    await getIndexStats(runner, { schema: "d" });
+    await getHealth(runner);
+    expect(sent).toHaveLength(15);
+    for (const sql of sent) {
+      expect(sql, sql).not.toMatch(/\bLIKE\b|connection_id|libredb/i);
+      expect(sql.startsWith("SELECT '"), sql).toBe(false);
+    }
+  });
+
+  test("the Sessions panel reads as many rows past its limit as Studio runs statements at once, and shows its limit", async () => {
+    const own = { id: "own-session", queryId: "own-query", text: "SHOW CREATE TABLE `default`.`d`.`t`" };
+    const users = [1, 2, 3, 4, 5].map((n) => userStatement(n));
+    const { runner, sent } = processes([own, ...users], [own.queryId]);
+    const sessions = await getActiveSessions(runner, { limit: 3 });
+    expect(sessions.map((session) => session.pid)).toEqual(users.slice(0, 3).map((user) => user.id));
+    expect(sent).toEqual([databendSessionsSql(3)]);
+    expect(sent[0].endsWith(` LIMIT ${3 + DATABEND_LIMITER_OPTIONS.perEngine}`)).toBe(true);
+  });
+
+  test("an idle server lists no session and counts no active statement: the reads themselves are Studio's", async () => {
+    const { runner } = processes([]);
+    expect(await getActiveSessions(runner)).toEqual([]);
+    expect((await getOverview(runner)).activeConnections).toBe(0);
+  });
+
+  test("the active count stays whole past its bound, never the bound itself", async () => {
+    const many = Array.from({ length: 700 }, (_, n) => userStatement(n));
+    const { runner } = processes(many);
+    expect((await getOverview(runner)).activeConnections).toBe(700);
+  });
+
+  test("past its bound, the count leaves Studio's own out only among the newest it read", async () => {
+    const many = Array.from({ length: 700 }, (_, n) => userStatement(n));
+    // The oldest is past the 500 newest, so it stays in the count; the newest and the reading statement are left out.
+    const { runner } = processes(many, [many[0].queryId, many[699].queryId]);
+    expect((await getOverview(runner)).activeConnections).toBe(699);
+  });
+
+  test("a read that degrades is no figure and no session, never a zero", async () => {
+    const runner: DatabendStatementRunner = async (sql) => {
+      if (sql.includes("system.processes")) throw failure(1063);
+      return outcome([], []);
+    };
+    expect("activeConnections" in (await getOverview(runner))).toBe(false);
+    expect(await getActiveSessions(runner)).toEqual([]);
   });
 });
 
@@ -233,7 +452,7 @@ describe("sessions and the kill [X08]", () => {
     ["Aborting", "aborting"],
   ])("the command %s is the panel state %s", async (command, state) => {
     const row = [...SESSION_ROW];
-    row[4] = command;
+    row[5] = command;
     const { runner } = routed({ [databendSessionsSql(5)]: outcome(SESSION_SCHEMA, [row]) });
     const [session] = await getActiveSessions(runner, { limit: 5 });
     expect(session.state).toBe(state);
@@ -241,8 +460,8 @@ describe("sessions and the kill [X08]", () => {
 
   test("a session with no host and an unreadable time keeps only what it has", async () => {
     const row = [...SESSION_ROW];
-    row[2] = null as unknown as string;
-    row[6] = "not a time";
+    row[3] = null as unknown as string;
+    row[7] = "not a time";
     const { runner } = routed({ [databendSessionsSql(5)]: outcome(SESSION_SCHEMA, [row]) });
     const [session] = await getActiveSessions(runner, { limit: 5 });
     expect(session.state).toBe("active");
@@ -473,7 +692,7 @@ describe("the panels", () => {
     ]);
   });
 
-  test("health sends one read at a time, so no panel read counts a sibling as running work", async () => {
+  test("health sends its reads one at a time, holding one statement slot", async () => {
     const answers: Record<string, StatementOutcome> = {
       ...OVERVIEW_ANSWERS,
       [databendSlowQueriesSql(10)]: outcome(SLOW_SCHEMA, []),

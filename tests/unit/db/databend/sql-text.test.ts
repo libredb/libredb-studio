@@ -18,6 +18,14 @@ import { applyQueryLimit } from "@/lib/db/utils/query-limiter";
  * the reason and never echoes the text.
  */
 describe("databendStatementRefusal", () => {
+  // The editor sends a selection of several statements to the multi-statement route, so this refusal reaches a caller
+  // that sent one text as one request, and Studio has no Run All control to name (browser verification, 2026-10-08).
+  test("the multi-statement refusal asks for one statement at a time and names no control", () => {
+    expect(DATABEND_MULTIPLE_STATEMENTS).toBe(
+      "Databend runs one statement per request, and when the first is an INSERT or REPLACE it drops the rest without an error. Run the statements one at a time.",
+    );
+  });
+
   test.each<[string, string, string]>([
     ["two statements", "SELECT 1; SELECT 2", DATABEND_MULTIPLE_STATEMENTS],
     [

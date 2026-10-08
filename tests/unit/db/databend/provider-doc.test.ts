@@ -13,6 +13,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYAML } from "yaml";
+import { createErrorResponse } from "@/lib/api/errors";
 import {
   DATABEND_DSN_CAUTIONS,
   DATABEND_DSN_REFUSALS,
@@ -20,6 +21,8 @@ import {
   databendNotAppliedNotice,
   parseConnectionString,
 } from "@/lib/connection-string-parser";
+import { IMPORT_NO_TARGET, importRefusal } from "@/components/DataImportModal";
+import { BILLED_COMPUTE_HOLD } from "@/components/object-tree/ObjectTree";
 import { DB_UI_CONFIG, DATABEND_FIELD_HINTS } from "@/lib/db-ui-config";
 import {
   CONNECTION_STRING_ACCEPTED,
@@ -28,6 +31,7 @@ import {
   READS_FILE_ACCESS_POSTURE,
 } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
+import { TimeoutError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { DATABEND_ANSWER_SENTENCES, RESULT_MODE_FLOOR, readAnswer } from "@/lib/db/providers/sql/databend/answer";
 import { AUTH_LATCH_MAX_ENTRIES, AUTH_LATCH_TTL_MS } from "@/lib/db/providers/sql/databend/auth-latch";
@@ -52,6 +56,7 @@ import {
   type DatabendFailureContext,
   refusalError,
   stopError,
+  toDatabaseError,
   transportFailure,
 } from "@/lib/db/providers/sql/databend/errors";
 import { DATABEND_PAGE_UNANSWERED, DATABEND_WARNING_LIMIT } from "@/lib/db/providers/sql/databend/http-transport";
@@ -68,6 +73,7 @@ import {
   databendSlowQueriesSql,
   getActiveSessions,
   getHealth,
+  getOverview,
 } from "@/lib/db/providers/sql/databend/introspect";
 import { DATABEND_KILL_SPEC, DATABEND_LABEL_SENTENCES, DATABEND_LABELS } from "@/lib/db/providers/sql/databend/labels";
 import { DATABEND_OBJECT_SENTENCES, type DatabendStatementRunner } from "@/lib/db/providers/sql/databend/objects";
@@ -96,13 +102,22 @@ import {
 } from "@/lib/db/providers/sql/databend/sql-text";
 import { DatabendError, type DatabendTruncation } from "@/lib/db/providers/sql/databend/transport";
 import { MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
-import { databendTextStrategy } from "@/lib/explain/databend-text";
+import { DATABEND_EXPLAIN_DECLINES, databendTextStrategy } from "@/lib/explain/databend-text";
 import { buildResultExport } from "@/lib/export/result-export";
 import { SeedConnectionSchema } from "@/lib/seed/types";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { DatabaseConnection } from "@/lib/types";
 import { loadDatabendManifest } from "../../../helpers/databend-fixtures";
-import { idsOf, ok, pathsOf, runSignal, statement, transportHarness } from "../../../helpers/databend-node-transport";
+import {
+  idsOf,
+  ok,
+  pathsOf,
+  runSignal,
+  scriptedNodeTransport,
+  statement,
+  transportDeps,
+  transportHarness,
+} from "../../../helpers/databend-node-transport";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -296,6 +311,21 @@ const QUOTED: Readonly<Record<string, { readonly keys: readonly string[]; readon
     keys: Object.keys(DATABEND_DSN_CAUTIONS),
     quotes: [DATABEND_DSN_CAUTIONS.caFile, DATABEND_DSN_CAUTIONS.sslmode("verify-full")],
   },
+  DATABEND_EXPLAIN_DECLINES: {
+    keys: Object.keys(DATABEND_EXPLAIN_DECLINES),
+    quotes: [
+      DATABEND_EXPLAIN_DECLINES.binding("[word]", "[construct]"),
+      DATABEND_EXPLAIN_DECLINES.writer("[name]"),
+      DATABEND_EXPLAIN_DECLINES.hint,
+      DATABEND_EXPLAIN_DECLINES.stage,
+      DATABEND_EXPLAIN_DECLINES.formFeed,
+      DATABEND_EXPLAIN_DECLINES.taggedDollar,
+      DATABEND_EXPLAIN_DECLINES.unterminated,
+      DATABEND_EXPLAIN_DECLINES.hintAdvice,
+      DATABEND_EXPLAIN_DECLINES.formFeedAdvice,
+      DATABEND_EXPLAIN_DECLINES.taggedDollarAdvice,
+    ],
+  },
   DATABEND_OBJECT_SENTENCES: {
     keys: Object.keys(DATABEND_OBJECT_SENTENCES),
     quotes: [
@@ -377,6 +407,25 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     const limits = flat(sectionOf(DOC, "## 13. Known limitations"));
     expect(limits).not.toContain("only paging was measured");
     expect(limits).toContain("a cold start through Studio and multi-node paging are not run yet");
+    // The live check's S3 and S3b are the two bounds it runs through the gateway; the bounds of one answer, the cell
+    // budget and the warning bound ran locally only, so neither section may say every budget ran there or none did.
+    const bounds = flat(sectionOf(DOC, "### 3.10 Bounds, and what they were measured against"));
+    expect(bounds).not.toContain("only paging was measured");
+    expect(bounds).toContain(
+      "Through the Databend Cloud gateway the live check read 100,000 rows whole over the page chain and cut a statement at the 16 MiB budget of answer text; the bounds of one answer, the cell budget and the warning bound were not run there.",
+    );
+    expect(limits).not.toContain("Every budget was verified locally and through Databend Cloud's gateway");
+    expect(limits).toContain(
+      "through Databend Cloud's gateway, on one warehouse, only the 100,000-row read and the 16 MiB budget of answer text ran",
+    );
+  });
+
+  test("section 3.1 says where the editor sends several statements, and no control the UI lacks", () => {
+    const guard = flat(sectionOf(DOC, "### 3.1 One statement per request, and the guard before it"));
+    expect(guard).toContain(
+      "In the editor, a selection of several statements goes to Studio's multi-statement route, which splits it under the same grammar row and sends each statement on its own.",
+    );
+    expect(DOC).not.toContain("Run All");
   });
 
   test("the header sends a DSN to Paste URL, and the overview names no other type's route (owner decision Q6)", () => {
@@ -417,6 +466,15 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     expect(flat(sectionOf(DOC, "## 9. Capabilities & labels"))).toContain(
       "`resumesBilledCompute` is declared when Warehouse is set or the host is Databend Cloud's (section 4.4).",
     );
+  });
+
+  test("4.4 says a connection Studio opens by itself reads nothing until it is used, and quotes the tree (CL-CORE-2)", () => {
+    const cloud = flat(sectionOf(DOC, "### 4.4 Databend Cloud: warehouse, cold start and billing"));
+    expect(cloud).toContain(
+      "Nor does Studio open it by itself: the connection Studio makes active at sign-in or on a reload, from a link, when the server changes the connection list or when the person deletes the open connection reads nothing past its declaration, which opens no connection, until the person picks it, loads its objects, opens the Schema tab of the phone layout or runs a statement;",
+    );
+    expect(cloud).toContain(`> ${BILLED_COMPUTE_HOLD}`);
+    expect(cloud).toContain("only what a person asks for");
   });
 
   test("section 10 names an older Cloud host's warehouse as it names a Warehouse, and 4.4 says so (RI-3)", () => {
@@ -491,6 +549,45 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     const d248 = /^### D248\. [\s\S]*?(?=^### )/m.exec(BACKLOG)?.[0] ?? "";
     expect(d248).toContain("within one Studio process");
     expect(d248).toContain("D252");
+  });
+
+  test("section 8 names the privilege the kill needs and what a user without it sees (cl-ops F2)", () => {
+    const maintenance = flat(sectionOf(DOC, "## 8. Maintenance"));
+    expect(maintenance).toContain("needs the global SUPER privilege");
+    // Databend's refusal as the pinned image answered `studio_reader`'s kill of another session (measured 2026-10-08).
+    const refusal =
+      "Permission denied: privilege [Super] is required on *.* for user 'studio_reader'@'%' with roles [public,studio_ro]. Note: Please ensure that your current role have the appropriate permissions to create a new Object";
+    expect(maintenance).toContain(`\`${refusal}\``);
+    // The refusal answers with the statement's id, so Studio shows it as Databend wrote it, nothing appended.
+    const ctx: DatabendFailureContext = {
+      request: "post",
+      origin: "provider",
+      sql: "KILL QUERY 's1'",
+      endpoint: { host: "localhost", port: DATABEND_DEFAULT_PORT },
+      timeoutMs: 10_000,
+      secretForms: [],
+    };
+    const refused = answerError({ id: "q", error: { code: 1063, message: refusal, detail: null } }, ctx, null);
+    expect(refused.message).toBe(refusal);
+    expect(maintenance).toContain("`GRANT SUPER ON *.* TO ROLE <role>`");
+  });
+
+  // "That message" is the provider's own kill message, so it follows that quote, and the privilege paragraph comes after
+  // what the panel says of a kill; a refusal shows where the shared hook shows every failed kill, in an error toast.
+  test("section 8 keeps 'that message' on the provider's kill message and says a refused kill is an error toast (cl-ops F2)", () => {
+    const maintenance = sectionOf(DOC, "## 8. Maintenance");
+    expect(maintenance).toContain(
+      `> ${DATABEND_MONITORING_SENTENCES.killAsked("[session id]")}\n\nThe Sessions panel does not show that message`,
+    );
+    expect(maintenance.indexOf("Without SUPER")).toBeGreaterThan(
+      maintenance.indexOf("On Databend the session is not ended"),
+    );
+    expect(flat(maintenance)).toContain(
+      "Without SUPER, Databend refuses the kill with 1063 before it looks for the session, the statement keeps running, and an error toast shows Databend's refusal as Databend wrote it.",
+    );
+    const hook = read("src/hooks/use-monitoring-data.ts");
+    expect(hook).toContain('throw new Error(result.error || "Failed to kill session");');
+    expect(hook).toContain("toast.error(errorMessage);");
   });
 
   test("the kill is stated as the Sessions panel shows it, which is not the provider's own wording (U98)", () => {
@@ -719,6 +816,18 @@ describe("docs/providers/databend.md quotes what the code says", () => {
       DATABEND_DSN_REFUSALS: ["fragment", "userinfo", "signIn", "flight", "jdbc", "shellExport"],
       DATABEND_SSLMODE_NOTICES: ["require", "enable"],
       DATABEND_DSN_CAUTIONS: ["caFile", "sslmode"],
+      DATABEND_EXPLAIN_DECLINES: [
+        "binding",
+        "writer",
+        "hint",
+        "stage",
+        "formFeed",
+        "taggedDollar",
+        "unterminated",
+        "hintAdvice",
+        "formFeedAdvice",
+        "taggedDollarAdvice",
+      ],
       DATABEND_OBJECT_SENTENCES: [
         "bound",
         "incomplete",
@@ -983,6 +1092,115 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     script.expectDone();
   });
 
+  test("Stop reports a cancel only for a run that ended cancelled, waiting at most what 5.8 names (GAP-SH-C8-1)", async () => {
+    const cancellation = flat(sectionOf(DOC, "### 5.8 Cancellation and deadlines"));
+    // The editor's titles for the cancel route's two answers.
+    const editor = read("src/hooks/use-query-execution.ts");
+    for (const title of ["Query Cancelled", "Cancel Not Confirmed"]) {
+      expect(editor).toContain(`title: "${title}"`);
+      expect(cancellation).toContain(`"${title}"`);
+    }
+    // A run stopped before its first answer whose kill never answers: the cancel asks for one deadline, its wait.
+    const script = scriptedNodeTransport([
+      {
+        method: "POST",
+        path: QUERY_PATH,
+        reply: ok(idsOf(1), { schema: [{ name: "server_version", type: "String" }] }),
+      },
+      { method: "POST", path: QUERY_PATH, reply: ok(idsOf(2), { schema: [{ name: "auth_type", type: "String" }] }) },
+      { method: "POST", path: QUERY_PATH, reply: { hang: true } },
+      { method: "GET", path: pathsOf(idsOf(3).queryId).kill, reply: { hang: true } },
+      { method: "POST", path: LOGOUT_PATH, reply: { status: 200 } },
+    ]);
+    const time = transportDeps(script);
+    const subject = new DatabendProvider(CONNECTION, {}, time.deps);
+    await subject.connect();
+    const running = subject.query("SELECT 1", undefined, "doc-cancel").catch((error: unknown) => error);
+    await script.received(3);
+    const asked = time.deadlines.length;
+    const cancelling = subject.cancelQuery("doc-cancel");
+    const wait = time.deadlines[asked].ms;
+    await script.received(4);
+    expect(wait).toBe(3 * DATABEND_CLOSE_TIMEOUT_MS);
+    expect(cancellation).toContain(
+      `waits for the stopped run to end, at most ${wait / 1000} seconds, the ${DATABEND_CLOSE_TIMEOUT_MS / 1000} seconds each of the kill, ROLLBACK and logout it may still send`,
+    );
+    time.fire(wait);
+    expect(await cancelling).toBe(false);
+    time.fire(DATABEND_CLOSE_TIMEOUT_MS);
+    expect(await running).toBeInstanceOf(Error);
+    await subject.disconnect();
+    script.expectDone();
+  });
+
+  test("the resuming sentence reaches a route as written and a timeout gets the route's own, as 4.4, 5.8 and 10 say (GAP-CL-1)", async () => {
+    const ctx: DatabendFailureContext = {
+      request: "get",
+      origin: "provider",
+      sql: "SELECT 1",
+      warehouse: "[warehouse]",
+      endpoint: { host: "localhost", port: DATABEND_DEFAULT_PORT },
+      timeoutMs: 10_000,
+      secretForms: [],
+    };
+    const resuming = createErrorResponse(
+      toDatabaseError(stopError("deadline", { answered: true, killAcknowledged: true }, ctx), ctx),
+    );
+    expect(resuming.status).toBe(503);
+    expect(((await resuming.json()) as { error: string }).error).toBe(
+      DATABEND_ERROR_SENTENCES.resuming("[warehouse]", "10"),
+    );
+    const timeout = createErrorResponse(new TimeoutError(DATABEND_ERROR_SENTENCES.deadline("10"), "databend", 10_000));
+    expect(timeout.status).toBe(408);
+    const routeSentence = ((await timeout.json()) as { error: string }).error;
+    const cloud = flat(sectionOf(DOC, "### 4.4 Databend Cloud: warehouse, cold start and billing"));
+    expect(cloud).toContain(
+      "It is a `ConnectionError`, which Studio's routes answer with HTTP 503 and the sentence itself, so the object tree, the monitoring page and Test Connection show it as written.",
+    );
+    const cancellation = flat(sectionOf(DOC, "### 5.8 Cancellation and deadlines"));
+    expect(cancellation).toContain(`answer it with HTTP 408 and their own sentence, "${routeSentence}"`);
+    expect(cancellation).toContain(
+      "The resuming sentence of section 4.4 and the slot wait above are no statement's timeout: each is a `ConnectionError`, which Studio's routes answer with HTTP 503 and the sentence itself.",
+    );
+    expect(flat(sectionOf(DOC, "## 10. Error handling"))).toContain(
+      "Studio's own read that outlasts its deadline on a named warehouse, and a statement that waited for a statement slot past its deadline, are `unavailable`",
+    );
+  });
+
+  test("X27 keeps its measurement and says Databend's resuming warehouse is answered 503 now, which is not resent (GAP-CL-1)", () => {
+    const x27 = flat(/^### X27\. [\s\S]*?(?=^---$)/m.exec(BACKLOG)?.[0] ?? "");
+    expect(x27).toContain(
+      "a first Databend Cloud connect that met a resuming warehouse was answered 408 twice before its third attempt passed.",
+    );
+    expect(x27).toContain(
+      "Since #1593, Databend's resuming-warehouse case, Studio's own read that outlasts its deadline on a named warehouse, is answered with HTTP 503, which Chromium does not resend.",
+    );
+  });
+
+  test("an in-body error's position is in Databend's own excerpt and on the error, never marked in the editor (SHC-2)", () => {
+    const row = rowOf(sectionOf(DOC, "## 10. Error handling"), "An in-body error over HTTP 200") ?? "";
+    expect(row).not.toContain("the editor marks the position");
+    expect(row).toContain("the editor marks nothing");
+    expect(row).toContain('the results panel shows it under "The query failed."');
+    expect(read("src/components/studio/BottomPanel.tsx")).toContain("The query failed.");
+    // The editor draws no marker for a query error: a marker added later changes this row.
+    expect(read("src/components/QueryEditor.tsx")).not.toContain("setModelMarkers");
+    const ctx: DatabendFailureContext = {
+      request: "post",
+      origin: "user",
+      sql: "SELECT nope",
+      endpoint: { host: "localhost", port: DATABEND_DEFAULT_PORT },
+      timeoutMs: 60_000,
+      secretForms: [],
+    };
+    const excerpt = "error: \n  --> SQL:1:8\n  |\n1 | SELECT nope\n  |        ^^^^ column nope doesn't exist";
+    const failed = answerError({ id: "q", error: { code: 1065, message: excerpt, detail: null } }, ctx, null);
+    expect(failed.position).toBe(8);
+    expect(row).toContain(
+      "the error carries it as `position`, the character it names counted from 1 (8 for `SELECT nope`), which the query route returns in its answer's `details`",
+    );
+  });
+
   test("the server-text cuts the doc quotes are the lengths errors.ts keeps", () => {
     const ctx: DatabendFailureContext = {
       request: "post",
@@ -1102,6 +1320,33 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     expect(capabilities.explainFormat).toBe("databend-text");
   });
 
+  test("the Explain button says why it declines a SELECT, in the sentences 5.6 quotes, and clears the plan (CL-CORE-1)", () => {
+    const explain = sectionOf(DOC, "### 5.6 EXPLAIN is the planning form only");
+    const prose = flat(explain);
+    expect(prose).toContain(
+      "[word] being MATERIALIZED or PIVOT, [construct] a MATERIALIZED CTE or a PIVOT, and [name] the declined name in lower case; the automatic estimate declines without a word:",
+    );
+    expect(prose).toContain(
+      "The first two name a word the statement holds anywhere in its code, a column or an alias included, not a construct Studio found.",
+    );
+    expect(prose).toContain(
+      "The hint, form feed and tagged run sentences end with the advice below only when the statement with that one hint or form feed taken out, or that run quoted with `$$`, would get a plan; otherwise the sentence stands alone:",
+    );
+    expect(prose).toContain("after any decline the Explain tab shows no plan, never the plan of the statement before");
+    // Every row the Explain button declines gets a reason, so none of them reads as "not a SELECT".
+    const rows = explain.split("\n").filter((line) => /^\| `[^`]*` \| (Explain|Both) \|/.test(line));
+    expect(rows.length).toBeGreaterThanOrEqual(10);
+    for (const row of rows) {
+      const sql = row.slice(2, -2).split(" | ")[0].slice(1, -1);
+      const reason = databendTextStrategy.declineReason?.(sql, "analyze") ?? null;
+      if (sql.startsWith("INSERT")) expect(reason, sql).toBeNull();
+      else expect(reason, sql).not.toBeNull();
+    }
+    expect(flat(sectionOf(DOC, "## 13. Known limitations"))).toContain(
+      "EXPLAIN gives no plan for the shapes of section 5.6, and the Explain button says which reason declined it;",
+    );
+  });
+
   test("the capability and label tables are the provider's declarations and the records'", () => {
     const section = sectionOf(DOC, "## 9. Capabilities & labels");
     const declared: Readonly<Record<string, unknown>> = { ...capabilities };
@@ -1155,6 +1400,22 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     expect(sectionOf(DOC, "## 8. Maintenance")).toContain(`"${DATABEND_KILL_SPEC.label}"`);
   });
 
+  test("section 9 says why Import Data has no target on Databend and quotes the dialog, and 13 lists it (D4)", () => {
+    const section = flat(sectionOf(DOC, "## 9. Capabilities & labels"));
+    // What the dialog reads from the declaration: no kind takes row writes, and no create-table.
+    expect(capabilities.supportsCreateTable).toBe(false);
+    expect((capabilities.objectKinds ?? []).some((kind) => kind.acceptsRowWrites === true)).toBe(false);
+    expect(importRefusal(capabilities)).toBe(IMPORT_NO_TARGET);
+    expect(section).toContain(
+      "Import Data has no target on Databend: Studio draws the IMPORT control for every connection, and its dialog writes only into an existing object of a kind that declares `acceptsRowWrites`, which no Databend kind does (section 6.3), or into a table it creates, which `supportsCreateTable: false` withholds, so it offers only Close and says:",
+    );
+    expect(section).toContain(`> ${IMPORT_NO_TARGET}`);
+    expect(section).toContain("Load rows with `INSERT` or `COPY INTO` in the editor instead.");
+    expect(flat(sectionOf(DOC, "## 13. Known limitations"))).toContain(
+      "Import Data has no target on Databend (section 9): load rows with `INSERT` or `COPY INTO` in the editor.",
+    );
+  });
+
   test("the session state the monitoring section names is the word the panels count (F8)", async () => {
     const monitoring = flat(sectionOf(DOC, "## 7. Monitoring & health"));
     expect(monitoring).toContain(
@@ -1177,6 +1438,39 @@ describe("docs/providers/databend.md quotes what the code says", () => {
       };
     };
     expect((await getActiveSessions(runner)).map((session) => session.state)).toEqual(["active", "aborting"]);
+  });
+
+  test("section 7 leaves Studio's own statements out by the query id Studio sent them under (CL-OPS-1)", async () => {
+    const monitoring = flat(sectionOf(DOC, "## 7. Monitoring & health"));
+    for (const sentence of [
+      "Studio reads the panels at once, two statements at a time, so `system.processes` lists Studio's own statements beside the ones the panels are for: the reading one, a sibling panel's read, the object tree's.",
+      "The Sessions panel and the active count leave out, by the query id it was sent under (`current_query_id`), every statement this Studio process wrote itself and had in flight while the read ran: a tree, describe, source, connect, monitoring or kill statement, from before its request until its last close ended.",
+      "Studio generates each query id from a random UUID, so another client can neither predict one nor run a statement under one while Studio's runs: measured on the pinned image, a statement another user sent under a running statement's query id was refused with `query_id [query id] already exists`, and one the same user sent started nothing.",
+      "Nothing is matched on statement text, so a user's statement is listed and counted whatever it says, the editor's statements included, and so is every statement of another Studio process, its monitoring reads included.",
+      "The row's `id`, the kill target, is a session id Databend makes for each request, not the client session id Studio sends: measured on the pinned image and on v1.2.881, a running statement was listed under an `id` other than its client session id, and under its own query id as `current_query_id`.",
+      `The Sessions panel asks Databend for ${DATABEND_LIMITER_OPTIONS.perEngine} rows past its limit, as many statements as Studio runs at once, so that leaving Studio's own out still fills it, and shows at most its limit.`,
+      `The active count reads the query ids of the ${DATABEND_MAX_MONITORING_LIMIT} newest running statements beside Databend's count of them all, so the count is whole past ${DATABEND_MAX_MONITORING_LIMIT}, and leaves Studio's own out only among those ${DATABEND_MAX_MONITORING_LIMIT}.`,
+    ]) {
+      expect(monitoring).toContain(sentence);
+    }
+    const sessions = databendSessionsSql(DATABEND_DEFAULT_SESSION_LIMIT);
+    expect(sessions).toContain("current_query_id AS query_id");
+    expect(sessions.endsWith(` LIMIT ${DATABEND_DEFAULT_SESSION_LIMIT + DATABEND_LIMITER_OPTIONS.perEngine}`)).toBe(
+      true,
+    );
+    const sent: string[] = [];
+    await getOverview(async (sql) => {
+      sent.push(sql);
+      return { schema: [], rows: [], truncated: null, notices: [], hasResultSet: true, affect: null };
+    });
+    const count = sent.find((sql) => sql.includes("system.processes")) ?? "";
+    expect(count).toContain("SELECT current_query_id AS query_id, count(*) OVER () AS running ");
+    expect(count.endsWith(` ORDER BY created_time DESC LIMIT ${DATABEND_MAX_MONITORING_LIMIT}`)).toBe(true);
+    // The reading row is left out by its query id, as every statement of Studio's own is, not by `connection_id()`.
+    expect(monitoring).not.toContain("connection_id()");
+    expect(flat(sectionOf(DOC, "## 13. Known limitations"))).toContain(
+      `Studio's own monitoring reads are left out only by the Studio process that sent them, so another Studio process's reads show among the running statements; past ${DATABEND_MAX_MONITORING_LIMIT} running statements, the active count leaves Studio's own out only among the ${DATABEND_MAX_MONITORING_LIMIT} newest.`,
+    );
   });
 
   test("the degrading codes the monitoring section names are the ones introspect.ts reads", () => {

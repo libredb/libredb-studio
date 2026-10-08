@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D253, U17 · 157
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U98 · 90
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U102 · 94
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC18 · 15
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -3194,6 +3194,7 @@ Found by the acceptance pass of the vector-family work; the default predates it.
 Chromium reads a 408 on a reused keep-alive connection as a server closing an idle socket and sends the POST again, up to twice, without telling the page.
 So one Run of a statement that reaches its query timeout reaches the database up to three times, and the editor shows "Query timed out" only after the last.
 Measured 2026-10-08 on the CI image of #1593 with a Databend connection whose query timeout was 3 seconds: the page sent one `POST /api/db/query`, Databend received the statement three times about 3 seconds apart, each with its own kill, and the server logged three "Query timeout" lines; a first Databend Cloud connect that met a resuming warehouse was answered 408 twice before its third attempt passed.
+Since #1593, Databend's resuming-warehouse case, Studio's own read that outlasts its deadline on a named warehouse, is answered with HTTP 503, which Chromium does not resend.
 Not measured with a write: a statement that a provider does not stop on the server, or one that commits before the deadline is noticed, would take effect once per attempt.
 The route has answered 408 since f59b44d5c (2026-03-12), for every engine.
 
@@ -3771,12 +3772,13 @@ Found 2026-09-30 while designing the etcd provider (#1089, spec E10).
 
 `vacuumStateKnown` ignores `vacuumSupported` (`src/components/monitoring/tabs/TablesTab.tsx`, where the card reads it), so on an engine that supports maintenance and declares no `vacuum` the card counts the tables whose `bloatRatio` passes 10 as if the engine had a vacuum.
 The table's "Vacuum" column header (`TablesTab.tsx:443`) is drawn on those engines too.
-Ten engines declare `supportsMaintenance: true`, set or inherited from `BaseDatabaseProvider.getCapabilities()`, with no `vacuum` among their `maintenanceOperations`: MySQL, libSQL, Oracle, SQL Server, ClickHouse, Trino, Redis, Couchbase and etcd today, and Db2 LUW after the Db2 PR (#786), which reads no table statistics in its first version.
+Twelve engines declare `supportsMaintenance: true`, set or inherited from `BaseDatabaseProvider.getCapabilities()`, with no `vacuum` among their `maintenanceOperations`: MySQL, libSQL, Oracle, Db2, SQL Server, ClickHouse, Trino, Redis, Couchbase, etcd, Milvus and Databend.
 All but MySQL publish no `bloatRatio`, so their card shows 0 with a green "OK" wherever the tab has table statistics to read; Redis answers none, so its card reads that only while its database is empty, and N/A once the database holds a key.
 MySQL's `bloatRatio` is `DATA_FREE` as a percentage of the table's data and index bytes, so its card counts the tables past 10 percent under the Vacuum title, a count the fix takes off the card too.
+On Databend, whose one operation is `kill`, the Tables tab of self-hosted Databend and of Databend Cloud read "Vacuum 0 OK" with a green icon on 2026-10-08, beside rows whose Bloat and Vacuum columns all read "-".
 Reproduce: render `TablesTab` with the capabilities `POST /api/db/provider-meta` serves for libSQL, Oracle or SQL Server and the statistics of one table, or open the Tables tab on one of them over a database that holds a table, and read the Vacuum card.
 
-Found 2026-09-30 while designing the etcd provider (R11 ARCH-3); its engine list was measured again on 2026-10-01 by the etcd review, from each provider's capabilities and table statistics.
+Found 2026-09-30 while designing the etcd provider (R11 ARCH-3); its engine list was measured again on 2026-10-01 by the etcd review, from each provider's capabilities and table statistics, and on 2026-10-08 from each type-id's `getCapabilities()`, the day the browser verification of the Databend provider (#1593) saw the Databend card.
 
 **Done when:** `vacuumStateKnown` requires `vacuumSupported`, the card is absent or says the engine has no vacuum, and a component test pins it for an engine without one.
 
@@ -4040,16 +4042,19 @@ Not fixed there: the panel is shared by every key-value engine.
 
 **Done when:** "Scan all" is disabled once the walk is exhausted, as "Scan more" is, and a component test asserts both buttons after a scan that answered complete.
 
-### U85. The agent rail says a conversation "ended when the page reloaded" after in-app navigation
+### U85. The agent rail says a conversation "ended when the page reloaded" after in-app navigation or a refused start
 
 Going from Studio to Monitoring and back with the browser's Back button, without a reload, the rail says "The conversation this browser was in (1 question, ...) ended when the page reloaded. Your next question starts a new one."
 `interrupted` in `src/components/agent/use-agent-run.ts` is the stored thread whenever the mounted rail follows no run, and the rail's `runId` starts empty each time the rail mounts, so a remount after in-app navigation reads as a reload (`agent-thread-ended` in `src/components/agent/AgentRail.tsx`).
 Seen 2026-10-04 in the final browser pass of the Oxia provider (#1310); nothing in it is specific to Oxia.
+A start the server refuses is a second trigger, with no navigation at all: `start()` in the same hook empties `runId` and the run's entries before it posts, so a refused start leaves the rail following nothing while the previous run's conversation is still stored.
+After a Plan question was answered, an Agent-mode Start that the server refused with 400 `{"refused":"engine-unsupported"}` left the same sentence on the rail, and "Run details No activity yet." in place of the plan answer.
+Measured 2026-10-08 in the browser on Databend Cloud and self-hosted Databend, where a fresh page never showed the sentence, and the same day at the hook in a throwaway test: after a refused start, `interrupted` named the answered run's conversation and the run's entries were empty.
 
-Found by the final browser pass of the Oxia provider (#1310).
+Found by the final browser pass of the Oxia provider (#1310), and the second trigger on 2026-10-08 by the browser verification of the Databend provider (#1593); pre-existing.
 Not fixed there: the rail is shared by every engine, and the PR does not touch it.
 
-**Done when:** in-app navigation away from Studio and back either keeps following the conversation or says what actually ended it, the reload wording appears only after a reload, and a test remounts the rail without a reload and asserts the notice.
+**Done when:** in-app navigation away from Studio and back either keeps following the conversation or says what actually ended it, a refused start leaves the previous run and its answer on screen, the reload wording appears only after a reload, and tests remount the rail without a reload and refuse a start after an answered run, each asserting the notice.
 
 ### U86. A MongoDB view's row menu offers Validate, Compact and Check Collection
 
@@ -4186,10 +4191,58 @@ Found 2026-10-08 by the red-team round of the Databend precursors (I14); pre-exi
 Neither reads what the provider declares: the kill's `maintenanceOperationSpecs.kill.label` names the operation (Databend's is "Kill Query"), and the result's message says what the engine did.
 On Databend `KILL QUERY` stops the session's current statement and leaves the session open, so the dialog and the toast both claim more than happened, while the provider's own message, "Asked Databend to stop the current statement of session <id>.", reaches only an API caller.
 Measured 2026-10-08 with the maintenance route mocked to return the Databend provider's own result: the toast read "Session <id> terminated successfully".
+Seen live the same day by the browser verification of the Databend provider (#1593): on self-hosted Databend the dialog read as quoted above, and the toast read "Session <id> terminated successfully" while the route answered 200 with the provider's message; on Databend Cloud the dialog read the same.
 
 Found 2026-10-08 by the red-team round of the Databend provider (HD-4); pre-existing for every provider that declares `kill`.
 
 **Done when:** the dialog's title, button and wording come from the provider's kill declaration, and the toast shows the route's `message` when it returns one, with a component test for a provider whose kill stops a statement and one whose kill ends a session, and `docs/providers/databend.md` section 8 drops its note.
+
+### U99. A result with no rows heads Studio's own notices "The engine reported:"
+
+A result with no rows shows its `warnings` under "The engine reported:" (`ENGINE_WARNINGS_LABEL` in `src/components/ResultsGrid.tsx`, since #289), and `QueryWarning` in `src/lib/types.ts` still describes the channel as notices an engine attached, "as the engine worded it".
+Providers have since put sentences of their own in the same channel (etcd, Kafka, Milvus, Qdrant, Prometheus, and now Databend), so the heading credits the engine with any of them that arrives on a result with no rows; over a result with rows the stats bar counts them as "N warnings" and credits no one.
+Measured 2026-10-08 in the browser on self-hosted Databend and Databend Cloud: after `BEGIN` the panel read "The engine reported:" over "The statement left a transaction open, and each statement runs in its own session, so Studio rolled it back.", and after `USE studio_demo` over the sentence saying that USE does not carry over.
+The same day a throwaway test drew Studio's sentence for an etcd `watch` that saw no event, "Watched /apisix/routes/ (prefix) for 5 s: no event.", under the same heading, the result shaped by `commandResult` in `src/lib/db/providers/keyvalue/etcd/results.ts` and drawn by `ResultsGrid`.
+
+Found 2026-10-08 by the browser verification of the Databend provider (#1593); pre-existing.
+
+**Done when:** a warning carries whose words it is (for example a `source` on `QueryWarning` that a provider sets on the sentences it writes), the empty results panel heads the engine's notices and Studio's own apart, or under one heading true of both, the `QueryWarning` docblock says what the channel carries, and a component test draws a Studio-written warning on a result with no rows.
+
+### U100. An error quotes the `LIMIT 501` that Studio appended to the statement
+
+A SELECT with no bound of its own is sent with ` LIMIT <n>` appended (`applyQueryLimit` in `src/lib/db/utils/query-limiter.ts`, through `SQLBaseProvider.prepareQuery`), one row past the page (`probePastPage` in `src/lib/api/page-probe.ts`), so `LIMIT 501` under the editor's page of 500.
+An engine whose error quotes the statement, or names the token it stopped at, hands that clause back, and the results panel, the toast and the History entry show the message as the route returns it, with nothing saying that Studio added the clause.
+Measured 2026-10-08 in the browser on Databend Cloud and self-hosted Databend: a SELECT from an unknown table failed with Databend's quote of the statement ending in ` LIMIT 501`, its caret still under the right column.
+The same day, through the providers in process, in the order `POST /api/db/query` runs them (`prepareQuery`, `probePastPage`, then `query`): DuckDB answered `SELECT id FROM missing_table` with `LINE 1: SELECT id FROM missing_table LIMIT 501`, and the unfinished `SELECT 1 AS one WHERE` with `Parser Error: syntax error at or near "LIMIT"`; SQLite answered that unfinished statement with `near "LIMIT": syntax error`, a token the user never typed.
+
+Found 2026-10-08 by the browser verification of the Databend provider (#1593); pre-existing.
+
+**Done when:** an error from a statement the limiter rewrote tells the user that Studio appended the bound and which clause it was, carried by the response rather than by a type-id branch, and a test drives an unfinished SELECT on SQLite to that error.
+
+### U101. Agent mode asks consent for an Analyze run that the server then refuses on the engine
+
+On an engine outside `AGENT_EXECUTION_ENGINES` (`src/lib/agent/engine-support.ts`), the rail's amber notice says that a run whose workflow sends a statement is refused at start, yet a start that resolves to Analyze (`data-analysis`) first raises the consent step.
+The step is headed "Start this run" with a "read-only" pill, says "This run will open as Analyze on <connection>, which answers with a result.", and its checkbox note promises "the same database-enforced read-only session either way".
+Its "Start run" then sends `POST /api/agent/runs`, which answers 400 `{"refused":"engine-unsupported"}`, and the rail says "No run was opened. The notice above says why, and what still runs on this engine."
+`hold` in `src/components/agent/AgentRail.tsx` raises the step whenever `canHandOver` holds, and `canHandOver` reads the mode, `AGENT_WORKFLOW_PRESENTS_ANSWER` and the hand-over runner but never the engine, while the route refuses on `AGENT_WORKFLOW_SENDS_STATEMENTS` and the engine (`src/app/api/agent/runs/route.ts`).
+The workflow is the trigger: Analyze chosen under Advanced reproduces it every time, and an Automatic start only when the classifier reads the objective as data analysis, which varied between runs of one objective.
+Measured 2026-10-08 in the browser on Databend Cloud and self-hosted Databend, and the same day on MongoDB in a throwaway component test of the rail: the step appeared, and "Start run" got the 400 and that line.
+
+Found 2026-10-08 by the browser verification of the Databend provider (#1593); pre-existing.
+
+**Done when:** a start whose workflow sends a statement, on an engine agent mode does not execute on, is not held at a consent step (the rail refuses it before any card, or the card says that no run opens on this engine), the rail and the route decide it with one shared predicate, Start stays live for the operations workflow, and a component test drives an Analyze start on such an engine and finds no step promising a read-only run.
+
+### U102. Opening a connection reads its whole inventory twice
+
+On sign-in, on a reload and when a connection is opened, Studio posts `/api/db/objects/inventory` twice with the same body for the same connection, so the read of every table's columns that U27 describes runs twice, and `/api/db/provider-meta` is posted three times.
+Measured 2026-10-08 on the CI image `sha-d8cd782` of #1593, signed in as the standard user with one seed connection: a PostgreSQL 16 seed and a self-hosted Databend seed each got two inventory requests with the body `{"kinds":[...],"includeColumns":true}` on sign-in and two again after a reload, and the Databend Cloud seed of the same day's browser verification got two when Studio opened it at sign-in.
+On a connection whose requests resume billed compute, such as a Databend Cloud warehouse, the second request is a second billed read of the whole catalog.
+Databend's two `/api/db/objects/containers` requests in the same window are not a repeat: one lists the catalogs and the other the default catalog's databases.
+The connection-change effect in `src/components/Studio.tsx` depends on `[conn.activeConnection, metadata]` and calls `conn.fetchSchema` on every run, and the metadata arrives after the connection is made active, which fits two reads; which change sends the second was not isolated.
+
+Found 2026-10-08 by the browser verification of the Databend provider (#1593); pre-existing for every engine.
+
+**Done when:** opening a connection sends one inventory request, with a test that makes a connection active, lets its metadata arrive and counts one `/api/db/objects/inventory` request, and the editor's tab type still follows the metadata.
 
 ## Dependencies
 

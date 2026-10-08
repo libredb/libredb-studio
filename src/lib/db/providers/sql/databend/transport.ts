@@ -24,7 +24,8 @@
  * `"user"` is the editor's statement, sent with the user's own dialect settings. `"provider"` is a statement Studio
  * writes itself (the object tree, describe, source, monitoring, the connect probe), which also pins `sql_dialect`,
  * `quoted_ident_case_sensitive` and `timezone` (design 3.3), whose network failure is `network` where a user
- * statement's is `outcome-unknown` (design 3.11), and whose deadline is `timeout` whatever the kill answered.
+ * statement's is `outcome-unknown` (design 3.11), and whose deadline is `timeout` whatever the kill answered, or
+ * `unavailable`, the resuming outcome, on a named warehouse.
  */
 export type StatementOrigin = "user" | "provider";
 
@@ -130,6 +131,12 @@ export interface StatementOutcome {
   readonly notices: readonly DatabendNotice[];
   readonly hasResultSet: boolean;
   readonly affect: DatabendAffect | null;
+  /**
+   * A provider statement's only: the query ids of this process's own provider statements in flight at any moment
+   * while it ran, its own included, which a read of running statements leaves out (design 5.5). A user statement is
+   * never one of them, and its outcome has none.
+   */
+  readonly ownQueryIds?: ReadonlySet<string>;
 }
 
 /** The one door to the query server. */
@@ -145,9 +152,11 @@ export interface DatabendTransport {
  *
  * The first nine are Databend's own: `auth` (a refused or latched sign-in), `config` (Warehouse, Host or a setting
  * named wrong), `protocol` (an answer that did not follow the HTTP protocol), `unavailable` (a warehouse that did not
- * resume in time), `outcome-unknown` (the statement may have run), `timeout` (Studio's deadline), `cancelled` (a
- * cancel the server acknowledged), `statement` (an in-body error) and `server` (a non-200 answer before the end). The
- * last five are the node transport's `TransportError` kinds a provider statement surfaces as they are.
+ * resume in time, Studio's own read that outlasted its deadline on a named warehouse, or Studio's statement slots that
+ * stayed busy until a statement's deadline), `outcome-unknown` (the statement may have run), `timeout` (Studio's
+ * deadline), `cancelled` (a cancel the server acknowledged, or one before anything was sent), `statement` (an in-body
+ * error) and `server` (a non-200 answer before the end). The last five are the node transport's `TransportError`
+ * kinds a provider statement surfaces as they are.
  */
 export type DatabendErrorCategory =
   | "auth"

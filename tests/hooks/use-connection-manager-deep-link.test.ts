@@ -256,6 +256,36 @@ describe("opening the editor on a linked connection", () => {
     expect(mockToastError).not.toHaveBeenCalled();
   });
 
+  // The shell's fallback after the reader deletes the open connection is not a pick of theirs, but the delete is their
+  // own act, so it cancels the link as their pick does.
+  test("the connection a delete falls back to cancels a pending link, with no switch and no toast later", async () => {
+    window.history.replaceState(null, "", "/?connection=seed%3Abilling");
+    let calls = 0;
+    const fetchMock = mockGlobalFetch(
+      routes(() => {
+        calls += 1;
+        return answer(calls === 1 ? [seed("orders"), seed("audit")] : [seed("orders"), seed("audit"), seed("billing")]);
+      }),
+    );
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => expect(result.current.activeConnection?.id).toBe("seed:orders"));
+    const audit = result.current.connections.find((c) => c.id === "seed:audit");
+    act(() => {
+      result.current.activateFallback(audit ?? null);
+    });
+    await waitFor(() => expect(result.current.activeConnection?.id).toBe("seed:audit"));
+
+    passSeedCache();
+    focusWindow();
+    await waitFor(() => expect(managedCalls(fetchMock)).toBe(2));
+    await sleep(50);
+    expect(result.current.activeConnection?.id).toBe("seed:audit");
+    expect(result.current.connections.map((c) => c.id)).toContain("seed:billing");
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
   test("a refresh that fails leaves the link pending, and the next refresh that answers decides", async () => {
     window.history.replaceState(null, "", "/?connection=seed%3Abilling");
     let calls = 0;

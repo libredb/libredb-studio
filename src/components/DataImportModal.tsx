@@ -217,6 +217,16 @@ export function offersNewTableImport(capabilities: ProviderCapabilities | undefi
 }
 
 /**
+ * What the dialog says on an engine that offers an import nothing to write into (#786).
+ *
+ * It names Studio's import as what has no target, not the engine as taking no data: it used to read "This connection
+ * takes no imported data", which on Databend contradicted an INSERT the same person had just run in the editor (D4).
+ * `docs/providers/databend.md` section 9 quotes it.
+ */
+export const IMPORT_NO_TARGET =
+  "Studio's import has no target on this connection: it offers no existing table here to write into and cannot create one.";
+
+/**
  * Why this engine takes no import at all, or null when it takes one (#786).
  *
  * An import writes rows into an existing object of a kind that accepts row writes, or into a table
@@ -228,7 +238,7 @@ export function offersNewTableImport(capabilities: ProviderCapabilities | undefi
 export function importRefusal(capabilities: ProviderCapabilities | undefined): string | null {
   if (capabilities === undefined || offersNewTableImport(capabilities)) return null;
   if (declaredKinds(capabilities).some((kind) => kind.acceptsRowWrites === true)) return null;
-  return "This connection takes no imported data: its engine declares no table an import may write into and no table an import may create.";
+  return IMPORT_NO_TARGET;
 }
 
 export function generateImportSQL(

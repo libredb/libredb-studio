@@ -58,6 +58,7 @@ mock.module("@/components/object-tree", () => ({
         "data-connection": String(connection?.id ?? "none"),
         "data-levels": String(capabilities?.containerLevels?.length ?? "none"),
         "data-deferred": String(props.deferred ?? false),
+        "data-deferred-billed": String(props.deferredForBilledCompute ?? false),
         "data-has-load": String(props.onLoad !== undefined),
         "data-actions": Object.keys((props.actions as Record<string, unknown>) ?? {})
           .sort()
@@ -139,6 +140,7 @@ import React from "react";
 
 import { mockPostgresConnection, mockMySQLConnection } from "../../fixtures/connections";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import { connectionPulseTitle } from "@/hooks/use-connection-pulse";
 
 // ---- Load the component under test AFTER all mock.module registrations ----
 // A static import would be hoisted and evaluate the real module tree
@@ -328,6 +330,18 @@ describe("Sidebar", () => {
 
     expect(getByTestId("object-tree").getAttribute("data-deferred")).toBe("true");
     expect(getByTestId("object-tree").getAttribute("data-has-load")).toBe("true");
+    expect(getByTestId("object-tree").getAttribute("data-deferred-billed")).toBe("false");
+  });
+
+  // CL-CORE-2: the shell holds a restored connection whose requests resume billed compute, and says why.
+  test("a connection held for billed compute hands the tree the deferral, its reason and the load action", () => {
+    const onLoadObjects = mock(() => {});
+    const props = createDefaultProps({ objectScanDeferred: true, deferredForBilledCompute: true, onLoadObjects });
+    const { getByTestId } = render(<Sidebar {...props} />);
+
+    expect(getByTestId("object-tree").getAttribute("data-deferred")).toBe("true");
+    expect(getByTestId("object-tree").getAttribute("data-deferred-billed")).toBe("true");
+    expect(getByTestId("object-tree").getAttribute("data-has-load")).toBe("true");
   });
 
   /**
@@ -501,6 +515,36 @@ describe("Sidebar", () => {
     const { queryByText } = render(<Sidebar {...props} />);
 
     expect(queryByText("Connected")).not.toBeNull();
+  });
+
+  /**
+   * CL-CORE-4: the header said "Not checked" over a connection Studio sends no health check, while this footer drew a
+   * pulsing green "Connected" under it. The footer reads the same pulse state as the header.
+   */
+  test("under a connection Studio does not check, the footer says Not checked, with a still neutral dot", () => {
+    const { container, queryByText, getByText } = render(
+      <Sidebar {...createDefaultProps({ connectionPulse: "not-checked" })} />,
+    );
+
+    expect(queryByText("Connected")).toBeNull();
+    const status = container.querySelector('[data-testid="sidebar-connection-status"]');
+    expect(status?.getAttribute("title")).toBe(connectionPulseTitle("not-checked"));
+    expect(status?.textContent).toBe("Not checked");
+    expect(getByText("Not checked")).not.toBeNull();
+    const dot = status?.querySelector("div");
+    expect(dot?.className).not.toContain("animate-pulse");
+    expect(dot?.className).not.toContain("green");
+  });
+
+  test("control: a checked connection, or a shell with no pulse, keeps the pulsing Connected", () => {
+    for (const connectionPulse of ["healthy", null, undefined]) {
+      const { container, queryByText, unmount } = render(<Sidebar {...createDefaultProps({ connectionPulse })} />);
+      expect(queryByText("Connected"), String(connectionPulse)).not.toBeNull();
+      expect(queryByText("Not checked")).toBeNull();
+      const dot = container.querySelector('[data-testid="sidebar-connection-status"] div');
+      expect(dot?.className).toContain("animate-pulse");
+      unmount();
+    }
   });
 
   test("no ERD button on a connection declaring Cypher, whose relationship types are no tables (SR20)", () => {

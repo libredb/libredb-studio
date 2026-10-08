@@ -28,6 +28,7 @@ import { oxiaRefusal } from "@/lib/db/providers/keyvalue/oxia/guard";
 import { milvusRefusal } from "@/lib/db/providers/vector/milvus/guard";
 import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
 import { statementRefusal } from "@/lib/db/destructive-commands";
+import { DATABEND_EXPLAIN_DECLINES } from "@/lib/explain/databend-text";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
@@ -2953,6 +2954,141 @@ describe("useQueryExecution", () => {
     });
   });
 
+  // CL-CORE-1: a strategy that declines a SELECT-shaped statement says why, where the sentences below would call it
+  // not a SELECT, or not one statement.
+  describe("an Explain the strategy declines with a reason of its own", () => {
+    const databend: DatabaseConnection = { ...mockConnection, id: "qe-databend", type: "databend", port: 8000 };
+    const databendMetadata: ProviderMetadata = {
+      ...mockMetadata,
+      capabilities: { ...mockMetadata.capabilities, explainFormat: "databend-text" },
+    };
+    const explainOn = async (sql: string) => {
+      const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+      const { result } = renderHook(() =>
+        useQueryExecution(createDefaultParams({ activeConnection: databend, metadata: databendMetadata })),
+      );
+      await act(async () => {
+        await result.current.executeQuery(sql, undefined, true);
+      });
+      return fetchMock;
+    };
+
+    test("a SELECT the strategy declines is toasted with the strategy's reason, and nothing is sent", async () => {
+      const fetchMock = await explainOn("WITH t AS MATERIALIZED (SELECT 1 AS a) SELECT * FROM t");
+
+      expect(fetchMock.mock.calls).toHaveLength(0);
+      expect(mockToastError).toHaveBeenCalledWith("Not Supported", {
+        description: DATABEND_EXPLAIN_DECLINES.binding("MATERIALIZED", "a MATERIALIZED CTE"),
+      });
+      expect(mockToastError).not.toHaveBeenCalledWith("Not Supported", {
+        description: "Only SELECT statements can be explained.",
+      });
+    });
+
+    test("an optimizer hint is named, not called a statement that is not a SELECT", async () => {
+      await explainOn("SELECT /*+ SET_VAR(timezone='UTC') */ 1 AS one");
+
+      expect(mockToastError).toHaveBeenCalledWith("Not Supported", {
+        description: `${DATABEND_EXPLAIN_DECLINES.hint} ${DATABEND_EXPLAIN_DECLINES.hintAdvice}`,
+      });
+    });
+
+    test("a quote that never closes is named, not called more than one statement", async () => {
+      await explainOn("SELECT 'x");
+
+      expect(mockToastError).toHaveBeenCalledWith("Not Supported", {
+        description: DATABEND_EXPLAIN_DECLINES.unterminated,
+      });
+    });
+
+    test("control: a statement that is not a SELECT keeps the shared sentence, as does a second statement", async () => {
+      await explainOn("INSERT INTO t SELECT 1");
+      expect(mockToastError).toHaveBeenCalledWith("Not Supported", {
+        description: "Only SELECT statements can be explained.",
+      });
+
+      await explainOn("SELECT 1; SELECT 2");
+      expect(mockToastError).toHaveBeenCalledWith("Not Supported", {
+        description: "Only a single statement can be explained.",
+      });
+    });
+  });
+
+  // CL-CORE-2: a run is the person using the connection, which ends the hold a restore put on a connection whose
+  // requests resume billed compute. The shell is told before the first request, and only for a run that sends one.
+  describe("onStatementSent", () => {
+    test("is called once for a run, before its first request", async () => {
+      const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+      let requestsWhenTold = -1;
+      const onStatementSent = mock(() => {
+        requestsWhenTold = fetchMock.mock.calls.length;
+      });
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams({ onStatementSent })));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT * FROM users");
+      });
+
+      expect(onStatementSent).toHaveBeenCalledTimes(1);
+      expect(requestsWhenTold).toBe(0);
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+    });
+
+    test("an Explain that is sent counts as a run", async () => {
+      mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+      const onStatementSent = mock(() => {});
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams({ onStatementSent })));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT * FROM users", undefined, true);
+      });
+
+      expect(onStatementSent).toHaveBeenCalledTimes(1);
+    });
+
+    test("is not called for a run that sends nothing: one the safety dialog takes, or a declined Explain", async () => {
+      const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+      const onStatementSent = mock(() => {});
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams({ onStatementSent })));
+
+      await act(async () => {
+        await result.current.executeQuery("DROP TABLE users");
+        await result.current.executeQuery("INSERT INTO users (name) VALUES ('x')", undefined, true);
+      });
+
+      expect(fetchMock.mock.calls).toHaveLength(0);
+      expect(onStatementSent).not.toHaveBeenCalled();
+    });
+  });
+
+  // GAP-CL-4: the Explain tab is brought forward for every Explain, so a declined one left the plan of the statement
+  // before it on screen under the new text. The fix is for every engine, so it is pinned on PostgreSQL.
+  test("a declined Explain clears the plan of the statement before it", async () => {
+    const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+    const planned = createTab({
+      explainPlan: { format: "postgres-json", raw: [{ Plan: { "Node Type": "Seq Scan" } }] },
+    });
+    const snapshots: QueryTab[][] = [];
+    const setTabsMock = mock((fn: unknown) => {
+      if (typeof fn === "function") snapshots.push((fn as (t: QueryTab[]) => QueryTab[])([planned]));
+    });
+    const params = createDefaultParams({ setTabs: setTabsMock, tabs: [planned], currentTab: planned });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    let ran: boolean | undefined;
+    await act(async () => {
+      ran = await result.current.executeQuery("INSERT INTO users (name) VALUES ('x')", undefined, true);
+    });
+
+    expect(ran).toBe(false);
+    expect(fetchMock.mock.calls).toHaveLength(0);
+    const declined = snapshots.at(-1)?.[0];
+    expect(declined?.explainPlan).toBeUndefined();
+    expect(declined?.isExecuting).toBe(false);
+    expect(result.current.bottomPanelMode).toBe("explain");
+  });
+
   // ── executeQuery load more appends rows ────────────────────────────────
 
   test("executeQuery with offset appends rows (load more)", async () => {
@@ -4441,6 +4577,101 @@ describe("useQueryExecution", () => {
       await flush();
 
       // The plan describes `users`; the tab is now running `orders`.
+      expect(readTabs()[0].explainPlan).toBeUndefined();
+    });
+
+    /*
+      GAP-CL-4: a declined Explain clears the plan without becoming a run, so the run before it keeps the tab and its
+      rows. The plan that run asked for in the background is the statement before's, so once a decline has cleared the
+      plan it may not land, however late it answers. The Explain button is not held while a run is out, and on a
+      warehouse that is resuming the run can take the whole resume.
+    */
+    test("a declined Explain keeps the plan of the run before it off the tab, whenever that plan answers", async () => {
+      const calls = installDeferredFetch();
+      const { params, readTabs } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+      const plan = { rows: [{ "QUERY PLAN": [{ Plan: { "Node Type": "Seq Scan" } }] }] };
+
+      act(() => {
+        result.current.executeQuery("SELECT * FROM users");
+      });
+      await flush();
+      await act(async () => {
+        mainCalls(calls)[0].settle(mockQueryResult);
+      });
+
+      let declined: boolean | undefined;
+      await act(async () => {
+        declined = await result.current.executeQuery("INSERT INTO users (id) VALUES (2)", undefined, true);
+      });
+      expect(declined).toBe(false);
+      await act(async () => {
+        explainCalls(calls)[0].settle(plan);
+      });
+      await flush();
+
+      expect(readTabs()[0].explainPlan).toBeUndefined();
+      expect(readTabs()[0].result).toEqual(mockQueryResult);
+
+      // A run started after the decline owns the plan it asks for.
+      act(() => {
+        result.current.executeQuery("SELECT * FROM orders");
+      });
+      await flush();
+      await act(async () => {
+        mainCalls(calls)[1].settle(mockQueryResult);
+      });
+      await act(async () => {
+        explainCalls(calls)[1].settle(plan);
+      });
+      await flush();
+
+      expect(readTabs()[0].explainPlan).toBeDefined();
+    });
+
+    test("a run still out when an Explain is declined lands its rows, and no plan", async () => {
+      const calls = installDeferredFetch();
+      const { params, readTabs } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT * FROM users");
+      });
+      await flush();
+      await act(async () => {
+        await result.current.executeQuery("INSERT INTO users (id) VALUES (2)", undefined, true);
+      });
+      await act(async () => {
+        mainCalls(calls)[0].settle(mockQueryResult);
+      });
+      await act(async () => {
+        explainCalls(calls)[0].settle({ rows: [{ "QUERY PLAN": [{ Plan: { "Node Type": "Seq Scan" } }] }] });
+      });
+      await flush();
+
+      expect(readTabs()[0].result).toEqual(mockQueryResult);
+      expect(readTabs()[0].isExecuting).toBe(false);
+      expect(readTabs()[0].explainPlan).toBeUndefined();
+    });
+
+    test("an Explain still out when a later one is declined lands no plan", async () => {
+      const calls = installDeferredFetch();
+      const { params, readTabs } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT * FROM users", undefined, true);
+      });
+      await flush();
+      await act(async () => {
+        await result.current.executeQuery("INSERT INTO users (id) VALUES (2)", undefined, true);
+      });
+      await act(async () => {
+        explainCalls(calls)[0].settle({ rows: [{ "QUERY PLAN": [{ Plan: { "Node Type": "Seq Scan" } }] }] });
+      });
+      await flush();
+
+      expect(readTabs()[0].isExecuting).toBe(false);
       expect(readTabs()[0].explainPlan).toBeUndefined();
     });
 

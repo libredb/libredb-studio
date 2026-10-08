@@ -2117,6 +2117,234 @@ describe("deferring the object scan", () => {
 });
 
 // =============================================================================
+// A restore that would resume billed compute (CL-CORE-2)
+// =============================================================================
+//
+// Measured on Databend Cloud: signing in, with no click, opened the restored connection and read its inventory twice,
+// which resumes and bills a suspended warehouse. A connection the page made active by itself, whose provider declares
+// `resumesBilledCompute`, now reads nothing past its declaration until the person uses it: picks it, loads its
+// objects, or sends it a statement. `/api/db/provider-meta` opens no connection, so it still runs.
+describe("a restore of a connection whose requests resume billed compute", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  const BILLED_ID = "billed";
+  const billed = makeConnection({ id: BILLED_ID, name: "Cloud", type: "databend", port: 443 });
+  const plain = makeConnection({ id: "plain", name: "Local" });
+
+  /** The declaration read: the billed connection declares the capability, any other does not. */
+  const declaration = (gate?: Promise<void>) => async (req: Request) => {
+    const body = (await req.json()) as { connection?: { id?: string } };
+    await gate;
+    const capabilities = {
+      queryLanguage: "sql",
+      containerLevels: [{ id: "schema" }],
+      objectKinds: PG_OBJECT_KINDS,
+      ...(body.connection?.id === BILLED_ID ? { resumesBilledCompute: true } : {}),
+    };
+    return { ok: true, json: { capabilities, labels: {} } };
+  };
+
+  const install = (gate?: Promise<void>) =>
+    mockGlobalFetch({
+      "/api/db/provider-meta": declaration(gate),
+      "/api/db/objects/inventory": inventoryRoute(OBJECTS),
+    });
+
+  const pathsOf = (fetchMock: ReturnType<typeof mockGlobalFetch>, prefix: string): string[] =>
+    fetchMock.mock.calls
+      .map((call) => new URL(String(call[0]), "http://localhost:3000").pathname)
+      .filter((path) => path.startsWith(prefix));
+
+  /** Sign in with `stored` saved and `active` the connection open last time, then the read Studio's effect asks for. */
+  const restore = async (fetchMock: ReturnType<typeof mockGlobalFetch>, active: DatabaseConnection) => {
+    storage.saveConnection(billed);
+    storage.saveConnection(plain);
+    storage.setActiveConnectionId(active.id);
+    const hook = renderHook(() => useConnectionManager(true));
+    await waitFor(() => expect(hook.result.current.activeConnection?.id).toBe(active.id));
+    await act(async () => {
+      await hook.result.current.fetchSchema(hook.result.current.activeConnection!);
+    });
+    expect(pathsOf(fetchMock, "/api/db/provider-meta").length).toBeGreaterThan(0);
+    return hook;
+  };
+
+  test("a restored connection that resumes billed compute reads nothing past its declaration", async () => {
+    const fetchMock = install();
+
+    const { result } = await restore(fetchMock, billed);
+
+    expect(pathsOf(fetchMock, "/api/db/objects")).toEqual([]);
+    expect(result.current.activeAwaitsUse).toBe(true);
+    expect(result.current.schema).toEqual([]);
+    expect(result.current.schemaError).toBeNull();
+    expect(result.current.isLoadingSchema).toBe(false);
+  });
+
+  test("control: a restored connection whose provider bills nothing per request is read as before", async () => {
+    const fetchMock = install();
+
+    const { result } = await restore(fetchMock, plain);
+
+    expect(pathsOf(fetchMock, "/api/db/objects")).toEqual(["/api/db/objects/inventory"]);
+    expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]);
+    expect(result.current.activeAwaitsUse).toBe(true);
+  });
+
+  test("picking the restored connection again reads what the restore held, once", async () => {
+    const fetchMock = install();
+    const { result } = await restore(fetchMock, billed);
+
+    await act(async () => {
+      result.current.setActiveConnection(result.current.activeConnection);
+    });
+
+    await waitFor(() => expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]));
+    expect(pathsOf(fetchMock, "/api/db/objects")).toEqual(["/api/db/objects/inventory"]);
+    expect(result.current.activeAwaitsUse).toBe(false);
+
+    // Picked again, it has been read: nothing more is sent.
+    await act(async () => {
+      result.current.setActiveConnection(result.current.activeConnection);
+    });
+    expect(pathsOf(fetchMock, "/api/db/objects")).toEqual(["/api/db/objects/inventory"]);
+  });
+
+  test("loading its objects reads what the restore held", async () => {
+    const fetchMock = install();
+    const { result } = await restore(fetchMock, billed);
+
+    await act(async () => {
+      result.current.loadObjects();
+    });
+
+    await waitFor(() => expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]));
+    expect(result.current.activeAwaitsUse).toBe(false);
+  });
+
+  test("a statement sent to it reads what the restore held, and a second one reads nothing more", async () => {
+    const fetchMock = install();
+    const { result } = await restore(fetchMock, billed);
+
+    await act(async () => {
+      result.current.markActiveUsed();
+    });
+
+    await waitFor(() => expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]));
+    expect(result.current.activeAwaitsUse).toBe(false);
+    await act(async () => {
+      result.current.markActiveUsed();
+    });
+    expect(pathsOf(fetchMock, "/api/db/objects")).toEqual(["/api/db/objects/inventory"]);
+  });
+
+  test("a connection the person picks is read at once, though it resumes billed compute", async () => {
+    const fetchMock = install();
+    const { result } = await restore(fetchMock, plain);
+
+    await act(async () => {
+      result.current.setActiveConnection(billed);
+    });
+    await act(async () => {
+      await result.current.fetchSchema(billed);
+    });
+
+    expect(pathsOf(fetchMock, "/api/db/objects")).toEqual(["/api/db/objects/inventory", "/api/db/objects/inventory"]);
+    expect(result.current.activeAwaitsUse).toBe(false);
+  });
+
+  // The person can pick the connection while its declaration is still being read: that read then reads on, and the
+  // pick sends no second one.
+  test("a pick made while the declaration is being read is honoured by that read", async () => {
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    storage.saveConnection(billed);
+    storage.setActiveConnectionId(BILLED_ID);
+    const fetchMock = install(gate);
+    const { result } = renderHook(() => useConnectionManager(true));
+    await waitFor(() => expect(result.current.activeConnection?.id).toBe(BILLED_ID));
+
+    let read: Promise<void> = Promise.resolve();
+    act(() => {
+      read = result.current.fetchSchema(result.current.activeConnection!);
+    });
+    await act(async () => {
+      result.current.setActiveConnection(result.current.activeConnection);
+    });
+    await act(async () => {
+      open();
+      await read;
+    });
+
+    expect(pathsOf(fetchMock, "/api/db/objects")).toEqual(["/api/db/objects/inventory"]);
+    expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]);
+  });
+
+  // D31: nothing read for this connection may stay on screen as its objects.
+  test("a held read drops the objects of the connection read before it", async () => {
+    const { result } = await restore(install(), plain);
+    expect(result.current.schema).toHaveLength(2);
+
+    await act(async () => {
+      await result.current.fetchSchema(billed);
+    });
+
+    expect(result.current.schema).toEqual([]);
+    expect(result.current.schemaContext).toBe("[]");
+  });
+
+  // Deleting the open connection makes the first one left active. The page chose it, not the person, so it is held as a
+  // restored one is, though the person used the one they deleted; picking it reads it.
+  test("the connection a delete falls back to is held, though the person used the deleted one", async () => {
+    const fetchMock = install();
+    const { result } = await restore(fetchMock, plain);
+    await act(async () => {
+      result.current.setActiveConnection(result.current.activeConnection);
+    });
+    expect(result.current.activeAwaitsUse).toBe(false);
+
+    await act(async () => {
+      result.current.activateFallback(billed);
+    });
+    await act(async () => {
+      await result.current.fetchSchema(result.current.activeConnection!);
+    });
+
+    expect(result.current.activeConnection?.id).toBe(BILLED_ID);
+    expect(result.current.activeAwaitsUse).toBe(true);
+    expect(pathsOf(fetchMock, "/api/db/objects")).toEqual(["/api/db/objects/inventory"]);
+    expect(result.current.schema).toEqual([]);
+
+    await act(async () => {
+      result.current.setActiveConnection(result.current.activeConnection);
+    });
+
+    await waitFor(() => expect(result.current.schema.map((table) => table.name)).toEqual(["users", "orders"]));
+    expect(result.current.activeAwaitsUse).toBe(false);
+  });
+
+  test("nothing is held, and nothing is marked used, with no active connection", async () => {
+    const fetchMock = install();
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      result.current.markActiveUsed();
+    });
+
+    expect(result.current.activeAwaitsUse).toBe(false);
+    expect(pathsOf(fetchMock, "/api/db/objects")).toEqual([]);
+  });
+});
+
+// =============================================================================
 // The object surface's kinds and paths (#789, Task 25c)
 // =============================================================================
 //

@@ -5,7 +5,7 @@ import "../helpers/mock-navigation";
 import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, within, fireEvent, act, waitFor } from "@testing-library/react";
-import { DataImportModal } from "@/components/DataImportModal";
+import { DataImportModal, IMPORT_NO_TARGET } from "@/components/DataImportModal";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import { pathKey } from "@/lib/db/object-path";
 import { INFLUXQL_OBJECT_KINDS } from "@/lib/db/providers/timeseries/influxdb/influxql-objects";
@@ -1426,7 +1426,7 @@ describe("DataImportModal on an engine that takes no import (#786)", () => {
     );
     const body = within(baseElement);
 
-    expect(body.getByTestId("import-refused").textContent).toContain("takes no imported data");
+    expect(body.getByTestId("import-refused").textContent).toBe(IMPORT_NO_TARGET);
     expect(baseElement.querySelector('input[type="file"]')).toBeNull();
     expect(body.queryByText("New Table")).toBeNull();
 

@@ -128,7 +128,8 @@ describe("the statement POST (C10)", () => {
     test.each([
       ["a cancel", "cancel", "user", "cancelled", S.cancelled],
       ["the statement deadline", "expire", "user", "timeout", S.deadline("60")],
-      ["a provider statement's deadline", "expire", "provider", "timeout", S.resuming("default", "10")],
+      // Studio's own read on a named warehouse: the resuming outcome, which a route shows as it is (GAP-CL-1).
+      ["a provider statement's deadline", "expire", "provider", "unavailable", S.resuming("default", "10")],
     ] as const)(
       "%s sends no kill and no logout, and says the statement was not sent",
       async (_label, how, origin, category, message) => {

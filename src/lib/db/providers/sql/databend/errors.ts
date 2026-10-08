@@ -361,9 +361,10 @@ export function refusalError(refusal: DatabendRefusal, ctx: DatabendFailureConte
 /**
  * Studio's own cancel or deadline, with what the run knew when it stopped (design 3.10; X02, X07). After the first
  * answer a cancel, and a user statement's deadline, stopped the statement only when Databend acknowledged the kill;
- * otherwise it may still finish, and the failure is `outcome-unknown`. A statement Studio sends itself is `timeout` at
- * its deadline whatever the kill answered, since checking before running it again means nothing for Studio's own
- * reads: X07's resuming sentence on a named warehouse, the deadline sentence otherwise.
+ * otherwise it may still finish, and the failure is `outcome-unknown`. A statement Studio sends itself is not an
+ * unknown outcome at its deadline whatever the kill answered, since checking before running it again means nothing
+ * for Studio's own reads: on a named warehouse it is X07's resuming outcome, `unavailable` as a gateway's
+ * `ProvisionWarehouseTimeout` is, so a route shows its sentence rather than a timeout's; otherwise it is `timeout`.
  */
 export function stopError(stop: DatabendStop, state: DatabendStopState, ctx: DatabendFailureContext): DatabendError {
   const provider = ctx.origin === "provider";
@@ -380,7 +381,7 @@ export function stopError(stop: DatabendStop, state: DatabendStopState, ctx: Dat
   }
   // A probe or surface read that outlasts its budget on a named warehouse is most likely a resume (X07).
   const wait = seconds(ctx.timeoutMs);
-  if (provider && ctx.warehouse) return new DatabendError("timeout", sentences.resuming(ctx.warehouse, wait));
+  if (provider && ctx.warehouse) return new DatabendError("unavailable", sentences.resuming(ctx.warehouse, wait));
   // After the first answer a user statement's deadline stopped it only when Databend acknowledged the kill [X02].
   if (!provider && state.answered && !state.killAcknowledged) {
     return new DatabendError("outcome-unknown", sentences.deadlineUnacknowledged(wait));
@@ -390,7 +391,8 @@ export function stopError(stop: DatabendStop, state: DatabendStopState, ctx: Dat
 
 /**
  * Studio's own cancel or deadline before anything was sent, such as a sign-in latch wait cut short: nothing can still
- * run, so a cancel is `cancelled` and a deadline `timeout`, never `outcome-unknown`.
+ * run, so a cancel is `cancelled` and a deadline `timeout`, or Studio's own read's resuming outcome on a named
+ * warehouse, never `outcome-unknown`.
  */
 export function unsentStopError(stop: DatabendStop, ctx: DatabendFailureContext): DatabendError {
   return stopError(stop, { answered: true, killAcknowledged: true }, ctx);

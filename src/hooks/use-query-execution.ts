@@ -75,6 +75,12 @@ interface UseQueryExecutionParams {
    * and the BEGIN/COMMIT/ROLLBACK controls must stop offering a transaction that is gone.
    */
   onTransactionEnded?: () => void;
+  /**
+   * A run is about to send its first request to the active connection: called once per run, after every check that
+   * keeps a run from being sent. A run is the person using the connection, which ends the hold a restore puts on a
+   * connection whose requests resume billed compute (`useConnectionManager`, CL-CORE-2).
+   */
+  onStatementSent?: () => void;
   queryEditorRef: RefObject<QueryEditorRef | null>;
 }
 
@@ -154,12 +160,22 @@ const SANDBOX_NOT_ROLLED_BACK = {
  * Why an explain run cannot proceed, phrased for the user. Absent metadata means
  * "not loaded yet", not "unsupported" — blaming the database type there would be
  * misleading.
+ *
+ * `strategyReason` is the strategy's own sentence for a statement it declines (`declineReason`), and it comes
+ * first: a strategy that declines a SELECT-shaped statement knows why, where the two sentences after it would call
+ * that statement not a SELECT, or not one statement (CL-CORE-1).
  */
-function explainRefusal(metadata: ProviderMetadata | null, hasStrategy: boolean, oneStatement: boolean) {
+function explainRefusal(
+  metadata: ProviderMetadata | null,
+  hasStrategy: boolean,
+  oneStatement: boolean,
+  strategyReason: string | null,
+) {
   if (!metadata) {
     return { title: "Not Ready", description: "Connection metadata is still loading. Try again in a moment." };
   }
   if (hasStrategy && metadata.capabilities.supportsExplain) {
+    if (strategyReason !== null) return { title: "Not Supported", description: strategyReason };
     if (!oneStatement) return { title: "Not Supported", description: "Only a single statement can be explained." };
     return { title: "Not Supported", description: "Only SELECT statements can be explained." };
   }
@@ -239,6 +255,7 @@ export function useQueryExecution({
   fetchSchema,
   onObjectsChanged,
   onTransactionEnded,
+  onStatementSent,
   queryEditorRef,
 }: UseQueryExecutionParams) {
   /**
@@ -278,6 +295,16 @@ export function useQueryExecution({
    * window too.
    */
   const lastRunRef = useRef(new Map<string, string>());
+
+  /**
+   * The generation of each tab's plan, keyed by tab id, which a declined Explain bumps (GAP-CL-4).
+   *
+   * A declined Explain sends nothing, so it is no run and supersedes none: a run still in flight keeps the tab and its
+   * rows. It owns the plan, though, because it brings the Explain tab forward with no plan on it, and a plan that a
+   * run started before it answers afterwards is the plan of the statement before. So a run reads the generation when it
+   * starts and writes its plan only while the generation is unchanged. Never cleared per run, as `lastRunRef` is not.
+   */
+  const planGenerationRef = useRef(new Map<string, number>());
 
   // Latest-value refs. `executeQuery` reads these at call time only, so keeping
   // them out of its dependency list makes the callback identity stable across a
@@ -498,9 +525,19 @@ export function useQueryExecution({
         oneStatement &&
         (explainStrategy?.buildSql(queryToExecute, "analyze") ?? null) !== null;
       if (isExplain && !explainAccepted) {
-        toast({ ...explainRefusal(metadata, Boolean(explainStrategy), oneStatement), variant: "destructive" });
+        const strategyReason = explainStrategy?.declineReason?.(queryToExecute, "analyze") ?? null;
+        toast({
+          ...explainRefusal(metadata, Boolean(explainStrategy), oneStatement, strategyReason),
+          variant: "destructive",
+        });
+        // The Explain tab was brought forward above, so a plan still on the tab would read as this statement's: it
+        // belongs to the statement before (GAP-CL-4). So does a plan a run still in flight asked for, which the new
+        // plan generation keeps off the tab.
+        planGenerationRef.current.set(targetTabId, (planGenerationRef.current.get(targetTabId) ?? 0) + 1);
         setTabs((prev) =>
-          prev.map((t) => (t.id === targetTabId ? { ...t, isExecuting: false, isLoadingMore: false } : t)),
+          prev.map((t) =>
+            t.id === targetTabId ? { ...t, isExecuting: false, isLoadingMore: false, explainPlan: undefined } : t,
+          ),
         );
         return false;
       }
@@ -549,6 +586,10 @@ export function useQueryExecution({
        */
       const isSuperseded = () => lastRunRef.current.get(targetTabId) !== queryId;
 
+      const planGeneration = planGenerationRef.current.get(targetTabId) ?? 0;
+      /** A declined Explain has cleared the tab's plan since this run started, so this run's plan is not wanted. */
+      const planCleared = () => (planGenerationRef.current.get(targetTabId) ?? 0) !== planGeneration;
+
       /** Write to the tab this run owns — and only while it still owns it. */
       const commitToTab = (update: (tab: QueryTab) => QueryTab) => {
         if (isSuperseded()) return;
@@ -558,6 +599,7 @@ export function useQueryExecution({
       // Playground mode: begin a transaction before executing (will rollback after)
       const isPlaygroundRun = playgroundMode && !transactionActive && !isExplain && !isLoadMore;
 
+      onStatementSent?.();
       try {
         if (isPlaygroundRun) {
           const beginRes = await appFetch("/api/db/transaction", {
@@ -850,7 +892,9 @@ export function useQueryExecution({
               const strategy = planStrategy(explainData, explainStrategy);
               const plan = { format: strategy.format, raw: strategy.extractPlan(explainData) };
               // `commitToTab` drops the plan if a newer run owns the tab: a plan
-              // describing the previous statement is worse than no plan at all.
+              // describing the previous statement is worse than no plan at all. A
+              // declined Explain takes no run over, so it is asked of separately.
+              if (planCleared()) return;
               commitToTab((t) => ({ ...t, explainPlan: plan }));
             })
             .catch((err) => {
@@ -913,7 +957,7 @@ export function useQueryExecution({
             currentOffset: isExplain ? t.currentOffset : resultData.rows.length,
             isExecuting: false,
             isLoadingMore: false,
-            explainPlan: explainPlanData || t.explainPlan,
+            explainPlan: planCleared() ? t.explainPlan : explainPlanData || t.explainPlan,
             // A run that landed answers the failure before it. An EXPLAIN leaves the
             // results panel alone, so it leaves that panel's error alone too. A script that
             // stopped on an error keeps the earlier statements' rows AND says it stopped (#1385).
@@ -1080,6 +1124,7 @@ export function useQueryExecution({
       fetchSchema,
       onObjectsChanged,
       onTransactionEnded,
+      onStatementSent,
       metadata,
       transactionActive,
       playgroundMode,

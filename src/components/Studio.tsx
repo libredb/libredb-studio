@@ -114,6 +114,10 @@ export default function Studio() {
   const { metadata, error: metadataError, retry: retryMetadata } = useProviderMetadata(conn.activeConnection);
   // After the metadata, because the declaration decides whether a health check may be sent at all.
   const connectionPulse = useConnectionPulse(conn.activeConnection, metadata);
+  // A connection the page opened by itself reads nothing while every request to it can resume billed compute, until
+  // the person uses it (CL-CORE-2): the manager holds the inventory, and the tree is held here, with the declaration
+  // that decides when the tree is drawn at all, so it is held before its first read.
+  const billedComputeHold = conn.activeAwaitsUse && metadata?.capabilities.resumesBilledCompute === true;
   const { favoriteIds, toggleFavorite } = useFavoriteConnections(storageReady);
   const { order: connectionOrder, setOrder: setConnectionOrder } = useConnectionOrder(storageReady);
   const { groups: connectionGroups, ...groupActions } = useConnectionGroups(storageReady);
@@ -411,6 +415,7 @@ export default function Studio() {
     fetchSchema: conn.fetchSchema,
     onObjectsChanged: objectsChanged,
     onTransactionEnded: txn.markTransactionEnded,
+    onStatementSent: conn.markActiveUsed,
     queryEditorRef,
   });
   const { executeQuery, cancelQuery } = queryExec;
@@ -578,6 +583,15 @@ export default function Studio() {
   const openSaveQuery = useCallback(() => setIsSaveQueryModalOpen(true), []);
   const [savedKey, setSavedKey] = useState(0);
   const [activeMobileTab, setActiveMobileTab] = useState<"database" | "schema" | "editor">("editor");
+  // The Schema tab is the phone layout's object tree, so opening it uses the connection as loading the tree does.
+  const { markActiveUsed } = conn;
+  const changeMobileTab = useCallback(
+    (tab: "database" | "schema" | "editor") => {
+      if (tab === "schema") markActiveUsed();
+      setActiveMobileTab(tab);
+    },
+    [markActiveUsed],
+  );
   /** What the panel group may hold: below the breakpoint, only the body panel. */
   const isMobile = useIsMobile();
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -1133,9 +1147,11 @@ export default function Studio() {
     const updated = [...managedConns, ...userConns];
     conn.setConnections(updated);
     // Rebuilt from storage, `updated` still holds the connections the server refuses while custom
-    // connections are off, so the next selection is the first connection the lists show.
+    // connections are off, so the next selection is the first connection the lists show. The page
+    // chooses it, not the person, so it is not counted as used: one whose requests resume billed
+    // compute is held until the person uses it (CL-CORE-2).
     const listed = connectionsUnderPolicy(updated, { customConnections: conn.customConnections });
-    if (conn.activeConnection?.id === id) conn.setActiveConnection(listed[0] ?? null);
+    if (conn.activeConnection?.id === id) conn.activateFallback(listed[0] ?? null);
   };
 
   const confirmDeleteConnection = () => {
@@ -1246,9 +1262,11 @@ export default function Studio() {
                 metadata={metadata}
                 metadataError={metadataError}
                 onRetryMetadata={retryMetadata}
-                objectScanDeferred={conn.objectScanDeferred}
+                objectScanDeferred={conn.objectScanDeferred || billedComputeHold}
+                deferredForBilledCompute={billedComputeHold && !conn.objectScanDeferred}
                 onLoadObjects={conn.loadObjects}
                 objectRefreshToken={objectRefreshToken}
+                connectionPulse={connectionPulse}
               />
             </ResizablePanel>
             <ResizableHandle className="w-1 bg-transparent hover:bg-brand-tint/30 transition-colors" />
@@ -1680,7 +1698,7 @@ export default function Studio() {
         onLogout={handleLogout}
         shortcutsDialogRef={shortcutsDialogRef}
         activeMobileTab={activeMobileTab}
-        onMobileTabChange={setActiveMobileTab}
+        onMobileTabChange={changeMobileTab}
         hasResult={!!tabMgr.currentTab.result}
         onOpenAgent={agentEnabled ? openAgentSheet : undefined}
       />

@@ -34,7 +34,7 @@ import { hasUnterminatedSpan, IDENTIFIER_PART, readSqlSpan } from "@/lib/sql/spa
 import { countCodeStatements } from "@/lib/sql/statement-splitter";
 
 export const DATABEND_MULTIPLE_STATEMENTS =
-  "Databend runs one statement per request, and when the first is an INSERT or REPLACE it drops the rest without an error. Run the statements one at a time, or use Run All.";
+  "Databend runs one statement per request, and when the first is an INSERT or REPLACE it drops the rest without an error. Run the statements one at a time.";
 
 export const DATABEND_NO_STATEMENT = "There is no statement to run: the text holds only comments.";
 

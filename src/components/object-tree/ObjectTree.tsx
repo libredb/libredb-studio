@@ -54,6 +54,12 @@ export interface ObjectTreeProps {
    * that one reader's press releases both this tree and the flat schema read.
    */
   readonly deferred?: boolean;
+  /**
+   * Why the tree is deferred, when it is not the connection's own `skipObjectScan`: the page opened a connection
+   * whose every request can resume billed compute by itself, and nothing is read until the person uses it
+   * (`useConnectionManager`, CL-CORE-2). Only the sentence changes; `deferred` is what holds the reads.
+   */
+  readonly deferredForBilledCompute?: boolean;
   /** What the load action calls. Absent means no action is offered. */
   readonly onLoad?: () => void;
   readonly onObjectClick?: (object: DatabaseObject) => void;
@@ -92,6 +98,10 @@ export interface ObjectTreeProps {
    */
   readonly refreshToken?: number;
 }
+
+/** What the deferred panel says under a connection held for billed compute; `docs/providers/databend.md` 4.4 quotes it. */
+export const BILLED_COMPUTE_HOLD =
+  "Studio opened this connection without reading it, because any request to it can resume compute that is billed while it runs. The editor is ready to use.";
 
 /** An open menu: which row it belongs to, and where the reader asked for it. */
 interface OpenMenu {
@@ -139,6 +149,7 @@ export function ObjectTree({
   connection,
   capabilities,
   deferred,
+  deferredForBilledCompute,
   onLoad,
   onObjectClick,
   actions,
@@ -484,7 +495,9 @@ export function ObjectTree({
       <TreePanel testId="tree-deferred" icon={<Database strokeWidth={1.5} className="w-6 h-6 text-brand" />}>
         <h3 className="text-foreground text-xs font-medium mb-1">{connection.name}</h3>
         <p className="text-xs text-muted-foreground leading-relaxed">
-          This connection opens without reading its catalog. The editor is ready to use.
+          {deferredForBilledCompute === true
+            ? BILLED_COMPUTE_HOLD
+            : "This connection opens without reading its catalog. The editor is ready to use."}
         </p>
         {onLoad !== undefined && (
           <button

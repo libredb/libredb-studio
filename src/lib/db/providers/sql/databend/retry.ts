@@ -12,7 +12,7 @@
  * The backoff is 1, 2, 4, 8, 8 s with 20 percent jitter either way: at most six POST and three GET attempts, a
  * `Retry-After` in seconds honoured, and never a wait that reaches the time left. A page's attempt timer that expired
  * with time left re-requests the same page at once, one time, inside the three GET attempts [X15]; with no time left
- * it is the statement deadline, which is `timeout` and never retried.
+ * it is the statement deadline, which is never retried.
  *
  * Pure: the time left and the random value are inputs.
  */

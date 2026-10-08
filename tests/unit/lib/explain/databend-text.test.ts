@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { databendTextStrategy } from "@/lib/explain/databend-text";
+import { DATABEND_EXPLAIN_DECLINES, DATABEND_NESTED_DECLINE, databendTextStrategy } from "@/lib/explain/databend-text";
 import type { ExplainMode, ExplainTreeNode } from "@/lib/explain/types";
 
 const MODES: ExplainMode[] = ["estimate", "analyze"];
@@ -284,6 +284,128 @@ describe("databendTextStrategy.buildSql", () => {
     "SELECT (",
   ])("estimate still plans %s", (sql) => {
     expect(databendTextStrategy.buildSql(sql, "estimate")).toBe(`EXPLAIN ${sql}`);
+  });
+});
+
+/**
+ * CL-CORE-1: the Explain button said "Only SELECT statements can be explained." for a SELECT this strategy declined, so
+ * the strategy names its own reason, and the client shows it in place of that sentence.
+ */
+describe("databendTextStrategy.declineReason", () => {
+  const reason = (sql: string, mode: ExplainMode) => databendTextStrategy.declineReason?.(sql, mode);
+
+  test.each(MODES)("%s gives no reason for a statement it plans, nor for one that is not SELECT-shaped", (mode) => {
+    expect(reason("SELECT 1", mode)).toBeNull();
+    expect(reason("SELECT * FROM t WHERE a IN (SELECT a FROM u)", mode)).toBeNull();
+    // Not a SELECT: the client's own sentence says that, so the strategy adds none.
+    expect(reason("INSERT INTO t SELECT nextval(s)", mode)).toBeNull();
+    expect(reason("-- SELECT 1", mode)).toBeNull();
+  });
+
+  // The walk matches a word, not the construct, so the sentence names the word the statement holds: a column or an
+  // alias of that name declines the same, and is not called a MATERIALIZED CTE or a PIVOT.
+  test.each(MODES)(
+    "%s names the word of a construct Databend runs while it plans, wherever the word stands",
+    (mode) => {
+      const materialized = DATABEND_EXPLAIN_DECLINES.binding("MATERIALIZED", "a MATERIALIZED CTE");
+      const pivot = DATABEND_EXPLAIN_DECLINES.binding("PIVOT", "a PIVOT");
+      expect(reason("WITH t AS MATERIALIZED (SELECT 1 AS a) SELECT * FROM t", mode)).toBe(materialized);
+      expect(reason("SELECT * FROM t PIVOT(sum(a) FOR b IN (SELECT b FROM u))", mode)).toBe(pivot);
+      expect(reason("SELECT materialized FROM t", mode)).toBe(materialized);
+      expect(reason('SELECT 1 AS "pivot"', mode)).toBe(pivot);
+      expect(materialized).toStartWith("This statement names MATERIALIZED, and ");
+      expect(pivot).toStartWith("This statement names PIVOT, and ");
+    },
+  );
+
+  test("the estimate names a subquery two parentheses deep, which the Explain button plans", () => {
+    const sql = "SELECT * FROM numbers((SELECT 1))";
+    expect(reason(sql, "estimate")).toBe(DATABEND_NESTED_DECLINE);
+    expect(reason(sql, "analyze")).toBeNull();
+  });
+
+  test.each(MODES)("%s names a writer in lower case, however it is spelled", (mode) => {
+    expect(reason("SELECT NEXTVAL(s)", mode)).toBe(DATABEND_EXPLAIN_DECLINES.writer("nextval"));
+    expect(reason("SELECT * FROM `fuse_vacuum2`()", mode)).toBe(DATABEND_EXPLAIN_DECLINES.writer("fuse_vacuum2"));
+    expect(reason("SELECT * FROM sync_crash_me()", mode)).toBe(DATABEND_EXPLAIN_DECLINES.writer("sync_crash_me"));
+  });
+
+  test.each(MODES)("%s names text Databend reads differently from Studio", (mode) => {
+    const declines = DATABEND_EXPLAIN_DECLINES;
+    expect(reason("SELECT /*+ SET_VAR(timezone='UTC') */ 1 AS one", mode)).toBe(
+      `${declines.hint} ${declines.hintAdvice}`,
+    );
+    expect(reason("SELECT * FROM @s\\' , numbers((SELECT 1)) --'", mode)).toBe(declines.stage);
+    expect(reason("SELECT * FROM t --\f, numbers((SELECT 1))", mode)).toBe(
+      `${declines.formFeed} ${declines.formFeedAdvice}`,
+    );
+    expect(reason("SELECT $a$ x $a$", mode)).toBe(`${declines.taggedDollar} ${declines.taggedDollarAdvice}`);
+    expect(reason("SELECT 'x", mode)).toBe(declines.unterminated);
+  });
+
+  // The advice promises a plan, so it is given only where the text with that one hint or form feed taken out, or that
+  // run quoted with $$, gets one; anything else that declines leaves the reason without it.
+  test.each(MODES)("%s advises taking an obstacle out only where the text without it gets a plan", (mode) => {
+    const declines = DATABEND_EXPLAIN_DECLINES;
+    for (const [sql, said] of [
+      ["SELECT /*+ SET_VAR(timezone='UTC') */ nextval(s)", declines.hint],
+      ["SELECT /*+ SET_VAR(a='1') */ /*+ SET_VAR(b='2') */ 1", declines.hint],
+      ["SELECT $a$ x $a$, nextval(s)", declines.taggedDollar],
+      // Quoted with $$, the body's own $$ ends the run early and the last $$ never closes.
+      ["SELECT $a$ x $$ $a$", declines.taggedDollar],
+      ["SELECT nextval(s) --\f", declines.formFeed],
+      ["SELECT 1 --\f\f", declines.formFeed],
+      // Taken out, the form feed joins the words on either side of it into a writer's name.
+      ["SELECT next\fval(s)", declines.formFeed],
+    ] as const) {
+      expect(reason(sql, mode), sql).toBe(said);
+      expect(reason(sql, mode), sql).not.toContain("to see the plan");
+    }
+  });
+
+  // The hook and buildSql are one walk, so they cannot disagree: a SELECT-shaped text gets a plan or a reason.
+  test.each(MODES)("%s gives a reason exactly where buildSql declines a SELECT-shaped statement", (mode) => {
+    for (const sql of [
+      "SELECT 1",
+      "WITH a AS (SELECT 1) SELECT * FROM a",
+      "SELECT * FROM numbers((SELECT nextval(s)))",
+      "SELECT [nextval(s)]",
+      "SELECT 'fuse_vacuum2()' AS note",
+      "SELECT * FROM @~/--, numbers((SELECT 1))",
+      "SELECT * FROM @s -- note",
+      "SELECT parse_json('[1]')<@[1,2] AS r",
+      "SELECT * FROM numbers((FROM t))",
+      "SELECT 1 /* open",
+      "SELECT $$it$$ AS a FROM @stage",
+    ]) {
+      const declined = databendTextStrategy.buildSql(sql, mode) === null;
+      expect(reason(sql, mode) !== null, sql).toBe(declined);
+    }
+  });
+
+  test("every sentence is one a person reads: no placeholder left, and each says no plan was asked for", () => {
+    const sentences = [
+      DATABEND_EXPLAIN_DECLINES.binding("PIVOT", "a PIVOT"),
+      DATABEND_EXPLAIN_DECLINES.writer("nextval"),
+      DATABEND_EXPLAIN_DECLINES.hint,
+      DATABEND_EXPLAIN_DECLINES.stage,
+      DATABEND_EXPLAIN_DECLINES.formFeed,
+      DATABEND_EXPLAIN_DECLINES.taggedDollar,
+      DATABEND_EXPLAIN_DECLINES.unterminated,
+      DATABEND_NESTED_DECLINE,
+    ];
+    for (const sentence of sentences) {
+      expect(sentence).toContain("does not ask Databend for this statement's plan");
+      expect(sentence).not.toMatch(/undefined|\[|\u2013|\u2014/);
+    }
+    for (const advice of [
+      DATABEND_EXPLAIN_DECLINES.hintAdvice,
+      DATABEND_EXPLAIN_DECLINES.formFeedAdvice,
+      DATABEND_EXPLAIN_DECLINES.taggedDollarAdvice,
+    ]) {
+      expect(advice).toEndWith(" to see the plan.");
+      expect(advice).not.toMatch(/undefined|\[|\u2013|\u2014/);
+    }
   });
 });
 

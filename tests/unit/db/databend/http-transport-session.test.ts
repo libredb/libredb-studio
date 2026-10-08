@@ -4,22 +4,30 @@
  * second end-open, a ROLLBACK link answered with a 200 it cannot read is a refused close and one with no answer a
  * failed one, a close whose answer the node transport refused to read is a refused one too, `Fail` sends nothing, a
  * session that still needs keep-alive is logged out, and a POST with no answer gets one kill and one logout with our
- * session id.
+ * session id. A provider statement's outcome names the query ids of this process's own provider statements in flight
+ * while it ran, its own included, each kept from before its POST until its last close.
  */
 import { describe, expect, test } from "bun:test";
+import { type NodeResponse, type NodeTransport, TransportError } from "@/lib/db/http/node-transport";
 import { DATABEND_ERROR_SENTENCES as S, DATABEND_PROTOCOL_FAULTS as F } from "@/lib/db/providers/sql/databend/errors";
+import { createDatabendHttpTransport } from "@/lib/db/providers/sql/databend/http-transport";
 import { DatabendError } from "@/lib/db/providers/sql/databend/transport";
 import { serverText } from "@/lib/db/utils/server-text";
 import {
+  answerBody,
   capturedAnswer,
   idsOf,
   ok,
   pathsOf,
+  scriptedNodeTransport,
   statement,
   TEST_NODE,
   TEST_PASSWORD,
+  testOptions,
   testQueryId,
+  transportDeps,
   transportHarness,
+  wireIds,
 } from "../../../helpers/databend-node-transport";
 
 const FIRST = idsOf(1);
@@ -426,5 +434,99 @@ describe("a POST with no answer (X13)", () => {
     expect(script.requests[1].headers["x-databend-session"]).toBe(session);
     expect(script.requests[2].headers["x-databend-session"]).toBe(session);
     expect(script.requests[2].headers["x-databend-sticky-node"]).toBeUndefined();
+  });
+});
+
+describe("Studio's own statements in flight (design 5.5, CL-OPS-1)", () => {
+  const OK_TEXT = "{}";
+
+  /**
+   * A transport over a node transport that answers each statement POST with the ids it carries and a final link, a
+   * statement starting `FAIL` with an in-body error, and each final with 200, every answer once `hold` of the
+   * statement's text, or of the final's path, settles.
+   */
+  function heldTransport(hold: (what: string) => Promise<void> | undefined = () => undefined) {
+    const time = transportDeps(scriptedNodeTransport());
+    const node = (): NodeTransport => ({
+      async request(request): Promise<NodeResponse> {
+        if (request.signal.aborted) throw new TransportError("aborted", "The request was cancelled");
+        const path = new URL(request.url).pathname;
+        const sql = request.body === undefined ? undefined : (JSON.parse(request.body) as { sql: string }).sql;
+        await hold(sql ?? path);
+        if (sql === undefined) return { status: 200, contentType: "application/json", retryAfter: null, text: OK_TEXT };
+        // A statement POST carries its own headers, the client session and the query id among them.
+        const ids = wireIds({ ...request.headers });
+        const failed = sql.startsWith("FAIL") ? { state: "Failed", error: { code: 1006, message: "failed" } } : {};
+        const body = answerBody({
+          id: ids.queryId,
+          session_id: ids.sessionId,
+          next_uri: `/v1/query/${ids.queryId}/final`,
+          ...failed,
+        });
+        return { status: 200, contentType: "application/json", retryAfter: null, text: JSON.stringify(body) };
+      },
+      close() {},
+    });
+    return createDatabendHttpTransport(testOptions(), { ...time.deps, createNodeTransport: node });
+  }
+
+  const provider = (sql: string, signal?: AbortSignal) =>
+    statement(sql, { origin: "provider", ...(signal === undefined ? {} : { signal }) });
+
+  test("a provider statement's outcome names its own query id; a user statement's names none", async () => {
+    const transport = heldTransport();
+    const read = await transport.run(provider("SELECT 'read'"));
+    const user = await transport.run(statement("SELECT 'user'"));
+    expect(read.ownQueryIds).toEqual(new Set([idsOf(1).queryId]));
+    expect(user.ownQueryIds).toBeUndefined();
+  });
+
+  test("a read names every own statement in flight while it ran, one that ended before its answer included", async () => {
+    const read = Promise.withResolvers<void>();
+    const earlier = Promise.withResolvers<void>();
+    const transport = heldTransport((what) => {
+      if (what === "SELECT 'read'") return read.promise;
+      return what === "SELECT 'earlier'" ? earlier.promise : undefined;
+    });
+    const earlierRun = transport.run(provider("SELECT 'earlier'"));
+    const readRun = transport.run(provider("SELECT 'read'"));
+    earlier.resolve();
+    const earlierOutcome = await earlierRun;
+    // Began and ended while the read was still waiting for its answer.
+    const sibling = await transport.run(provider("SELECT 'sibling'"));
+    const user = await transport.run(statement("SELECT 'user'"));
+    read.resolve();
+    const readOutcome = await readRun;
+    const [first, second, third] = [1, 2, 3].map((n) => idsOf(n).queryId);
+    expect(readOutcome.ownQueryIds).toEqual(new Set([first, second, third]));
+    expect(earlierOutcome.ownQueryIds).toEqual(new Set([first, second]));
+    expect(sibling.ownQueryIds).toEqual(new Set([second, third]));
+    expect(user.ownQueryIds).toBeUndefined();
+    // Nothing is left in flight: the next statement names only itself.
+    expect((await transport.run(provider("SELECT 'next'"))).ownQueryIds).toEqual(new Set([idsOf(5).queryId]));
+  });
+
+  test("a statement stays its own until its last close ends, and is forgotten once its run ends, however it ended", async () => {
+    const closing = idsOf(1);
+    const finalAsked = Promise.withResolvers<void>();
+    const finalHeld = Promise.withResolvers<void>();
+    const transport = heldTransport((what) => {
+      if (what !== pathsOf(closing.queryId).final) return undefined;
+      finalAsked.resolve();
+      return finalHeld.promise;
+    });
+    const closingRun = transport.run(provider("SELECT 'closing'"));
+    await finalAsked.promise;
+    // Its answer arrived and its final is still out: it is still in flight.
+    const during = await transport.run(provider("SELECT 'during'"));
+    expect(during.ownQueryIds).toEqual(new Set([closing.queryId, idsOf(2).queryId]));
+    finalHeld.resolve();
+    await closingRun;
+    expect(await transport.run(provider("FAIL")).catch((error: unknown) => error)).toBeInstanceOf(DatabendError);
+    const stopped = new AbortController();
+    stopped.abort();
+    const unsent = await transport.run(provider("SELECT 'stopped'", stopped.signal)).catch((error: unknown) => error);
+    expect((unsent as DatabendError).category).toBe("cancelled");
+    expect((await transport.run(provider("SELECT 'after'"))).ownQueryIds).toEqual(new Set([idsOf(5).queryId]));
   });
 });

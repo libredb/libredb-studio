@@ -26,16 +26,17 @@ const DATABEND_GRAMMAR = resolveSqlGrammar("databend");
  * (measured on v1.2.951: `EXPLAIN SELECT * FROM numbers((SELECT nextval(s)))` moved the
  * sequence, as did the comment-led and `FROM`-first spellings, and a MATERIALIZED CTE
  * moved it once a client session was present, which Studio always sends). Derived tables
- * and `IN` or `EXISTS` subqueries bind without executing. `screen` below is what keeps
+ * and `IN` or `EXISTS` subqueries bind without executing. `walk` below is what keeps
  * those executions off the Explain path.
  */
 const EXPLAIN_PREFIX = "EXPLAIN ";
 
 /**
- * Names whose presence anywhere in the code declines both modes, compared upper-cased.
+ * Names whose presence anywhere in the code declines both modes, compared upper-cased, in two groups because a
+ * decline names its reason.
  *
- * `MATERIALIZED` and `PIVOT` are the binder constructs that execute under plain EXPLAIN.
- * `NEXTVAL` takes a sequence value, and the other six are the table functions that write
+ * `MATERIALIZED` and `PIVOT` are the binder constructs that execute under plain EXPLAIN, each with the words the
+ * reason names it by. `NEXTVAL` takes a sequence value, and the other six are the table functions that write
  * from a SELECT shape (`table_function_factory.rs`): `FUSE_VACUUM2` vacuums tables, and
  * `SET_CACHE_CAPACITY` really moved a cache's capacity under
  * plain EXPLAIN when nested in an argument subquery. Four more act when read and are
@@ -46,9 +47,12 @@ const EXPLAIN_PREFIX = "EXPLAIN ";
  * matched as a word and as a quoted identifier, so a writer nested in an argument
  * subquery never runs on an Explain click.
  */
-const DECLINED_NAMES = new Set([
-  "MATERIALIZED",
-  "PIVOT",
+const BINDER_CONSTRUCTS: ReadonlyMap<string, string> = new Map([
+  ["MATERIALIZED", "a MATERIALIZED CTE"],
+  ["PIVOT", "a PIVOT"],
+]);
+
+const WRITER_NAMES = new Set([
   "NEXTVAL",
   "FUSE_AMEND",
   "SET_CACHE_CAPACITY",
@@ -153,14 +157,77 @@ function nextCodeWord(sql: string, index: number): string | null {
   return readSqlWord(sql, i)?.text ?? null;
 }
 
+/** What every decline costs the person, the same whatever declined. */
+const NO_PLAN = "does not ask Databend for this statement's plan";
+
+/** Why text Databend reads differently from Studio declines: the screen cannot read it as Databend does. */
+const UNREADABLE = `so Studio cannot check what Databend would run while planning it and ${NO_PLAN}`;
+
+/** Where the depth rule of the estimate declines: a table function's argument, or a subquery as deep. */
+const NESTED_SUBQUERY = "a subquery two or more parentheses deep, where a table function's argument sits";
+
 /**
- * Whether Explain may send this statement in this mode, walking code only: strings and
- * comments are skipped, a quoted identifier is read as the name it is, and an array
- * subscript is code. Text with a run that never closes declines, because what follows
- * the run cannot be read.
+ * The estimate's reason for its depth rule, which the Explain button never meets, since it plans such a subquery. The
+ * automatic estimate declines without a word, so no toast shows it, and it stands outside the record below, which the
+ * doc quotes.
  */
-function screen(sql: string, mode: ExplainMode): boolean {
-  if (sql.includes(FORM_FEED)) return false;
+export const DATABEND_NESTED_DECLINE = `Databend can run part of a statement with ${NESTED_SUBQUERY} while it plans it, so Studio ${NO_PLAN}.`;
+
+/**
+ * Why the strategy declines a SELECT-shaped statement, one sentence per reason, which `declineReason` hands the
+ * Explain button in place of the sentence that the statement is not a SELECT (CL-CORE-1). The doc quotes each one
+ * (`docs/providers/databend.md` section 5.6).
+ *
+ * A name is matched as a word, wherever it stands, so the first two say only that the statement names it: a column
+ * called `materialized` declines as a MATERIALIZED CTE does. Each advice sentence ends its reason only where the text
+ * with that one hint or form feed taken out, or that run quoted with `$$`, is planned (`screen`), since it promises a
+ * plan.
+ */
+export const DATABEND_EXPLAIN_DECLINES = Object.freeze({
+  binding: (word: string, construct: string) =>
+    `This statement names ${word}, and Databend can run part of a statement with ${construct} while it plans it, so Studio ${NO_PLAN}.`,
+  writer: (name: string) =>
+    `This statement names ${name}, which writes or acts when Databend runs it, and Databend can run part of a statement while it plans it, so Studio ${NO_PLAN}.`,
+  hint: `This statement has an optimizer hint (/*+ ... */), which Databend reads as code and Studio as a comment, ${UNREADABLE}.`,
+  stage: `A stage name (@...) in this statement holds a backslash or runs into a comment, a dollar quote or a bracket, which Databend reads as part of the name, ${UNREADABLE}.`,
+  formFeed: `This statement holds a form feed, which ends a -- comment in Databend but not in Studio's reading, ${UNREADABLE}.`,
+  taggedDollar: `A dollar-quoted run in this statement is tagged ($name$), which Databend reads as a variable and not a quote, ${UNREADABLE}.`,
+  unterminated: `A quote or comment in this statement never closes, ${UNREADABLE}.`,
+  hintAdvice: "Remove the hint to see the plan.",
+  formFeedAdvice: "Remove the form feed to see the plan.",
+  taggedDollarAdvice: "Use $$ quoting to see the plan.",
+});
+
+/**
+ * A decline the walk met. `fix` is set for an obstacle a person can take out, a hint, a form feed or a tagged run: the
+ * text with that one taken out, or that run quoted with `$$`, and the advice to do so.
+ */
+interface Decline {
+  readonly reason: string;
+  readonly fix?: { readonly text: string; readonly advice: string };
+}
+
+/** The decline a declined name gives, or null for a name that declines nothing. */
+function nameDecline(name: string): Decline | null {
+  const construct = BINDER_CONSTRUCTS.get(name);
+  if (construct !== undefined) return { reason: DATABEND_EXPLAIN_DECLINES.binding(name, construct) };
+  return WRITER_NAMES.has(name) ? { reason: DATABEND_EXPLAIN_DECLINES.writer(name.toLowerCase()) } : null;
+}
+
+/**
+ * The first decline met walking this statement in this mode, or null when Explain may send it, walking code only:
+ * strings and comments are skipped, a quoted identifier is read as the name it is, and an array subscript is code.
+ * Text with a run that never closes declines, because what follows the run cannot be read.
+ */
+function walk(sql: string, mode: ExplainMode): Decline | null {
+  const feed = sql.indexOf(FORM_FEED);
+  if (feed >= 0) {
+    const text = sql.slice(0, feed) + sql.slice(feed + FORM_FEED.length);
+    return {
+      reason: DATABEND_EXPLAIN_DECLINES.formFeed,
+      fix: { text, advice: DATABEND_EXPLAIN_DECLINES.formFeedAdvice },
+    };
+  }
   let depth = 0;
   // Where the last plain stage token ends: an `@` before it is inside that token, read with it.
   let stageReadTo = 0;
@@ -169,33 +236,46 @@ function screen(sql: string, mode: ExplainMode): boolean {
   while (i < sql.length) {
     const span = codeSpan(sql, i);
     if (span !== null) {
-      if (!span.terminated) return false;
-      if (span.kind === "dollar-string" && !sql.startsWith(DOLLAR_LITERAL_OPENER, i)) return false;
-      if (span.kind === "block-comment" && sql.startsWith(HINT_OPENER, i)) return false;
-      if (span.kind === "quoted-identifier" && DECLINED_NAMES.has(sql.slice(i + 1, span.end - 1).toUpperCase())) {
-        return false;
+      if (!span.terminated) return { reason: DATABEND_EXPLAIN_DECLINES.unterminated };
+      if (span.kind === "dollar-string" && !sql.startsWith(DOLLAR_LITERAL_OPENER, i)) {
+        // The tag is `$name$`, its name an identifier, so the second `$` closes it.
+        const tag = sql.slice(i, sql.indexOf("$", i + 1) + 1);
+        const body = sql.slice(i + tag.length, span.end - tag.length);
+        const text = sql.slice(0, i) + DOLLAR_LITERAL_OPENER + body + DOLLAR_LITERAL_OPENER + sql.slice(span.end);
+        return {
+          reason: DATABEND_EXPLAIN_DECLINES.taggedDollar,
+          fix: { text, advice: DATABEND_EXPLAIN_DECLINES.taggedDollarAdvice },
+        };
       }
+      if (span.kind === "block-comment" && sql.startsWith(HINT_OPENER, i)) {
+        const text = sql.slice(0, i) + sql.slice(span.end);
+        return { reason: DATABEND_EXPLAIN_DECLINES.hint, fix: { text, advice: DATABEND_EXPLAIN_DECLINES.hintAdvice } };
+      }
+      const quoted =
+        span.kind === "quoted-identifier" ? nameDecline(sql.slice(i + 1, span.end - 1).toUpperCase()) : null;
+      if (quoted !== null) return quoted;
       i = span.end;
       continue;
     }
 
     const word = readSqlWord(sql, i);
     if (word !== null) {
-      if (DECLINED_NAMES.has(word.text)) return false;
+      const named = nameDecline(word.text);
+      if (named !== null) return named;
       i = word.end;
       continue;
     }
 
     if (sql[i] === "@" && i >= stageReadTo && !endsArrowAt(sql, i)) {
       const end = plainStageEnd(sql, i);
-      if (end === undefined) return false;
+      if (end === undefined) return { reason: DATABEND_EXPLAIN_DECLINES.stage };
       stageReadTo = end;
     }
     if (sql[i] === "(") {
       depth++;
       const opener = nextCodeWord(sql, i + 1);
       if (mode === "estimate" && depth >= ARGUMENT_SUBQUERY_DEPTH && opener !== null && QUERY_OPENERS.has(opener)) {
-        return false;
+        return { reason: DATABEND_NESTED_DECLINE };
       }
     } else if (sql[i] === ")") {
       depth--;
@@ -203,7 +283,24 @@ function screen(sql: string, mode: ExplainMode): boolean {
     i++;
   }
 
-  return true;
+  return null;
+}
+
+/** Whether Explain sends this statement in this mode: SELECT-shaped, and nothing in it declines. */
+function plans(sql: string, mode: ExplainMode): boolean {
+  return classifySelectPrefix(sql, DATABEND_GRAMMAR) !== null && walk(sql, mode) === null;
+}
+
+/**
+ * Why Explain may not send this statement in this mode, or null when it may: the first decline the walk meets. An
+ * obstacle a person can take out is advised out only where the text without it is planned, since the advice promises
+ * a plan; with anything else in the way the reason stands alone.
+ */
+function screen(sql: string, mode: ExplainMode): string | null {
+  const decline = walk(sql, mode);
+  if (decline === null) return null;
+  const { reason, fix } = decline;
+  return fix !== undefined && plans(fix.text, mode) ? `${reason} ${fix.advice}` : reason;
 }
 
 /** The property Databend prints its row estimate under; it becomes the node's metric. */
@@ -276,9 +373,12 @@ function toPlanLines(texts: readonly string[]): PlanLine[] {
 export const databendTextStrategy: ExplainStrategy = {
   format: "databend-text",
   buildSql(sql, mode) {
-    if (classifySelectPrefix(sql, DATABEND_GRAMMAR) === null) return null;
-    if (!screen(sql, mode)) return null;
-    return `${EXPLAIN_PREFIX}${sql}`;
+    return plans(sql, mode) ? `${EXPLAIN_PREFIX}${sql}` : null;
+  },
+  // The same walk as buildSql, so a SELECT-shaped statement gets a plan or a reason, never neither. A statement that
+  // is not a SELECT gets none: the caller's own sentence says that.
+  declineReason(sql, mode) {
+    return classifySelectPrefix(sql, DATABEND_GRAMMAR) === null ? null : screen(sql, mode);
   },
   // No parsing here: the rows ARE the plan, one line per row.
   extractPlan(result) {
