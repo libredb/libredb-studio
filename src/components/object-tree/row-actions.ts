@@ -313,15 +313,20 @@ function objectActions(
    * `role` is asked as well, because a routine row is not a prefix even on an engine whose relation
    * rows are groupings. And the pattern is the object's own NAME, verbatim: `keyGrouping` already
    * built it with its `*`, so a caller that appended or stripped one would address different keys.
+   *
+   * THE SECOND REASON (Keys panel levels, spec 3.7): an engine that lists its key space one level at a
+   * time may name, as `keyScan.levels.rootKind`, the kind whose rows are its key space's first segment,
+   * an object store's bucket, and Browse Keys opens the panel on that row's folder. Still a declaration
+   * and never a kind id written here. One condition pushes the item, so a row that meets both reasons
+   * is offered it once.
    */
   const browseKeys = handlers.onBrowseKeys;
-  if (
-    isRelation &&
-    browseKeys !== undefined &&
-    capabilities.keyScan !== undefined &&
-    capabilities.tablesAreDerivedGroupings === true
-  ) {
-    actions.push({ id: "browse-keys", label: "Browse Keys", icon: KeyRound, run: () => browseKeys(object) });
+  const rootKind = capabilities.keyScan?.levels?.rootKind;
+  if (browseKeys !== undefined && capabilities.keyScan !== undefined) {
+    const groupingRow = isRelation && capabilities.tablesAreDerivedGroupings === true;
+    if (groupingRow || rootKind === kind.id) {
+      actions.push({ id: "browse-keys", label: "Browse Keys", icon: KeyRound, run: () => browseKeys(object) });
+    }
   }
   return actions;
 }

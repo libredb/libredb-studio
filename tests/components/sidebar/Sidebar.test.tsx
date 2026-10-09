@@ -840,6 +840,41 @@ describe("Sidebar", () => {
     expect(queryByTestId("key-browser")?.getAttribute("data-request")).toBe("/-a b'\"#$[x]/");
   });
 
+  test("hands a bucket row's name and the separator to the Keys view under a level declaration", () => {
+    const props = createDefaultProps({
+      activeConnection: mockPostgresConnection,
+      // A level walk under `/` with no container level: what an object store declares, its buckets being
+      // the key space's first segment.
+      metadata: {
+        capabilities: {
+          queryLanguage: "json",
+          containerLevels: [],
+          keyScan: {
+            defaultCount: 500,
+            maxCount: 1000,
+            separator: "/",
+            cursor: "opaque",
+            pattern: "prefix",
+            totalScope: "none",
+            levels: { rootKind: "bucket" },
+          },
+        },
+      } as unknown as ProviderMetadata,
+      objectActions: { onGenerateSelect: () => {} },
+    });
+    const { queryByTestId, getByRole } = render(<Sidebar {...props} />);
+
+    act(() => {
+      capturedBrowseKeys?.({ name: "sales", path: ["sales"] });
+    });
+
+    // The bucket's folder, `sales/`, and no database: the panel's first request for it carries the
+    // pattern and `level: true` (KeyBrowser.test.tsx, "opens a handed-over prefix ...").
+    expect(queryByTestId("key-browser")?.getAttribute("data-request")).toBe("sales/");
+    expect(queryByTestId("key-browser")?.getAttribute("data-request-database")).toBe("none");
+    expect(getByRole("tab", { name: "Keys" }).getAttribute("aria-selected")).toBe("true");
+  });
+
   /**
    * The panel is not offered to a shell that answers the reads itself.
    *
