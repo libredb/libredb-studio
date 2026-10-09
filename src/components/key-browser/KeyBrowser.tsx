@@ -51,8 +51,10 @@ import {
   keyRowNames,
   keyTreeWindow,
   KEY_ROW_HEIGHT,
+  levelScope,
   pathKey,
   sentPattern,
+  splitKey,
   type KeyTreeNode,
   type KeyTreeRow,
 } from "./tree";
@@ -162,6 +164,14 @@ function outcomeOf(added: number | undefined): string {
 }
 
 /**
+ * Every path from the top level down to `scope`, each as its `pathKey`: the folders a level walk draws
+ * open, so the level it lists is visible under them (Keys panel levels, spec 3.6).
+ */
+function scopeChain(scope: readonly string[]): ReadonlySet<string> {
+  return new Set(scope.map((_, index) => pathKey(scope.slice(0, index + 1))));
+}
+
+/**
  * One drawn row: a row of the key tree, or the database that tree hangs under.
  *
  * ONE UNION RATHER THAN A CHILD ELEMENT, because the two scroll and window together: a database row
@@ -214,6 +224,25 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
   const prefixed = shape.pattern === "prefix";
   /** What the box sends for the text in it: the text under `glob`, the text as a prefix under `prefix`. */
   const sent = sentPattern(pattern, shape);
+  /**
+   * Whether this engine lists its key space one level at a time (Keys panel levels, spec 3.6). Every
+   * behaviour and every sentence below that differs from today's is gated on it, so an engine without
+   * `levels` draws and asks exactly what it did.
+   */
+  const levels = capability.levels !== undefined;
+  /** The path whose level the panel's own walk lists, and its identity as a map key. */
+  const scope = useMemo(() => levelScope(sent, shape), [sent, shape]);
+  const scopeKey = pathKey(scope);
+  /*
+   * A NEW QUESTION OPENS THE SCOPE'S CHAIN, applied on the render it arrives, as `request` is above. A
+   * Browse Keys handover to `sales/` draws `sales/` open with its level listed under it, and every folder
+   * left open by the previous question closes: its listing belonged to the walk being replaced.
+   */
+  const [scopeOpened, setScopeOpened] = useState<string | null>(null);
+  if (levels && scopeOpened !== sent) {
+    setScopeOpened(sent);
+    setOpen(scopeChain(scope));
+  }
 
   const {
     names,
@@ -262,6 +291,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
 
   const {
     keys,
+    folders,
     scanned,
     total,
     clustered,
@@ -305,6 +335,16 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
   }, [reset, scanMore]);
 
   /*
+   * THE REFRESH BUTTON. Under levels it also closes every folder but the scope's chain (Keys panel
+   * levels, spec 3.6): `reset` clears every folder's cursor, and a folder left open with no cursor would
+   * draw open and empty with no gesture left to list it. A folder lists again when the reader opens it.
+   */
+  const refresh = useCallback(() => {
+    if (levels) setOpen(scopeChain(scope));
+    restart();
+  }, [levels, restart, scope]);
+
+  /*
    * The first page loads itself, and it is re-taken when the walk's question changes.
    *
    * A panel whose first gesture is "find the Scan button" reads as broken until somebody finds it,
@@ -341,11 +381,31 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
     [database, onOpenKey, shape, types],
   );
 
-  const openPath = useCallback(
-    (path: readonly string[]) => {
+  const tree = useMemo(() => buildKeyTree(keys, shape, folders), [keys, shape, folders]);
+  const filtering = term.trim() !== "";
+  const visible = useMemo(() => filterKeyTree(tree, term, shape), [tree, term, shape]);
+  /** The server folders' paths, by `pathKey`: a folder the server named pages its own level. */
+  const serverFolderKeys = useMemo(
+    () => new Set(folders.map((folder) => pathKey(splitKey(folder, shape).slice(0, -1)))),
+    [folders, shape],
+  );
+
+  /**
+   * Open or close a folder, and LIST A SERVER FOLDER on the reader's first expand (Keys panel levels,
+   * spec 3.6).
+   *
+   * The decision is taken here, from the `open` set of this render, and never inside the `setOpen`
+   * updater: React may call an updater twice in development, and a request sent from one would be sent
+   * twice. A folder is listed once: not when it already has a cursor, not while its page is in flight,
+   * and not when a filter is what holds it open, because typing must not fan out requests.
+   */
+  const toggleFolder = useCallback(
+    (node: KeyTreeNode) => {
+      const key = pathKey(node.path);
+      const unlisted = node.serverFolder === true && !nodeCursors.has(key) && !nodeLoading.has(key);
+      if (levels && !filtering && !open.has(key) && unlisted) void loadMoreUnder(node.path);
       setOpen((previous) => {
         const next = new Set(previous);
-        const key = pathKey(path);
         // One write for both directions: a twisty that only ever added would be a row that cannot be
         // closed, and the copy is what makes React see a new Set.
         if (next.has(key)) next.delete(key);
@@ -353,16 +413,20 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         return next;
       });
     },
-    [setOpen],
+    [filtering, levels, loadMoreUnder, nodeCursors, nodeLoading, open],
   );
-
-  const tree = useMemo(() => buildKeyTree(keys, shape), [keys, shape]);
-  const filtering = term.trim() !== "";
-  const visible = useMemo(() => filterKeyTree(tree, term, shape), [tree, term, shape]);
   // While a filter is on, every surviving folder is open: a match two levels down that stayed
   // collapsed would look like no match at all, which is the one answer a filter must never give.
   const canLoadMore = useCallback(
     (path: readonly string[]) => {
+      if (levels) {
+        // Under levels each LEVEL has its own row (Keys panel levels, spec 3.6): the scope's pages the
+        // panel's own walk, a server folder's pages its own listing, and no other node lists anything.
+        if (filtering || heldFull) return false;
+        const key = pathKey(path);
+        if (key === scopeKey) return !exhausted;
+        return serverFolderKeys.has(key) && nodeCursors.get(key) !== "0";
+      }
       /*
        * THREE REASONS NOT TO OFFER IT, and each is a fact rather than a preference.
        *
@@ -381,11 +445,16 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
       if (exhausted || filtering || heldFull) return false;
       return nodeCursors.get(pathKey(path)) !== "0";
     },
-    [exhausted, filtering, heldFull, nodeCursors],
+    [exhausted, filtering, heldFull, levels, nodeCursors, scopeKey, serverFolderKeys],
   );
   const rows = useMemo(
-    () => flattenKeyTree(visible, (path) => filtering || open.has(pathKey(path)), canLoadMore),
-    [visible, filtering, open, canLoadMore],
+    () =>
+      flattenKeyTree(visible, (path) => filtering || open.has(pathKey(path)), canLoadMore, {
+        // The top level is a level too, and under levels every load-more row counts the rows listed.
+        rootLoadMore: levels && scope.length === 0,
+        countRows: levels,
+      }),
+    [visible, filtering, open, canLoadMore, levels, scope],
   );
   /**
    * A row's indentation, in pixels.
@@ -488,6 +557,29 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         ? "out of every key this NODE holds (this server is clustered: SCAN and DBSIZE are per node)"
         : "out of every key this database holds";
 
+  /** Whether a level can still be asked for more: the scope's own walk, or a listed server folder's. */
+  const levelHasMore = (key: string): boolean =>
+    key === scopeKey ? !exhausted : nodeCursors.has(key) && nodeCursors.get(key) !== "0";
+  /** A server folder nobody has listed yet: it has a name, and nothing under it is counted. */
+  const unlistedFolder = (node: KeyTreeNode): boolean =>
+    node.serverFolder === true && pathKey(node.path) !== scopeKey && !nodeCursors.has(pathKey(node.path));
+  /**
+   * A folder's badge under levels (Keys panel levels, spec 3.6): the rows its level has listed, with a
+   * `+` while that level has more pages. A level lists its own entries and never its subfolders'
+   * contents, so no folder has a key count to show; an unlisted folder shows nothing, and its title
+   * says it is unlisted rather than counting rows that were never asked for.
+   */
+  const levelBadge = (node: KeyTreeNode): string =>
+    unlistedFolder(node)
+      ? ""
+      : `${node.children.length.toLocaleString("en-US")}${levelHasMore(pathKey(node.path)) ? "+" : ""}`;
+  const levelBadgeTitle = (node: KeyTreeNode): string => {
+    if (unlistedFolder(node)) return "Not listed yet: open the folder to list it";
+    const listed = node.children.length;
+    const more = levelHasMore(pathKey(node.path)) ? "; more pages remain" : "";
+    return `${listed.toLocaleString("en-US")} entr${listed === 1 ? "y" : "ies"} listed in this folder${more}`;
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="key-browser">
       <div className="flex items-center gap-1 pb-2">
@@ -558,7 +650,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         <button
           type="button"
           data-testid="key-browser-refresh"
-          onClick={restart}
+          onClick={refresh}
           aria-label="Scan this database again"
           title="Scan this database again"
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-brand"
@@ -794,14 +886,17 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
 
             if (row.kind === "loadMore") {
               const key = pathKey(row.path);
-              const loading = nodeLoading.has(key);
+              // Under levels the scope's row presses the panel's own walk, whose page is `busy`; every
+              // other row presses its folder's own listing (Keys panel levels, spec 3.6).
+              const ownLevel = levels && key === scopeKey;
+              const loading = ownLevel ? busy : nodeLoading.has(key);
               return (
                 <button
                   key={`more:${key}`}
                   type="button"
                   data-testid="key-browser-load-more"
                   disabled={loading}
-                  onClick={() => void loadMoreUnder(row.path)}
+                  onClick={() => void (ownLevel ? scanMore() : loadMoreUnder(row.path))}
                   /*
                    * THE ROW SAYS WHAT A PRESS IS WORTH BEFORE IT IS PRESSED, in the declared shape.
                    * Under `glob`, `MATCH` is applied per batch and is not indexed; under `prefix`, a
@@ -856,7 +951,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
             // The FULL name, the one join every reader uses, and the three names the row gives its node,
             // all in the declared separator (spec 4.6).
             const name = keyName(node.path, shape);
-            const names = keyRowNames(node, folder, shape);
+            const names = keyRowNames(node, folder, shape, levels);
             /*
              * A NODE CAN BE TWO THINGS AT ONCE, and this is the row where that shows: `user:42` is
              * a key AND a prefix of `user:42:profile`, so it has a value to read and children to
@@ -870,7 +965,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
             const readable = node.isKey && onOpenKey !== undefined;
             const activate = (): void => {
               if (readable) openKey(node);
-              else if (folder) openPath(node.path);
+              else if (folder) toggleFolder(node);
             };
             return (
               <div
@@ -924,7 +1019,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                     tabIndex={-1}
                     onClick={(event) => {
                       event.stopPropagation();
-                      openPath(node.path);
+                      toggleFolder(node);
                     }}
                     onKeyDown={(event) => event.stopPropagation()}
                     className="-m-1.5 flex h-3.5 w-3.5 box-content shrink-0 items-center justify-center rounded-sm p-1.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-brand"
@@ -981,9 +1076,13 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                       "shrink-0 pl-2 text-[10px] tabular-nums text-muted-foreground",
                       !node.isKey && "ml-auto",
                     )}
-                    title={`${node.count.toLocaleString("en-US")} key${node.count === 1 ? "" : "s"} loaded under this prefix so far, in ${node.children.length} row${node.children.length === 1 ? "" : "s"}`}
+                    title={
+                      levels
+                        ? levelBadgeTitle(node)
+                        : `${node.count.toLocaleString("en-US")} key${node.count === 1 ? "" : "s"} loaded under this prefix so far, in ${node.children.length} row${node.children.length === 1 ? "" : "s"}`
+                    }
                   >
-                    {node.count.toLocaleString("en-US")}
+                    {levels ? levelBadge(node) : node.count.toLocaleString("en-US")}
                   </span>
                 ) : (
                   /*
