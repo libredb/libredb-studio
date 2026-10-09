@@ -997,6 +997,52 @@ describe("declared field rules (Databend design 6.3)", () => {
   });
 });
 
+describe("a declared character range", () => {
+  const FORMAT = "Name must be lower-case letters. Nothing was sent.";
+  const RANGE = "Name holds 3 to 5 characters. Nothing was sent.";
+  const config: DatabaseUIConfig = {
+    ...getDBConfig("postgres"),
+    fieldRules: {
+      user: { format: { pattern: /^[a-z]+$/, sentence: FORMAT }, charRange: { min: 3, max: 5, sentence: RANGE } },
+    },
+  };
+  const named = (user: string | undefined): DatabaseConnection => ({
+    id: "c1",
+    name: "Synthetic",
+    type: "postgres",
+    host: "localhost",
+    port: 5432,
+    user,
+    createdAt: new Date(),
+  });
+
+  test("connectionFieldRefusal checks charRange after format", () => {
+    // Out of range and failing the format: the format sentence, as the provider's format row runs before its range row.
+    expect(connectionFieldRefusal(config, named("AB"))).toBe(FORMAT);
+    expect(connectionFieldRefusal(config, named("ABCDEFG"))).toBe(FORMAT);
+    // Passing the format and outside the range: the range sentence, at either end.
+    expect(connectionFieldRefusal(config, named("ab"))).toBe(RANGE);
+    expect(connectionFieldRefusal(config, named("abcdef"))).toBe(RANGE);
+    // Both ends are inside.
+    expect(connectionFieldRefusal(config, named("abc"))).toBeUndefined();
+    expect(connectionFieldRefusal(config, named("abcde"))).toBeUndefined();
+  });
+
+  test("a blank value never reaches the range, so a blank field still passes", () => {
+    expect(connectionFieldRefusal(config, named(""))).toBeUndefined();
+    expect(connectionFieldRefusal(config, named(undefined))).toBeUndefined();
+  });
+
+  test("a range declared without a format is checked on its own", () => {
+    const rangeOnly: DatabaseUIConfig = {
+      ...config,
+      fieldRules: { user: { charRange: { min: 3, max: 5, sentence: RANGE } } },
+    };
+    expect(connectionFieldRefusal(rangeOnly, named("A B"))).toBeUndefined();
+    expect(connectionFieldRefusal(rangeOnly, named("A"))).toBe(RANGE);
+  });
+});
+
 describe("db-showcase", () => {
   describe("SHOWCASE_RANK", () => {
     test("assigns every database type a distinct rank covering 0..N-1", () => {

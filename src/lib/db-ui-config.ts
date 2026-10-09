@@ -146,6 +146,8 @@ export interface ConnectionFieldRule {
   readonly required?: string;
   /** A field that is not blank must match `pattern` whole, or `sentence` is the refusal. */
   readonly format?: { readonly pattern: RegExp; readonly sentence: string };
+  /** A field that is not blank and passes `format` must hold `min` to `max` characters, or `sentence` is the refusal. */
+  readonly charRange?: { readonly min: number; readonly max: number; readonly sentence: string };
 }
 
 /**
@@ -824,6 +826,12 @@ export function connectionFieldRefusal(config: DatabaseUIConfig, connection: Dat
       continue;
     }
     if (rule.format !== undefined && !rule.format.pattern.test(String(value))) return rule.format.sentence;
+    if (
+      rule.charRange !== undefined &&
+      (String(value).length < rule.charRange.min || String(value).length > rule.charRange.max)
+    ) {
+      return rule.charRange.sentence;
+    }
   }
   return undefined;
 }
