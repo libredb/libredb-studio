@@ -26,6 +26,7 @@ import { delimiter, join } from "node:path";
 import { TLSSocket } from "node:tls";
 import { gzipSync } from "node:zlib";
 import type { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
+import { httpOrigin as parentHttpOrigin, originHost } from "@/lib/db/http/endpoint";
 import type { createNodeTransport, nodeTlsMaterial } from "@/lib/db/http/node-transport";
 import {
   closeAll,
@@ -98,6 +99,8 @@ interface ByteOutcome {
   readonly kind?: string;
   readonly message?: string;
   readonly redirect?: unknown;
+  /** The selected response headers, for the case that reads one. */
+  readonly headers?: unknown;
 }
 
 interface ByteDeps {
@@ -538,6 +541,35 @@ async function runByteCases(
       transport.close();
     }
   });
+  // A 101 is refused on every runtime in both forms node:http delivers it: through the upgrade event when it carries
+  // Connection: upgrade and an Upgrade header, and through the response callback when it does not.
+  await record("byte: a 101 with connection: upgrade and an upgrade header", () =>
+    once("127.0.0.1", "/b/upgraded-101"),
+  );
+  await record("byte: a 101 with neither", () => once("127.0.0.1", "/b/bare-101"));
+  // Dot segments, plain and escaped, reach the listener byte for byte; the parent reads the request lines.
+  await record("byte: a .. target", () => once("127.0.0.1", "/b/x/../y.txt"));
+  await record("byte: a %2E%2E target", () => once("127.0.0.1", "/b/%2E%2E/k"));
+  // A selected header whose value is UTF-8 on the wire is returned as the runtime's latin1 reading of those bytes.
+  {
+    const transport = deps.createNodeByteTransport({
+      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort),
+      tls: null,
+      maxSockets: 1,
+      headers: {},
+      responseHeaders: { names: ["x-amz-meta-city"] },
+    });
+    try {
+      const answer = await transport.request(request("/b/latin1"));
+      outcomes["byte: a selected header with a UTF-8 value"] = {
+        ok: true,
+        status: answer.status,
+        headers: answer.headers,
+      };
+    } finally {
+      transport.close();
+    }
+  }
   return { byteOutcomes: outcomes, byteGlobalAgentCalls: globalCalls };
 }
 
@@ -581,6 +613,10 @@ let byteServer: ReturnType<typeof createTcpServer>;
 const byteSockets = new Set<Socket>();
 /** Every request line the byte listener received, with the id of the socket it came on, in order. */
 const byteHeads: Array<{ readonly socket: number; readonly line: string }> = [];
+/** The Host lines of each request head the byte listener received, in the order of byteHeads. */
+const byteHostLines: string[][] = [];
+/** The byte listener's port, for the Host the parent expects on the wire. */
+let byteListenerPort = 0;
 let byteAccepted = 0;
 /** A 1 MiB body of a fixed pattern, so the parent knows the digest of any prefix of it. */
 const BYTE_BIG = Buffer.alloc(MIB);
@@ -662,6 +698,15 @@ function byteAnswer(method: string, path: string): Buffer {
   if (path === "/b/gz") {
     return answer("200 OK", ["content-encoding: gzip", `content-length: ${BYTE_GZIP.length}`], BYTE_GZIP);
   }
+  if (path === "/b/upgraded-101") {
+    return answer("101 Switching Protocols", ["connection: upgrade", "upgrade: websocket"]);
+  }
+  if (path === "/b/bare-101") return answer("101 Switching Protocols", ["content-length: 0"]);
+  if (path === "/b/x/../y.txt" || path === "/b/%2E%2E/k") {
+    return answer("200 OK", ["content-length: 3"], Buffer.from("dot"));
+  }
+  // The header line is written as latin1, so these characters put the UTF-8 bytes of "café" on the wire.
+  if (path === "/b/latin1") return answer("200 OK", ["x-amz-meta-city: caf\u00c3\u00a9", "content-length: 0"]);
   if (path === "/b/region") {
     return answer("301 Moved Permanently", ["x-amz-bucket-region: eu-west-1", "content-length: 0"]);
   }
@@ -684,8 +729,10 @@ async function byteListener(): Promise<number> {
       pending += chunk.toString("latin1");
       for (let end = pending.indexOf("\r\n\r\n"); end !== -1; end = pending.indexOf("\r\n\r\n")) {
         const line = pending.slice(0, pending.indexOf("\r\n"));
+        const headLines = pending.slice(0, end).split("\r\n");
         pending = pending.slice(end + 4);
         byteHeads.push({ socket: id, line });
+        byteHostLines.push(headLines.filter((entry) => entry.toLowerCase().startsWith("host:")));
         const [method, path] = line.split(" ");
         if (!socket.destroyed) socket.write(byteAnswer(method, path));
       }
@@ -745,6 +792,7 @@ beforeAll(async () => {
   const cutPort = await cutListener();
   const corruptPort = await corruptListener(certificates.local);
   const bytePort = await byteListener();
+  byteListenerPort = bytePort;
   const plan: Plan = {
     ports: {
       plain: plain.port,
@@ -1036,6 +1084,22 @@ function byteDigest(bytes: Uint8Array): number {
   return sum;
 }
 
+const SWITCHED_PROTOCOLS: ByteOutcome = {
+  ok: false,
+  errorName: "TransportError",
+  kind: "network",
+  message:
+    "The server switched the connection to another protocol, and this transport reads HTTP only, so the response was not read",
+};
+const DOT_ANSWER: ByteOutcome = {
+  ok: true,
+  status: 200,
+  length: 3,
+  digest: byteDigest(Buffer.from("dot")),
+  truncated: false,
+  contentEncoding: null,
+};
+
 /** What each byte case must come to on every runtime. */
 const BYTE_EXPECTED: Readonly<Record<string, ByteOutcome>> = {
   "byte: HEAD then GET on one socket": {
@@ -1086,6 +1150,15 @@ const BYTE_EXPECTED: Readonly<Record<string, ByteOutcome>> = {
     digest: byteDigest(BYTE_BIG.subarray(0, 10)),
     truncated: true,
     contentEncoding: null,
+  },
+  "byte: a 101 with connection: upgrade and an upgrade header": SWITCHED_PROTOCOLS,
+  "byte: a 101 with neither": SWITCHED_PROTOCOLS,
+  "byte: a .. target": DOT_ANSWER,
+  "byte: a %2E%2E target": DOT_ANSWER,
+  "byte: a selected header with a UTF-8 value": {
+    ok: true,
+    status: 200,
+    headers: [["x-amz-meta-city", "caf\u00c3\u00a9"]],
   },
 };
 
@@ -1233,10 +1306,23 @@ for (const [label, binary] of RUNTIMES) {
       expect(heads.map(({ line }) => line)).toContain("GET /b/sp/./dot.txt HTTP/1.1");
     });
 
-    test("every socket the byte cases opened carried a request, so no cancelled request was dialled", () => {
+    test("a request cancelled as a cut answer ahead of it resolves opens no socket: every byte socket carried a request", () => {
       const carried = new Set(byteHeads.slice(run?.from.byteHeads).map(({ socket }) => socket));
       expect(byteAccepted - (run?.from.byteAccepted ?? 0)).toBe(carried.size);
       expect(byteHeads.slice(run?.from.byteHeads).map(({ line }) => line)).not.toContain("GET /b/never HTTP/1.1");
+    });
+
+    test("the .. and %2E%2E targets arrived byte for byte", () => {
+      const lines = byteHeads.slice(run?.from.byteHeads).map(({ line }) => line);
+      expect(lines).toContain("GET /b/x/../y.txt HTTP/1.1");
+      expect(lines).toContain("GET /b/%2E%2E/k HTTP/1.1");
+    });
+
+    test("every byte request carried one Host line, equal to originHost of the origin", () => {
+      const host = originHost(parentHttpOrigin("http", "127.0.0.1", byteListenerPort));
+      const hosts = byteHostLines.slice(run?.from.byteHeads);
+      expect(hosts.length).toBeGreaterThan(0);
+      expect(hosts.every((lines) => lines.length === 1 && lines[0] === `host: ${host}`)).toBe(true);
     });
   });
 }
