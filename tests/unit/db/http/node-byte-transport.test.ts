@@ -420,6 +420,30 @@ describe("a 101 answer", () => {
       expect((await transport.request(get("/b/next"))).bytes.toString()).toBe("ok");
     },
   );
+
+  // Without both Connection: upgrade and an Upgrade header, node:http hands a 101 to the response callback instead of
+  // the upgrade event, so the answer callback refuses it by its status.
+  test.each([
+    ["no upgrade headers", ["content-length: 0"]],
+    ["connection: upgrade and no upgrade header", ["connection: upgrade", "content-length: 0"]],
+  ] as const)(
+    "a 101 with %s fails as the same network failure, closes its socket and frees its slot",
+    async (_label, headerLines) => {
+      const listener = await rawHttpListener((_head, index) =>
+        index === 0 ? rawAnswer("101 Switching Protocols", headerLines) : OK(),
+      );
+      const transport = connect(listener, { maxSockets: 1 });
+      const error = (await failure(() => transport.request(get("/b/k")))) as TransportError;
+      expect({ name: error.name, kind: error.kind, message: error.message }).toEqual({
+        name: "TransportError",
+        kind: "network",
+        message: SWITCHED,
+      });
+      await eventually(() => listener.open() === 0, "the 101 socket to close");
+      expect((await transport.request(get("/b/next"))).bytes.toString()).toBe("ok");
+      expect(listener.accepted()).toBe(2);
+    },
+  );
 });
 
 describe("the exact request target", () => {

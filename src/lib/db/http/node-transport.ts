@@ -1162,8 +1162,10 @@ interface Prepared {
  * answer, its status and the request that carried it once the answer's own errors are wired to the exchange.
  *
  * With `refusesUpgrade`, the byte transport's, a 101 answer fails the request at once as a network failure and its
- * socket is destroyed. node:http hands a 101 to the request's `upgrade` event, never to the response callback, so
- * without it the request never settles: it holds its slot until its deadline and is reported as a timeout.
+ * socket is destroyed. node:http hands a 101 that carries Connection: upgrade and an Upgrade header to the request's
+ * `upgrade` event, never to the response callback, so without it the request never settles: it holds its slot until
+ * its deadline and is reported as a timeout. Any other 101 reaches the response callback, where the byte transport
+ * refuses it by its status.
  */
 function dispatch<T>(
   core: TransportCore,
@@ -1387,6 +1389,12 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
           },
         }),
         (answer, status, outgoing) => {
+          if (status === 101) {
+            // A 101 without both Connection: upgrade and an Upgrade header reaches this callback rather than the
+            // upgrade event; it is refused the same way, and fail() destroys its socket so it never returns to the pool.
+            pending.fail(new TransportError("network", SWITCHED_PROTOCOLS));
+            return;
+          }
           const selected = selectedHeaders(answer.rawHeaders, selection);
           const redirect = redirectRefusal(answer, status, `${address.origin}${pathAndQuery(target)}`);
           if (redirect !== null) {
