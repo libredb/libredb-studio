@@ -144,7 +144,8 @@ describe("request refusals before any socket", () => {
     ["a query starting with &", { target: { path: "/b", query: "&a=b" } }, INVALID_QUERY],
     ["a lower-case escape in the query", { target: { path: "/b", query: "a=%2f" } }, INVALID_QUERY],
     ["a plus in the query", { target: { path: "/b", query: "a=b+c" } }, INVALID_QUERY],
-    ["a 16385-byte target", { target: { path: `/${"a".repeat(16383)}`, query: "" } }, TARGET_TOO_LONG],
+    ["a 16385-byte path-only target", { target: { path: `/${"a".repeat(16384)}`, query: "" } }, TARGET_TOO_LONG],
+    ["a 16385-byte target with a query", { target: { path: "/b", query: `a=${"x".repeat(16380)}` } }, TARGET_TOO_LONG],
   ] as const)("%s", async (_label, override, sentence) => {
     const listener = await rawHttpListener(OK);
     const transport = connect(listener);
@@ -249,11 +250,20 @@ describe("the exact request target", () => {
     expect(lines(listener.heads[0])[0]).toBe(`GET ${query === "" ? path : `${path}?${query}`} HTTP/1.1`);
   });
 
-  test("a target of exactly 16384 bytes is sent", async () => {
+  test("a path-only target of exactly 16384 bytes is sent", async () => {
     const listener = await rawHttpListener(OK);
-    const path = `/${"a".repeat(16382)}`;
+    const path = `/${"a".repeat(16383)}`;
     expect((await connect(listener).request(get(path))).status).toBe(200);
     expect(lines(listener.heads[0])[0]).toBe(`GET ${path} HTTP/1.1`);
+  });
+
+  test("a target with a query of exactly 16384 bytes, the ? counted, is sent", async () => {
+    const listener = await rawHttpListener(OK);
+    const query = `a=${"x".repeat(16379)}`;
+    expect(`/b?${query}`).toHaveLength(16384);
+    const answer = await connect(listener).request(get("/b", { target: { path: "/b", query } }));
+    expect(answer.status).toBe(200);
+    expect(lines(listener.heads[0])[0]).toBe(`GET /b?${query} HTTP/1.1`);
   });
 });
 

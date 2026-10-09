@@ -619,7 +619,10 @@ function requestTargetOf(target: unknown): RequestTarget {
   if (typeof path !== "string" || typeof query !== "string") throw new DatabaseConfigError(INVALID_TARGET);
   if (!TARGET_PATH.test(path)) throw new DatabaseConfigError(INVALID_TARGET_PATH);
   if (!TARGET_QUERY.test(query)) throw new DatabaseConfigError(INVALID_TARGET_QUERY);
-  if (path.length + 1 + query.length > MAX_TARGET_LENGTH) throw new DatabaseConfigError(TARGET_TOO_LONG);
+  // The bytes written as the request target: the "?" only when there is a query.
+  if ((query === "" ? path.length : path.length + 1 + query.length) > MAX_TARGET_LENGTH) {
+    throw new DatabaseConfigError(TARGET_TOO_LONG);
+  }
   return { path, query };
 }
 
