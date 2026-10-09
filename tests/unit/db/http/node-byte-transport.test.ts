@@ -1078,6 +1078,33 @@ describe("the signer at send time", () => {
     expect(signed).toEqual(["/first"]);
   });
 
+  test("four requests on one signal under maxSockets 1: after the abort only the first was signed and dialled", async () => {
+    const silent = await silentListener();
+    const signed: string[] = [];
+    const transport = connect(silent, {
+      maxSockets: 1,
+      signer: signer((input) => {
+        signed.push(input.path);
+        return { authorization: AUTHORIZATION };
+      }),
+    });
+    const controller = new AbortController();
+    const outcomes = ["/a", "/b", "/c", "/d"].map((path) =>
+      failure(() => transport.request(get(path, { signal: controller.signal }))),
+    );
+    await eventually(() => silent.accepted() === 1, "the first request to reach the listener");
+    controller.abort();
+    expect((await Promise.all(outcomes)).map((error) => (error as TransportError).kind)).toEqual([
+      "aborted",
+      "aborted",
+      "aborted",
+      "aborted",
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(signed).toEqual(["/a"]);
+    expect(silent.accepted()).toBe(1);
+  });
+
   test("a signer that throws rejects with that same error and opens no socket", async () => {
     const listener = await rawHttpListener(OK);
     const error = await failure(() => connect(listener, { signer: throwingOn("/b/k") }).request(get("/b/k")));

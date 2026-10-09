@@ -1235,7 +1235,14 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
 
   const exchange = (request: CheckedByteRequest): Promise<NodeByteResponse> =>
     core.queue<NodeByteResponse>(request.signal, (pending) => {
-      const { method, target, perRequest, maxResponseBytes, truncateAt } = request;
+      const { method, target, perRequest, signal, maxResponseBytes, truncateAt } = request;
+      // A signal shared with the request ahead calls that request's abort listener first, and its failure frees this
+      // slot before this request's own listener has run, so this request is taken from the queue already cancelled.
+      // It fails here, never signed and never handed to the Agent, which would dial a socket for it.
+      if (signal.aborted) {
+        pending.fail(abortFailure(signal));
+        return;
+      }
       const headers = { ...connectionHeaders, ...perRequest, host: address.host, "accept-encoding": "identity" };
       let signed: Readonly<Record<string, string>> = {};
       if (signer !== undefined) {
