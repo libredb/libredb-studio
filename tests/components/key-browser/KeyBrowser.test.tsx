@@ -2852,6 +2852,41 @@ describe("a panel listed one level at a time", () => {
     });
   });
 
+  test("a server folder whose first listing failed offers close and reopen only, which lists it again", async () => {
+    const route = levelRoute(["a/x", "a/y", "z/q"], 20);
+    let failed = false;
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.clone().json()) as Record<string, unknown>;
+        if (body.pattern === "a/" && !failed) {
+          failed = true;
+          return { status: 500, json: { error: "the listing failed" } };
+        }
+        return route.handler(req);
+      },
+    });
+    renderLevels();
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0", "z/@0"]);
+    });
+
+    fireEvent.click(twisty("a/"));
+    await waitFor(() => {
+      expect(screen.getByText("the listing failed")).toBeDefined();
+    });
+
+    // One way to retry, the one a folder above the prefix offers: no row under a folder never listed.
+    expect(loadMoreRows()).toHaveLength(0);
+    expect(badgeCell("a/").getAttribute("title")).toBe("Not listed yet: close and reopen the folder to list it");
+
+    fireEvent.click(twisty("a/"));
+    fireEvent.click(twisty("a/"));
+    await waitFor(() => {
+      expect(rows()).toContain("a/x@1");
+    });
+    expect(route.seen.filter((body) => body.pattern === "a/")).toHaveLength(1);
+  });
+
   test("typing in the prefix box asks a new question and closes the folders the last one opened", async () => {
     const route = levelRoute(SPACE, 20);
     mockGlobalFetch({ "/api/db/keys/scan": route.handler });

@@ -458,10 +458,12 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         if (filtering || heldFull) return false;
         const key = pathKey(path);
         if (key === scopeKey) return !exhausted;
-        // A folder above the scope pages its level only once it has been listed: before that the walk
-        // drew it open on the way down, and a row under it would offer a level nobody asked for.
-        if (ancestorKeys.has(key)) return nodeCursors.has(key) && nodeCursors.get(key) !== "0";
-        return serverFolderKeys.has(key) && nodeCursors.get(key) !== "0";
+        // A folder pages its level only once it has been listed: a folder above the scope was drawn open
+        // on the way down, and a server folder whose first listing failed is open with nothing listed,
+        // and a row under either would offer a level nobody has. Both retry by close and reopen.
+        return (
+          (ancestorKeys.has(key) || serverFolderKeys.has(key)) && nodeCursors.has(key) && nodeCursors.get(key) !== "0"
+        );
       }
       /*
        * THREE REASONS NOT TO OFFER IT, and each is a fact rather than a preference.
