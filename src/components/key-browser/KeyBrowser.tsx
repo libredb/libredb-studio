@@ -233,17 +233,6 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
   /** The path whose level the panel's own walk lists, and its identity as a map key. */
   const scope = useMemo(() => levelScope(sent, shape), [sent, shape]);
   const scopeKey = pathKey(scope);
-  /*
-   * A NEW QUESTION OPENS THE SCOPE'S CHAIN, applied on the render it arrives, as `request` is above. A
-   * Browse Keys handover to `sales/` draws `sales/` open with its level listed under it, and every folder
-   * left open by the previous question closes: its listing belonged to the walk being replaced.
-   */
-  const [scopeOpened, setScopeOpened] = useState<string | null>(null);
-  if (levels && scopeOpened !== sent) {
-    setScopeOpened(sent);
-    setOpen(scopeChain(scope));
-  }
-
   const {
     names,
     answered: databasesAnswered,
@@ -280,6 +269,21 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
   /** What the panel says the walk is reading: the choice, or the engine's own session database. */
   const walked = listed ?? sessionDefault;
   const database = listed === null ? undefined : Number(listed);
+  /*
+   * A NEW QUESTION OPENS THE SCOPE'S CHAIN, applied on the render it arrives, as `request` is above. A
+   * Browse Keys handover to `sales/` draws `sales/` open with its level listed under it, and every folder
+   * left open by the previous question closes: its listing belonged to the walk being replaced.
+   *
+   * THE QUESTION IS THE WALK'S WHOLE IDENTITY, not the prefix alone: the panel stays mounted when the
+   * reader switches connection, and a folder left open from another key space would draw open and empty.
+   */
+  const walkIdentity = `${connection.id}|${database ?? ""}|${sent}`;
+  const [scopeOpened, setScopeOpened] = useState<string | null>(null);
+  if (levels && scopeOpened !== walkIdentity) {
+    setScopeOpened(walkIdentity);
+    setOpen(scopeChain(scope));
+  }
+
   /**
    * The database row the tree hangs under, or null when there is no database to draw.
    *
@@ -413,7 +417,9 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
   const toggleFolder = useCallback(
     (node: KeyTreeNode) => {
       const key = pathKey(node.path);
-      const listable = node.serverFolder === true || ancestorKeys.has(key);
+      // The scope row is the walk's own level, listed by the walk under the typed prefix: even when its
+      // parent's listing names it a folder, listing it as one would ask for keys outside that prefix.
+      const listable = key !== scopeKey && (node.serverFolder === true || ancestorKeys.has(key));
       const unlisted = listable && !nodeCursors.has(key) && !nodeLoading.has(key);
       if (levels && !filtering && !open.has(key) && unlisted) void loadMoreUnder(node.path);
       setOpen((previous) => {
@@ -425,7 +431,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         return next;
       });
     },
-    [ancestorKeys, filtering, levels, loadMoreUnder, nodeCursors, nodeLoading, open],
+    [ancestorKeys, filtering, levels, loadMoreUnder, nodeCursors, nodeLoading, open, scopeKey],
   );
   // While a filter is on, every surviving folder is open: a match two levels down that stayed
   // collapsed would look like no match at all, which is the one answer a filter must never give.
@@ -597,6 +603,11 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
       ? ""
       : `${node.children.length.toLocaleString("en-US")}${levelHasMore(pathKey(node.path)) ? "+" : ""}`;
   const levelBadgeTitle = (node: KeyTreeNode): string => {
+    // A folder drawn open and not listed (a folder above the scope, drawn open on the way down) lists
+    // its level on the next open, so the way there is to close it first.
+    if (unlistedFolder(node) && open.has(pathKey(node.path)) && !nodeLoading.has(pathKey(node.path))) {
+      return "Not listed yet: close and reopen the folder to list it";
+    }
     if (unlistedFolder(node)) return "Not listed yet: open the folder to list it";
     const listed = node.children.length;
     const more = levelHasMore(pathKey(node.path)) ? "; more pages remain" : "";

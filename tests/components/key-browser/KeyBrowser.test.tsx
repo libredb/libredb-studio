@@ -2411,12 +2411,16 @@ describe("a panel listed one level at a time", () => {
       expect(rows()).toEqual(["sales/@0", "2026/@1", "sales/2026/ord-b.csv@2", "sales/2026/orders.csv@2"]);
     });
 
-    // Only `2026/`'s ord entries were asked for, so `sales/` holds one row nobody listed it for.
+    // Only `2026/`'s ord entries were asked for, so `sales/` holds one row nobody listed it for. It is
+    // drawn open already, so the way to list it is to close it and open it again.
     expect(badge("sales/")).toBe("");
-    expect(badgeCell("sales/").getAttribute("title")).toBe("Not listed yet: open the folder to list it");
+    expect(badgeCell("sales/").getAttribute("title")).toBe("Not listed yet: close and reopen the folder to list it");
 
     fireEvent.click(twisty("sales/"));
+    // A request the click fired would land a tick later, so the tick is waited for before asserting none.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(route.seen.filter((body) => body.pattern === "sales/")).toEqual([]);
+    expect(badgeCell("sales/").getAttribute("title")).toBe("Not listed yet: open the folder to list it");
     fireEvent.click(twisty("sales/"));
     await waitFor(() => {
       expect(rows()).toContain("sales/a.csv@1");
@@ -2451,6 +2455,52 @@ describe("a panel listed one level at a time", () => {
       expect(rows()).toContain("sales/b.csv@1");
     });
     expect(route.seen.filter((body) => body.pattern === "sales/")[1]).toMatchObject({ cursor: "i:2", level: true });
+  });
+
+  test("the scope row stays the walk's own level after its parent lists it as a folder", async () => {
+    const route = levelRoute(["sales/2026/ord.csv", "sales/2026/q.csv", "sales/a.csv"], 20);
+    mockGlobalFetch({ "/api/db/keys/scan": route.handler });
+    renderLevels({ pattern: "sales/2026/ord" });
+    await waitFor(() => {
+      expect(rows()).toEqual(["sales/@0", "2026/@1", "sales/2026/ord.csv@2"]);
+    });
+    // Listing `sales/` names `2026/` among its folders.
+    fireEvent.click(twisty("sales/"));
+    fireEvent.click(twisty("sales/"));
+    await waitFor(() => {
+      expect(rows()).toContain("sales/a.csv@1");
+    });
+
+    fireEvent.click(twisty("2026/"));
+    fireEvent.click(twisty("2026/"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The typed prefix is the question: `2026/`'s whole level lies outside it and is never asked for.
+    expect(route.seen.filter((body) => body.pattern === "sales/2026/")).toEqual([]);
+    expect(rows()).not.toContain("sales/2026/q.csv@2");
+  });
+
+  test("switching to another connection closes the folders the last walk opened", async () => {
+    const route = levelRoute(SPACE, 20);
+    mockGlobalFetch({ "/api/db/keys/scan": route.handler });
+    const view = renderLevels();
+    await waitFor(() => {
+      expect(rows()).toContain("a/@0");
+    });
+    fireEvent.click(twisty("a/"));
+    await waitFor(() => {
+      expect(rows()).toContain("0/@1");
+    });
+    const before = route.seen.length;
+
+    view.rerender(<KeyBrowser connection={{ ...CONNECTION, id: "s3-2" }} capability={LEVEL_SCAN} />);
+
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0", "z/@0", "top.txt@0"]);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(twisty("a/").getAttribute("aria-label")).toBe("Expand a");
+    expect(route.seen.slice(before).map((body) => body.pattern)).toEqual([undefined]);
   });
 
   test("typing in the prefix box asks a new question and closes the folders the last one opened", async () => {
