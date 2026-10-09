@@ -2664,6 +2664,35 @@ describe("a panel listed one level at a time", () => {
     expect(badgeCell("a/").getAttribute("title")).toBe("Not listed yet: open the folder to list it");
   });
 
+  test("a folder above the prefix that holds its rows reopens at the held limit, asking for nothing", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": {
+        json: {
+          keys: Array.from({ length: HELD_KEY_LIMIT }, (_, index) => `a/b/k${index}`),
+          prefixes: [],
+          cursor: "c1",
+          total: 0,
+          types: {},
+        },
+      },
+    });
+    renderLevels({ pattern: "a/b/" });
+    await waitFor(() => {
+      expect(screen.queryByTestId("key-browser-held")).not.toBeNull();
+    });
+    const before = fetchMock.mock.calls.length;
+
+    fireEvent.click(twisty("a/"));
+    expect(twisty("a/").getAttribute("aria-label")).toBe("Expand a");
+    fireEvent.click(twisty("a/"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Unlisted, but not empty: its rows are already held, so opening it draws them and lists nothing.
+    expect(twisty("a/").getAttribute("aria-label")).toBe("Collapse a");
+    expect(rows()).toContain("b/@1");
+    expect(fetchMock.mock.calls.length).toBe(before);
+  });
+
   test("an unlisted folder's twisty under a filter leaves it closed once the filter is cleared", async () => {
     const route = levelRoute(["a/x", "ab/y", "readme", "z/q"], 3);
     mockGlobalFetch({ "/api/db/keys/scan": route.handler });

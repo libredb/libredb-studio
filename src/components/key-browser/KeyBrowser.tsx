@@ -431,9 +431,10 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
       // parent's listing names it a folder, listing it as one would ask for keys outside that prefix.
       const listable = key !== scopeKey && (node.serverFolder === true || ancestorKeys.has(key));
       const unlisted = listable && !nodeCursors.has(key) && !nodeLoading.has(key);
-      // An unlisted folder opens only when its level can be listed now: under a filter, or with the panel
-      // held full, it would open with nothing listed and no row to list it, so the press changes nothing.
-      if (levels && unlisted && !open.has(key) && (filtering || heldFull)) return;
+      // An unlisted folder that holds no rows opens only when its level can be listed now: under a filter,
+      // or with the panel held full, it would open empty with no row to list it, so the press changes
+      // nothing. One whose rows are already held, a folder above the prefix, opens without a listing.
+      if (levels && unlisted && node.children.length === 0 && !open.has(key) && (filtering || heldFull)) return;
       if (levels && !open.has(key) && unlisted) void loadMoreUnder(node.path);
       setOpen((previous) => {
         const next = new Set(previous);
