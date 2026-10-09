@@ -2227,6 +2227,8 @@ describe("a panel listed one level at a time", () => {
     "List all of this level",
     "Load more of this folder",
     "Listing this folder",
+    "Load more of the top level",
+    "Listing the top level",
     "entries listed",
     "entry listed",
     "Nothing is listed",
@@ -2885,6 +2887,61 @@ describe("a panel listed one level at a time", () => {
       expect(rows()).toContain("a/x@1");
     });
     expect(route.seen.filter((body) => body.pattern === "a/")).toHaveLength(1);
+  });
+
+  test("words the top level's own row by its level, while it asks and after", async () => {
+    // A no-op default rather than `| null`: the executor below replaces it before anything waits.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const route = levelRoute(["a/x", "b/y", "c.txt"], 2);
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.clone().json()) as Record<string, unknown>;
+        if (body.cursor === "i:2") await gate;
+        return route.handler(req);
+      },
+    });
+    renderLevels();
+    await waitFor(() => {
+      expect(loadMoreRows()[0]?.textContent).toContain("Load more of the top level");
+    });
+
+    fireEvent.click(loadMoreRows()[0]);
+    await waitFor(() => {
+      expect(loadMoreRows()[0]?.textContent).toContain("Listing the top level...");
+    });
+    release();
+    await waitFor(() => {
+      expect(rows()).toContain("c.txt@0");
+    });
+    expect(loadMoreRows()).toEqual([]);
+  });
+
+  test("on mount, the top level's busy row is the loading state and the empty state's spinner is not drawn", async () => {
+    // A no-op default rather than `| null`: the executor below replaces it before anything waits.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const route = levelRoute(["a/x", "b/y", "c.txt"], 2);
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        await gate;
+        return route.handler(req);
+      },
+    });
+    renderLevels();
+    await waitFor(() => {
+      expect(loadMoreRows()[0]?.textContent).toContain("Listing the top level...");
+    });
+    expect(screen.queryByTestId("key-browser-empty")).toBeNull();
+
+    release();
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0", "b/@0"]);
+    });
   });
 
   test("typing in the prefix box asks a new question and closes the folders the last one opened", async () => {

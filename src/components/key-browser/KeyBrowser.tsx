@@ -962,6 +962,8 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
               // other row presses its folder's own listing (Keys panel levels, spec 3.6).
               const ownLevel = levels && key === scopeKey;
               const loading = ownLevel ? busy : nodeLoading.has(key);
+              // The top level is no folder, so its row names its level; every folder's row names the folder.
+              const topLevel = ownLevel && scope.length === 0;
               return (
                 <button
                   key={`more:${key}`}
@@ -1004,9 +1006,11 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                   <span className="truncate text-xs text-muted-foreground">
                     {loading
                       ? levels
-                        ? "Listing this folder..."
+                        ? topLevel
+                          ? "Listing the top level..."
+                          : "Listing this folder..."
                         : "Asking for one more page..."
-                      : `${levels ? "Load more of this folder" : "Click to load more"}${outcomeOf(nodeAdded.get(key))}`}
+                      : `${levels ? (topLevel ? "Load more of the top level" : "Load more of this folder") : "Click to load more"}${outcomeOf(nodeAdded.get(key))}`}
                   </span>
                   {/*
                       THE COUNT THIS PRESS IS MEASURED AGAINST, in the same right-hand column every
