@@ -170,6 +170,8 @@ type MySQLQueryable = Pick<PoolConnection, "query" | "execute">;
  * The one exception is a server that refuses COM_STMT_PREPARE itself, which
  * `probeClientSideBinding()` measures at connect: there a parameterised statement is
  * written out by `bindClientSide()` and goes over the text protocol like any other.
+ * A server that prepares some statements and refuses others is met per statement, by
+ * `bindAfterRefusedPrepare()` (#1403).
  *
  * `arrayRows` asks for each row as its values in column order (`rowsAsArray`), on every one of
  * those paths. A user's statement is read that way, see `buildQueryResult`; the provider's own
@@ -185,17 +187,27 @@ const runStatement = <T extends RowDataPacket[] = RowDataPacket[]>(
   if (core !== undefined && BINDS_CLIENT_SIDE.has(core) && params !== undefined && params.length > 0) {
     return runBoundClientSide<T>(queryable, core as CoreConnection, sql, params, arrayRows);
   }
+  const prepared = (answer: Promise<[T, FieldPacket[]]>, values: unknown[]): Promise<[T, FieldPacket[]]> =>
+    core === undefined
+      ? answer
+      : answer.catch((error: unknown) =>
+          bindAfterRefusedPrepare<T>(error, queryable, core as CoreConnection, sql, values, arrayRows),
+        );
   if (core !== undefined && UTF8_UNDER_UTF8MB3.has(core)) {
-    return runReadingUtf8mb3AsUtf8<T>(core as CoreConnection, statementOf(sql, arrayRows), params);
+    const answer = runReadingUtf8mb3AsUtf8<T>(core as CoreConnection, statementOf(sql, arrayRows), params);
+    return params === undefined || params.length === 0 ? answer : prepared(answer, params);
   }
   // Two calls each rather than one over `statementOf()`: mysql2 types the text and the options
   // object as two overloads, and the provider's own reads keep sending the bare text.
   if (params === undefined || params.length === 0) {
     return arrayRows ? queryable.query<T>({ sql, rowsAsArray: true }) : queryable.query<T>(sql);
   }
-  return arrayRows
-    ? queryable.execute<T>({ sql, rowsAsArray: true }, asExecuteParams(params))
-    : queryable.execute<T>(sql, asExecuteParams(params));
+  return prepared(
+    arrayRows
+      ? queryable.execute<T>({ sql, rowsAsArray: true }, asExecuteParams(params))
+      : queryable.execute<T>(sql, asExecuteParams(params)),
+    params,
+  );
 };
 
 /** The statement as mysql2 takes it: the bare text, or with `rowsAsArray` when array rows are asked for. */
@@ -385,17 +397,71 @@ const probeClientSideBinding = async (queryable: MySQLQueryable): Promise<boolea
   const { errno, fatal, message } = refusal as { errno?: unknown; fatal?: unknown; message?: unknown };
   if (fatal === true || errno === ER_MAX_PREPARED_STMT_COUNT_REACHED) return false;
   if ((await prepares()) === undefined) return false;
-  try {
-    const [rows] = await queryable.query<RowDataPacket[]>(`SELECT ${stringLiteral(BINDING_PROBE_VALUE)} AS bound`);
-    if (rows[0]?.bound !== BINDING_PROBE_VALUE) return false;
-  } catch {
-    return false;
-  }
+  if ((await literalReadsBack(queryable)) !== true) return false;
   console.info(
     `[MySQL] The server refused to prepare a statement (errno ${String(errno)}: ${String(message)}); this pool writes parameter values into the statement text.`,
   );
   return true;
 };
+
+/**
+ * Whether the server reads `stringLiteral()` of `BINDING_PROBE_VALUE` back unchanged, or
+ * `undefined` when it did not answer the question.
+ */
+const literalReadsBack = async (queryable: MySQLQueryable): Promise<boolean | undefined> => {
+  try {
+    const [rows] = await queryable.query<RowDataPacket[]>(`SELECT ${stringLiteral(BINDING_PROBE_VALUE)} AS bound`);
+    return rows[0]?.bound === BINDING_PROBE_VALUE;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * `This command is not supported in the prepared statement protocol yet`, MySQL's own code for a
+ * statement class the server will not prepare.
+ */
+const ER_UNSUPPORTED_PS = 1295;
+
+/** The core connections that answered `literalReadsBack()`, and what they answered. */
+const LITERAL_READ_BACK = new WeakMap<object, boolean>();
+
+/**
+ * A parameterised statement the server refused to PREPARE, sent once more as text with its values
+ * written in by `runBoundClientSide()` (#1403). Any other failure is rethrown unchanged.
+ *
+ * StarRocks prepares `SELECT ?` and refuses `UPDATE`, `INSERT` and `DELETE` with a placeholder:
+ * measured 2026-10-09 through mysql2 on `starrocks/allin1-ubuntu:latest` and `:3.3.22`, each
+ * answered errno 1295 `ER_UNSUPPORTED_PS`, a bare `prepare()` of the UPDATE did too, and after a
+ * refused `UPDATE pk SET n = n + 1 WHERE id = ?` the row still read `n = 0`. So the refusal comes
+ * at COM_STMT_PREPARE and nothing has run when the statement is sent again. Every inline row edit
+ * there failed with that sentence while the same UPDATE typed in the editor saved.
+ *
+ * Only 1295 on a live connection is retried, because it is the one answer that says "this
+ * statement, prepared" rather than "this statement". The written literal is the one
+ * `probeClientSideBinding()` checks at connect, and it is checked the same way on this connection
+ * before its first retry: a server that does not read it back unchanged keeps its refusal.
+ * Measured on both StarRocks versions and MySQL 26.7.0, the literal read back byte for byte in a
+ * text SELECT and in a text UPDATE.
+ */
+async function bindAfterRefusedPrepare<T extends RowDataPacket[]>(
+  error: unknown,
+  queryable: MySQLQueryable,
+  core: CoreConnection,
+  sql: string,
+  params: unknown[],
+  arrayRows: boolean,
+): Promise<[T, FieldPacket[]]> {
+  const { errno, fatal } = (error ?? {}) as { errno?: unknown; fatal?: unknown };
+  if (errno !== ER_UNSUPPORTED_PS || fatal === true) throw error;
+  let readsBack = LITERAL_READ_BACK.get(core);
+  if (readsBack === undefined) {
+    readsBack = await literalReadsBack(queryable);
+    if (readsBack !== undefined) LITERAL_READ_BACK.set(core, readsBack);
+  }
+  if (readsBack !== true) throw error;
+  return runBoundClientSide<T>(queryable, core, sql, params, arrayRows);
+}
 
 /**
  * One result set read as array rows: its columns named by `uniqueFieldNames`, and each row keyed by

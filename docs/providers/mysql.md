@@ -192,6 +192,7 @@ module-local helper, `runStatement(queryable, sql, params?)`
 |-----------|--------|----------|
 | carries parameters | `conn.execute(sql, params)` | binary, server-side prepared |
 | carries parameters, on a server measured to refuse `COM_STMT_PREPARE` | `conn.query(sql, params)` | text, values escaped in client-side ([below](#a-server-that-prepares-nothing-binds-client-side)) |
+| carries parameters, and the server refused to prepare this statement with errno 1295 | `conn.execute`, then once more as `conn.query` | text, values escaped in client-side ([below](#a-server-that-refuses-to-prepare-some-statements)) |
 | carries none (or an empty array) | `conn.query(sql)` | text |
 
 Parameterised statements are unchanged: the placeholders are what the prepared protocol is for, and
@@ -381,6 +382,44 @@ transaction state in the status flags ([§6.0.1](#601-servers-that-report-no-tra
 Databend is no longer a relative of this provider: it ships as the `databend` type-id over its own HTTP
 query API ([databend.md](./databend.md)), and these measurements stay as the record of what its MySQL
 handler answers a `mysql` connection.
+
+#### A server that refuses to prepare some statements
+
+StarRocks prepares a `SELECT` and refuses to prepare data-changing statements (#1403). Measured
+2026-10-09 through mysql2 on `starrocks/allin1-ubuntu:latest` (`current_version()` `4.1.6-6862092`)
+and `:3.3.22` (`3.3.22-753696f`), a PRIMARY KEY table, one connection each:
+
+| Call | Answer |
+|---|---|
+| `execute("SELECT ? AS x", [1])` | `[{"x":1}]` |
+| `execute` of an `UPDATE`, an `INSERT` or a `DELETE` with a placeholder | errno 1295 `ER_UNSUPPORTED_PS`: `This command is not supported in the prepared statement protocol yet` |
+| `prepare("UPDATE pk SET n = n + 1 WHERE id = ?")`, nothing executed | the same |
+| the row after a refused `UPDATE pk SET n = n + 1 WHERE id = ?` | `n = 0`, unchanged |
+
+So `probeClientSideBinding()` keeps such a pool on the prepared path, its reads answer, and every
+inline row edit failed with that sentence while the same `UPDATE` typed in the editor saved. The
+refusal comes at `COM_STMT_PREPARE` and nothing has run, so `runStatement` answers it per statement:
+a parameterised statement still goes to `execute()`, and only when that rejects with errno 1295 on a
+live connection is the same statement sent once more through `runBoundClientSide()`, written with the
+literal described above and subject to the same `NO_BACKSLASH_ESCAPES` check. Before the first such
+retry on a connection, the literal round trip `probeClientSideBinding()` asks for at connect is asked
+on that connection and the answer kept for it; a server that does not read it back unchanged keeps the
+1295 refusal. Any other error, a fatal one included, is the server's verdict on the statement and is
+not retried. A server that prepares the statement, MySQL and Doris among them, never reaches this.
+
+Measured through the provider on 2026-10-09, the inline editor's own two statements (the key check
+`SELECT ... COUNT(*) ... WHERE id IN (?)`, then `UPDATE pk SET name = ? WHERE id = ?` with
+`it's a "quoted" \path`), then `UPDATE pk SET n = n + 1 WHERE id = ?`:
+
+| Server | before #1403 | since |
+|---|---|---|
+| StarRocks 4.1.6 and 3.3.22 | both `UPDATE`s refused with the 1295 sentence; the row unchanged | both saved: `rowCount` 1, the value read back exactly, `n` went from 0 to 1 |
+| MySQL 26.7.0 (`mysql:latest`) | saved, prepared | the same |
+| Apache Doris 4.1.3 (`apache/doris:all-in-one-4.1.3`, a UNIQUE KEY table) | saved, prepared | the same |
+
+`tests/integration/db/mysql-wire-decoding.test.ts` runs the real driver against an in-process server
+that prepares a `SELECT` and refuses an `UPDATE`, an `INSERT` or a `DELETE` with 1295, on both
+decoding paths, and pins the text it receives.
 
 ### 3.5 No server-side query timeout
 

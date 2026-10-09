@@ -139,20 +139,47 @@ const prepareOkPacket = (statementId: number) => {
  * - `switches-to-verbatim`: refuses COM_STMT_PREPARE and reads backslash escapes while the provider
  *   connects, then reads a backslash as an ordinary character, as a session does after
  *   `SET SESSION sql_mode = CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES')`.
+ * - `refuses-dml-prepare`: COM_STMT_PREPARE is answered for a SELECT and refused with
+ *   `ER_UNSUPPORTED_PS` for an UPDATE, an INSERT or a DELETE, as StarRocks refuses them (#1403).
+ * - `refuses-dml-prepare-verbatim`: the same, with a literal's backslash read as a character.
+ * - `refuses-dml-prepare-no-probe`: the same, and the text protocol refuses the binding probe.
+ * - `refuses-dml-otherwise`: the DML is refused at prepare with an error that is not 1295.
  *
  * Every text statement the server receives is kept in `received`, so a test can read what the
- * client-side binding actually sent.
+ * client-side binding actually sent, and every statement it is asked to prepare in `prepared`.
  */
-type Binding = "prepares" | "refuses-prepare" | "refuses-prepare-verbatim" | "refuses-both" | "switches-to-verbatim";
+type Binding =
+  | "prepares"
+  | "refuses-prepare"
+  | "refuses-prepare-verbatim"
+  | "refuses-both"
+  | "switches-to-verbatim"
+  | "refuses-dml-prepare"
+  | "refuses-dml-prepare-verbatim"
+  | "refuses-dml-prepare-no-probe"
+  | "refuses-dml-otherwise";
 
 interface StartedServer {
   port: number;
   close: () => void;
   received: string[];
+  prepared: string[];
 }
 
 /** Databend's refusal of COM_STMT_PREPARE, measured 2026-10-04 on 1.2.881: errno 1105. */
 const PREPARE_REFUSAL = { message: "Prepare is not support in Databend.", code: 1105 };
+
+/**
+ * StarRocks's refusal of a prepared UPDATE, INSERT or DELETE, measured 2026-10-09 on
+ * `starrocks/allin1-ubuntu:latest` and `:3.3.22`: errno 1295, `ER_UNSUPPORTED_PS`.
+ */
+const UNSUPPORTED_PS_REFUSAL = {
+  message: "This command is not supported in the prepared statement protocol yet",
+  code: 1295,
+};
+
+/** A prepare refusal that is not 1295, which the provider must not answer by writing values in. */
+const OTHER_DML_REFUSAL = { message: "You have an error in your SQL syntax", code: 1064 };
 
 /** `SELECT '<literal>' AS bound`: the provider's binding probe, its literal in group 1. */
 const BOUND_PROBE = /^SELECT '((?:[^'\\]|\\[\s\S]|'')*)' AS bound$/;
@@ -170,6 +197,7 @@ const BACKSLASH_CHECK = "SELECT 'a\\\\b' AS backslash";
 const startServer = (textLabel: number, binding: Binding = "prepares"): Promise<StartedServer> => {
   const server = (mysql2 as unknown as { createServer(): FakeServer }).createServer();
   const received: string[] = [];
+  const prepares: string[] = [];
   let connectionId = 0;
   const result: Column[] = [
     { name: "v", characterSet: textLabel, columnType: VAR_STRING, flags: 0 },
@@ -210,8 +238,11 @@ const startServer = (textLabel: number, binding: Binding = "prepares"): Promise<
           [definition({ name: "backslash", characterSet: textLabel, columnType: VAR_STRING, flags: 0 })],
         );
       } else if (bound !== null) {
-        const literal = readLiteral(bound[1], binding === "refuses-prepare-verbatim");
-        if (binding === "refuses-both") {
+        const literal = readLiteral(
+          bound[1],
+          binding === "refuses-prepare-verbatim" || binding === "refuses-dml-prepare-verbatim",
+        );
+        if (binding === "refuses-both" || binding === "refuses-dml-prepare-no-probe") {
           connection.writeError({ message: `unsupported: ${sql}`, code: 1064 });
         } else {
           connection.writeTextResult(
@@ -279,8 +310,16 @@ const startServer = (textLabel: number, binding: Binding = "prepares"): Promise<
     const prepared = new Map<number, string>();
     connection.on("stmt_prepare", (sql) => {
       connection.sequenceId = 1;
-      if (binding !== "prepares") {
-        connection.writeError(PREPARE_REFUSAL);
+      const refusesDml = binding.startsWith("refuses-dml");
+      prepares.push(sql);
+      if (refusesDml ? /^(UPDATE|INSERT|DELETE)/.test(sql) : binding !== "prepares") {
+        connection.writeError(
+          !refusesDml
+            ? PREPARE_REFUSAL
+            : binding === "refuses-dml-otherwise"
+              ? OTHER_DML_REFUSAL
+              : UNSUPPORTED_PS_REFUSAL,
+        );
         connection.sequenceId = 0;
         return;
       }
@@ -307,7 +346,7 @@ const startServer = (textLabel: number, binding: Binding = "prepares"): Promise<
   });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () =>
-      resolve({ port: server._server.address().port, close: () => server.close(), received }),
+      resolve({ port: server._server.address().port, close: () => server.close(), received, prepared: prepares }),
     );
   });
 };
@@ -680,6 +719,139 @@ describe("a server that refuses COM_STMT_PREPARE (Databend)", () => {
     expect((result.rows[0] as Record<string, unknown>).v).toBe(TEXT);
     expect(reads(preparing)).toEqual([]);
     expect(reads(refusing)).toEqual(["SELECT v, b FROM t WHERE v = 'x'"]);
+  });
+});
+
+/**
+ * A server that prepares a SELECT and refuses to prepare an UPDATE, an INSERT or a DELETE with
+ * `ER_UNSUPPORTED_PS` (1295), as StarRocks does (#1403). The pool keeps the prepared path, and a
+ * statement the server refused is sent once more as text with its values written in. Both decoding
+ * paths are run, because StarRocks labels its text utf8mb3.
+ */
+describe("a server that refuses to prepare DML (StarRocks)", () => {
+  const servers: StartedServer[] = [];
+  const start = async (textLabel: number, binding: Binding) => {
+    const server = await startServer(textLabel, binding);
+    servers.push(server);
+    return server;
+  };
+  afterAll(() => {
+    for (const server of servers) server.close();
+  });
+
+  /** The text UPDATEs a server received, which only the client-side binding sends here. */
+  const updates = (server: StartedServer) => server.received.filter((sql) => sql.startsWith("UPDATE"));
+  const probes = (server: StartedServer) => server.received.filter((sql) => BOUND_PROBE.test(sql));
+
+  test.each([
+    ["labels text utf8mb4", UTF8MB4_UNICODE_CI],
+    ["labels text utf8mb3", UTF8MB3_GENERAL_CI],
+  ])("an UPDATE the server refused to prepare is sent as text and applied (server %s)", async (_label, textLabel) => {
+    const server = await start(textLabel, "refuses-dml-prepare");
+    const provider = await connected(server.port);
+
+    const result = await provider.query("UPDATE t SET v = ? WHERE id = ?", ["new", 1]);
+
+    expect((result as { rowCount: number }).rowCount).toBe(1);
+    expect(server.prepared).toContain("UPDATE t SET v = ? WHERE id = ?");
+    expect(updates(server)).toEqual(["UPDATE t SET v = 'new' WHERE id = 1"]);
+  });
+
+  test("a value holding quotes and a backslash is written so it reads back as written", async () => {
+    const server = await start(UTF8MB4_UNICODE_CI, "refuses-dml-prepare");
+    const provider = await connected(server.port);
+    const value = `it's a "quoted" \\path`;
+
+    await provider.query("UPDATE t SET v = ? WHERE id = ?", [value, 1]);
+
+    const [sent] = updates(server);
+    const literal = /^UPDATE t SET v = '((?:[^'\\]|\\[\s\S]|'')*)' WHERE id = 1$/.exec(sent ?? "");
+    expect(readLiteral(literal?.[1] ?? "", false)).toBe(value);
+  });
+
+  test("an INSERT and a DELETE are retried the same way", async () => {
+    const server = await start(UTF8MB4_UNICODE_CI, "refuses-dml-prepare");
+    const provider = await connected(server.port);
+
+    await provider.query("INSERT INTO t (v) VALUES (?)", ["x"]);
+    await provider.query("DELETE FROM t WHERE v = ?", ["x"]);
+
+    expect(server.received).toContain("INSERT INTO t (v) VALUES ('x')");
+    expect(server.received).toContain("DELETE FROM t WHERE v = 'x'");
+  });
+
+  test("a server that prepares the UPDATE, as MySQL does, is never sent it as text", async () => {
+    const server = await start(UTF8MB4_UNICODE_CI, "prepares");
+    const provider = await connected(server.port);
+
+    await provider.query("UPDATE t SET v = ? WHERE id = ?", ["x", 1]);
+
+    expect(server.prepared).toContain("UPDATE t SET v = ? WHERE id = ?");
+    expect(updates(server)).toEqual([]);
+    expect(probes(server)).toEqual([]);
+  });
+
+  test("a SELECT with parameters stays on the prepared protocol", async () => {
+    const server = await start(UTF8MB4_UNICODE_CI, "refuses-dml-prepare");
+    const provider = await connected(server.port);
+
+    const result = await provider.query("SELECT v, b FROM t WHERE v = ?", ["x"]);
+
+    expect((result.rows[0] as Record<string, unknown>).v).toBe(TEXT);
+    expect(server.prepared).toContain("SELECT v, b FROM t WHERE v = ?");
+    expect(server.received.filter((sql) => sql.startsWith("SELECT v, b"))).toEqual([]);
+  });
+
+  test("the literal is checked once per connection, before the first retry", async () => {
+    const server = await start(UTF8MB4_UNICODE_CI, "refuses-dml-prepare");
+    const provider = await connected(server.port);
+    // The pool check's connection does not bind client-side, so connect asked nothing of the literal.
+    expect(probes(server)).toEqual([]);
+
+    await provider.query("UPDATE t SET v = ? WHERE id = ?", ["a", 1]);
+    await provider.query("UPDATE t SET v = ? WHERE id = ?", ["b", 1]);
+
+    expect(probes(server)).toHaveLength(1);
+    expect(updates(server)).toEqual(["UPDATE t SET v = 'a' WHERE id = 1", "UPDATE t SET v = 'b' WHERE id = 1"]);
+  });
+
+  test("a transaction's connection retries the same way", async () => {
+    const server = await start(UTF8MB4_UNICODE_CI, "refuses-dml-prepare");
+    const provider = await connected(server.port);
+
+    await provider.beginTransaction();
+    await provider.queryInTransaction("UPDATE t SET v = ? WHERE id = ?", ["x", 1]);
+    await provider.commitTransaction();
+
+    expect(updates(server)).toEqual(["UPDATE t SET v = 'x' WHERE id = 1"]);
+  });
+
+  /**
+   * The literal has to read back exactly before anything is written in, and a refusal that does not
+   * say "prepared" is the server's verdict on the statement, so neither is retried.
+   */
+  test.each([
+    ["reads a backslash verbatim", "refuses-dml-prepare-verbatim" as const, UNSUPPORTED_PS_REFUSAL.message],
+    ["refuses the literal check", "refuses-dml-prepare-no-probe" as const, UNSUPPORTED_PS_REFUSAL.message],
+    ["refuses the prepare with another error", "refuses-dml-otherwise" as const, OTHER_DML_REFUSAL.message],
+  ])("a server that %s keeps its refusal and is sent no text", async (_label, binding, message) => {
+    const server = await start(UTF8MB4_UNICODE_CI, binding);
+    const provider = await connected(server.port);
+
+    const failure = await provider.query("UPDATE t SET v = ? WHERE id = ?", ["x", 1]).catch((error: unknown) => error);
+
+    expect((failure as Error).message).toContain(message);
+    expect(updates(server)).toEqual([]);
+  });
+
+  test("a literal check the server refused is asked again on the next refusal", async () => {
+    const server = await start(UTF8MB4_UNICODE_CI, "refuses-dml-prepare-no-probe");
+    const provider = await connected(server.port);
+
+    await provider.query("UPDATE t SET v = ? WHERE id = ?", ["x", 1]).catch(() => undefined);
+    await provider.query("UPDATE t SET v = ? WHERE id = ?", ["y", 1]).catch(() => undefined);
+
+    expect(probes(server)).toHaveLength(2);
   });
 });
 

@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D253, U17 · 157
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U107 · 99
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U107 · 98
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC18 · 15
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -3178,17 +3178,6 @@ Db2 declares `kinds` for the same reason: RUNSTATS and REORG are refused on a vi
 Found by the acceptance pass of the vector-family work; the menu entries predate it.
 
 **Done when:** PostgreSQL and SQLite declare `kinds` on the operations their row menus offer, naming the kinds each engine runs them on, measured on a PostgreSQL materialized view and on SQLite's `ANALYZE` of a view, and a test asserts that a view's row menu offers no maintenance entry its engine would not run.
-
-### X26. The /monitoring Tables and Sessions tabs offer maintenance and Terminate to a non-admin, and the server refuses them
-
-`MonitoringDashboard` (`src/components/monitoring/MonitoringDashboard.tsx:304-310`) renders `SessionsTab` and `TablesTab` without `isAdmin`, and both default it to `true`, so a signed-in user who is not an admin sees every per-row Analyze, Vacuum and Reindex control and every Terminate button on /monitoring.
-Each click is sent, and `POST /api/db/maintenance` answers `403 {"error":"Unauthorized. Admin access required."}`, shown as a toast, while the object tree's row menus already hide these entries from the same user.
-Measured 2026-10-03 in the acceptance pass of the vector-family work, signed in with the user role on a PostgreSQL connection: 6 maintenance buttons and 7 Terminate buttons, each click answered 403.
-`TablesTab`'s docblock already names that default as older behaviour and leaves it alone.
-
-Found by the acceptance pass of the vector-family work; the default predates it.
-
-**Done when:** `MonitoringDashboard` passes the signed-in role to both tabs, a non-admin sees no maintenance or Terminate control on /monitoring, and a component test renders the dashboard as a non-admin and finds none.
 
 ### X27. A query that reaches its deadline is answered HTTP 408, which Chromium resends, so the statement runs up to three times
 
