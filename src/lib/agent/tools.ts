@@ -2586,9 +2586,44 @@ const TOOL_OWNING_FIELD: Readonly<Record<string, string>> = Object.freeze({
   after: "compare_plans",
 });
 
+/**
+ * The `source` each evidence field belongs to, for a citation sent under the wrong branch.
+ *
+ * `evidenceSchema` is a discriminated union on `source`, so a model holding an artifact id that
+ * declares `context-snapshot` is validated against the snapshot branch: it is told its
+ * `correlationId` is surplus and a `fingerprint` is missing. Both halves are true of that branch
+ * and neither is the remedy, which is to name the branch the field it sent belongs to.
+ *
+ * Measured 2026-10-09 on `gemma4:e2b` investigation: 101 refusals in one five-run cell, all this
+ * mistake, the cell at 0/5 with two runs spending seven minutes re-sending the same call. The same
+ * refusal appears in `laguna-xs-2.1:latest` and `devstral-small-2:24b`. It is the shape
+ * `TOOL_OWNING_FIELD` already answers one level up: the server can see which branch was meant
+ * because the key is in the input, and `remove` is the one instruction that loses it.
+ */
+const EVIDENCE_SOURCE_OWNING_FIELD: Readonly<Record<string, string>> = Object.freeze({
+  correlationId: "artifact",
+  fingerprint: "context-snapshot",
+});
+
+/** The field the OTHER branch requires, so the half-truth about it can be dropped. */
+const EVIDENCE_SIBLING_FIELD: Readonly<Record<string, string>> = Object.freeze({
+  correlationId: "fingerprint",
+  fingerprint: "correlationId",
+});
+
 function describeIssues(issues: readonly z.core.$ZodIssue[], input: unknown): string {
   const renames = renamesAmong(issues, input);
   const renamedTo = new Set(renames.values());
+  // A citation under the wrong branch: the path of every evidence object that sent one branch's
+  // field, mapped to that field, so the sibling's "expected string, received nothing" can be
+  // dropped where it would contradict the instruction being given.
+  const misbranched = new Map<string, string>();
+  for (const issue of issues) {
+    if (issue.code !== "unrecognized_keys") continue;
+    for (const key of issue.keys) {
+      if (EVIDENCE_SOURCE_OWNING_FIELD[key] !== undefined) misbranched.set(issue.path.join("."), key);
+    }
+  }
   const named = [
     ...[...renames].map(([from, to]) => `rename ${from} to ${to}`),
     ...issues.flatMap((issue) => {
@@ -2628,8 +2663,30 @@ function describeIssues(issues: readonly z.core.$ZodIssue[], input: unknown): st
             ? []
             : [`${key} belongs to ${owner} — call ${owner} with it first, then call this tool again without it`];
         });
-        const strays = surplus.filter((key) => TOOL_OWNING_FIELD[key] === undefined);
-        return [...misfiled, ...(strays.length === 0 ? [] : [`${where}: remove ${strays.join(", ")}`])];
+        // A key that belongs to the OTHER BRANCH of this union is not surplus either: the model
+        // sent the right id under the wrong `source`, and `remove` loses the id. See
+        // `EVIDENCE_SOURCE_OWNING_FIELD`.
+        const misbranchedHere = surplus.flatMap((key) => {
+          const source = EVIDENCE_SOURCE_OWNING_FIELD[key];
+          return source === undefined
+            ? []
+            : [`${where}: ${key} belongs to source "${source}" — set source to "${source}" and keep ${key}`];
+        });
+        const strays = surplus.filter(
+          (key) => TOOL_OWNING_FIELD[key] === undefined && EVIDENCE_SOURCE_OWNING_FIELD[key] === undefined,
+        );
+        return [
+          ...misfiled,
+          ...misbranchedHere,
+          ...(strays.length === 0 ? [] : [`${where}: remove ${strays.join(", ")}`]),
+        ];
+      }
+      // The sibling branch's required field, where the model sent this branch's: naming it would
+      // contradict the instruction above, which tells the model to keep what it sent.
+      if (issue.code === "invalid_type" && issue.path.length > 0) {
+        const parent = issue.path.slice(0, -1).join(".");
+        const sent = misbranched.get(parent);
+        if (sent !== undefined && EVIDENCE_SIBLING_FIELD[sent] === String(issue.path.at(-1))) return [];
       }
       return [describeIssue(issue, where, input)];
     }),
