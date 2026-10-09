@@ -65,6 +65,11 @@ function batchSize(capability: KeyScanCapability): number {
 export interface KeyScanResult {
   /** Distinct keys the walk has seen, in the order it saw them. */
   readonly keys: readonly string[];
+  /**
+   * The folder prefixes the server named, distinct, in the order they arrived (Keys panel levels,
+   * spec 3.5). Always empty on an engine that declares no `levels`: only a level page carries them.
+   */
+  readonly folders: readonly string[];
   /** Keys the walk has been handed, repeats included. */
   readonly scanned: number;
   /**
@@ -181,8 +186,14 @@ export function useKeyScan(options: {
    * prefix with, the pattern it builds, and the word the Scan all sentence uses.
    */
   const shape = useMemo(() => keyScanShape(capability), [capability]);
+  /**
+   * Whether this engine lists its key space one level at a time (Keys panel levels, spec 3.5). Read
+   * once: every request then asks for a level, and every page's folders are held beside its keys.
+   */
+  const levels = capability.levels !== undefined;
 
   const [keys, setKeys] = useState<readonly string[]>([]);
+  const [folders, setFolders] = useState<readonly string[]>([]);
   const [scanned, setScanned] = useState(0);
   const [total, setTotal] = useState<number | null>(null);
   const [clustered, setClustered] = useState<boolean | undefined>(undefined);
@@ -243,6 +254,11 @@ export function useKeyScan(options: {
    */
   const walked = useRef(new Set<string>());
   /*
+   * The server folders the tree has been handed, for the reason `walked` holds keys: a folder named by
+   * two pages is one folder, and the list the tree is built from must not grow with repeats.
+   */
+  const heldFolders = useRef(new Set<string>());
+  /*
    * Each prefix's own walk, keyed by `pathKey`. In a ref because the read has to see what the last
    * scoped page wrote, exactly as the global cursor does, and mirrored into state below because a row
    * has to RENDER the difference between "never asked" and "asked and there is no more".
@@ -284,6 +300,9 @@ export function useKeyScan(options: {
         // reads an absent `database` as "the session's", which is exactly what a panel with no
         // database chosen means.
         ...(database === undefined ? {} : { database }),
+        // Only an engine that declares levels is asked for one (Keys panel levels, spec 3.5); every other
+        // engine's body is byte-identical to the one it always received.
+        ...(levels ? { level: true as const } : {}),
       };
       const response = await appFetch("/api/db/keys/scan", {
         method: "POST",
@@ -308,9 +327,11 @@ export function useKeyScan(options: {
         clustered: body.clustered,
         // Passed through as it came: `scanMore` adds it up and `loadMoreUnder` leaves it alone (spec 4.6).
         skipped: body.skipped,
+        // A level page's folders, absent on every other page (Keys panel levels, spec 3.5).
+        prefixes: body.prefixes,
       };
     },
-    [connection, database],
+    [connection, database, levels],
   );
 
   /**
@@ -330,6 +351,21 @@ export function useKeyScan(options: {
       walked.current.add(name);
       fresh.push(name);
     }
+    return fresh;
+  }, []);
+
+  /**
+   * The folders in a page the tree does not hold yet, and the record that it now does (Keys panel
+   * levels, spec 3.5). The same two steps `absorb` takes for keys, for the server's folder prefixes.
+   */
+  const absorbFolders = useCallback((prefixes: readonly string[]): string[] => {
+    const fresh: string[] = [];
+    for (const prefix of prefixes) {
+      if (heldFolders.current.has(prefix)) continue;
+      heldFolders.current.add(prefix);
+      fresh.push(prefix);
+    }
+    if (fresh.length > 0) setFolders((previous) => [...previous, ...fresh]);
     return fresh;
   }, []);
 
@@ -366,7 +402,9 @@ export function useKeyScan(options: {
       // database or a pattern nobody is looking at any more, beside a cursor from that walk.
       if (!alive.current || mine !== walk.current) return true;
       cursor.current = page.cursor;
-      scannedKeys.current += page.keys.length;
+      // A level page's folders are entries the walk was handed, as its keys are (Keys panel levels,
+      // spec 3.5), so the progress line and Scan all's budget count both.
+      scannedKeys.current += page.keys.length + (page.prefixes?.length ?? 0);
       failure.current = null;
       /*
        * What the page LEFT OUT, added up across the global walk's pages (spec 4.6). A page that left
@@ -380,6 +418,8 @@ export function useKeyScan(options: {
         };
         setSkipped(skippedKeys.current);
       }
+      // Folders before keys, so a panel that fills keeps the level's structure ahead of its leaves.
+      absorbFolders(page.prefixes ?? []);
       const fresh = absorb(page.keys);
       absorbTypes(page);
       setKeys((previous) => (fresh.length === 0 ? previous : [...previous, ...fresh]));
@@ -412,7 +452,7 @@ export function useKeyScan(options: {
       if (alive.current && mine === walk.current) setBusy(false);
     }
     return true;
-  }, [absorb, absorbTypes, capability, pattern, readPageAt]);
+  }, [absorb, absorbFolders, absorbTypes, capability, pattern, readPageAt]);
 
   const scanAll = useCallback(async (): Promise<void> => {
     // A page in flight for the CURRENT walk is one this loop is already waiting on, so a second press
@@ -543,12 +583,16 @@ export function useKeyScan(options: {
         nodeCursor.current.set(key, page.cursor);
         setNodeCursors(new Map(nodeCursor.current));
 
+        // The folder's own level (Keys panel levels, spec 3.5): its prefixes are held to its segments as
+        // its keys are, and absorbed first.
+        const freshFolders = absorbFolders((page.prefixes ?? []).filter((name) => isUnderPrefix(name, path, shape)));
         const fresh = absorb(page.keys.filter((name) => isUnderPrefix(name, path, shape)));
         absorbTypes(page);
         setKeys((previous) => (fresh.length === 0 ? previous : [...previous, ...fresh]));
         // Recorded whatever the answer: a page that added nothing is the case this number exists to
-        // report, and leaving it out would draw that press as one that never happened.
-        setNodeAdded((previous) => new Map(previous).set(key, fresh.length));
+        // report, and leaving it out would draw that press as one that never happened. A folder the
+        // page named is something it added, as a key is.
+        setNodeAdded((previous) => new Map(previous).set(key, fresh.length + freshFolders.length));
         setError(null);
       } catch (thrown) {
         if (!alive.current || mine !== walk.current) return;
@@ -567,7 +611,7 @@ export function useKeyScan(options: {
         }
       }
     },
-    [absorb, absorbTypes, capability, readPageAt, shape],
+    [absorb, absorbFolders, absorbTypes, capability, readPageAt, shape],
   );
 
   const stop = useCallback((): void => {
@@ -592,8 +636,10 @@ export function useKeyScan(options: {
     nodeCursor.current.clear();
     nodeInFlight.current.clear();
     walked.current.clear();
+    heldFolders.current.clear();
     knownTypes.current.clear();
     setKeys([]);
+    setFolders([]);
     setScanned(0);
     setSkipped(null);
     setTotal(null);
@@ -609,6 +655,7 @@ export function useKeyScan(options: {
 
   return {
     keys,
+    folders,
     scanned,
     total,
     clustered,

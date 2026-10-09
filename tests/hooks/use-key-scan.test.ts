@@ -1504,3 +1504,218 @@ describe("a walk in a declared shape", () => {
     expect(result.current.stoppedBy).toBeNull();
   });
 });
+
+/**
+ * A walk listed ONE LEVEL AT A TIME (Keys panel levels, spec 3.5): an engine that declares `levels`
+ * is asked for a level, answers the folder prefixes of that level beside its keys, and the hook holds
+ * the folders as the tree's server folders. The three shipped engines declare no levels and send
+ * exactly the bodies they always did.
+ */
+describe("a walk listed one level at a time", () => {
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  const LEVEL_SCAN = {
+    defaultCount: 500,
+    maxCount: 1000,
+    separator: "/",
+    cursor: "opaque",
+    pattern: "prefix",
+    totalScope: "none",
+    levels: { rootKind: "bucket" },
+  } as const;
+  const ETCD_LIKE = {
+    defaultCount: 500,
+    maxCount: 1000,
+    separator: "/",
+    cursor: "opaque",
+    pattern: "prefix",
+    totalScope: "walk",
+  } as const;
+  const OXIA_LIKE = { ...ETCD_LIKE, totalScope: "none" } as const;
+
+  /** A level page, in the shape the route answers with. */
+  function levelPage(keys: string[], prefixes: string[], cursor: string): MockFetchResponse {
+    return { json: { keys, prefixes, cursor, total: 0, types: {} } };
+  }
+
+  function levelHook() {
+    return renderHook(() => useKeyScan({ connection: CONNECTION, capability: LEVEL_SCAN, pattern: "" }));
+  }
+
+  test("sends no level key and holds no folders under the Redis, etcd and Oxia declarations", async () => {
+    for (const capability of [CAPABILITY, ETCD_LIKE, OXIA_LIKE]) {
+      const fetchMock = mockGlobalFetch({ "/api/db/keys/scan": page(["a/x", "a:y"], "c1") });
+      const { result, unmount } = renderHook(() => useKeyScan({ connection: CONNECTION, capability, pattern: "" }));
+
+      // oxlint-disable-next-line no-await-in-loop -- one declaration at a time: each owns the global fetch mock.
+      await act(async () => {
+        await result.current.scanMore();
+      });
+      // oxlint-disable-next-line no-await-in-loop -- one declaration at a time: each owns the global fetch mock.
+      await act(async () => {
+        await result.current.loadMoreUnder(["a"]);
+      });
+
+      const bodies = bodiesOf(fetchMock);
+      expect(bodies.length).toBe(2);
+      expect(bodies.some((body) => "level" in body)).toBe(false);
+      expect(result.current.folders).toEqual([]);
+      unmount();
+      restoreGlobalFetch();
+    }
+  });
+
+  test("asks for a level and holds the page's folders, counting keys and folders as listed", async () => {
+    const fetchMock = mockGlobalFetch({ "/api/db/keys/scan": levelPage(["readme"], ["a/", "z/"], "c1") });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    const body = bodiesOf(fetchMock)[0];
+    expect(body).toMatchObject({ cursor: "0", count: 500, level: true });
+    expect("pattern" in body).toBe(false);
+    expect(result.current.folders).toEqual(["a/", "z/"]);
+    expect(result.current.keys).toEqual(["readme"]);
+    expect(result.current.scanned).toBe(3);
+  });
+
+  test("lists a folder's own level with the largest batch, and continues it from its own cursor", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as { pattern?: string; cursor: string };
+        if (body.pattern === undefined) return levelPage([], ["a/"], "0");
+        // `b/x/` is outside the folder asked about, and is held to the folder's segments as a key is.
+        return body.cursor === "0"
+          ? levelPage(["a/k1"], ["a/b/", "a/c/", "b/x/"], "a:1")
+          : levelPage(["a/k2"], ["a/d/"], "0");
+      },
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder(["a"]);
+    });
+
+    expect(bodiesOf(fetchMock)[1]).toMatchObject({ cursor: "0", pattern: "a/", count: 1000, level: true });
+    expect(result.current.folders).toEqual(["a/", "a/b/", "a/c/"]);
+    expect(result.current.keys).toEqual(["a/k1"]);
+    expect(result.current.nodeAdded.get(pathKey(["a"]))).toBe(3);
+    // The folder's page is not the panel's walk, so the progress stays the walk's own.
+    expect(result.current.scanned).toBe(1);
+
+    await act(async () => {
+      await result.current.loadMoreUnder(["a"]);
+    });
+
+    expect(bodiesOf(fetchMock)[2]).toMatchObject({ cursor: "a:1", pattern: "a/", level: true });
+    expect(result.current.folders).toEqual(["a/", "a/b/", "a/c/", "a/d/"]);
+    expect(result.current.keys).toEqual(["a/k1", "a/k2"]);
+    expect(result.current.nodeCursors.get(pathKey(["a"]))).toBe("0");
+  });
+
+  test("a spent level stops the panel's walk and leaves a folder's own listing working", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as { pattern?: string };
+        return body.pattern === undefined ? levelPage([], ["a/"], "0") : levelPage(["a/x"], [], "0");
+      },
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    expect(result.current.exhausted).toBe(true);
+
+    let asked = true;
+    await act(async () => {
+      asked = await result.current.scanMore();
+    });
+    expect(asked).toBe(false);
+    expect(fetchMock.mock.calls.length).toBe(1);
+
+    await act(async () => {
+      await result.current.loadMoreUnder(["a"]);
+    });
+    expect(fetchMock.mock.calls.length).toBe(2);
+    expect(result.current.keys).toEqual(["a/x"]);
+  });
+
+  test("reset empties the folders and drops a folder's page that lands after it", async () => {
+    // A no-op default rather than `| null`: the executor below replaces it before anything waits.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as { pattern?: string };
+        if (body.pattern === undefined) return levelPage([], ["a/"], "0");
+        await gate;
+        return levelPage(["a/x"], ["a/b/"], "0");
+      },
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    expect(result.current.folders).toEqual(["a/"]);
+
+    let pending: Promise<void> = Promise.resolve();
+    act(() => {
+      pending = result.current.loadMoreUnder(["a"]);
+    });
+    act(() => {
+      result.current.reset();
+    });
+    expect(result.current.folders).toEqual([]);
+
+    release();
+    await act(async () => {
+      await pending;
+    });
+    expect(result.current.folders).toEqual([]);
+    expect(result.current.keys).toEqual([]);
+  });
+
+  /**
+   * Review Focus 5: a server folder whose last segment is empty (`a//`) or is a lone `*` lists ITS OWN
+   * range when opened. `pathPattern` reads the path, never the name, so `["a", "*"]` is not read
+   * as the folder mark of `a/`.
+   */
+  test("Review Focus 5: a folder whose last segment is empty or * lists its own range", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as { pattern?: string };
+        if (body.pattern === "a//") return levelPage(["a//k"], ["a//b/"], "0");
+        if (body.pattern === "a/*/") return levelPage(["a/*/x"], [], "0");
+        return levelPage([], ["a/"], "0");
+      },
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder(["a", ""]);
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder(["a", "*"]);
+    });
+
+    const bodies = bodiesOf(fetchMock);
+    expect(bodies[1]).toMatchObject({ pattern: "a//", level: true });
+    expect(bodies[2]).toMatchObject({ pattern: "a/*/", level: true });
+    expect(result.current.folders).toEqual(["a/", "a//b/"]);
+    expect(result.current.keys).toEqual(["a//k", "a/*/x"]);
+  });
+});
