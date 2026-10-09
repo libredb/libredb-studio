@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D253, U17 · 157
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U104 · 96
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U106 · 98
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC18 · 15
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -4265,6 +4265,28 @@ Showing both views at once would change the sidebar for Redis, etcd and Oxia, wh
 Found 2026-10-09 while designing the folder-aware Keys panel for object stores.
 
 **Done when:** a side-by-side layout is designed that leaves Redis, etcd and Oxia unchanged, or the owner declines it.
+
+### U105. The key scan route passes on a cursor its own next request refuses
+
+`POST /api/db/keys/scan` holds the cursor a caller sends to the walk's declared shape (`readCursor` in `src/app/api/db/keys/scan/route.ts`), but returns the cursor a provider answers without looking at it.
+So a provider that declares a `decimal` cursor and answers a page with another one gets that page through with `200`, and the reader's next page is refused with `400` `"cursor" must be a decimal cursor the previous page answered with`, a sentence that blames the reader for the provider's defect.
+Measured 2026-10-10 with test doubles on the folder-aware Keys panel branch: a decimal level walk answering cursor `"a"` and a plain decimal key walk answering cursor `"k"` both gave `200` on the first page and that `400` on the second.
+
+Found 2026-10-09 by an adversarial review of the folder-aware Keys panel.
+
+**Done when:** the route refuses an answered cursor that does not match the declared shape with a `500` naming the provider, on every walk, with route tests for a `decimal` and an `"opaque"` declaration.
+
+### U106. A Scan all whose walk was reset writes its ending onto the next walk
+
+`scanAll` in `src/components/key-browser/use-key-scan.ts` applies its ending after its loop, `setScanningAll(false)` and, when `stopped.current` is set, `setStoppedBy("Stopped.")`, without checking that its walk is still the current one.
+`reset` sets `stopped.current` to end that loop, so a Scan all whose page is in flight when the walk is reset writes `Stopped.` onto the fresh walk.
+Measured 2026-10-10 with a hook test: start `scanAll()` with its first page held, call `reset()` and release the page, and `stoppedBy` reads `"Stopped."` where `null` is expected.
+Read from the code and not measured: a Scan all started on the new walk sets `stopped.current` back to `false`, so the old loop asks for another page, is refused while the new page is in flight, and calls `setScanningAll(false)` while the new loop still runs.
+`main` has the same tail.
+
+Found 2026-10-09 by an adversarial review of the folder-aware Keys panel; pre-existing.
+
+**Done when:** the loop checks its walk generation before it writes anything, with a hook test for each of the two cases.
 
 ## Dependencies
 
