@@ -1718,4 +1718,121 @@ describe("a walk listed one level at a time", () => {
     expect(result.current.folders).toEqual(["a/", "a//b/"]);
     expect(result.current.keys).toEqual(["a//k", "a/*/x"]);
   });
+
+  test("counts held folders and keys against one limit, absorbing a page's folders first", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": levelPage(
+        Array.from({ length: HELD_KEY_LIMIT - 1 }, (_, index) => `k${index}`),
+        ["a/", "b/"],
+        "c1",
+      ),
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    // 9,999 keys and 2 folders were handed over: the folders went in first, and the keys stopped at
+    // ten thousand entries in all.
+    expect(result.current.folders).toEqual(["a/", "b/"]);
+    expect(result.current.keys.length).toBe(HELD_KEY_LIMIT - 2);
+
+    // Full, so neither the walk nor a folder's own listing buys a page it would drop.
+    let asked = true;
+    await act(async () => {
+      asked = await result.current.scanMore();
+    });
+    expect(asked).toBe(false);
+    await act(async () => {
+      await result.current.loadMoreUnder(["a"]);
+    });
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(result.current.nodeCursors.size).toBe(0);
+  });
+
+  test("under the Redis declaration the limit falls at the same key as it always did", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": page(
+        Array.from({ length: HELD_KEY_LIMIT + 1 }, (_, index) => `bulk:${index}`),
+        "7",
+      ),
+    });
+    const { result } = hook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    expect(result.current.keys.length).toBe(HELD_KEY_LIMIT);
+    expect(result.current.keys.at(-1)).toBe(`bulk:${HELD_KEY_LIMIT - 1}`);
+    expect(result.current.folders).toEqual([]);
+  });
+
+  test("ends a Scan all at 10,000 entries with the level sentence", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": levelPage(
+        Array.from({ length: SCAN_ALL_MAX_KEYS - 10 }, (_, index) => `k${index}`),
+        Array.from({ length: 10 }, (_, index) => `p${index}/`),
+        "c1",
+      ),
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanAll();
+    });
+
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(result.current.stoppedBy).toBe(
+      "Stopped after 10,000 entries. Narrow the prefix to list a smaller part of the key space.",
+    );
+  });
+
+  test("holds a folder marker twice: its folder in the parent level and its key in its own", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as { pattern?: string };
+        return body.pattern === "m/" ? levelPage(["m/", "m/x"], [], "0") : levelPage([], ["m/"], "0");
+      },
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder(["m"]);
+    });
+
+    expect(result.current.folders).toEqual(["m/"]);
+    expect(result.current.keys).toEqual(["m/", "m/x"]);
+  });
+
+  test("with 9,998 other keys held, the marker's folder and key reach the limit and the next key is dropped", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as { pattern?: string };
+        if (body.pattern === "m/") return levelPage(["m/", "m/x"], [], "0");
+        return levelPage(
+          Array.from({ length: HELD_KEY_LIMIT - 2 }, (_, index) => `k${index}`),
+          ["m/"],
+          "0",
+        );
+      },
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder(["m"]);
+    });
+
+    expect(result.current.folders).toEqual(["m/"]);
+    expect(result.current.keys.length).toBe(HELD_KEY_LIMIT - 1);
+    expect(result.current.keys).toContain("m/");
+    expect(result.current.keys).not.toContain("m/x");
+  });
 });

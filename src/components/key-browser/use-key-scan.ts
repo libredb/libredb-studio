@@ -335,39 +335,57 @@ export function useKeyScan(options: {
   );
 
   /**
+   * What the panel HOLDS: keys plus server folders (Keys panel levels, spec 3.5), each a drawn row.
+   *
+   * THE ONLY READER OF `HELD_KEY_LIMIT` in this hook: `absorb`, `absorbFolders` and the guards of
+   * `scanMore` and `loadMoreUnder` all ask it, so no guard buys a page that `absorb` would drop, and
+   * the panel's own `heldFull` reads the same sum. A folder marker is held twice on purpose, its
+   * folder in the parent level and its key in its own, because both are drawn. With no folders this
+   * is `walked.current.size`, so an engine without levels meets the limit at the same key it always did.
+   */
+  const heldEntries = useCallback((): number => walked.current.size + heldFolders.current.size, []);
+
+  /**
    * The names in a page the tree does not hold yet, and the record that it now does.
    *
    * One function because two callers need the same two steps in the same order, and a caller that
    * read `walked` before the other had written it would append a batch twice.
    */
-  const absorb = useCallback((names: readonly string[]): string[] => {
-    const fresh: string[] = [];
-    for (const name of names) {
-      // A repeat is skipped before the limit is even consulted: a key already held is not a key that
-      // the limit is being asked about, and a page of nothing but repeats must not be read as "the
-      // tree is full" when it is merely "you have seen these".
-      if (walked.current.has(name)) continue;
-      if (walked.current.size >= HELD_KEY_LIMIT) break;
-      walked.current.add(name);
-      fresh.push(name);
-    }
-    return fresh;
-  }, []);
+  const absorb = useCallback(
+    (names: readonly string[]): string[] => {
+      const fresh: string[] = [];
+      for (const name of names) {
+        // A repeat is skipped before the limit is even consulted: a key already held is not a key that
+        // the limit is being asked about, and a page of nothing but repeats must not be read as "the
+        // tree is full" when it is merely "you have seen these".
+        if (walked.current.has(name)) continue;
+        if (heldEntries() >= HELD_KEY_LIMIT) break;
+        walked.current.add(name);
+        fresh.push(name);
+      }
+      return fresh;
+    },
+    [heldEntries],
+  );
 
   /**
    * The folders in a page the tree does not hold yet, and the record that it now does (Keys panel
    * levels, spec 3.5). The same two steps `absorb` takes for keys, for the server's folder prefixes.
    */
-  const absorbFolders = useCallback((prefixes: readonly string[]): string[] => {
-    const fresh: string[] = [];
-    for (const prefix of prefixes) {
-      if (heldFolders.current.has(prefix)) continue;
-      heldFolders.current.add(prefix);
-      fresh.push(prefix);
-    }
-    if (fresh.length > 0) setFolders((previous) => [...previous, ...fresh]);
-    return fresh;
-  }, []);
+  const absorbFolders = useCallback(
+    (prefixes: readonly string[]): string[] => {
+      const fresh: string[] = [];
+      for (const prefix of prefixes) {
+        if (heldFolders.current.has(prefix)) continue;
+        if (heldEntries() >= HELD_KEY_LIMIT) break;
+        heldFolders.current.add(prefix);
+        fresh.push(prefix);
+      }
+      if (fresh.length > 0) setFolders((previous) => [...previous, ...fresh]);
+      return fresh;
+    },
+    [heldEntries],
+  );
 
   /**
    * Record what a page said about its keys' types.
@@ -390,7 +408,7 @@ export function useKeyScan(options: {
     const mine = walk.current;
     // A tree that is FULL cannot be given anything, so this walk would buy a page to drop it: the
     // panel's own sentence is what the reader should be reading instead of a request in flight.
-    if (walked.current.size >= HELD_KEY_LIMIT) return false;
+    if (heldEntries() >= HELD_KEY_LIMIT) return false;
     if (spent.current || pageInFlight.current === mine) return false;
     pageInFlight.current = mine;
     setBusy(true);
@@ -452,7 +470,7 @@ export function useKeyScan(options: {
       if (alive.current && mine === walk.current) setBusy(false);
     }
     return true;
-  }, [absorb, absorbFolders, absorbTypes, capability, pattern, readPageAt]);
+  }, [absorb, absorbFolders, absorbTypes, capability, heldEntries, pattern, readPageAt]);
 
   const scanAll = useCallback(async (): Promise<void> => {
     // A page in flight for the CURRENT walk is one this loop is already waiting on, so a second press
@@ -493,7 +511,11 @@ export function useKeyScan(options: {
         const limit = SCAN_ALL_MAX_KEYS.toLocaleString("en-US");
         // The word for what narrows a walk follows the declaration: a prefix, or a `MATCH` pattern.
         const narrow = shape.pattern === "prefix" ? "prefix" : "pattern";
-        reason = `Stopped after ${limit} keys. Narrow the ${narrow} to walk a smaller key space.`;
+        // A level walk counts folders and keys alike, so its sentence says entries (Keys panel levels,
+        // spec 3.5).
+        reason = levels
+          ? `Stopped after ${limit} entries. Narrow the prefix to list a smaller part of the key space.`
+          : `Stopped after ${limit} keys. Narrow the ${narrow} to walk a smaller key space.`;
         break;
       }
     }
@@ -504,7 +526,7 @@ export function useKeyScan(options: {
     // Applied after the cap's sentence rather than instead of it, so a Stop pressed in the same turn
     // is what a reader sees: the two are ordered, not merged.
     if (stopped.current) setStoppedBy("Stopped.");
-  }, [scanMore, shape]);
+  }, [levels, scanMore, shape]);
 
   /**
    * One page of a walk scoped to ONE PREFIX, for the Load more row under an open folder.
@@ -539,7 +561,7 @@ export function useKeyScan(options: {
       // The tree is full: a scoped page would be filtered, deduplicated against a tree that already
       // holds its keys, and dropped — so the row is not offered and a press that somehow arrives
       // spends nothing.
-      if (walked.current.size >= HELD_KEY_LIMIT) return;
+      if (heldEntries() >= HELD_KEY_LIMIT) return;
 
       // One page per prefix at a time, for the reason `scanMore` gives about the global walk: two in
       // flight would both read this prefix's cursor and both advance from it.
@@ -611,7 +633,7 @@ export function useKeyScan(options: {
         }
       }
     },
-    [absorb, absorbFolders, absorbTypes, capability, readPageAt, shape],
+    [absorb, absorbFolders, absorbTypes, capability, heldEntries, readPageAt, shape],
   );
 
   const stop = useCallback((): void => {
