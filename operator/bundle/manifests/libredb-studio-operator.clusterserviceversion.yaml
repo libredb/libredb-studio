@@ -22,7 +22,7 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.18.1
-    createdAt: "2026-10-08T16:00:27Z"
+    createdAt: "2026-10-09T00:08:28Z"
     description: Open-source web-based SQL IDE for twenty-seven engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
       ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra,
@@ -44,7 +44,8 @@ spec:
   customresourcedefinitions:
     owned:
     - description: A LibreDB Studio instance managed by the operator. The spec mirrors
-        the Helm chart values; every field left unset falls back to the chart defaults.
+        the Helm chart values except extraObjects, which the operator refuses; every
+        field left unset falls back to the chart defaults.
       displayName: LibreDB Studio
       kind: LibreDBStudio
       name: libredbstudios.studio.libredb.org

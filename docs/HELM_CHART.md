@@ -35,6 +35,7 @@ charts/libredb-studio/
     ├── pdb.yaml               # PodDisruptionBudget
     ├── pvc.yaml               # PersistentVolumeClaim (SQLite mode)
     ├── networkpolicy.yaml     # Ingress/egress rules (DB ports, DNS, HTTPS)
+    ├── extra-objects.yaml     # extraObjects: user manifests rendered through tpl (default none)
     └── NOTES.txt              # Post-install usage instructions
 ```
 

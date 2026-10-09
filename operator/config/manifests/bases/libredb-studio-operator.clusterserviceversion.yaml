@@ -25,7 +25,8 @@ spec:
   customresourcedefinitions:
     owned:
     - description: A LibreDB Studio instance managed by the operator. The spec mirrors
-        the Helm chart values; every field left unset falls back to the chart defaults.
+        the Helm chart values except extraObjects, which the operator refuses; every
+        field left unset falls back to the chart defaults.
       displayName: LibreDB Studio
       kind: LibreDBStudio
       name: libredbstudios.studio.libredb.org

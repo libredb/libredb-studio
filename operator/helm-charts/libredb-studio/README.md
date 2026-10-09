@@ -190,9 +190,9 @@ helm install libredb libredb/libredb-studio \
 
 `secrets.adminPassword` is not part of an OIDC install: the issuer authenticates every user, and the app still signs its own session cookie with `secrets.jwtSecret`. Strict mode (`config.authBootstrap=off`) therefore requires only the JWT secret here.
 
-### Trusting a private CA
+## Trusting a private CA
 
-When the issuer (or Vault, or a database over TLS) uses a certificate from an internal CA, Node.js rejects it unless the CA is added to `NODE_EXTRA_CA_CERTS`. Mount the CA from a ConfigMap or Secret already in the namespace with `extraVolumes` and `extraVolumeMounts`, and point the variable at the file through `extraEnv`:
+When the OIDC issuer, Vault or a database server uses a certificate from an internal CA, Node.js rejects it unless the CA is added to `NODE_EXTRA_CA_CERTS`. Mount the CA from a ConfigMap or Secret already in the namespace with `extraVolumes` and `extraVolumeMounts`, and point the variable at the file through `extraEnv`:
 
 ```yaml
 extraVolumes:
@@ -209,6 +209,7 @@ extraEnv:
 ```
 
 Without it the OIDC login fails with a TLS error such as `UNABLE_TO_VERIFY_LEAF_SIGNATURE`.
+Node reads the file only when the container starts, and the chart's restart-on-change checksums cover only the ConfigMap and Secret it renders itself, so after the CA changes, run `kubectl rollout restart` on the Deployment.
 
 ## AI Configuration
 
@@ -594,6 +595,31 @@ Your external secret is referenced with these keys (customizable via `secrets.ex
 - `jwt-secret`, `admin-password` — required in strict mode (the pod waits for them); in zero-config mode missing ones are generated at first start
 - Optional: `admin-email`, `user-email`, `user-password` (the non-admin account exists only when `user-password` is set), `admin-totp-secret`, `user-totp-secret`, `llm-api-key`, `oidc-client-id`, `oidc-client-secret`, `storage-postgres-url`
 
+To ship the `ExternalSecret` with the release, so it is installed, upgraded and removed with it, list it in `extraObjects`:
+
+```yaml
+config:
+  authBootstrap: "off"
+secrets:
+  existingSecret: libredb-secrets
+extraObjects:
+  - apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata:
+      name: libredb-secrets
+    spec:
+      secretStoreRef:
+        kind: SecretStore
+        name: vault
+      target:
+        name: libredb-secrets
+      dataFrom:
+        - extract:
+            key: libredb/studio
+```
+
+Strict mode (`config.authBootstrap: "off"`) matters here: it makes the pod wait for the Secret the ExternalSecret creates, where zero-config mode would start without it and generate credentials of its own first.
+
 ## Upgrading
 
 ```bash
@@ -684,7 +710,7 @@ helm uninstall libredb
 | `postgresql.enabled` | Deploy PostgreSQL subchart | `false` |
 | `extraVolumes` | Additional pod volumes (Kubernetes `Volume` objects), such as a private CA from a ConfigMap or Secret | `[]` |
 | `extraVolumeMounts` | Additional volume mounts for the app container (Kubernetes `VolumeMount` objects). With a CA mounted, set `NODE_EXTRA_CA_CERTS` to the file through `extraEnv` so an OIDC issuer or Vault on an internal CA is trusted | `[]` |
-| `extraObjects` | Additional Kubernetes manifests deployed with the release, each rendered through `tpl` so it can use release values and the chart's helpers; a string item is taken as a template as it is | `[]` |
+| `extraObjects` | Additional Kubernetes manifests deployed with the release, each rendered through `tpl` so it can use release values and the chart's helpers; a string item is taken as a template as it is. Not available through the OpenShift operator, whose CRD refuses it | `[]` |
 | `global.compatibility.openshift.adaptSecurityContext` | Drop fixed UID/GID fields for the OpenShift SCC: `auto`, `force`, or `disabled` | `auto` |
 
 See [values.yaml](values.yaml) for the complete list of configurable parameters.
