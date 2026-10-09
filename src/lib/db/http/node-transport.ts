@@ -1198,7 +1198,7 @@ interface CheckedByteRequest {
  */
 export function createNodeByteTransport(options: NodeByteTransportOptions): NodeByteTransport {
   const { port } = options.origin;
-  // Checked before connectionOf builds the Agent, so a refused selection leaves nothing behind.
+  // Checked before the core is built, so a refused selection builds no Agent.
   const selection = responseHeaderSelectionOf(options.responseHeaders);
   const { address, connectionHeaders, requestHeaderNames, coreSettings } = connectionOf(
     options,

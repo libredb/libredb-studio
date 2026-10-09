@@ -2730,7 +2730,7 @@ Found 2026-10-08 while fixing the red-team findings on the Databend provider's t
 
 ### D254. Metadata services outside link-local networks are not refused
 
-The byte transport refuses the entries of `LINK_LOCAL_NETWORKS` in `src/lib/db/http/egress-policy.ts` (`169.254.0.0/16` with its IPv4-mapped and NAT64 forms, `fe80::/10`, `fd00:ec2::254`) whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says (`docs/SECURITY.md` row 0.6).
+The byte transport refuses the entries of `LINK_LOCAL_NETWORKS` in `src/lib/db/http/egress-policy.ts` (`169.254.0.0/16` with its IPv4-mapped form and its NAT64 form under the well-known prefix `64:ff9b::/96`, `fe80::/10`, `fd00:ec2::254`) whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says (`docs/SECURITY.md` row 0.6).
 A metadata service a cloud serves at any other address is reachable with the guard off, and no primary source for such addresses was read when the list was written.
 The first candidate to verify is Alibaba Cloud's `100.100.100.200`, reported by a reviewer and not yet sourced; it sits in CGNAT `100.64.0.0/10`, which the byte transport refuses only when `DB_HTTP_BLOCK_PRIVATE_HOSTS` is on.
 The second is `169.254.0.0/16` behind the NAT64 local-use prefix `64:ff9b:1::/48`, which the guard's own list holds and `LINK_LOCAL_NETWORKS` does not, so with the guard off the byte transport reaches it.
