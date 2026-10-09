@@ -4,6 +4,97 @@ entries:
   - annotations:
       artifacthub.io/category: database
       artifacthub.io/changes: |
+        - "Databend shows its official icon from the Databend brand assets in place of the warehouse drawn for Studio"
+        - "A new connection starts with Environment set to Other, which shows no badge, instead of Local"
+        - "Generate Test Data leaves foreign-key columns out and keeps primary-key and unique values distinct, MongoDB included"
+        - "A Source tab re-reads its object when opened again and has a refresh control"
+        - "Fixes across PostgreSQL and its relatives, the wire-compatible engines, Vitess, MongoDB, Redis and Oracle Schema Diff"
+        - "Track app release 0.18.2 (appVersion bump; default image tag follows)"
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:0.18.2
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 0.18.2
+    created: "2026-10-09T20:21:40.571451855Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting twenty-seven
+      engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB,
+      Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino,
+      Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant,
+      InfluxDB, InfluxDB 3, Oxia and Databend
+    digest: 70f9b71bb240170e17b8a239b412b143479e87d81966ccb35c3cb4c968cc1cba
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - libsql
+    - turso
+    - duckdb
+    - prometheus
+    - promql
+    - kafka
+    - etcd
+    - db2
+    - ibm-db2
+    - neo4j
+    - cypher
+    - victoriametrics
+    - redpanda
+    - milvus
+    - qdrant
+    - influxdb
+    - influxql
+    - influxdb3
+    - oxia
+    - databend
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.81/libredb-studio-0.1.81.tgz
+    version: 0.1.81
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
         - "Three optional values, extraVolumes, extraVolumeMounts and extraObjects, mount extra volumes into the app container (such as a private CA, trusted by pointing NODE_EXTRA_CA_CERTS at it through extraEnv) and ship extra Kubernetes manifests with the release; all empty by default, so nothing changes when unset"
       artifacthub.io/containsSecurityUpdates: "false"
       artifacthub.io/images: |
@@ -5183,4 +5274,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-09T01:03:37.25424807Z"
+generated: "2026-10-09T20:21:40.56698546Z"
