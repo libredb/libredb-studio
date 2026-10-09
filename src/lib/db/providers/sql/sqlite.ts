@@ -47,7 +47,13 @@ import {
 } from "../../errors";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
-import { loadSQLiteDriver, type SQLiteDatabase, type SQLiteStatement } from "./sqlite-driver";
+import {
+  loadSQLiteDriver,
+  type SQLiteDatabase,
+  type SQLiteDeclaredColumn,
+  type SQLiteStatement,
+} from "./sqlite-driver";
+import { SQLiteWorkerClient, type SQLiteHandle, type SQLiteRawRead, type SQLiteWorkerOpen } from "./sqlite-worker";
 import { declaredColumnTypes } from "./column-types";
 import {
   applySourceBound,
@@ -974,15 +980,15 @@ export interface SQLiteTableSizeBytes {
  * right - but a test that reads the driver's name to predict which arm it is on is
  * reading the wrong thing.
  */
-export function readDbstatSizes(db: SQLiteDatabase): Map<string, SQLiteTableSizeBytes> | null {
-  let pages: { name: string; bytes: number }[];
-  try {
-    pages = db.prepare(DBSTAT_SIZES_SQL).all() as { name: string; bytes: number }[];
-  } catch {
-    return null;
-  }
-
-  const owners = db.prepare(DBSTAT_INDEX_OWNERS_SQL).all() as { name: string; tbl_name: string }[];
+/**
+ * Turn the two `dbstat` reads into per-table sizes. Shared by the in-process
+ * handle (`readDbstatSizes`) and the worker handle (`getTableStats`), so the two
+ * paths cannot disagree about how an index's pages are attributed.
+ */
+function buildDbstatSizes(
+  pages: readonly { name: string; bytes: number }[],
+  owners: readonly { name: string; tbl_name: string }[],
+): Map<string, SQLiteTableSizeBytes> {
   const bytesByObject = new Map(pages.map((page) => [page.name, Number(page.bytes) || 0]));
   const indexNames = new Set(owners.map((owner) => owner.name));
   const sizes = new Map<string, SQLiteTableSizeBytes>();
@@ -1005,6 +1011,18 @@ export function readDbstatSizes(db: SQLiteDatabase): Map<string, SQLiteTableSize
   }
 
   return sizes;
+}
+
+export function readDbstatSizes(db: SQLiteDatabase): Map<string, SQLiteTableSizeBytes> | null {
+  let pages: { name: string; bytes: number }[];
+  try {
+    pages = db.prepare(DBSTAT_SIZES_SQL).all() as { name: string; bytes: number }[];
+  } catch {
+    return null;
+  }
+
+  const owners = db.prepare(DBSTAT_INDEX_OWNERS_SQL).all() as { name: string; tbl_name: string }[];
+  return buildDbstatSizes(pages, owners);
 }
 
 /**
@@ -1030,13 +1048,32 @@ export function readDbstatSizes(db: SQLiteDatabase): Map<string, SQLiteTableSize
  * An empty result still names its columns, because they come from the statement rather
  * than from a first row.
  */
-function readResultRows(
+/**
+ * Read one row-returning statement's raw values and declared columns, before any
+ * result shaping. The values keep the driver's own conversion (64-bit integers as
+ * numbers when lossless and decimal strings otherwise, BLOBs as `Buffer`), because
+ * the shaping below must see exactly what the in-process driver hands out.
+ */
+function readStatementRows(
   stmt: SQLiteStatement,
-  sql: string,
   params: readonly unknown[],
-): { rows: Record<string, unknown>[]; fields: string[]; declared: Pick<QueryResult, "columnTypes"> } {
+): { values: unknown[][]; columns: readonly SQLiteDeclaredColumn[] } {
   const values = stmt.values(...params);
   const columns = stmt.declaredColumns();
+  return { values, columns };
+}
+
+/**
+ * Turn raw values and declared columns into a shaped result: columns keyed by
+ * non-empty, unique names and the declared types paired with those names. Shared
+ * by the in-process path and the worker path, so one can never name a column
+ * differently from the other (see `readResultRows`'s former contract).
+ */
+function assembleResult(
+  values: readonly (readonly unknown[])[],
+  columns: readonly SQLiteDeclaredColumn[],
+  sql: string,
+): { rows: Record<string, unknown>[]; fields: string[]; declared: Pick<QueryResult, "columnTypes"> } {
   const fields = uniqueFieldNames(columns.map(([name]) => name));
   return {
     rows: keyRowsByPosition(fields, values, "sqlite", sql),
@@ -1080,8 +1117,58 @@ export function buildTableStats(tableName: string, rowCount: number, size: SQLit
 // SQLite Provider
 // ============================================================================
 
+/**
+ * The in-process handle, used only for `:memory:` databases, which a child process
+ * cannot share. It wraps the existing `SQLiteDatabase` surface behind the same
+ * `SQLiteHandle` contract the worker implements, so the provider has one way to
+ * run a statement.
+ */
+class DirectSQLiteHandle implements SQLiteHandle {
+  constructor(private readonly db: SQLiteDatabase) {}
+
+  async exec(sql: string): Promise<void> {
+    this.db.exec(sql);
+  }
+
+  async all(sql: string, params?: readonly unknown[]): Promise<unknown[]> {
+    return this.db.prepare(sql).all(...(params ?? []));
+  }
+
+  async get(sql: string, params?: readonly unknown[]): Promise<unknown> {
+    return this.db.prepare(sql).get(...(params ?? [])) ?? null;
+  }
+
+  async queryRows(sql: string, params: readonly unknown[], _timeoutMs?: number): Promise<SQLiteRawRead> {
+    const stmt = this.db.prepare(sql);
+    if (stmt.returnsRows()) {
+      const { values, columns } = readStatementRows(stmt, params);
+      return { values, columns, returnsRows: true, changes: 0 };
+    }
+    const info = params.length > 0 ? stmt.run(...params) : stmt.run();
+    return { values: [], columns: [], returnsRows: false, changes: info.changes };
+  }
+
+  async inTransaction(): Promise<boolean> {
+    return this.db.inTransaction;
+  }
+
+  async close(): Promise<void> {
+    this.db.close(true);
+  }
+}
+
 export class SQLiteProvider extends SQLBaseProvider {
   private db: SQLiteDatabase | null = null;
+  /** The worker-owned handle for on-disk databases; null for `:memory:`. */
+  private worker: SQLiteWorkerClient | null = null;
+  /** The one handle every statement runs through: in-process for `:memory:`, worker for files. */
+  private handle: SQLiteHandle | null = null;
+  /** The caller's own ids for statements in flight, so `cancelQuery` can tell "running" from "already done". */
+  private readonly runningQueryIds = new Set<string>();
+  /** The open-time facts, kept so a killed worker can be restarted with the same handle. */
+  private workerOpen: SQLiteWorkerOpen | null = null;
+  /** The one in-flight restart, so concurrent statements after a kill share one child. */
+  private startingWorker: Promise<SQLiteWorkerClient> | null = null;
   /** True when this instance was opened under the agent read-only profile. */
   private readonly readOnlyProfile: boolean;
   private readonly denyExternalAccess: boolean;
@@ -1118,8 +1205,12 @@ export class SQLiteProvider extends SQLBaseProvider {
       // SQLite HAS transactions; this provider holds no session for one, so
       // POST /api/db/transaction refuses the call and the controls stay hidden.
       supportsTransactions: false,
-      // Both drivers run the statement synchronously on the server's one thread (#1364).
-      blocksServerWhileRunning: true,
+      // On-disk statements run in a child process and can be cancelled; `:memory:` stays
+      // on the server thread because a child process cannot share it (#1364, #1623). With
+      // the worker turned off (`LIBREDB_SQLITE_WORKER=0`) on-disk statements fall back to
+      // the synchronous driver, so the server-blocking and cancel facts both flip back.
+      blocksServerWhileRunning: this.isMemoryDatabase() || !this.shouldUseWorker(),
+      supportsQueryCancel: !this.isMemoryDatabase() && this.shouldUseWorker(),
       maintenanceOperations: ["vacuum", "analyze", "reindex", "check"],
       // `VACUUM` rewrites the whole database file and takes no object at all, and
       // `PRAGMA integrity_check` reads the whole file the same way - `runMaintenance`
@@ -1178,7 +1269,7 @@ export class SQLiteProvider extends SQLBaseProvider {
   // ============================================================================
 
   public async connect(): Promise<void> {
-    if (this.db) {
+    if (this.db || this.worker) {
       return;
     }
 
@@ -1190,38 +1281,48 @@ export class SQLiteProvider extends SQLBaseProvider {
     }
 
     try {
-      // Dynamically load the runtime-appropriate SQLite driver
-      const SQLiteDB = await loadSQLiteDriver();
-
       const dbPath = this.getDatabasePath(true);
 
       if (this.readOnlyProfile) {
-        this.connectReadOnly(SQLiteDB, dbPath);
+        await this.connectReadOnly(dbPath);
+        return;
+      }
+
+      if (dbPath === ":memory:") {
+        // A child process cannot share the in-memory database, so `:memory:` stays on
+        // this thread with the synchronous driver it always used (K3).
+        const SQLiteDB = await loadSQLiteDriver();
+        this.db = new SQLiteDB(dbPath, { create: true, readwrite: true });
+        this.db.exec("PRAGMA foreign_keys = ON");
+        this.db.exec("PRAGMA journal_mode = WAL");
+        this.db.exec("PRAGMA synchronous = NORMAL");
+        this.setConnected(true);
         return;
       }
 
       if (isUnwritableExistingFile(dbPath)) {
-        this.connectUnwritableFile(SQLiteDB, dbPath);
+        await this.connectUnwritableFile(dbPath);
         return;
       }
 
-      if (dbPath !== ":memory:") {
-        const dir = path.dirname(dbPath);
-        if (!fs.existsSync(dir)) {
-          fs.mkdirSync(dir, { recursive: true });
-        }
+      const dir = path.dirname(dbPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
       }
 
-      this.db = new SQLiteDB(dbPath, {
-        create: true,
-        readwrite: true,
-      });
-
-      // Enable WAL mode and foreign keys
-      this.db.exec("PRAGMA foreign_keys = ON");
-      this.db.exec("PRAGMA journal_mode = WAL");
-      this.db.exec("PRAGMA synchronous = NORMAL");
-
+      if (this.shouldUseWorker()) {
+        this.workerOpen = { dbPath, readonly: false, queryOnly: false };
+        this.worker = await SQLiteWorkerClient.start(this.workerOpen);
+        this.handle = this.worker;
+      } else {
+        // The synchronous fallback: exactly the pre-worker open, so the test suite can
+        // exercise every on-disk behaviour without Bun's worker-process hang.
+        const SQLiteDB = await loadSQLiteDriver();
+        this.db = new SQLiteDB(dbPath, { create: true, readwrite: true });
+        this.db.exec("PRAGMA foreign_keys = ON");
+        this.db.exec("PRAGMA journal_mode = WAL");
+        this.db.exec("PRAGMA synchronous = NORMAL");
+      }
       this.setConnected(true);
     } catch (error) {
       // The handle is opened before the pragmas run, so a failure past that line
@@ -1236,8 +1337,14 @@ export class SQLiteProvider extends SQLBaseProvider {
       // `finally`, because `close(true)` raises when SQLite cannot close, and a
       // reference kept past that throw is exactly the silent no-op described above.
       try {
+        // The worker's close kills the child after releasing the file; the in-process
+        // fallback's close(true) releases it immediately. Both may exist on a refused
+        // connect, so both are closed (file release, #1623).
+        await this.handle?.close();
         this.db?.close(true);
       } finally {
+        this.handle = null;
+        this.worker = null;
         this.db = null;
       }
       this.setError(error instanceof Error ? error : new Error(String(error)));
@@ -1276,15 +1383,22 @@ export class SQLiteProvider extends SQLBaseProvider {
    * 2026-09-26). `connect()` names that case, reading it from the file's header because
    * SQLite words it differently by build (`isWalModeFile`).
    */
-  private connectUnwritableFile(SQLiteDB: Awaited<ReturnType<typeof loadSQLiteDriver>>, dbPath: string): void {
+  private async connectUnwritableFile(dbPath: string): Promise<void> {
     this.unwritableFilePath = dbPath;
     logger.info(`[SQLite] Opening ${dbPath} read-only: this process cannot write the file or its directory`, {
       provider: "sqlite",
     });
-    this.db = new SQLiteDB(dbPath, { readonly: true });
-    this.db.exec("PRAGMA foreign_keys = ON");
-    // A file in WAL mode fails here rather than at the open: SQLite opens its files lazily.
-    this.db.prepare("PRAGMA journal_mode").get();
+    if (this.shouldUseWorker()) {
+      this.workerOpen = { dbPath, readonly: true, queryOnly: false };
+      this.worker = await SQLiteWorkerClient.start(this.workerOpen);
+      this.handle = this.worker;
+    } else {
+      const SQLiteDB = await loadSQLiteDriver();
+      this.db = new SQLiteDB(dbPath, { readonly: true });
+      this.db.exec("PRAGMA foreign_keys = ON");
+      // A file in WAL mode fails here rather than at the open: SQLite opens its files lazily.
+      this.db.prepare("PRAGMA journal_mode").get();
+    }
     this.setConnected(true);
   }
 
@@ -1304,7 +1418,7 @@ export class SQLiteProvider extends SQLBaseProvider {
    * can only ever yield an empty one (node:sqlite) or fail (bun:sqlite), so
    * vending it would hand the agent a silently useless target.
    */
-  private connectReadOnly(SQLiteDB: Awaited<ReturnType<typeof loadSQLiteDriver>>, dbPath: string): void {
+  private async connectReadOnly(dbPath: string): Promise<void> {
     if (dbPath === ":memory:") {
       throw new ExecutionProfileError(
         "The agent read-only execution profile cannot target an in-memory SQLite database",
@@ -1312,41 +1426,84 @@ export class SQLiteProvider extends SQLBaseProvider {
       );
     }
 
-    this.db = new SQLiteDB(dbPath, { readonly: true });
-    try {
-      this.enforceQueryOnly();
-    } catch (error) {
-      // Released now, for the same reason disconnect() does it: a refused profile that
-      // left the file held open would be a lock on a database nobody is using. The
-      // reference goes in a `finally`, because `close(true)` raises when it cannot
-      // close, and the refusal the caller needs to see is still `error`.
+    if (this.shouldUseWorker()) {
+      this.workerOpen = { dbPath, readonly: true, queryOnly: true };
+      this.worker = await SQLiteWorkerClient.start(this.workerOpen);
+      this.handle = this.worker;
       try {
-        this.db.close(true);
-      } finally {
-        this.db = null;
+        await this.enforceQueryOnly();
+      } catch (error) {
+        // Released now, for the same reason disconnect() does it: a refused profile that
+        // left the file held open would be a lock on a database nobody is using.
+        try {
+          await this.handle.close();
+        } finally {
+          this.handle = null;
+          this.worker = null;
+        }
+        throw error;
       }
-      throw error;
+    } else {
+      const SQLiteDB = await loadSQLiteDriver();
+      this.db = new SQLiteDB(dbPath, { readonly: true });
+      try {
+        await this.enforceQueryOnly();
+      } catch (error) {
+        try {
+          this.db.close(true);
+        } finally {
+          this.db = null;
+        }
+        throw error;
+      }
     }
 
     this.setConnected(true);
   }
 
   /** Set `query_only` and refuse to continue unless it reads back enabled. */
-  private enforceQueryOnly(): void {
-    this.db!.exec(QUERY_ONLY_PRAGMA_SQL);
-    assertQueryOnlyEnabled(this.db!.prepare(QUERY_ONLY_READBACK_SQL).all());
+  private async enforceQueryOnly(): Promise<void> {
+    // Through `getHandle`, not `this.worker`: a deadline or a cancel kills the child,
+    // and the next statement must restart it before the PRAGMA runs (#1623).
+    const handle = await this.getHandle();
+    await handle.exec(QUERY_ONLY_PRAGMA_SQL);
+    assertQueryOnlyEnabled(await handle.all(QUERY_ONLY_READBACK_SQL));
   }
 
   public async disconnect(): Promise<void> {
-    if (this.db) {
-      // `true` means "release the file now" rather than "once the last statement is
-      // collected" - see the measurement on `SQLiteDatabase.close`. A caller that has
-      // disconnected is entitled to delete, move or reopen the database, and on Windows
-      // a deferred close makes all three impossible.
-      this.db.close(true);
+    if (this.db || this.handle) {
+      // The worker's close kills the child after releasing the file, and the in-process
+      // close(true) releases the file immediately: either way a caller that has
+      // disconnected is entitled to delete, move or reopen the database.
+      if (this.db) await new DirectSQLiteHandle(this.db).close();
+      if (this.handle) await this.handle.close();
+      this.handle = null;
       this.db = null;
+      this.worker = null;
       this.setConnected(false);
     }
+  }
+
+  /** Whether this connection targets an in-memory database, which a child process cannot share. */
+  private isMemoryDatabase(): boolean {
+    return this.getDatabasePath() === ":memory:";
+  }
+
+  /**
+   * Whether an on-disk connection runs in the child-process worker. The child is a
+   * `node` process, so it can only run `node:sqlite`: a forced `bun` driver
+   * (`LIBREDB_SQLITE_DRIVER=bun`, the test suite's way to exercise `bun:sqlite`)
+   * must stay in-process. `LIBREDB_SQLITE_WORKER=0` is the escape hatch for
+   * runtimes where the child cannot run at all.
+   */
+  private shouldUseWorker(): boolean {
+    if (this.isMemoryDatabase()) return false;
+    if (process.env.LIBREDB_SQLITE_DRIVER === "bun") return false;
+    const override = process.env.LIBREDB_SQLITE_WORKER;
+    if (override !== undefined) {
+      return !["0", "false", "no", "off"].includes(override.toLowerCase());
+    }
+    return true;
   }
 
   private getDatabasePath(checkReserved = false): string {
@@ -1389,50 +1546,112 @@ export class SQLiteProvider extends SQLBaseProvider {
   // Query Execution
   // ============================================================================
 
-  public async query(sql: string, params?: unknown[]): Promise<QueryResult> {
+  public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     this.ensureConnected();
 
     return this.trackQuery(async () => {
-      const { result, executionTime } = await this.measureExecution(async () => {
-        try {
-          const stmt = this.db!.prepare(sql);
-
-          // Routed on what SQLite compiled, not on the leading keyword: a statement with
-          // result columns is read for its rows, whatever it starts with. A keyword set
-          // missed WITH, VALUES and every `... RETURNING`, and `run()` dropped their rows.
-          if (stmt.returnsRows()) {
-            return { ...readResultRows(stmt, sql, params ?? []), changes: 0 };
-          } else {
-            const info = params ? stmt.run(...params) : stmt.run();
+      if (queryId !== undefined) this.runningQueryIds.add(queryId);
+      try {
+        const { result, executionTime } = await this.measureExecution(async () => {
+          try {
+            const read = await (await this.getHandle()).queryRows(sql, params ?? [], this.queryTimeout);
+            // Routed on what SQLite compiled, not on the leading keyword: a statement with
+            // result columns is read for its rows, whatever it starts with. A keyword set
+            // missed WITH, VALUES and every `... RETURNING`, and `run()` dropped their rows.
+            if (read.returnsRows) {
+              return { ...assembleResult(read.values, read.columns, sql), changes: 0 };
+            }
             return {
               rows: [],
               fields: [],
-              changes: info.changes,
+              changes: read.changes,
               // A write has no result columns at all - measured, both drivers answer an
               // EMPTY column list after `run()` - so there is nothing to declare, and the
               // key is left off exactly as `fields: []` leaves the names off.
               declared: {},
             };
+          } catch (error) {
+            if (this.unwritableFilePath !== null && isReadOnlyWriteError(error)) {
+              throw new QueryError(
+                `SQLite database ${this.unwritableFilePath} is open read-only because this process cannot write the file or its directory: ${(error as Error).message}`,
+                "sqlite",
+                sql,
+              );
+            }
+            throw mapDatabaseError(error, "sqlite", sql);
           }
-        } catch (error) {
-          if (this.unwritableFilePath !== null && isReadOnlyWriteError(error)) {
-            throw new QueryError(
-              `SQLite database ${this.unwritableFilePath} is open read-only because this process cannot write the file or its directory: ${(error as Error).message}`,
-              "sqlite",
-              sql,
-            );
-          }
-          throw mapDatabaseError(error, "sqlite", sql);
-        }
-      });
+        });
 
-      return {
-        rows: result.rows,
-        fields: result.fields,
-        rowCount: result.rows.length || result.changes,
-        executionTime,
-        ...result.declared,
-      };
+        return {
+          rows: result.rows,
+          fields: result.fields,
+          rowCount: result.rows.length || result.changes,
+          executionTime,
+          ...result.declared,
+        };
+      } finally {
+        if (queryId !== undefined) this.runningQueryIds.delete(queryId);
+      }
+    });
+  }
+
+  /**
+   * The handle to run statements on, restarting a killed worker if a cancel or a
+   * deadline ended it. `:memory:` returns the in-process handle.
+   */
+  private async getHandle(): Promise<SQLiteHandle> {
+    // `:memory:` derives its handle fresh from `this.db` on every call, so a test that
+    // swaps the in-process handle (see `interceptReads`) is seen by the next statement.
+    if (this.db) return new DirectSQLiteHandle(this.db);
+    if (this.handle === null) {
+      throw new DatabaseConfigError("Provider is not connected. Call connect() first.", "sqlite");
+    }
+    if (this.worker !== null && !this.worker.isAlive()) {
+      // Single-flight: two statements racing to restart after a kill share one child,
+      // so a cancel followed by parallel queries leaves exactly one process (#1623).
+      this.startingWorker ??= SQLiteWorkerClient.start(this.workerOpen!);
+      try {
+        this.worker = await this.startingWorker;
+        this.handle = this.worker;
+      } finally {
+        this.startingWorker = null;
+      }
+    }
+    return this.handle;
+  }
+
+  /**
+   * Stop a running statement by killing the child that runs it (#1623). True only when
+   * a statement under that id was actually in flight; a finished or unknown id is false.
+   */
+  public async cancelQuery(queryId: string): Promise<boolean> {
+    if (!this.runningQueryIds.has(queryId)) return false;
+    this.runningQueryIds.delete(queryId);
+    this.worker?.terminate();
+    return true;
+  }
+
+  /**
+   * Run one statement read with a PREEMPTIVE deadline. SQLite's drivers expose no
+   * interrupt, so the only way to stop an overrunning statement is to kill the child
+   * that runs it; the deadline here does that instead of waiting for the result (#1623).
+   */
+  private async runWithStatementTimeout<T>(fn: () => Promise<T>, timeoutMs: number, sql: string): Promise<T> {
+    return await new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.worker?.terminate();
+        reject(new QueryError(`Read-only execution exceeded the time budget: ${timeoutMs}ms allowed`, "sqlite", sql));
+      }, timeoutMs);
+      fn().then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
     });
   }
 
@@ -1475,9 +1694,9 @@ export class SQLiteProvider extends SQLBaseProvider {
   public async endOpenQueryTransaction(): Promise<OpenQueryTransactionOutcome> {
     this.ensureConnected();
 
-    if (!this.db!.inTransaction) return "none";
+    if (!(await (await this.getHandle()).inTransaction())) return "none";
 
-    this.db!.exec("ROLLBACK");
+    await (await this.getHandle()).exec("ROLLBACK");
     return "rolled-back";
   }
 
@@ -1511,7 +1730,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     // Per statement, not just at open: the profiled provider is pooled and
     // reused, so a previous statement's `PRAGMA query_only = false` would
     // otherwise persist for every later call on this connection.
-    this.enforceQueryOnly();
+    await this.enforceQueryOnly();
 
     return this.trackQuery(async () => {
       const {
@@ -1520,8 +1739,20 @@ export class SQLiteProvider extends SQLBaseProvider {
       } = await this.measureExecution(async () => {
         try {
           // The budgets below are checked on the rows either way, so a result refused for
-          // being too large carries its types no further than it carries its rows.
-          return readResultRows(this.db!.prepare(sql), sql, []);
+          // being too large carries its types no further than it carries its rows. The
+          // deadline is preemptive: an overrunning statement kills the child (#1623).
+          //
+          // The handle is captured BEFORE the deadline timer starts. If the timer fired
+          // first and `fn` resolved a fresh handle, it would restart the very statement
+          // the deadline just refused — that restart runs with no budget, and the next
+          // disconnect hangs waiting for a close it can never answer.
+          const handle = await this.getHandle();
+          const read = await this.runWithStatementTimeout(
+            () => handle.queryRows(sql, []),
+            budget.statementTimeoutMs,
+            sql,
+          );
+          return assembleResult(read.values, read.columns, sql);
         } catch (error) {
           throw mapDatabaseError(error, "sqlite", sql);
         }
@@ -1542,11 +1773,12 @@ export class SQLiteProvider extends SQLBaseProvider {
           sql,
         );
       }
-      // SQLite has no transaction-local statement timeout, and neither adapter
-      // exposes sqlite3_interrupt or a progress handler, so the budget's
-      // timeout is a post-execution deadline: an overrunning statement is not
-      // preempted, but its result is refused rather than returned as if it had
-      // been within budget. Recorded as such in docs/providers/sqlite.md.
+      // With the child-process worker the deadline above is preemptive: an overrunning
+      // statement is killed and its promise rejects before this check. Under the
+      // synchronous fallback (`:memory:`, or `LIBREDB_SQLITE_WORKER=0`) there is no
+      // interrupt to call, so the timeout is a post-execution deadline there: the
+      // statement is not preempted, but its result is refused rather than returned as
+      // if it had been within budget.
       if (executionTime > budget.statementTimeoutMs) {
         throw new QueryError(
           `Read-only execution exceeded the time budget: ${executionTime}ms > ${budget.statementTimeoutMs}ms allowed`,
@@ -1614,7 +1846,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     const counts = seedZeroCounts(declared);
 
     try {
-      applyKindCounts(counts, this.db!.prepare(COUNTS_SQL).all(MAIN_SCHEMA) as KindCountRow[]);
+      applyKindCounts(counts, (await (await this.getHandle()).all(COUNTS_SQL, [MAIN_SCHEMA])) as KindCountRow[]);
       return counts;
     } catch (error) {
       return unavailableCounts(
@@ -1625,9 +1857,9 @@ export class SQLiteProvider extends SQLBaseProvider {
   }
 
   /** One object-surface read, mapped against THE STATEMENT SQLITE RECEIVED. */
-  private runObjectQuery<T>(sql: string, params: readonly unknown[]): T[] {
+  private async runObjectQuery<T>(sql: string, params: readonly unknown[]): Promise<T[]> {
     try {
-      return this.db!.prepare(sql).all(...params) as T[];
+      return (await (await this.getHandle()).all(sql, params)) as T[];
     } catch (error) {
       throw mapDatabaseError(error, "sqlite", sql);
     }
@@ -1661,7 +1893,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       throw new QueryError(`SQLite declares the kind "${kind}" but has no statement that lists it`, "sqlite");
     }
 
-    return this.runObjectQuery<ObjectRow>(statement.sql, statement.params)
+    return (await this.runObjectQuery<ObjectRow>(statement.sql, statement.params))
       .map((row) => ({ path: objectPath(container, row), name: row.name, kind }))
       .sort((left, right) => comparePaths(left.path, right.path));
     // No `rowCount` and no `sizeBytes`, and both absences are facts about SQLite rather
@@ -1722,16 +1954,16 @@ export class SQLiteProvider extends SQLBaseProvider {
     // level to take one from - see MAIN_SCHEMA for what leaving it out actually does.
     const binds = [path[path.length - 1], MAIN_SCHEMA];
 
-    const columnRows = this.runObjectQuery<ObjectColumnRow>(OBJECT_COLUMNS_SQL, binds);
+    const columnRows = await this.runObjectQuery<ObjectColumnRow>(OBJECT_COLUMNS_SQL, binds);
     if (columnRows.length === 0) {
       throw new QueryError(`No SQLite ${kind} named ${binds[0]} in ${MAIN_SCHEMA}`, "sqlite", OBJECT_COLUMNS_SQL);
     }
 
     return objectDetailFromRows(path, {
       columns: columnRows,
-      indexes: this.readObjectIndexes(binds),
-      indexColumns: this.readObjectIndexColumns(binds),
-      foreignKeys: this.readObjectForeignKeys(binds),
+      indexes: await this.readObjectIndexes(binds),
+      indexColumns: await this.readObjectIndexColumns(binds),
+      foreignKeys: await this.readObjectForeignKeys(binds),
     });
   }
 
@@ -1743,8 +1975,8 @@ export class SQLiteProvider extends SQLBaseProvider {
    * serves a UNIQUE or PRIMARY KEY constraint, cannot be dropped, and is not an object a
    * user declared.
    */
-  private readObjectIndexes(binds: readonly unknown[]): ObjectIndexRow[] {
-    return this.runObjectQuery<ObjectIndexRow>(OBJECT_INDEXES_SQL, binds);
+  private async readObjectIndexes(binds: readonly unknown[]): Promise<ObjectIndexRow[]> {
+    return await this.runObjectQuery<ObjectIndexRow>(OBJECT_INDEXES_SQL, binds);
   }
 
   /**
@@ -1755,14 +1987,18 @@ export class SQLiteProvider extends SQLBaseProvider {
    * statement produces. Null names are kept rather than filtered, because the MAPPER is
    * the one place that decides what an expression key means.
    */
-  private readObjectIndexColumns(binds: readonly unknown[]): ObjectIndexColumnRow[] {
+  private async readObjectIndexColumns(binds: readonly unknown[]): Promise<ObjectIndexColumnRow[]> {
     const [, schema] = binds;
-    return this.readObjectIndexes(binds).flatMap((index) =>
-      this.runObjectQuery<{ name: string | null }>(OBJECT_INDEX_COLUMNS_SQL, [index.name, schema]).map((column) => ({
-        index_name: index.name,
-        name: column.name,
-      })),
-    );
+    const indexes = await this.readObjectIndexes(binds);
+    const rows: ObjectIndexColumnRow[] = [];
+    for (const index of indexes) {
+      const columns = await this.runObjectQuery<{ name: string | null }>(OBJECT_INDEX_COLUMNS_SQL, [
+        index.name,
+        schema,
+      ]);
+      for (const column of columns) rows.push({ index_name: index.name, name: column.name });
+    }
+    return rows;
   }
 
   /**
@@ -1774,11 +2010,11 @@ export class SQLiteProvider extends SQLBaseProvider {
    * put a null in a typed string field. The parent's key columns are read at most once per
    * parent and only when some constraint needs them.
    */
-  private readObjectForeignKeys(binds: readonly unknown[]): ObjectForeignKeyRow[] {
+  private async readObjectForeignKeys(binds: readonly unknown[]): Promise<ObjectForeignKeyRow[]> {
     const [name, schema] = binds;
     // The schema first, because it is the SUBQUERY's placeholder and SQLite numbers
     // placeholders by where they appear in the statement text.
-    return this.runObjectQuery<ObjectForeignKeyRow>(OBJECT_FOREIGN_KEYS_SQL, [schema, name, schema]);
+    return await this.runObjectQuery<ObjectForeignKeyRow>(OBJECT_FOREIGN_KEYS_SQL, [schema, name, schema]);
   }
 
   /**
@@ -1837,23 +2073,32 @@ export class SQLiteProvider extends SQLBaseProvider {
     const head = [MAIN_SCHEMA, ...(bounded ? [limit + 1] : [])];
     const params = (schemaBinds: number): unknown[] => [...head, ...Array<string>(schemaBinds).fill(MAIN_SCHEMA)];
 
-    const targets = this.runObjectQuery<{ object_name: string }>(statements.target, params(statements.schemaBinds[0]));
+    const targets = await this.runObjectQuery<{ object_name: string }>(
+      statements.target,
+      params(statements.schemaBinds[0]),
+    );
     const truncated = bounded && targets.length > limit;
     // The extra object the `limit + 1` bound brought back is dropped here, so its rows in
     // the four maps below are simply never read.
     const names = (truncated ? targets.slice(0, limit) : targets).map((row) => row.object_name);
 
     const columns = groupByObject(
-      this.runObjectQuery<OfObject<ObjectColumnRow>>(statements.columns, params(statements.schemaBinds[1])),
+      await this.runObjectQuery<OfObject<ObjectColumnRow>>(statements.columns, params(statements.schemaBinds[1])),
     );
     const indexes = groupByObject(
-      this.runObjectQuery<OfObject<ObjectIndexRow>>(statements.indexes, params(statements.schemaBinds[2])),
+      await this.runObjectQuery<OfObject<ObjectIndexRow>>(statements.indexes, params(statements.schemaBinds[2])),
     );
     const indexColumns = groupByObject(
-      this.runObjectQuery<OfObject<ObjectIndexColumnRow>>(statements.indexColumns, params(statements.schemaBinds[3])),
+      await this.runObjectQuery<OfObject<ObjectIndexColumnRow>>(
+        statements.indexColumns,
+        params(statements.schemaBinds[3]),
+      ),
     );
     const foreignKeys = groupByObject(
-      this.runObjectQuery<OfObject<ObjectForeignKeyRow>>(statements.foreignKeys, params(statements.schemaBinds[4])),
+      await this.runObjectQuery<OfObject<ObjectForeignKeyRow>>(
+        statements.foreignKeys,
+        params(statements.schemaBinds[4]),
+      ),
     );
 
     const details = names
@@ -1921,7 +2166,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     }
 
     const name = path[path.length - 1];
-    const rows = this.runObjectQuery<ObjectSourceRow>(OBJECT_SOURCE_SQL, [SOURCE_CATALOG_TYPES[kind], name]);
+    const rows = await this.runObjectQuery<ObjectSourceRow>(OBJECT_SOURCE_SQL, [SOURCE_CATALOG_TYPES[kind], name]);
     const row = rows[0];
     if (row === undefined) {
       throw new QueryError(`No SQLite ${kind} named ${name} in ${MAIN_SCHEMA}`, "sqlite", OBJECT_SOURCE_SQL);
@@ -1973,7 +2218,7 @@ export class SQLiteProvider extends SQLBaseProvider {
    * `sizeStmt.get()` returning no row, or a row whose `size` is `undefined` - is
    * fixed once here rather than twice.
    */
-  private readDatabaseSizeBytes(): number | undefined {
+  private async readDatabaseSizeBytes(): Promise<number | undefined> {
     const dbPath = this.getDatabasePath();
     if (dbPath !== ":memory:") {
       try {
@@ -1985,8 +2230,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       }
     }
     try {
-      const sizeStmt = this.db!.prepare(MEMORY_DB_SIZE_SQL);
-      const result = sizeStmt.get() as { size?: number };
+      const result = (await (await this.getHandle()).get(MEMORY_DB_SIZE_SQL)) as { size?: number } | null;
       // A type check, not `|| 0`: page_count * page_size answering a real zero is
       // a measured reading, kept - but `|| 0` cannot tell that apart from
       // `get()` returning no row, or a row whose `size` came back `undefined`,
@@ -2001,13 +2245,14 @@ export class SQLiteProvider extends SQLBaseProvider {
     this.ensureConnected();
 
     const dbPath = this.getDatabasePath();
-    const sizeBytes = this.readDatabaseSizeBytes();
+    const sizeBytes = await this.readDatabaseSizeBytes();
     const databaseSize = sizeBytes === undefined ? "N/A" : formatBytes(sizeBytes);
 
     let isHealthy = true;
     try {
-      const integrityStmt = this.db!.prepare("PRAGMA integrity_check");
-      const integrityResult = integrityStmt.get() as { integrity_check: string };
+      const integrityResult = (await (await this.getHandle()).get("PRAGMA integrity_check")) as {
+        integrity_check: string;
+      } | null;
       isHealthy = integrityResult?.integrity_check === "ok";
     } catch {
       isHealthy = false;
@@ -2015,8 +2260,9 @@ export class SQLiteProvider extends SQLBaseProvider {
 
     let journalMode = "unknown";
     try {
-      const journalStmt = this.db!.prepare("PRAGMA journal_mode");
-      const journalResult = journalStmt.get() as { journal_mode: string };
+      const journalResult = (await (await this.getHandle()).get("PRAGMA journal_mode")) as {
+        journal_mode: string;
+      } | null;
       journalMode = journalResult?.journal_mode || "unknown";
     } catch {
       // Ignore
@@ -2078,13 +2324,15 @@ export class SQLiteProvider extends SQLBaseProvider {
         case "reindex":
           sql = target ? `REINDEX ${this.escapeIdentifier(target)}` : "REINDEX";
           break;
-        case "check":
-          const checkStmt = this.db!.prepare("PRAGMA integrity_check");
-          const checkResult = checkStmt.get() as { integrity_check: string };
+        case "check": {
+          const checkResult = (await (await this.getHandle()).get("PRAGMA integrity_check")) as {
+            integrity_check: string;
+          } | null;
           return {
             success: checkResult?.integrity_check === "ok",
             message: checkResult?.integrity_check || "Unknown",
           };
+        }
       }
 
       // Unsupported types fall through the switch with sql left empty. A
@@ -2095,7 +2343,7 @@ export class SQLiteProvider extends SQLBaseProvider {
         throw new QueryError(`Unsupported maintenance type for SQLite: ${type}`, "sqlite");
       }
 
-      this.db!.exec(sql);
+      await (await this.getHandle()).exec(sql);
       return { success: true, message: `${type.toUpperCase()} completed successfully` };
     });
 
@@ -2114,22 +2362,21 @@ export class SQLiteProvider extends SQLBaseProvider {
     this.ensureConnected();
 
     // Get SQLite version
-    const versionStmt = this.db!.prepare("SELECT sqlite_version() as version");
-    const versionResult = versionStmt.get() as { version: string };
+    const versionResult = (await (await this.getHandle()).get("SELECT sqlite_version() as version")) as {
+      version: string;
+    } | null;
     const version = `SQLite ${versionResult?.version || "Unknown"}`;
 
     // Get database size, absent rather than 0 when it cannot be read (#546) - see
     // `readDatabaseSizeBytes()` above, shared with `getHealth()`.
-    const sizeBytes = this.readDatabaseSizeBytes();
+    const sizeBytes = await this.readDatabaseSizeBytes();
 
     // Get table count
-    const tableCountStmt = this.db!.prepare(TABLE_COUNT_SQL);
-    const tableCountResult = tableCountStmt.get() as { count: number };
+    const tableCountResult = (await (await this.getHandle()).get(TABLE_COUNT_SQL)) as { count: number } | null;
     const tableCount = tableCountResult?.count || 0;
 
     // Get index count
-    const indexCountStmt = this.db!.prepare(INDEX_COUNT_SQL);
-    const indexCountResult = indexCountStmt.get() as { count: number };
+    const indexCountResult = (await (await this.getHandle()).get(INDEX_COUNT_SQL)) as { count: number } | null;
     const indexCount = indexCountResult?.count || 0;
 
     return {
@@ -2213,20 +2460,38 @@ export class SQLiteProvider extends SQLBaseProvider {
     ];
   }
 
+  /**
+   * The same two `dbstat` reads the in-process handle makes, through whatever handle
+   * this provider runs on. The shared attribution lives in `buildDbstatSizes`.
+   */
+  private async readDbstatSizesViaHandle(): Promise<Map<string, SQLiteTableSizeBytes> | null> {
+    let pages: { name: string; bytes: number }[];
+    try {
+      pages = (await (await this.getHandle()).all(DBSTAT_SIZES_SQL)) as { name: string; bytes: number }[];
+    } catch {
+      return null;
+    }
+    const owners = (await (await this.getHandle()).all(DBSTAT_INDEX_OWNERS_SQL)) as {
+      name: string;
+      tbl_name: string;
+    }[];
+    return buildDbstatSizes(pages, owners);
+  }
+
   public async getTableStats(): Promise<TableStats[]> {
     this.ensureConnected();
 
-    const tablesStmt = this.db!.prepare(STATS_TABLES_SQL);
-    const tables = tablesStmt.all() as { name: string }[];
+    const tables = (await (await this.getHandle()).all(STATS_TABLES_SQL)) as { name: string }[];
 
     // One dbstat scan per call, not per table: it reads the whole database file.
-    const sizes = readDbstatSizes(this.db!);
+    const sizes = await this.readDbstatSizesViaHandle();
     const stats: TableStats[] = [];
 
     for (const { name: tableName } of tables) {
       // Get row count
-      const countStmt = this.db!.prepare(`SELECT COUNT(*) as count FROM "${tableName}"`);
-      const countResult = countStmt.get() as { count: number };
+      const countResult = (await (await this.getHandle()).get(`SELECT COUNT(*) as count FROM "${tableName}"`)) as {
+        count: number;
+      } | null;
       const rowCount = countResult?.count || 0;
 
       stats.push(buildTableStats(tableName, rowCount, sizes?.get(tableName) ?? null));
@@ -2238,19 +2503,23 @@ export class SQLiteProvider extends SQLBaseProvider {
   public async getIndexStats(): Promise<IndexStats[]> {
     this.ensureConnected();
 
-    const indexesStmt = this.db!.prepare(STATS_INDEXES_SQL);
-    const indexes = indexesStmt.all() as { name: string; tbl_name: string }[];
+    const indexes = (await (await this.getHandle()).all(STATS_INDEXES_SQL)) as { name: string; tbl_name: string }[];
 
     const stats: IndexStats[] = [];
 
     for (const { name: indexName, tbl_name: tableName } of indexes) {
       // Get index info
-      const indexInfoStmt = this.db!.prepare(`PRAGMA index_info("${indexName}")`);
-      const indexCols = indexInfoStmt.all() as { seqno: number; cid: number; name: string }[];
+      const indexCols = (await (await this.getHandle()).all(`PRAGMA index_info("${indexName}")`)) as {
+        seqno: number;
+        cid: number;
+        name: string;
+      }[];
 
       // Get index uniqueness
-      const indexListStmt = this.db!.prepare(`PRAGMA index_list("${tableName}")`);
-      const indexList = indexListStmt.all() as { name: string; unique: number }[];
+      const indexList = (await (await this.getHandle()).all(`PRAGMA index_list("${tableName}")`)) as {
+        name: string;
+        unique: number;
+      }[];
       const indexMeta = indexList.find((i) => i.name === indexName);
 
       stats.push({
@@ -2292,8 +2561,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       }
     } else {
       try {
-        const sizeStmt = this.db!.prepare(MEMORY_DB_SIZE_SQL);
-        const result = sizeStmt.get() as { size: number };
+        const result = (await (await this.getHandle()).get(MEMORY_DB_SIZE_SQL)) as { size: number } | null;
         mainSizeBytes = result?.size || 0;
       } catch {
         // Ignore

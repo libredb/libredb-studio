@@ -94,11 +94,11 @@ const handoverChips = (): readonly { readonly text: string; readonly tone: "neut
 
 /**
  * The one sentence that is true of SQLite and of nothing else, in the words the budget meter
- * already uses for the same fact: SQLite does not preempt a statement over its timeout, so
- * the editor's missing time limit is a different promise there than it is on PostgreSQL.
+ * already uses for the same fact: an on-disk SQLite read that overruns its timeout is now
+ * killed mid-flight, so only the in-memory database keeps the old blocking behaviour.
  */
 const SQLITE_COST =
-  "On SQLite a read is not interrupted when it runs long: it blocks other writers and this application until it finishes.";
+  "On SQLite a read that runs past its timeout is now killed mid-flight; the in-memory database is the exception and still blocks this application until the read finishes.";
 
 export function ConsentCard({
   workflowType,
@@ -223,7 +223,7 @@ export function ConsentCard({
                 The SQLite chip is the label of the sentence below it, not a second opinion:
                 the two are adjacent, so nothing can show the compressed form alone.
               */
-              ...(isSqlite ? ([{ text: "SQLite: not interruptible", tone: "warn" }] as const) : []),
+              ...(isSqlite ? ([{ text: "SQLite: killed at its timeout", tone: "warn" }] as const) : []),
             ].map((chip) => (
               <span
                 key={chip.text}

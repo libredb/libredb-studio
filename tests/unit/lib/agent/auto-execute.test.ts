@@ -124,9 +124,9 @@ describe("condition 2: the plan gate, per engine, with unknown resolving to risk
   });
 
   test("SQLite: any SCAN is risky, including one mixed with an index", () => {
-    // Stricter than PostgreSQL's rule on purpose: this engine neither reports a cost
-    // to weigh nor preempts a read that overruns, and a runaway read blocks writers
-    // and this application until it finishes.
+    // Stricter than PostgreSQL's rule on purpose: this engine reports neither a cost
+    // nor a row estimate to weigh, and the only stop an overrunning read has is the
+    // killable child process it runs in.
     for (const access of ["full-scan", "mixed", "unknown"] as const) {
       const decision = evaluateAutoExecute({
         ...passing(),

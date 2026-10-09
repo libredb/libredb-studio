@@ -135,9 +135,9 @@ describe("the milestone's deferral record is complete in both directions", () =>
   });
 
   test("the SQLite caveat is stated as behaviour, not implied", () => {
-    // docs/BACKLOG.md A1: a SQLite statement timeout is post-execution. A budget meter or a
-    // deadline that let a reader assume preemption would be the dishonest half of this feature.
-    expect(AGENT_DOC).toMatch(/sqlite[^.]*\b(not preempt|no preemption|post-execution)\b/i);
+    // A budget meter or a deadline that let a reader assume an in-engine interrupt would
+    // be the dishonest half of this feature, so AGENT.md says how SQLite really stops it.
+    expect(AGENT_DOC).toMatch(/sqlite[^.]*\b(kill(ed|ing) (the child|mid-flight))\b/i);
   });
 });
 

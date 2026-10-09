@@ -312,6 +312,11 @@ describe("agent statement boundary — layer (b): SQLite refuses the same statem
   }
 
   beforeAll(async () => {
+    // The (b) side runs against bun:sqlite in-process, as the preamble says. The worker's
+    // node:sqlite child hangs on Windows (Bun 1.4.x) under the repeated `PRAGMA query_only`
+    // this corpus issues, and this file's subject is the engine's query_only boundary, not
+    // the child transport - so it forces the synchronous driver here.
+    process.env.LIBREDB_SQLITE_WORKER = "0";
     const seed = new SQLiteProvider(config(TARGET_DB));
     await seed.connect();
     await seed.query("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
@@ -325,6 +330,7 @@ describe("agent statement boundary — layer (b): SQLite refuses the same statem
   afterAll(async () => {
     if (profile?.isConnected()) await profile.disconnect();
     rmSync(SCRATCH, { recursive: true });
+    delete process.env.LIBREDB_SQLITE_WORKER;
   });
 
   const sqliteAttacks = ATTACKS.filter((attack) => attack.sqlite !== undefined);

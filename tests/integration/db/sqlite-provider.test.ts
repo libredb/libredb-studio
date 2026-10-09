@@ -99,6 +99,22 @@ async function hasDbstat(db: SQLiteProvider): Promise<boolean> {
   }
 }
 
+/**
+ * Await an engine refusal without `expect(...).rejects`. Bun 1.4.x's
+ * `expect(promise).rejects` hangs on a rejection that arrives from the worker
+ * child's stdout (the read-only profile's engine refusals), so the worker path
+ * reads the outcome directly: it resolves with the error, and throws when the
+ * statement resolved instead of being refused.
+ */
+async function engineRefusal(promise: Promise<unknown>): Promise<Error> {
+  const outcome = await promise.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  if (outcome === undefined) throw new Error("expected the statement to be refused, but it resolved");
+  return outcome as Error;
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -2903,7 +2919,7 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
     const dbPath = await seedDatabase();
     const profile = await openAgent(dbPath);
 
-    await expect(profile.queryReadOnly("INSERT INTO t (id, v) VALUES (2, 'agent')", AGENT_BUDGET)).rejects.toThrow();
+    await engineRefusal(profile.queryReadOnly("INSERT INTO t (id, v) VALUES (2, 'agent')", AGENT_BUDGET));
 
     expect(await readBack(dbPath)).toEqual([{ id: 1, v: "seeded" }]);
   });
@@ -2912,8 +2928,8 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
     const dbPath = await seedDatabase();
     const profile = await openAgent(dbPath);
 
-    await expect(profile.queryReadOnly("CREATE TABLE injected (id INTEGER)", AGENT_BUDGET)).rejects.toThrow();
-    await expect(profile.queryReadOnly("DROP TABLE t", AGENT_BUDGET)).rejects.toThrow();
+    await engineRefusal(profile.queryReadOnly("CREATE TABLE injected (id INTEGER)", AGENT_BUDGET));
+    await engineRefusal(profile.queryReadOnly("DROP TABLE t", AGENT_BUDGET));
 
     const tables = await profile.queryReadOnly("SELECT name FROM sqlite_master WHERE type = 'table'", AGENT_BUDGET);
     expect(tables.rows).toEqual([{ name: "t" }]);
@@ -2961,7 +2977,7 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
     await profile.queryReadOnly("PRAGMA query_only = false", AGENT_BUDGET);
 
     expect((await profile.queryReadOnly("PRAGMA query_only", AGENT_BUDGET)).rows).toEqual([{ query_only: 1 }]);
-    await expect(profile.queryReadOnly("INSERT INTO t (id, v) VALUES (2, 'bypass')", AGENT_BUDGET)).rejects.toThrow();
+    await engineRefusal(profile.queryReadOnly("INSERT INTO t (id, v) VALUES (2, 'bypass')", AGENT_BUDGET));
     expect(await readBack(dbPath)).toEqual([{ id: 1, v: "seeded" }]);
   });
 
@@ -2975,7 +2991,7 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
     // arbitrary server path on BOTH adapters (verified). query_only is what
     // refuses it, which is why it is re-asserted per statement.
     await profile.queryReadOnly("PRAGMA query_only = false", AGENT_BUDGET);
-    await expect(profile.queryReadOnly(`VACUUM INTO '${stolen}'`, AGENT_BUDGET)).rejects.toThrow();
+    await engineRefusal(profile.queryReadOnly(`VACUUM INTO '${stolen}'`, AGENT_BUDGET));
 
     // KNOWN LIMITATION: the engine creates the target file before refusing the
     // copy, so an empty file can still appear at an agent-chosen path. What
@@ -3051,12 +3067,16 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
     });
     expect(rows.rowCount).toBe(3);
 
-    await expect(
-      profile.queryReadOnly("SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3", {
+    const thrown = await profile
+      .queryReadOnly("SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3", {
         ...AGENT_BUDGET,
         maxResultRows: 2,
-      }),
-    ).rejects.toThrow(QueryError);
+      })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    expect(thrown).toBeInstanceOf(QueryError);
   });
 
   test("the row budget refusal a grounding capture records is parsed out of THIS message (B54)", async () => {
@@ -3105,24 +3125,31 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
     const dbPath = await seedDatabase();
     const profile = await openAgent(dbPath);
 
-    await expect(
-      profile.queryReadOnly("SELECT 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' AS big", { ...AGENT_BUDGET, maxResultBytes: 8 }),
-    ).rejects.toThrow(QueryError);
+    const thrown = await profile
+      .queryReadOnly("SELECT 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' AS big", { ...AGENT_BUDGET, maxResultBytes: 8 })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    expect(thrown).toBeInstanceOf(QueryError);
   });
 
   test("rejects a statement that overruns the timeout budget", async () => {
     const dbPath = await seedDatabase();
     const profile = await openAgent(dbPath);
 
-    // Neither adapter exposes sqlite3_interrupt or a progress handler, so the
-    // timeout is a post-execution deadline: the statement is not preempted,
-    // but its result is refused. See docs/providers/sqlite.md section 12.
-    await expect(
-      profile.queryReadOnly(
+    // The deadline is preemptive in the worker: the child that runs the statement
+    // is killed at the timeout, so the statement never returns its result.
+    const thrown = await profile
+      .queryReadOnly(
         "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 400000) SELECT COUNT(*) AS n FROM c",
         { ...AGENT_BUDGET, statementTimeoutMs: 1 },
-      ),
-    ).rejects.toThrow(QueryError);
+      )
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    expect(thrown).toBeInstanceOf(QueryError);
   });
 
   test.each([
@@ -3146,13 +3173,13 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
 
     // A missing file is not created by ATTACH either — same no-create property
     // as the profile's own open.
-    await expect(profile.queryReadOnly(`ATTACH DATABASE '${absent}' AS absent`, AGENT_BUDGET)).rejects.toThrow();
+    await engineRefusal(profile.queryReadOnly(`ATTACH DATABASE '${absent}' AS absent`, AGENT_BUDGET));
     expect(existsSync(absent)).toBe(false);
 
     // An EXISTING file attaches successfully: the read-only mode is inherited,
     // so writes through it are refused...
     await profile.queryReadOnly(`ATTACH DATABASE '${otherPath}' AS other`, AGENT_BUDGET);
-    await expect(profile.queryReadOnly("INSERT INTO other.t (id, v) VALUES (2, 'x')", AGENT_BUDGET)).rejects.toThrow();
+    await engineRefusal(profile.queryReadOnly("INSERT INTO other.t (id, v) VALUES (2, 'x')", AGENT_BUDGET));
     expect(await readBack(otherPath)).toEqual([{ id: 1, v: "seeded" }]);
 
     // ...but its ROWS become readable, and neither adapter offers a
@@ -3166,7 +3193,7 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
     expect(leaked.rows).toEqual([{ v: "seeded" }]);
 
     await profile.queryReadOnly("DETACH DATABASE other", AGENT_BUDGET);
-    await expect(profile.queryReadOnly("DETACH DATABASE main", AGENT_BUDGET)).rejects.toThrow();
+    await engineRefusal(profile.queryReadOnly("DETACH DATABASE main", AGENT_BUDGET));
   });
 
   test("refuses a handle whose query_only pragma does not read back enabled", () => {
@@ -4907,19 +4934,17 @@ describe("SQLiteProvider on a database file this process cannot write", () => {
     // SQLite reads a WAL-mode file only with a `-shm` file beside it, and a directory it
     // cannot write gives it nowhere to make one, so even a read-only handle is refused
     // (measured on bun:sqlite and node:sqlite, 2026-09-26). The provider cannot change
-    // that, but it can say why instead of passing on SQLite's bare refusal. SQLite words
-    // that refusal two ways: Linux's bundled library answers the file alone with
-    // SQLITE_READONLY, and Apple's with SQLITE_CANTOPEN (macos-latest, 2026-09-26). So the
-    // reason is read from the file's header, and SQLite's own words follow it.
+    // that, but it can say why instead of passing on SQLite's bare refusal. The child
+    // worker runs node:sqlite, whose bundled library answers this file alone with
+    // SQLITE_READONLY on every platform (bun:sqlite had worded it SQLITE_CANTOPEN on
+    // Apple), so the reason is read from the file's header and the engine's own words
+    // follow it unvaried.
     test("a WAL-mode file is refused with the reason and the way out", async () => {
       const file = writeUnwritableFixture(join(root, "wal"), "wal");
       const db = new SQLiteProvider(makeSQLiteConfig({ database: file }));
       const connect = db.connect();
       await expect(connect).rejects.toBeInstanceOf(ConnectionError);
-      await expect(connect).rejects.toThrow(
-        WAL_REFUSAL(file) +
-          (process.platform === "darwin" ? "unable to open database file" : "attempt to write a readonly database"),
-      );
+      await expect(connect).rejects.toThrow(WAL_REFUSAL(file) + "attempt to write a readonly database");
       expect(db.isConnected()).toBe(false);
     });
 

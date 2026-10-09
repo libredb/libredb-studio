@@ -2488,16 +2488,16 @@ describe("AgentRail", () => {
     });
 
     /**
-     * `docs/BACKLOG.md` A1: SQLite has no interrupt, so its statement timeout is
-     * checked after the statement returns. A meter that showed a timeout without
-     * saying so would imply a preemption the runtime cannot perform.
+     * An on-disk SQLite statement runs in a killable child process, so the timeout
+     * preempts it. A meter that said "refused once it returns" would understate what
+     * the path now performs.
      */
-    test("the meter says plainly that a SQLite statement is reported rather than interrupted", () => {
+    test("the meter says plainly that a SQLite statement is killed at its timeout", () => {
       const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
 
       const caveats = getByTestId("agent-budget-caveats").textContent ?? "";
       expect(caveats).toContain("SQLite");
-      expect(caveats).toContain("not interrupted");
+      expect(caveats).toContain("killed mid-flight");
     });
 
     /**
@@ -3886,7 +3886,7 @@ describe("AgentRail", () => {
     test("a SQLite connection is told what a long read there costs; another engine is not", async () => {
       const sqlite = await consentOf({ connectionType: "sqlite" });
       expect(sqlite.getByTestId("agent-auto-execute-sqlite").textContent).toBe(
-        "On SQLite a read is not interrupted when it runs long: it blocks other writers and this application until it finishes.",
+        "On SQLite a read that runs past its timeout is now killed mid-flight; the in-memory database is the exception and still blocks this application until the read finishes.",
       );
       cleanup();
 

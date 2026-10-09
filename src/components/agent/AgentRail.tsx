@@ -2810,7 +2810,7 @@ export const AgentRail = React.memo(function AgentRail({
                       charged statements, so that spend is not in the figure above.
                     </>
                   )}{" "}
-                  On SQLite a statement over its timeout is refused once it returns, not interrupted while it runs.
+                  On SQLite a statement over its timeout is now killed mid-flight, not refused only once it returns.
                 </span>
               </InfoNote>
             </span>
