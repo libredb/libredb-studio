@@ -106,28 +106,24 @@ export interface NodeResponse {
 /** One response header as received: the name lower-cased by the transport, the value as the runtime decoded it (latin1). */
 export type ResponseHeader = readonly [name: string, value: string];
 
+/** A refused 3xx as a byte transport saw it: its status and its selected headers, never Location or Set-Cookie. */
+interface RedirectDetail {
+  readonly status: number;
+  readonly headers: readonly ResponseHeader[];
+  readonly headersTruncated: boolean;
+}
+
 /** A request that did not complete. Its message never carries a header, the key, a URL query string or a body. */
 export class TransportError extends ConnectionError {
   /** True only with kind "network": the response callback had run and the body had not ended when the request failed. */
   readonly truncated: boolean;
   /** On kind "redirect" from a byte transport: the refused status and the selected headers. Undefined everywhere else. */
-  readonly redirect?: {
-    readonly status: number;
-    readonly headers: readonly ResponseHeader[];
-    readonly headersTruncated: boolean;
-  };
+  readonly redirect?: RedirectDetail;
 
   constructor(
     readonly kind: "timeout" | "aborted" | "too-large" | "redirect" | "encoding" | "tls" | "network",
     message: string,
-    options?: {
-      readonly truncated?: boolean;
-      readonly redirect?: {
-        readonly status: number;
-        readonly headers: readonly ResponseHeader[];
-        readonly headersTruncated: boolean;
-      };
-    },
+    options?: { readonly truncated?: boolean; readonly redirect?: RedirectDetail },
   ) {
     super(message);
     this.truncated = options?.truncated ?? false;
@@ -642,6 +638,11 @@ function requestTargetOf(target: unknown): RequestTarget {
   return { path, query };
 }
 
+/** The request target as written on the wire: the "?" only when there is a query. */
+function pathAndQuery(target: RequestTarget): string {
+  return target.query === "" ? target.path : `${target.path}?${target.query}`;
+}
+
 /** A header value cut to `limit` characters, or null when absent. */
 function cut(value: string | undefined, limit: number): string | null {
   return value === undefined ? null : value.slice(0, limit);
@@ -945,6 +946,20 @@ function dispatch<T>(
 }
 
 /**
+ * The shared refusal's message for a 3xx answer to `requestUrl`, or null for any other status. The refusal reads a
+ * fetch-shaped status and Location, so the adapter hands it those two; the message names only the target's origin.
+ */
+function redirectRefusal(answer: IncomingMessage, status: number, requestUrl: string): string | null {
+  try {
+    const location = answer.headers.location;
+    rejectRedirect({ status, headers: new Headers(location === undefined ? {} : { location }) }, requestUrl);
+    return null;
+  } catch (refusal) {
+    return (refusal as Error).message;
+  }
+}
+
+/**
  * One connection's text transport: GET and POST to a URL on the connection's origin, the answer decoded as UTF-8.
  * The constructor opens nothing; the first request opens the first socket.
  */
@@ -978,13 +993,10 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
           body: payload?.text,
         }),
         (answer, status) => {
-          try {
-            // The shared refusal reads a fetch-shaped status and Location, so the adapter hands it those two.
-            const location = answer.headers.location;
-            rejectRedirect({ status, headers: new Headers(location === undefined ? {} : { location }) }, request.url);
-          } catch (refusal) {
+          const redirect = redirectRefusal(answer, status, request.url);
+          if (redirect !== null) {
             // Released unread: fail() destroys the answer, so no redirect is followed and no body is read.
-            pending.fail(new TransportError("redirect", (refusal as Error).message));
+            pending.fail(new TransportError("redirect", redirect));
             return;
           }
           const encoding = answer.headers["content-encoding"];
@@ -1047,6 +1059,8 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
   const selection = responseHeaderSelectionOf(options.responseHeaders);
   const { address, connectionHeaders, requestHeaderNames, core } = connectionOf(options, (origin) => ({
     hostname: unbracketed(origin.host),
+    // The origin the redirect refusal resolves a Location against, so its message is the text transport's.
+    origin: new URL(endpointUrl(origin, "/")).origin,
     // Set by the transport on every request, so the Host a signer signs is the Host on the wire (byte transport design 3.3).
     host: originHost(origin),
   }));
@@ -1065,13 +1079,23 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
             hostname: address.hostname,
             port,
             // Written by node:http byte for byte, never parsed, so dot segments reach the server as given.
-            path: target.query === "" ? target.path : `${target.path}?${target.query}`,
+            path: pathAndQuery(target),
             method: request.method,
             headers: { ...connectionHeaders, ...perRequest, host: address.host, "accept-encoding": "identity" },
           },
         }),
         (answer, status, outgoing) => {
           const selected = selectedHeaders(answer.rawHeaders, selection);
+          const redirect = redirectRefusal(answer, status, `${address.origin}${pathAndQuery(target)}`);
+          if (redirect !== null) {
+            // Released unread and never followed; the status and the selected headers let the caller name a region.
+            pending.fail(
+              new TransportError("redirect", redirect, {
+                redirect: { status, headers: selected.headers, headersTruncated: selected.truncated },
+              }),
+            );
+            return;
+          }
           const chunks: Buffer[] = [];
           let received = 0;
           const respond = (truncated: boolean): NodeByteResponse => ({

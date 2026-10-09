@@ -739,3 +739,58 @@ describe("truncateAt", () => {
     expect({ length: answer.bytes.length, truncated: answer.truncated }).toEqual({ length: 100_000, truncated: true });
   });
 });
+
+describe("redirects", () => {
+  test("a 301 with x-amz-bucket-region and no Location carries its status and selected headers", async () => {
+    const listener = await rawHttpListener(() =>
+      rawAnswer("301 Moved Permanently", ["x-amz-bucket-region: eu-west-1", "content-length: 0"]),
+    );
+    const transport = connect(listener, { responseHeaders: { names: ["x-amz-bucket-region"] } });
+    const error = (await failure(() => transport.request(get("/b")))) as TransportError;
+    expect({ kind: error.kind, message: error.message, redirect: error.redirect }).toEqual({
+      kind: "redirect",
+      message: "The server answered HTTP 301, a redirect with no Location header, and redirects are not followed",
+      redirect: { status: 301, headers: [["x-amz-bucket-region", "eu-west-1"]], headersTruncated: false },
+    });
+  });
+
+  test.each(["GET", "HEAD"] as const)("a %s answered 307 to a second listener is not followed", async (method) => {
+    const second = await rawHttpListener(OK);
+    const listener = await rawHttpListener(() =>
+      rawAnswer("307 Temporary Redirect", [
+        `location: http://127.0.0.1:${second.port}/b/k?X-Amz-Signature=secret`,
+        "content-length: 0",
+      ]),
+    );
+    const transport = connect(listener, { responseHeaders: { names: [], prefixes: ["x-amz-"] } });
+    const error = (await failure(() => transport.request({ ...get("/b/k"), method }))) as TransportError;
+    expect(error.kind).toBe("redirect");
+    expect(error.message).toBe(
+      `The server answered HTTP 307, a redirect to http://127.0.0.1:${second.port}, and redirects are not followed`,
+    );
+    expect(error.redirect).toEqual({ status: 307, headers: [], headersTruncated: false });
+    expect(error.message).not.toContain("secret");
+    expect(second.accepted()).toBe(0);
+  });
+
+  test("Location and Set-Cookie of a 3xx are never part of its redirect detail", async () => {
+    const listener = await rawHttpListener(() =>
+      rawAnswer("302 Found", [
+        "location: /b/k?token=secret",
+        "set-cookie: session=secret",
+        "x-amz-bucket-region: us-east-2",
+        "content-length: 0",
+      ]),
+    );
+    const transport = connect(listener, { responseHeaders: { names: ["x-amz-bucket-region"], prefixes: ["set-"] } });
+    const error = (await failure(() => transport.request(get("/b/k")))) as TransportError;
+    expect(error.message).toBe(
+      `The server answered HTTP 302, a redirect to http://127.0.0.1:${listener.port}, and redirects are not followed`,
+    );
+    expect(error.redirect).toEqual({
+      status: 302,
+      headers: [["x-amz-bucket-region", "us-east-2"]],
+      headersTruncated: false,
+    });
+  });
+});
