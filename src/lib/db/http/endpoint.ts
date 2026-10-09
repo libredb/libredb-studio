@@ -111,8 +111,10 @@ for (const [network, prefix, family] of LOOPBACK_NETWORKS) loopback.addSubnet(ne
  * Whether a host is this machine: an address in `LOOPBACK_NETWORKS`, bare or IPv4-mapped, or the exact name
  * `localhost` in any case, and nothing else. The brackets `validateHost` puts around an IPv6 literal are stripped
  * first.
+ * Exported for a provider that needs the loopback condition without the password sentence; not the `isLoopbackHost`
+ * of src/lib/auth.ts, which reads a Host header that may carry a port.
  */
-function isLoopbackHost(host: string): boolean {
+export function isLoopbackHost(host: string): boolean {
   const address = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   if (address.toLowerCase() === "localhost") return true;
   const family = isIP(address);
@@ -227,6 +229,43 @@ function originString(origin: HttpOrigin): string {
   const url = new URL(`${origin.scheme}://${origin.host}`);
   url.port = String(origin.port);
   return url.origin;
+}
+
+const INVALID_TEXT = "Invalid text: expected well-formed Unicode, so it cannot be percent-encoded";
+
+/**
+ * Every UTF-8 byte outside A-Z a-z 0-9 - . _ ~ as %XX with upper-case hex; text with a lone surrogate is refused.
+ *
+ * This is SigV4's UriEncode alphabet, so a byte request target built from it is a canonical URI unchanged
+ * (byte transport design 3.4). encodeURIComponent already writes upper-case hex and leaves only `!'()*` outside
+ * that alphabet unescaped, and it throws URIError on a lone surrogate.
+ */
+export function rfc3986Encode(text: string): string {
+  let encoded: string;
+  try {
+    encoded = encodeURIComponent(text);
+  } catch {
+    throw new DatabaseConfigError(INVALID_TEXT);
+  }
+  return encoded.replace(/[!'()*]/g, (mark) => `%${mark.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+/** "/" + each segment rfc3986Encode-d, joined by "/"; empty, "." and ".." segments are kept as given. */
+export function rfc3986Path(segments: readonly string[]): string {
+  return `/${segments.map(rfc3986Encode).join("/")}`;
+}
+
+/** name=value pairs, each side rfc3986Encode-d, in the given order, joined by "&"; [] gives "". */
+export function rfc3986Query(pairs: readonly (readonly [name: string, value: string])[]): string {
+  return pairs.map(([name, value]) => `${rfc3986Encode(name)}=${rfc3986Encode(value)}`).join("&");
+}
+
+/**
+ * The Host header value node:http writes for this origin: host, bracketed if IPv6, with ":port" only when not the
+ * scheme default. The byte transport sends it itself, so a signer signs exactly the Host that goes on the wire.
+ */
+export function originHost(origin: HttpOrigin): string {
+  return new URL(endpointUrl(origin, "/")).host;
 }
 
 /**
