@@ -379,7 +379,7 @@ commits your branch adds:
 
 ```bash
 docker run --rm -v "$PWD:/repo:ro" -w /repo \
-  zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+  ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
   git --no-banner --redact --config /repo/.gitleaks.toml \
       --log-opts="--diff-merges=first-parent origin/main..HEAD"
 ```
@@ -411,7 +411,7 @@ fixed-version column `bun audit` lacks:
 
 ```bash
 docker run --rm -v "$PWD:/repo:ro" -w /repo \
-  aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c \
+  ghcr.io/aquasecurity/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c \
   fs --scanners vuln --ignorefile /repo/.trivyignore.yaml \
      --skip-dirs node_modules --skip-dirs .next --skip-dirs dist --skip-dirs coverage .
 ```

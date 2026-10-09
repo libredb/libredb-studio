@@ -48,7 +48,7 @@
 # Reproduce the gate locally, exactly as CI runs it:
 #
 #   docker run --rm -v "$PWD:/repo:ro" -w /repo \
-#     aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c \
+#     ghcr.io/aquasecurity/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c \
 #     fs --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
 #        --ignorefile /repo/.trivyignore.yaml \
 #        --skip-dirs node_modules --skip-dirs .next --skip-dirs dist --skip-dirs coverage .
@@ -56,7 +56,7 @@
 # And the image gate, which exits 2 on a finding and 1 on its own failure:
 #
 #   docker run --rm -v "$PWD:/repo:ro" \
-#     aquasec/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c \
+#     ghcr.io/aquasecurity/trivy@sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c \
 #     image --scanners vuln --pkg-types os --severity CRITICAL --ignore-unfixed \
 #        --exit-code 2 --ignorefile /repo/.trivyignore.yaml \
 #        ghcr.io/libredb/libredb-studio:latest
