@@ -102,18 +102,35 @@ export interface NodeResponse {
   readonly text: string;
 }
 
+/** One response header as received: the name lower-cased by the transport, the value as the runtime decoded it (latin1). */
+export type ResponseHeader = readonly [name: string, value: string];
+
 /** A request that did not complete. Its message never carries a header, the key, a URL query string or a body. */
 export class TransportError extends ConnectionError {
   /** True only with kind "network": the response callback had run and the body had not ended when the request failed. */
   readonly truncated: boolean;
+  /** On kind "redirect" from a byte transport: the refused status and the selected headers. Undefined everywhere else. */
+  readonly redirect?: {
+    readonly status: number;
+    readonly headers: readonly ResponseHeader[];
+    readonly headersTruncated: boolean;
+  };
 
   constructor(
     readonly kind: "timeout" | "aborted" | "too-large" | "redirect" | "encoding" | "tls" | "network",
     message: string,
-    options?: { readonly truncated?: boolean },
+    options?: {
+      readonly truncated?: boolean;
+      readonly redirect?: {
+        readonly status: number;
+        readonly headers: readonly ResponseHeader[];
+        readonly headersTruncated: boolean;
+      };
+    },
   ) {
     super(message);
     this.truncated = options?.truncated ?? false;
+    this.redirect = options?.redirect;
     this.name = "TransportError";
     Object.setPrototypeOf(this, TransportError.prototype);
   }

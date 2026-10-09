@@ -196,3 +196,30 @@ describe("the constructor", () => {
     });
   });
 });
+
+describe("the redirect detail", () => {
+  test("a TransportError built with two or three arguments carries no redirect detail", () => {
+    expect(new TransportError("redirect", "x").redirect).toBeUndefined();
+    expect(new TransportError("redirect", "x", { truncated: false }).redirect).toBeUndefined();
+  });
+
+  test("the options argument sets it", () => {
+    const redirect = {
+      status: 301,
+      headers: [["x-amz-bucket-region", "eu-west-1"] as const],
+      headersTruncated: false,
+    };
+    const error = new TransportError("redirect", "x", { redirect });
+    expect({ kind: error.kind, truncated: error.truncated, redirect: error.redirect }).toEqual({
+      kind: "redirect",
+      truncated: false,
+      redirect: { status: 301, headers: [["x-amz-bucket-region", "eu-west-1"]], headersTruncated: false },
+    });
+  });
+
+  test("a 3xx refused on the text path carries no redirect detail", async () => {
+    const error = await failure(() => send("/redirect"));
+    expect(error.kind).toBe("redirect");
+    expect(error.redirect).toBeUndefined();
+  });
+});
