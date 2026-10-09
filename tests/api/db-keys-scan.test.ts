@@ -560,6 +560,7 @@ describe("POST /api/db/keys/scan for one level", () => {
     activeProvider = declaringProvider(walk);
 
     for (const level of [false, null]) {
+      // oxlint-disable-next-line no-await-in-loop -- one body at a time: each reads the one active provider.
       const { status, body } = await post({ level });
       expect({ level, status }).toEqual({ level, status: 400 });
       expect(body.error).toBe('"level" must be true, or absent for a walk of keys only');
