@@ -554,6 +554,20 @@ describe("POST /api/db/keys/scan for one level", () => {
     expect(walk).not.toHaveBeenCalled();
   });
 
+  test("refuses level: false and level: null on an engine without levels, in the level sentence", async () => {
+    // Spec-mandated (SPEC-2 3.3): main answered these with a page; a level that is present and not
+    // true is a malformed body whatever the engine declares.
+    const walk = mock<(options: KeyScanOptions) => Promise<KeyScanPage>>(async () => PAGE);
+    activeProvider = declaringProvider(walk);
+
+    for (const level of [false, null]) {
+      const { status, body } = await post({ level });
+      expect({ level, status }).toEqual({ level, status: 400 });
+      expect(body.error).toBe('"level" must be true, or absent for a walk of keys only');
+    }
+    expect(walk).not.toHaveBeenCalled();
+  });
+
   test("refuses level: true on an engine that declares no folder listing", async () => {
     const redisWalk = mock<(options: KeyScanOptions) => Promise<KeyScanPage>>(async () => PAGE);
     activeProvider = declaringProvider(redisWalk);
