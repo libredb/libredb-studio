@@ -712,6 +712,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "No index information at all: StarRocks exposes no secondary-index catalog, so the object browser and the index panel show none.",
       "A parameter cannot sit in the LIMIT position under the binary prepared protocol, and this engine says so in as many words: measured 2026-09-22 through mysql2, LIMIT ? answers 'using parameter(?) as limit or offset not supported' while the identical statement with the number written in succeeds. Same constraint as Doris, which it is a fork of, and it cost the object browser the same 500 on every folder read until the bulk read wrote its bound in. Verified through the provider afterwards against a seeded database: describeObjects() reads 2 objects with 3 columns on the first, and a bound of 1 reads 1 object and reports its own truncation.",
       "The Explain panel renders StarRocks's own text plan: StarRocks does not parse EXPLAIN FORMAT='json', so the provider sends a plain EXPLAIN, which answered a 13-node tree for a constant SELECT (browser, 2026-09-06).",
+      "Inline row edit saves. StarRocks prepares SELECT ? but refuses to prepare an UPDATE, INSERT or DELETE with errno 1295 (This command is not supported in the prepared statement protocol yet), and nothing has run when it does, so such a statement is sent once more as text with its values written in; before that every Apply failed. Measured on 4.1.6 and 3.3.22 on 2026-10-09 (#1403).",
     ],
   },
   {

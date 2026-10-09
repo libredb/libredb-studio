@@ -2446,6 +2446,60 @@ async function probeRoutineGuard(client: PoolClient): Promise<boolean> {
 }
 
 /**
+ * The session setting under which a DML statement's effect is visible to the reads that follow it (#1399).
+ *
+ * RisingWave shows a write to later batch reads only after a `FLUSH`, or at once in a session that has
+ * `rw_implicit_flush` on. Measured on RisingWave 3.1.0 (`risingwavelabs/risingwave:latest`, single_node) on
+ * 2026-10-09: an `UPDATE` then a `SELECT` in one default session read the OLD row, which is what the grid
+ * drew after an inline edit under a toast that said the results were up to date; the same pair under
+ * `SET rw_implicit_flush = true` read the new one. The setting is the session's own (a new session answered
+ * `false` again), and a write made under it was read by a second session that did not have it.
+ *
+ * Two statements ask for it, because no single one is answered without an error by both ends of the family:
+ *
+ * | statement                                           | RisingWave 3.1.0            | PostgreSQL 18.6 |
+ * | --------------------------------------------------- | --------------------------- | --------------- |
+ * | `SELECT current_setting('rw_implicit_flush', true)` | refused, `Failed to bind`   | one row, NULL   |
+ * | `SHOW rw_implicit_flush`                            | one row, `false`            | refused, 42704  |
+ *
+ * The quiet form goes first. PostgreSQL answers it with NULL and is asked nothing else, so a PostgreSQL
+ * server's log gains no `unrecognized configuration parameter` line at every connect, which asking with
+ * `SHOW` first would write. Only a server that refuses the quiet form is asked the plain way.
+ */
+const IMPLICIT_FLUSH_QUIET_PROBE_SQL = "SELECT current_setting('rw_implicit_flush', true) AS value";
+const IMPLICIT_FLUSH_SHOW_PROBE_SQL = "SHOW rw_implicit_flush";
+const IMPLICIT_FLUSH_ON_SQL = "SET rw_implicit_flush = true";
+
+/** The one value of a one-row, one-column answer, whatever the server named the column. */
+function soleValue(result: { rows: unknown[] }): unknown {
+  const row = result.rows[0];
+  return row === null || typeof row !== "object" ? undefined : Object.values(row)[0];
+}
+
+/**
+ * Whether this server has the implicit-flush setting and has it OFF, so that each session must turn it on.
+ * Run once per `connect()`, on the client connect already borrowed, beside `probeExplainFormat` and for its
+ * reasons: it reads an ANSWER and never a message, it names no engine, and nothing here rejects. A server
+ * without the setting is one whose writes are visible already, which is a fact about the session and not
+ * about the connection.
+ */
+async function probeImplicitFlushOff(client: PoolClient): Promise<boolean> {
+  let value: unknown;
+  try {
+    value = soleValue(await client.query(IMPLICIT_FLUSH_QUIET_PROBE_SQL));
+  } catch {
+    try {
+      value = soleValue(await client.query(IMPLICIT_FLUSH_SHOW_PROBE_SQL));
+    } catch {
+      // Neither form: the server has no such setting.
+      return false;
+    }
+  }
+  // Absent is NULL, and a server that already has it on needs nothing.
+  return value === "false";
+}
+
+/**
  * PostgreSQL's maintenance, as PostgreSQL itself runs it.
  *
  * Every statement has both forms - `VACUUM ANALYZE <table>` and bare `VACUUM ANALYZE`, `REINDEX
@@ -2603,6 +2657,14 @@ export class PostgresProvider extends SQLBaseProvider {
    * PostgreSQL's grammar.
    */
   private measuredRoutineGuard = true;
+
+  /**
+   * Whether this server has the implicit-flush setting and has it off, measured by
+   * `probeImplicitFlushOff()` at connect (#1399). While it is true every session this pool opens is
+   * turned on, so a write is visible to the read that follows it. It starts false, which is every
+   * server that has no such setting, PostgreSQL among them, and what the read-only profile keeps.
+   */
+  private implicitFlushIsOff = false;
 
   /**
    * Which placements of each maintenance statement this server accepts, measured by
@@ -2834,6 +2896,10 @@ export class PostgresProvider extends SQLBaseProvider {
         if (!this.readOnlyProfile) {
           this.measuredExplainFormat = await probeExplainFormat(client);
           this.measuredRoutineGuard = await probeRoutineGuard(client);
+          // The pool's `connect` listener turns it on for every session opened from here on; this
+          // session is already open, so it is turned on here.
+          this.implicitFlushIsOff = await probeImplicitFlushOff(client);
+          if (this.implicitFlushIsOff) await client.query(IMPLICIT_FLUSH_ON_SQL);
           const probe = await this.probeMaintenance(client);
           this.measuredMaintenance = probe.measured;
           connectClientFault = probe.discard;
@@ -2901,6 +2967,16 @@ export class PostgresProvider extends SQLBaseProvider {
     // returned to the pool drops what it holds rather than keeping it for the life of the
     // process. A statement that reports them took them before its own release.
     pool.on("release", (_error, client) => takeNotices(client));
+    // The implicit-flush setting is the session's own (#1399), so each session the pool opens after the
+    // probe is turned on as it arrives. `pg` runs a client's statements in the order they were handed to
+    // it, and this one is handed over before the pool gives the client to whoever asked for it. Never
+    // under the read-only profile, which leaves `implicitFlushIsOff` unset: it writes nothing.
+    pool.on("connect", (client) => {
+      if (!this.implicitFlushIsOff) return;
+      client.query(IMPLICIT_FLUSH_ON_SQL).catch((error: unknown) => {
+        console.error("[Postgres] Could not turn on rw_implicit_flush for a session:", error);
+      });
+    });
   }
 
   /**

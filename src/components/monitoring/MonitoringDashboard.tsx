@@ -22,6 +22,7 @@ import { useMonitoringData } from "@/hooks/use-monitoring-data";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
+import { useAuth } from "@/hooks/use-auth";
 
 import { OverviewTab } from "./tabs/OverviewTab";
 import { PerformanceTab } from "./tabs/PerformanceTab";
@@ -91,6 +92,15 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
   // Declared provider capabilities, so tabs can hide controls the provider cannot
   // perform (issue #272). Same hook Studio uses — no new API surface.
   const { metadata } = useProviderMetadata(selectedConnection);
+  // The connected provider's maintenance over the declared capabilities (#1387): see
+  // `withConnectedMaintenance`. The Sessions tab's Terminate and the Tables tab's per-row
+  // controls both read it.
+  const capabilities = withConnectedMaintenance(metadata?.capabilities, data?.maintenance);
+
+  // The route refuses maintenance and `kill` to anyone but an admin, so both tabs that offer
+  // them are told the signed-in role (#1424). Unknown until /api/auth/me answers, which reads
+  // as not an admin.
+  const { isAdmin } = useAuth();
 
   // A provider whose compute resumes on any statement and is billed until it suspends: every
   // auto-refresh tick keeps it awake, so the toggle says so and names the sentence as its description.
@@ -314,7 +324,14 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 <QueriesTab data={data} loading={loading} labels={metadata?.labels} />
               </TabsContent>
               <TabsContent value="sessions" className="h-full m-0 p-0">
-                <SessionsTab data={data} loading={loading} onKillSession={killSession} labels={metadata?.labels} />
+                <SessionsTab
+                  data={data}
+                  loading={loading}
+                  onKillSession={killSession}
+                  labels={metadata?.labels}
+                  isAdmin={isAdmin}
+                  capabilities={capabilities}
+                />
               </TabsContent>
               <TabsContent value="tables" className="h-full m-0 p-0">
                 <TablesTab
@@ -322,9 +339,8 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                   loading={loading}
                   onRunMaintenance={runMaintenance}
                   onPreviewMaintenance={previewMaintenance}
-                  // The connected provider's maintenance over the declared capabilities (#1387): see
-                  // `withConnectedMaintenance`.
-                  capabilities={withConnectedMaintenance(metadata?.capabilities, data?.maintenance)}
+                  capabilities={capabilities}
+                  isAdmin={isAdmin}
                   labels={metadata?.labels}
                   // The provider refuses every maintenance operation on a read-only connection (#1418).
                   readOnly={selectedConnection?.readOnly === true}

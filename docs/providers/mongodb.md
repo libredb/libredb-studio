@@ -1113,8 +1113,37 @@ collection is collected rather than ending the run, and the result names it:
 false whenever anything failed. Before #1408 the first view aborted the validate loop with a 500,
 and the compact loop swallowed every error into a bare "Compacted collections".
 
-`getCapabilities().maintenanceOperations = ['vacuum', 'analyze', 'check']` — so the UI surfaces those
-three, though `runMaintenance` also accepts `optimize`/`kill`/`reindex` when invoked directly.
+`getCapabilities().maintenanceOperations = ['vacuum', 'analyze', 'check', 'kill']` — so the UI offers
+those four (`kill` as the session lists' Terminate button), though `runMaintenance` also accepts
+`optimize`/`reindex` when invoked directly.
+
+`kill` was implemented and undeclared until #1424, so `/api/db/maintenance` refused the Terminate
+button both session lists drew: `Operation 'kill' not supported for this database. Supported: vacuum,
+analyze, check`. It is declared now, and the button sends `killOp` with the row's opid. Measured on
+MongoDB 9.0.2: an insert blocked behind `fsyncLock` was ended by it (`Interrupted`).
+
+Not every session row takes it. `getActiveSessions()` reads `currentOp` with `$all`, which also
+answers rows `killOp` cannot end, and those carry `terminable: false` so neither list draws the
+button on them. One run on MongoDB 9.0.2 with only Studio connected listed 39 rows:
+
+| Rows | What they are | Terminate |
+|------|---------------|-----------|
+| 34 | server threads (`TTLMonitor`, `ftdc`, ...): no opid | no |
+| 2 | Studio's own idle connections: no opid | no |
+| 2 | server jobs (`Checkpointer`, `JournalFlusher`): an opid, but `killOp` answers `"attempting to kill op"` and both keep running | no |
+| 1 | this read's own `currentOp`, finished before anyone can click | no |
+
+So no row in that run was offered Terminate, while the blocked insert above, another client's running
+operation, was.
+
+Other rows can be offered it, because each carries an opid and a client while it is in flight:
+
+- a driver's own monitoring `hello` (`maxAwaitTimeMS: 10000`), Studio's included: `killOp` ends it,
+  and the driver sends a new one;
+- another command of the same Studio read, such as the `serverStatus` sent beside `currentOp`: it has
+  finished before anyone can click, and `killOp` on its opid answers `ok` and does nothing.
+
+The server accepts the kill on both, so neither is a refusal the button can produce.
 
 ### Where each operation may be offered (`maintenanceOperationSpecs`)
 
@@ -1135,6 +1164,7 @@ request here.
 | `vacuum` | Compact Collection | yes | yes | `{compact: <coll>}`, or every collection from `listCollections()` |
 | `analyze` | Validate Collection | yes | yes | `{validate: <coll>}`, same loop without a target |
 | `check` | Check Collection | yes | **no** | `{dbCheck: <coll>}` is not looped and throws without a collection name |
+| `kill` | Kill Operation | no | no | `{killOp: 1, op: <opid>}`; the target is an opid, which only the Sessions panel lists |
 
 *"Compact Collection"* really is the `vacuum` this provider declares, so
 `vacuumActionOperation` stays absent.
@@ -1310,7 +1340,7 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
   provider exposes no begin/commit/rollback API, and no statement it accepts can open one, which is
   why `endOpenQueryTransaction()` is absent ([§5](#endopenquerytransaction-is-absent-and-which-absence-it-is-d75)).
 - **No `cancelQuery`.** A running operation can only be terminated via maintenance `killOp` (needs the
-  opid and privileges).
+  opid and privileges), which the Sessions panel's Terminate button sends (#1424).
 - **No column modification in a generated migration.** Since
   [#269](https://github.com/libredb/libredb-studio/issues/269) the schema-diff migration generator
   answers a modified column per dialect; collections are schemaless, so it emits

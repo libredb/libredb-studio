@@ -431,7 +431,7 @@ Five of the seven also declare `hasSource` and a `sourceLanguage`, which is what
 against one database and nothing in the product can switch it on a live connection, so the level
 would draw a folder with exactly one child forever.
 
-**No `index` kind**, deliberately, and this is the line the fifteen other providers are read
+**No `index` kind**, deliberately, and this is the line the other providers are read
 against. PostgreSQL's own catalog models an index as a property of the relation it is on:
 `pg_index` is keyed by `indrelid` and an index cannot exist apart from one. So it stays where it
 already is, in `describeObject()`'s output beside that object's columns, rather than becoming a
@@ -1918,6 +1918,43 @@ SANDBOX refuses them before sending, together with the `COMMIT`, `ROLLBACK` and 
 refuses on every engine ([`sandbox-refusal.ts`](../../src/lib/editor/sandbox-refusal.ts)). A
 `PREPARE name AS ...` statement is not matched: the sequence is two words.
 
+### 8.0.1 A write the next read cannot see, and the session setting that shows it (#1399)
+
+RisingWave makes a DML statement's effect visible to later batch reads only after a `FLUSH`, or at once in a session whose `rw_implicit_flush` is on.
+So an inline edit ran its `UPDATE`, re-ran the result's query at once, and drew the old row under a toast that said "The results are up to date".
+
+Measured on RisingWave 3.1.0 (`risingwavelabs/risingwave:latest`, single_node) on 2026-10-09:
+
+| What was run | Read back |
+|---|---|
+| `UPDATE` then `SELECT` in one default session | the old row |
+| the same pair after `SET rw_implicit_flush = true` | the new row |
+| `SHOW rw_implicit_flush` in a new session afterwards | `false`: the setting is the session's own |
+| a write under the setting, read by a second session without it | the new row |
+| a write without the setting, read by a second session | the old row |
+
+`connect()` therefore asks whether the server has the setting and has it off, and where it does, every session the pool opens is turned on: the one connect borrowed directly, and each later one from the pool's `connect` event, where `pg` runs the statement before the session is handed to whoever asked for it.
+A write made in such a session is visible to every session once it returns, so the grid's refresh reads it whichever pooled session it runs on.
+
+Two statements ask, because no single one is answered without an error by both ends of the family:
+
+| Statement | RisingWave 3.1.0 | PostgreSQL 18.6 |
+|---|---|---|
+| `SELECT current_setting('rw_implicit_flush', true)` | refused, *Failed to bind expression* | one row, NULL |
+| `SHOW rw_implicit_flush` | one row, `false` | refused, `42704` *unrecognized configuration parameter* |
+| the setting in `pg_settings` | no row | no row |
+
+The quiet form goes first.
+PostgreSQL answers it with NULL and is asked nothing more, so its server log gains no `unrecognized configuration parameter` line at every connect, which asking with `SHOW` first would write; measured on 18.6, the connect adds no line that names the setting.
+Only a server that refuses the quiet form is asked with `SHOW`, and one that refuses both has no such setting.
+The probe reads the answer and never a message and names no engine, as the EXPLAIN probe does ([10.1](#101-the-explain-grammar-is-measured-at-connect-597)).
+
+Measured through the provider against the same server, three writes each followed at once by a read of the same row: the read answered the previous value all three times before this change and the new value all three times after it.
+
+A server that already has the setting on is left alone.
+The read-only profile ([12](#12-agent-read-only-execution-profile-328)) asks nothing: it writes nothing, and a probe at connect would be a statement outside its `BEGIN READ ONLY` envelope.
+A session that refuses the `SET` is reported on the server console and stays in the pool, where its writes behave as they did before.
+
 ### 8.1 `endOpenQueryTransaction()` — a transaction left open on a pooled client
 
 The lifecycle above is not the only way a transaction starts here.
@@ -2189,8 +2226,8 @@ already fits.
 was hardcoded to *"Run Reindex"* / *"Rebuild Indexes"* / *"Reconstructs all indexes in the database."*
 for every engine (#464). That wording was written for this engine — the global card
 sends no target, so `runMaintenance('reindex')` here runs `REINDEX DATABASE`
-([§9](#9-maintenance)) — so declaring it changes nothing on PostgreSQL and lets the two
-other providers that offer `reindex` (SQLite, Couchbase) say what theirs does instead:
+([§9](#9-maintenance)) — so declaring it changes nothing on PostgreSQL and lets the
+other providers that offer `reindex`, such as SQLite, libSQL and Couchbase, say what theirs does instead:
 
 | Field | Value |
 | --- | --- |
