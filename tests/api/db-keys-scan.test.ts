@@ -471,7 +471,6 @@ describe("POST /api/db/keys/scan for one level", () => {
     pattern: "prefix",
     totalScope: "walk",
   } as const;
-  const OXIA_LIKE = { ...ETCD_LIKE, totalScope: "none" } as const;
   const EMPTY_LEVEL: KeyScanPage = { keys: [], prefixes: [], cursor: "0", total: 0, types: {} };
 
   /** A provider with the given walk declaration and no container level, its walk supplied per test. */
