@@ -90,22 +90,30 @@ export function assertPublicDnsAnswers(addresses: readonly LookupAddress[]): voi
     throw new DatabaseConfigError(BLOCKED_HOST);
 }
 
+/**
+ * A lookup that resolves with all: true, runs `check` over every answer, and hands the checked answer to the socket
+ * itself, so the address dialled is the address checked and a second lookup cannot rebind it.
+ */
+function checkedLookup(check: (addresses: readonly LookupAddress[]) => void): LookupFunction {
+  return (hostname, options, callback) => {
+    dnsLookup(hostname, { ...options, all: true }, (error, addresses) => {
+      if (error) {
+        callback(error, []);
+        return;
+      }
+      try {
+        check(addresses);
+        if (options.all) callback(null, addresses);
+        else callback(null, addresses[0].address, addresses[0].family);
+      } catch (refusal) {
+        callback(refusal as NodeJS.ErrnoException, []);
+      }
+    });
+  };
+}
+
 /** The checked DNS answer is returned to the socket itself, preventing a second lookup/rebind. */
-export const publicAddressLookup: LookupFunction = (hostname, options, callback) => {
-  dnsLookup(hostname, { ...options, all: true }, (error, addresses) => {
-    if (error) {
-      callback(error, []);
-      return;
-    }
-    try {
-      assertPublicDnsAnswers(addresses);
-      if (options.all) callback(null, addresses);
-      else callback(null, addresses[0].address, addresses[0].family);
-    } catch (refusal) {
-      callback(refusal as NodeJS.ErrnoException, []);
-    }
-  });
-};
+export const publicAddressLookup: LookupFunction = checkedLookup(assertPublicDnsAnswers);
 
 /** Disable socket reuse so an earlier unguarded connection cannot bypass lookup. */
 export function guardedNodeOptions(hostname: string | null | undefined): Pick<RequestOptions, "lookup" | "agent"> {
@@ -114,6 +122,52 @@ export function guardedNodeOptions(hostname: string | null | undefined): Pick<Re
   assertPublicLiteralHost(hostname);
   return { lookup: publicAddressLookup, agent: false };
 }
+
+const LINK_LOCAL_HOST =
+  "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says";
+const UNUSABLE_ANSWER = "Invalid host: the name did not resolve to a usable IP address";
+
+/**
+ * The addresses a byte transport never reaches, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says (byte transport design 3.9):
+ * IPv4 link-local, where the EC2, Azure and GCP metadata address 169.254.169.254 sits; IPv6 link-local; AWS's IPv6
+ * instance metadata address; and 169.254.0.0/16 behind the NAT64 well-known prefix, which BlockList does not map.
+ * IPv4-mapped forms need no row: BlockList matches them against the IPv4 subnet. Loopback and private addresses stay
+ * reachable, so a local object store works.
+ */
+export const LINK_LOCAL_NETWORKS: readonly (readonly [network: string, prefix: number, family: "ipv4" | "ipv6"])[] = [
+  ["169.254.0.0", 16, "ipv4"],
+  ["fe80::", 10, "ipv6"],
+  ["fd00:ec2::254", 128, "ipv6"],
+  ["64:ff9b::a9fe:0", 112, "ipv6"],
+];
+
+const linkLocal = new BlockList();
+for (const [network, prefix, family] of LINK_LOCAL_NETWORKS) linkLocal.addSubnet(network, prefix, family);
+
+/** Refuses an IP literal inside LINK_LOCAL_NETWORKS (brackets stripped, IPv4-mapped forms included); a name passes. */
+export function assertNotLinkLocalLiteral(host: string): void {
+  const address = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  const family = isIP(address);
+  if (family !== 0 && linkLocal.check(address, family === 4 ? "ipv4" : "ipv6")) {
+    throw new DatabaseConfigError(LINK_LOCAL_HOST);
+  }
+}
+
+/** Refuses an answer set holding any such address, or holding no usable address. */
+export function assertNoLinkLocalDnsAnswer(addresses: readonly LookupAddress[]): void {
+  if (
+    addresses.length === 0 ||
+    addresses.some(({ address, family }) => (family !== 4 && family !== 6) || isIP(address) !== family)
+  ) {
+    throw new DatabaseConfigError(UNUSABLE_ANSWER);
+  }
+  if (addresses.some(({ address, family }) => linkLocal.check(address, family === 4 ? "ipv4" : "ipv6"))) {
+    throw new DatabaseConfigError(LINK_LOCAL_HOST);
+  }
+}
+
+/** Resolves and pins the answer as publicAddressLookup does, refusing link-local and metadata answers instead. */
+export const linkLocalRefusingLookup: LookupFunction = checkedLookup(assertNoLinkLocalDnsAnswer);
 
 /**
  * The restricted mode uses Node's request socket so its DNS lookup can validate and
