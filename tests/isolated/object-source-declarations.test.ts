@@ -617,7 +617,7 @@ describe("the key-browser declaration", () => {
       ]);
     });
 
-    test("levels with a separator that is not one character is refused by name", () => {
+    test("levels with a separator that is not one UTF-16 code unit long is refused by name", () => {
       for (const separator of ["", "::"]) {
         expect(levelBreaches("store", store({ ...LEVELS, separator }))).toEqual([
           `store declares keyScan.levels with the separator ${JSON.stringify(separator)}, and a level ends at a separator one UTF-16 code unit long`,
