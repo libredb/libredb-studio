@@ -650,6 +650,21 @@ describe("POST /api/db/keys/scan for one level", () => {
     expect(redis.body.error).toBe("redis answered folder prefixes to a walk that asked for keys only");
   });
 
+  test("answers 500 for an empty folder list on a walk that asked for keys only, as for a full one", async () => {
+    // Present is the defect, not non-empty: a key walk's page carries no `prefixes` at all.
+    const empty: KeyScanPage = { keys: ["a/x"], prefixes: [], cursor: "0", total: 0, types: {} };
+
+    activeProvider = levelProvider(async () => empty);
+    const level = await post({});
+    expect(level.status).toBe(500);
+    expect(level.body.error).toBe("oxia answered folder prefixes to a walk that asked for keys only");
+
+    activeProvider = declaringProvider(async () => empty);
+    const redis = await post({});
+    expect(redis.status).toBe(500);
+    expect(redis.body.error).toBe("redis answered folder prefixes to a walk that asked for keys only");
+  });
+
   test("answers 500, in its own sentence, for each level answer outside the level it was asked for", async () => {
     const cases: Array<{ page: Partial<KeyScanPage>; error: string }> = [
       { page: { prefixes: ["b/x/"] }, error: 'oxia answered a folder outside the level it was asked for: "b/x/"' },
