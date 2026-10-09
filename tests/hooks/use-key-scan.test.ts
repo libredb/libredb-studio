@@ -2110,4 +2110,70 @@ describe("a walk listed one level at a time", () => {
     expect(asked).toBe(true);
     expect(fetchMock.mock.calls.length).toBe(2);
   });
+
+  test("a page of the last question, on any engine, leaves the keys, the count, the cursor and the types alone", async () => {
+    const stale = heldAnswer();
+    let call = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async () => {
+        call += 1;
+        if (call === 1) return page(["k1"], "7", 31, { k1: "string" });
+        if (call === 2) return stale.answered;
+        return page([], "8");
+      },
+    });
+    const { result, rerender } = questionHook({ capability: CAPABILITY, database: 1 });
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    let held: Promise<unknown> = Promise.resolve();
+    act(() => {
+      held = result.current.scanMore();
+    });
+    rerender({ capability: CAPABILITY, database: 2 });
+    stale.release(page(["k2"], "9", 900, { k2: "hash" }));
+    await act(async () => {
+      await held;
+    });
+
+    expect(result.current.keys).toEqual(["k1"]);
+    expect(result.current.scanned).toBe(1);
+    expect(result.current.total).toBe(31);
+    expect(result.current.types.has("k2")).toBe(false);
+    // The cursor is the one the last question's own page wrote, not the stale page's "9".
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    expect(bodiesOf(fetchMock)[2]).toMatchObject({ cursor: "7" });
+  });
+
+  test("a Scan all of the last question ends when its page lands, instead of asking for that page again", async () => {
+    const stale = heldAnswer();
+    let call = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async () => {
+        call += 1;
+        if (call === 1) return stale.answered;
+        return page(["again"], "3");
+      },
+    });
+    const { result, rerender } = questionHook({ capability: CAPABILITY, database: 1 });
+
+    let running: Promise<unknown> = Promise.resolve();
+    act(() => {
+      running = result.current.scanAll();
+    });
+    rerender({ capability: CAPABILITY, database: 2 });
+    stale.release(page(["k1"], "5"));
+    await act(async () => {
+      await running;
+    });
+
+    // The page wrote nothing, so the loop's cursor did not move: a loop that went on would ask for the
+    // same page for ever.
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(result.current.scanningAll).toBe(false);
+    expect(result.current.keys).toEqual([]);
+  });
 });

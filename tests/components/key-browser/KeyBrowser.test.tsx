@@ -867,6 +867,57 @@ describe("KeyBrowser", () => {
   });
 
   describe("the database the walk is in", () => {
+    test("a page of the last connection landing while the next one waits on its database list draws none of its keys", async () => {
+      // No-op defaults rather than `| null`: the executors below replace them before anything waits.
+      let releasePage: () => void = () => {};
+      const pageGate = new Promise<void>((resolve) => {
+        releasePage = resolve;
+      });
+      let releaseList: () => void = () => {};
+      const listGate = new Promise<void>((resolve) => {
+        releaseList = resolve;
+      });
+      let call = 0;
+      mockGlobalFetch({
+        "/api/db/keys/scan": async () => {
+          call += 1;
+          if (call === 1) {
+            await pageGate;
+            return page(["old:1", "old:2"], "5", 900);
+          }
+          return page(["app:env"], "0", 31);
+        },
+        "/api/db/objects/containers": async () => {
+          await listGate;
+          return { json: DATABASES };
+        },
+      });
+      const view = renderBrowser();
+      await waitFor(() => {
+        expect(call).toBe(1);
+      });
+
+      view.rerender(
+        <KeyBrowser
+          connection={{ ...CONNECTION, id: "redis-2" }}
+          capability={CAPABILITY}
+          databaseLevel={LEVEL}
+          request={{ pattern: "", database: "1" }}
+        />,
+      );
+      const before = progress();
+      releasePage();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(rows().some((row) => row.startsWith("old:"))).toBe(false);
+      expect(progress()).toBe(before);
+
+      releaseList();
+      await waitFor(() => {
+        expect(rows()).toEqual(["1@0", "app:*@1"]);
+      });
+    });
+
     test("draws it as the tree's root, and walks the session's own until somebody chooses", async () => {
       const fetchMock = mockGlobalFetch(redisRoutes(page(["app:env"], "0", 1531)));
       renderLevel();
@@ -2586,7 +2637,7 @@ describe("a panel listed one level at a time", () => {
     });
   });
 
-  test("a level page landing while a Redis panel waits on its database list never reaches the tree", async () => {
+  test("a level page landing while a Redis panel waits on its database list draws none of its folders or keys", async () => {
     // No-op defaults rather than `| null`: the executors below replace them before anything waits.
     let releasePage: () => void = () => {};
     const pageGate = new Promise<void>((resolve) => {
@@ -2630,8 +2681,9 @@ describe("a panel listed one level at a time", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // No throw, and no folder of the level walk under the Redis database it now draws.
+    // No throw, and nothing of the level walk's page: none of its folders and none of its keys.
     expect(rows().some((row) => row.endsWith("/@0"))).toBe(false);
+    expect(rows().some((row) => row.startsWith("top.txt@"))).toBe(false);
 
     releaseList();
     await waitFor(() => {
