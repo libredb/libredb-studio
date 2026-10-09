@@ -28,6 +28,8 @@
  *   origin or a number. A signer's own Error is the provider's text and is passed through as thrown.
  *
  * The byte transport, `createNodeByteTransport`, in addition:
+ * - reads each field of a request once, checks what it read and sends that, so a field that answers differently on a
+ *   later read never changes the method, the target, the headers, the caps or the signal a request is sent with;
  * - reports a stored content-encoding in `contentEncoding` and returns its bytes as received, never decoded and never
  *   refused, counted against the cap as received;
  * - with `truncateAt`, keeps the first `truncateAt` bytes of a longer body, resolves with `truncated: true`, and then
@@ -1162,6 +1164,16 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
   };
 }
 
+/** A byte request as request() read and checked it: what the exchange sends, never read from the caller's object again. */
+interface CheckedByteRequest {
+  readonly method: "GET" | "HEAD";
+  readonly target: RequestTarget;
+  readonly perRequest: Readonly<Record<string, string>>;
+  readonly signal: AbortSignal;
+  readonly maxResponseBytes: number;
+  readonly truncateAt: number | undefined;
+}
+
 /**
  * One connection's byte transport (byte transport design 3): GET and HEAD to an exact request target on the
  * connection's origin, the body returned as bytes. It shares the text transport's core, so the socket, proxy, TLS,
@@ -1187,12 +1199,9 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
   const signer =
     options.signer === undefined ? undefined : checkedSigner(options.signer, connectionHeaders, requestHeaderNames);
 
-  const exchange = (
-    request: NodeByteRequest,
-    target: RequestTarget,
-    perRequest: Readonly<Record<string, string>>,
-  ): Promise<NodeByteResponse> =>
+  const exchange = (request: CheckedByteRequest): Promise<NodeByteResponse> =>
     core.queue<NodeByteResponse>(request.signal, (pending) => {
+      const { method, target, perRequest, maxResponseBytes, truncateAt } = request;
       const headers = { ...connectionHeaders, ...perRequest, host: address.host, "accept-encoding": "identity" };
       let signed: Readonly<Record<string, string>> = {};
       if (signer !== undefined) {
@@ -1201,7 +1210,7 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
         // Error into a network failure. fail() settles this request alone and frees its slot.
         try {
           signed = signedHeaders(signer, {
-            method: request.method,
+            method,
             host: address.host,
             path: target.path,
             query: target.query,
@@ -1223,8 +1232,8 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
             port,
             // Written by node:http byte for byte, never parsed, so dot segments reach the server as given.
             path: pathAndQuery(target),
-            method: request.method,
-            // host is set explicitly, so node:http adds no second one and what was signed is what is sent.
+            method,
+            // host is set explicitly, so node:http adds no second one and the Host signed is the Host sent.
             headers: { ...headers, ...signed },
           },
         }),
@@ -1253,15 +1262,15 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
             truncated,
           });
           // One bound governs memory: truncateAt when given, which is never above maxResponseBytes.
-          const limit = request.truncateAt ?? request.maxResponseBytes;
+          const limit = truncateAt ?? maxResponseBytes;
           answer.on("data", (chunk: Buffer) => {
             if (received + chunk.length <= limit) {
               received += chunk.length;
               chunks.push(chunk);
               return;
             }
-            if (request.truncateAt === undefined) {
-              pending.fail(tooLarge(request.maxResponseBytes));
+            if (truncateAt === undefined) {
+              pending.fail(tooLarge(maxResponseBytes));
               return;
             }
             // The runtime picks the chunk size (Bun handed 393,110 bytes at once for a stop at 100,000), so the cut
@@ -1287,16 +1296,17 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
 
   return {
     async request(request) {
-      admit(core, request.signal);
-      if (request.method !== "GET" && request.method !== "HEAD") throw new DatabaseConfigError(INVALID_METHOD);
-      if (!isPositiveInteger(request.maxResponseBytes)) throw new DatabaseConfigError(INVALID_MAX_RESPONSE_BYTES);
-      const { truncateAt } = request;
-      if (truncateAt !== undefined && (!isPositiveInteger(truncateAt) || truncateAt > request.maxResponseBytes)) {
+      // Each field is read once, here, and only these reads are checked and sent, as the target and the headers are.
+      const { signal, method, maxResponseBytes, truncateAt } = request;
+      admit(core, signal);
+      if (method !== "GET" && method !== "HEAD") throw new DatabaseConfigError(INVALID_METHOD);
+      if (!isPositiveInteger(maxResponseBytes)) throw new DatabaseConfigError(INVALID_MAX_RESPONSE_BYTES);
+      if (truncateAt !== undefined && (!isPositiveInteger(truncateAt) || truncateAt > maxResponseBytes)) {
         throw new DatabaseConfigError(INVALID_TRUNCATE_AT);
       }
       const perRequest = perRequestHeaders(request.headers, requestHeaderNames);
       const target = requestTargetOf(request.target);
-      return exchange(request, target, perRequest);
+      return exchange({ method, target, perRequest, signal, maxResponseBytes, truncateAt });
     },
     close() {
       core.close();

@@ -237,6 +237,63 @@ describe("request refusals before any socket", () => {
   });
 });
 
+/** A request whose field `name` answers `first` on its first read and `later` on every read after it. */
+function shifting<K extends keyof NodeByteRequest>(
+  request: NodeByteRequest,
+  name: K,
+  first: NodeByteRequest[K],
+  later: NodeByteRequest[K],
+): NodeByteRequest {
+  let reads = 0;
+  const shifted = { ...request };
+  Object.defineProperty(shifted, name, {
+    enumerable: true,
+    get: () => {
+      reads += 1;
+      return reads === 1 ? first : later;
+    },
+  });
+  return shifted;
+}
+
+describe("a request's fields are read once, so what is checked is what is sent", () => {
+  test("a method that answers GET and then DELETE is sent as GET", async () => {
+    const listener = await rawHttpListener(OK);
+    const request = shifting(get("/b/k"), "method", "GET", "DELETE" as unknown as "GET");
+    await connect(listener).request(request);
+    expect(lines(listener.heads[0])[0]).toBe("GET /b/k HTTP/1.1");
+  });
+
+  test("a truncateAt that answers 100000 and then nothing still cuts the body", async () => {
+    const body = randomBytes(MIB);
+    const listener = await rawHttpListener(() => rawAnswer("200 OK", [`content-length: ${MIB}`], body));
+    const request = shifting(get("/b/k", { maxResponseBytes: 2 * MIB }), "truncateAt", 100_000, undefined);
+    const answer = await connect(listener).request(request);
+    expect({ length: answer.bytes.length, truncated: answer.truncated }).toEqual({ length: 100_000, truncated: true });
+  });
+
+  test("a maxResponseBytes that answers 100 and then 2 MiB still refuses a 1 MiB body at 100 bytes", async () => {
+    const body = randomBytes(MIB);
+    const listener = await rawHttpListener(() => rawAnswer("200 OK", [`content-length: ${MIB}`], body));
+    const request = shifting(get("/b/k"), "maxResponseBytes", 100, 2 * MIB);
+    const error = (await failure(() => connect(listener).request(request))) as TransportError;
+    expect({ kind: error.kind, message: error.message }).toEqual({
+      kind: "too-large",
+      message: "The response exceeded the 100-byte limit for one response, so it was not read to the end",
+    });
+  });
+
+  test("a signal that answers the caller's and then another is cancelled by the caller's", async () => {
+    const silent = await silentListener();
+    const controller = new AbortController();
+    const request = shifting(get("/b/k"), "signal", controller.signal, AbortSignal.timeout(2000));
+    const pending = failure(() => connect(silent).request(request));
+    await eventually(() => silent.accepted() === 1, "the request to reach the listener");
+    controller.abort();
+    expect((await pending).message).toBe("The request was cancelled");
+  });
+});
+
 describe("the exact request target", () => {
   test.each([
     ["/b/sp/./dot.txt", ""],
