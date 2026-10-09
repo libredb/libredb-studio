@@ -431,7 +431,10 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
       // parent's listing names it a folder, listing it as one would ask for keys outside that prefix.
       const listable = key !== scopeKey && (node.serverFolder === true || ancestorKeys.has(key));
       const unlisted = listable && !nodeCursors.has(key) && !nodeLoading.has(key);
-      if (levels && !filtering && !open.has(key) && unlisted) void loadMoreUnder(node.path);
+      // An unlisted folder opens only when its level can be listed now: under a filter, or with the panel
+      // held full, it would open with nothing listed and no row to list it, so the press changes nothing.
+      if (levels && unlisted && !open.has(key) && (filtering || heldFull)) return;
+      if (levels && !open.has(key) && unlisted) void loadMoreUnder(node.path);
       setOpen((previous) => {
         const next = new Set(previous);
         // One write for both directions: a twisty that only ever added would be a row that cannot be
@@ -441,7 +444,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         return next;
       });
     },
-    [ancestorKeys, filtering, levels, loadMoreUnder, nodeCursors, nodeLoading, open, scopeKey],
+    [ancestorKeys, filtering, heldFull, levels, loadMoreUnder, nodeCursors, nodeLoading, open, scopeKey],
   );
   // While a filter is on, every surviving folder is open: a match two levels down that stayed
   // collapsed would look like no match at all, which is the one answer a filter must never give.

@@ -2557,6 +2557,85 @@ describe("a panel listed one level at a time", () => {
     expect(twisty("a/").getAttribute("aria-label")).toBe("Expand a");
   });
 
+  test("an unlisted folder's twisty at the held limit leaves it closed and asks for nothing", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": {
+        json: {
+          keys: Array.from({ length: HELD_KEY_LIMIT - 2 }, (_, index) => `k${index}`),
+          prefixes: ["a/", "b/"],
+          cursor: "c1",
+          total: 0,
+          types: {},
+        },
+      },
+    });
+    renderLevels();
+    await waitFor(() => {
+      expect(screen.queryByTestId("key-browser-held")).not.toBeNull();
+    });
+    const before = fetchMock.mock.calls.length;
+
+    fireEvent.click(twisty("a/"));
+    // A request the click fired would land a tick later, so the tick is waited for before asserting none.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(twisty("a/").getAttribute("aria-label")).toBe("Expand a");
+    expect(fetchMock.mock.calls.length).toBe(before);
+    expect(badgeCell("a/").getAttribute("title")).toBe("Not listed yet: open the folder to list it");
+  });
+
+  test("an unlisted folder's twisty under a filter leaves it closed once the filter is cleared", async () => {
+    const route = levelRoute(["a/x", "ab/y", "readme", "z/q"], 3);
+    mockGlobalFetch({ "/api/db/keys/scan": route.handler });
+    renderLevels();
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0", "ab/@0", "readme@0"]);
+    });
+    const filter = screen.getByLabelText("Filter the folders and keys listed");
+
+    fireEvent.change(filter, { target: { value: "a" } });
+    fireEvent.click(twisty("a/"));
+    fireEvent.change(filter, { target: { value: "" } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(route.seen).toHaveLength(1);
+    expect(twisty("a/").getAttribute("aria-label")).toBe("Expand a");
+    expect(badgeCell("a/").getAttribute("title")).toBe("Not listed yet: open the folder to list it");
+    // Only the top level's own row: the folder offers none until it is listed.
+    expect(loadMoreRows().map((row) => row.style.paddingLeft)).toEqual(["8px"]);
+  });
+
+  test("a twisty pressed under a filter still opens the folder for Redis, etcd and Oxia, asking for nothing", async () => {
+    const shapes: ReadonlyArray<{
+      readonly capability: KeyScanCapability;
+      readonly keys: string[];
+      readonly folder: string;
+    }> = [
+      { capability: CAPABILITY, keys: ["app:cache:ttl", "app:env"], folder: "app:*" },
+      { capability: ETCD_LIKE, keys: ["app/cfg", "app/env"], folder: "app/*" },
+      { capability: OXIA_LIKE, keys: ["app/cfg", "app/env"], folder: "app/*" },
+    ];
+    for (const { capability, keys, folder } of shapes) {
+      const fetchMock = mockGlobalFetch({ "/api/db/keys/scan": page(keys, "7", keys.length) });
+      const view = render(<KeyBrowser connection={CONNECTION} capability={capability} />);
+      // oxlint-disable-next-line no-await-in-loop -- one declaration at a time: each owns the global fetch mock.
+      await waitFor(() => {
+        expect(rows()).toEqual([`${folder}@0`]);
+      });
+      const before = fetchMock.mock.calls.length;
+      const filter = screen.getByLabelText("Filter the keys found");
+
+      fireEvent.change(filter, { target: { value: "app" } });
+      fireEvent.click(twisty(folder));
+      fireEvent.change(filter, { target: { value: "" } });
+
+      expect(twisty(folder).getAttribute("aria-label")).toMatch(/^Collapse /);
+      expect(fetchMock.mock.calls.length).toBe(before);
+      view.unmount();
+      restoreGlobalFetch();
+    }
+  });
+
   test("typing in the prefix box asks a new question and closes the folders the last one opened", async () => {
     const route = levelRoute(SPACE, 20);
     mockGlobalFetch({ "/api/db/keys/scan": route.handler });
