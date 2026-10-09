@@ -68,7 +68,7 @@ interface Question {
   readonly database: number | undefined;
 }
 
-/** Whether two questions are the same one, each input compared by identity as the walk compares them. */
+/** Whether two questions have the same inputs, each compared by identity as the walk compares them. */
 function sameQuestion(a: Question, b: Question): boolean {
   return (
     a.connection === b.connection &&
@@ -224,11 +224,17 @@ export function useKeyScan(options: {
    * prefix in this one, which the tree refuses outright. Tagged, such a page fills `heldFolders` and
    * never reaches the tree, and the first render of a new question hands back none, before any effect.
    * Only the folders are held to this; an engine without levels has none, so it is unchanged.
+   *
+   * EACH TIME A QUESTION IS ASKED IS ITS OWN OBJECT, and the folders are tagged with that object rather
+   * than with its inputs. The inputs are compared by identity to notice a new question, stored on the
+   * render that notices it, and a question asked again after another one is a new object: the folders
+   * it held the first time, whose count `heldFolders` has already dropped, are not shown again.
    */
-  const asked = useMemo<Question>(
-    () => ({ connection, capability, pattern, database }),
-    [connection, capability, pattern, database],
-  );
+  const inputs: Question = { connection, capability, pattern, database };
+  const [askedBefore, setAskedBefore] = useState(inputs);
+  const newQuestion = !sameQuestion(askedBefore, inputs);
+  if (newQuestion) setAskedBefore(inputs);
+  const asked = newQuestion ? inputs : askedBefore;
   const [folders, setFolders] = useState<{ readonly question: Question | null; readonly list: readonly string[] }>({
     question: null,
     list: [],
@@ -426,7 +432,7 @@ export function useKeyScan(options: {
     (prefixes: readonly string[], question: Question): string[] => {
       // A page asked for a question that is no longer the current one adds nothing and leaves the folder
       // state alone: its folders belong to a tree nobody is drawing.
-      if (!sameQuestion(question, askedNow.current)) return [];
+      if (question !== askedNow.current) return [];
       const fresh: string[] = [];
       for (const prefix of prefixes) {
         if (heldFolders.current.has(prefix)) continue;
@@ -438,10 +444,7 @@ export function useKeyScan(options: {
       if (fresh.length > 0) {
         setFolders((previous) => ({
           question,
-          list:
-            previous.question !== null && sameQuestion(previous.question, question)
-              ? [...previous.list, ...fresh]
-              : fresh,
+          list: previous.question === question ? [...previous.list, ...fresh] : fresh,
         }));
       }
       return fresh;
@@ -748,7 +751,7 @@ export function useKeyScan(options: {
 
   return {
     keys,
-    folders: folders.question !== null && sameQuestion(folders.question, asked) ? folders.list : NO_FOLDERS,
+    folders: folders.question === asked ? folders.list : NO_FOLDERS,
     scanned,
     total,
     clustered,

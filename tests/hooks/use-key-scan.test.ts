@@ -2061,4 +2061,53 @@ describe("a walk listed one level at a time", () => {
 
     expect(result.current.folders).toEqual(["x/", "y/"]);
   });
+
+  test("a question asked again lists its folders once, without the ones it held before", async () => {
+    let call = 0;
+    mockGlobalFetch({
+      "/api/db/keys/scan": async () => {
+        call += 1;
+        return call === 1 ? levelPage([], ["a/"], "c1") : levelPage([], ["a/", "b/"], "c2");
+      },
+    });
+    const { result, rerender } = questionHook({ capability: LEVEL_SCAN, database: 1 });
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    rerender({ capability: LEVEL_SCAN, database: 2 });
+    rerender({ capability: LEVEL_SCAN, database: 1 });
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    expect(result.current.folders).toEqual(["a/", "b/"]);
+  });
+
+  test("a question asked again counts no folder against the held limit that it no longer shows", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": levelPage(
+        Array.from({ length: HELD_KEY_LIMIT - 1 }, (_, index) => `k${index}`),
+        ["a/"],
+        "c1",
+      ),
+    });
+    const { result, rerender } = questionHook({ capability: LEVEL_SCAN, database: 1 });
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    rerender({ capability: LEVEL_SCAN, database: 2 });
+    rerender({ capability: LEVEL_SCAN, database: 1 });
+
+    // The keys are still held (only `reset` clears them), and with the folder gone from both the list
+    // and its count, the panel and the hook agree on one entry left: the next page is asked for.
+    expect(result.current.folders).toEqual([]);
+    let asked = true;
+    await act(async () => {
+      asked = await result.current.scanMore();
+    });
+    expect(asked).toBe(true);
+    expect(fetchMock.mock.calls.length).toBe(2);
+  });
 });
