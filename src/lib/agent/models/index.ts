@@ -44,6 +44,7 @@ import {
   DEFAULT_REPORT_REMINDER_LIMIT,
   DEFAULT_REFUSAL_EXAMPLES,
   DEFAULT_PRESENT_REMINDER_LIMIT,
+  DEFAULT_COMPARE_HOLD_LIMIT,
   DEFAULT_VERDICT_HOLD_LIMIT,
   DEFAULT_RETRY_EMPTY_TURN,
   DEFAULT_RETRY_UNREAD_STOP,
@@ -181,6 +182,17 @@ export function retriesUnreadStop(modelId: string): boolean {
  * split, so not one shipped model's turn count moved on the day this landed; thirty state it now,
  * and the three that say `true` say it because that is what their runs were taken under.
  */
+/**
+ * How many times THIS model's stop-without-reading is answered. One unless measured otherwise.
+ *
+ * The gate it bounds fires only where no tool was called, so the run has already earned
+ * `no-report` and another ask provably cannot cost a pass - the same argument `answersUnreadStop`
+ * makes for sending the sentence at all.
+ */
+export function unreadStopAsksFor(modelId: string): number {
+  return resolve(modelId, "unreadStopAsks") ?? 1;
+}
+
 export function answersUnreadStop(modelId: string): boolean {
   return resolve(modelId, "retryUnreadStop") ?? true;
 }
@@ -244,6 +256,18 @@ export function presentReminderLimitFor(modelId: string): number {
  */
 export function verdictHoldLimitFor(modelId: string): number {
   return resolve(modelId, "verdictHoldLimit") ?? DEFAULT_VERDICT_HOLD_LIMIT;
+}
+
+/**
+ * How many times this model may be held on a report that rests on plans it never compared.
+ *
+ * One everywhere, because one is what the loop's own literal was. It moved out of
+ * `investigation.ts` for the reason `verdictHoldLimit` did: a model that needs a second ask and a
+ * model that will never comply were being answered identically, and there was nowhere to record
+ * the difference.
+ */
+export function compareHoldLimitFor(modelId: string): number {
+  return resolve(modelId, "compareHoldLimit") ?? DEFAULT_COMPARE_HOLD_LIMIT;
 }
 
 /**

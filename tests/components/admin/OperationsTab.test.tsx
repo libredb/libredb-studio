@@ -32,7 +32,7 @@ let mockActiveConnectionId: string | null = "c1";
 // state before `/api/db/provider-meta` answers, and the state it stays in when
 // that request fails (#282).
 let mockMetadata: { capabilities: Record<string, unknown>; labels?: Record<string, string> } | null = {
-  capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum", "reindex"] },
+  capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum", "reindex", "kill"] },
 };
 
 const defaultSessions = [
@@ -209,7 +209,7 @@ describe("OperationsTab", () => {
     ];
     mockActiveConnectionId = "c1";
     mockMetadata = {
-      capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum", "reindex"] },
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum", "reindex", "kill"] },
     };
 
     // Clear mocks
@@ -1480,6 +1480,65 @@ describe("OperationsTab", () => {
     expect(dialogText).toContain("idle in transaction");
     // Also verify the warning about uncommitted transactions
     expect(dialogText).toContain("uncommitted transactions");
+  });
+
+  // =========================================================================
+  // Terminate only where the server accepts kill (#1424)
+  // =========================================================================
+
+  const terminateLabels = async () => {
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    return view!
+      .queryAllByRole("button", { name: /^Terminate session/ })
+      .map((button) => button.getAttribute("aria-label"));
+  };
+
+  test("a session row offers Terminate where the provider declares kill", async () => {
+    expect(await terminateLabels()).toEqual(["Terminate session 1234"]);
+  });
+
+  test("no session row offers Terminate where the provider does not declare kill", async () => {
+    // Redis's own declaration: `analyze` and nothing else, so the route answers 400 to `kill`.
+    mockMetadata = { capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze"] } };
+    expect(await terminateLabels()).toEqual([]);
+  });
+
+  test("no session row offers Terminate where the provider declares no maintenance at all", async () => {
+    // Cassandra's and Druid's own declaration.
+    mockMetadata = { capabilities: { supportsMaintenance: false, maintenanceOperations: [] } };
+    expect(await terminateLabels()).toEqual([]);
+  });
+
+  test("no session row offers Terminate before the capabilities arrive", async () => {
+    mockMetadata = null;
+    expect(await terminateLabels()).toEqual([]);
+  });
+
+  test("the connected provider's maintenance decides, so a server that refused kill offers none", async () => {
+    monitoringOverride = {
+      data: {
+        activeSessions: defaultSessions,
+        tables: defaultTables,
+        maintenance: { maintenanceOperations: ["analyze"] },
+      },
+    };
+    expect(await terminateLabels()).toEqual([]);
+  });
+
+  test("a row the engine says it cannot end offers none, and the others keep theirs", async () => {
+    monitoringOverride = {
+      data: {
+        activeSessions: [
+          ...defaultSessions,
+          { pid: "N/A", user: "N/A", state: "idle", query: "{}", duration: "0ms", durationMs: 0, terminable: false },
+        ],
+        tables: defaultTables,
+      },
+    };
+    expect(await terminateLabels()).toEqual(["Terminate session 1234"]);
   });
 
   // =========================================================================

@@ -36,6 +36,14 @@
  * that it skipped the case. There, steps 1 to 4 also show that neither read fails on the
  * `VECTOR_INFO` column the server does not have.
  *
+ * THE MODIFY CASE (#1240). Oracle refuses a nullability the column already has: a `MODIFY` that
+ * restates ` NULL` on a nullable column is ORA-01451, and the column keeps its old type. On every
+ * server, this script creates a source and a target table, reads both through the provider, and
+ * replays the generated `ALTER TABLE ... MODIFY` statements at the source. Every statement must be
+ * accepted, and the source must then have the target's `ALL_TAB_COLUMNS` rows, `NULLABLE`
+ * included. As the control, it replays a type change that restates the unchanged nullability and
+ * requires ORA-01451 for ` NULL` and ORA-01442 for ` NOT NULL`.
+ *
  *   LIBREDB_LIVE_ORACLE_URL=oracle://app:Password123!@127.0.0.1:1521/XEPDB1 \
  *     bun tests/live/oracle-column-type.ts
  *
@@ -77,6 +85,42 @@ const VECTOR_COLUMNS = [
   `"V_ANY_FLOAT64" VECTOR(*, FLOAT64)`,
   `"V_16_BINARY" VECTOR(16, BINARY)`,
   `"V_SPARSE" VECTOR(100, FLOAT32, SPARSE)`,
+];
+
+/** The same, plus `NULLABLE`, which the MODIFY case changes (#1240). */
+const MODIFY_SHAPE_SQL = `SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE, CHAR_LENGTH, CHAR_USED,
+                NULLABLE
+         FROM USER_TAB_COLUMNS
+         WHERE TABLE_NAME = :1
+         ORDER BY COLUMN_ID`;
+
+/**
+ * The MODIFY case (#1240), as source and target declarations of the same columns: a type change
+ * on a nullable and on a NOT NULL column, with the nullability unchanged, and a nullability-only
+ * change in each direction.
+ */
+const MODIFY_SOURCE_COLUMNS = [
+  `"S" VARCHAR2(20)`,
+  `"U" UROWID(100)`,
+  `"N" VARCHAR2(20) NOT NULL`,
+  `"TO_NOT_NULL" VARCHAR2(20)`,
+  `"TO_NULL" VARCHAR2(20) NOT NULL`,
+];
+const MODIFY_TARGET_COLUMNS = [
+  `"S" VARCHAR2(50)`,
+  `"U" UROWID`,
+  `"N" VARCHAR2(50) NOT NULL`,
+  `"TO_NOT_NULL" VARCHAR2(20) NOT NULL`,
+  `"TO_NULL" VARCHAR2(20)`,
+];
+
+/**
+ * The type changes that restate an unchanged nullability, which is what the generator wrote
+ * before #1240, and the refusal each one must meet.
+ */
+const RESTATED_NULLABILITY = [
+  { statement: `MODIFY ("S" VARCHAR2(50 BYTE) NULL)`, refusal: "ORA-01451" },
+  { statement: `MODIFY ("N" VARCHAR2(50 BYTE) NOT NULL)`, refusal: "ORA-01442" },
 ];
 
 /** The first release with the `VECTOR` type is 23ai. `PRODUCT_COMPONENT_VERSION.VERSION_FULL` is `21.3.0.0.0` on 21c XE. */
@@ -300,6 +344,92 @@ async function probeVectors(conn: oracledb.Connection, provider: OracleProvider,
   return failures;
 }
 
+/**
+ * The MODIFY case (#1240), on every server.
+ *
+ * The source and the target are real tables read through the provider, so the diff compares
+ * the same `ColumnSchema` values a SchemaDiff run compares. The target's columns are diffed
+ * under the source's name, and the generated `ALTER TABLE` statements run at the source.
+ */
+async function probeModify(conn: oracledb.Connection, provider: OracleProvider, owner: string): Promise<string[]> {
+  const failures: string[] = [];
+  const source = `LIBREDB_MODIFY_SOURCE_${process.pid}`;
+  const target = `LIBREDB_MODIFY_TARGET_${process.pid}`;
+  console.log(`\n=== the MODIFY case, on ${source} ===`);
+  try {
+    await conn.execute(`CREATE TABLE "${source}" (${MODIFY_SOURCE_COLUMNS.join(", ")})`);
+    await conn.execute(`CREATE TABLE "${target}" (${MODIFY_TARGET_COLUMNS.join(", ")})`);
+    const want = await shape(conn, target, MODIFY_SHAPE_SQL);
+    const from = await provider.describeObject([owner, source], "table");
+    const to = await provider.describeObject([owner, target], "table");
+    const sql = generateMigrationSQL(
+      diffSchemas(
+        [{ name: source, columns: from.columns, indexes: [] }],
+        [{ name: source, columns: to.columns, indexes: [] }],
+      ),
+      "oracle",
+    );
+
+    let ran = 0;
+    for (const statement of splitStatements(sql, resolveSqlGrammar("oracle"))) {
+      const text = statement.sql
+        .replace(/;\s*$/, "")
+        .replace(/^(?:[ \t]*(?:--[^\n]*)?\n)*/, "")
+        .trim();
+      if (!/^ALTER\s+TABLE/i.test(text)) continue;
+      ran += 1;
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- one statement at a time is the point.
+        await conn.execute(text);
+        console.log(`the generated statement was accepted: ${text}`);
+      } catch (error) {
+        failures.push(
+          `the generated statement was refused: ${error instanceof Error ? error.message : String(error)}\n${text}`,
+        );
+      }
+    }
+    if (ran !== MODIFY_SOURCE_COLUMNS.length) {
+      failures.push(`the generator wrote ${ran} ALTER TABLE statements, not ${MODIFY_SOURCE_COLUMNS.length}:\n${sql}`);
+    }
+
+    const got = await shape(conn, source, MODIFY_SHAPE_SQL);
+    let same = 0;
+    for (const [index, row] of want.entries()) {
+      if (JSON.stringify(got[index]) === JSON.stringify(row)) {
+        same += 1;
+        continue;
+      }
+      failures.push(
+        `${String(row.COLUMN_NAME)} did not become the target column. Target ${JSON.stringify(row)}, ` +
+          `migrated ${JSON.stringify(got[index])}.`,
+      );
+    }
+    console.log(`${same} of ${want.length} migrated columns have the target's ALL_TAB_COLUMNS row.`);
+
+    // The control: a type change that restates the unchanged nullability is refused.
+    for (const { statement, refusal } of RESTATED_NULLABILITY) {
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- one statement at a time is the point.
+        await conn.execute(`ALTER TABLE "${source}" ${statement}`);
+        failures.push(
+          `the restated nullability was ACCEPTED (${statement}). This guard proves #1240 by the engine's ` +
+            `refusal, and the engine no longer refuses it, so the guard has stopped measuring anything.`,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes(refusal)) failures.push(`${statement} was refused, but not with ${refusal}: ${message}`);
+        else console.log(`the restated nullability was refused, as it must be: ${statement}: ${message}`);
+      }
+    }
+  } catch (error) {
+    failures.push(`the MODIFY case could not run: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    await dropQuietly(conn, source);
+    await dropQuietly(conn, target);
+  }
+  return failures;
+}
+
 async function probe(): Promise<string[]> {
   const failures: string[] = [];
   const parsed = url();
@@ -364,6 +494,7 @@ async function probe(): Promise<string[]> {
     }
 
     failures.push(...(await probeVectors(conn, provider, owner)));
+    failures.push(...(await probeModify(conn, provider, owner)));
   } finally {
     await provider.disconnect();
     await conn.close();
@@ -384,5 +515,6 @@ console.log(
   "Both column reads report the declaration with DATA_TYPE beside it, the generated CREATE TABLE was accepted " +
     "by the server that supplied its columns and created the same columns, and the DATA_TYPE-only definition it " +
     "replaces was refused with ORA-00906. On 23ai or later, the same holds for the VECTOR columns, whose " +
-    "DATA_TYPE-only definition creates different columns.",
+    "DATA_TYPE-only definition creates different columns. The generated MODIFY statements were accepted and " +
+    "created the target columns, and a MODIFY that restates an unchanged nullability was refused.",
 );

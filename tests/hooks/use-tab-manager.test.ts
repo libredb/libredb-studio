@@ -11,7 +11,7 @@ import { useTabManager, PREVIEW_PAGE_SIZE } from "@/hooks/use-tab-manager";
 import { holdWorkspaceOwner } from "@/lib/config/base-path";
 import type { DatabaseConnection } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
-import type { DatabaseObject } from "@/lib/db/types";
+import type { DatabaseObject, ObjectSourceDocument } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
@@ -1935,6 +1935,116 @@ describe("useTabManager opens a Source tab", () => {
 
     expect(result.current.tabs).toHaveLength(2);
     expect(result.current.activeTabId).toBe(first);
+  });
+
+  const definitionDocument: ObjectSourceDocument = {
+    path: orderTotal.path,
+    kind: "function",
+    parts: [
+      {
+        id: "definition",
+        label: "Function",
+        text: "CREATE FUNCTION order_total(integer) RETURNS numeric AS $$ SELECT 1 $$;",
+        language: "sql",
+        form: "complete",
+        origin: "regenerated",
+      },
+    ],
+  };
+
+  test("a second View Source clears the document so the viewer re-reads it (#1407)", () => {
+    // A change from another client between the two activations trips nothing the tab already
+    // tracks: the stale banner fires only on a DDL this SESSION ran, and before this fix the
+    // only way back was to close the tab and reopen it.
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: defaultMetadata, schema: [] }),
+    );
+
+    act(() => {
+      result.current.openSourceTab(orderTotal);
+    });
+    const tabId = result.current.tabs[1].id;
+    act(() => {
+      result.current.updateTabById(tabId, {
+        source: { path: orderTotal.path, kind: "function", document: definitionDocument, readAtToken: 2 },
+      });
+    });
+    act(() => {
+      result.current.setActiveTabId("default");
+    });
+
+    act(() => {
+      result.current.openSourceTab(orderTotal);
+    });
+
+    expect(result.current.tabs).toHaveLength(2);
+    expect(result.current.activeTabId).toBe(tabId);
+    expect(result.current.tabs[1].source?.document).toBeUndefined();
+    expect(result.current.tabs[1].source?.readAtToken).toBeUndefined();
+  });
+
+  test("a second View Source on a tab whose read FAILED clears the failure, so the viewer reads again (#1407)", () => {
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: defaultMetadata, schema: [] }),
+    );
+
+    act(() => {
+      result.current.openSourceTab(orderTotal);
+    });
+    const tabId = result.current.tabs[1].id;
+    act(() => {
+      result.current.updateTabById(tabId, {
+        source: { path: orderTotal.path, kind: "function", failure: "connection reset" },
+      });
+    });
+    act(() => {
+      result.current.setActiveTabId("default");
+    });
+
+    act(() => {
+      result.current.openSourceTab(orderTotal);
+    });
+
+    expect(result.current.activeTabId).toBe(tabId);
+    expect(result.current.tabs[1].source?.failure).toBeUndefined();
+    expect(result.current.tabs[1].source?.document).toBeUndefined();
+  });
+
+  test("a second View Source on a DIRTY tab marks it stale instead of clearing it, so an unsaved edit is never replaced (#1407)", () => {
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: defaultMetadata, schema: [] }),
+    );
+
+    act(() => {
+      result.current.openSourceTab(orderTotal);
+    });
+    const tabId = result.current.tabs[1].id;
+    act(() => {
+      result.current.updateTabById(tabId, {
+        source: {
+          path: orderTotal.path,
+          kind: "function",
+          document: definitionDocument,
+          readAtToken: 2,
+          dirty: true,
+        },
+      });
+    });
+    act(() => {
+      result.current.setActiveTabId("default");
+    });
+
+    act(() => {
+      result.current.openSourceTab(orderTotal);
+    });
+
+    expect(result.current.activeTabId).toBe(tabId);
+    expect(result.current.tabs[1].source?.document).toEqual(definitionDocument);
+    expect(result.current.tabs[1].source?.dirty).toBe(true);
+    // `-1`: `objectRefreshToken` only ever counts up from 0, so this can never equal it and the
+    // viewer's stale banner shows - the way back for a reader who does not want to lose a draft
+    // by letting the refresh button (disabled while dirty) or a re-read clear it outright.
+    expect(result.current.tabs[1].source?.readAtToken).toBe(-1);
   });
 
   test("the match is on the path and the KIND, so one name in two roles opens two tabs", () => {

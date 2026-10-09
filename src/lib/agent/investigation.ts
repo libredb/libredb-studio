@@ -64,6 +64,7 @@ import { BASELINE_NOTICES } from "./models/notices";
 import {
   ceilingFor,
   presentReminderLimitFor,
+  compareHoldLimitFor,
   verdictHoldLimitFor,
   retriesEmptyTurn,
   answersUnreadStop,
@@ -73,6 +74,7 @@ import {
   planStatementAsksFor,
   reportReminderLimitFor,
   samplingFor,
+  unreadStopAsksFor,
 } from "./models";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import { type AgentGoalShortfall, verifyRunGoal } from "./goal-verifier";
@@ -2862,8 +2864,15 @@ export async function runInvestigation(
     reading them back.
     */
     const delivered = guidanceDelivered(record.events);
-    /** Whether this RUN has already answered a stop that read nothing; see `retryUnreadStop`. */
-    let unreadStopRetried = delivered["unread-stop"] > 0;
+    /**
+     * How many times this RUN has answered a stop that read nothing; see `unreadStopAsks`.
+     *
+     * A count rather than a flag: one ask is a bound, not an answer. `devstral-small-2:24b` says
+     * what it needs, hears this sentence, says the same thing again and the run ends - three of
+     * five runs on its one unlocked surface. Read off the ledger like every other bound here,
+     * because it is a property of the RUN and a second drive has already spent what it spent.
+     */
+    let unreadStopAsked = delivered["unread-stop"];
     /**
      * Whether this RUN has already been told a tool call of its own could not be parsed.
      *
@@ -3237,6 +3246,17 @@ export async function runInvestigation(
     let reserveAnnounced = delivered["report-reserve"] > 0;
     // Read from the ledger for the reason the line above is: a resumed run has already heard it.
     let planBarAnnounced = delivered["plan-bar"] > 0;
+    /*
+      Whether THIS turn read a plan, so the bar can be announced once the turn's results are all in.
+      It cannot be announced where the plan is read: every tool call in one assistant message must
+      be answered by its own tool result with nothing between them, and a `user` message pushed
+      between two results leaves the second call unanswered - `Tool result is missing for tool call
+      <id>`, the run dead as `model-unavailable`. Measured in production 2026-09-30, where the
+      measurement harness read that as a transport fault and threw two whole cells away.
+    */
+    let planBarDue = false;
+    /** Tool calls this run has completed on a plan-judged workflow without inspecting a plan. */
+    let planlessCalls = 0;
     /** Whether a tool this run HOLDS has been called; see `remindToReport`. */
     let anyToolCalled = false;
     /**
@@ -3315,8 +3335,8 @@ export async function runInvestigation(
      * proxy the compose-time hold uses - a run whose verdict does not want a comparison is not
      * handed the tool, so it is never told about one.
      */
-    const announcePlanBar = async (tool: string): Promise<void> => {
-      if (planBarAnnounced || tool !== "inspect_plan" || !holdsTool("compare_plans")) return;
+    const announcePlanBar = async (): Promise<void> => {
+      if (!planBarDue || planBarAnnounced) return;
       planBarAnnounced = true;
       messages.push({ role: "user", content: notice(AGENT_PLAN_BAR_NOTICE) });
       await issueGuidance("plan-bar");
@@ -3820,7 +3840,7 @@ export async function runInvestigation(
         if (
           record.mode === "agent" &&
           !anyToolCalled &&
-          !unreadStopRetried &&
+          unreadStopAsked < unreadStopAsksFor(model.modelId) &&
           turns < maxTurns &&
           resources.deadline.remainingMs() > 0 &&
           // The sentence NAMES `inspect_schema` AND `inspect_plan`, so it may only reach a run
@@ -3838,7 +3858,7 @@ export async function runInvestigation(
           holdsTool("inspect_plan") &&
           answersUnreadStop(model.modelId)
         ) {
-          unreadStopRetried = true;
+          unreadStopAsked += 1;
           messages.push(...turn.assistantMessages);
           messages.push({ role: "user", content: notice(BASELINE_NOTICES.unreadStop) });
           await issueGuidance("unread-stop");
@@ -4059,7 +4079,17 @@ export async function runInvestigation(
         // A run whose verdict wants a comparison, holding the two plans that would make
         // one, is one call short of it. Checked here for the same reason the present
         // notice is: `compose_report` ends the run.
-        if (call.toolName === "compose_report" && !noTimeToHold && compareReminders < 1 && holdsTool("compare_plans")) {
+        // The bound was the literal `1` until 2026-10-09, which left this the only reminder hold
+        // with no per-model setting behind it. `laguna-xs-2.1:latest` optimize is why it has one:
+        // five rolls of its best document read 4/5, 4/5, 1/5, 4/5, 4/5, and the loss that recurred
+        // was this exact shortfall on runs holding four plans, with the sentence delivered in every
+        // run. It hears it once, reports without comparing, and the cell loses by one run.
+        if (
+          call.toolName === "compose_report" &&
+          !noTimeToHold &&
+          compareReminders < compareHoldLimitFor(model.modelId) &&
+          holdsTool("compare_plans")
+        ) {
           const { record: sofar } = await service.resume(context.runId);
           const plans = sofar.events.flatMap((event) =>
             event.kind === "tool-completed" && event.artifact.operationId === "sql.explain.estimate"
@@ -4124,8 +4154,28 @@ export async function runInvestigation(
         }
         if (outcome.kind === "reported") return conclude("succeeded", "report-composed");
         messages.push(prompted ? promptedResultMessage(call, outcome.text) : toolResultMessage(call, outcome.text));
-        await announcePlanBar(call.toolName);
+        /*
+          Due on a plan, and due on READING INSTEAD of one.
+
+          The first version fired only after `inspect_plan`, which left the shape that actually
+          loses this cell untouched: `laguna-xs-2.1` passes every run that reads a plan (43-47s,
+          three of five) and loses every run that does not - `inspect_schema` five times, or three
+          reads plus two queries, 127 and 222 seconds, zero plans. The sentence that would redirect
+          those two is delivered by holding `compose_report`, and both had already tripped
+          `report-reserve`, which suppresses every hold. So the run that most needed the bar was the
+          one guaranteed never to hear it.
+
+          Two tool calls is the threshold: one read is orientation, and a workflow judged on plans
+          that has made two moves without looking at one has chosen a different approach. It still
+          rides on the turn and spends none of its own.
+        */
+        if (holdsTool("compare_plans")) {
+          if (call.toolName === "inspect_plan") planBarDue = true;
+          else if (++planlessCalls >= 2) planBarDue = true;
+        }
       }
+      // After every result this turn owes, never between two of them.
+      await announcePlanBar();
       return null;
     };
 

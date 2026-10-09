@@ -2,8 +2,8 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting twenty-seven engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia and Databend
 type: application
-version: 0.1.80
-appVersion: "0.18.1"
+version: 0.1.81
+appVersion: "0.18.2"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -209,10 +209,13 @@ annotations:
   # False: 0.1.80 adds three values, extraVolumes, extraVolumeMounts and extraObjects (#1526),
   # all empty by default, so every existing install renders exactly as before. They mount
   # extra volumes into the app container and ship extra manifests with the release.
+  # False: 0.1.81 tracks app release 0.18.2, which carries no security fix: Databend's official
+  # icon, new connections that start unlabelled, Generate Test Data and Source tab fixes, and
+  # provider fixes. No template, value or default moves, so the upgrade is the image.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.18.1
+      image: ghcr.io/libredb/libredb-studio:0.18.2
       platforms:
         - linux/amd64
         - linux/arm64
@@ -224,7 +227,12 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Three optional values, extraVolumes, extraVolumeMounts and extraObjects, mount extra volumes into the app container (such as a private CA, trusted by pointing NODE_EXTRA_CA_CERTS at it through extraEnv) and ship extra Kubernetes manifests with the release; all empty by default, so nothing changes when unset"
+    - "Databend shows its official icon from the Databend brand assets in place of the warehouse drawn for Studio"
+    - "A new connection starts with Environment set to Other, which shows no badge, instead of Local"
+    - "Generate Test Data leaves foreign-key columns out and keeps primary-key and unique values distinct, MongoDB included"
+    - "A Source tab re-reads its object when opened again and has a refresh control"
+    - "Fixes across PostgreSQL and its relatives, the wire-compatible engines, Vitess, MongoDB, Redis and Oracle Schema Diff"
+    - "Track app release 0.18.2 (appVersion bump; default image tag follows)"
 dependencies:
   - name: postgresql
     version: "16.x.x"

@@ -1,6 +1,6 @@
 {
   "name": "@libredb/studio",
-  "version": "0.18.1",
+  "version": "0.18.2",
   "description": "The database editor that deploys next to your data, not onto your laptop.",
   "keywords": [
     "sql",

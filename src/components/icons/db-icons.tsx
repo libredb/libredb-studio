@@ -663,25 +663,40 @@ export const OxiaIcon: React.FC<IconProps> = ({ className, ...props }) => (
 );
 
 /**
- * Databend: a mark drawn for Studio, never Databend's logo.
+ * Databend: the official icon from Databend's brand assets (https://www.databend.com/brand/, "Icon · Light"), used at the
+ * Databend team's request (databendlabs/databend-docs#3512).
  *
- * A warehouse under its roof with two shelves, the cloud data warehouse a connection reaches, as strokes at the house
- * weight with no fill, which is what stays identifiable at the 14px the connection list draws.
+ * The brand guidelines ask for the original colours and proportions, so this is the one mark here with fixed fills and no
+ * stroke: the paths and colours are the published file's, unchanged, and the accent class a caller passes does not
+ * repaint it. Only the viewBox differs, a square around the mark's own bounds so it sits on the same footprint as the
+ * 24-unit icons beside it. tests/unit/lib/db-icons.test.tsx pins the paths and colours to the published file.
  */
 export const DatabendIcon: React.FC<IconProps> = ({ className, ...props }) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={className}
-    {...props}
-  >
-    <path d="M3 9.5 12 4l9 5.5" />
-    <path d="M5 8.5V20h14V8.5" />
-    <path d="M8.5 13h7" />
-    <path d="M8.5 16.5h7" />
+  <svg viewBox="22 -20 98 98" className={className} {...props}>
+    <path
+      fill="#B7E3FF"
+      d="M118.8,52.16c-.73.73-3.57-1.78-4.53-3.23.17,1.77-.47,5.3-1.35,5.27-1.65-.06-2.72-4.84-2.09-8.05C100.45,40.2,89.9,45.4,89.9,45.4l0,0c1.3.16,4.35.49,4.27,1.86,0,.9-4,3.59-16.38,2.59-3.89,3.28-19.59,10.34-33.5,8C34.25,55.53,28.84,50.86,26,46c2.57,1.81,13.38,7.91,34.59,1.18,24.48-7.75,32.3-12,52.59-6.73a.08.08,0,0,0,0,0A16.9,16.9,0,0,1,114.34,44h0C117.72,46.19,119.78,51.18,118.8,52.16Z"
+    />
+    <path
+      fill="#52AAFF"
+      d="M108.76,32.91a33,33,0,0,1,4.45,7.55c-20.29-5.28-28.11-1-52.59,6.73C39.41,53.92,28.6,47.82,26,46l0,0v0a23.41,23.41,0,0,1-2.41-16c.45-.46,1-1,1.56-1.48C27.47,30.6,38.83,39.38,61,33.84,61,33.84,95.63,25.06,108.76,32.91Z"
+    />
+    <path
+      fill="#0175F2"
+      d="M97.18,22.78a41.15,41.15,0,0,1,11.58,10.13C95.63,25.06,61,33.84,61,33.84,38.83,39.38,27.47,30.6,25.14,28.5A56.76,56.76,0,0,1,45,17.62h0a30.34,30.34,0,0,0,17.09,2.32C72.44,18.47,84.62,18.24,97.18,22.78Z"
+    />
+    <path
+      fill="#015BCB"
+      d="M92.31,20.21a53.78,53.78,0,0,1,4.87,2.57c-12.56-4.54-24.74-4.31-35.07-2.84A30.38,30.38,0,0,1,45,17.62c10.33-3.35,23.66-4.73,39.1-.48A61.53,61.53,0,0,1,92.31,20.21Z"
+    />
+    <path
+      fill="#015BCB"
+      d="M61.06,2.49A2.51,2.51,0,0,1,59.53,4.8h0a10.68,10.68,0,0,0-4.84,4.83,11.27,11.27,0,0,1-.24-2.27,10.64,10.64,0,0,1,2-6.18,3.8,3.8,0,0,1,.29-.38A2.43,2.43,0,0,1,58.55,0,2.49,2.49,0,0,1,61.06,2.49Z"
+    />
+    <path
+      fill="#015BCB"
+      d="M52.43,12.17a11.11,11.11,0,0,1-.07,1.16A10.46,10.46,0,0,0,48,10.65l-.12,0A2.66,2.66,0,1,1,51,6.82,10.58,10.58,0,0,1,52.43,12.17Z"
+    />
+    <circle fill="#0175F2" cx="62.87" cy="46.71" r="2.28" />
   </svg>
 );

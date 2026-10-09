@@ -138,12 +138,27 @@ mock.module("@/components/monitoring/tabs/QueriesTab", () => ({
   },
 }));
 
+// Captures the props the dashboard hands the sessions tab, for the Terminate wiring (#1424).
+const sessionsTabProps: Array<Record<string, unknown>> = [];
+
 mock.module("@/components/monitoring/tabs/SessionsTab", () => ({
-  SessionsTab: () => {
+  SessionsTab: (props: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    sessionsTabProps.push(props);
     return React.createElement("div", { "data-testid": "monitoring-sessionstab" }, "SessionsTab");
   },
+}));
+
+// The signed-in role `useAuth` answers; beforeEach puts the admin back (#1424).
+let currentRole = "admin";
+
+mock.module("@/hooks/use-auth", () => ({
+  useAuth: () => ({
+    user: { role: currentRole },
+    isAdmin: currentRole === "admin",
+    handleLogout: mock(async () => {}),
+  }),
 }));
 
 // Captures the props the dashboard hands the tables tab, so the capability wiring
@@ -245,6 +260,7 @@ describe("MonitoringDashboard", () => {
     mockUseMonitoringData.mockImplementation(monitoringDataDefaults);
     selectCallbacks.clear();
     currentCapabilities = mockCapabilities;
+    currentRole = "admin";
   });
 
   test("renders monitoring title", async () => {
@@ -625,5 +641,57 @@ describe("MonitoringDashboard", () => {
     });
 
     expect(tablesTabProps[tablesTabProps.length - 1].onPreviewMaintenance).toBe(previewMaintenance);
+  });
+
+  // The route refuses maintenance and `kill` to a non-admin, so both tabs are told the signed-in role (#1424).
+  test("tells the sessions and tables tabs whether the signed-in user is an admin", async () => {
+    const openTab = async (name: string) => {
+      const user = userEvent.setup();
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<MonitoringDashboard />);
+      });
+      const trigger = Array.from(renderResult!.container.querySelectorAll('[role="tab"]')).find((t) =>
+        t.textContent?.includes(name),
+      ) as HTMLElement;
+      await user.click(trigger);
+      cleanup();
+    };
+    const lastIsAdmin = async () => {
+      sessionsTabProps.length = 0;
+      tablesTabProps.length = 0;
+      await openTab("Sessions");
+      await openTab("Tables");
+      return [sessionsTabProps.at(-1)?.isAdmin, tablesTabProps.at(-1)?.isAdmin];
+    };
+
+    expect(await lastIsAdmin()).toEqual([true, true]);
+    currentRole = "user";
+    expect(await lastIsAdmin()).toEqual([false, false]);
+  });
+
+  test("hands the sessions tab the declared capabilities with the connected maintenance over them (#1424)", async () => {
+    const user = userEvent.setup();
+    // The connected server refused `kill` where the type id declares it, as CockroachDB's narrowing can (#1387).
+    currentCapabilities = { ...mockCapabilities, maintenanceOperations: ["analyze", "kill"] };
+    const connected = { ...monitoringDataDefaults() };
+    connected.data = {
+      ...(connected.data as Record<string, unknown>),
+      maintenance: { maintenanceOperations: ["analyze"] },
+    };
+    mockUseMonitoringData.mockImplementation(() => connected);
+    sessionsTabProps.length = 0;
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<MonitoringDashboard />);
+    });
+    const trigger = Array.from(renderResult!.container.querySelectorAll('[role="tab"]')).find((t) =>
+      t.textContent?.includes("Sessions"),
+    ) as HTMLElement;
+    await user.click(trigger);
+
+    const capabilities = sessionsTabProps.at(-1)?.capabilities as { maintenanceOperations: string[] };
+    expect(capabilities.maintenanceOperations).toEqual(["analyze"]);
   });
 });

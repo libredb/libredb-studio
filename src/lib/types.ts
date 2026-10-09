@@ -690,6 +690,13 @@ export interface SourceTabState {
   /** The catalog-change counter's value when this document was read. */
   readonly readAtToken?: number;
   /**
+   * The wall-clock moment this document was read (`Date.now()`), so "Stored by the engine as it
+   * was submitted. Complete as shown." is anchored in time rather than left to mean "at some
+   * point" (#1407). Not persisted either, for the same reason `readAtToken` is not: a restored
+   * tab re-reads, so there is no prior read to date.
+   */
+  readonly readAt?: number;
+  /**
    * WHICH part the reader is editing, and never a boolean (#789 Phase 3, discussion #778).
    *
    * Per part and not per tab, so two parts of one Oracle package can hold two independent drafts,

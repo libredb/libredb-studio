@@ -107,6 +107,33 @@ export function chatToolCallStream(name: string, argumentsJson: string, callId?:
   );
 }
 
+/**
+ * TWO tool calls in ONE assistant message, which is what a model does when it decides two
+ * readings at once and is the shape that broke the transcript.
+ *
+ * The protocol says every tool call in an assistant message is answered by its own tool result,
+ * with nothing between them. A `user` message pushed after the FIRST result leaves the second call
+ * unanswered, and the next request is refused: `Tool result is missing for tool call <id>`. One
+ * tool call per turn cannot reach that, so nothing tested it.
+ */
+export function chatTwoToolCallStream(
+  first: { readonly name: string; readonly args: string; readonly id: string },
+  second: { readonly name: string; readonly args: string; readonly id: string },
+): Response {
+  return sseResponse(
+    chatChunk({
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { index: 0, id: first.id, type: "function", function: { name: first.name, arguments: first.args } },
+        { index: 1, id: second.id, type: "function", function: { name: second.name, arguments: second.args } },
+      ],
+    }),
+    chatChunk({}, "tool_calls"),
+    "[DONE]",
+  );
+}
+
 /** The same tool call with its arguments split across frames, as a token-streaming server sends. */
 export function chatToolCallStreamInChunks(name: string, argumentChunks: readonly string[]): Response {
   return sseResponse(

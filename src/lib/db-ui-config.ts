@@ -670,10 +670,11 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
       "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
   },
   databend: {
-    // A mark drawn for Studio, never Databend's logo.
+    // Databend's published icon in its own colours, at the Databend team's request (databendlabs/databend-docs#3512).
     icon: DatabendIcon,
     // `hue-red` is Oracle's; its `-alt` step joins IDENTITY_ALTS with this entry, the first of the hues with no
-    // identity `-alt` to clear tests/unit/theme-accent-contrast.test.ts.
+    // identity `-alt` to clear tests/unit/theme-accent-contrast.test.ts. The icon has fixed fills, so this class no
+    // longer paints it; the entry still needs a distinct one.
     color: "text-hue-red-alt",
     label: "Databend",
     // Self-hosted's HTTP handler port. Port 443 comes from a DSN or an https:// paste, never from the SSL mode or a host

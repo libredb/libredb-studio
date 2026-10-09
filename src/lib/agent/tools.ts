@@ -2604,7 +2604,29 @@ function describeIssues(issues: readonly z.core.$ZodIssue[], input: unknown): st
         // `remove` is the one instruction that loses it. See `TOOL_OWNING_FIELD`.
         const misfiled = surplus.flatMap((key) => {
           const owner = TOOL_OWNING_FIELD[key];
-          return owner === undefined ? [] : [`${key} belongs to ${owner}, send it there`];
+          /*
+            THE ORDER, not just the destination.
+
+            `send it there` was measured on `qwen2.5:3b-instruct` data-analysis, 2026-10-05:
+            FIFTY-FIVE refusals in one five-run cell, every one this exact sentence, the model
+            re-sending the same call each time until the runs ended having reported nothing. The
+            cell scored 0/5.
+
+            Reading the whole message explains the loop. The wrapper says `Correct them and call
+            the tool again`; this clause said `send it there`. Those are two different
+            instructions about two different tools, in one sentence, and the model followed the
+            first - correctly, by its own lights. A destination is not a sequence.
+
+            So the clause now carries the sequence, which is the only part that was missing: the
+            other call, first, and this one again without the field. It stays outside
+            `refusalExamples` under the rule `present_answer` already follows one layer down - a
+            whole worked call crowds a small model's turn, a short concrete value does not, and
+            being told a field lives `somewhere` is not the same instruction as being told what
+            to call.
+          */
+          return owner === undefined
+            ? []
+            : [`${key} belongs to ${owner} — call ${owner} with it first, then call this tool again without it`];
         });
         const strays = surplus.filter((key) => TOOL_OWNING_FIELD[key] === undefined);
         return [...misfiled, ...(strays.length === 0 ? [] : [`${where}: remove ${strays.join(", ")}`])];

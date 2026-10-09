@@ -610,6 +610,42 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       const open = tabs.find(matchesAddress);
       if (open !== undefined) {
         setActiveTabId(open.id);
+        /*
+         * Re-read on reactivation, clearing the same fields the viewer's own `reread`
+         * does (#1407): a second click on the same row is the reader asking what this object
+         * holds NOW, and the only way back before this was the stale banner, shown only after
+         * a DDL ran in THIS session, which a change from another client never trips.
+         *
+         * Skipped while the tab is DIRTY, and the open tab's own flag rather than a fresh
+         * read of the draft store: overwriting an unsaved edit on a second click is the exact
+         * defect the stale banner's control already refuses elsewhere, and the pane keeps
+         * showing it until the reader saves or discards it deliberately. A dirty reactivation
+         * is marked stale INSTEAD, with the sentinel token `-1`: `objectRefreshToken` only ever
+         * counts up from 0, so `-1` can never equal it and the banner shows without this hook
+         * needing the shell's own counter to say so. The viewer's own `reread` button is the
+         * way back, and it is itself disabled while dirty for the same reason.
+         */
+        if (open.source !== undefined) {
+          setTabs((prev) =>
+            prev.map((tab) =>
+              tab.id === open.id && tab.source !== undefined
+                ? {
+                    ...tab,
+                    source:
+                      tab.source.dirty === true
+                        ? { ...tab.source, readAtToken: -1 }
+                        : {
+                            ...tab.source,
+                            document: undefined,
+                            failure: undefined,
+                            readAtToken: undefined,
+                            readAt: undefined,
+                          },
+                  }
+                : tab,
+            ),
+          );
+        }
         return;
       }
       /*

@@ -244,6 +244,8 @@ function Harness(props: {
       activePartId={state.activePartId}
       refreshToken={props.refreshToken ?? 0}
       readAtToken={state.readAtToken}
+      readAt={state.readAt}
+      dirty={state.dirty}
       reader={props.reader}
       onChange={onChange}
     />
@@ -711,6 +713,7 @@ describe("ObjectSourceView", () => {
     expect(clear).toBeTruthy();
     expect(Object.hasOwn(clear!, "failure")).toBe(true);
     expect(Object.hasOwn(clear!, "readAtToken")).toBe(true);
+    expect(Object.hasOwn(clear!, "readAt")).toBe(true);
     /*
      * `=== null` and not `expect(node).toBeNull()`, here and at every other absence poll in this
      * file. A poll that FAILS hands bun the live happy-dom node to pretty-print, and bun walks the
@@ -723,6 +726,60 @@ describe("ObjectSourceView", () => {
      * then. That was measured, by logging the element on the line above each poll.
      */
     await waitFor(() => expect(screen.queryByTestId("object-source-stale") === null).toBe(true));
+  });
+
+  test("the refresh control re-reads a document shown with no catalog change and no failure (#1407)", async () => {
+    // Neither of the other two controls is drawn here: nothing marked this tab stale and
+    // nothing failed, so before this control existed a change from another client had no way
+    // back short of closing the tab and reopening it.
+    const original = "CREATE OR REPLACE PACKAGE APP.APP_ORDERS_PKG AS\n  FUNCTION total RETURN NUMBER;\nEND;";
+    const changed = `${original}\n-- changed by another client`;
+    const answers: ObjectSourceDocument[] = [
+      oneReadablePart,
+      { ...oneReadablePart, parts: [{ ...oneReadablePart.parts[0], text: changed }] },
+    ];
+    const reader = Object.assign(
+      async () => {
+        reader.calls += 1;
+        return answers[reader.calls - 1];
+      },
+      { calls: 0 },
+    );
+    const patches: ObjectSourcePatch[] = [];
+    const record = (patch: ObjectSourcePatch) => {
+      patches.push(patch);
+    };
+    render(<Harness reader={reader} refreshToken={0} onPatch={record} />);
+    await waitFor(() => expect(editorValue()).toBe(original));
+    expect(screen.queryByTestId("object-source-stale-reread")).toBeNull();
+    expect(screen.queryByTestId("object-source-failure-retry")).toBeNull();
+
+    await userEvent.click(screen.getByTestId("object-source-refresh"));
+
+    await waitFor(() => expect(reader.calls).toBe(2));
+    // The second read's answer is on screen, not just requested.
+    await waitFor(() => expect(editorValue()).toBe(changed));
+    const clear = patches.find((patch) => Object.hasOwn(patch, "document") && patch.document === undefined);
+    expect(clear).toBeTruthy();
+    expect(Object.hasOwn(clear!, "failure")).toBe(true);
+    expect(Object.hasOwn(clear!, "readAtToken")).toBe(true);
+    expect(Object.hasOwn(clear!, "readAt")).toBe(true);
+  });
+
+  test("the refresh control is absent until a document is on screen", () => {
+    const pending: ObjectSourceReader = () => new Promise(() => {});
+    render(<Harness reader={pending} refreshToken={0} />);
+    expect(screen.queryByTestId("object-source-refresh")).toBeNull();
+  });
+
+  test("shows when the document was read, so 'as shown' is anchored in time (#1407)", async () => {
+    const reader = readerFor(oneReadablePart);
+    render(<Harness reader={reader} refreshToken={0} />);
+    expect(screen.queryByTestId("object-source-read-at")).toBeNull();
+
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("object-source-read-at")).toBeTruthy());
+    expect(screen.getByTestId("object-source-read-at").textContent).toMatch(/^Read /);
   });
 
   test("keeps the part the reader was on across a re-read, so the stale control does not move them", async () => {
@@ -1841,6 +1898,38 @@ describe("ObjectSourceView edit mode", () => {
     const flips = patches.filter((patch) => Object.hasOwn(patch, "dirty"));
     expect(flips).toHaveLength(2);
     expect(flips[1]?.dirty).toBeUndefined();
+  });
+
+  test("the header refresh control is disabled while the tab is dirty, so it cannot discard a draft (#1407)", async () => {
+    const { applier } = applierDouble();
+    const reader = readerFor(withPart(READABLE));
+    const patches: ObjectSourcePatch[] = [];
+    render(
+      <EditHarness
+        applier={applier}
+        document={withPart(READABLE)}
+        reader={reader}
+        onPatch={(patch) => {
+          patches.push(patch);
+        }}
+      />,
+    );
+    await enterEditMode();
+
+    await type(`${READABLE.text}a`);
+    await waitFor(() => expect((screen.getByTestId("object-source-refresh") as HTMLButtonElement).disabled).toBe(true));
+
+    await userEvent.click(screen.getByTestId("object-source-refresh"));
+    // The click is a no-op on a disabled button: no re-read went out, so the draft that read is
+    // not here to replace is never asked for.
+    expect(reader.calls).toBe(0);
+    expect(patches.some((patch) => Object.hasOwn(patch, "document") && patch.document === undefined)).toBe(false);
+
+    // Back to the original text clears `dirty`, and the control is live again.
+    await type(READABLE.text);
+    await waitFor(() =>
+      expect((screen.getByTestId("object-source-refresh") as HTMLButtonElement).disabled).toBe(false),
+    );
   });
 
   test("a landed read that changes the document does NOT swap the buffer under the typing", async () => {

@@ -659,7 +659,7 @@ export function StudioWorkspace({
    */
   const handleApplied = useCallback(() => {
     catalogChanged();
-    onSourceChange({ document: undefined, failure: undefined, readAtToken: undefined });
+    onSourceChange({ document: undefined, failure: undefined, readAtToken: undefined, readAt: undefined });
   }, [catalogChanged, onSourceChange]);
 
   /**
@@ -1042,6 +1042,7 @@ export function StudioWorkspace({
                               */
                               refreshToken={objectRefreshToken}
                               readAtToken={sourceTab.readAtToken}
+                              readAt={sourceTab.readAt}
                               reader={conn.sourceReader}
                               editingPartId={sourceTab.editingPartId}
                               dirty={sourceTab.dirty}

@@ -95,8 +95,29 @@ const settingsShape = {
    * already says, and not one of those measurements would change.
    */
   verdictHoldLimit: countSchema.optional(),
+  /**
+   * Absent means the compiled one, which is what every entry written before this bound became
+   * per-model was measured under - the loop held `compareReminders < 1`. Optional for the same
+   * reason `verdictHoldLimit` is: making it required would write the default into every entry to
+   * say what their absence already says.
+   */
+  compareHoldLimit: countSchema.optional(),
   retryEmptyTurn: z.boolean(),
   retryUnreadStop: z.boolean(),
+  /**
+   * How many times a stop that read nothing is answered. Absent means once, which is what every
+   * entry written before this field existed was measured under.
+   *
+   * `retryUnreadStop` says whether to answer and this says how often, because a boolean can only
+   * ever give one ask and one ask is a bound rather than an answer: `devstral-small-2:24b` holds
+   * five of six surfaces at 5/5 and loses optimize on runs that call nothing - it says what it
+   * needs, hears the sentence, says the same thing again, and the run ends.
+   *
+   * It belongs HERE as well as in `profile.ts`: a field the operator document cannot carry is a
+   * field a candidate cannot be measured with, and the schema strips what it does not name. The
+   * first attempt to use it was silently dropped for exactly that reason.
+   */
+  unreadStopAsks: countSchema.optional(),
   suppressPlanReasoning: z.boolean(),
   /**
    * Absent means off, which is what every entry written before this switch existed was measured
@@ -156,8 +177,10 @@ const measuredAgainstSchema = z.strictObject({
     planStatementRetries: countSchema,
     presentReminderLimit: countSchema,
     verdictHoldLimit: countSchema,
+    compareHoldLimit: countSchema,
     retryEmptyTurn: z.boolean(),
     retryUnreadStop: z.boolean(),
+    unreadStopAsks: countSchema.optional(),
     suppressPlanReasoning: z.boolean(),
     suppressAgentReasoning: z.boolean().optional(),
     refusalExamples: z.boolean(),

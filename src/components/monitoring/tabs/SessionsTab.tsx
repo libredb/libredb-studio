@@ -19,7 +19,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useReturnFocus } from "@/hooks/use-return-focus";
-import type { MonitoringData, ActiveSessionDetails, ProviderLabels } from "@/lib/db/types";
+import {
+  offersSessionTermination,
+  type MonitoringData,
+  type ActiveSessionDetails,
+  type ProviderCapabilities,
+  type ProviderLabels,
+} from "@/lib/db/types";
 import { PanelUnavailable } from "../PanelUnavailable";
 
 interface SessionsTabProps {
@@ -32,9 +38,14 @@ interface SessionsTabProps {
    * flight, so every read of it stays optional.
    */
   labels?: ProviderLabels;
+  /**
+   * The connected provider's capabilities. Terminate renders only where they declare `kill`
+   * (#1424), and none renders while they are undefined.
+   */
+  capabilities?: ProviderCapabilities;
 }
 
-export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labels }: SessionsTabProps) {
+export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labels, capabilities }: SessionsTabProps) {
   const [killingPid, setKillingPid] = useState<number | string | null>(null);
   const [confirmKill, setConfirmKill] = useState<ActiveSessionDetails | null>(null);
   const confirmKillReturnFocus = useReturnFocus();
@@ -44,6 +55,8 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labe
   }
 
   const sessions = data?.activeSessions ?? [];
+  // The route refuses `kill` to a non-admin and to every engine that does not declare it (#1424).
+  const offersTerminate = isAdmin && offersSessionTermination(capabilities);
 
   // A panel whose read failed is absent from the payload with its own message under
   // `errors`, and that is a different fact from an empty answer: rendering it as data
@@ -233,7 +246,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labe
                         {session.waitEventType ? `${session.waitEventType}` : "-"}
                       </TableCell>
                       <TableCell className="text-right py-2">
-                        {isAdmin ? (
+                        {offersTerminate && session.terminable !== false ? (
                           <Button
                             variant="ghost"
                             size="icon"

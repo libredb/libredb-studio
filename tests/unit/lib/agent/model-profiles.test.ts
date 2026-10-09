@@ -7,6 +7,7 @@ import { resetTuning } from "@/lib/agent/model-tuning";
 import {
   answersUnreadStop,
   ceilingFor,
+  compareHoldLimitFor,
   modelProfiles,
   planStatementRetriesFor,
   presentReminderLimitFor,
@@ -284,12 +285,47 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
       That argument is about the DEFAULT. It says nothing about a model whose ledgers show the
       third ask landing, and until now there was no way to tell those two cases apart.
 
-      Every shipped model resolves to two, because none has been measured needing otherwise.
+      One model has now been measured needing otherwise. `laguna-xs-2.1:latest` optimize earns its
+      own verifier's rejection rather than arriving malformed, so the hold that tells a run why is
+      the one it can act on, and the cell closed at five. Every other shipped model still resolves
+      to two, and so does a model nobody has measured.
     */
-    for (const modelId of Object.keys(modelProfiles())) {
-      expect(verdictHoldLimitFor(modelId)).toBe(2);
+    for (const [modelId, profile] of Object.entries(modelProfiles())) {
+      expect(verdictHoldLimitFor(modelId)).toBe(profile.verdictHoldLimit ?? 2);
     }
+    expect(verdictHoldLimitFor("laguna-xs-2.1:latest")).toBe(5);
     expect(verdictHoldLimitFor("some-model-released-tomorrow:70b")).toBe(2);
+  });
+
+  test("how many times a report may be held to ask for the comparison it rests on", () => {
+    /*
+      THE FOURTH REMINDER BOUND, AND THE ONLY ONE THAT WAS A LITERAL.
+
+      `reportReminderLimit`, `presentReminderLimit` and `verdictHoldLimit` are all settings. The
+      compare-before-report hold was `compareReminders < 1` written into the loop, so the sentence
+      naming the two plan ids a run has already inspected was said exactly once, and a model that
+      reported anyway was never asked again.
+
+      Measured on `laguna-xs-2.1:latest` optimize, 2026-10-09: five rolls of its best document read
+      4/5, 4/5, 1/5, 4/5, 4/5, and the recurring loss was `report-composed` with
+      `no-plan-comparison` on a run that had inspected four plans. `plan-bar` was delivered in every
+      run of every roll. The run holds the plans, hears the sentence once, reports without comparing,
+      and the cell loses by one.
+
+      Safe the way `verdictHoldLimit` is safe, and for the same reason: the hold fires only where
+      `compose_report` is called by a run holding plans and no comparison, which is a run already
+      earning `no-plan-comparison`. A run about to pass never reaches it. What a raised limit costs
+      is turns on a run that has already lost.
+
+      One remains the default, so no model measured before this bound existed moves. The model that
+      asked for it carries five: at one its optimize cell held 4/5 across five rolls and the run it
+      lost was always the one that reported without comparing; at five it read 5/5.
+    */
+    for (const [modelId, profile] of Object.entries(modelProfiles())) {
+      expect(compareHoldLimitFor(modelId)).toBe(profile.compareHoldLimit ?? 1);
+    }
+    expect(compareHoldLimitFor("laguna-xs-2.1:latest")).toBe(5);
+    expect(compareHoldLimitFor("some-model-released-tomorrow:70b")).toBe(1);
   });
 
   test("every profile states what measured it", () => {

@@ -51,14 +51,16 @@ configureMonacoLoader();
  * `onChange` so the tab keeps it across a tab switch and an unmount. Every field is optional
  * and a shell MERGES BY SPREAD, which is what makes an explicitly-`undefined` field a CLEAR:
  * the stale banner's control sends `{ document: undefined, failure: undefined, readAtToken:
- * undefined }` and the three keys are present on purpose, because an omitted key would leave
- * the stale document in place and the re-read would never be issued.
+ * undefined, readAt: undefined }` and the four keys are present on purpose, because an omitted
+ * key would leave the stale document in place and the re-read would never be issued.
  */
 export interface ObjectSourcePatch {
   readonly document?: ObjectSourceDocument;
   readonly failure?: string;
   readonly activePartId?: string;
   readonly readAtToken?: number;
+  /** The wall-clock moment this document was read, so the header can say when (#1407). */
+  readonly readAt?: number;
   /**
    * WHICH part is being edited, and never a boolean (#789 Phase 3, from discussion #778).
    *
@@ -107,6 +109,8 @@ export interface ObjectSourceViewProps {
   readonly refreshToken: number;
   /** The counter's value when this document was read. Absent until a read lands. */
   readonly readAtToken?: number;
+  /** The wall-clock moment this document was read, so the header can say when (#1407). */
+  readonly readAt?: number;
   /** Absent means the standalone route. The embedded shell passes the host's reader. */
   readonly reader?: ObjectSourceReader;
   /** The tab's own edit state, mirrored from `SourceTabState`. Absent means nothing is being edited. */
@@ -645,7 +649,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
          * stale, then pressing "Read again" silently put the reader back on the SPECIFICATION.
          * That write duplicated the fallback it sat above and could only ever lose a selection.
          */
-        onChange({ document: answer, readAtToken: tokenAtRead });
+        onChange({ document: answer, readAtToken: tokenAtRead, readAt: Date.now() });
       },
       (error: unknown) => {
         onChange({
@@ -704,7 +708,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
     (renderableDocument === undefined && connection === null ? DISCONNECTED : undefined);
 
   const reread = useCallback(() => {
-    onChange({ document: undefined, failure: undefined, readAtToken: undefined });
+    onChange({ document: undefined, failure: undefined, readAtToken: undefined, readAt: undefined });
   }, [onChange]);
 
   const part = useMemo(
@@ -1412,6 +1416,37 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
         <span className="ml-auto shrink-0 text-[11px] uppercase text-muted-foreground" data-testid="object-source-kind">
           {props.kindLabel}
         </span>
+        {/* Anchors "Complete as shown" in time (#1407): absent until a read lands, and cleared by `reread` same as the document. */}
+        {renderableDocument !== undefined && props.readAt !== undefined && (
+          <span className="shrink-0 text-[11px] text-muted-foreground" data-testid="object-source-read-at">
+            Read {new Date(props.readAt).toLocaleTimeString()}
+          </span>
+        )}
+        {/*
+          Available whenever a document is shown (#1407), not only after a catalog change (the
+          stale banner below) or a failed read (`Try again`): a change from another client trips
+          neither, and before this the reader's only way back was to close and reopen the tab.
+          `reread` is the same handler both of those already call.
+
+          Disabled while the tab is dirty, the same way `use-tab-manager.ts`'s reactivation
+          skips its clear for a dirty tab: `reread` drops `document` and re-fetches, and an
+          unsaved edit must not be pulled out from under the reader by a background re-read
+          they did not ask to lose.
+        */}
+        {renderableDocument !== undefined && (
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            className="shrink-0"
+            data-testid="object-source-refresh"
+            aria-label="Read this definition again"
+            disabled={props.dirty === true}
+            onClick={reread}
+          >
+            <RefreshCw aria-hidden="true" className="h-3.5 w-3.5" />
+          </Button>
+        )}
       </div>
 
       {stale && (
@@ -1420,11 +1455,18 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
           data-testid="object-source-stale"
         >
           <TriangleAlert aria-hidden="true" strokeWidth={1.5} className="h-3.5 w-3.5 shrink-0" />
+          {/*
+            Two ways in: a catalog change in this session, or a second View Source on a dirty
+            tab (`use-tab-manager.ts`). The wording covers both, and `Read again` waits on the
+            edit like the header refresh does, because `reread` drops the document under it.
+          */}
           <span className="min-w-0">
-            This definition was read before a catalog change in this session. It may be out of date.
+            This definition may have changed since it was read.
+            {props.dirty === true && " Save or discard your edit to read it again."}
           </span>
           <Button
             type="button"
+            disabled={props.dirty === true}
             size="sm"
             variant="ghost"
             className="ml-auto h-6 shrink-0 px-2 text-xs"
@@ -1745,7 +1787,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
        * chosen by the DOCUMENT. `landOutcome`'s collateral arm calls `onApplied`, both shipped
        * shells answer it by clearing the document, `Studio.tsx` and `StudioWorkspace.tsx` each
        * running `onSourceChange({ document: undefined, failure: undefined, readAtToken:
-       * undefined })`, and with no document there is no part: the arm holding this dialog was
+       * undefined, readAt: undefined })`, and with no document there is no part: the arm holding this dialog was
        * replaced by the loading region and the report of what the apply had just destroyed was
        * unmounted by that same apply. MEASURED at the pane and against the real `<Studio />`:
        * report GONE, loading shown; with the re-read then failing, GONE for good, the loss

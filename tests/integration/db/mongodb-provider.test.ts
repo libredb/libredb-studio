@@ -27,6 +27,8 @@ let mockCollections: { name: string; type: string }[] = [
   { name: "orders", type: "collection" },
 ];
 let mockCurrentOps: Record<string, unknown>[] = [];
+/** Every `killOp` command the admin database received, so a test can read what Terminate sent (#1424). */
+let killOpCommands: Record<string, unknown>[] = [];
 
 // ----------------------------------------------------------------------------
 // Object-surface state (#789)
@@ -386,6 +388,10 @@ const createMockDb = (dbName = "testdb") => ({
     serverStatus: async () => mockServerStatus(),
     command: async (cmd: Record<string, unknown>) => {
       if (cmd.currentOp) return { inprog: mockCurrentOps };
+      if (cmd.killOp) {
+        killOpCommands.push(cmd);
+        return { info: "attempting to kill op", ok: 1 };
+      }
       if (cmd.buildInfo) return { version: "7.0.0" };
       if (cmd.listDatabases) {
         lastListDatabasesCommand = cmd;
@@ -734,6 +740,7 @@ describe("MongoDBProvider", () => {
       { name: "orders", type: "collection" },
     ];
     mockCurrentOps = [];
+    killOpCommands = [];
     mockServerStatus = defaultServerStatus;
     mockDbStats = defaultDbStats;
     mockCollStatsByCollection = {};
@@ -1107,6 +1114,7 @@ describe("MongoDBProvider", () => {
         vacuum: { label: "Compact Collection", perEntity: true, global: true },
         analyze: { label: "Validate Collection", perEntity: true, global: true },
         check: { label: "Check Collection", perEntity: true, global: false },
+        kill: { label: "Kill Operation", perEntity: false, global: false },
       });
       expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
       // MongoDB's "Compact Collection" really is the `vacuum` it declares, so the
@@ -1804,6 +1812,17 @@ describe("MongoDBProvider", () => {
       await expect(provider.runMaintenance("flush" as never)).rejects.toThrow();
     });
 
+    // #1424: `kill` was implemented and undeclared, so the route refused the Terminate it backs.
+    test("kill is declared and sends killOp with the row's opid", async () => {
+      expect(provider.getCapabilities().maintenanceOperations).toContain("kill");
+
+      const result = await provider.runMaintenance("kill", "64517");
+
+      expect(killOpCommands).toEqual([{ killOp: 1, op: 64517 }]);
+      expect(result.success).toBe(true);
+      expect(result.message).toBe("Killed operation: 64517");
+    });
+
     // #1408: the whole-database loops ran `validate` on every `listCollections()` entry,
     // views included, and the server refuses it on a view - so the first view aborted
     // the run with a 500. Compact swallowed every error and answered a bare success.
@@ -2208,6 +2227,28 @@ describe("MongoDBProvider", () => {
       expect(sessions[1].duration).toBe("5.0s");
       expect(sessions[2].duration).toBe("2m 0s");
       expect(sessions[3].duration).toBe("2h 1m");
+    });
+
+    // #1424: `currentOp` with `$all` also answers rows `killOp` cannot end. Measured on MongoDB 9.0.2 with only
+    // Studio connected: 39 rows. 1 was Studio's own `currentOp`, 34 were server threads with no opid, 2 were
+    // Studio's own idle connections with no opid, and 2 were server jobs (`Checkpointer`, `JournalFlusher`)
+    // whose opid `killOp` answered `ok: 1` for while both kept running.
+    test("marks a row with no opid, with no client, or that is this read itself, as not terminable", async () => {
+      mockCurrentOps = [
+        { opid: 64517, client: "10.0.0.1:4444", active: true, command: { insert: "t" }, microsecs_running: 1000 },
+        { client: "10.0.0.1:4445", active: false },
+        { desc: "TTLMonitor", active: false },
+        { opid: 3072, desc: "JournalFlusher", active: true },
+        { opid: 154627, client: "10.0.0.1:4446", active: true, command: { currentOp: 1, $all: true } },
+      ];
+      const sessions = await provider.getActiveSessions();
+      expect(sessions.map((s) => [s.pid, s.terminable])).toEqual([
+        [64517, undefined],
+        ["N/A", false],
+        ["N/A", false],
+        [3072, false],
+        [154627, false],
+      ]);
     });
 
     test("respects the limit option", async () => {

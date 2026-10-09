@@ -24,6 +24,7 @@ import { BASELINE_NOTICES } from "@/lib/agent/models/notices";
 import {
   DEFAULT_PLAN_STATEMENT_RETRIES,
   DEFAULT_PRESENT_REMINDER_LIMIT,
+  DEFAULT_COMPARE_HOLD_LIMIT,
   DEFAULT_VERDICT_HOLD_LIMIT,
   DEFAULT_REFUSAL_EXAMPLES,
   DEFAULT_REPORT_REMINDER_LIMIT,
@@ -68,6 +69,7 @@ const document = (overrides: Record<string, unknown> = {}): Record<string, unkno
       planStatementRetries: 0,
       presentReminderLimit: 1,
       verdictHoldLimit: 2,
+      compareHoldLimit: 1,
       retryEmptyTurn: false,
       retryUnreadStop: false,
       suppressPlanReasoning: false,
@@ -134,6 +136,7 @@ describe("the document Studio ships with", () => {
       planStatementRetries: DEFAULT_PLAN_STATEMENT_RETRIES,
       presentReminderLimit: DEFAULT_PRESENT_REMINDER_LIMIT,
       verdictHoldLimit: DEFAULT_VERDICT_HOLD_LIMIT,
+      compareHoldLimit: DEFAULT_COMPARE_HOLD_LIMIT,
       retryEmptyTurn: DEFAULT_RETRY_EMPTY_TURN,
       retryUnreadStop: DEFAULT_RETRY_UNREAD_STOP,
       suppressPlanReasoning: DEFAULT_SUPPRESS_PLAN_REASONING,

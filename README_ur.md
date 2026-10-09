@@ -15,6 +15,7 @@
   <a href="README_es.md">Español</a> ·
   <b>اردو</b> ·
   <a href="README_hi.md">हिन्दी</a> ·
+  <a href="README_ko.md">한국어</a> ·
   <a href="README_pt.md">Português (Brasil)</a> ·
   <a href="README_ru.md">Русский</a>
 </p>

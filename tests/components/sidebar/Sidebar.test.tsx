@@ -622,6 +622,43 @@ describe("Sidebar", () => {
     expect(withWalk.queryByTestId("key-browser")).toBeNull();
   });
 
+  /**
+   * #1169: DEFERRING THE CATALOG DOES NOT DEFER THE WALK, and the switch says so.
+   *
+   * `skipObjectScan` (#765) promises that opening a connection reads NOTHING, and that promise holds
+   * here for the reason it holds everywhere else: the key panel is what reads a key space, and the
+   * panel mounts only when the reader chooses Keys. So the tab pair stays, because the switch itself
+   * is not a read, and the walk that follows the choice is a bounded sample that says it is one.
+   *
+   * Both halves are pinned together on purpose: the switch surviving the deferral is only correct
+   * while the panel is still absent before the choice, so a change that mounted the panel eagerly
+   * (a read on connect under another name) fails here rather than in the browser.
+   */
+  test("a deferred connection that declares keyScan keeps the switch, and mounts no walk until Keys is chosen", () => {
+    const onLoadObjects = mock(() => {});
+    const props = createDefaultProps({
+      metadata: walkMetadata(),
+      objectScanDeferred: true,
+      onLoadObjects,
+    });
+    const { getByRole, queryByTestId } = render(<Sidebar {...props} />);
+
+    // The engine's declaration decides the switch: the deferral is about the catalog, and this
+    // engine has none to read.
+    expect(getByRole("tab", { name: "Objects" })).toBeDefined();
+    expect(getByRole("tab", { name: "Keys" })).toBeDefined();
+
+    // The deferral still reaches the tree, with its load action.
+    expect(queryByTestId("object-tree")?.getAttribute("data-deferred")).toBe("true");
+    expect(queryByTestId("object-tree")?.getAttribute("data-has-load")).toBe("true");
+
+    // Nothing has read a key: the panel IS the walk, and it is not mounted until Keys is chosen.
+    expect(queryByTestId("key-browser")).toBeNull();
+
+    fireEvent.click(getByRole("tab", { name: "Keys" }));
+    expect(queryByTestId("key-browser")).not.toBeNull();
+  });
+
   test("hands the panel the connection and the declared batch size when Keys is chosen", () => {
     const props = createDefaultProps({
       activeConnection: mockPostgresConnection,

@@ -1236,3 +1236,258 @@ const SQL_EVERYTHING_BEFORE_1468 = [
   "  ('900 Pine St', 670.53, 'user9@example.com', 'Sydney', true, 293, 387.18, '2026-02-15', '2026-06-05 07:36:01', '2f0f31ca-24f8-467d-86b4-7bb10a7b6274', 'Test data', '{}'),",
   "  ('1000 Elm St', 800.76, 'user10@example.com', 'Berlin', false, 9696, 390.98, '2026-07-05', '2026-08-14 05:52:04', 'be2fe558-2ff0-4123-9174-763827c9f36e', 'Test data', '{}');",
 ].join("\n");
+
+describe("TestDataGenerator foreign keys and unique columns (#1400)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const column = (name: string, type: string, extra: Partial<DetailedObject["columns"][number]> = {}) => ({
+    name,
+    type,
+    nullable: true,
+    isPrimary: false,
+    ...extra,
+  });
+
+  const employees: DetailedObject = {
+    name: "emp",
+    kind: "table",
+    path: ["app", "emp"],
+    indexes: [],
+    columns: [
+      column("id", "serial", { nullable: false, isPrimary: true }),
+      column("name", "varchar(100)"),
+      column("dept_id", "int"),
+      column("manager", "int"),
+    ],
+    foreignKeys: [
+      { columnName: "dept_id", referencedTable: "dept", referencedColumn: "id" },
+      { columnName: "manager", referencedTable: "emp", referencedColumn: "id" },
+    ],
+  };
+
+  function renderGenerator(tableSchema: DetailedObject) {
+    return render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={tableSchema.path}
+        tableSchema={tableSchema}
+        databaseType="postgres"
+        capabilities={postgresCaps}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+  }
+
+  test("a foreign key column is left out of the INSERT, whatever its name", () => {
+    const statement = executed(employees, postgresCaps);
+    expect(statement).toContain("(name)");
+    expect(statement).not.toContain("dept_id");
+    expect(statement).not.toContain("manager");
+  });
+
+  test("a foreign key column is labelled as one, not as auto-increment, and the dialog says why", () => {
+    const { container } = renderGenerator(employees);
+    const text = container.textContent || "";
+    expect(text).toContain("dept_id: foreignKey");
+    expect(text).toContain("manager: foreignKey");
+    expect(text).not.toContain("dept_id: autoIncrement");
+    expect(text).toContain("Foreign key columns are left out of the INSERT (dept_id, manager)");
+    expect(text).toContain("1 columns");
+    const struck = Array.from(container.querySelectorAll("span.line-through")).map((s) => s.textContent);
+    expect(struck).toContain("dept_id: foreignKey");
+  });
+
+  test("a table with no foreign keys shows no foreign key note", () => {
+    const { container } = renderGenerator({ ...employees, foreignKeys: undefined });
+    expect(container.textContent).not.toContain("Foreign key columns are left out");
+  });
+
+  const accounts: DetailedObject = {
+    name: "accounts",
+    kind: "table",
+    path: ["app", "accounts"],
+    indexes: [
+      { name: "accounts_email_key", columns: ["email"], unique: true },
+      { name: "accounts_nick_idx", columns: ["nick"], unique: false },
+      { name: "accounts_pair_key", columns: ["handle", "age"], unique: true },
+    ],
+    columns: [
+      column("code", "varchar(20)", { nullable: false, isPrimary: true }),
+      column("email", "varchar(255)"),
+      column("handle", "varchar(40)", { baseType: "varchar" }),
+      column("age", "int"),
+      column("nick", "varchar(40)"),
+      column("website", "varchar(255)"),
+    ],
+  };
+
+  const emailsOf = (statement: string): string[] => statement.match(/'user\d+(?:\.[0-9a-f]{6})?@example\.com'/g) ?? [];
+
+  test("emails of a UNIQUE column are distinct within a run and across runs", () => {
+    const first = emailsOf(executed(accounts, postgresCaps));
+    cleanup();
+    const second = emailsOf(executed(accounts, postgresCaps));
+    expect(first).toHaveLength(10);
+    for (const email of first) expect(email).toMatch(/^'user\d+\.[0-9a-f]{6}@example\.com'$/);
+    expect(new Set(first).size).toBe(10);
+    expect(first.filter((email) => second.includes(email))).toEqual([]);
+  });
+
+  test("Regenerate gives the UNIQUE column new values", () => {
+    const { container, getByTitle } = renderGenerator(accounts);
+    const before = emailsOf(container.textContent || "");
+    fireEvent.click(getByTitle("Regenerate random data"));
+    const after = emailsOf(container.textContent || "");
+    expect(after).toHaveLength(10);
+    expect(after.filter((email) => before.includes(email))).toEqual([]);
+  });
+
+  test("free-text values of unique and primary key columns carry a per-run, per-row suffix", () => {
+    const statement = withDeterministicRandom(() => executed(accounts, postgresCaps));
+    const suffixed = statement.match(/'[^']*-[0-9a-f]{6}-\d+'/g) ?? [];
+    // `code` is the primary key and `handle` sits in a unique index: 10 rows each. `website` and
+    // `nick` are in no unique index, so they stay what they were.
+    expect(suffixed).toHaveLength(20);
+    expect(statement).toContain("'https://example.com/page/1'");
+    expect(statement).not.toContain("page/1-");
+  });
+
+  test("a numeric column of a unique index is not given a text suffix", () => {
+    const statement = executed(accounts, postgresCaps);
+    expect(statement).not.toMatch(/\d-[0-9a-f]{6}-\d/);
+    expect(statement).toMatch(/', \d{2}, '/);
+  });
+
+  test("a column in no unique index keeps the plain email", () => {
+    const plain: DetailedObject = { ...accounts, indexes: [] };
+    const statement = executed({ ...plain, columns: [column("email", "varchar(255)")] }, postgresCaps);
+    expect(statement).toContain("'user1@example.com'");
+    expect(statement).toContain("'user10@example.com'");
+  });
+
+  test("short pick-list values of a UNIQUE column are distinct within one run", () => {
+    // Every pick lands on the first entry, the worst case for a short list: without a suffix all
+    // ten rows would carry the same city, country, status and paragraph.
+    const random = spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const places: DetailedObject = {
+        name: "places",
+        kind: "table",
+        path: ["app", "places"],
+        indexes: [
+          { name: "places_city_key", columns: ["city"], unique: true },
+          { name: "places_country_key", columns: ["country"], unique: true },
+          { name: "places_status_key", columns: ["status"], unique: true },
+          { name: "places_description_key", columns: ["description"], unique: true },
+        ],
+        columns: [
+          column("city", "varchar(50)"),
+          column("country", "varchar(50)"),
+          column("status", "varchar(20)"),
+          column("description", "text", { baseType: "text" }),
+        ],
+      };
+      const rows = executed(places, postgresCaps)
+        .split("\n")
+        .filter((line) => line.startsWith("  ("));
+      expect(rows).toHaveLength(10);
+      for (let position = 0; position < 4; position++) {
+        const values = rows.map((row) => row.match(/'[^']*'/g)![position]);
+        expect(new Set(values).size).toBe(10);
+      }
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  const mongoUsers = (indexes: DetailedObject["indexes"]): DetailedObject => ({
+    name: "users",
+    kind: "table",
+    path: ["shop", "users"],
+    indexes,
+    columns: [column("name", "VARCHAR(100)"), column("email", "VARCHAR(255)"), column("age", "int")],
+  });
+
+  const mongoEmails = (schema: DetailedObject): string[] =>
+    (JSON.parse(executed(schema, jsonCaps)).documents as { email: string }[]).map((doc) => doc.email);
+
+  test("the MongoDB insertMany arm gives a UNIQUE index's field distinct values, within a run and between runs", () => {
+    const schema = mongoUsers([{ name: "email_1", columns: ["email"], unique: true }]);
+    const first = mongoEmails(schema);
+    cleanup();
+    const second = mongoEmails(schema);
+    for (const email of first) expect(email).toMatch(/^user\d+\.[0-9a-f]{6}@example\.com$/);
+    expect(new Set(first).size).toBe(10);
+    expect(first.filter((email) => second.includes(email))).toEqual([]);
+  });
+
+  test("the MongoDB insertMany arm keeps the plain email where no unique index names the field", () => {
+    const emails = mongoEmails(mongoUsers([{ name: "email_1", columns: ["email"], unique: false }]));
+    expect(emails[0]).toBe("user1@example.com");
+    expect(emails[9]).toBe("user10@example.com");
+  });
+
+  /**
+   * Math.random answers every value twice in a row, so each row's first draw repeats the row
+   * before it: a generator that does not look at what the column already holds writes duplicates.
+   */
+  function pairedRandom() {
+    let calls = 0;
+    return spyOn(Math, "random").mockImplementation(() => Math.floor(calls++ / 2) / 100);
+  }
+
+  test("a numeric UNIQUE column is distinct within one run even where the draws repeat", () => {
+    const random = pairedRandom();
+    try {
+      const stock: DetailedObject = {
+        name: "stock",
+        kind: "table",
+        path: ["app", "stock"],
+        indexes: [{ name: "stock_qty_key", columns: ["qty"], unique: true }],
+        columns: [column("qty", "int")],
+      };
+      const quantities = executed(stock, postgresCaps)
+        .split("\n")
+        .filter((line) => line.startsWith("  ("))
+        .map((line) => line.replace(/[,;]$/, ""));
+      expect(quantities).toHaveLength(10);
+      expect(new Set(quantities).size).toBe(10);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  test("the MongoDB insertMany arm gives a numeric UNIQUE index's field distinct values within one run", () => {
+    const random = pairedRandom();
+    try {
+      const ages = (
+        JSON.parse(executed(mongoUsers([{ name: "age_1", columns: ["age"], unique: true }]), jsonCaps)).documents as {
+          age: number;
+        }[]
+      ).map((doc) => doc.age);
+      expect(ages).toHaveLength(10);
+      expect(new Set(ages).size).toBe(10);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  test("a UNIQUE column whose generator has only two values gives up after a few draws instead of looping", () => {
+    const flags: DetailedObject = {
+      name: "flags",
+      kind: "table",
+      path: ["app", "flags"],
+      indexes: [{ name: "flags_active_key", columns: ["active"], unique: true }],
+      columns: [column("active", "boolean")],
+    };
+    const rows = executed(flags, postgresCaps)
+      .split("\n")
+      .filter((line) => line.startsWith("  ("))
+      .map((line) => line.replace(/[,;]$/, ""));
+    expect(rows).toHaveLength(10);
+    expect(new Set(rows).size).toBeLessThanOrEqual(2);
+  });
+});

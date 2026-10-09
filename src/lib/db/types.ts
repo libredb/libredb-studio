@@ -395,6 +395,17 @@ export function withConnectedMaintenance(
 }
 
 /**
+ * Whether a session row may offer Terminate, asked by both session lists (#1424).
+ *
+ * `/api/db/maintenance` refuses `kill` unless the provider declares maintenance and lists `kill`
+ * in `maintenanceOperations`, so a control drawn anywhere else can only produce that refusal.
+ * Unknown capabilities are not a permission, for the reason `maintenanceControl` gives.
+ */
+export function offersSessionTermination(capabilities: ProviderCapabilities | undefined): boolean {
+  return capabilities?.supportsMaintenance === true && capabilities.maintenanceOperations.includes("kill");
+}
+
+/**
  * The six members of `MaintenanceType`, as a value. A record rather than a list, so a seventh member of the type
  * fails to compile here until it is placed.
  */
@@ -2273,6 +2284,11 @@ export interface ActiveSessionDetails {
   waitEventType?: string;
   waitEvent?: string;
   blocked?: boolean;
+  /**
+   * `false` on a row the provider's `kill` cannot end, so neither session list draws a Terminate
+   * control on it. Absent means the declared `kill` applies to the row (#1424).
+   */
+  terminable?: boolean;
 }
 
 /**

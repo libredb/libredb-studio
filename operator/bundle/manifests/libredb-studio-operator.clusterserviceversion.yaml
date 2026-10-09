@@ -21,14 +21,14 @@ metadata:
       ]
     capabilities: Basic Install
     categories: Database, Developer Tools
-    containerImage: ghcr.io/libredb/libredb-studio-operator:0.18.1
-    createdAt: "2026-10-09T00:08:28Z"
+    containerImage: ghcr.io/libredb/libredb-studio-operator:0.18.2
+    createdAt: "2026-10-09T18:56:13Z"
     description: Open-source web-based SQL IDE for twenty-seven engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
       ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra,
       libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB
       3, Oxia and Databend - with AI-powered query assistance.
-    olm.skipRange: '>=0.0.0 <0.18.1'
+    olm.skipRange: '>=0.0.0 <0.18.2'
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: helm.sdk.operatorframework.io/v1
     repository: https://github.com/libredb/libredb-studio
@@ -37,7 +37,7 @@ metadata:
     operatorframework.io/arch.amd64: supported
     operatorframework.io/arch.arm64: supported
     operatorframework.io/os.linux: supported
-  name: libredb-studio-operator.v0.18.1
+  name: libredb-studio-operator.v0.18.2
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -263,7 +263,7 @@ spec:
                 - --leader-elect
                 - --leader-election-id=libredb-studio-operator
                 - --health-probe-bind-address=:8081
-                image: ghcr.io/libredb/libredb-studio-operator:0.18.1
+                image: ghcr.io/libredb/libredb-studio-operator:0.18.2
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -392,4 +392,4 @@ spec:
   provider:
     name: LibreDB
     url: https://libredb.org
-  version: 0.18.1
+  version: 0.18.2

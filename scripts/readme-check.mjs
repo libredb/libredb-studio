@@ -55,6 +55,7 @@ const LOCALIZED = [
   "README_hi.md",
   "README_pt.md",
   "README_ru.md",
+  "README_ko.md",
 ];
 
 /** The variable the quickstart warning must name. */
