@@ -454,8 +454,8 @@ function keyBrowserBreaches(type: string, capabilities: ProviderCapabilities): r
  * THE LEVEL DECLARATION, held to its rules (Keys panel levels, spec 3.8).
  *
  * `keyScan.levels` says an engine lists its key space one level at a time. A level is a prefix and a
- * separator, and a level page has no total, so `levels` needs `pattern: "prefix"`, a non-empty
- * separator and `totalScope: "none"`. `levels.rootKind` names the kind whose rows are the key space's first segment,
+ * separator, and a level page has no total, so `levels` needs `pattern: "prefix"`, a separator of one
+ * character and `totalScope: "none"`. `levels.rootKind` names the kind whose rows are the key space's first segment,
  * so it must be a declared kind, a kind that draws rows (not one only the Keys panel enumerates), on an
  * engine with no container level, where the Sidebar sends no `database` beside the pattern.
  *
@@ -480,9 +480,13 @@ function levelBreaches(type: string, capabilities: ProviderCapabilities): readon
   if (shape.totalScope !== "none") {
     breaches.push(`${type} declares keyScan.levels with a total, and a level page has no total to count`);
   }
-  // An empty separator is found in every key, so no level could ever end at one.
-  if (shape.separator === "") {
-    breaches.push(`${type} declares keyScan.levels with an empty separator, and a level ends at the next separator`);
+  // An empty separator is found in every key, so no level could ever end at one; a longer one can overlap
+  // itself or be cut by a prefix that ends inside it, and the panel would then draw an entry below the
+  // level the route judged it in.
+  if (shape.separator.length !== 1) {
+    breaches.push(
+      `${type} declares keyScan.levels with the separator ${JSON.stringify(shape.separator)}, and a level ends at a separator of one character`,
+    );
   }
   const id = levels.rootKind;
   if (id !== undefined) {
@@ -613,10 +617,12 @@ describe("the key-browser declaration", () => {
       ]);
     });
 
-    test("levels with an empty separator is refused by name", () => {
-      expect(levelBreaches("store", store({ ...LEVELS, separator: "" }))).toEqual([
-        "store declares keyScan.levels with an empty separator, and a level ends at the next separator",
-      ]);
+    test("levels with a separator that is not one character is refused by name", () => {
+      for (const separator of ["", "::"]) {
+        expect(levelBreaches("store", store({ ...LEVELS, separator }))).toEqual([
+          `store declares keyScan.levels with the separator ${JSON.stringify(separator)}, and a level ends at a separator of one character`,
+        ]);
+      }
     });
 
     test("levels on a counted walk is refused by name", () => {

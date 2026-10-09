@@ -692,8 +692,8 @@ export interface KeyScanCapability {
   /**
    * Present iff `scanKeysPage` also answers a LEVEL page: asked with `KeyScanOptions.level`, it returns
    * the keys directly under the pattern and the folder prefixes one separator deeper, each folder once,
-   * at most `count` entries in all, and the cursor of that level. Requires `pattern: "prefix"` and
-   * `totalScope: "none"`.
+   * at most `count` entries in all, and the cursor of that level. Requires `pattern: "prefix"`,
+   * `totalScope: "none"` and a separator of one character.
    * A provider that declares it still answers a walk without `level` exactly as before.
    *
    * THE LEVEL-PROVIDER CONTRACT (Keys panel levels, spec 3.3). A level page never holds more than `count`

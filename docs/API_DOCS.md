@@ -1417,6 +1417,7 @@ etcd declares `"/"`, `"opaque"`, `"prefix"` and `"walk"`: a cursor only it can r
 Oxia declares `"/"`, `"opaque"`, `"prefix"` and `"none"`: a cursor only it can read, a literal prefix, and no count.
 An engine whose server groups keys into folder prefixes may also declare `levels`: its walk can list one level of the key space at a time under `separator`.
 A `levels` declaration needs `pattern: "prefix"` and `totalScope: "none"`, and any other pair is a defect of the declaration, answered `500` on every request.
+Its `separator` is one character: an empty one is found in every key, and a longer one can overlap itself or be cut by a pattern that ends inside it, so the panel could draw an entry below the level the route judged it in.
 `levels.rootKind`, when present, names the object kind whose rows name the key space's first segment; the row menu offers Browse Keys on those rows and opens the panel on `<name><separator>`, on an engine with no container level.
 
 **Authentication:** Required.
