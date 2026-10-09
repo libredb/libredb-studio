@@ -584,6 +584,64 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
   });
 
   /*
+    THE TWO BIGGEST REFUSAL LOOPS IN THE WHOLE LEDGER, and both were type reports.
+
+    Counted across the sweep's ledger on 2026-10-09, `compose_report` refusals by exact message:
+
+      140x  claims.0.evidence: expected array, received nothing
+       95x  claims.0.evidence: expected array, received object
+       32x  the same, on two claims at once
+
+    267 refusals, in the cell that is unlocked on fifteen of the sixteen rows in the candidate
+    table. `cogito:3b` was refused thirty times in one optimize cell, `qwen3.5:0.8b` twenty-two,
+    `gemma4:e2b` a hundred and one - and the dominant LOSS those cells record is `model-timeout`
+    with `no-report`, which is the consequence: the run spends its deadline re-sending a call it
+    was never told how to fix.
+
+    "expected array, received object" names the types and not the move. The model sent ONE citation
+    where a list of one belongs, which is the cheapest mistake in this contract to state a remedy
+    for: wrap what you sent. "received nothing" is the same shape one step earlier - the field is
+    required, and saying so is not the same as reporting its type.
+
+    This is the rule the file already turns on, in its own words one function down: naming what
+    WOULD have worked. A closed set gets its values, a refused call gets a worked example, a
+    misfiled field gets the order of the two calls. An array gets "wrap it".
+  */
+  test("a single citation where a list belongs is told to wrap it, not just told the type", async () => {
+    const h = harness();
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+    if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
+    const events: AgentRunEvent[] = [{ kind: "tool-completed", atMs: 1, stepId: "step_1", artifact: outcome.artifact }];
+
+    // ONE citation object where an array of one belongs - 95 refusals in the ledger wore this shape.
+    const tek = composeReportTool(
+      h.context,
+      { runId: h.context.runId, events },
+      {
+        claims: [
+          {
+            claim: "orders has rows",
+            evidence: { source: "artifact", correlationId: outcome.artifact.correlationId },
+          },
+        ],
+      },
+    );
+    if (tek.kind !== "unavailable") throw new Error(`expected unavailable, got ${tek.kind}`);
+    expect(tek.reasonCode).toBe("INVALID_TOOL_INPUT");
+    expect(tek.modelText).toContain("wrap it in an array");
+
+    // And the field omitted entirely - 140 refusals, the single most common in the ledger.
+    const yok = composeReportTool(
+      h.context,
+      { runId: h.context.runId, events },
+      { claims: [{ claim: "orders has rows" }] },
+    );
+    if (yok.kind !== "unavailable") throw new Error(`expected unavailable, got ${yok.kind}`);
+    expect(yok.modelText).toContain("required");
+  });
+
+  /*
     Measured 2026-08-16 against a real Ollama endpoint: `qwen3.8` could not finish a
     data-analysis run, and the reason was an ENCODING rather than a capability. Kept as its own
     group because the fix belongs to the tool's input contract and to nothing else.

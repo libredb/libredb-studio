@@ -2739,8 +2739,30 @@ function renamesAmong(issues: readonly z.core.$ZodIssue[], input: unknown): Read
 
 /** One issue in this layer's words; see `describeIssues`, which owns the rules. */
 function describeIssue(issue: z.core.$ZodIssue, where: string, input: unknown): string {
-  if (issue.code === "invalid_type")
-    return `${where}: expected ${issue.expected}, received ${arrivedAt(input, issue.path)}`;
+  if (issue.code === "invalid_type") {
+    const arrived = arrivedAt(input, issue.path);
+    /*
+      THE TWO BIGGEST REFUSAL LOOPS IN THE LEDGER, and both were type reports.
+
+      Counted 2026-10-09 across the sweep: `claims.N.evidence: expected array, received nothing`
+      140 times and `expected array, received object` 127 times - 267 refusals, in the cell that is
+      unlocked on fifteen of the sixteen rows in the candidate table. `cogito:3b` was refused thirty
+      times in ONE optimize cell, `qwen3.5:0.8b` twenty-two, `gemma4:e2b` a hundred and one, and
+      what those cells record as their loss is `model-timeout` with `no-report`: the consequence of
+      spending a deadline re-sending a call nobody told them how to fix.
+
+      Naming the types is not naming the move. A model that sent one citation where a list of one
+      belongs needs to be told to wrap what it sent; a model that sent nothing needs to be told the
+      field is required, which "received nothing" reports without saying. Both remedies are in hand
+      at the point of refusal, which is the rule this file already turns on one branch down - a
+      closed set gets its values, a refused call gets a worked example, a misfiled field gets the
+      order of the two calls.
+    */
+    if (issue.expected === "array" && arrived !== "nothing")
+      return `${where}: expected array, received one ${arrived} — wrap it in an array: [ the value you sent ]`;
+    if (arrived === "nothing") return `${where}: expected ${issue.expected}, received nothing — this field is required`;
+    return `${where}: expected ${issue.expected}, received ${arrived}`;
+  }
   /*
       A closed set is named, because "invalid value" was not something a model could act on.
 
