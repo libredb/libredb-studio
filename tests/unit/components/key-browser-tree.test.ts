@@ -3,11 +3,13 @@ import {
   buildKeyTree,
   filterKeyTree,
   flattenKeyTree,
+  isFolder,
   isUnderPrefix,
   keyName,
   keyRowNames,
   keyTreeWindow,
   KEY_ROW_HEIGHT,
+  levelScope,
   pathPattern,
   prefixPattern,
   sentPattern,
@@ -809,5 +811,93 @@ describe("the tree in a declared shape", () => {
     expect(filterKeyTree(root, "::*", wide)).toBe(root);
     expect(segments(at(filterKeyTree(root, "a::b::*", wide), "a"))).toEqual(["b"]);
     expect(keyRowNames(at(root, "a"), true, wide)).toEqual({ label: "a::*", title: "a::*", toggle: "a" });
+  });
+});
+
+/**
+ * The tree of an engine that lists its key space one level at a time (Keys panel levels, spec 3.4):
+ * folders the server named as prefixes, held beside the keys, drawn as folders before anything is
+ * listed in them, and adding nothing to any key count.
+ */
+const LEVELS = keyScanShape({
+  defaultCount: 500,
+  maxCount: 1000,
+  separator: "/",
+  cursor: "opaque",
+  pattern: "prefix",
+  totalScope: "none",
+  levels: { rootKind: "bucket" },
+});
+
+describe("server folders in the tree", () => {
+  test("a tree built with no folders is today's tree, and no node carries the flag", () => {
+    const keys = ["/apisix/routes/1", "/app/", "/app/cfg", "k3s/x", "plain"];
+    const today = buildKeyTree(keys, ETCD);
+    const redis = buildKeyTree(["app:env", "app:cache:ttl"]);
+
+    expect(buildKeyTree(keys, ETCD, [])).toEqual(today);
+    expect("serverFolder" in today).toBe(false);
+    expect(everyNode(today).some((node) => "serverFolder" in node)).toBe(false);
+    expect("serverFolder" in redis).toBe(false);
+    expect(everyNode(redis).some((node) => "serverFolder" in node)).toBe(false);
+  });
+
+  test("a folder with nothing listed under it is a folder, drawn before the leaves, with no keys counted", () => {
+    const root = buildKeyTree(["readme"], LEVELS, ["sales/"]);
+
+    expect(segments(root)).toEqual(["sales", "readme"]);
+    expect(at(root, "sales")).toEqual({
+      segment: "sales",
+      path: ["sales"],
+      children: [],
+      count: 0,
+      isKey: false,
+      serverFolder: true,
+    });
+    expect(isFolder(at(root, "sales"))).toBe(true);
+    expect(isFolder(at(root, "readme"))).toBe(false);
+    // A folder adds nothing to any count: the root holds one key.
+    expect(root.count).toBe(1);
+    const rows = flattenKeyTree(root, () => false);
+    expect(rows.map((row) => (row.kind === "node" ? `${row.node.segment}:${row.folder}` : "more"))).toEqual([
+      "sales:true",
+      "readme:false",
+    ]);
+  });
+
+  test("a folder and a key of the same name are one node that is both", () => {
+    const root = buildKeyTree(["sales"], LEVELS, ["sales/"]);
+
+    expect(segments(root)).toEqual(["sales"]);
+    expect(at(root, "sales")).toMatchObject({ isKey: true, serverFolder: true, count: 1, children: [] });
+  });
+
+  test("a deeper folder creates the nodes above it, and only the last is the server's folder", () => {
+    const root = buildKeyTree(["sales/2026/orders.csv"], LEVELS, ["sales/2026/archive/", "sales//", "/"]);
+
+    expect(at(root, "sales", "2026", "archive").serverFolder).toBe(true);
+    expect("serverFolder" in at(root, "sales")).toBe(false);
+    expect("serverFolder" in at(root, "sales", "2026")).toBe(false);
+    // An empty last segment is a folder of its own, and `/` is the separator's root row.
+    expect(at(root, "sales", "").serverFolder).toBe(true);
+    expect(at(root, "").serverFolder).toBe(true);
+    expect(at(root, "sales").count).toBe(1);
+  });
+
+  test("names the path whose level the panel's own walk lists", () => {
+    expect(levelScope("", LEVELS)).toEqual([]);
+    expect(levelScope("sales", LEVELS)).toEqual([]);
+    expect(levelScope("sales/", LEVELS)).toEqual(["sales"]);
+    expect(levelScope("sales/2026/ord", LEVELS)).toEqual(["sales", "2026"]);
+    expect(levelScope("/a/", LEVELS)).toEqual(["", "a"]);
+  });
+
+  test("a filter keeps a server folder by its own name, and the folder keeps its flag", () => {
+    const root = buildKeyTree(["readme"], LEVELS, ["sales/", "logs/"]);
+
+    const narrowed = filterKeyTree(root, "sales", LEVELS);
+
+    expect(segments(narrowed)).toEqual(["sales"]);
+    expect(at(narrowed, "sales").serverFolder).toBe(true);
   });
 });
