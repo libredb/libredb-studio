@@ -295,8 +295,19 @@ export function useKeyScan(options: {
   /*
    * The server folders the tree has been handed, for the reason `walked` holds keys: a folder named by
    * two pages is one folder, and the list the tree is built from must not grow with repeats.
+   *
+   * ONE QUESTION'S FOLDERS, like the state they feed. `askedNow` is the question the last commit asked,
+   * and the effect below starts an empty set whenever it changes: a folder of the last question would
+   * otherwise count against this one's held limit and hide the same folder when this one names it.
    */
   const heldFolders = useRef(new Set<string>());
+  const askedNow = useRef(asked);
+  useEffect(() => {
+    // A page of the last question that landed before this ran is cleared here; one that lands after
+    // it finds its question replaced and adds nothing (see `absorbFolders`).
+    askedNow.current = asked;
+    heldFolders.current.clear();
+  }, [asked]);
   /*
    * Each prefix's own walk, keyed by `pathKey`. In a ref because the read has to see what the last
    * scoped page wrote, exactly as the global cursor does, and mirrored into state below because a row
@@ -413,6 +424,9 @@ export function useKeyScan(options: {
    */
   const absorbFolders = useCallback(
     (prefixes: readonly string[], question: Question): string[] => {
+      // A page asked for a question that is no longer the current one adds nothing and leaves the folder
+      // state alone: its folders belong to a tree nobody is drawing.
+      if (!sameQuestion(question, askedNow.current)) return [];
       const fresh: string[] = [];
       for (const prefix of prefixes) {
         if (heldFolders.current.has(prefix)) continue;

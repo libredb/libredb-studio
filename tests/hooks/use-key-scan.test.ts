@@ -1942,4 +1942,123 @@ describe("a walk listed one level at a time", () => {
     expect(result.current.folders).toEqual([]);
     expect(seen.some((folders) => folders.length > 0)).toBe(false);
   });
+
+  /**
+   * A page held until the test opens its gate, then answered with whatever the test hands `release`.
+   * A no-op default rather than `| null`: the executor below replaces it before anything waits.
+   */
+  function heldAnswer() {
+    let release: (answer: MockFetchResponse) => void = () => {};
+    const answered = new Promise<MockFetchResponse>((resolve) => {
+      release = resolve;
+    });
+    return { answered, release: (answer: MockFetchResponse) => release(answer) };
+  }
+
+  /** The hook driven by its props, so a test can change the question without anybody calling `reset`. */
+  function questionHook(initialProps: { capability: typeof LEVEL_SCAN | typeof CAPABILITY; database?: number }) {
+    return renderHook(
+      ({ capability, database }: { capability: typeof LEVEL_SCAN | typeof CAPABILITY; database?: number }) =>
+        useKeyScan({ connection: CONNECTION, capability, pattern: "", database }),
+      { initialProps },
+    );
+  }
+
+  test("a stale page's folders do not count against the held limit of the question that replaced it", async () => {
+    const stale = heldAnswer();
+    let call = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async () => {
+        call += 1;
+        if (call === 1) return stale.answered;
+        return page(["fresh"], "9");
+      },
+    });
+    const { result, rerender } = questionHook({ capability: LEVEL_SCAN });
+
+    let held: Promise<unknown> = Promise.resolve();
+    act(() => {
+      held = result.current.scanMore();
+    });
+    rerender({ capability: CAPABILITY });
+    stale.release(
+      levelPage(
+        Array.from({ length: HELD_KEY_LIMIT - 1 }, (_, index) => `k${index}`),
+        ["a/"],
+        "c1",
+      ),
+    );
+    await act(async () => {
+      await held;
+    });
+
+    let asked = false;
+    await act(async () => {
+      asked = await result.current.scanMore();
+    });
+    expect(asked).toBe(true);
+    expect(fetchMock.mock.calls.length).toBe(2);
+  });
+
+  test("a stale page's folder does not hide the same folder named by the question that replaced it", async () => {
+    const stale = heldAnswer();
+    let call = 0;
+    mockGlobalFetch({
+      "/api/db/keys/scan": async () => {
+        call += 1;
+        if (call === 1) return stale.answered;
+        return levelPage([], ["a/"], "c2");
+      },
+    });
+    const { result, rerender } = questionHook({ capability: LEVEL_SCAN, database: 1 });
+
+    let held: Promise<unknown> = Promise.resolve();
+    act(() => {
+      held = result.current.scanMore();
+    });
+    rerender({ capability: LEVEL_SCAN, database: 2 });
+    stale.release(levelPage([], ["a/"], "c1"));
+    await act(async () => {
+      await held;
+    });
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    expect(result.current.folders).toEqual(["a/"]);
+  });
+
+  test("a stale folder page does not take the folders over from the question that replaced it", async () => {
+    const stale = heldAnswer();
+    let call = 0;
+    mockGlobalFetch({
+      "/api/db/keys/scan": async () => {
+        call += 1;
+        if (call === 1) return stale.answered;
+        if (call === 2) return levelPage([], ["x/"], "c2");
+        return levelPage([], ["x/", "y/"], "c3");
+      },
+    });
+    const { result, rerender } = questionHook({ capability: LEVEL_SCAN, database: 1 });
+
+    // A folder's page rather than the walk's own: the walk refuses a second page of its generation while
+    // one is in the air, and a folder's page does not stand in its way.
+    let held: Promise<unknown> = Promise.resolve();
+    act(() => {
+      held = result.current.loadMoreUnder(["a"]);
+    });
+    rerender({ capability: LEVEL_SCAN, database: 2 });
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    stale.release(levelPage([], ["a/b/"], "c1"));
+    await act(async () => {
+      await held;
+    });
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    expect(result.current.folders).toEqual(["x/", "y/"]);
+  });
 });
