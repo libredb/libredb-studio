@@ -256,7 +256,10 @@ A body takes no `//` comment (`docs/BACKLOG.md` D158).
 - The filter is Milvus's own expression, which the server parses and type-checks; every filter of one request together is at most 64 KiB.
 - Every search parameter is checked per index type before the request is sent, and every key outside the table of section 5.6 is refused by name although the server ignores it.
 
-Milvus 3.0.2 can return `enable_dynamic_field: true` from DescribeCollection without listing `$meta` in `schema.fields` (#1417). Studio uses that flag to include `$meta` in the default projection and accept an explicit `"outputFields": ["$meta"]`, whether or not the field is listed. The object tree exposes one nullable `$meta` column of type `JSON (dynamic)` in either case. On a collection without dynamic fields, requesting `$meta` is refused with a message saying that the collection has no dynamic field.
+Milvus 3.0.2 can return `enable_dynamic_field: true` from DescribeCollection without listing `$meta` in `schema.fields` (#1417).
+Studio uses that flag to include `$meta` in the default projection and accept an explicit `"outputFields": ["$meta"]`, whether or not the field is listed.
+The object tree exposes one nullable `$meta` column of type `JSON (dynamic)` in either case.
+On a collection without dynamic fields, requesting `$meta` is refused with a message saying that the collection has no dynamic field.
 
 ### 5.3 Examples
 
