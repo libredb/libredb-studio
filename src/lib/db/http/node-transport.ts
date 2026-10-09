@@ -36,7 +36,7 @@ import {
   request as httpRequest,
 } from "node:http";
 import { Agent as HttpsAgent, type AgentOptions as HttpsAgentOptions, request as httpsRequest } from "node:https";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 import { checkServerIdentity, type PeerCertificate } from "node:tls";
 import { urlToHttpOptions } from "node:url";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
@@ -518,23 +518,53 @@ function tlsAgentOptions(tls: NodeTlsMaterial): HttpsAgentOptions {
 }
 
 /**
- * One connection's transport: its own keep-alive Agent, never the global one. The constructor opens nothing; the first
+ * How one request is settled, handed to the code that writes it once a socket slot is free. Every method is safe to
+ * call after the request has settled: a second settlement is ignored.
+ */
+interface Exchange<T> {
+  /** The request node:http is writing, destroyed by a failure. */
+  sent(outgoing: ClientRequest): void;
+  /** The answer has arrived: from here until ended(), a network failure is a truncation. */
+  answered(incoming: IncomingMessage): void;
+  /** The body has ended. */
+  ended(): void;
+  /** Settles with `value` and frees the socket slot; false, with nothing resolved, when the request had settled. */
+  resolve(value: T): boolean;
+  /** Settles with `failure`, destroys the request and its answer, and frees the socket slot. */
+  fail(failure: Error): void;
+  /** fail() with whatever the runtime raised, read by failureFrom. */
+  failWith(error: unknown): void;
+  /** Whether the request has settled: answered, failed, cancelled or stopped by close(). */
+  settled(): boolean;
+}
+
+interface CoreSettings {
+  readonly tls: NodeTlsMaterial | null;
+  readonly maxSockets: number;
+  readonly idleSocketMs: number | undefined;
+  /** The guard's lookup, the byte transport's link-local lookup, or undefined for the runtime's own. */
+  readonly lookup: LookupFunction | undefined;
+}
+
+/** What both factories share: the connection's Agent, its socket queue, close() and the failure mapping. */
+interface TransportCore {
+  readonly agent: HttpAgent;
+  readonly send: typeof httpRequest | typeof httpsRequest;
+  isClosed(): boolean;
+  /** Runs `begin` once a socket slot is free, or never when the request is stopped while it waits. */
+  queue<T>(signal: AbortSignal, begin: (pending: Exchange<T>) => void): Promise<T>;
+  close(): void;
+}
+
+/**
+ * One connection's Agent and queue: its own keep-alive Agent, never the global one. Nothing is opened here; the first
  * request opens the first socket.
  */
-export function createNodeTransport(options: NodeTransportOptions): NodeTransport {
-  const { origin, tls, maxSockets } = options;
-  if (!isPositiveInteger(maxSockets)) throw new DatabaseConfigError(INVALID_MAX_SOCKETS);
-  if ((origin.scheme === "https") !== (tls !== null)) throw new DatabaseConfigError(SCHEME_MISMATCH);
-  // With DB_HTTP_BLOCK_PRIVATE_HOSTS on, this refuses a blocked IP literal now, before any socket, because a literal
-  // never reaches a lookup, and hands back the guard's lookup for this connection's own Agent. Its `agent: false` is not
-  // taken: the Agent below belongs to this connection alone and never carries an unguarded request (R44 QM1).
-  const { lookup } = guardedNodeOptions(origin.host);
-  const connectionOrigin = new URL(endpointUrl(origin, "/")).origin;
-  const connectionHeaders = lowerCased(options.headers);
-  const requestHeaderNames = requestHeaderNamesOf(options.requestHeaderNames, connectionHeaders);
+function transportCore(settings: CoreSettings): TransportCore {
+  const { tls, maxSockets, lookup } = settings;
   const shared: AgentOptions = {
     keepAlive: true,
-    timeout: options.idleSocketMs ?? IDLE_SOCKET_MS,
+    timeout: settings.idleSocketMs ?? IDLE_SOCKET_MS,
     maxSockets,
     ...(lookup === undefined ? {} : { lookup }),
   };
@@ -559,13 +589,8 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
     if (!closed) waiting.shift()?.();
   };
 
-  const exchange = (
-    request: NodeRequest,
-    target: URL,
-    perRequest: Readonly<Record<string, string>>,
-  ): Promise<NodeResponse> =>
-    new Promise<NodeResponse>((resolve, reject) => {
-      const { hostname, port, path } = urlToHttpOptions(target);
+  const queue = <T>(signal: AbortSignal, begin: (pending: Exchange<T>) => void): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
       let outgoing: ClientRequest | undefined;
       let incoming: IncomingMessage | undefined;
       let settled = false;
@@ -576,7 +601,7 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
         if (settled) return false;
         settled = true;
         active.delete(fail);
-        request.signal.removeEventListener("abort", onAbort);
+        signal.removeEventListener("abort", onAbort);
         if (started) release();
         else waiting.splice(waiting.indexOf(start), 1);
         return true;
@@ -588,84 +613,140 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
         outgoing?.destroy();
         reject(failure);
       };
-      const failWith = (error: unknown): void => fail(failureFrom(error, request.signal, tls !== null, responded));
-      const onAbort = (): void => fail(abortFailure(request.signal));
+      const failWith = (error: unknown): void => fail(failureFrom(error, signal, tls !== null, responded));
+      const onAbort = (): void => fail(abortFailure(signal));
+      const pending: Exchange<T> = {
+        sent: (request) => {
+          outgoing = request;
+        },
+        answered: (answer) => {
+          incoming = answer;
+          responded = true;
+        },
+        ended: () => {
+          responded = false;
+        },
+        resolve: (value) => {
+          if (!settle()) return false;
+          resolve(value);
+          return true;
+        },
+        fail,
+        failWith,
+        settled: () => settled,
+      };
       const start = (): void => {
         started = true;
         sending += 1;
-        const payload = payloadOf(request);
-        try {
-          outgoing = send(
-            {
-              hostname,
-              port,
-              path,
-              method: request.method,
-              agent,
-              headers: requestHeaders(connectionHeaders, perRequest, payload),
-            },
-            (answer) => {
-              incoming = answer;
-              responded = true;
-              answer.on("error", failWith);
-              // Set on every answer a ClientRequest receives; the type is shared with server-side requests.
-              const status = answer.statusCode ?? 0;
-              try {
-                // The shared refusal reads a fetch-shaped status and Location, so the adapter hands it those two.
-                const location = answer.headers.location;
-                rejectRedirect(
-                  { status, headers: new Headers(location === undefined ? {} : { location }) },
-                  request.url,
-                );
-              } catch (refusal) {
-                // Released unread: fail() destroys the answer, so no redirect is followed and no body is read.
-                fail(new TransportError("redirect", (refusal as Error).message));
-                return;
-              }
-              const encoding = answer.headers["content-encoding"];
-              if (encoding !== undefined && encoding.trim().toLowerCase() !== "identity") {
-                // Refused before a byte of the body is read, so maxResponseBytes always counts the bytes that are parsed.
-                fail(encodingRefusal(encoding));
-                return;
-              }
-              const chunks: Buffer[] = [];
-              let received = 0;
-              answer.on("data", (chunk: Buffer) => {
-                received += chunk.length;
-                if (received > request.maxResponseBytes) {
-                  fail(tooLarge(request.maxResponseBytes));
-                  return;
-                }
-                chunks.push(chunk);
-              });
-              answer.on("end", () => {
-                responded = false;
-                if (!settle()) return;
-                resolve({
-                  status,
-                  contentType: answer.headers["content-type"] ?? null,
-                  retryAfter: retryAfterOf(answer.headers["retry-after"]),
-                  text: Buffer.concat(chunks).toString("utf8"),
-                });
-              });
-            },
-          );
-          outgoing.on("error", failWith);
-          outgoing.end(payload?.text);
-        } catch (error) {
-          // node:http refuses some requests by throwing before anything is sent: a header value with a line feed.
-          failWith(error);
-        }
+        begin(pending);
       };
       active.add(fail);
-      request.signal.addEventListener("abort", onAbort, { once: true });
+      signal.addEventListener("abort", onAbort, { once: true });
       if (sending < maxSockets) start();
       else waiting.push(start);
     });
 
   return {
+    agent,
+    send,
+    isClosed: () => closed,
+    queue,
+    close() {
+      closed = true;
+      for (const stop of [...active]) stop(new TransportError("aborted", CLOSED));
+      agent.destroy();
+    },
+  };
+}
+
+/**
+ * One connection's text transport: GET and POST to a URL on the connection's origin, the answer decoded as UTF-8.
+ * The constructor opens nothing; the first request opens the first socket.
+ */
+export function createNodeTransport(options: NodeTransportOptions): NodeTransport {
+  const { origin, tls, maxSockets } = options;
+  if (!isPositiveInteger(maxSockets)) throw new DatabaseConfigError(INVALID_MAX_SOCKETS);
+  if ((origin.scheme === "https") !== (tls !== null)) throw new DatabaseConfigError(SCHEME_MISMATCH);
+  // With DB_HTTP_BLOCK_PRIVATE_HOSTS on, this refuses a blocked IP literal now, before any socket, because a literal
+  // never reaches a lookup, and hands back the guard's lookup for this connection's own Agent. Its `agent: false` is not
+  // taken: the Agent below belongs to this connection alone and never carries an unguarded request (R44 QM1).
+  const { lookup } = guardedNodeOptions(origin.host);
+  const connectionOrigin = new URL(endpointUrl(origin, "/")).origin;
+  const connectionHeaders = lowerCased(options.headers);
+  const requestHeaderNames = requestHeaderNamesOf(options.requestHeaderNames, connectionHeaders);
+  const core = transportCore({ tls, maxSockets, idleSocketMs: options.idleSocketMs, lookup });
+
+  const exchange = (
+    request: NodeRequest,
+    target: URL,
+    perRequest: Readonly<Record<string, string>>,
+  ): Promise<NodeResponse> =>
+    core.queue<NodeResponse>(request.signal, (pending) => {
+      const { hostname, port, path } = urlToHttpOptions(target);
+      const payload = payloadOf(request);
+      try {
+        const outgoing = core.send(
+          {
+            hostname,
+            port,
+            path,
+            method: request.method,
+            agent: core.agent,
+            headers: requestHeaders(connectionHeaders, perRequest, payload),
+          },
+          (answer) => {
+            pending.answered(answer);
+            answer.on("error", pending.failWith);
+            // Set on every answer a ClientRequest receives; the type is shared with server-side requests.
+            const status = answer.statusCode ?? 0;
+            try {
+              // The shared refusal reads a fetch-shaped status and Location, so the adapter hands it those two.
+              const location = answer.headers.location;
+              rejectRedirect({ status, headers: new Headers(location === undefined ? {} : { location }) }, request.url);
+            } catch (refusal) {
+              // Released unread: fail() destroys the answer, so no redirect is followed and no body is read.
+              pending.fail(new TransportError("redirect", (refusal as Error).message));
+              return;
+            }
+            const encoding = answer.headers["content-encoding"];
+            if (encoding !== undefined && encoding.trim().toLowerCase() !== "identity") {
+              // Refused before a byte of the body is read, so maxResponseBytes always counts the bytes that are parsed.
+              pending.fail(encodingRefusal(encoding));
+              return;
+            }
+            const chunks: Buffer[] = [];
+            let received = 0;
+            answer.on("data", (chunk: Buffer) => {
+              received += chunk.length;
+              if (received > request.maxResponseBytes) {
+                pending.fail(tooLarge(request.maxResponseBytes));
+                return;
+              }
+              chunks.push(chunk);
+            });
+            answer.on("end", () => {
+              pending.ended();
+              pending.resolve({
+                status,
+                contentType: answer.headers["content-type"] ?? null,
+                retryAfter: retryAfterOf(answer.headers["retry-after"]),
+                text: Buffer.concat(chunks).toString("utf8"),
+              });
+            });
+          },
+        );
+        pending.sent(outgoing);
+        outgoing.on("error", pending.failWith);
+        outgoing.end(payload?.text);
+      } catch (error) {
+        // node:http refuses some requests by throwing before anything is sent: a header value with a line feed.
+        pending.failWith(error);
+      }
+    });
+
+  return {
     async request(request) {
-      if (closed) throw new TransportError("aborted", CLOSED);
+      if (core.isClosed()) throw new TransportError("aborted", CLOSED);
       // An already-aborted signal never fires "abort" again, and node:http would send the request regardless.
       if (request.signal.aborted) throw abortFailure(request.signal);
       if (!isPositiveInteger(request.maxResponseBytes)) throw new DatabaseConfigError(INVALID_MAX_RESPONSE_BYTES);
@@ -680,9 +761,7 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
       return exchange(request, target, perRequest);
     },
     close() {
-      closed = true;
-      for (const stop of [...active]) stop(new TransportError("aborted", CLOSED));
-      agent.destroy();
+      core.close();
     },
   };
 }
