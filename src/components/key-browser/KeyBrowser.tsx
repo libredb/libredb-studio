@@ -458,12 +458,12 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         if (filtering || heldFull) return false;
         const key = pathKey(path);
         if (key === scopeKey) return !exhausted;
-        // A folder pages its level only once it has been listed: a folder above the scope was drawn open
-        // on the way down, and a server folder whose first listing failed is open with nothing listed,
-        // and a row under either would offer a level nobody has. Both retry by close and reopen.
-        return (
-          (ancestorKeys.has(key) || serverFolderKeys.has(key)) && nodeCursors.has(key) && nodeCursors.get(key) !== "0"
-        );
+        // A folder pages its level once it has been listed, and its row is drawn while its listing is in
+        // flight, because the row's "Listing this folder..." is the folder's one busy sign. A folder above
+        // the scope drawn open on the way down, or a server folder whose first listing failed, has neither
+        // and offers no row: a level nobody has listed retries by close and reopen.
+        if (!ancestorKeys.has(key) && !serverFolderKeys.has(key)) return false;
+        return nodeLoading.has(key) || (nodeCursors.has(key) && nodeCursors.get(key) !== "0");
       }
       /*
        * THREE REASONS NOT TO OFFER IT, and each is a fact rather than a preference.
@@ -483,7 +483,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
       if (exhausted || filtering || heldFull) return false;
       return nodeCursors.get(pathKey(path)) !== "0";
     },
-    [ancestorKeys, exhausted, filtering, heldFull, levels, nodeCursors, scopeKey, serverFolderKeys],
+    [ancestorKeys, exhausted, filtering, heldFull, levels, nodeCursors, nodeLoading, scopeKey, serverFolderKeys],
   );
   const rows = useMemo(
     () =>
