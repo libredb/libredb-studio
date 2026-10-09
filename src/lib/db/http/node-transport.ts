@@ -792,11 +792,13 @@ function checkedSigner(
   connection: Readonly<Record<string, string>>,
   requestNames: ReadonlySet<string>,
 ): CheckedSigner {
-  const names: unknown = signer.headerNames;
+  const given: unknown = signer.headerNames;
+  // One read of the list, checked and then kept, so a list whose entries change between reads cannot pass one set.
+  const names: unknown[] | undefined = Array.isArray(given) ? Array.from(given as unknown[]) : undefined;
   if (
-    !Array.isArray(names) ||
+    names === undefined ||
     names.length === 0 ||
-    !Array.from(names).every((name) => typeof name === "string" && HEADER_NAME.test(name))
+    !names.every((name) => typeof name === "string" && HEADER_NAME.test(name))
   ) {
     throw new DatabaseConfigError(INVALID_SIGNER);
   }
@@ -981,31 +983,42 @@ function transportCore(settings: CoreSettings): TransportCore {
   };
 }
 
-/** What both factories build from their options: the origin's address as each reads it, the headers and the core. */
+/** What both factories read from their options once every check has passed, and the settings of their core. */
 interface Connection<A> {
   readonly address: A;
   readonly connectionHeaders: Readonly<Record<string, string>>;
   readonly requestHeaderNames: ReadonlySet<string>;
-  readonly core: TransportCore;
+  readonly coreSettings: CoreSettings;
+}
+
+interface ConnectionRules {
+  /**
+   * The byte factory's: a link-local or metadata literal is refused, and every socket is opened through a lookup that
+   * checks the address it dials. The text factory leaves it off, so DB_HTTP_BLOCK_PRIVATE_HOSTS alone limits where
+   * it connects.
+   */
+  readonly refusesLinkLocal: boolean;
 }
 
 /**
- * The checks both factories run when a transport is built, in this order, and the core they then share. `address`
- * reads the origin once the guard has passed it: the text factory's origin string, the byte factory's Host. The byte
- * factory checks its response-header selection before calling this, so a refused selection builds no Agent.
- * `refusesLinkLocal` is the byte factory's: the text factory's behaviour is unchanged.
+ * The checks both factories run when a transport is built, in this order, and the settings of the core they then
+ * share. `address` reads the origin once the guard has passed it: the text factory's origin string, the byte factory's
+ * Host. Nothing is built here: each factory builds its core from `coreSettings` once its own checks have passed too,
+ * so the byte factory checks its response-header selection before this and its signer after it, and a refused
+ * selection or signer builds no Agent.
  */
 function connectionOf<A>(
   options: NodeTransportOptions,
   address: (origin: HttpOrigin) => A,
-  refusesLinkLocal = false,
+  { refusesLinkLocal }: ConnectionRules,
 ): Connection<A> {
   const { origin, tls, maxSockets } = options;
   if (!isPositiveInteger(maxSockets)) throw new DatabaseConfigError(INVALID_MAX_SOCKETS);
   if ((origin.scheme === "https") !== (tls !== null)) throw new DatabaseConfigError(SCHEME_MISMATCH);
   // With DB_HTTP_BLOCK_PRIVATE_HOSTS on, this refuses a blocked IP literal now, before any socket, because a literal
   // never reaches a lookup, and hands back the guard's lookup for this connection's own Agent. Its `agent: false` is not
-  // taken: the Agent below belongs to this connection alone and never carries an unguarded request (R44 QM1).
+  // taken: the Agent built from these settings belongs to this connection alone and never carries an unguarded request
+  // (R44 QM1).
   // With refusesLinkLocal, and whatever the flag says, a link-local or metadata literal is refused next, so the guard's
   // sentence wins when it is on, and every socket is opened through a lookup that checks the answer it dials: the
   // guard's, whose blocked list holds every link-local network, or else linkLocalRefusingLookup (byte transport
@@ -1016,8 +1029,8 @@ function connectionOf<A>(
   const addressed = address(origin);
   const connectionHeaders = lowerCased(options.headers);
   const requestHeaderNames = requestHeaderNamesOf(options.requestHeaderNames, connectionHeaders);
-  const core = transportCore({ tls, maxSockets, idleSocketMs: options.idleSocketMs, lookup });
-  return { address: addressed, connectionHeaders, requestHeaderNames, core };
+  const coreSettings = { tls, maxSockets, idleSocketMs: options.idleSocketMs, lookup };
+  return { address: addressed, connectionHeaders, requestHeaderNames, coreSettings };
 }
 
 /** The refusals every request meets first, in this order: a closed transport, then a signal already aborted. */
@@ -1084,8 +1097,9 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
     address: connectionOrigin,
     connectionHeaders,
     requestHeaderNames,
-    core,
-  } = connectionOf(options, (origin) => new URL(endpointUrl(origin, "/")).origin);
+    coreSettings,
+  } = connectionOf(options, (origin) => new URL(endpointUrl(origin, "/")).origin, { refusesLinkLocal: false });
+  const core = transportCore(coreSettings);
 
   const exchange = (
     request: NodeRequest,
@@ -1183,7 +1197,7 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
   const { port } = options.origin;
   // Checked before connectionOf builds the Agent, so a refused selection leaves nothing behind.
   const selection = responseHeaderSelectionOf(options.responseHeaders);
-  const { address, connectionHeaders, requestHeaderNames, core } = connectionOf(
+  const { address, connectionHeaders, requestHeaderNames, coreSettings } = connectionOf(
     options,
     (origin) => ({
       hostname: unbracketed(origin.host),
@@ -1192,12 +1206,13 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
       // Set by the transport on every request, so the Host a signer signs is the Host on the wire (byte transport design 3.3).
       host: originHost(origin),
     }),
-    true,
+    { refusesLinkLocal: true },
   );
-  // Checked against the connection's headers and the request's names, so it follows connectionOf; the Agent built
-  // there has opened no socket yet.
+  // Checked against the connection's headers and the request's names, so it follows connectionOf, and before the
+  // core, so a refused signer builds no Agent.
   const signer =
     options.signer === undefined ? undefined : checkedSigner(options.signer, connectionHeaders, requestHeaderNames);
+  const core = transportCore(coreSettings);
 
   const exchange = (request: CheckedByteRequest): Promise<NodeByteResponse> =>
     core.queue<NodeByteResponse>(request.signal, (pending) => {

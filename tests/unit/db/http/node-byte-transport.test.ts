@@ -954,6 +954,24 @@ describe("the signer's names, checked when the transport is built", () => {
     expect(listener.accepted()).toBe(0);
   });
 
+  test("the list is read once: a name that answers x-amz-date twice and then host never lets the signer send host", async () => {
+    const listener = await rawHttpListener(OK);
+    let reads = 0;
+    const headerNames: string[] = [];
+    Object.defineProperty(headerNames, 0, {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return reads <= 2 ? "x-amz-date" : "host";
+      },
+    });
+    const transport = connect(listener, { signer: { headerNames, sign: () => ({ host: "elsewhere.test" }) } });
+    const error = await failure(() => transport.request(get("/b/k")));
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error.message).toBe("Invalid signature headers: the signer returned a header this transport does not list");
+    expect(listener.accepted()).toBe(0);
+  });
+
   test("authorization is accepted", () => {
     const origin = httpOrigin("http", "127.0.0.1", 9000);
     expect(() =>
