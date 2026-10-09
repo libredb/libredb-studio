@@ -90,8 +90,10 @@ function inferFakerType(colName: string, colType: string): { generator: string; 
   if (type.includes("float") || type.includes("double") || type.includes("decimal") || type.includes("numeric"))
     return { generator: "decimal", example: "3.14" };
   // Oracle's one numeric family (#1400). `NUMBER(10,2)` reaches here as its `baseType`, `NUMBER`,
-  // so the scale is not in view; an integer fits every precision and scale, where a fraction
-  // would be rounded away by a scale of 0. Without this arm the column got `Sample text`.
+  // so precision and scale are not in view. An integer avoids a fraction that a scale of 0 would
+  // round away, but it is not bounded by the precision: the generator draws up to 9999, which a
+  // narrow column such as `NUMBER(1)` or `NUMBER(5,2)` refuses with ORA-01438. Without this arm
+  // the column got `Sample text`.
   if (type.startsWith("number")) return { generator: "integer", example: "42" };
   if (type.includes("date") && !type.includes("time")) return { generator: "date", example: "2024-03-15" };
   if (type.includes("time")) return { generator: "datetime", example: "2024-03-15 14:30:00" };
