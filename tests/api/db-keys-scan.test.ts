@@ -431,3 +431,161 @@ describe("POST /api/db/keys/scan in a declared shape", () => {
     expect(walk).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The route for an engine that lists its key space one level at a time (Keys panel levels, spec 3.3).
+ *
+ * The double declares `levels` in the only shape the route accepts, an uncounted prefix walk, and its
+ * type id is only the word the sentences carry: no provider in the fleet declares `levels` here.
+ */
+describe("POST /api/db/keys/scan for one level", () => {
+  const LEVEL_SCAN = {
+    defaultCount: 500,
+    maxCount: 1000,
+    separator: "/",
+    cursor: "opaque",
+    pattern: "prefix",
+    totalScope: "none",
+    levels: { rootKind: "bucket" },
+  } as const;
+  const ETCD_LIKE = {
+    defaultCount: 500,
+    maxCount: 1000,
+    separator: "/",
+    cursor: "opaque",
+    pattern: "prefix",
+    totalScope: "walk",
+  } as const;
+  const OXIA_LIKE = { ...ETCD_LIKE, totalScope: "none" } as const;
+  const EMPTY_LEVEL: KeyScanPage = { keys: [], prefixes: [], cursor: "0", total: 0, types: {} };
+
+  /** A provider with the given walk declaration and no container level, its walk supplied per test. */
+  function levelProvider(
+    walk: (options: KeyScanOptions) => Promise<KeyScanPage>,
+    keyScan: Record<string, unknown> = LEVEL_SCAN,
+    type: "oxia" | "etcd" = "oxia",
+  ): DatabaseProvider {
+    const provider = createMockProvider({
+      type,
+      capabilities: { keyScan: keyScan as never, containerLevels: [] },
+    });
+    provider.scanKeysPage = mock(walk);
+    return provider;
+  }
+
+  /** The options object the walk was last handed, read whole so a key added with `undefined` shows. */
+  function lastOptions(walk: { mock: { calls: unknown[][] } }): Record<string, unknown> {
+    const call = walk.mock.calls.at(-1);
+    if (call === undefined) throw new Error("the walk was never called");
+    return call[0] as Record<string, unknown>;
+  }
+
+  test("forwards exactly today's four keys, with no level key, to a Redis, an etcd and an Oxia walk", async () => {
+    const shapes = [
+      {
+        type: "redis",
+        keyScan: { defaultCount: 500, maxCount: 1000 },
+        containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+      },
+      { type: "etcd", keyScan: ETCD_LIKE, containerLevels: [] },
+      { type: "oxia", keyScan: OXIA_LIKE, containerLevels: [] },
+    ] as const;
+    for (const shape of shapes) {
+      const walk = mock(async (_options: KeyScanOptions) => PAGE);
+      const provider = createMockProvider({
+        type: shape.type,
+        capabilities: { keyScan: shape.keyScan, containerLevels: shape.containerLevels },
+      });
+      provider.scanKeysPage = mock(walk);
+      activeProvider = provider;
+
+      const { status } = await post({});
+
+      expect({ type: shape.type, status }).toEqual({ type: shape.type, status: 200 });
+      // `toEqual` ignores a property whose value is `undefined`, so the keys are read by name and the
+      // object compared strictly: a `level: undefined` key would pass the existing cases and fail here.
+      expect(Object.keys(lastOptions(walk)).sort()).toEqual(["count", "cursor", "database", "pattern"]);
+      expect(lastOptions(walk)).toStrictEqual({ cursor: "0", pattern: undefined, count: 500, database: undefined });
+    }
+  });
+
+  test("forwards level: true with the prefix untrimmed", async () => {
+    const walk = mock(async (_options: KeyScanOptions) => EMPTY_LEVEL);
+    activeProvider = levelProvider(walk);
+
+    const { status } = await post({ level: true, pattern: " sales/" });
+
+    expect(status).toBe(200);
+    expect(lastOptions(walk)).toStrictEqual({
+      cursor: "0",
+      pattern: " sales/",
+      count: 500,
+      database: undefined,
+      level: true,
+    });
+  });
+
+  test("refuses a level that is present and not true", async () => {
+    const walk = mock(async (_options: KeyScanOptions) => EMPTY_LEVEL);
+    activeProvider = levelProvider(walk);
+
+    for (const level of [false, "true", 1, null]) {
+      const { status, body } = await post({ level });
+      expect({ level, status }).toEqual({ level, status: 400 });
+      expect(body.error).toBe('"level" must be true, or absent for a walk of keys only');
+    }
+    expect(walk).not.toHaveBeenCalled();
+  });
+
+  test("refuses level: true on an engine that declares no folder listing", async () => {
+    const redisWalk = mock(async (_options: KeyScanOptions) => PAGE);
+    activeProvider = declaringProvider(redisWalk);
+    const redis = await post({ level: true });
+    expect(redis.status).toBe(400);
+    expect(redis.body.error).toBe(
+      'redis declares no folder listing: its walk pages keys only, so "level" has nothing to ask for',
+    );
+
+    const etcdWalk = mock(async (_options: KeyScanOptions) => PAGE);
+    activeProvider = levelProvider(etcdWalk, ETCD_LIKE, "etcd");
+    const etcd = await post({ level: true });
+    expect(etcd.status).toBe(400);
+    expect(etcd.body.error).toBe(
+      'etcd declares no folder listing: its walk pages keys only, so "level" has nothing to ask for',
+    );
+
+    expect(redisWalk).not.toHaveBeenCalled();
+    expect(etcdWalk).not.toHaveBeenCalled();
+  });
+
+  test("answers 500 for levels declared on a walk that is not an uncounted prefix walk, on every request", async () => {
+    const sentence =
+      'oxia declares levels on a walk that is not an uncounted prefix walk: levels need pattern "prefix" and totalScope "none"';
+    for (const keyScan of [
+      { ...LEVEL_SCAN, pattern: "glob" },
+      { ...LEVEL_SCAN, totalScope: "walk" },
+    ]) {
+      const walk = mock(async (_options: KeyScanOptions) => EMPTY_LEVEL);
+      activeProvider = levelProvider(walk, keyScan);
+      for (const body of [{ level: true }, {}]) {
+        const answer = await post(body);
+        expect({ keyScan, body, status: answer.status }).toEqual({ keyScan, body, status: 500 });
+        expect(answer.body.error).toBe(sentence);
+      }
+      expect(walk).not.toHaveBeenCalled();
+    }
+  });
+
+  test("forwards exactly four keys and answers a key page on a level double asked without level", async () => {
+    const keysOnly: KeyScanPage = { keys: ["sales/2026/orders.csv"], cursor: "0", total: 0, types: {} };
+    const walk = mock(async (_options: KeyScanOptions) => keysOnly);
+    activeProvider = levelProvider(walk);
+
+    const { status, body } = await post<KeyScanPage>({ pattern: "sales/" });
+
+    expect(status).toBe(200);
+    expect(body).toStrictEqual(keysOnly);
+    expect(Object.keys(lastOptions(walk)).sort()).toEqual(["count", "cursor", "database", "pattern"]);
+    expect(lastOptions(walk)).toStrictEqual({ cursor: "0", pattern: "sales/", count: 500, database: undefined });
+  });
+});

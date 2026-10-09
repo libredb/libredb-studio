@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { handleObjectRequest, ObjectRouteError, optionalDatabase, requireString } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
-import { keyScanShape, type KeyScanCapability, type KeyScanShape } from "@/lib/db/types";
+import { keyScanShape, type KeyScanCapability, type KeyScanOptions, type KeyScanShape } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
 
@@ -75,6 +75,16 @@ export async function POST(req: NextRequest) {
     }
 
     const shape = keyScanShape(capability);
+    // A level declaration on a walk that is not an uncounted prefix walk is a defect of the DECLARATION
+    // (Keys panel levels, spec 3.3), so it is refused on every request, whether or not the request asks
+    // for a level, in the words the method check above uses for the same kind of state.
+    if (capability.levels !== undefined && (shape.pattern !== "prefix" || shape.totalScope !== "none")) {
+      throw new ObjectRouteError(
+        `${provider.type} declares levels on a walk that is not an uncounted prefix walk: ` +
+          `levels need pattern "prefix" and totalScope "none"`,
+        500,
+      );
+    }
     const options = {
       cursor: readCursor(body, shape),
       pattern: readPattern(body, shape),
@@ -83,6 +93,7 @@ export async function POST(req: NextRequest) {
       // `SELECT` state lives on the connection and not in this route.
       database: optionalDatabase(body, "database"),
     };
+    const level = readLevel(body);
     if (options.database !== undefined && containerDepth(capabilities) === 0) {
       throw new ObjectRouteError(
         `${provider.type} walks one key space and declares no database level: "database" names the numbered ` +
@@ -90,7 +101,16 @@ export async function POST(req: NextRequest) {
         400,
       );
     }
-    return walk.call(provider, options);
+    if (level && capability.levels === undefined) {
+      throw new ObjectRouteError(
+        `${provider.type} declares no folder listing: its walk pages keys only, so "level" has nothing to ask for`,
+        400,
+      );
+    }
+    // `level` travels only when asked, so a walk without it hands the provider exactly the four keys it
+    // always did, with no `level` key at all.
+    const forwarded: KeyScanOptions = { ...options, ...(level ? { level: true as const } : {}) };
+    return walk.call(provider, forwarded);
   });
 }
 
@@ -154,4 +174,19 @@ function readCount(body: Record<string, unknown>, capability: KeyScanCapability)
     );
   }
   return count;
+}
+
+/**
+ * Whether the caller asks for ONE LEVEL of the key space (Keys panel levels, spec 3.3).
+ *
+ * Absent means a walk of keys, the walk every engine answers. Only the literal `true` asks for a level:
+ * `false`, `"true"`, `1` and `null` are values a caller can send, and reading any of them as a choice
+ * would forward a question the caller did not spell.
+ */
+function readLevel(body: Record<string, unknown>): boolean {
+  if (body.level === undefined) return false;
+  if (body.level !== true) {
+    throw new ObjectRouteError('"level" must be true, or absent for a walk of keys only', 400);
+  }
+  return true;
 }
