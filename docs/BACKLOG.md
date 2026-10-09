@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D253, U17 · 157
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U106 · 98
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U107 · 99
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC18 · 15
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -4287,6 +4287,18 @@ Read from the code and not measured: a Scan all started on the new walk sets `st
 Found 2026-10-09 by an adversarial review of the folder-aware Keys panel; pre-existing.
 
 **Done when:** the loop checks its walk generation before it writes anything, with a hook test for each of the two cases.
+
+### U107. A Scan more pressed while the Keys panel waits for a chosen database sends the old walk's cursor
+
+When the database the Keys panel walks changes, the panel's restart waits for the database list to answer before it resets the walk (`waitingForChosenDatabase` in `src/components/key-browser/KeyBrowser.tsx`), and `scanMore` in `src/components/key-browser/use-key-scan.ts` reads the walk's cursor from that unreset state.
+So a page asked for in that wait carries the previous database's cursor to the new database.
+Measured 2026-10-10 with a hook test under a Redis-shaped capability: with database 1, `scanMore()` answered cursor `"7"`; rerendered with database 2 and no reset, the next `scanMore()` sent `{"cursor":"7","database":2}`.
+Whether the panel offers Scan more during that wait was not measured.
+`main` has the same path.
+
+Found 2026-10-10 by an adversarial review of the folder-aware Keys panel; pre-existing.
+
+**Done when:** no page is asked for a question whose walk has not been reset, with a hook test that changes the database without a reset and finds no request carrying the old cursor.
 
 ## Dependencies
 
