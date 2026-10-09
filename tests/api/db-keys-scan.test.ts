@@ -491,7 +491,7 @@ describe("POST /api/db/keys/scan for one level", () => {
       { type: "oxia", keyScan: OXIA_LIKE, containerLevels: [] },
     ] as const;
     for (const shape of shapes) {
-      const walk = mock(async (_options: KeyScanOptions) => PAGE);
+      const walk = mock<(options: KeyScanOptions) => Promise<KeyScanPage>>(async () => PAGE);
       const provider = createMockProvider({
         type: shape.type,
         capabilities: { keyScan: shape.keyScan, containerLevels: shape.containerLevels },
@@ -510,7 +510,7 @@ describe("POST /api/db/keys/scan for one level", () => {
   });
 
   test("forwards level: true with the prefix untrimmed", async () => {
-    const walk = mock(async (_options: KeyScanOptions) => EMPTY_LEVEL);
+    const walk = mock<(options: KeyScanOptions) => Promise<KeyScanPage>>(async () => EMPTY_LEVEL);
     activeProvider = levelProvider(walk);
 
     const { status } = await post({ level: true, pattern: " sales/" });
@@ -526,7 +526,7 @@ describe("POST /api/db/keys/scan for one level", () => {
   });
 
   test("refuses a level that is present and not true", async () => {
-    const walk = mock(async (_options: KeyScanOptions) => EMPTY_LEVEL);
+    const walk = mock<(options: KeyScanOptions) => Promise<KeyScanPage>>(async () => EMPTY_LEVEL);
     activeProvider = levelProvider(walk);
 
     for (const level of [false, "true", 1, null]) {
@@ -538,7 +538,7 @@ describe("POST /api/db/keys/scan for one level", () => {
   });
 
   test("refuses level: true on an engine that declares no folder listing", async () => {
-    const redisWalk = mock(async (_options: KeyScanOptions) => PAGE);
+    const redisWalk = mock<(options: KeyScanOptions) => Promise<KeyScanPage>>(async () => PAGE);
     activeProvider = declaringProvider(redisWalk);
     const redis = await post({ level: true });
     expect(redis.status).toBe(400);
@@ -546,7 +546,7 @@ describe("POST /api/db/keys/scan for one level", () => {
       'redis declares no folder listing: its walk pages keys only, so "level" has nothing to ask for',
     );
 
-    const etcdWalk = mock(async (_options: KeyScanOptions) => PAGE);
+    const etcdWalk = mock<(options: KeyScanOptions) => Promise<KeyScanPage>>(async () => PAGE);
     activeProvider = levelProvider(etcdWalk, ETCD_LIKE, "etcd");
     const etcd = await post({ level: true });
     expect(etcd.status).toBe(400);
@@ -565,7 +565,7 @@ describe("POST /api/db/keys/scan for one level", () => {
       { ...LEVEL_SCAN, pattern: "glob" },
       { ...LEVEL_SCAN, totalScope: "walk" },
     ]) {
-      const walk = mock(async (_options: KeyScanOptions) => EMPTY_LEVEL);
+      const walk = mock<(options: KeyScanOptions) => Promise<KeyScanPage>>(async () => EMPTY_LEVEL);
       activeProvider = levelProvider(walk, keyScan);
       for (const body of [{ level: true }, {}]) {
         const answer = await post(body);
@@ -578,7 +578,7 @@ describe("POST /api/db/keys/scan for one level", () => {
 
   test("forwards exactly four keys and answers a key page on a level double asked without level", async () => {
     const keysOnly: KeyScanPage = { keys: ["sales/2026/orders.csv"], cursor: "0", total: 0, types: {} };
-    const walk = mock(async (_options: KeyScanOptions) => keysOnly);
+    const walk = mock<(options: KeyScanOptions) => Promise<KeyScanPage>>(async () => keysOnly);
     activeProvider = levelProvider(walk);
 
     const { status, body } = await post<KeyScanPage>({ pattern: "sales/" });

@@ -1687,11 +1687,11 @@ describe("a walk listed one level at a time", () => {
   });
 
   /**
-   * Review Focus 5: a server folder whose last segment is empty (`a//`) or is a lone `*` lists ITS OWN
+   * A server folder whose last segment is empty (`a//`) or is a lone `*` lists ITS OWN
    * range when opened. `pathPattern` reads the path, never the name, so `["a", "*"]` is not read
    * as the folder mark of `a/`.
    */
-  test("Review Focus 5: a folder whose last segment is empty or * lists its own range", async () => {
+  test("a folder whose last segment is empty or * lists its own range", async () => {
     const fetchMock = mockGlobalFetch({
       "/api/db/keys/scan": async (req) => {
         const body = (await req.json()) as { pattern?: string };

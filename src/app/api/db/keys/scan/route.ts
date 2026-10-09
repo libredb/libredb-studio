@@ -209,7 +209,7 @@ function readLevel(body: Record<string, unknown>): boolean {
 /**
  * Hold a provider's answer to the level contract, or name how it broke it (Keys panel levels, spec 3.3).
  *
- * A key walk's page is never counted or read here: a Redis `SCAN` page may hold more keys than `COUNT`.
+ * A key walk's page is never counted here: a Redis `SCAN` page may hold more keys than `COUNT`.
  * A level page is held to its level: with `p` the pattern (or `""`) and `s` the separator, a prefix
  * starts with `p`, ends with `s`, is at least `p.length + s.length` long and holds no `s` between them;
  * no prefix appears twice; a key starts with `p` and holds no `s` after it (a key equal to `p`, a folder
