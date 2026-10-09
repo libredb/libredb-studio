@@ -316,6 +316,7 @@ const INVALID_HEADER_NAMES = "Invalid requestHeaderNames: expected lower-case he
 const UNLISTED_HEADER = "Invalid request headers: a header this transport does not list was given";
 const NOT_A_RECORD = "Invalid request headers: expected a plain record of header names and values";
 const INVALID_METHOD = "Invalid method: this transport sends GET and HEAD only";
+const INVALID_TRUNCATE_AT = "Invalid truncateAt: expected a positive integer no greater than maxResponseBytes";
 const INVALID_TARGET = "Invalid request target: expected a path and a query";
 const INVALID_TARGET_PATH =
   "Invalid request path: expected an absolute path of unreserved characters, slashes and upper-case percent escapes";
@@ -884,7 +885,8 @@ interface Connection<A> {
 
 /**
  * The checks both factories run when a transport is built, in this order, and the core they then share. `address`
- * reads the origin once the guard has passed it: the text factory's origin string, the byte factory's Host.
+ * reads the origin once the guard has passed it: the text factory's origin string, the byte factory's Host. The byte
+ * factory checks its response-header selection before calling this, so a refused selection builds no Agent.
  */
 function connectionOf<A>(options: NodeTransportOptions, address: (origin: HttpOrigin) => A): Connection<A> {
   const { origin, tls, maxSockets } = options;
@@ -917,13 +919,13 @@ interface Prepared {
 /**
  * Writes one request on the core's Agent, once its socket slot is free. `prepare` runs inside the same try as the
  * write, so whatever throws there or in node:http fails this request alone and frees its slot. `answered` is handed the
- * answer and its status once the answer's own errors are wired to the exchange.
+ * answer, its status and the request that carried it once the answer's own errors are wired to the exchange.
  */
 function dispatch<T>(
   core: TransportCore,
   pending: Exchange<T>,
   prepare: () => Prepared,
-  answered: (answer: IncomingMessage, status: number) => void,
+  answered: (answer: IncomingMessage, status: number, outgoing: ClientRequest) => void,
 ): void {
   try {
     const { options, body } = prepare();
@@ -931,7 +933,7 @@ function dispatch<T>(
       pending.answered(answer);
       answer.on("error", pending.failWith);
       // Set on every answer a ClientRequest receives; the type is shared with server-side requests.
-      answered(answer, answer.statusCode ?? 0);
+      answered(answer, answer.statusCode ?? 0, outgoing);
     });
     pending.sent(outgoing);
     outgoing.on("error", pending.failWith);
@@ -1068,32 +1070,48 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
             headers: { ...connectionHeaders, ...perRequest, host: address.host, "accept-encoding": "identity" },
           },
         }),
-        (answer, status) => {
+        (answer, status, outgoing) => {
           const selected = selectedHeaders(answer.rawHeaders, selection);
           const chunks: Buffer[] = [];
           let received = 0;
+          const respond = (truncated: boolean): NodeByteResponse => ({
+            status,
+            contentType: cut(answer.headers["content-type"], MAX_CONTENT_TYPE_LENGTH),
+            contentEncoding: cut(answer.headers["content-encoding"], MAX_CONTENT_ENCODING_LENGTH),
+            retryAfter: retryAfterOf(answer.headers["retry-after"]),
+            headers: selected.headers,
+            headersTruncated: selected.truncated,
+            bytes: Buffer.concat(chunks),
+            truncated,
+          });
+          // One bound governs memory: truncateAt when given, which is never above maxResponseBytes.
+          const limit = request.truncateAt ?? request.maxResponseBytes;
           answer.on("data", (chunk: Buffer) => {
-            received += chunk.length;
-            if (received > request.maxResponseBytes) {
+            if (received + chunk.length <= limit) {
+              received += chunk.length;
+              chunks.push(chunk);
+              return;
+            }
+            if (request.truncateAt === undefined) {
               pending.fail(tooLarge(request.maxResponseBytes));
               return;
             }
-            chunks.push(chunk);
+            // The runtime picks the chunk size (Bun handed 393,110 bytes at once for a stop at 100,000), so the cut
+            // is a slice of the chunk that crosses the bound.
+            chunks.push(chunk.subarray(0, limit - received));
+            received = limit;
+            // Resolve first and destroy second: after destroy neither end nor error fires, and a late event finds the
+            // request settled. A destroyed socket is never reused, so the next request opens a new one.
+            if (pending.resolve(respond(true))) {
+              answer.destroy();
+              outgoing.destroy();
+            }
           });
           answer.on("end", () => {
             pending.ended();
             // An end after a failure, a cancel or close() builds no answer: nothing would receive it.
             if (pending.settled()) return;
-            pending.resolve({
-              status,
-              contentType: cut(answer.headers["content-type"], MAX_CONTENT_TYPE_LENGTH),
-              contentEncoding: cut(answer.headers["content-encoding"], MAX_CONTENT_ENCODING_LENGTH),
-              retryAfter: retryAfterOf(answer.headers["retry-after"]),
-              headers: selected.headers,
-              headersTruncated: selected.truncated,
-              bytes: Buffer.concat(chunks),
-              truncated: false,
-            });
+            pending.resolve(respond(false));
           });
         },
       );
@@ -1104,6 +1122,10 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
       admit(core, request.signal);
       if (request.method !== "GET" && request.method !== "HEAD") throw new DatabaseConfigError(INVALID_METHOD);
       if (!isPositiveInteger(request.maxResponseBytes)) throw new DatabaseConfigError(INVALID_MAX_RESPONSE_BYTES);
+      const { truncateAt } = request;
+      if (truncateAt !== undefined && (!isPositiveInteger(truncateAt) || truncateAt > request.maxResponseBytes)) {
+        throw new DatabaseConfigError(INVALID_TRUNCATE_AT);
+      }
       const perRequest = perRequestHeaders(request.headers, requestHeaderNames);
       const target = requestTargetOf(request.target);
       return exchange(request, target, perRequest);

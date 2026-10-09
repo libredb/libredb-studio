@@ -679,3 +679,63 @@ describe("the 16384-character total of the selected headers", () => {
     expect({ count: headers.length, truncated }).toEqual({ count: 16, truncated: false });
   });
 });
+
+const INVALID_TRUNCATE_AT = "Invalid truncateAt: expected a positive integer no greater than maxResponseBytes";
+
+describe("truncateAt", () => {
+  test.each([
+    ["0", 0],
+    ["1.5", 1.5],
+    ["maxResponseBytes + 1", MIB + 1],
+  ])("truncateAt %s is refused before any socket", async (_label, truncateAt) => {
+    const listener = await rawHttpListener(OK);
+    const error = await failure(() => connect(listener).request(get("/b/k", { truncateAt })));
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error.message).toBe(INVALID_TRUNCATE_AT);
+    expect(listener.accepted()).toBe(0);
+  });
+
+  test("100000 of a 1 MiB body gives exactly the first 100000 bytes, closes the socket, and the next request opens a new one", async () => {
+    const body = randomBytes(MIB);
+    const listener = await rawHttpListener(() => rawAnswer("200 OK", [`content-length: ${MIB}`], body));
+    const transport = connect(listener);
+    const answer = await transport.request(get("/b/k", { maxResponseBytes: 2 * MIB, truncateAt: 100_000 }));
+    expect({
+      length: answer.bytes.length,
+      truncated: answer.truncated,
+      same: answer.bytes.equals(body.subarray(0, 100_000)),
+    }).toEqual({
+      length: 100_000,
+      truncated: true,
+      same: true,
+    });
+    await eventually(() => listener.open() === 0, "the cut socket to close on the server side");
+    expect((await transport.request(get("/b/k", { maxResponseBytes: 2 * MIB }))).bytes.length).toBe(MIB);
+    expect(listener.accepted()).toBe(2);
+  });
+
+  test("a body of exactly truncateAt bytes is a normal answer with truncated false", async () => {
+    const body = randomBytes(100_000);
+    const listener = await rawHttpListener(() => rawAnswer("200 OK", ["content-length: 100000"], body));
+    const answer = await connect(listener).request(get("/b/k", { truncateAt: 100_000 }));
+    expect({ length: answer.bytes.length, truncated: answer.truncated }).toEqual({ length: 100_000, truncated: false });
+  });
+
+  test("a chunked body is cut the same way", async () => {
+    const body = randomBytes(MIB);
+    const chunked = Buffer.concat([Buffer.from(`${MIB.toString(16)}\r\n`), body, Buffer.from("\r\n0\r\n\r\n")]);
+    const listener = await rawHttpListener(() => rawAnswer("200 OK", ["transfer-encoding: chunked"], chunked));
+    const answer = await connect(listener).request(get("/b/k", { maxResponseBytes: 2 * MIB, truncateAt: 100_000 }));
+    expect({ truncated: answer.truncated, same: answer.bytes.equals(body.subarray(0, 100_000)) }).toEqual({
+      truncated: true,
+      same: true,
+    });
+  });
+
+  test("truncateAt equal to maxResponseBytes cuts a longer body instead of failing as too-large", async () => {
+    const body = randomBytes(MIB);
+    const listener = await rawHttpListener(() => rawAnswer("200 OK", [`content-length: ${MIB}`], body));
+    const answer = await connect(listener).request(get("/b/k", { maxResponseBytes: 100_000, truncateAt: 100_000 }));
+    expect({ length: answer.bytes.length, truncated: answer.truncated }).toEqual({ length: 100_000, truncated: true });
+  });
+});
