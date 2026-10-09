@@ -697,8 +697,8 @@ export interface KeyScanCapability {
    * A provider that declares it still answers a walk without `level` exactly as before.
    *
    * THE LEVEL-PROVIDER CONTRACT (Keys panel levels, spec 3.3). A level page never holds more than `count`
-   * entries, keys and prefixes together, whatever the server returns in one response, and no prefix
-   * twice. A provider whose server answers a level unpaged removes repeated entries, sorts the full answer
+   * entries, keys and prefixes together, whatever the server returns in one response, and no prefix or
+   * key twice. A provider whose server answers a level unpaged removes repeated entries, sorts the full answer
    * by UTF-8 byte order, returns the first `count` entries after the cursor, and spells its cursor as the
    * last entry returned (start-after semantics), so a list that changes order between calls neither skips
    * nor repeats an entry. A level cursor is valid in every process that serves the connection: a provider

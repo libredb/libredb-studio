@@ -216,7 +216,7 @@ function readLevel(body: Record<string, unknown>): boolean {
  * starts with `p` and ends at the first `s` found from the end of `p`, which also makes it end with `s`
  * and hold no `s` before that one, overlapping occurrences of a longer separator included;
  * no prefix appears twice; a key starts with `p` and holds no `s` after it (a key equal to `p`, a folder
- * marker, passes); and keys and prefixes together fit in `count`.
+ * marker, passes); no key appears twice; and keys and prefixes together fit in `count`.
  */
 function checkAnswer(type: string, page: KeyScanPage, options: KeyScanOptions, separator: string): void {
   if (options.level !== true) {
@@ -244,6 +244,7 @@ function checkAnswer(type: string, page: KeyScanPage, options: KeyScanOptions, s
     }
     seen.add(prefix);
   }
+  const seenKeys = new Set<string>();
   for (const key of page.keys) {
     if (!key.startsWith(pattern) || key.slice(pattern.length).includes(separator)) {
       throw new ObjectRouteError(
@@ -251,6 +252,10 @@ function checkAnswer(type: string, page: KeyScanPage, options: KeyScanOptions, s
         500,
       );
     }
+    if (seenKeys.has(key)) {
+      throw new ObjectRouteError(`${type} answered the key ${JSON.stringify(key)} twice on one level page`, 500);
+    }
+    seenKeys.add(key);
   }
   const entries = page.keys.length + prefixes.length;
   if (entries > options.count) {

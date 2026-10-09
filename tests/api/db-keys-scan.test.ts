@@ -680,6 +680,13 @@ describe("POST /api/db/keys/scan for one level", () => {
     }
   });
 
+  test("answers 500 for the same key twice on one level page", async () => {
+    activeProvider = levelProvider(async () => ({ ...EMPTY_LEVEL, keys: ["a/x", "a/y", "a/x"] }));
+    const answer = await post({ level: true, pattern: "a/" });
+    expect(answer.status).toBe(500);
+    expect(answer.body.error).toBe('oxia answered the key "a/x" twice on one level page');
+  });
+
   test("answers level pages that keep to their level unchanged", async () => {
     const cases: Array<{ request: Record<string, unknown>; page: KeyScanPage }> = [
       // The top level, with no pattern.

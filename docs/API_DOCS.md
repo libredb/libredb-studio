@@ -1477,7 +1477,7 @@ Its `prefixes` are the folder prefixes one `separator` deeper.
 A provider that declares `levels` meets four rules:
 
 - A level page never holds more than `count` entries, keys and prefixes together, whatever the server returns in one response.
-- No prefix appears twice on one page.
+- No prefix and no key appears twice on one page.
 - A provider whose server answers a level unpaged removes repeated entries, sorts the full answer by UTF-8 byte order, returns the first `count` entries after the cursor, and spells its cursor as the last entry returned, so a list that changes order between calls neither skips nor repeats an entry.
 - A level cursor is valid in every process that serves the connection: a provider may bind it to the request's scope but not to its own instance.
 
@@ -1505,6 +1505,7 @@ The route checks every level page and answers `500` for a prefix or a key outsid
 | A level answer carries a prefix outside the level | `500` | `{ "error": "<type> answered a folder outside the level it was asked for: \"<prefix>\"" }` |
 | A level answer carries one prefix twice | `500` | `{ "error": "<type> answered the folder \"<prefix>\" twice on one level page" }` |
 | A level answer carries a key outside the level | `500` | `{ "error": "<type> answered a key outside the level it was asked for: \"<key>\"" }` |
+| A level answer carries one key twice | `500` | `{ "error": "<type> answered the key \"<key>\" twice on one level page" }` |
 | A level answer carries more entries than `count` | `500` | `{ "error": "<type> answered <n> entries to a level page of at most <count>" }` |
 | Rate limited | `429` | `{ "error": "...", "code": "RATE_LIMITED" }` |
 
