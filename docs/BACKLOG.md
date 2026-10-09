@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D253, U17 · 157
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U107 · 98
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U108 · 99
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC18 · 15
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -4288,6 +4288,17 @@ A hook test that changes the database without a reset sends `{"cursor":"7","data
 Found 2026-10-10 by an adversarial review of the folder-aware Keys panel; pre-existing.
 
 **Done when:** no page is asked for a walk that has not been reset, with a panel test that switches connection during the wait, presses Scan more, and finds no request carrying the previous walk's cursor.
+
+### U108. The Keys panel carries a Browse Keys pattern to the next connection
+
+Browse Keys hands the Keys panel its pattern through a request the Sidebar keeps in state (`keyPatternRequest` in `src/components/sidebar/Sidebar.tsx`), which stays set when the reader switches connection, and the panel starts its pattern from that request (`useState(request?.pattern ?? "")` in `src/components/key-browser/KeyBrowser.tsx`).
+So the Keys panel of the next connection opens on the previous connection's pattern, which may match nothing there.
+Measured 2026-10-10 in a browser on the folder-aware Keys panel branch: after Browse Keys on the Redis row `bulk:*`, the Keys panels of an etcd connection, an Oxia connection and a second etcd connection opened with the key prefix `bulk:*` and read `Scanned 0`.
+`main` has the same code in both places.
+
+Found 2026-10-10 by the browser pass of the folder-aware Keys panel; pre-existing.
+
+**Done when:** a Browse Keys request belongs to the connection it was made on, so the Keys panel of another connection opens without it, with a Sidebar test that does Browse Keys, switches connection, and finds the panel's pattern empty.
 
 ## Dependencies
 
