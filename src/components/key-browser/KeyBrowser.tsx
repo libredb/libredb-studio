@@ -319,7 +319,9 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
    * stops taking pages when it is reached, and the panel draws one sentence for that bound — the
    * same number `Scan all` ends its own budget at, worded so a reader can tell the two apart.
    */
-  const heldFull = keys.length >= HELD_KEY_LIMIT;
+  // Keys plus server folders, the sum the hook's own limit reads (Keys panel levels, spec 3.6); with no
+  // folders, which is every engine without levels, it is the key count it always was.
+  const heldFull = keys.length + folders.length >= HELD_KEY_LIMIT;
 
   /*
    * Start the walk again from cursor `"0"`.
@@ -389,6 +391,15 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
     () => new Set(folders.map((folder) => pathKey(splitKey(folder, shape).slice(0, -1)))),
     [folders, shape],
   );
+  /**
+   * The folders above the scope, by `pathKey` (Keys panel levels, spec 3.6). The panel's walk lists the
+   * scope's level only, so a folder above it holds the one row on the way down and nobody asked for its
+   * level: until it is listed it is an unlisted folder, and it lists its level when opened as one does.
+   */
+  const ancestorKeys = useMemo(
+    () => (levels ? new Set([...scopeChain(scope)].filter((key) => key !== scopeKey)) : new Set<string>()),
+    [levels, scope, scopeKey],
+  );
 
   /**
    * Open or close a folder, and LIST A SERVER FOLDER on the reader's first expand (Keys panel levels,
@@ -402,7 +413,8 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
   const toggleFolder = useCallback(
     (node: KeyTreeNode) => {
       const key = pathKey(node.path);
-      const unlisted = node.serverFolder === true && !nodeCursors.has(key) && !nodeLoading.has(key);
+      const listable = node.serverFolder === true || ancestorKeys.has(key);
+      const unlisted = listable && !nodeCursors.has(key) && !nodeLoading.has(key);
       if (levels && !filtering && !open.has(key) && unlisted) void loadMoreUnder(node.path);
       setOpen((previous) => {
         const next = new Set(previous);
@@ -413,7 +425,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         return next;
       });
     },
-    [filtering, levels, loadMoreUnder, nodeCursors, nodeLoading, open],
+    [ancestorKeys, filtering, levels, loadMoreUnder, nodeCursors, nodeLoading, open],
   );
   // While a filter is on, every surviving folder is open: a match two levels down that stayed
   // collapsed would look like no match at all, which is the one answer a filter must never give.
@@ -425,6 +437,9 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         if (filtering || heldFull) return false;
         const key = pathKey(path);
         if (key === scopeKey) return !exhausted;
+        // A folder above the scope pages its level only once it has been listed: before that the walk
+        // drew it open on the way down, and a row under it would offer a level nobody asked for.
+        if (ancestorKeys.has(key)) return nodeCursors.has(key) && nodeCursors.get(key) !== "0";
         return serverFolderKeys.has(key) && nodeCursors.get(key) !== "0";
       }
       /*
@@ -445,7 +460,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
       if (exhausted || filtering || heldFull) return false;
       return nodeCursors.get(pathKey(path)) !== "0";
     },
-    [exhausted, filtering, heldFull, levels, nodeCursors, scopeKey, serverFolderKeys],
+    [ancestorKeys, exhausted, filtering, heldFull, levels, nodeCursors, scopeKey, serverFolderKeys],
   );
   const rows = useMemo(
     () =>
@@ -525,7 +540,8 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
   const walkScoped = shape.totalScope === "walk";
   // An engine that publishes no key count (`"none"`): the line is the numerator alone, and `total` is not read.
   const uncounted = shape.totalScope === "none";
-  const progressPrefix = walkScoped || uncounted || pattern === "" ? "Scanned" : "Matched";
+  // A level walk lists folders and keys, so its line says Listed (Keys panel levels, spec 3.6).
+  const progressPrefix = levels ? "Listed" : walkScoped || uncounted || pattern === "" ? "Scanned" : "Matched";
   const progressSuffix = total === null || uncounted ? "" : walkScoped || pattern === "" ? `/${total}` : ` of ${total}`;
   /*
    * THE NUMERATOR NEVER READS ABOVE THE PANEL'S OWN BUDGET, and that is the whole point of clamping a
@@ -547,22 +563,29 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
    * and "not clustered" would be a claim from a refusal.
    */
   const nodeScoped = clustered === true;
-  const countScope = uncounted
-    ? "keys read so far: this engine publishes no key count, so no total is shown"
-    : walkScoped
-      ? sent === ""
-        ? "out of every key this connection may read"
-        : `out of the keys under ${sent} this connection may read`
-      : nodeScoped
-        ? "out of every key this NODE holds (this server is clustered: SCAN and DBSIZE are per node)"
-        : "out of every key this database holds";
+  const countScope = levels
+    ? "Folders and keys of this level listed so far: this engine lists one folder at a time and publishes no count, so no total is shown"
+    : uncounted
+      ? "keys read so far: this engine publishes no key count, so no total is shown"
+      : walkScoped
+        ? sent === ""
+          ? "out of every key this connection may read"
+          : `out of the keys under ${sent} this connection may read`
+        : nodeScoped
+          ? "out of every key this NODE holds (this server is clustered: SCAN and DBSIZE are per node)"
+          : "out of every key this database holds";
 
   /** Whether a level can still be asked for more: the scope's own walk, or a listed server folder's. */
   const levelHasMore = (key: string): boolean =>
     key === scopeKey ? !exhausted : nodeCursors.has(key) && nodeCursors.get(key) !== "0";
-  /** A server folder nobody has listed yet: it has a name, and nothing under it is counted. */
+  /**
+   * A server folder nobody has listed yet: it has a name, and nothing under it is counted. A folder above
+   * the scope is one too until its own level is listed.
+   */
   const unlistedFolder = (node: KeyTreeNode): boolean =>
-    node.serverFolder === true && pathKey(node.path) !== scopeKey && !nodeCursors.has(pathKey(node.path));
+    (node.serverFolder === true || ancestorKeys.has(pathKey(node.path))) &&
+    pathKey(node.path) !== scopeKey &&
+    !nodeCursors.has(pathKey(node.path));
   /**
    * A folder's badge under levels (Keys panel levels, spec 3.6): the rows its level has listed, with a
    * `+` while that level has more pages. A level lists its own entries and never its subfolders'
@@ -587,16 +610,20 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
           value={pattern}
           onChange={(event) => setPattern(event.target.value)}
           placeholder={
-            prefixed
-              ? `Key prefix, e.g. ${separator}app${separator}config${separator}`
-              : `Match pattern, e.g. app${separator}cache${separator}*`
+            levels
+              ? `Prefix, e.g. app${separator}config${separator}`
+              : prefixed
+                ? `Key prefix, e.g. ${separator}app${separator}config${separator}`
+                : `Match pattern, e.g. app${separator}cache${separator}*`
           }
           aria-label={prefixed ? "Key prefix" : "Match pattern"}
           // A `*` typed into a prefix is data, and the box says so where a reader looks (spec 4.6).
           title={
-            prefixed
-              ? `Walks the keys that begin with exactly this text. A * is part of the prefix, except in a trailing ${separator}*, which is read as the folder it names.`
-              : undefined
+            levels
+              ? `Lists the folders and keys directly under exactly this text. A * is part of the prefix, except in a trailing ${separator}*, which is read as the folder it names.`
+              : prefixed
+                ? `Walks the keys that begin with exactly this text. A * is part of the prefix, except in a trailing ${separator}*, which is read as the folder it names.`
+                : undefined
           }
           className="h-7 min-w-0 flex-1 font-mono text-xs"
         />
@@ -651,8 +678,8 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
           type="button"
           data-testid="key-browser-refresh"
           onClick={refresh}
-          aria-label="Scan this database again"
-          title="Scan this database again"
+          aria-label={levels ? "List this prefix again" : "Scan this database again"}
+          title={levels ? "List this prefix again" : "Scan this database again"}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-brand"
         >
           <RefreshCw strokeWidth={1.5} className="h-3.5 w-3.5" />
@@ -675,7 +702,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
             disabled={busy || scanningAll || exhausted || heldFull}
             className="rounded px-2 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
           >
-            Scan more
+            {levels ? "List more" : "Scan more"}
           </button>
           <button
             type="button"
@@ -683,25 +710,31 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
             disabled={(busy && !scanningAll) || heldFull}
             className="rounded px-2 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
           >
-            {scanningAll ? "Stop" : "Scan all"}
+            {scanningAll ? "Stop" : levels ? "List all of this level" : "Scan all"}
           </button>
         </div>
       </div>
 
-      {keys.length > 0 && (
+      {/* Under levels a level can hold folders and no keys, and its folders must be filterable too
+          (Keys panel levels, spec 3.6). */}
+      {(levels ? keys.length + folders.length : keys.length) > 0 && (
         <div className="pb-2">
           <Input
             value={term}
             onChange={(event) => setTerm(event.target.value)}
-            placeholder="Filter the keys found"
-            aria-label="Filter the keys found"
+            placeholder={levels ? "Filter the folders and keys listed" : "Filter the keys found"}
+            aria-label={levels ? "Filter the folders and keys listed" : "Filter the keys found"}
             /*
               WHAT IT MATCHES, on the row itself, because the box takes two kinds of answer and the
               reader cannot tell which one it wants: a word names a SEGMENT (`cache`), and the rest of
               a path names a KEY (`queue:jobs:failed:2026:09:23`). Both are answered — see
               `filterKeyTree` — and the tooltip is where that is stated rather than guessed at.
             */
-            title={`Narrows the keys already loaded, without asking the server. Matches any part of a key's full name, or one of its \`${separator}\`-separated segments.`}
+            title={
+              levels
+                ? `Narrows the folders and keys already listed, without asking the server. Matches any part of a full name, or one of its \`${separator}\`-separated segments.`
+                : `Narrows the keys already loaded, without asking the server. Matches any part of a key's full name, or one of its \`${separator}\`-separated segments.`
+            }
             className="h-7 text-xs"
           />
         </div>
@@ -756,7 +789,9 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
           `Scan more` quietly refused because a tree that is full cannot be given more. */}
       {heldFull && (
         <p className="px-1 pb-2 text-[10px] leading-relaxed text-warning" data-testid="key-browser-held">
-          {`Holding ${HELD_KEY_LIMIT.toLocaleString("en-US")} keys, which is this panel's limit. Narrow the ${prefixed ? "prefix" : "pattern"} to walk a smaller key space.`}
+          {levels
+            ? `Holding ${HELD_KEY_LIMIT.toLocaleString("en-US")} keys and folders, which is this panel's limit. Narrow the prefix to list a smaller part of the key space.`
+            : `Holding ${HELD_KEY_LIMIT.toLocaleString("en-US")} keys, which is this panel's limit. Narrow the ${prefixed ? "prefix" : "pattern"} to walk a smaller key space.`}
         </p>
       )}
 
@@ -788,7 +823,13 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
             <>
               <KeyRound strokeWidth={1.5} className="h-5 w-5" />
               <span className="mt-2 text-xs font-medium">
-                {filtering ? "No key matches the filter" : "This database holds no keys the walk has seen"}
+                {filtering
+                  ? "No key matches the filter"
+                  : levels
+                    ? sent === ""
+                      ? "Nothing is listed at the top level"
+                      : `Nothing is listed under ${sent}`
+                    : "This database holds no keys the walk has seen"}
               </span>
             </>
           )}
@@ -905,9 +946,11 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                    * fact that has to be on the row rather than discovered by pressing it repeatedly.
                    */
                   title={
-                    prefixed
-                      ? "Ask the server for the next page of the keys under this prefix. The walk above reads the same range in the same order, so a page can hold only keys already loaded."
-                      : "Ask the server for one more page under this prefix. It answers a batch of buckets rather than a listing, so a page can hold only keys already loaded."
+                    levels
+                      ? "Ask the server for the next page of this folder. A page lists folders and keys of this level only, and each folder lists its own level when opened."
+                      : prefixed
+                        ? "Ask the server for the next page of the keys under this prefix. The walk above reads the same range in the same order, so a page can hold only keys already loaded."
+                        : "Ask the server for one more page under this prefix. It answers a batch of buckets rather than a listing, so a page can hold only keys already loaded."
                   }
                   // One level deeper than the folder it belongs to, so it reads as following the
                   // children above it rather than as one of them.
@@ -928,7 +971,11 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                     <PackageOpen strokeWidth={1.5} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   )}
                   <span className="truncate text-xs text-muted-foreground">
-                    {loading ? "Asking for one more page..." : `Click to load more${outcomeOf(nodeAdded.get(key))}`}
+                    {loading
+                      ? levels
+                        ? "Listing this folder..."
+                        : "Asking for one more page..."
+                      : `${levels ? "Load more of this folder" : "Click to load more"}${outcomeOf(nodeAdded.get(key))}`}
                   </span>
                   {/*
                       THE COUNT THIS PRESS IS MEASURED AGAINST, in the same right-hand column every
@@ -939,7 +986,9 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                     data-testid="key-browser-load-more-count"
                     className="ml-auto shrink-0 pl-2 text-[10px] tabular-nums text-muted-foreground"
                   >
-                    {`${row.count.toLocaleString("en-US")} key${row.count === 1 ? "" : "s"}`}
+                    {levels
+                      ? `${row.count.toLocaleString("en-US")} entr${row.count === 1 ? "y" : "ies"} listed`
+                      : `${row.count.toLocaleString("en-US")} key${row.count === 1 ? "" : "s"}`}
                   </span>
                 </button>
               );

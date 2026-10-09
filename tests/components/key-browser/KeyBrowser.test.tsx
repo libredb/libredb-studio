@@ -2158,4 +2158,319 @@ describe("a panel listed one level at a time", () => {
     });
     expect(badgeCell("a/").getAttribute("title")).toBe("2 entries listed in this folder");
   });
+
+  const ETCD_LIKE: KeyScanCapability = {
+    defaultCount: 500,
+    maxCount: 1000,
+    separator: "/",
+    cursor: "opaque",
+    pattern: "prefix",
+    totalScope: "walk",
+  };
+  const OXIA_LIKE: KeyScanCapability = { ...ETCD_LIKE, totalScope: "none" };
+
+  /** Text that only a level panel draws (Keys panel levels, spec 3.6); today's panel must carry none of it. */
+  const LEVEL_TEXT = [
+    "Listed ",
+    "List more",
+    "List all of this level",
+    "Load more of this folder",
+    "Listing this folder",
+    "entries listed",
+    "entry listed",
+    "Nothing is listed",
+    "keys and folders",
+  ];
+
+  /** Open every folder the panel draws, one twisty at a time, bounded so a stuck twisty fails the test. */
+  function openEveryFolder(): void {
+    for (let pass = 0; pass < 100; pass += 1) {
+      const closed = screen
+        .queryAllByTestId("key-browser-twisty")
+        .find((candidate) => candidate.getAttribute("aria-label")?.startsWith("Expand "));
+      if (closed === undefined) return;
+      fireEvent.click(closed);
+    }
+    throw new Error("a folder of the key tree did not open");
+  }
+
+  test("draws none of the level wording, and no top-level row, for Redis, etcd and Oxia", async () => {
+    const shapes: ReadonlyArray<{ readonly capability: KeyScanCapability; readonly keys: string[] }> = [
+      { capability: CAPABILITY, keys: ["app:cache:user:1", "app:cache:user:2", "app:env", "queue:jobs:1"] },
+      { capability: ETCD_LIKE, keys: ["/apisix/routes/1", "/apisix/routes/2", "/app/cfg", "k3s/x/y"] },
+      { capability: OXIA_LIKE, keys: ["/apisix/routes/1", "/apisix/routes/2", "/app/cfg", "k3s/x/y"] },
+    ];
+    for (const { capability, keys } of shapes) {
+      mockGlobalFetch({ "/api/db/keys/scan": page(keys, "7", keys.length) });
+      const view = render(<KeyBrowser connection={CONNECTION} capability={capability} />);
+      // oxlint-disable-next-line no-await-in-loop -- one declaration at a time: each owns the global fetch mock.
+      await waitFor(() => {
+        expect(screen.queryAllByRole("treeitem").length).toBeGreaterThan(0);
+      });
+
+      openEveryFolder();
+
+      const text = view.container.textContent ?? "";
+      for (const phrase of LEVEL_TEXT)
+        expect({ phrase, found: text.includes(phrase) }).toEqual({ phrase, found: false });
+      // Folders offer today's rows, and none of them sits at the top level.
+      expect(loadMoreRows().length).toBeGreaterThan(0);
+      expect(loadMoreRows().some((row) => row.style.paddingLeft === "8px")).toBe(false);
+      view.unmount();
+      restoreGlobalFetch();
+    }
+  });
+
+  test("reads the level wording on the progress line, the buttons, the boxes and the refresh", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": levelRoute(["a/x", "readme"], 20).handler });
+    const view = renderLevels();
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0", "readme@0"]);
+    });
+
+    expect(progress()).toBe("Listed 2");
+    expect(screen.getByTestId("key-browser-progress").getAttribute("title")).toBe(
+      "Folders and keys of this level listed so far: this engine lists one folder at a time and publishes no count, so no total is shown",
+    );
+    expect(screen.getByText("List more")).toBeDefined();
+    expect(screen.getByText("List all of this level")).toBeDefined();
+    const box = screen.getByLabelText("Key prefix") as HTMLInputElement;
+    expect(box.placeholder).toBe("Prefix, e.g. app/config/");
+    expect(box.title).toBe(
+      "Lists the folders and keys directly under exactly this text. A * is part of the prefix, except in a trailing /*, which is read as the folder it names.",
+    );
+    const refresh = screen.getByTestId("key-browser-refresh");
+    expect(refresh.getAttribute("aria-label")).toBe("List this prefix again");
+    expect(refresh.getAttribute("title")).toBe("List this prefix again");
+    const filter = screen.getByLabelText("Filter the folders and keys listed") as HTMLInputElement;
+    expect(filter.placeholder).toBe("Filter the folders and keys listed");
+    expect(filter.title).toBe(
+      "Narrows the folders and keys already listed, without asking the server. Matches any part of a full name, or one of its `/`-separated segments.",
+    );
+    view.unmount();
+    restoreGlobalFetch();
+
+    // Today's words, on every engine without levels, and no filter box while nothing is held.
+    for (const capability of [CAPABILITY, ETCD_LIKE, OXIA_LIKE]) {
+      mockGlobalFetch({ "/api/db/keys/scan": page(["a/x", "a:y"], "7", 2) });
+      const today = render(<KeyBrowser connection={CONNECTION} capability={capability} />);
+      // oxlint-disable-next-line no-await-in-loop -- one declaration at a time: each owns the global fetch mock.
+      await waitFor(() => {
+        expect(screen.queryAllByRole("treeitem").length).toBeGreaterThan(0);
+      });
+      expect(screen.getByText("Scan more")).toBeDefined();
+      expect(screen.getByText("Scan all")).toBeDefined();
+      expect(screen.getByLabelText("Filter the keys found")).toBeDefined();
+      expect(screen.queryByText("List more")).toBeNull();
+      expect(screen.queryByText("List all of this level")).toBeNull();
+      expect(screen.queryByLabelText("Filter the folders and keys listed")).toBeNull();
+      today.unmount();
+      restoreGlobalFetch();
+
+      mockGlobalFetch({ "/api/db/keys/scan": page([], "0", 0) });
+      const empty = render(<KeyBrowser connection={CONNECTION} capability={capability} />);
+      // oxlint-disable-next-line no-await-in-loop -- one declaration at a time: each owns the global fetch mock.
+      await waitFor(() => {
+        expect(screen.getByTestId("key-browser-empty").textContent).toBe(
+          "This database holds no keys the walk has seen",
+        );
+      });
+      expect(screen.queryByLabelText("Filter the keys found")).toBeNull();
+      empty.unmount();
+      restoreGlobalFetch();
+    }
+  });
+
+  test("words a folder's load-more row by its folder, while it asks and after, and counts it in entries", async () => {
+    // A no-op default rather than `| null`: the executor below replaces it before anything waits.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const route = levelRoute(SPACE, 20);
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.clone().json()) as Record<string, unknown>;
+        if (body.cursor === "i:20") await gate;
+        return route.handler(req);
+      },
+    });
+    renderLevels();
+    await waitFor(() => {
+      expect(rows()).toContain("a/@0");
+    });
+    fireEvent.click(twisty("a/"));
+    await waitFor(() => {
+      expect(loadMoreRows()[0]?.textContent).toContain("Load more of this folder");
+    });
+    const [more] = loadMoreRows();
+    expect(more.getAttribute("title")).toBe(
+      "Ask the server for the next page of this folder. A page lists folders and keys of this level only, and each folder lists its own level when opened.",
+    );
+    expect(within(more).getByTestId("key-browser-load-more-count").textContent).toBe("20 entries listed");
+
+    fireEvent.click(more);
+    await waitFor(() => {
+      expect(loadMoreRows()[0]?.textContent).toContain("Listing this folder...");
+    });
+    release();
+    await waitFor(() => {
+      expect(loadMoreRows()[0]?.textContent).toContain("Load more of this folder · +20 new");
+    });
+  });
+
+  test("counts a load-more row of one listed entry in the singular", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": levelRoute(["b/1", "b/2"], 1).handler });
+    renderLevels();
+    await waitFor(() => {
+      expect(rows()).toEqual(["b/@0"]);
+    });
+    fireEvent.click(twisty("b/"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("key-browser-load-more-count")?.textContent).toBe("1 entry listed");
+    });
+  });
+
+  test("says the held limit and the empty level in the level wording", async () => {
+    // 9,999 keys and 2 folders: the folders go in first and the keys stop at ten thousand entries.
+    mockGlobalFetch({
+      "/api/db/keys/scan": {
+        json: {
+          keys: Array.from({ length: HELD_KEY_LIMIT - 1 }, (_, index) => `bulk/${index % 3}/${index}`),
+          prefixes: ["a/", "b/"],
+          cursor: "c1",
+          total: 0,
+          types: {},
+        },
+      },
+    });
+    const held = renderLevels();
+    await waitFor(() => {
+      expect(screen.getByTestId("key-browser-held").textContent).toBe(
+        "Holding 10,000 keys and folders, which is this panel's limit. Narrow the prefix to list a smaller part of the key space.",
+      );
+    });
+    expect((screen.getByText("List more") as HTMLButtonElement).disabled).toBe(true);
+    expect(progress()).toBe("Listed 10000");
+    held.unmount();
+    restoreGlobalFetch();
+
+    mockGlobalFetch({ "/api/db/keys/scan": levelRoute([], 20).handler });
+    const top = renderLevels();
+    await waitFor(() => {
+      expect(screen.getByTestId("key-browser-empty").textContent).toBe("Nothing is listed at the top level");
+    });
+    top.unmount();
+    restoreGlobalFetch();
+
+    mockGlobalFetch({ "/api/db/keys/scan": levelRoute(["logs/a"], 20).handler });
+    renderLevels({ pattern: "sales/" });
+    await waitFor(() => {
+      expect(screen.getByTestId("key-browser-empty").textContent).toBe("Nothing is listed under sales/");
+    });
+  });
+
+  test("draws the filter box for a level of folders alone, and the filter keeps a folder by its own name", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": levelRoute(["a/1", "b/1", "c/1"], 20).handler });
+    renderLevels();
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0", "b/@0", "c/@0"]);
+    });
+
+    fireEvent.change(screen.getByLabelText("Filter the folders and keys listed"), { target: { value: "b" } });
+
+    expect(rows()).toEqual(["b/@0"]);
+  });
+
+  test("disables List more and List all of this level once keys plus folders reach the held limit", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": {
+        json: {
+          keys: Array.from({ length: HELD_KEY_LIMIT - 2 }, (_, index) => `k${index}`),
+          prefixes: ["a/", "b/"],
+          cursor: "c1",
+          total: 0,
+          types: {},
+        },
+      },
+    });
+    renderLevels();
+    await waitFor(() => {
+      expect(screen.queryByTestId("key-browser-held")).not.toBeNull();
+    });
+
+    expect((screen.getByText("List more") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText("List all of this level") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("a folder above a handed-over prefix claims no listing, and opening it after a close lists its level", async () => {
+    const route = levelRoute(["sales/2026/orders.csv", "sales/2026/ord-b.csv", "sales/a.csv", "sales/b/x"], 20);
+    mockGlobalFetch({ "/api/db/keys/scan": route.handler });
+    renderLevels({ pattern: "sales/2026/ord" });
+    await waitFor(() => {
+      expect(rows()).toEqual(["sales/@0", "2026/@1", "sales/2026/ord-b.csv@2", "sales/2026/orders.csv@2"]);
+    });
+
+    // Only `2026/`'s ord entries were asked for, so `sales/` holds one row nobody listed it for.
+    expect(badge("sales/")).toBe("");
+    expect(badgeCell("sales/").getAttribute("title")).toBe("Not listed yet: open the folder to list it");
+
+    fireEvent.click(twisty("sales/"));
+    expect(route.seen.filter((body) => body.pattern === "sales/")).toEqual([]);
+    fireEvent.click(twisty("sales/"));
+    await waitFor(() => {
+      expect(rows()).toContain("sales/a.csv@1");
+    });
+    expect(route.seen.filter((body) => body.pattern === "sales/")).toEqual([
+      expect.objectContaining({ cursor: "0", pattern: "sales/", level: true }),
+    ]);
+    expect(rows()).toContain("b/@1");
+    expect(badge("sales/")).toBe("3");
+    expect(badgeCell("sales/").getAttribute("title")).toBe("3 entries listed in this folder");
+  });
+
+  test("a listed folder above the prefix pages its own level from its own row", async () => {
+    const route = levelRoute(["sales/2026/ord.csv", "sales/a.csv", "sales/b.csv", "sales/c.csv"], 2);
+    mockGlobalFetch({ "/api/db/keys/scan": route.handler });
+    renderLevels({ pattern: "sales/2026/ord" });
+    await waitFor(() => {
+      expect(rows()).toEqual(["sales/@0", "2026/@1", "sales/2026/ord.csv@2"]);
+    });
+    // Unlisted, so no row of its own yet.
+    expect(loadMoreRows()).toEqual([]);
+
+    fireEvent.click(twisty("sales/"));
+    fireEvent.click(twisty("sales/"));
+    await waitFor(() => {
+      expect(badge("sales/")).toBe("2+");
+    });
+    expect(loadMoreRows()).toHaveLength(1);
+
+    fireEvent.click(loadMoreRows()[0]);
+    await waitFor(() => {
+      expect(rows()).toContain("sales/b.csv@1");
+    });
+    expect(route.seen.filter((body) => body.pattern === "sales/")[1]).toMatchObject({ cursor: "i:2", level: true });
+  });
+
+  test("typing in the prefix box asks a new question and closes the folders the last one opened", async () => {
+    const route = levelRoute(SPACE, 20);
+    mockGlobalFetch({ "/api/db/keys/scan": route.handler });
+    renderLevels();
+    await waitFor(() => {
+      expect(rows()).toContain("a/@0");
+    });
+    fireEvent.click(twisty("a/"));
+    await waitFor(() => {
+      expect(rows()).toContain("0/@1");
+    });
+
+    fireEvent.change(screen.getByLabelText("Key prefix"), { target: { value: "a" } });
+
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0"]);
+    });
+    expect(twisty("a/").getAttribute("aria-label")).toBe("Expand a");
+    expect(route.seen.filter((body) => body.pattern === "a/")).toHaveLength(1);
+  });
 });
