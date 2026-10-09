@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D254, U17 · 158
+- [Drivers and connections](#drivers-and-connections) — D1-D255, U17 · 159
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U103 · 95
@@ -2732,11 +2732,23 @@ Found 2026-10-08 while fixing the red-team findings on the Databend provider's t
 
 The byte transport refuses the entries of `LINK_LOCAL_NETWORKS` in `src/lib/db/http/egress-policy.ts` (`169.254.0.0/16` with its IPv4-mapped and NAT64 forms, `fe80::/10`, `fd00:ec2::254`) whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says (`docs/SECURITY.md` row 0.6).
 A metadata service a cloud serves at any other address is reachable with the guard off, and no primary source for such addresses was read when the list was written.
-The first candidate to verify is Alibaba Cloud's `100.100.100.200`, reported by a reviewer and not yet sourced; it sits in CGNAT `100.64.0.0/10`, which the byte transport does not refuse.
+The first candidate to verify is Alibaba Cloud's `100.100.100.200`, reported by a reviewer and not yet sourced; it sits in CGNAT `100.64.0.0/10`, which the byte transport refuses only when `DB_HTTP_BLOCK_PRIVATE_HOSTS` is on.
+The second is `169.254.0.0/16` behind the NAT64 local-use prefix `64:ff9b:1::/48`, which the guard's own list holds and `LINK_LOCAL_NETWORKS` does not, so with the guard off the byte transport reaches it.
 
 Found 2026-10-09 while designing the S3 provider.
 
 **Done when:** each named cloud's documented address is read from a saved primary source and added to `LINK_LOCAL_NETWORKS` or recorded as reachable.
+
+### D255. The shared text transport reads a request's cap again after checking it
+
+`createNodeTransport` in `src/lib/db/http/node-transport.ts` checks `request.maxResponseBytes` in `request()` and then reads it from the caller's object again for every body chunk, so a field that answers differently on a later read sets a cap that was never checked.
+Measured 2026-10-10 on Bun 1.4.2 against a raw local listener: a `maxResponseBytes` getter that answered 100 on its first read and 2 MiB afterwards was read five times, and a 1 MiB body was returned whole instead of failing as `too-large`.
+The same path never checks `method` at all, so a caller that passes `"DELETE"` past the type sends `DELETE` (measured on the same run).
+`createNodeByteTransport` reads each field once and checks the method; no provider passes such an object today, so this is hardening.
+
+Found 2026-10-10 by the whole-branch review of the S3 byte transport; pre-existing in the text transport.
+
+**Done when:** the text transport reads `method`, `url`, `body`, `form`, `signal` and `maxResponseBytes` once, refuses a method other than GET and POST before any socket, and sends only what it checked, with a test per field whose getter answers differently on its second read.
 
 ## Value interpolation
 
@@ -4668,7 +4680,7 @@ Found 2026-10-09 while designing the S3 provider; pre-existing.
 
 ### DOC20. docs/ADDING_A_PROVIDER.md carries stale counts and an incomplete label table
 
-The guide says seven translated READMEs are gated by `readme:check` where `scripts/readme-check.mjs` gates eight (`README_ko.md` joined in 3d9689aaf); lists three query languages where `queryLanguage` has five (`"sql" | "json" | "promql" | "cypher" | "influxql"` in `src/lib/db/types.ts`); says `QueryEditor` registers six language modules where it registers seven plus `registerDialectConsoles`; leaves `sessionsEmptyState`, `tableStatsCaption` and `vacuumActionOperation` out of its `ProviderLabels` table; and gives two driver-free counts, thirteen in its first decision and fifteen in its checklist.
+The guide says seven translated READMEs are gated by `readme:check` where `scripts/readme-check.mjs` gates eight (`README_ko.md` joined in 3d9689aaf); lists three query languages where `queryLanguage` has five (`"sql" | "json" | "promql" | "cypher" | "influxql"` in `src/lib/db/types.ts`); says `QueryEditor` registers six language modules where it registers seven plus `registerDialectConsoles`; has no row for `sessionsEmptyState`, `tableStatsCaption` or `vacuumActionOperation` in its `ProviderLabels` table; and gives two driver-free counts, thirteen in its first decision and fifteen in its checklist.
 
 Found 2026-10-09 while designing the S3 provider; pre-existing.
 
