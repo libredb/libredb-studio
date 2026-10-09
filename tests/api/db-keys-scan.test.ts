@@ -16,6 +16,8 @@ import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 import { createMockProvider } from "../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import type { DatabaseProvider, KeyScanOptions, KeyScanPage } from "@/lib/db/types";
+import { ETCD_KEY_SCAN } from "@/lib/db/providers/keyvalue/etcd/key-scan";
+import { OXIA_KEY_SCAN } from "@/lib/db/providers/keyvalue/oxia/key-scan";
 import {
   DatabaseError,
   DatabaseConfigError,
@@ -493,15 +495,17 @@ describe("POST /api/db/keys/scan for one level", () => {
     return call[0] as Record<string, unknown>;
   }
 
-  test("forwards exactly today's four keys, with no level key, to a Redis, an etcd and an Oxia walk", async () => {
+  test("forwards exactly today's four keys, with no level key, to the shipped etcd and Oxia walks and a Redis lookalike", async () => {
     const shapes = [
       {
         type: "redis",
+        // A lookalike: Redis declares its walk inline in its capabilities and exports no constant, so
+        // this copies `src/lib/db/providers/keyvalue/redis.ts` by hand. etcd and Oxia are the shipped ones.
         keyScan: { defaultCount: 500, maxCount: 1000 },
         containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
       },
-      { type: "etcd", keyScan: ETCD_LIKE, containerLevels: [] },
-      { type: "oxia", keyScan: OXIA_LIKE, containerLevels: [] },
+      { type: "etcd", keyScan: ETCD_KEY_SCAN, containerLevels: [] },
+      { type: "oxia", keyScan: OXIA_KEY_SCAN, containerLevels: [] },
     ] as const;
     for (const shape of shapes) {
       const walk = mock<(options: KeyScanOptions) => Promise<KeyScanPage>>(async () => PAGE);
