@@ -588,4 +588,89 @@ describe("POST /api/db/keys/scan for one level", () => {
     expect(Object.keys(lastOptions(walk)).sort()).toEqual(["count", "cursor", "database", "pattern"]);
     expect(lastOptions(walk)).toStrictEqual({ cursor: "0", pattern: "sales/", count: 500, database: undefined });
   });
+
+  test("answers a Redis page larger than its count unchanged, because a key walk is never counted", async () => {
+    const big: KeyScanPage = {
+      keys: Array.from({ length: 1200 }, (_, index) => `k:${index}`),
+      cursor: "5",
+      total: 1200,
+      types: {},
+    };
+    activeProvider = declaringProvider(async () => big);
+
+    const { status, body } = await post<KeyScanPage>({ count: 1000 });
+
+    expect(status).toBe(200);
+    expect(body).toStrictEqual(big);
+    expect("prefixes" in body).toBe(false);
+  });
+
+  test("answers 500 for folder prefixes on a walk that asked for keys only", async () => {
+    const stray: KeyScanPage = { keys: ["a/x"], prefixes: ["a/b/"], cursor: "0", total: 0, types: {} };
+
+    activeProvider = levelProvider(async () => stray);
+    const level = await post({});
+    expect(level.status).toBe(500);
+    expect(level.body.error).toBe("oxia answered folder prefixes to a walk that asked for keys only");
+
+    activeProvider = declaringProvider(async () => stray);
+    const redis = await post({});
+    expect(redis.status).toBe(500);
+    expect(redis.body.error).toBe("redis answered folder prefixes to a walk that asked for keys only");
+  });
+
+  test("answers 500, in its own sentence, for each level answer outside the level it was asked for", async () => {
+    const cases: Array<{ page: Partial<KeyScanPage>; error: string }> = [
+      { page: { prefixes: ["b/x/"] }, error: 'oxia answered a folder outside the level it was asked for: "b/x/"' },
+      { page: { prefixes: ["a/x"] }, error: 'oxia answered a folder outside the level it was asked for: "a/x"' },
+      { page: { prefixes: ["a/"] }, error: 'oxia answered a folder outside the level it was asked for: "a/"' },
+      { page: { prefixes: ["a/x/y/"] }, error: 'oxia answered a folder outside the level it was asked for: "a/x/y/"' },
+      { page: { prefixes: ["a/x/", "a/x/"] }, error: 'oxia answered the folder "a/x/" twice on one level page' },
+      { page: { keys: ["a/x/y"] }, error: 'oxia answered a key outside the level it was asked for: "a/x/y"' },
+      { page: { keys: ["b"] }, error: 'oxia answered a key outside the level it was asked for: "b"' },
+      {
+        page: { keys: Array.from({ length: 1000 }, (_, index) => `a/k${index}`), prefixes: ["a/x/"] },
+        error: "oxia answered 1001 entries to a level page of at most 1000",
+      },
+    ];
+    for (const { page, error } of cases) {
+      activeProvider = levelProvider(async () => ({ ...EMPTY_LEVEL, ...page }));
+      const answer = await post({ level: true, pattern: "a/", count: 1000 });
+      expect({ error, status: answer.status }).toEqual({ error, status: 500 });
+      expect(answer.body.error).toBe(error);
+    }
+  });
+
+  test("answers level pages that keep to their level unchanged", async () => {
+    const cases: Array<{ request: Record<string, unknown>; page: KeyScanPage }> = [
+      // The top level, with no pattern.
+      {
+        request: { level: true },
+        page: { keys: ["readme"], prefixes: ["sales/", "/"], cursor: "0", total: 0, types: {} },
+      },
+      // A key equal to the pattern: an object store's folder marker.
+      { request: { level: true, pattern: "a/" }, page: { ...EMPTY_LEVEL, keys: ["a/"] } },
+      // An empty segment is a folder of its own.
+      { request: { level: true, pattern: "a/" }, page: { ...EMPTY_LEVEL, prefixes: ["a//"] } },
+      // A pattern that ends mid-segment.
+      {
+        request: { level: true, pattern: "sales/2026/ord" },
+        page: {
+          keys: ["sales/2026/orders.csv"],
+          prefixes: ["sales/2026/ord-archive/"],
+          cursor: "c1",
+          total: 0,
+          types: {},
+        },
+      },
+      // A level page with no prefixes field at all.
+      { request: { level: true, pattern: "a/" }, page: { keys: ["a/x"], cursor: "0", total: 0, types: {} } },
+    ];
+    for (const { request, page } of cases) {
+      activeProvider = levelProvider(async () => page);
+      const answer = await post<KeyScanPage>(request);
+      expect({ request, status: answer.status }).toEqual({ request, status: 200 });
+      expect(answer.body).toStrictEqual(page);
+    }
+  });
 });

@@ -1,7 +1,13 @@
 import { NextRequest } from "next/server";
 import { handleObjectRequest, ObjectRouteError, optionalDatabase, requireString } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
-import { keyScanShape, type KeyScanCapability, type KeyScanOptions, type KeyScanShape } from "@/lib/db/types";
+import {
+  keyScanShape,
+  type KeyScanCapability,
+  type KeyScanOptions,
+  type KeyScanPage,
+  type KeyScanShape,
+} from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +58,13 @@ export const dynamic = "force-dynamic";
  * so an engine that declares a walk and no container level (etcd, whose connection is one key space)
  * is refused it in this route's own words rather than handed a number it has no use for (spec 3.4).
  * `containerDepth` is the rule the Keys panel applies before it sends one at all.
+ *
+ * `level: true` ASKS FOR ONE LEVEL, AND A LEVEL PAGE IS CHECKED BEFORE IT IS ANSWERED (Keys panel levels, spec 3.3).
+ * Only an engine that declares `levels` takes it, and only on an uncounted prefix walk; any other value is refused, and a request without it forwards exactly the four fields it always did.
+ * The panel draws each folder a level page answers as complete for its level, so a folder from another level, or one drawn twice, would be a wrong tree with no visible error.
+ * Every prefix must therefore sit exactly one separator under the pattern and appear once, every key must sit directly under the pattern, and the page must hold no more entries than the `count` it was asked for.
+ * A key walk must carry no prefixes at all, and its count is never checked, because a Redis `SCAN` page may hold more keys than `COUNT`.
+ * The page itself is answered unchanged.
  *
  * Budget: shared, through `handleObjectRequest`, with the object routes and `POST /api/db/query`
  * (`src/lib/api/object-route.ts`). A walk a person drives with a progress bar spends the same
@@ -110,7 +123,9 @@ export async function POST(req: NextRequest) {
     // `level` travels only when asked, so a walk without it hands the provider exactly the four keys it
     // always did, with no `level` key at all.
     const forwarded: KeyScanOptions = { ...options, ...(level ? { level: true as const } : {}) };
-    return walk.call(provider, forwarded);
+    const page = await walk.call(provider, forwarded);
+    checkAnswer(provider.type, page, forwarded, shape.separator);
+    return page;
   });
 }
 
@@ -189,4 +204,54 @@ function readLevel(body: Record<string, unknown>): boolean {
     throw new ObjectRouteError('"level" must be true, or absent for a walk of keys only', 400);
   }
   return true;
+}
+
+/**
+ * Hold a provider's answer to the level contract, or name how it broke it (Keys panel levels, spec 3.3).
+ *
+ * A key walk's page is never counted or read here: a Redis `SCAN` page may hold more keys than `COUNT`.
+ * A level page is held to its level: with `p` the pattern (or `""`) and `s` the separator, a prefix
+ * starts with `p`, ends with `s`, is at least `p.length + s.length` long and holds no `s` between them;
+ * no prefix appears twice; a key starts with `p` and holds no `s` after it (a key equal to `p`, a folder
+ * marker, passes); and keys and prefixes together fit in `count`.
+ */
+function checkAnswer(type: string, page: KeyScanPage, options: KeyScanOptions, separator: string): void {
+  if (options.level !== true) {
+    if (page.prefixes !== undefined) {
+      throw new ObjectRouteError(`${type} answered folder prefixes to a walk that asked for keys only`, 500);
+    }
+    return;
+  }
+  const pattern = options.pattern ?? "";
+  const prefixes = page.prefixes ?? [];
+  const seen = new Set<string>();
+  for (const prefix of prefixes) {
+    const inLevel =
+      prefix.startsWith(pattern) &&
+      prefix.endsWith(separator) &&
+      prefix.length >= pattern.length + separator.length &&
+      !prefix.slice(pattern.length, prefix.length - separator.length).includes(separator);
+    if (!inLevel) {
+      throw new ObjectRouteError(
+        `${type} answered a folder outside the level it was asked for: ${JSON.stringify(prefix)}`,
+        500,
+      );
+    }
+    if (seen.has(prefix)) {
+      throw new ObjectRouteError(`${type} answered the folder ${JSON.stringify(prefix)} twice on one level page`, 500);
+    }
+    seen.add(prefix);
+  }
+  for (const key of page.keys) {
+    if (!key.startsWith(pattern) || key.slice(pattern.length).includes(separator)) {
+      throw new ObjectRouteError(
+        `${type} answered a key outside the level it was asked for: ${JSON.stringify(key)}`,
+        500,
+      );
+    }
+  }
+  const entries = page.keys.length + prefixes.length;
+  if (entries > options.count) {
+    throw new ObjectRouteError(`${type} answered ${entries} entries to a level page of at most ${options.count}`, 500);
+  }
 }
