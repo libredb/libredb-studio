@@ -623,13 +623,18 @@ export function useKeyScan(options: {
         // the pages that did not.
         setError(thrown instanceof Error ? thrown.message : String(thrown));
       } finally {
-        nodeInFlight.current.delete(key);
-        if (alive.current) {
-          setNodeLoading((previous) => {
-            const next = new Set(previous);
-            next.delete(key);
-            return next;
-          });
+        // Only a page of the walk still current frees its folder, the guard the page itself is held
+        // to: `reset` already cleared a discarded walk's slots, and the slot this key holds now may be
+        // the current walk's own page in the air, which a stale landing must not release.
+        if (mine === walk.current) {
+          nodeInFlight.current.delete(key);
+          if (alive.current) {
+            setNodeLoading((previous) => {
+              const next = new Set(previous);
+              next.delete(key);
+              return next;
+            });
+          }
         }
       }
     },

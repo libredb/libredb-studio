@@ -721,6 +721,50 @@ describe("useKeyScan", () => {
       expect(result.current.error).toBeNull();
       expect(result.current.keys).toEqual(["fresh"]);
     });
+
+    test("a folder page landing after a reset leaves the new walk's page for that folder in flight", async () => {
+      const gates = [gate(), gate()];
+      let call = 0;
+      const fetchMock = mockGlobalFetch({
+        "/api/db/keys/scan": async () => {
+          const mine = gates[call];
+          call += 1;
+          await mine?.held;
+          return page(["a:x"], "7");
+        },
+      });
+      const { result } = hook();
+
+      let stale: Promise<unknown> = Promise.resolve();
+      act(() => {
+        stale = result.current.loadMoreUnder(["a"]);
+      });
+      act(() => {
+        result.current.reset();
+      });
+      let current: Promise<unknown> = Promise.resolve();
+      act(() => {
+        current = result.current.loadMoreUnder(["a"]);
+      });
+      gates[0]?.release();
+      await act(async () => {
+        await stale;
+      });
+
+      // The discarded page owned the slot of a walk that is gone: freeing the folder here would let a
+      // second page of the CURRENT walk start from the same cursor as the one still in the air.
+      expect(result.current.nodeLoading.has(pathKey(["a"]))).toBe(true);
+      await act(async () => {
+        await result.current.loadMoreUnder(["a"]);
+      });
+      expect(fetchMock.mock.calls.length).toBe(2);
+
+      gates[1]?.release();
+      await act(async () => {
+        await current;
+      });
+      expect(result.current.nodeLoading.size).toBe(0);
+    });
   });
 
   /**
