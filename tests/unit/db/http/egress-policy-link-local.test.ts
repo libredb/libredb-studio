@@ -338,17 +338,13 @@ describe("a byte transport refuses every link-local form whatever the guard flag
     ...LITERALS.map((host) => [host, "on", BLOCKED] as const),
   ];
 
-  test.each(CASES)(
-    "the literal %s with the guard %s is refused when built, and nothing is accepted",
-    async (host, guard, sentence) => {
-      const listener = await rawHttpListener(OK);
-      const error = refusal(() => build(host, listener.port, guard));
-      expect(error).toBeInstanceOf(DatabaseConfigError);
-      expect(error.message).toBe(sentence);
-      expect(error.message).not.toContain(host.replace(/^\[|\]$/g, ""));
-      expect(listener.accepted()).toBe(0);
-    },
-  );
+  // A refusal when the transport is built leaves no transport to send with, so there is no listener to count here.
+  test.each(CASES)("the literal %s with the guard %s is refused when built", (host, guard, sentence) => {
+    const error = refusal(() => build(host, 80, guard));
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error.message).toBe(sentence);
+    expect(error.message).not.toContain(host.replace(/^\[|\]$/g, ""));
+  });
 
   test.each([
     ["metadata.test", "off", LINK_LOCAL],

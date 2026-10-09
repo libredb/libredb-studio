@@ -749,7 +749,7 @@ describe("truncateAt", () => {
     ["maxResponseBytes + 1", MIB + 1],
   ])("truncateAt %s is refused before any socket", async (_label, truncateAt) => {
     const listener = await rawHttpListener(OK);
-    const error = await failure(() => connect(listener).request(get("/b/k", { truncateAt })));
+    const error = await failure(() => connect(listener).request(get("/b/k", { maxResponseBytes: MIB, truncateAt })));
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toBe(INVALID_TRUNCATE_AT);
     expect(listener.accepted()).toBe(0);
@@ -831,6 +831,18 @@ describe("redirects", () => {
     expect(error.redirect).toEqual({ status: 307, headers: [], headersTruncated: false });
     expect(error.message).not.toContain("secret");
     expect(second.accepted()).toBe(0);
+  });
+
+  test("a 301 with 65 selected headers carries the first 64 and headersTruncated", async () => {
+    const meta = Array.from({ length: 65 }, (_, index) => `x-amz-meta-h${index}: v${index}`);
+    const listener = await rawHttpListener(() => rawAnswer("301 Moved Permanently", [...meta, "content-length: 0"]));
+    const transport = connect(listener, { responseHeaders: { names: [], prefixes: ["x-amz-meta-"] } });
+    const error = (await failure(() => transport.request(get("/b")))) as TransportError;
+    expect(error.redirect).toEqual({
+      status: 301,
+      headers: Array.from({ length: 64 }, (_, index) => [`x-amz-meta-h${index}`, `v${index}`]),
+      headersTruncated: true,
+    });
   });
 
   test("Location and Set-Cookie of a 3xx are never part of its redirect detail", async () => {

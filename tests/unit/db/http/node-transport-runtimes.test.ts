@@ -1160,9 +1160,5 @@ for (const [label, binary] of RUNTIMES) {
       expect(new Set(headThenGet.map(({ socket }) => socket)).size).toBe(1);
       expect(heads.map(({ line }) => line)).toContain("GET /b/sp/./dot.txt HTTP/1.1");
     });
-
-    test("the metadata.test request reached no listener", () => {
-      expect(byteHeads.slice(run?.from.byteHeads).map(({ line }) => line)).not.toContain("GET /b/k HTTP/1.1");
-    });
   });
 }

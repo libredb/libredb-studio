@@ -55,12 +55,16 @@ describe("rfc3986Encode", () => {
     ["a slash", "/", "%2F"],
     ["a percent sign", "%", "%25"],
     ["the measured mix", "a b+c*~!'()é/%", "a%20b%2Bc%2A~%21%27%28%29%C3%A9%2F%25"],
+    ["a valid astral pair, U+1F600", "\uD83D\uDE00", "%F0%9F%98%80"],
   ])("%s", (_label, text, encoded) => {
     expect(rfc3986Encode(text)).toBe(encoded);
   });
 
-  test("a lone surrogate is refused with the sentence", () => {
-    const error = refusal(() => rfc3986Encode("key\uD800"));
+  test.each([
+    ["high", "key\uD800"],
+    ["low", "key\uDC00"],
+  ])("a lone %s surrogate is refused with the sentence", (_label, text) => {
+    const error = refusal(() => rfc3986Encode(text));
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toBe(LONE_SURROGATE);
   });
@@ -96,13 +100,13 @@ describe("rfc3986Query", () => {
   });
 });
 
-describe("every encoder output is in the byte transport's target grammar", () => {
+describe("encoder outputs and the byte transport's target grammar", () => {
   test.each([
     rfc3986Path(["b", "sp", ".", "dot.txt"]),
     rfc3986Path(["b", "", "k"]),
     rfc3986Path(["b", "a/b"]),
     rfc3986Path(["b", "a b+c*~!'()é/%"]),
-  ])("path %s", (path) => {
+  ])("path %s is in the grammar", (path) => {
     expect(path).toMatch(PATH_GRAMMAR);
   });
 
@@ -114,8 +118,15 @@ describe("every encoder output is in the byte transport's target grammar", () =>
     rfc3986Query([["location", ""]]),
     rfc3986Query([]),
     rfc3986Query([["prefix", "a b+c*~!'()é/%"]]),
-  ])("query %s", (query) => {
+  ])("query %s is in the grammar", (query) => {
     expect(query).toMatch(QUERY_GRAMMAR);
+  });
+
+  test("an empty first segment and an empty query name are encoded, and fall outside the grammar", () => {
+    expect(rfc3986Path(["", "x"])).toBe("//x");
+    expect(rfc3986Path(["", "x"])).not.toMatch(PATH_GRAMMAR);
+    expect(rfc3986Query([["", "v"]])).toBe("=v");
+    expect(rfc3986Query([["", "v"]])).not.toMatch(QUERY_GRAMMAR);
   });
 });
 
