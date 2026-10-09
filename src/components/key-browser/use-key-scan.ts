@@ -311,9 +311,10 @@ export function useKeyScan(options: {
    * THE QUESTION THE LAST COMMIT ASKED, which every page is held to beside its walk generation.
    *
    * A page whose question is no longer this one writes nothing, on every engine: not its keys, its
-   * types, its cursor, its counts or its folders. Without it a panel waiting on its database list, which
-   * has not reset yet, would draw the last connection's keys under the new one and open them on it.
-   * Recorded in a layout effect so it is current from the commit on, before any page can land.
+   * types, its cursor, its counts or its folders. It clears nothing either: what the last walk already
+   * holds stays until the caller resets the walk, which a panel waiting on its database list does only
+   * once that list answers. Recorded in a layout effect so it is current from the commit on, before any
+   * page can land.
    */
   const askedNow = useRef(asked);
   useLayoutEffect(() => {
