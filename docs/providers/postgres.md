@@ -431,7 +431,7 @@ Five of the seven also declare `hasSource` and a `sourceLanguage`, which is what
 against one database and nothing in the product can switch it on a live connection, so the level
 would draw a folder with exactly one child forever.
 
-**No `index` kind**, deliberately, and this is the line the fifteen other providers are read
+**No `index` kind**, deliberately, and this is the line the other providers are read
 against. PostgreSQL's own catalog models an index as a property of the relation it is on:
 `pg_index` is keyed by `indrelid` and an index cannot exist apart from one. So it stays where it
 already is, in `describeObject()`'s output beside that object's columns, rather than becoming a
@@ -2189,8 +2189,8 @@ already fits.
 was hardcoded to *"Run Reindex"* / *"Rebuild Indexes"* / *"Reconstructs all indexes in the database."*
 for every engine (#464). That wording was written for this engine — the global card
 sends no target, so `runMaintenance('reindex')` here runs `REINDEX DATABASE`
-([§9](#9-maintenance)) — so declaring it changes nothing on PostgreSQL and lets the two
-other providers that offer `reindex` (SQLite, Couchbase) say what theirs does instead:
+([§9](#9-maintenance)) — so declaring it changes nothing on PostgreSQL and lets the
+other providers that offer `reindex`, such as SQLite, libSQL and Couchbase, say what theirs does instead:
 
 | Field | Value |
 | --- | --- |
