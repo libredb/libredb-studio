@@ -908,10 +908,26 @@ function transportCore(settings: CoreSettings): TransportCore {
    */
   let sending = 0;
   const waiting: Array<() => void> = [];
+  let draining = false;
+  /** The next waiting request when a slot is free; none after close(), which stops every waiting request itself. */
+  const startable = (): (() => void) | undefined => (!closed && sending < maxSockets ? waiting.shift() : undefined);
+  /**
+   * Starts waiting requests while a socket slot is free, in one loop. A request can fail as it starts, as a signer that
+   * throws does, and its failure frees its slot and calls back in here; that call returns at once and this loop starts
+   * the next, so a long queue of such failures never nests one start inside another and cannot overflow the stack.
+   */
+  const drain = (): void => {
+    if (draining) return;
+    draining = true;
+    try {
+      for (let start = startable(); start !== undefined; start = startable()) start();
+    } finally {
+      draining = false;
+    }
+  };
   const release = (): void => {
     sending -= 1;
-    // After close() nothing more starts: close() stops every waiting request itself.
-    if (!closed) waiting.shift()?.();
+    drain();
   };
 
   const queue = <T>(signal: AbortSignal, begin: (pending: Exchange<T>) => void): Promise<T> =>

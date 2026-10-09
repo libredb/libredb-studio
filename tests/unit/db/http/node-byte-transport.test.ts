@@ -1180,6 +1180,37 @@ describe("signer failures release their socket slot and escape nowhere", () => {
     }
   });
 
+  test("with maxSockets 1, 10000 queued requests whose signer throws all reject once the slot frees, and nothing escapes", async () => {
+    const watch = watchUncaught();
+    try {
+      const { listener, release } = await holdingListener();
+      const transport = connect(listener, { maxSockets: 1, signer: throwingOn("/boom") });
+      const held = transport.request(get("/held"));
+      await eventually(() => listener.seen.length === 1, "the held request to reach the listener");
+      let settled = 0;
+      const queued = Array.from({ length: 10_000 }, () =>
+        transport.request(get("/boom")).then(
+          () => "sent",
+          (error: unknown) => {
+            settled += 1;
+            return error;
+          },
+        ),
+      );
+      release();
+      expect((await held).bytes.toString()).toBe("held");
+      // A request the drain stranded never settles, so the count is read after a bound rather than awaited.
+      await eventually(() => settled === queued.length, "every queued request to settle", 3000).catch(() => {});
+      expect(settled).toBe(10_000);
+      expect((await Promise.all(queued)).every((outcome) => outcome === SIGNER_ERROR)).toBe(true);
+      expect(listener.accepted()).toBe(1);
+      expect((await transport.request(get("/after"))).bytes.toString()).toBe("ok");
+      expect(watch.seen).toEqual([]);
+    } finally {
+      watch.stop();
+    }
+  }, 15_000);
+
   test("a signer that assigns to input.headers rejects with a TypeError, sends nothing, and the next request completes", async () => {
     const watch = watchUncaught();
     try {

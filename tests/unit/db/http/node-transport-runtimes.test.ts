@@ -478,6 +478,41 @@ async function runByteCases(
   // DB_HTTP_BLOCK_PRIVATE_HOSTS is off here (runCases deletes it, and the child starts without it); entry.mjs
   // answers metadata.test with 169.254.169.254.
   await record("byte: metadata.test with the guard off", () => once("metadata.test", "/b/k"));
+  // 5000 requests queued behind one under maxSockets 1, each refused by its signer once the slot frees: a queue that
+  // started the next request from inside the last one's failure overflowed the stack on Node past about 1,800 and
+  // ended the process. `length` counts the requests that rejected with the signer's own error.
+  {
+    const transport = deps.createNodeByteTransport({
+      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort),
+      tls: null,
+      maxSockets: 1,
+      headers: {},
+      signer: {
+        headerNames: ["authorization"],
+        sign: (input) => {
+          if (input.path !== "/b/first") throw new Error("expired");
+          return { authorization: "signed" };
+        },
+      },
+    });
+    try {
+      const first = transport.request(request("/b/first"));
+      const queued = Array.from({ length: 5000 }, () =>
+        transport.request(request("/b/refused")).then(
+          () => "sent",
+          (error: Error) => error.message,
+        ),
+      );
+      await first;
+      const messages = await Promise.all(queued);
+      outcomes["byte: 5000 queued requests refused by their signer"] = {
+        ok: true,
+        length: messages.filter((message) => message === "expired").length,
+      };
+    } finally {
+      transport.close();
+    }
+  }
   return { byteOutcomes: outcomes, byteGlobalAgentCalls: globalCalls };
 }
 
@@ -1015,6 +1050,7 @@ const BYTE_EXPECTED: Readonly<Record<string, ByteOutcome>> = {
     redirect: { status: 301, headers: [["x-amz-bucket-region", "eu-west-1"]], headersTruncated: false },
   },
   "byte: metadata.test with the guard off": { ok: false, errorName: "DatabaseConfigError", message: LINK_LOCAL },
+  "byte: 5000 queued requests refused by their signer": { ok: true, length: 5000 },
 };
 
 function expectCase(report: Report | undefined, name: string): void {
