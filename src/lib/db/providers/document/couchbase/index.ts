@@ -135,6 +135,7 @@ const MISSING_CREDENTIALS_CODE = 13014;
 /** HTTP codes the transport normalizes into the same numeric space. */
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
+const HTTP_NOT_FOUND = 404;
 const HTTP_UNAVAILABLE = 503;
 
 const KEYSPACE_COUNT_SQL = [
@@ -447,6 +448,9 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       // Cheapest proof that the cluster is reachable AND the credentials work:
       // /pools/default needs no RBAC role beyond cluster read.
       await transport.manage<PoolsPayload>(POOLS_PATH);
+      // The pools read says nothing about the bucket this connection is scoped to,
+      // so the bucket's own path is asked next (see assertBucketExists).
+      await this.assertBucketExists(transport);
     } catch (error) {
       await transport.close();
       const failure = this.describeConnectFailure(error);
@@ -456,6 +460,27 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
 
     this.transport = transport;
     this.setConnected(true);
+  }
+
+  /**
+   * The configured bucket's absence is a connection to the wrong place: the
+   * monitoring reads are scoped to it, so a cluster that answers the pools read but
+   * has no such bucket used to save a connection the user did not mean — one that
+   * shows the cluster's real buckets in the tree and never says the configured one
+   * is wrong (#1411).
+   *
+   * ONLY a 404 refuses. The bucket read needs permissions a query-only role may not
+   * have (403), and the pools read already proved reachability and credentials, so
+   * every other failure of this read keeps the behaviour it had before it existed.
+   */
+  private async assertBucketExists(transport: CouchbaseHttpTransport): Promise<void> {
+    try {
+      await transport.manage(this.bucketPath());
+    } catch (error) {
+      if (error instanceof CouchbaseError && error.code === HTTP_NOT_FOUND) {
+        throw new DatabaseConfigError(`Bucket "${this.bucket}" does not exist on this Couchbase cluster`, this.type);
+      }
+    }
   }
 
   public async disconnect(): Promise<void> {

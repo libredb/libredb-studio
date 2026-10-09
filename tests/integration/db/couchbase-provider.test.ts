@@ -389,6 +389,30 @@ describe("CouchbaseProvider validation", () => {
     expect(() => new CouchbaseProvider(makeConnection({ database: undefined }))).toThrow(/bucket/i);
   });
 
+  test("refuses a bucket the cluster does not have, naming it", async () => {
+    // The pools read never mentions buckets, so the bucket's own path is where a name
+    // the user got wrong surfaces: the management API answers it with 404 and the
+    // connect that would have saved it is refused with the name instead.
+    stubManage("/pools/default/buckets/nosuchbucket", {}, 404);
+    const provider = new CouchbaseProvider(makeConnection({ database: "nosuchbucket" }));
+
+    const attempted = provider.connect();
+    await expect(attempted).rejects.toThrow(DatabaseConfigError);
+    await expect(attempted).rejects.toThrow(/nosuchbucket/);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("keeps the connect when the bucket read is refused for a reason other than a missing bucket", async () => {
+    // A role that may read the cluster but not its bucket settings answers 403 here.
+    // The pools read already proved reachability and credentials, so only a 404 --
+    // the cluster itself saying the bucket is not there -- refuses the connect.
+    stubManage(`/pools/default/buckets/${BUCKET}`, {}, 403);
+    const provider = await connectProvider();
+
+    expect(provider.isConnected()).toBe(true);
+    await provider.disconnect();
+  });
+
   test.each([undefined, ""])("uses the URI bucket when database is %s", async (database) => {
     const config = makeConnection({ host: undefined, database, connectionString: "couchbase://localhost/travel" });
     const provider = new CouchbaseProvider(config);
