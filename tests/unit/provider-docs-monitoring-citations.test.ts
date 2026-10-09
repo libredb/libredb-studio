@@ -762,6 +762,7 @@ const SEARCH_MODULE_CITATIONS = [
   { name: "DEFAULT_PORT", source: "src/lib/db/providers/sql/search/http-transport.ts" },
   { name: "DOT_PREFIXED", source: "src/lib/db/providers/sql/search/http-transport.ts" },
   { name: "OPENSEARCH_QUERY_INSIGHTS", source: "src/lib/db/providers/sql/search/http-transport.ts" },
+  { name: "OPENSEARCH_SECURITY_AUDITLOG", source: "src/lib/db/providers/sql/search/http-transport.ts" },
   { name: "OPENSEARCH_DETAILS_FOOTER", source: "src/lib/db/providers/sql/search/http-transport.ts" },
   { name: "toRow", source: "src/lib/db/providers/sql/search/http-transport.ts" },
   { name: "rebuildRows", source: "src/lib/db/providers/sql/search/http-transport.ts" },
