@@ -337,6 +337,21 @@ const TARGET_QUERY = new RegExp(
 const MAX_TARGET_LENGTH = 16384;
 const MAX_CONTENT_TYPE_LENGTH = 1024;
 const MAX_CONTENT_ENCODING_LENGTH = 64;
+const INVALID_RESPONSE_HEADERS =
+  "Invalid responseHeaders: expected at most 32 lower-case names and 8 lower-case prefixes ending in a hyphen";
+const NEVER_RETURNED_LISTED = "Invalid responseHeaders: location and set-cookie are never returned";
+/**
+ * Never handed back, even through a prefix: a Location path or query can carry a token and its userinfo a password,
+ * which is why the redirect refusal names only its origin, and Set-Cookie is session material no caller needs.
+ */
+const NEVER_RETURNED: ReadonlySet<string> = new Set(["location", "set-cookie"]);
+const MAX_SELECTED_NAMES = 32;
+const MAX_SELECTED_PREFIXES = 8;
+const MIN_SELECTED_PREFIX_LENGTH = 3;
+/** The caps on what is returned, applied whatever header limit the runtime has (byte transport design 3.5). */
+const MAX_RETURNED_HEADERS = 64;
+const MAX_RETURNED_VALUE_LENGTH = 1024;
+const MAX_RETURNED_TOTAL_LENGTH = 16384;
 
 /** A runtime error code named in a failure; any other value is left out of the message. */
 const ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
@@ -629,6 +644,74 @@ function requestTargetOf(target: unknown): RequestTarget {
 /** A header value cut to `limit` characters, or null when absent. */
 function cut(value: string | undefined, limit: number): string | null {
   return value === undefined ? null : value.slice(0, limit);
+}
+
+/** A response-header selection as checked: exact names and name prefixes, all lower case. */
+interface HeaderSelection {
+  readonly names: ReadonlySet<string>;
+  readonly prefixes: readonly string[];
+}
+
+/** The selection, checked once when the transport is built; absent selects nothing (byte transport design 3.5). */
+function responseHeaderSelectionOf(selection: ResponseHeaderSelection | undefined): HeaderSelection {
+  if (selection === undefined) return { names: new Set(), prefixes: [] };
+  const names: unknown = selection.names;
+  const prefixes: unknown = selection.prefixes ?? [];
+  if (
+    !Array.isArray(names) ||
+    !Array.isArray(prefixes) ||
+    names.length > MAX_SELECTED_NAMES ||
+    prefixes.length > MAX_SELECTED_PREFIXES ||
+    !names.every((name) => typeof name === "string" && HEADER_NAME.test(name)) ||
+    !prefixes.every(
+      (prefix) =>
+        typeof prefix === "string" &&
+        HEADER_NAME.test(prefix) &&
+        prefix.length >= MIN_SELECTED_PREFIX_LENGTH &&
+        prefix.endsWith("-"),
+    )
+  ) {
+    throw new DatabaseConfigError(INVALID_RESPONSE_HEADERS);
+  }
+  const listed = names as string[];
+  if (listed.some((name) => NEVER_RETURNED.has(name))) throw new DatabaseConfigError(NEVER_RETURNED_LISTED);
+  return { names: new Set(listed), prefixes: [...(prefixes as string[])] };
+}
+
+/**
+ * The selected headers of an answer, from its raw header list: answer.headers joins repeated x-amz-meta-* values and
+ * drops repeated etag, content-type and others, where rawHeaders keeps every name, value and order on both runtimes.
+ * Names are lower-cased here; values stay as the runtime decoded them (latin1). Location and Set-Cookie are skipped
+ * whatever the selection says. Past 64 headers, or past 16384 characters of names and values, later headers are
+ * dropped; a value past 1024 characters is cut; either sets the flag. Exported so the 16384 total, which no runtime
+ * lets through its own header-block limit, can be tested directly.
+ */
+export function selectedHeaders(
+  raw: readonly string[],
+  selection: HeaderSelection,
+): { readonly headers: ResponseHeader[]; readonly truncated: boolean } {
+  const headers: ResponseHeader[] = [];
+  let truncated = false;
+  let total = 0;
+  for (let index = 0; index + 1 < raw.length; index += 2) {
+    const name = raw[index].toLowerCase();
+    if (NEVER_RETURNED.has(name)) continue;
+    if (!selection.names.has(name) && !selection.prefixes.some((prefix) => name.startsWith(prefix))) continue;
+    if (headers.length === MAX_RETURNED_HEADERS) {
+      truncated = true;
+      break;
+    }
+    const received = raw[index + 1];
+    const value = received.slice(0, MAX_RETURNED_VALUE_LENGTH);
+    if (value.length < received.length) truncated = true;
+    if (total + name.length + value.length > MAX_RETURNED_TOTAL_LENGTH) {
+      truncated = true;
+      break;
+    }
+    total += name.length + value.length;
+    headers.push([name, value]);
+  }
+  return { headers, truncated };
 }
 
 /**
@@ -958,6 +1041,8 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
  */
 export function createNodeByteTransport(options: NodeByteTransportOptions): NodeByteTransport {
   const { port } = options.origin;
+  // Checked before connectionOf builds the Agent, so a refused selection leaves nothing behind.
+  const selection = responseHeaderSelectionOf(options.responseHeaders);
   const { address, connectionHeaders, requestHeaderNames, core } = connectionOf(options, (origin) => ({
     hostname: unbracketed(origin.host),
     // Set by the transport on every request, so the Host a signer signs is the Host on the wire (byte transport design 3.3).
@@ -984,6 +1069,7 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
           },
         }),
         (answer, status) => {
+          const selected = selectedHeaders(answer.rawHeaders, selection);
           const chunks: Buffer[] = [];
           let received = 0;
           answer.on("data", (chunk: Buffer) => {
@@ -1003,8 +1089,8 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
               contentType: cut(answer.headers["content-type"], MAX_CONTENT_TYPE_LENGTH),
               contentEncoding: cut(answer.headers["content-encoding"], MAX_CONTENT_ENCODING_LENGTH),
               retryAfter: retryAfterOf(answer.headers["retry-after"]),
-              headers: [],
-              headersTruncated: false,
+              headers: selected.headers,
+              headersTruncated: selected.truncated,
               bytes: Buffer.concat(chunks),
               truncated: false,
             });
