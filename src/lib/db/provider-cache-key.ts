@@ -113,7 +113,7 @@ export async function providerCacheKey(
  * or the fingerprint, and `tests/unit/lib/db/provider-cache-key.test.ts` walks those maps to hold it,
  * because this list is hand-kept and the API key pair was once missing from it. The public fields
  * below (the agent user, what TLS presents and trusts, the mechanism, the auth database, the consent,
- * the data servers, the warehouse, the tunnel's auth method and host key) are outside that walk, so the same file
+ * the data servers, the warehouse, the region, the tunnel's auth method and host key) are outside that walk, so the same file
  * holds them in a table of their own, one row per field.
  *
  * - `password` is the connection's own secret. `connectionString` is NOT here because the
@@ -137,15 +137,18 @@ export async function providerCacheKey(
  *   `src/lib/db/providers/document/mongodb.ts`), so the same user and password under another auth
  *   database are another principal's record. `connectionIdentity` in
  *   `src/lib/agent/context-snapshot.ts` frames it for the same reason.
- * - `allowInsecureAuth` decides whether a Db2 or InfluxDB provider sends its secret with no TLS (#786,
- *   InfluxDB spec I7), and whether an Oxia provider sends its token without TLS, so a connection whose
- *   consent was taken back must not be handed a provider opened under it.
+ * - `allowInsecureAuth` decides whether a Db2, InfluxDB or Databend provider sends its secret with no TLS (#786,
+ *   InfluxDB spec I7), whether an Oxia provider sends its token without TLS, and whether an S3 provider connects over
+ *   plain HTTP at all, so a connection whose consent was taken back must not be handed a provider opened under it.
  * - `dataServers` decides which hosts receive the token (O6), so a connection whose list changed must
  *   not be handed a provider whose policy admitted other hosts.
  * - `warehouse` decides which Databend compute every statement runs on (`X-DATABEND-WAREHOUSE`), and so which
  *   servers receive the password and which warehouse Cloud resumes and bills, so a connection naming another
  *   warehouse must not be handed a provider whose requests name this one. The fingerprint does not frame it, and
  *   `connectionIdentity` leaves it out on purpose: it picks compute, not the catalog.
+ * - `region` decides the scope every S3 request is signed for, so a connection naming another region must not be
+ *   handed a provider whose signer uses this one. The fingerprint does not frame it and `connectionIdentity` leaves it
+ *   out: it names a signing scope, not a server or a catalog.
  * - The tunnel's SECRETS and `hostKeyFingerprint`. Its ROUTE is deliberately absent: `tunnelRoute`
  *   frames the four route values inside the fingerprint already, and this is the half that file
  *   explicitly leaves out as "a credential, not a route".
@@ -169,6 +172,7 @@ async function credentialDigest(connection: DatabaseConnection): Promise<string>
     connection.allowInsecureAuth === true ? "insecure-auth" : "",
     connection.dataServers ?? "",
     connection.warehouse ?? "",
+    connection.region ?? "",
     tunnel?.authMethod ?? "",
     tunnel?.password ?? "",
     tunnel?.privateKey ?? "",

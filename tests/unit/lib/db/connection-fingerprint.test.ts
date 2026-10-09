@@ -199,6 +199,12 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(listed)).toBe(await connectionFingerprint(BASE));
   });
 
+  test("region is NOT in it: it changes how a request is signed, never which server receives it", async () => {
+    // An S3 region names a signing scope. Changing it alone can make the server refuse a request, never send a plan to
+    // another server, so by the docblock's criterion it is not a server field; the provider cache key frames it.
+    expect(await connectionFingerprint(vary({ region: "eu-central-1" }))).toBe(await connectionFingerprint(BASE));
+  });
+
   test("the framing holds, so two fields cannot slide across their boundary", async () => {
     // The whole reason the walk is length-framed. Unframed, both of these concatenate to the
     // same `...appdb1u...`: an unframed walk answers ONE digest for TWO different servers, which
