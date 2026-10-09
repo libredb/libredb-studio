@@ -1676,12 +1676,6 @@ because the provider exposes no `cancelQuery` ([§3.8](#38-the-deadline-is-the-c
   `EXPLAIN <select>` with plan **text** and the fork refuses that statement form entirely, so one code
   path cannot serve both; the text is also not the tree `src/lib/explain/` models
   ([§3.10](#310-no-explain-even-though-elasticsearch-answers-one)).
-- **Aliases and data streams are not listed in the schema tree.** They come from other endpoints
-  (`_alias`, `_data_stream`) that this seam does not carry, so a **queryable** alias does not appear in
-  the sidebar even though SQL accepts it. Recorded on the seam itself
-  (`SearchIndexInfo`, [transport.ts](../../src/lib/db/providers/sql/search/transport.ts)), and note the mapping
-  read already tolerates the case: it takes the single entry of the payload rather than looking it up
-  by the requested name, because an alias resolves to the concrete index behind it.
 - **No maintenance operations at all** ([§8](#8-maintenance)).
 - **No active sessions and no slow queries**, structurally rather than unimplemented: a request is one
   HTTP request, and the slow log is a node log file no API returns ([§7](#7-monitoring--health)).

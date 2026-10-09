@@ -1645,12 +1645,6 @@ because the provider exposes no `cancelQuery`
   behind `POST /_plugins/_sql/_explain` — a second endpoint outside this seam, whose tree shape is not
   what upstream returns either ([§3.10](#310-no-explain-the-statement-form-is-refused)). Widening the
   seam by one call is the concrete follow-up.
-- **Aliases and data streams are not listed in the schema tree.** They come from other endpoints
-  (`_alias`, `_data_stream`) that this seam does not carry, so a **queryable** alias does not appear in
-  the sidebar even though SQL accepts it. Recorded on the seam itself
-  (`SearchIndexInfo`, [transport.ts](../../src/lib/db/providers/sql/search/transport.ts)); the mapping read
-  already tolerates the case, taking the single entry of the payload rather than looking it up by the
-  requested name, because an alias resolves to the concrete index behind it.
 - **No maintenance operations at all** ([§8](#8-maintenance)).
 - **No active sessions, and no slow queries** — the second one by choice rather than by absence: this
   product's `top_queries-<date>` index really does hold them, and reading it would populate a panel for
