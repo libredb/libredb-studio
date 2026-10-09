@@ -11,6 +11,10 @@
  * counting listener, because Node reads NODE_USE_ENV_PROXY only when it starts. After its cases each child sends one
  * control request through the global agent: the counting listener must see exactly that one, which proves the
  * variables were live, and the spy on the global agents must count exactly that one, which proves the spy watches.
+ *
+ * The byte transport's cases run after that control request (runByteCases). Each child starts from an unbundled
+ * entry.mjs that answers the name metadata.test with 169.254.169.254 before the bundle loads, so the byte transport's
+ * refusal of a link-local DNS answer, with DB_HTTP_BLOCK_PRIVATE_HOSTS off, is proven on every runtime listed.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -20,6 +24,7 @@ import { type AddressInfo, createServer as createTcpServer, type Socket } from "
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { TLSSocket } from "node:tls";
+import { gzipSync } from "node:zlib";
 import type { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
 import type { createNodeTransport, nodeTlsMaterial } from "@/lib/db/http/node-transport";
 import {
@@ -66,6 +71,8 @@ interface Plan {
   readonly ca: string;
   readonly rogueCa: string;
   readonly secondCa: string;
+  /** The raw listener the byte cases talk to. */
+  readonly bytePort: number;
 }
 
 interface Outcome {
@@ -79,10 +86,42 @@ interface Outcome {
   readonly message?: string;
 }
 
+/** What one byte case came to: an answer's status, length, digest and flags, or a failure's name, kind and detail. */
+interface ByteOutcome {
+  readonly ok: boolean;
+  readonly status?: number;
+  readonly length?: number;
+  readonly digest?: number;
+  readonly truncated?: boolean;
+  readonly contentEncoding?: string | null;
+  readonly errorName?: string;
+  readonly kind?: string;
+  readonly message?: string;
+  readonly redirect?: unknown;
+}
+
+interface ByteDeps {
+  readonly createNodeByteTransport: typeof import("@/lib/db/http/node-transport").createNodeByteTransport;
+  readonly httpOrigin: typeof httpOrigin;
+  readonly http: typeof http;
+  readonly https: typeof https;
+}
+
 interface Report {
   readonly runtime: string;
   readonly outcomes: Record<string, Outcome>;
   readonly globalAgentCalls: { readonly duringCases: number; readonly withControl: number };
+}
+
+/** The byte transport's cases, run after the control request by runByteCases, merged into the child's report line. */
+interface ByteReport {
+  readonly byteOutcomes: Record<string, ByteOutcome>;
+  readonly byteGlobalAgentCalls: number;
+}
+
+/** A child's report read with its byte fields: the parse line types it as a Report, and the child wrote both. */
+function byteReport(run: ChildRun | undefined): (Report & ByteReport) | undefined {
+  return run?.report as (Report & ByteReport) | undefined;
 }
 
 /**
@@ -348,6 +387,100 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
   };
 }
 
+/**
+ * The byte transport's cases (byte transport design 4.2), run in each child after runCases and its control request.
+ * SELF-CONTAINED ON PURPOSE, as runCases is: each child runs this function's own text, so it names nothing but its
+ * parameters and the runtime's globals.
+ */
+async function runByteCases(
+  deps: ByteDeps,
+  plan: Plan,
+): Promise<{ byteOutcomes: Record<string, ByteOutcome>; byteGlobalAgentCalls: number }> {
+  const MIB = 1024 * 1024;
+  const outcomes: Record<string, ByteOutcome> = {};
+  let globalCalls = 0;
+  for (const agent of [deps.http.globalAgent, deps.https.globalAgent]) {
+    const spied = agent as unknown as { addRequest: (...args: unknown[]) => unknown };
+    const original = spied.addRequest;
+    spied.addRequest = function (this: unknown, ...args: unknown[]) {
+      globalCalls += 1;
+      return original.apply(this, args);
+    };
+  }
+  const digest = (bytes: Uint8Array): number => {
+    let sum = 0;
+    for (const byte of bytes) sum = (Math.imul(sum, 31) + byte) >>> 0;
+    return sum;
+  };
+  const record = async (
+    name: string,
+    run: () => Promise<{ status: number; bytes: Uint8Array; truncated: boolean; contentEncoding: string | null }>,
+  ): Promise<void> => {
+    try {
+      const answer = await run();
+      outcomes[name] = {
+        ok: true,
+        status: answer.status,
+        length: answer.bytes.length,
+        digest: digest(answer.bytes),
+        truncated: answer.truncated,
+        contentEncoding: answer.contentEncoding,
+      };
+    } catch (error) {
+      const failure = error as { name?: string; kind?: string; message?: string; redirect?: unknown };
+      outcomes[name] = {
+        ok: false,
+        errorName: failure.name,
+        kind: failure.kind,
+        message: failure.message,
+        redirect: failure.redirect,
+      };
+    }
+  };
+  const connect = (host: string) =>
+    deps.createNodeByteTransport({
+      origin: deps.httpOrigin("http", host, plan.bytePort),
+      tls: null,
+      maxSockets: 4,
+      headers: {},
+      responseHeaders: { names: ["x-amz-bucket-region"] },
+    });
+  const request = (path: string, extra: { method?: "GET" | "HEAD"; truncateAt?: number } = {}) => ({
+    method: extra.method ?? "GET",
+    target: { path, query: "" },
+    signal: AbortSignal.timeout(10_000),
+    maxResponseBytes: 2 * MIB,
+    ...(extra.truncateAt === undefined ? {} : { truncateAt: extra.truncateAt }),
+  });
+  const once = async (host: string, path: string, extra: { truncateAt?: number } = {}) => {
+    const transport = connect(host);
+    try {
+      return await transport.request(request(path, extra));
+    } finally {
+      transport.close();
+    }
+  };
+
+  await record("byte: HEAD then GET on one socket", async () => {
+    const transport = connect("127.0.0.1");
+    try {
+      const head = await transport.request(request("/b/head-then-get", { method: "HEAD" }));
+      if (head.bytes.length !== 0) throw new Error("the HEAD answer carried a body");
+      return await transport.request(request("/b/head-then-get"));
+    } finally {
+      transport.close();
+    }
+  });
+  await record("byte: truncateAt 100000 of a 1 MiB body", () => once("127.0.0.1", "/b/big", { truncateAt: 100_000 }));
+  await record("byte: a dot-segment target", () => once("127.0.0.1", "/b/sp/./dot.txt"));
+  await record("byte: a stored gzip body", () => once("127.0.0.1", "/b/gz"));
+  await record("byte: a 301 with x-amz-bucket-region", () => once("127.0.0.1", "/b/region"));
+  // DB_HTTP_BLOCK_PRIVATE_HOSTS is off here (runCases deletes it, and the child starts without it); entry.mjs
+  // answers metadata.test with 169.254.169.254.
+  await record("byte: metadata.test with the guard off", () => once("metadata.test", "/b/k"));
+  return { byteOutcomes: outcomes, byteGlobalAgentCalls: globalCalls };
+}
+
 // -- the listeners ------------------------------------------------------------------------------------------------
 
 const dir = mkdtempSync(join(tmpdir(), "node-transport-runtimes-"));
@@ -384,6 +517,18 @@ let cutServer: ReturnType<typeof createTcpServer>;
 const cutSockets = new Set<Socket>();
 let corruptServer: ReturnType<typeof createTcpServer>;
 const corruptSockets = new Set<Socket>();
+let byteServer: ReturnType<typeof createTcpServer>;
+const byteSockets = new Set<Socket>();
+/** Every request line the byte listener received, with the id of the socket it came on, in order. */
+const byteHeads: Array<{ readonly socket: number; readonly line: string }> = [];
+let byteAccepted = 0;
+/** A 1 MiB body of a fixed pattern, so the parent knows the digest of any prefix of it. */
+const BYTE_BIG = Buffer.alloc(MIB);
+for (let index = 0; index < MIB; index += 1) BYTE_BIG[index] = index % 251;
+/** A stored gzip object: 2,000 NDJSON lines, served with content-encoding gzip. */
+const BYTE_GZIP = gzipSync(
+  Buffer.from(Array.from({ length: 2000 }, (_, index) => `{"line":${index}}\n`).join(""), "utf8"),
+);
 
 const CHUNKED = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n";
 /** What the cut listener writes before it cuts, by the path's second half. */
@@ -443,6 +588,53 @@ async function corruptListener(material: { readonly cert: string; readonly key: 
   return (corruptServer.address() as AddressInfo).port;
 }
 
+/** The byte cases' answers, by method and path. */
+function byteAnswer(method: string, path: string): Buffer {
+  const answer = (status: string, headers: readonly string[], body: Buffer = Buffer.alloc(0)): Buffer =>
+    Buffer.concat([
+      Buffer.from(`HTTP/1.1 ${status}\r\n${headers.map((line) => `${line}\r\n`).join("")}\r\n`, "latin1"),
+      body,
+    ]);
+  if (path === "/b/head-then-get" && method === "HEAD") return answer("200 OK", ["content-length: 1000"]);
+  if (path === "/b/head-then-get") return answer("200 OK", ["content-length: 2"], Buffer.from("ok"));
+  if (path === "/b/big") return answer("200 OK", [`content-length: ${MIB}`], BYTE_BIG);
+  if (path === "/b/sp/./dot.txt") return answer("200 OK", ["content-length: 3"], Buffer.from("dot"));
+  if (path === "/b/gz") {
+    return answer("200 OK", ["content-encoding: gzip", `content-length: ${BYTE_GZIP.length}`], BYTE_GZIP);
+  }
+  if (path === "/b/region") {
+    return answer("301 Moved Permanently", ["x-amz-bucket-region: eu-west-1", "content-length: 0"]);
+  }
+  return answer("404 Not Found", ["content-length: 0"]);
+}
+
+/**
+ * A raw TCP listener for the byte cases: it records each request line byte for byte with its socket's id, so a reused
+ * socket can be told from a new one, and answers by method and path, keeping the socket open.
+ */
+async function byteListener(): Promise<number> {
+  byteServer = createTcpServer((socket) => {
+    byteAccepted += 1;
+    const id = byteAccepted;
+    byteSockets.add(socket);
+    socket.on("close", () => byteSockets.delete(socket));
+    socket.on("error", () => {});
+    let pending = "";
+    socket.on("data", (chunk: Buffer) => {
+      pending += chunk.toString("latin1");
+      for (let end = pending.indexOf("\r\n\r\n"); end !== -1; end = pending.indexOf("\r\n\r\n")) {
+        const line = pending.slice(0, pending.indexOf("\r\n"));
+        pending = pending.slice(end + 4);
+        byteHeads.push({ socket: id, line });
+        const [method, path] = line.split(" ");
+        if (!socket.destroyed) socket.write(byteAnswer(method, path));
+      }
+    });
+  });
+  await new Promise<void>((resolve) => byteServer.listen(0, "127.0.0.1", resolve));
+  return (byteServer.address() as AddressInfo).port;
+}
+
 beforeAll(async () => {
   const certificates = makeCertificates();
   const bombBody = await gzipOfZeros(1024 * MIB);
@@ -492,6 +684,7 @@ beforeAll(async () => {
   silent = await silentListener();
   const cutPort = await cutListener();
   const corruptPort = await corruptListener(certificates.local);
+  const bytePort = await byteListener();
   const plan: Plan = {
     ports: {
       plain: plain.port,
@@ -513,6 +706,7 @@ beforeAll(async () => {
     ca: certificates.ca,
     rogueCa: certificates.rogueCa,
     secondCa: certificates.secondCa,
+    bytePort,
   };
   writeFileSync(at("plan.json"), JSON.stringify(plan));
   // The child runs a bundle of the transport's own modules around the text of `runCases`, because Node loads neither
@@ -525,9 +719,12 @@ beforeAll(async () => {
       'import { readFileSync } from "node:fs";',
       `import { createNodeTransport, nodeTlsMaterial } from ${JSON.stringify(join(HTTP_SOURCES, "node-transport.ts"))};`,
       `import { endpointUrl, httpOrigin } from ${JSON.stringify(join(HTTP_SOURCES, "endpoint.ts"))};`,
+      `import { createNodeByteTransport } from ${JSON.stringify(join(HTTP_SOURCES, "node-transport.ts"))};`,
       `const runCases = ${runCases.toString()};`,
+      `const runByteCases = ${runByteCases.toString()};`,
       'const plan = JSON.parse(readFileSync(process.argv[2], "utf8"));',
       "const report = await runCases({ createNodeTransport, nodeTlsMaterial, endpointUrl, httpOrigin, http, https }, plan);",
+      "Object.assign(report, await runByteCases({ createNodeByteTransport, httpOrigin, http, https }, plan));",
       'process.stdout.write(JSON.stringify(report) + "\\n");',
       "process.exit(0);",
       "",
@@ -535,6 +732,28 @@ beforeAll(async () => {
   );
   const build = await Bun.build({ entrypoints: [at("child.ts")], target: "node", format: "esm", outdir: dir });
   if (!build.success) throw new Error(`Bun.build could not bundle the child: ${build.logs.join("\n")}`);
+  // Unbundled on purpose: the bundle hoists its node:dns import, so on Bun a patch inside child.ts would land too late
+  // (patched after the import, Bun 1.4.2 still resolved the real name; patched before it, Node and Bun both saw the
+  // patch). This answers metadata.test with 169.254.169.254 itself, asking no resolver, hands every other name to the
+  // real lookup, and syncBuiltinESMExports makes the bundle's `import { lookup } from "node:dns"` see the patch.
+  writeFileSync(
+    at("entry.mjs"),
+    [
+      'import { createRequire, syncBuiltinESMExports } from "node:module";',
+      'const dns = createRequire(import.meta.url)("node:dns");',
+      "const original = dns.lookup;",
+      "dns.lookup = function lookup(hostname, options, callback) {",
+      '  if (hostname !== "metadata.test") return original.call(this, hostname, options, callback);',
+      '  const done = typeof options === "function" ? options : callback;',
+      '  const all = typeof options === "object" && options !== null && options.all === true;',
+      '  const answer = { address: "169.254.169.254", family: 4 };',
+      "  process.nextTick(() => (all ? done(null, [answer]) : done(null, answer.address, answer.family)));",
+      "};",
+      "syncBuiltinESMExports();",
+      'await import("./child.js");',
+      "",
+    ].join("\n"),
+  );
 }, 60_000);
 
 afterAll(async () => {
@@ -543,6 +762,8 @@ afterAll(async () => {
   await new Promise<void>((resolve) => cutServer.close(() => resolve()));
   for (const socket of corruptSockets) socket.destroy();
   await new Promise<void>((resolve) => corruptServer.close(() => resolve()));
+  for (const socket of byteSockets) socket.destroy();
+  await new Promise<void>((resolve) => byteServer.close(() => resolve()));
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -591,6 +812,7 @@ interface ChildRun {
     readonly secure: number;
     readonly farName: number;
     readonly farAddress: number;
+    readonly byteHeads: number;
   };
 }
 
@@ -601,8 +823,9 @@ async function runChild(binary: string): Promise<ChildRun> {
     secure: secure.seen.length,
     farName: farName.seen.length,
     farAddress: farAddress.seen.length,
+    byteHeads: byteHeads.length,
   };
-  const child = Bun.spawn([binary, at("child.js"), at("plan.json")], {
+  const child = Bun.spawn([binary, at("entry.mjs"), at("plan.json")], {
     cwd: dir,
     env: childEnvironment(),
     stdout: "pipe",
@@ -740,6 +963,60 @@ const EXPECTED_ON_NODE: Readonly<Record<string, Expected>> = {
   "TLS: a record corrupted after the headers": TLS_REFUSED,
 };
 
+const LINK_LOCAL =
+  "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says";
+
+/** The digest runByteCases computes, written again here, where each expected answer's digest is computed. */
+function byteDigest(bytes: Uint8Array): number {
+  let sum = 0;
+  for (const byte of bytes) sum = (Math.imul(sum, 31) + byte) >>> 0;
+  return sum;
+}
+
+/** What each byte case must come to on every runtime. */
+const BYTE_EXPECTED: Readonly<Record<string, ByteOutcome>> = {
+  "byte: HEAD then GET on one socket": {
+    ok: true,
+    status: 200,
+    length: 2,
+    digest: byteDigest(Buffer.from("ok")),
+    truncated: false,
+    contentEncoding: null,
+  },
+  "byte: truncateAt 100000 of a 1 MiB body": {
+    ok: true,
+    status: 200,
+    length: 100_000,
+    digest: byteDigest(BYTE_BIG.subarray(0, 100_000)),
+    truncated: true,
+    contentEncoding: null,
+  },
+  "byte: a dot-segment target": {
+    ok: true,
+    status: 200,
+    length: 3,
+    digest: byteDigest(Buffer.from("dot")),
+    truncated: false,
+    contentEncoding: null,
+  },
+  "byte: a stored gzip body": {
+    ok: true,
+    status: 200,
+    length: BYTE_GZIP.length,
+    digest: byteDigest(BYTE_GZIP),
+    truncated: false,
+    contentEncoding: "gzip",
+  },
+  "byte: a 301 with x-amz-bucket-region": {
+    ok: false,
+    errorName: "TransportError",
+    kind: "redirect",
+    message: "The server answered HTTP 301, a redirect with no Location header, and redirects are not followed",
+    redirect: { status: 301, headers: [["x-amz-bucket-region", "eu-west-1"]], headersTruncated: false },
+  },
+  "byte: metadata.test with the guard off": { ok: false, errorName: "DatabaseConfigError", message: LINK_LOCAL },
+};
+
 function expectCase(report: Report | undefined, name: string): void {
   const outcome = report?.outcomes[name];
   const expected =
@@ -863,6 +1140,29 @@ for (const [label, binary] of RUNTIMES) {
     test("the cap, the encoding refusal, the redirect and both stops destroyed their sockets while their transports stayed open", () => {
       const text = run?.report.outcomes["open sockets on the stopped listeners"]?.text ?? "null";
       expect(JSON.parse(text)).toEqual({ big: 0, bomb: 0, holding: 0, redirecting: 0 });
+    });
+
+    test.each(Object.keys(BYTE_EXPECTED))("%s", (name) => {
+      expect({ name, outcome: byteReport(run)?.byteOutcomes[name] }).toEqual({ name, outcome: BYTE_EXPECTED[name] });
+    });
+
+    test("the byte cases sent nothing through the global agents", () => {
+      expect(byteReport(run)?.byteGlobalAgentCalls).toBe(0);
+    });
+
+    test("the byte HEAD and GET shared one socket, and the dot-segment target arrived byte for byte", () => {
+      const heads = byteHeads.slice(run?.from.byteHeads);
+      const headThenGet = heads.filter(({ line }) => line.endsWith(" /b/head-then-get HTTP/1.1"));
+      expect(headThenGet.map(({ line }) => line)).toEqual([
+        "HEAD /b/head-then-get HTTP/1.1",
+        "GET /b/head-then-get HTTP/1.1",
+      ]);
+      expect(new Set(headThenGet.map(({ socket }) => socket)).size).toBe(1);
+      expect(heads.map(({ line }) => line)).toContain("GET /b/sp/./dot.txt HTTP/1.1");
+    });
+
+    test("the metadata.test request reached no listener", () => {
+      expect(byteHeads.slice(run?.from.byteHeads).map(({ line }) => line)).not.toContain("GET /b/k HTTP/1.1");
     });
   });
 }
