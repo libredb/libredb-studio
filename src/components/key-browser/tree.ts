@@ -201,6 +201,11 @@ export function buildKeyTree(
   }
 
   for (const folder of folders) {
+    // A folder the server named is a full prefix; anything else is a defect in the caller, and the
+    // message names the defect without the folder's text, which is the user's data.
+    if (!folder.endsWith(shape.separator)) {
+      throw new Error("A server folder must be a non-empty prefix ending in the separator.");
+    }
     let node = root;
     for (const segment of splitKey(folder, shape).slice(0, -1)) node = childNode(node, segment);
     node.serverFolder = true;
@@ -280,8 +285,21 @@ export function flattenKeyTree(
   root: KeyTreeNode,
   isExpanded: (path: readonly string[]) => boolean,
   canLoadMore: (path: readonly string[]) => boolean = () => false,
+  /*
+   * Two switches for an engine that lists one level at a time (Keys panel levels, spec 3.4), both off
+   * by default so no existing caller gains a row or a changed number.
+   *
+   * `rootLoadMore`: the top level is a level too, with its own Load more row, emitted last at depth 0
+   * when `canLoadMore([])` answers true.
+   *
+   * `countRows`: a Load more row counts the ROWS listed in its folder, `children.length`, because a
+   * folder holding only server folders holds no keys, and "0 keys" beside several drawn folders would
+   * be false.
+   */
+  options: { readonly rootLoadMore?: boolean; readonly countRows?: boolean } = {},
 ): KeyTreeRow[] {
   const rows: KeyTreeRow[] = [];
+  const countOf = (node: KeyTreeNode): number => (options.countRows === true ? node.children.length : node.count);
 
   const walk = (node: KeyTreeNode, depth: number): void => {
     for (const child of node.children) {
@@ -294,7 +312,7 @@ export function flattenKeyTree(
           kind: "loadMore",
           path: child.path,
           depth: depth + 1,
-          count: child.count,
+          count: countOf(child),
           setSize: 0,
           posInSet: 0,
         });
@@ -303,6 +321,9 @@ export function flattenKeyTree(
   };
 
   walk(root, 0);
+  if (options.rootLoadMore === true && canLoadMore([])) {
+    rows.push({ kind: "loadMore", path: [], depth: 0, count: countOf(root), setSize: 0, posInSet: 0 });
+  }
   return numberSiblings(rows);
 }
 
@@ -437,15 +458,20 @@ export function keyRowNames(
   node: KeyTreeNode,
   folder: boolean,
   shape: KeyScanShape = UNDECLARED,
+  /*
+   * An engine that lists one level at a time (Keys panel levels, spec 3.4): its folders are folders the
+   * server named, not globs a walk matched, so the folder mark is the separator alone (`2026/`), and a
+   * row that is both says "a key and a folder".
+   */
+  levels = false,
 ): { readonly label: string; readonly title: string; readonly toggle: string } {
   const name = keyName(node.path, shape);
-  const marker = `${shape.separator}*`;
+  const marker = levels ? shape.separator : `${shape.separator}*`;
   const label = folder && !node.isKey ? `${node.segment}${marker}` : name;
-  const title = folder
-    ? node.isKey
-      ? `${name} is a key of this database and a prefix: ${name}${marker}`
-      : `${name}${marker}`
-    : name;
+  const both = levels
+    ? `${name} is a key and a folder: ${name}${marker}`
+    : `${name} is a key of this database and a prefix: ${name}${marker}`;
+  const title = folder ? (node.isKey ? both : `${name}${marker}`) : name;
   return { label, title, toggle: name === "" ? shape.separator : name };
 }
 

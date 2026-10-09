@@ -900,4 +900,127 @@ describe("server folders in the tree", () => {
     expect(segments(narrowed)).toEqual(["sales"]);
     expect(at(narrowed, "sales").serverFolder).toBe(true);
   });
+
+  test("a duplicated folder prefix is one node", () => {
+    const root = buildKeyTree([], LEVELS, ["sales/", "sales/"]);
+
+    expect(segments(root)).toEqual(["sales"]);
+  });
+
+  test("refuses a server folder that is empty or does not end with the separator, without echoing it", () => {
+    for (const folder of ["", "secret-sales", "secret/sales"]) {
+      let message = "";
+      try {
+        buildKeyTree([], LEVELS, [folder]);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toBe("A server folder must be a non-empty prefix ending in the separator.");
+      expect(message).not.toContain("secret");
+    }
+  });
+
+  test("flattens with no row for the top level unless asked, whatever canLoadMore answers", () => {
+    const root = buildKeyTree(["a/x", "b"], LEVELS, ["c/"]);
+
+    const rows = flattenKeyTree(
+      root,
+      () => true,
+      () => true,
+    );
+
+    expect(rows.filter((row) => row.kind === "loadMore" && row.path.length === 0)).toEqual([]);
+  });
+
+  test("asked, emits the top level's row last, at depth 0, counting its rows and left out of the ARIA set", () => {
+    const root = buildKeyTree(["a/x", "b"], LEVELS, ["c/"]);
+    const options = { rootLoadMore: true, countRows: true };
+
+    const rows = flattenKeyTree(
+      root,
+      () => false,
+      () => true,
+      options,
+    );
+
+    const last = rows.at(-1);
+    expect(last).toEqual({ kind: "loadMore", path: [], depth: 0, count: 3, setSize: 0, posInSet: 0 });
+    const items = rows.filter((row) => row.kind === "node");
+    expect(items.map((row) => [row.posInSet, row.setSize])).toEqual([
+      [1, 3],
+      [2, 3],
+      [3, 3],
+    ]);
+    // Not offered: no row.
+    expect(
+      flattenKeyTree(
+        root,
+        () => false,
+        () => false,
+        options,
+      ).some((row) => row.kind === "loadMore"),
+    ).toBe(false);
+    // Without `countRows` the top level's row carries the keys held, as every other row does today.
+    expect(
+      flattenKeyTree(
+        root,
+        () => false,
+        () => true,
+        { rootLoadMore: true },
+      ).at(-1),
+    ).toMatchObject({ path: [], count: 2 });
+  });
+
+  test("with countRows, a folder of two server folders and no keys counts two rows; without it, its keys", () => {
+    const root = buildKeyTree([], LEVELS, ["a/b/", "a/c/"]);
+    const onlyA = (path: readonly string[]) => path.length === 1;
+
+    const counted = flattenKeyTree(root, () => true, onlyA, { countRows: true });
+    const today = flattenKeyTree(root, () => true, onlyA);
+
+    expect(counted.filter((row) => row.kind === "loadMore")).toEqual([
+      { kind: "loadMore", path: ["a"], depth: 1, count: 2, setSize: 0, posInSet: 0 },
+    ]);
+    expect(today.filter((row) => row.kind === "loadMore")).toEqual([
+      { kind: "loadMore", path: ["a"], depth: 1, count: 0, setSize: 0, posInSet: 0 },
+    ]);
+  });
+
+  test("names a level row with the separator alone, and a key that is a folder in the level wording", () => {
+    const folders = buildKeyTree([], LEVELS, ["sales/2026/"]);
+    expect(keyRowNames(at(folders, "sales", "2026"), true, LEVELS, true)).toEqual({
+      label: "2026/",
+      title: "sales/2026/",
+      toggle: "sales/2026",
+    });
+
+    const both = buildKeyTree(["sales/2026"], LEVELS, ["sales/2026/"]);
+    expect(keyRowNames(at(both, "sales", "2026"), true, LEVELS, true)).toEqual({
+      label: "sales/2026",
+      title: "sales/2026 is a key and a folder: sales/2026/",
+      toggle: "sales/2026",
+    });
+
+    // A folder marker is a key row inside its folder, named by its full key.
+    const marker = buildKeyTree(["m/"], LEVELS, ["m/"]);
+    expect(keyRowNames(at(marker, "m", ""), false, LEVELS, true)).toEqual({ label: "m/", title: "m/", toggle: "m/" });
+  });
+
+  test("names every row exactly as today when levels is not asked for", () => {
+    const root = buildKeyTree(["/apisix/routes/1", "/app/", "/app/cfg", "/app", "k3s/x", "plain", "/"], ETCD);
+    for (const node of everyNode(root)) {
+      const folder = node.children.length > 0;
+      expect(keyRowNames(node, folder, ETCD, false)).toEqual(keyRowNames(node, folder, ETCD));
+    }
+    const redis = buildKeyTree(["app", "app:env", ":foo"]);
+    for (const node of everyNode(redis)) {
+      const folder = node.children.length > 0;
+      expect(keyRowNames(node, folder, undefined, false)).toEqual(keyRowNames(node, folder));
+    }
+    expect(keyRowNames(at(root, "", "app"), true, ETCD)).toEqual({
+      label: "/app",
+      title: "/app is a key of this database and a prefix: /app/*",
+      toggle: "/app",
+    });
+  });
 });
