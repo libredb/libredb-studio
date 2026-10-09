@@ -17,6 +17,9 @@ const RESOLVABLE_FIELDS = [
   // Databend's warehouse (I16): the compute a Cloud DSN names, which a deployment keeps beside its host, so a
   // seeded `${DATABEND_WAREHOUSE}` is resolved rather than sent to Cloud as a literal warehouse name.
   "warehouse",
+  // S3's signing region, kept beside the endpoint in a deployment's environment, so a seeded `${S3_REGION}` is
+  // resolved rather than signed for literally.
+  "region",
   // Elasticsearch API key pair (#708). A seeded `${ELASTIC_API_KEY_ID}` / `${vault:...}`
   // that is not on this list is sent literally and the cluster answers 401 on a key
   // that works. Both halves, not one: either left unresolved is a half-filled pair
@@ -53,6 +56,7 @@ interface VaultResolvableConnection {
   database?: string;
   dataServers?: string;
   warehouse?: string;
+  region?: string;
   apiKeyId?: string;
   apiKeySecret?: string;
   ssl?: ResolvableSsl;

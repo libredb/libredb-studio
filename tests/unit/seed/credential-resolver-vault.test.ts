@@ -181,6 +181,24 @@ describe("credential-resolver vault scheme", () => {
     expect(resolved.dataServers).toBe("a.internal:6648,b.internal:6648");
   });
 
+  it("resolves a ${vault:...} reference in region", async () => {
+    process.env.VAULT_ADDR = "http://127.0.0.1:8200";
+    process.env.VAULT_TOKEN = "root";
+
+    const resolved = await resolveVaultCredentials(
+      { ...baseConn, region: "${vault:secret/data/s3#region}" },
+      {
+        fetch: (async () =>
+          new Response(JSON.stringify({ data: { data: { region: "eu-central-1" } } }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })) as unknown as typeof fetch,
+      },
+    );
+
+    expect(resolved.region).toBe("eu-central-1");
+  });
+
   it("raises on a ${vault:...} reference with no #key", async () => {
     process.env.VAULT_ADDR = "http://127.0.0.1:8200";
     process.env.VAULT_TOKEN = "root";

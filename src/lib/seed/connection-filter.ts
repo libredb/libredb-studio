@@ -102,6 +102,9 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
         // Databend's warehouse, copied for the reason skipObjectScan is: dropped here, a seeded Databend Cloud
         // connection would be refused for the warehouse the file did name.
         warehouse: conn.warehouse,
+        // S3's signing region, copied for the reason skipObjectScan is: dropped here, a seeded connection to Garage or a
+        // MinIO with a site region would be refused for the region the file did name.
+        region: conn.region,
         createdAt: new Date(),
         managed: conn.managed ?? true,
         roles: conn.roles,

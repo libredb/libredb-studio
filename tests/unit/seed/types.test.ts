@@ -482,6 +482,25 @@ describe("SeedConnectionSchema: Db2's consent to a cleartext password (#786)", (
     expect(result.error?.issues.map((issue) => issue.path)).toEqual([["warehouse"]]);
   });
 
+  // The schema has no type gate on this field either: `db2` is only a valid seed to carry it.
+  it("region survives parsing (zod strips an undeclared key)", () => {
+    const result = SeedConnectionSchema.safeParse({ ...db2, region: "eu-central-1" });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.region).toBe("eu-central-1");
+  });
+
+  it("leaves region absent when the seed names none", () => {
+    expect(SeedConnectionSchema.safeParse(db2).data?.region).toBeUndefined();
+  });
+
+  it("rejects a region that is not a string, naming the field", () => {
+    const result = SeedConnectionSchema.safeParse({ ...db2, region: 1 });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path)).toEqual([["region"]]);
+  });
+
   it("rejects a dataServers that is not a string, naming the field", () => {
     const result = SeedConnectionSchema.safeParse({ ...db2, dataServers: 6648 });
 
