@@ -31,8 +31,8 @@
  * The byte transport, `createNodeByteTransport`, in addition:
  * - reads each field of a request once, checks what it read and sends that, so a field that answers differently on a
  *   later read never changes the method, the target, the headers, the caps or the signal a request is sent with;
- * - reports a stored content-encoding in `contentEncoding` and returns its bytes as received, never decoded and never
- *   refused, counted against the cap as received;
+ * - reports a stored content-encoding in `contentEncoding`, repeated values joined with ", " as node:http joins them,
+ *   and returns its bytes as received, never decoded and never refused, counted against the cap as received;
  * - with `truncateAt`, keeps the first `truncateAt` bytes of a longer body, resolves with `truncated: true`, and then
  *   destroys the socket, which is never reused, and frees its socket slot only once that socket has closed;
  * - besides `contentType`, `contentEncoding` and `retryAfter`, which every response carries whatever the selection
@@ -244,7 +244,10 @@ export interface NodeByteResponse {
   readonly status: number;
   /** The content-type header read as the text path reads it (answer.headers, so the first of repeated values), cut to 1024 characters; null when absent. */
   readonly contentType: string | null;
-  /** The content-encoding header read the same way, cut to 64 characters; null when absent. The body is never decoded. */
+  /**
+   * The content-encoding header from answer.headers, where node:http joins repeated values with ", " (two lines gzip and
+   * br read "gzip, br"), cut to 64 characters; null when absent. The body is never decoded.
+   */
   readonly contentEncoding: string | null;
   /** The Retry-After header through the text path's retryAfterOf, cut to 64 characters; null when absent. */
   readonly retryAfter: string | null;

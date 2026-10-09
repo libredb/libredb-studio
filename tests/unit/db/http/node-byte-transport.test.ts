@@ -825,6 +825,17 @@ describe("the response headers returned", () => {
     expect((await connect(twice).request(get("/b/k"))).contentType).toBe("text/plain");
   });
 
+  test("two content-encoding lines come back joined with a comma, where of two content-type lines the first is read", async () => {
+    const listener = await rawHttpListener(
+      headerAnswer(["content-type: a", "content-type: b", "content-encoding: gzip", "content-encoding: br"]),
+    );
+    const answer = await connect(listener).request(get("/b/k"));
+    expect({ contentType: answer.contentType, contentEncoding: answer.contentEncoding }).toEqual({
+      contentType: "a",
+      contentEncoding: "gzip, br",
+    });
+  });
+
   test("a 100-character retry-after is cut to 64", async () => {
     const listener = await rawHttpListener(headerAnswer([`retry-after: ${"7".repeat(100)}`]));
     expect((await connect(listener).request(get("/b/k"))).retryAfter).toBe("7".repeat(64));
