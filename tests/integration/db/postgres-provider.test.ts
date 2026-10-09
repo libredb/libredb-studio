@@ -4315,12 +4315,14 @@ describe("PostgresProvider", () => {
       const editor = new PostgresProvider(makePgConfig());
       await editor.connect();
 
-      // The EXPLAIN probe, the routine-guard probe (#1437), then the maintenance probe's block
-      // (#1387). This fixture records what reaches the engine mock, and the statements inside the
-      // aborted block are refused before it.
+      // The EXPLAIN probe, the routine-guard probe (#1437), the implicit-flush probe's quiet form
+      // (#1399), which this server answers and so is the only one of its two, then the maintenance
+      // probe's block (#1387). This fixture records what reaches the engine mock, and the statements
+      // inside the aborted block are refused before it.
       expect(fresh.statements.map((s) => s.text)).toEqual([
         "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1",
         "DO $probe$BEGIN PERFORM p.xmin FROM pg_catalog.pg_proc p WHERE false; END$probe$",
+        "SELECT current_setting('rw_implicit_flush', true) AS value",
         "BEGIN",
         "ROLLBACK",
       ]);
@@ -5134,6 +5136,168 @@ describe("PostgresProvider EXPLAIN grammar probe", () => {
     await provider.connect();
 
     expect(provider.getCapabilities().explainFormat).toBe("postgres-text");
+    await provider.disconnect();
+  });
+});
+
+/**
+ * RisingWave's implicit flush (#1399). A DML statement's effect reaches later batch reads only after a
+ * `FLUSH`, or at once in a session whose `rw_implicit_flush` is on. Measured 2026-10-09 on RisingWave 3.1.0
+ * (`risingwavelabs/risingwave:latest`, single_node) and PostgreSQL 18.6, every answer below the server's own:
+ *
+ * | statement                                         | RisingWave 3.1.0          | PostgreSQL 18.6                    |
+ * | `SELECT current_setting('rw_implicit_flush', true)` | refused: `Failed to bind` | one row, NULL                      |
+ * | `SHOW rw_implicit_flush`                          | one row, `false`          | `unrecognized configuration param` |
+ * | `SET rw_implicit_flush = true`                    | `SET_VARIABLE`            | never sent                         |
+ *
+ * On RisingWave an UPDATE then a SELECT in one default session read the old row; with the setting on, the
+ * new one. The setting is the session's own (a new session read `false` again), and a write made under it
+ * was visible to a second session that did not have it.
+ */
+describe("PostgresProvider implicit flush (#1399)", () => {
+  const QUIET_PROBE = "SELECT current_setting('rw_implicit_flush', true) AS value";
+  const SHOW_PROBE = "SHOW rw_implicit_flush";
+  const TURN_ON = "SET rw_implicit_flush = true";
+  const RISINGWAVE_BIND_REFUSAL = new Error(
+    "Failed to run the query\n\nCaused by these errors: Failed to bind expression",
+  );
+  const POSTGRES_UNRECOGNIZED = Object.assign(new Error('unrecognized configuration parameter "rw_implicit_flush"'), {
+    code: "42704",
+  });
+  let sent: string[];
+
+  /** What a server answers the three statements; everything else is the fixture's answer. */
+  function server(answers: { quiet: unknown[] | Error; show?: unknown[] | Error; turnOn?: Error }) {
+    const answer = (rows: unknown[] | Error) =>
+      rows instanceof Error ? Promise.reject(rows) : Promise.resolve({ rows });
+    return (sql: string) => {
+      sent.push(sql);
+      if (sql === QUIET_PROBE) return answer(answers.quiet);
+      if (sql === SHOW_PROBE) return answer(answers.show ?? POSTGRES_UNRECOGNIZED);
+      if (sql === TURN_ON) return answers.turnOn ? Promise.reject(answers.turnOn) : Promise.resolve({ rows: [] });
+      return defaultMockQuery(sql);
+    };
+  }
+
+  const postgres = () => server({ quiet: [{ value: null }] });
+  const risingwave = (value = "false", turnOn?: Error) =>
+    server({ quiet: RISINGWAVE_BIND_REFUSAL, show: [{ rw_implicit_flush: value }], turnOn });
+  const about = () => sent.filter((sql) => sql.toLowerCase().includes("rw_implicit_flush"));
+
+  /** A session the pool opens later, as `pg-pool` announces it: a `connect` event carrying the new client. */
+  function openAnotherSession(turnOn?: Error) {
+    const queries: string[] = [];
+    const client = {
+      query: (sql: string) => {
+        queries.push(sql);
+        return turnOn ? Promise.reject(turnOn) : Promise.resolve({ rows: [] });
+      },
+    };
+    lastPool!.emit("connect", client);
+    return queries;
+  }
+
+  beforeEach(() => {
+    sent = [];
+    mockQueryFn = postgres();
+  });
+
+  test("on PostgreSQL the quiet form answers NULL, and nothing more is sent on any session", async () => {
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+
+    // One statement, and it is the one PostgreSQL answers without an error: `SHOW` and the one-argument
+    // `current_setting` both raise 42704 there, which would write an ERROR line into the server's log at
+    // every connect.
+    expect(about()).toEqual([QUIET_PROBE]);
+    expect(openAnotherSession()).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("on RisingWave the setting is found off and turned on for the session connect borrowed", async () => {
+    mockQueryFn = risingwave();
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+
+    expect(about()).toEqual([QUIET_PROBE, SHOW_PROBE, TURN_ON]);
+    await provider.disconnect();
+  });
+
+  test("every session the pool opens afterwards is turned on too, because the setting is the session's own", async () => {
+    mockQueryFn = risingwave();
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+
+    expect(openAnotherSession()).toEqual([TURN_ON]);
+    expect(openAnotherSession()).toEqual([TURN_ON]);
+    await provider.disconnect();
+  });
+
+  test("a server that already has it on is left alone", async () => {
+    mockQueryFn = risingwave("true");
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+
+    expect(about()).toEqual([QUIET_PROBE, SHOW_PROBE]);
+    expect(openAnotherSession()).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("a server with neither form is one without the setting, and connect does not fail for it", async () => {
+    mockQueryFn = server({ quiet: RISINGWAVE_BIND_REFUSAL, show: POSTGRES_UNRECOGNIZED });
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+
+    expect(provider.isConnected()).toBe(true);
+    expect(about()).toEqual([QUIET_PROBE, SHOW_PROBE]);
+    expect(openAnotherSession()).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("a quiet form that answers a value is believed without asking again", async () => {
+    // No measured server answers this way; it is the reading of a relative that has both the setting and
+    // PostgreSQL's two-argument form.
+    mockQueryFn = server({ quiet: [{ value: "false" }] });
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+
+    expect(about()).toEqual([QUIET_PROBE, TURN_ON]);
+    await provider.disconnect();
+  });
+
+  test("a session that refuses the setting is reported and does not take the process down", async () => {
+    mockQueryFn = risingwave();
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const refusal = new Error("cannot set rw_implicit_flush");
+      expect(openAnotherSession(refusal)).toEqual([TURN_ON]);
+      // The rejection is the listener's own to handle: an unhandled one would end the process.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(errorSpy).toHaveBeenCalledWith("[Postgres] Could not turn on rw_implicit_flush for a session:", refusal);
+    } finally {
+      errorSpy.mockRestore();
+    }
+    await provider.disconnect();
+  });
+
+  test("the read-only profile asks nothing: it writes nothing, and every statement of its is inside the envelope", async () => {
+    // The profile's own probe at connect: a least-privilege role, so the connect goes through.
+    const unprivileged = {
+      is_superuser: false,
+      reads_server_files: false,
+      writes_server_files: false,
+      executes_programs: false,
+    };
+    const rest = risingwave();
+    mockQueryFn = (sql: string) =>
+      sql.includes("is_superuser") ? Promise.resolve({ rows: [unprivileged] }) : rest(sql);
+    const provider = new PostgresProvider(makePgConfig(), {}, { readOnly: true });
+    await provider.connect();
+
+    expect(about()).toEqual([]);
+    expect(openAnotherSession()).toEqual([]);
     await provider.disconnect();
   });
 });

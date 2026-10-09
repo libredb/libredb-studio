@@ -6,7 +6,12 @@ import { mock, describe, test, expect, afterEach } from "bun:test";
 import React from "react";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { SessionsTab } from "@/components/monitoring/tabs/SessionsTab";
-import type { MonitoringData, ProviderLabels } from "@/lib/db/types";
+import type { MonitoringData, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
+import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
+import { RedisProvider } from "@/lib/db/providers/keyvalue/redis";
+import { CassandraProvider } from "@/lib/db/providers/sql/cassandra/index";
+import { DruidProvider } from "@/lib/db/providers/sql/druid/index";
 
 mock.module("@/components/ui/tooltip", () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) => React.createElement("div", {}, children),
@@ -14,6 +19,25 @@ mock.module("@/components/ui/tooltip", () => ({
   TooltipTrigger: ({ children }: { children: React.ReactNode }) => React.createElement("div", {}, children),
   TooltipContent: ({ children }: { children: React.ReactNode }) => React.createElement("div", {}, children),
 }));
+
+// Each engine's own declaration, read from the provider rather than written here (#1424).
+const config = { name: "t", host: "localhost", port: 1, database: "app", createdAt: new Date(0) };
+const postgresCaps = new PostgresProvider({ ...config, id: "pg", type: "postgres" }).getCapabilities();
+const sqliteCaps = new SQLiteProvider({
+  ...config,
+  id: "sqlite",
+  type: "sqlite",
+  database: ":memory:",
+}).getCapabilities();
+const enginesWithoutKill: [string, ProviderCapabilities][] = [
+  ["SQLite", sqliteCaps],
+  ["Redis", new RedisProvider({ ...config, id: "redis", type: "redis" }).getCapabilities()],
+  [
+    "Cassandra",
+    new CassandraProvider({ ...config, id: "cassandra", type: "cassandra", localDataCenter: "dc1" }).getCapabilities(),
+  ],
+  ["Druid", new DruidProvider({ ...config, id: "druid", type: "druid" }).getCapabilities()],
+];
 
 function makeData(): MonitoringData {
   return {
@@ -138,7 +162,13 @@ describe("SessionsTab", () => {
   test("calls onKillSession after confirming terminate action", async () => {
     const onKillSession = mock(async () => true);
     const { getByRole, queryByText } = render(
-      <SessionsTab data={makeData()} loading={false} onKillSession={onKillSession} isAdmin />,
+      <SessionsTab
+        data={makeData()}
+        loading={false}
+        onKillSession={onKillSession}
+        isAdmin
+        capabilities={postgresCaps}
+      />,
     );
 
     fireEvent.click(getByRole("button", { name: "Terminate session 101" }));
@@ -157,7 +187,13 @@ describe("SessionsTab", () => {
   test("cancelling the terminate dialog puts focus back on the row's kill button", async () => {
     const onKillSession = mock(async () => true);
     const { getByRole, queryByText } = render(
-      <SessionsTab data={makeData()} loading={false} onKillSession={onKillSession} isAdmin />,
+      <SessionsTab
+        data={makeData()}
+        loading={false}
+        onKillSession={onKillSession}
+        isAdmin
+        capabilities={postgresCaps}
+      />,
     );
 
     const killButton = getByRole("button", { name: "Terminate session 101" });
@@ -173,10 +209,74 @@ describe("SessionsTab", () => {
   });
 
   test("hides admin actions when isAdmin is false", () => {
-    const { queryAllByText } = render(
-      <SessionsTab data={makeData()} loading={false} onKillSession={mock(async () => true)} isAdmin={false} />,
+    const { queryAllByRole } = render(
+      <SessionsTab
+        data={makeData()}
+        loading={false}
+        onKillSession={mock(async () => true)}
+        isAdmin={false}
+        capabilities={postgresCaps}
+      />,
     );
-    expect(queryAllByText("-").length).toBeGreaterThan(0);
+    expect(queryAllByRole("button", { name: /^Terminate session/ })).toHaveLength(0);
+  });
+});
+
+// The route refuses `kill` wherever the provider does not declare it, so the button is drawn only where it can
+// work: for an admin, on an engine that declares `kill`, on a row the engine can end (#1424).
+describe("Terminate is offered only where the server accepts it", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const terminateLabels = (capabilities: ProviderCapabilities | undefined, data: MonitoringData = makeData()) =>
+    render(
+      <SessionsTab
+        data={data}
+        loading={false}
+        onKillSession={mock(async () => true)}
+        isAdmin
+        capabilities={capabilities}
+      />,
+    )
+      .queryAllByRole("button", { name: /^Terminate session/ })
+      .map((button) => button.getAttribute("aria-label"));
+
+  test("an admin on PostgreSQL gets one per row", () => {
+    expect(terminateLabels(postgresCaps)).toEqual(["Terminate session 101", "Terminate session 202"]);
+  });
+
+  for (const [engine, capabilities] of enginesWithoutKill) {
+    test(`${engine} declares no kill, so no row gets one`, () => {
+      expect(capabilities.maintenanceOperations).not.toContain("kill");
+      expect(terminateLabels(capabilities)).toEqual([]);
+    });
+  }
+
+  test("the Studio process SQLite lists as its one session gets none", () => {
+    const data = {
+      ...makeData(),
+      activeSessions: [
+        { pid: 4242, user: "sqlite", database: "app.db", state: "active", query: "", duration: "N/A", durationMs: 0 },
+      ],
+    } as MonitoringData;
+    expect(terminateLabels(sqliteCaps, data)).toEqual([]);
+  });
+
+  test("capabilities that have not arrived offer none", () => {
+    expect(terminateLabels(undefined)).toEqual([]);
+  });
+
+  test("a list naming kill offers none while maintenance is off, as the route refuses it first", () => {
+    const capabilities = { ...postgresCaps, supportsMaintenance: false };
+    expect(capabilities.maintenanceOperations).toContain("kill");
+    expect(terminateLabels(capabilities)).toEqual([]);
+  });
+
+  test("a row the engine says it cannot end gets none, and the others keep theirs", () => {
+    const data = makeData();
+    data.activeSessions![1] = { ...data.activeSessions![1], terminable: false };
+    expect(terminateLabels(postgresCaps, data)).toEqual(["Terminate session 101"]);
   });
 });
 

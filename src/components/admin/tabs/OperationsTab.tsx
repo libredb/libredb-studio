@@ -52,6 +52,7 @@ import { useAllConnections } from "@/hooks/use-all-connections";
 import {
   declaredEntityOperations,
   maintenanceControl,
+  offersSessionTermination,
   type ActiveSessionDetails,
   type MaintenanceOperation,
   type MaintenanceResult,
@@ -316,6 +317,8 @@ export function OperationsTab() {
   );
   const offers = (type: MaintenanceType, placement: "perEntity" | "global") =>
     maintenanceControl(capabilities, type, placement).offered;
+  // A session row's Terminate sends `kill`, which the route refuses wherever it is not declared (#1424).
+  const offersTerminate = offersSessionTermination(capabilities);
   // The six analyze/vacuum global ProviderLabels fields were declared, set by
   // seven providers, and read by no component, so every engine rendered
   // Postgres's query-planner copy (#427).
@@ -990,20 +993,22 @@ export function OperationsTab() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right py-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 text-fg-subtle hover:text-danger hover:bg-danger-tint/10 opacity-0 group-hover:opacity-100 transition-all"
-                          onClick={() => handleKillClick(session)}
-                          aria-label={`Terminate session ${session.pid}`}
-                          disabled={killingPid === session.pid}
-                        >
-                          {killingPid === session.pid ? (
-                            <LoaderCircle className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Skull className="h-3 w-3" />
-                          )}
-                        </Button>
+                        {offersTerminate && session.terminable !== false && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-fg-subtle hover:text-danger hover:bg-danger-tint/10 opacity-0 group-hover:opacity-100 transition-all"
+                            onClick={() => handleKillClick(session)}
+                            aria-label={`Terminate session ${session.pid}`}
+                            disabled={killingPid === session.pid}
+                          >
+                            {killingPid === session.pid ? (
+                              <LoaderCircle className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Skull className="h-3 w-3" />
+                            )}
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

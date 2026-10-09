@@ -1199,6 +1199,10 @@ JMX, and statistics are recomputed as a side effect of compaction. There is no `
 onto, because the protocol has no cancellation at all
 ([§3.7](#37-there-is-no-cancellation-so-none-is-offered)).
 
+So no Terminate button renders on the running queries the Sessions panel lists. Both session lists
+drew one on every row until #1424, and confirming answered `400 Maintenance operations not supported
+for this database`; they now draw it only where `kill` is declared.
+
 `TRUNCATE` is the tempting one and is deliberately not wired: it is a data-loss operation, it is not
 one of the nine `MaintenanceOperation` values, and a user who wants it can type it.
 

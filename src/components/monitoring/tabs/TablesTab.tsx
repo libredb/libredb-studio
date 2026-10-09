@@ -146,12 +146,12 @@ function VacuumNote({
  * table and why none of them appears.
  *
  * Two things the note deliberately does NOT say:
- *  - No page to go to instead. The only caller (`MonitoringDashboard`) passes no `isAdmin`, and the
- *    prop defaults to true, so this component cannot tell an admin from the non-admin that
- *    /monitoring is the route for - and `src/proxy.ts` denies a non-admin /admin/operations. Of the
- *    two fixes available (thread the real role down, or drop the clause) dropping it is the smaller
- *    one and the only one that changes no other behaviour: threading the role would also switch off
- *    the per-row buttons on that route, which is older behaviour and not this change's business.
+ *  - No page to go to instead. The clause was dropped while the only caller (`MonitoringDashboard`)
+ *    passed no `isAdmin` and the prop's default of true left this component unable to tell an admin
+ *    from the non-admin that /monitoring is the route for - and `src/proxy.ts` denies a non-admin
+ *    /admin/operations. The dashboard has passed the signed-in role since #1424, and the note renders
+ *    for an admin only (`maintenanceUnattachable` requires `isAdmin`), so the clause could now be
+ *    written; that change gated the controls and left this note's wording alone.
  *  - One cause for two inputs. `refused` is the `errors.tables` branch, where `PanelUnavailable` is
  *    already showing the engine's own reason - a permission or catalog failure as often as a missing
  *    statistic - so that branch says only what was measured here: nothing could be read.

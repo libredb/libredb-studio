@@ -936,15 +936,18 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // here (#414).
       declaresForeignKeys: false,
       supportsMaintenance: true,
-      maintenanceOperations: ["vacuum", "analyze", "check"],
+      maintenanceOperations: ["vacuum", "analyze", "check", "kill"],
       // `validate` and `compact` are both per-collection commands that this provider
       // also loops over `listCollections()` when no target is named, so both
       // placements are real. `dbCheck` is not looped and refuses to run without a
-      // collection name, so it is offered on a collection row only (#496).
+      // collection name, so it is offered on a collection row only (#496). `kill` is
+      // `killOp` on a session row's opid, which neither a collection row nor a
+      // whole-database card can supply (#1424).
       maintenanceOperationSpecs: {
         vacuum: { label: "Compact Collection", perEntity: true, global: true },
         analyze: { label: "Validate Collection", perEntity: true, global: true },
         check: { label: "Check Collection", perEntity: true, global: false },
+        kill: { label: "Kill Operation", perEntity: false, global: false },
       },
       supportsConnectionString: true,
       defaultPort: 27017,
@@ -2000,6 +2003,12 @@ export class MongoDBProvider extends BaseDatabaseProvider {
           durationMs,
           waitEventType: op.waitingForLock ? "Lock" : undefined,
           waitEvent: op.lockStats ? "Acquiring lock" : undefined,
+          // `$all` also answers rows `killOp` cannot end: an idle connection and a server thread carry no
+          // opid, and a server job with one (`Checkpointer`, `JournalFlusher`) answers `killOp` with
+          // "attempting to kill op" and keeps running, measured on MongoDB 9.0.2 (#1424). This read's own
+          // `currentOp` is listed too and has finished before anyone can click it. Only another client's
+          // operation is offered Terminate.
+          ...(op.opid === undefined || !op.client || op.command?.currentOp !== undefined ? { terminable: false } : {}),
         };
       });
     } catch (error) {

@@ -1565,6 +1565,12 @@ Global Operations group where `supportsMaintenance` is `false`, each individual 
 resolved. So for Druid no maintenance control renders in either place — the statement above now
 describes the software rather than the intent.
 
+**The session lists' Terminate button followed later (issue #1424).** Monitoring > Sessions and
+Admin > Operations > Sessions drew it on every row without reading `maintenanceOperations`, so a
+running ingestion task was offered it, and confirming answered `HTTP 400 {"error":"Maintenance
+operations not supported for this database"}` while the task kept running. Both lists now draw it
+only where `kill` is declared, so it does not render for Druid either.
+
 `runMaintenance(type)` ([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts)) exists because
 the `DatabaseProvider` interface obliges every provider to implement it, and **not** because any
 request reaches it: `/api/db/maintenance`
