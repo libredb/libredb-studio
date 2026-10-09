@@ -212,3 +212,157 @@ describe("linkLocalRefusingLookup", () => {
     expect(lookupOptions[0].all).toBe(true);
   });
 });
+
+const { httpOrigin } = await import("@/lib/db/http/endpoint");
+const { createNodeByteTransport } = await import("@/lib/db/http/node-transport");
+const { closeAll, rawAnswer, rawHttpListener } = await import("../../../helpers/node-transport-fixtures");
+
+describe("through a byte transport with the guard off", () => {
+  const transports: Array<{ close(): void }> = [];
+  afterEach(async () => {
+    for (const transport of transports.splice(0)) transport.close();
+    await closeAll();
+  });
+
+  const OK = (): Buffer => rawAnswer("200 OK", ["content-length: 2"], "ok");
+
+  function connect(host: string, port: number) {
+    delete process.env[FLAG];
+    const transport = createNodeByteTransport({
+      origin: httpOrigin("http", host, port),
+      tls: null,
+      maxSockets: 4,
+      headers: {},
+    });
+    transports.push(transport);
+    return () =>
+      transport.request({
+        method: "GET",
+        target: { path: "/b/k", query: "" },
+        signal: AbortSignal.timeout(5000),
+        maxResponseBytes: 1024,
+      });
+  }
+
+  test("a name the resolver answers with 169.254.169.254 is refused with the sentence, and nothing is accepted", async () => {
+    const listener = await rawHttpListener(OK);
+    const request = connect("metadata.test", listener.port);
+    let error: Error | undefined;
+    try {
+      await request();
+    } catch (caught) {
+      error = caught as Error;
+    }
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error?.message).toBe(LINK_LOCAL);
+    expect(listener.accepted()).toBe(0);
+  });
+
+  test("a name the resolver answers with 127.0.0.1 reaches the listener", async () => {
+    const listener = await rawHttpListener(OK);
+    const answer = await connect("local.test", listener.port)();
+    expect(answer.bytes.toString()).toBe("ok");
+    expect(listener.accepted()).toBe(1);
+  });
+
+  test("five requests open one socket after one lookup", async () => {
+    const listener = await rawHttpListener(OK);
+    const request = connect("local.test", listener.port);
+    for (let index = 0; index < 5; index += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each reuses the pooled socket.
+      expect((await request()).status).toBe(200);
+    }
+    expect(lookups.filter((name) => name === "local.test")).toEqual(["local.test"]);
+    expect(listener.accepted()).toBe(1);
+  });
+});
+
+const BLOCKED = "Invalid host: this HTTP database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS";
+
+describe("a byte transport refuses every link-local form whatever the guard flag says, and opens no socket", () => {
+  const transports: Array<{ close(): void }> = [];
+  afterEach(async () => {
+    for (const transport of transports.splice(0)) transport.close();
+    await closeAll();
+  });
+
+  const OK = (): Buffer => rawAnswer("200 OK", ["content-length: 2"], "ok");
+
+  /** The guard flag off or on, then a byte transport on the host and port given, read raw so no validation runs first. */
+  function build(host: string, port: number, guard: "off" | "on") {
+    if (guard === "on") process.env[FLAG] = "true";
+    else delete process.env[FLAG];
+    const transport = createNodeByteTransport({
+      origin: { scheme: "http", host, port },
+      tls: null,
+      maxSockets: 4,
+      headers: {},
+    });
+    transports.push(transport);
+    return transport;
+  }
+
+  async function failureOf(run: () => Promise<unknown>): Promise<Error> {
+    try {
+      await run();
+    } catch (error) {
+      return error as Error;
+    }
+    throw new Error("expected the request to fail");
+  }
+
+  const LITERALS = [
+    "169.254.169.254",
+    "[fe80::1]",
+    "[fd00:ec2::254]",
+    "[::ffff:169.254.169.254]",
+    "[::ffff:a9fe:a9fe]",
+    "[64:ff9b::a9fe:a9fe]",
+  ];
+
+  // The guard's sentence when the flag is on, because the guard runs first; the link-local sentence otherwise.
+  const CASES = [
+    ...LITERALS.map((host) => [host, "off", LINK_LOCAL] as const),
+    ...LITERALS.map((host) => [host, "on", BLOCKED] as const),
+  ];
+
+  test.each(CASES)(
+    "the literal %s with the guard %s is refused when built, and nothing is accepted",
+    async (host, guard, sentence) => {
+      const listener = await rawHttpListener(OK);
+      const error = refusal(() => build(host, listener.port, guard));
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect(error.message).toBe(sentence);
+      expect(error.message).not.toContain(host.replace(/^\[|\]$/g, ""));
+      expect(listener.accepted()).toBe(0);
+    },
+  );
+
+  test.each([
+    ["metadata.test", "off", LINK_LOCAL],
+    ["mixed.test", "off", LINK_LOCAL],
+    ["metadata.test", "on", BLOCKED],
+    ["mixed.test", "on", BLOCKED],
+  ] as const)(
+    "the name %s with the guard %s is refused at the lookup, and nothing is accepted",
+    async (host, guard, sentence) => {
+      const listener = await rawHttpListener(OK);
+      const transport = build(host, listener.port, guard);
+      const error = await failureOf(() =>
+        transport.request({
+          method: "GET",
+          target: { path: "/b/k", query: "" },
+          signal: AbortSignal.timeout(5000),
+          maxResponseBytes: 1024,
+        }),
+      );
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect(error.message).toBe(sentence);
+      expect(error.message).not.toContain(host);
+      expect(error.message).not.toContain("169.254");
+      expect(error.message).not.toContain("8.8.8.8");
+      expect(lookups).toEqual([host]);
+      expect(listener.accepted()).toBe(0);
+    },
+  );
+});

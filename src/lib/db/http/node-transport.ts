@@ -41,7 +41,7 @@ import { isIP, type LookupFunction } from "node:net";
 import { checkServerIdentity, type PeerCertificate } from "node:tls";
 import { urlToHttpOptions } from "node:url";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
-import { guardedNodeOptions } from "@/lib/db/http/egress-policy";
+import { assertNotLinkLocalLiteral, guardedNodeOptions, linkLocalRefusingLookup } from "@/lib/db/http/egress-policy";
 import { endpointUrl, type HttpOrigin, originHost, rejectRedirect } from "@/lib/db/http/endpoint";
 import type { SSLConfig, SSLMode } from "@/lib/types";
 
@@ -969,15 +969,26 @@ interface Connection<A> {
  * The checks both factories run when a transport is built, in this order, and the core they then share. `address`
  * reads the origin once the guard has passed it: the text factory's origin string, the byte factory's Host. The byte
  * factory checks its response-header selection before calling this, so a refused selection builds no Agent.
+ * `refusesLinkLocal` is the byte factory's: the text factory's behaviour is unchanged.
  */
-function connectionOf<A>(options: NodeTransportOptions, address: (origin: HttpOrigin) => A): Connection<A> {
+function connectionOf<A>(
+  options: NodeTransportOptions,
+  address: (origin: HttpOrigin) => A,
+  refusesLinkLocal = false,
+): Connection<A> {
   const { origin, tls, maxSockets } = options;
   if (!isPositiveInteger(maxSockets)) throw new DatabaseConfigError(INVALID_MAX_SOCKETS);
   if ((origin.scheme === "https") !== (tls !== null)) throw new DatabaseConfigError(SCHEME_MISMATCH);
   // With DB_HTTP_BLOCK_PRIVATE_HOSTS on, this refuses a blocked IP literal now, before any socket, because a literal
   // never reaches a lookup, and hands back the guard's lookup for this connection's own Agent. Its `agent: false` is not
   // taken: the Agent below belongs to this connection alone and never carries an unguarded request (R44 QM1).
-  const { lookup } = guardedNodeOptions(origin.host);
+  // With refusesLinkLocal, and whatever the flag says, a link-local or metadata literal is refused next, so the guard's
+  // sentence wins when it is on, and every socket is opened through a lookup that checks the answer it dials: the
+  // guard's, whose blocked list holds every link-local network, or else linkLocalRefusingLookup (byte transport
+  // design 3.9).
+  const { lookup: guardLookup } = guardedNodeOptions(origin.host);
+  if (refusesLinkLocal) assertNotLinkLocalLiteral(origin.host);
+  const lookup = refusesLinkLocal ? (guardLookup ?? linkLocalRefusingLookup) : guardLookup;
   const addressed = address(origin);
   const connectionHeaders = lowerCased(options.headers);
   const requestHeaderNames = requestHeaderNamesOf(options.requestHeaderNames, connectionHeaders);
@@ -1138,13 +1149,17 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
   const { port } = options.origin;
   // Checked before connectionOf builds the Agent, so a refused selection leaves nothing behind.
   const selection = responseHeaderSelectionOf(options.responseHeaders);
-  const { address, connectionHeaders, requestHeaderNames, core } = connectionOf(options, (origin) => ({
-    hostname: unbracketed(origin.host),
-    // The origin the redirect refusal resolves a Location against, so its message is the text transport's.
-    origin: new URL(endpointUrl(origin, "/")).origin,
-    // Set by the transport on every request, so the Host a signer signs is the Host on the wire (byte transport design 3.3).
-    host: originHost(origin),
-  }));
+  const { address, connectionHeaders, requestHeaderNames, core } = connectionOf(
+    options,
+    (origin) => ({
+      hostname: unbracketed(origin.host),
+      // The origin the redirect refusal resolves a Location against, so its message is the text transport's.
+      origin: new URL(endpointUrl(origin, "/")).origin,
+      // Set by the transport on every request, so the Host a signer signs is the Host on the wire (byte transport design 3.3).
+      host: originHost(origin),
+    }),
+    true,
+  );
   // Checked against the connection's headers and the request's names, so it follows connectionOf; the Agent built
   // there has opened no socket yet.
   const signer =

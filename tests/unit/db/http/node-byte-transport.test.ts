@@ -1148,3 +1148,19 @@ describe("signer failures release their socket slot and escape nowhere", () => {
     expect(listener.accepted()).toBe(0);
   });
 });
+
+describe("link-local origins", () => {
+  test.each(["169.254.169.254", "[fd00:ec2::254]", "[fe80::1]"])(
+    "%s is refused when the transport is built, with the guard off",
+    (host) => {
+      delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+      const error = refusal(() =>
+        createNodeByteTransport({ origin: { scheme: "http", host, port: 80 }, tls: null, maxSockets: 1, headers: {} }),
+      );
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect(error.message).toBe(
+        "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+      );
+    },
+  );
+});
