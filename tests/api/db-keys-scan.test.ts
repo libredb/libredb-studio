@@ -430,6 +430,19 @@ describe("POST /api/db/keys/scan in a declared shape", () => {
     // Refused before the walk: no page is read for a question the engine cannot answer.
     expect(walk).not.toHaveBeenCalled();
   });
+
+  test("refuses a database on a one-key-space engine in the database's words even beside a bad level", async () => {
+    const walk = mock(async () => ETCD_PAGE);
+    activeProvider = prefixProvider(walk);
+
+    // The answer this request had before "level" existed: a level field must not reorder the refusals.
+    const { status, body } = await post({ database: 0, level: false });
+    expect(status).toBe(400);
+    expect(body.error).toBe(
+      'etcd walks one key space and declares no database level: "database" names the numbered database to walk, and this engine has none to name',
+    );
+    expect(walk).not.toHaveBeenCalled();
+  });
 });
 
 /**

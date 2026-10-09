@@ -106,7 +106,6 @@ export async function POST(req: NextRequest) {
       // `SELECT` state lives on the connection and not in this route.
       database: optionalDatabase(body, "database"),
     };
-    const level = readLevel(body);
     if (options.database !== undefined && containerDepth(capabilities) === 0) {
       throw new ObjectRouteError(
         `${provider.type} walks one key space and declares no database level: "database" names the numbered ` +
@@ -114,6 +113,9 @@ export async function POST(req: NextRequest) {
         400,
       );
     }
+    // Read after the database refusal, so a request that engine refused before "level" existed is
+    // refused in the same words now.
+    const level = readLevel(body);
     if (level && capability.levels === undefined) {
       throw new ObjectRouteError(
         `${provider.type} declares no folder listing: its walk pages keys only, so "level" has nothing to ask for`,
