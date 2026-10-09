@@ -372,7 +372,7 @@ src/
     │   │                    #   cypher/ (lexer, statements, quoting, read policy, generators), objects.ts, values.ts and
     │   │                    #   profile.ts are pure and browser-safe; bolt/ (the GraphClient seam, the URI, the one
     │   │                    #   neo4j-driver-lite client, driver values to JSON) and graph-base-provider.ts are server only
-    │   ├── http/            # endpoint.ts: the validated URL builder every HTTP transport uses (no redirects); node-transport.ts: the shared node:http(s) transport a new REST provider takes (one keep-alive Agent per connection, no proxy variables, a streamed byte cap)
+    │   ├── http/            # endpoint.ts: the validated URL builder every HTTP transport uses (no redirects); node-transport.ts: the shared node:http(s) transport a new REST provider takes (one keep-alive Agent per connection, no proxy variables, a streamed byte cap); node-transport.ts also holds the byte transport (GET and HEAD to an exact target, bytes, selected headers, a per-request signer)
     │   ├── grpc/            # channel.ts: the one gRPC channel (options, unary and bidirectional calls, deadlines, aborts, the sent or unsent notice); credentials.ts: TLS credentials and the closing wrapper; tls.ts: the SSL / TLS panel, the TLS identity and the dial target, for every gRPC provider
     │   ├── factory.ts       # Provider factory
     │   ├── query-dialects.ts # The dialect registry: each queryDialect's tab type and row-menu answers

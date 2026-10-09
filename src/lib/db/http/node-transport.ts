@@ -5,6 +5,10 @@
  * its connection sends, and gets back `request` and `close`. Nothing here knows about an engine, and no provider is
  * imported. Server-only: it imports Node built-ins, so nothing browser-side may import it.
  *
+ * Two factories share one core (the Agent, the socket queue, close() and the failure mapping):
+ * `createNodeTransport` sends GET and POST to a URL and returns text; `createNodeByteTransport` sends GET and HEAD to
+ * an exact request target and returns bytes, for a provider that reads stored objects (byte transport design 3.1).
+ *
  * - One `node:http` or `node:https` Agent per connection, `keepAlive: true`, at most `maxSockets` sockets, an idle
  *   socket closed after IDLE_SOCKET_MS so a server's keep-alive timeout never closes one under a request, destroyed by
  *   close(). Never the global agent, which routes through a proxy variable (HTTP_PROXY under NODE_USE_ENV_PROXY=1 on
@@ -14,13 +18,29 @@
  *   the `agent: false` of guardedNodeOptions. The Agent never carries an unguarded request, so every socket it pools was
  *   opened through the guarded lookup, and a pooled socket costs one lookup rather than one per request.
  * - No redirect is followed: every 3xx goes to the shared rejectRedirect, and its body is released unread.
- * - Every request asks for `accept-encoding: identity`, and nothing is decompressed: an answer with any other
- *   content-encoding is refused before its body is read, so the byte cap always counts the bytes that are parsed.
- * - The body is counted as it streams, and the socket is destroyed the moment it passes `maxResponseBytes`.
+ * - Every request asks for `accept-encoding: identity`, and nothing is decompressed. `createNodeTransport` refuses an
+ *   answer with any other content-encoding before its body is read, so its byte cap always counts the bytes parsed.
+ * - The body is counted as it streams. `createNodeTransport` destroys the socket the moment the body passes
+ *   `maxResponseBytes`, and so does `createNodeByteTransport` when no `truncateAt` is given.
  * - A deadline or a cancel destroys the socket; the signal's reason tells the two apart.
  * - Nothing is retried: an answer that never arrived is reported as lost, and the request is never sent again.
  * - No message carries a header, the key, a URL query string or a body: a failure names its kind, a runtime code, an
  *   origin or a number.
+ *
+ * The byte transport, `createNodeByteTransport`, in addition:
+ * - reports a stored content-encoding in `contentEncoding` and returns its bytes as received, never decoded and never
+ *   refused, counted against the cap as received;
+ * - with `truncateAt`, keeps the first `truncateAt` bytes of a longer body, resolves with `truncated: true`, and then
+ *   destroys the socket, which is never reused;
+ * - returns only the response headers its `responseHeaders` selection names, read from the raw header list in received
+ *   order, at most 64, 1024 characters a value and 16384 characters in all, and never Location or Set-Cookie;
+ * - hands a `signer` the exact method, Host, path, query and headers just before the request is written, and adds only
+ *   the header names the signer lists; the transport sets Host itself, so what is signed is what is sent;
+ * - on a refused 3xx, carries its status and the selected headers in `TransportError.redirect`, still without
+ *   following it;
+ * - never reaches a link-local address or AWS's IPv6 instance metadata address (LINK_LOCAL_NETWORKS in
+ *   egress-policy.ts), whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says: a literal is refused when the transport is built,
+ *   and every socket is opened through a lookup that checks the address it dials.
  *
  * `nodeTlsMaterial` is the TLS mapping D37 counts, shared here so that a new REST provider takes it instead of
  * writing another copy.
