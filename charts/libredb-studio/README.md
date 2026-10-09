@@ -209,6 +209,19 @@ extraEnv:
 ```
 
 Without it the OIDC login fails with a TLS error such as `UNABLE_TO_VERIFY_LEAF_SIGNATURE`.
+
+When the CA sits in a Secret that also holds a private key, such as a cert-manager or Elasticsearch certificate Secret, project only the CA key so the private key never reaches the pod:
+
+```yaml
+extraVolumes:
+  - name: internal-ca
+    secret:
+      secretName: elasticsearch-master-certs
+      items:
+        - key: ca.crt
+          path: ca.crt
+```
+
 Node reads the file only when the container starts, and the chart's restart-on-change checksums cover only the ConfigMap and Secret it renders itself, so after the CA changes, run `kubectl rollout restart` on the Deployment.
 
 ## AI Configuration
