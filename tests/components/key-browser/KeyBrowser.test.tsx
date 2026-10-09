@@ -2529,6 +2529,34 @@ describe("a panel listed one level at a time", () => {
     expect(twisty("a/").getAttribute("aria-label")).toBe("Expand a");
   });
 
+  test("a level connection reached again through an engine without levels closes the folders it opened", async () => {
+    const route = levelRoute(SPACE, 20);
+    mockGlobalFetch({ "/api/db/keys/scan": route.handler });
+    const view = renderLevels();
+    await waitFor(() => {
+      expect(rows()).toContain("a/@0");
+    });
+    fireEvent.click(twisty("a/"));
+    await waitFor(() => {
+      expect(rows()).toContain("0/@1");
+    });
+
+    view.rerender(<KeyBrowser connection={{ ...CONNECTION, id: "etcd-2" }} capability={ETCD_LIKE} />);
+    await waitFor(() => {
+      expect(route.seen.at(-1)).not.toHaveProperty("level");
+    });
+    const before = route.seen.length;
+    view.rerender(<KeyBrowser connection={CONNECTION} capability={LEVEL_SCAN} />);
+
+    await waitFor(() => {
+      expect(route.seen.length).toBe(before + 1);
+    });
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0", "z/@0", "top.txt@0"]);
+    });
+    expect(twisty("a/").getAttribute("aria-label")).toBe("Expand a");
+  });
+
   test("typing in the prefix box asks a new question and closes the folders the last one opened", async () => {
     const route = levelRoute(SPACE, 20);
     mockGlobalFetch({ "/api/db/keys/scan": route.handler });
