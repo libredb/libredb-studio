@@ -28,12 +28,12 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D253, U17 · 157
+- [Drivers and connections](#drivers-and-connections) — D1-D254, U17 · 158
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U103 · 95
 - [Dependencies](#dependencies) — P1-P9 · 7
-- [Documentation](#documentation) — DOC3-DOC18 · 15
+- [Documentation](#documentation) — DOC3-DOC20 · 17
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
@@ -2728,6 +2728,16 @@ Found 2026-10-08 while fixing the red-team findings on the Databend provider's t
 
 **Done when:** a request stopped before it was handed a socket fails in a way its caller can tell from one stopped after it was sent, by a kind or a flag of its own, as `truncated` marks a cut answer, with a node-transport test that runs two requests under `maxSockets: 1`, stops the queued one, and asserts its failure and that the server received one request, and the Databend transport reads that failure as a stop with nothing sent, with no kill, no logout and `cancelled` or `timeout`, tested.
 
+### D254. Metadata services outside link-local networks are not refused
+
+The byte transport refuses the entries of `LINK_LOCAL_NETWORKS` in `src/lib/db/http/egress-policy.ts` (`169.254.0.0/16` with its IPv4-mapped and NAT64 forms, `fe80::/10`, `fd00:ec2::254`) whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says (`docs/SECURITY.md` row 0.6).
+A metadata service a cloud serves at any other address is reachable with the guard off, and no primary source for such addresses was read when the list was written.
+The first candidate to verify is Alibaba Cloud's `100.100.100.200`, reported by a reviewer and not yet sourced; it sits in CGNAT `100.64.0.0/10`, which the byte transport does not refuse.
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** each named cloud's documented address is read from a saved primary source and added to `LINK_LOCAL_NETWORKS` or recorded as reachable.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -4646,6 +4656,23 @@ Found 2026-10-04 while planning the platform integration, whose gates run in a g
 Not fixed there: that work runs the scan with those two mounts and counts `0 commits scanned.` as a failure, and `CONTRIBUTING.md` is outside it.
 
 **Done when:** `CONTRIBUTING.md` gives a command that scans the branch from a git worktree as well as from a clone, for example by mounting the worktree and the main checkout's `.git` at their own absolute paths, and says that a scan reporting `0 commits scanned.` checked nothing.
+
+### DOC19. CLAUDE.md names a mongodb branch that moved and a Redis method that no longer exists
+
+`CLAUDE.md` (Architecture) lists `src/lib/editor/tab-language.ts` among the three UI files that keep a `=== "mongodb"` branch, but that file has none; the branches are in `src/hooks/use-connection-form.ts` (`type === "mongodb" && authSource`) and `src/components/ConnectionModal.tsx` (`isMongoDB`).
+`CLAUDE.md` (Database Connections) says Redis `getSchema()` uses a non-blocking `SCAN`, but `getSchema` left the provider contract in #789 (`src/lib/db/base-provider.ts`), and comments in `src/lib/db/providers/keyvalue/redis.ts` still name it.
+
+Found 2026-10-09 while designing the S3 provider; pre-existing.
+
+**Done when:** `CLAUDE.md` names the files that hold the branches today and describes the Redis key walk by the method that exists, and the Redis comments name it too.
+
+### DOC20. docs/ADDING_A_PROVIDER.md carries stale counts and an incomplete label table
+
+The guide says seven translated READMEs are gated by `readme:check` where `scripts/readme-check.mjs` gates eight (`README_ko.md` joined in 3d9689aaf); lists three query languages where `queryLanguage` has five (`"sql" | "json" | "promql" | "cypher" | "influxql"` in `src/lib/db/types.ts`); says `QueryEditor` registers six language modules where it registers seven plus `registerDialectConsoles`; leaves `sessionsEmptyState`, `tableStatsCaption` and `vacuumActionOperation` out of its `ProviderLabels` table; and gives two driver-free counts, thirteen in its first decision and fifteen in its checklist.
+
+Found 2026-10-09 while designing the S3 provider; pre-existing.
+
+**Done when:** each count is derived from the code it describes, the label table matches `ProviderLabels`, and the guide states one driver-free count with the list it counts.
 
 ## Release pipeline
 
