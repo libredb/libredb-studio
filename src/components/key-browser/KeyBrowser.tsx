@@ -274,14 +274,24 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
    * Browse Keys handover to `sales/` draws `sales/` open with its level listed under it, and every folder
    * left open by the previous question closes: its listing belonged to the walk being replaced.
    *
-   * THE QUESTION IS THE WALK'S WHOLE IDENTITY, not the prefix alone: the panel stays mounted when the
-   * reader switches connection, and a folder left open from another key space would draw open and empty.
+   * THE QUESTION IS EXACTLY WHAT THE WALK KEYS ON: the connection and capability objects, the database
+   * and the sent prefix, compared by identity. The walk restarts, and drops every folder's listing, when
+   * any of them is a new value, even a rebuilt object with the same content, so an identity narrower than
+   * that would leave a folder drawn open and empty. The question is recorded whatever `levels` is, so
+   * a level connection reached again through an engine without levels is a new question too; only the
+   * re-open is gated, which keeps the engines without levels drawing what they always did.
    */
-  const walkIdentity = `${connection.id}|${database ?? ""}|${sent}`;
-  const [scopeOpened, setScopeOpened] = useState<string | null>(null);
-  if (levels && scopeOpened !== walkIdentity) {
-    setScopeOpened(walkIdentity);
-    setOpen(scopeChain(scope));
+  const question = { connection, capability, database, sent };
+  const [asked, setAsked] = useState<typeof question | null>(null);
+  if (
+    asked === null ||
+    asked.connection !== connection ||
+    asked.capability !== capability ||
+    asked.database !== database ||
+    asked.sent !== sent
+  ) {
+    setAsked(question);
+    if (levels) setOpen(scopeChain(scope));
   }
 
   /**

@@ -2503,6 +2503,32 @@ describe("a panel listed one level at a time", () => {
     expect(route.seen.slice(before).map((body) => body.pattern)).toEqual([undefined]);
   });
 
+  test("a rebuilt connection and capability with the same content close the folders the last walk opened", async () => {
+    const route = levelRoute(SPACE, 20);
+    mockGlobalFetch({ "/api/db/keys/scan": route.handler });
+    const view = renderLevels();
+    await waitFor(() => {
+      expect(rows()).toContain("a/@0");
+    });
+    fireEvent.click(twisty("a/"));
+    await waitFor(() => {
+      expect(rows()).toContain("0/@1");
+    });
+    const before = route.seen.length;
+
+    // New objects with the same content: the walk keys on the objects, so it restarts and drops every
+    // folder's listing, and a folder left open would draw open with nothing listed under it.
+    view.rerender(<KeyBrowser connection={{ ...CONNECTION }} capability={{ ...LEVEL_SCAN }} />);
+
+    await waitFor(() => {
+      expect(route.seen.length).toBe(before + 1);
+    });
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0", "z/@0", "top.txt@0"]);
+    });
+    expect(twisty("a/").getAttribute("aria-label")).toBe("Expand a");
+  });
+
   test("typing in the prefix box asks a new question and closes the folders the last one opened", async () => {
     const route = levelRoute(SPACE, 20);
     mockGlobalFetch({ "/api/db/keys/scan": route.handler });
