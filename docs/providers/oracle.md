@@ -1545,6 +1545,9 @@ again without it.
 This is the repair `listContainers()` makes for `ALL_USERS.ORACLE_MAINTAINED`.
 The provider instance also remembers the refusal, so a server without the column pays for one
 refused read for each provider instance, not one for each describe.
+Nothing resets that memory, a reconnect of the same instance included.
+So a server upgraded to 23ai under an open provider instance keeps the read without `VECTOR_INFO`,
+and its `VECTOR` columns read as `DATA_TYPE` until the instance is recreated.
 An ORA-00904 that names another column is raised, because reading without `VECTOR_INFO` repairs
 nothing there.
 A `VECTOR` row without `VECTOR_INFO` keeps `DATA_TYPE`, which is what the provider reported before
@@ -1566,10 +1569,44 @@ It replays the generated `CREATE TABLE` under `NLS_LENGTH_SEMANTICS = CHAR`, req
 and compares the new table's `ALL_TAB_COLUMNS` rows with the fixture's.
 It then replays the `DATA_TYPE`-only definition that this replaces and requires ORA-00906.
 
+##### What the server does with a `MODIFY` (#1240)
+
+The migration generator writes a modified column as one
+`ALTER TABLE <t> MODIFY (<col> <type><default><nullability>)`.
+It writes the nullability clause, ` NULL` or ` NOT NULL`, only when the nullability changes.
+Oracle refuses a nullability the column already has, measured on 21c XE and 26ai Free 23.26.3:
+
+| Statement | Result |
+| --- | --- |
+| `MODIFY ("S" VARCHAR2(50 BYTE) NULL)`, `S` nullable | `ORA-01451: column to be modified to NULL cannot be modified to NULL`, and `S` keeps its type |
+| `MODIFY ("N" VARCHAR2(50 BYTE) NOT NULL)`, `N` NOT NULL | `ORA-01442: column to be modified to NOT NULL is already NOT NULL`, and `N` keeps its type |
+| `MODIFY ("S" VARCHAR2(50 BYTE))`, `S` nullable | accepted: `VARCHAR2(50 BYTE)`, nullable |
+| `MODIFY ("U" UROWID(4000))`, `U` a nullable `UROWID(100)` | accepted: `DATA_LENGTH` 4000 |
+
+Before #1240 the clause was always there, so a type or default change on a column whose
+nullability did not change was refused, and the migration changed nothing.
+The live guard ([§12.4](#124-optional-verifying-against-a-live-oracle)) replays a type change on a
+nullable and on a NOT NULL column, and a nullability change in each direction, and requires the
+target's `ALL_TAB_COLUMNS` rows, `NULLABLE` included.
+
 One consequence for the schema diff, measured and accepted rather than repaired.
-`diffColumns()` compares `type`, and a snapshot saved before this change stored `DATA_TYPE`.
+`diffColumns()` compares `type`, and a snapshot saved before #1139 stored `DATA_TYPE`.
 So every column whose declaration now differs from `DATA_TYPE` reports one false
-`Type changed: VARCHAR2 → VARCHAR2(20 BYTE)` and one `MODIFY` that changes nothing.
+`Type changed: VARCHAR2 → VARCHAR2(20 BYTE)` and one `MODIFY`.
+Its nullability did not change, so the `MODIFY` has no nullability clause.
+What the server does with it depends on the side of the diff the old snapshot is on.
+Measured on an empty table on 21c XE and 26ai Free 23.26.3:
+
+- **The old snapshot is the source.** The `MODIFY` writes the current declaration, for example
+  `MODIFY ("V" VARCHAR2(20 BYTE))`.
+  The server accepts it and the column does not change.
+  This holds for `VARCHAR2`, `CHAR`, `NUMBER`, `FLOAT`, `RAW` and `UROWID`.
+- **The old snapshot is the target.** The `MODIFY` writes the bare `DATA_TYPE`.
+  A bare `VARCHAR2` or `RAW` is refused with ORA-00906.
+  A bare `CHAR`, `NUMBER`, `FLOAT` or `UROWID` is accepted and changes the column: `CHAR(2)` becomes
+  `CHAR(1)`, `NUMBER(12,2)` loses its precision and scale, `FLOAT(10)` becomes `FLOAT(126)`, and
+  `UROWID(100)` becomes `UROWID(4000)`.
+
 A column whose declaration is `DATA_TYPE`, such as `DATE`, `CLOB` or a bare `NUMBER`, compares equal
 and reports nothing, and a new snapshot clears the rest.
 Comparing `baseType` instead would also hide a real `VARCHAR2(20)` → `VARCHAR2(40)`, which is the
@@ -2348,15 +2385,23 @@ LIBREDB_LIVE_ORACLE_URL='oracle://app:Password123!@127.0.0.1:1521/XEPDB1' \
 ```
 
 On 21c the guard prints that it skipped the `VECTOR` case (#1209). To run that case, use 26ai Free.
-The fixture does not run there, so create `APP.COLUMN_TYPES` from the `CREATE TABLE` in
-`docker/oracle-init/01-object-fixture.sql` as `APP` first, without the `app.` prefix:
+The fixture names the 21c service `XEPDB1`, and 26ai Free names it `FREEPDB1`.
+So mount a copy of the fixture with the service name replaced, measured on 26ai Free 23.26.3.
+The init scripts run only on a fresh container, so wait for `DATABASE IS READY TO USE!` before you
+connect:
 
 ```bash
-docker run -d -e ORACLE_PASSWORD=Password123! -e APP_USER=app -e APP_USER_PASSWORD=Password123! \
-  -p 1522:1521 gvenzl/oracle-free:slim
+mkdir -p /tmp/oracle-init-free
+sed 's/XEPDB1/FREEPDB1/g' docker/oracle-init/01-object-fixture.sql > /tmp/oracle-init-free/01-object-fixture.sql
+docker run -d --name libredb-oracle-free -e ORACLE_PASSWORD='Password123!' -p 1522:1521 \
+  -v /tmp/oracle-init-free:/container-entrypoint-initdb.d:ro gvenzl/oracle-free:slim
+until docker logs libredb-oracle-free 2>&1 | grep -q 'DATABASE IS READY TO USE!'; do sleep 10; done
 LIBREDB_LIVE_ORACLE_URL='oracle://app:Password123!@127.0.0.1:1522/FREEPDB1' \
   bun tests/live/oracle-column-type.ts
 ```
+
+The guard also holds the `MODIFY` rule (#1240,
+[§7](#what-the-server-does-with-a-modify-1240)) on both servers.
 
 ---
 

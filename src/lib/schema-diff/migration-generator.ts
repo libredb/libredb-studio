@@ -715,7 +715,11 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
         );
       } else if (dialect === "oracle") {
         const type = col.targetType || col.sourceType || "VARCHAR2(255)";
-        const nullable = col.targetNullable === false ? " NOT NULL" : " NULL";
+        // Oracle refuses a nullability the column already has (#1240): a type change that
+        // restates ` NULL` on a nullable column is ORA-01451, and the column keeps its old type.
+        // So the clause is written only when the nullability changes.
+        const nullable =
+          col.sourceNullable === col.targetNullable ? "" : col.targetNullable === false ? " NOT NULL" : " NULL";
         const declaredDefault = defaultSql(col);
         const defaultVal = declaredDefault === undefined ? "" : ` DEFAULT ${declaredDefault}`;
         lines.push(

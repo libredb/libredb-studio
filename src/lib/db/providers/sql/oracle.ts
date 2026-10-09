@@ -2137,8 +2137,6 @@ export class OracleProvider extends SQLBaseProvider {
       } catch (error) {
         // `runObjectQuery()` has already mapped the error, and the mapped error keeps Oracle's text.
         if (!isMissingVectorInfoError(error)) throw error;
-        // Set 'vectorInfo' false only when actual isMissingVectorInfoError is thrown, else throw
-        // To be handled by the caller
         this.vectorInfo = false;
       }
     }

@@ -327,7 +327,7 @@ describe("generateMigrationSQL: ALTER TABLE", () => {
 
   test("oracle: MODIFY() syntax", () => {
     const sql = generateMigrationSQL(makeModifiedTableDiff(), "oracle");
-    expect(sql).toContain('ALTER TABLE "users" MODIFY ("name"');
+    expect(sql).toContain(`ALTER TABLE "users" MODIFY ("name" varchar(255) DEFAULT 'unknown' NOT NULL);`);
   });
 });
 
@@ -704,8 +704,7 @@ describe("generateMigrationSQL: MSSQL/Oracle ALTER edge cases", () => {
       hasChanges: true,
     };
     const sql = generateMigrationSQL(diff, "oracle");
-    expect(sql).toContain("MODIFY");
-    expect(sql).toContain("DEFAULT 'active'");
+    expect(sql).toContain(`MODIFY ("status" VARCHAR2(50) DEFAULT 'active');`);
   });
 });
 
@@ -1816,7 +1815,7 @@ describe("generateMigrationSQL: a default is emitted as SQL, not as its value", 
       makeModifiedColumnDiff({ targetType: "VARCHAR2(20)", targetDefault: "abc", targetDefaultSql: "'abc'" }),
       "oracle",
     );
-    expect(sql).toContain(`MODIFY ("note" VARCHAR2(20) DEFAULT 'abc' NULL);`);
+    expect(sql).toContain(`MODIFY ("note" VARCHAR2(20) DEFAULT 'abc');`);
   });
 
   test("SQL Server ADD DEFAULT prefers the SQL text", () => {
@@ -1967,5 +1966,60 @@ describe("an Oracle column's declared type reaches the DDL (#1139)", () => {
     expect(sql).toContain(`ADD ("C_VARCHAR2" VARCHAR2(20 BYTE));`);
     expect(sql).toContain(`ADD ("C_RAW" RAW(16));`);
     expect(sql).toContain(`ADD ("C_NUMBER_PS" NUMBER(12,2));`);
+  });
+});
+
+describe("an Oracle MODIFY states the nullability only when it changes (#1240)", () => {
+  /**
+   * Oracle refuses a nullability the column already has. Measured on 21c XE and 26ai Free:
+   * `MODIFY ("S" VARCHAR2(50) NULL)` on a nullable `S` is ORA-01451, and `S` keeps its old type.
+   * `MODIFY ("U" UROWID)`, with no nullability clause, is accepted and changes the type.
+   */
+  const table = (columns: StoredObject["columns"]): StoredObject[] => [{ name: "T", columns, indexes: [] }];
+  const column = (type: string, nullable: boolean) => ({ name: "S", type, nullable, isPrimary: false });
+
+  test("a type change on a nullable column writes no nullability clause", () => {
+    const sql = generateMigrationSQL(
+      diffSchemas(table([column("VARCHAR2(20 BYTE)", true)]), table([column("VARCHAR2(50 BYTE)", true)])),
+      "oracle",
+    );
+    expect(sql).toContain(`ALTER TABLE "T" MODIFY ("S" VARCHAR2(50 BYTE));`);
+    // The defect: ORA-01451, and the column keeps VARCHAR2(20).
+    expect(sql).not.toContain(" NULL);");
+  });
+
+  test("a type change on a NOT NULL column writes no nullability clause", () => {
+    const sql = generateMigrationSQL(
+      diffSchemas(table([column("VARCHAR2(20 BYTE)", false)]), table([column("VARCHAR2(50 BYTE)", false)])),
+      "oracle",
+    );
+    expect(sql).toContain(`ALTER TABLE "T" MODIFY ("S" VARCHAR2(50 BYTE));`);
+  });
+
+  test("a change to NOT NULL still writes NOT NULL", () => {
+    const sql = generateMigrationSQL(
+      diffSchemas(table([column("VARCHAR2(20 BYTE)", true)]), table([column("VARCHAR2(20 BYTE)", false)])),
+      "oracle",
+    );
+    expect(sql).toContain(`ALTER TABLE "T" MODIFY ("S" VARCHAR2(20 BYTE) NOT NULL);`);
+  });
+
+  test("a change to nullable still writes NULL, with the type change beside it", () => {
+    const sql = generateMigrationSQL(
+      diffSchemas(table([column("VARCHAR2(20 BYTE)", false)]), table([column("VARCHAR2(50 BYTE)", true)])),
+      "oracle",
+    );
+    expect(sql).toContain(`ALTER TABLE "T" MODIFY ("S" VARCHAR2(50 BYTE) NULL);`);
+  });
+
+  test("a default change on a nullable column writes no nullability clause either", () => {
+    const sql = generateMigrationSQL(
+      diffSchemas(
+        table([column("VARCHAR2(20 BYTE)", true)]),
+        table([{ ...column("VARCHAR2(20 BYTE)", true), defaultValue: "abc", defaultExpression: "'abc'" }]),
+      ),
+      "oracle",
+    );
+    expect(sql).toContain(`ALTER TABLE "T" MODIFY ("S" VARCHAR2(20 BYTE) DEFAULT 'abc');`);
   });
 });
