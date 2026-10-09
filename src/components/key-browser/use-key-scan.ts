@@ -57,6 +57,9 @@ export const SCAN_ALL_MAX_KEYS = 10_000;
  */
 export const HELD_KEY_LIMIT = 10_000;
 
+/** The folders a render hands back while its question has just changed: one value, so its identity holds. */
+const NO_FOLDERS: readonly string[] = [];
+
 /** The batch size to ask for, kept inside what the provider declared it will accept. */
 function batchSize(capability: KeyScanCapability): number {
   return Math.min(capability.defaultCount, capability.maxCount);
@@ -194,6 +197,28 @@ export function useKeyScan(options: {
 
   const [keys, setKeys] = useState<readonly string[]>([]);
   const [folders, setFolders] = useState<readonly string[]>([]);
+  /*
+   * THE QUESTION THE FOLDERS BELONG TO, the inputs the walk keys on, compared by identity on every
+   * render. A new question empties the folders ON THE RENDER IT ARRIVES rather than in the `reset` its
+   * caller runs from an effect: until then the panel builds its tree from them, and a folder from a walk
+   * in another shape is no prefix in this one, which the tree refuses outright. Only the folders go
+   * here; the keys and every other value still clear in `reset`, so an engine without levels, whose
+   * folders are always empty, is unchanged.
+   *
+   * THE PASS THAT NOTICES ALSO RETURNS NOTHING. React finishes the render that set the state before it
+   * renders again, and the caller's tree is built in that pass too, so the state alone would still hand
+   * it the old folders once.
+   */
+  const [foldersFor, setFoldersFor] = useState({ connection, capability, pattern, database });
+  const newQuestion =
+    foldersFor.connection !== connection ||
+    foldersFor.capability !== capability ||
+    foldersFor.pattern !== pattern ||
+    foldersFor.database !== database;
+  if (newQuestion) {
+    setFoldersFor({ connection, capability, pattern, database });
+    setFolders([]);
+  }
   const [scanned, setScanned] = useState(0);
   const [total, setTotal] = useState<number | null>(null);
   const [clustered, setClustered] = useState<boolean | undefined>(undefined);
@@ -682,7 +707,7 @@ export function useKeyScan(options: {
 
   return {
     keys,
-    folders,
+    folders: newQuestion ? NO_FOLDERS : folders,
     scanned,
     total,
     clustered,

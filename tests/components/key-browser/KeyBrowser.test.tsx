@@ -2557,6 +2557,33 @@ describe("a panel listed one level at a time", () => {
     expect(twisty("a/").getAttribute("aria-label")).toBe("Expand a");
   });
 
+  test("a panel moved from a level walk to Redis draws the Redis walk and none of the old folders", async () => {
+    const route = levelRoute(SPACE, 20);
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.clone().json()) as Record<string, unknown>;
+        if (body.level !== true) return page(["app:env", "app:cache:ttl"], "0", 2);
+        return route.handler(req);
+      },
+    });
+    const view = renderLevels();
+    await waitFor(() => {
+      expect(rows()).toContain("a/@0");
+    });
+    fireEvent.click(twisty("a/"));
+    await waitFor(() => {
+      expect(rows()).toContain("0/@1");
+    });
+
+    // Another separator: a folder of the last walk is no prefix in this shape, so a tree built from it
+    // on the first render of the new question would throw.
+    view.rerender(<KeyBrowser connection={{ ...CONNECTION, id: "redis-2" }} capability={CAPABILITY} />);
+
+    await waitFor(() => {
+      expect(rows()).toEqual(["app:*@0"]);
+    });
+  });
+
   test("an unlisted folder's twisty at the held limit leaves it closed and asks for nothing", async () => {
     const fetchMock = mockGlobalFetch({
       "/api/db/keys/scan": {

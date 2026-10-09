@@ -1879,4 +1879,29 @@ describe("a walk listed one level at a time", () => {
     expect(result.current.keys).toContain("m/");
     expect(result.current.keys).not.toContain("m/x");
   });
+
+  test("hands back no folder of the last question on the first render of a question with another capability", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": levelPage(["readme"], ["a/", "z/"], "c1") });
+    // Every render's folders, in order, read inside the render itself: an effect cannot have run yet
+    // on the first render of a new question, so this is what the panel's tree is built from there.
+    const seen: Array<readonly string[]> = [];
+    const { result, rerender } = renderHook(
+      ({ capability }: { capability: typeof LEVEL_SCAN | typeof CAPABILITY }) => {
+        const scan = useKeyScan({ connection: CONNECTION, capability, pattern: "" });
+        seen.push(scan.folders);
+        return scan;
+      },
+      { initialProps: { capability: LEVEL_SCAN as typeof LEVEL_SCAN | typeof CAPABILITY } },
+    );
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    expect(result.current.folders).toEqual(["a/", "z/"]);
+    const before = seen.length;
+
+    rerender({ capability: CAPABILITY });
+
+    expect(seen.slice(before).every((folders) => folders.length === 0)).toBe(true);
+    expect(seen.length).toBeGreaterThan(before);
+  });
 });
