@@ -568,6 +568,9 @@ describe("captureContextSnapshot — the capture excludes each image's own exten
       "gp_toolkit",
       "pg_ext_aux",
       "mz_catalog",
+      "mz_unsafe",
+      "mz_catalog_unstable",
+      "rw_catalog",
       "crdb_internal",
       "pg_extension",
     ]) {

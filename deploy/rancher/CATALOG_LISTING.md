@@ -95,7 +95,7 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > `EXTERNAL_DATABASE_TYPES` on `main`.
 > CapRover and Railway both moved to 0.17.0, which carries Prometheus and Apache Kafka, so their numerals and their tags agreed again until the merge of #1089.
 > From that merge they said nineteen, one ahead of the 0.17.0 they name, from the merge of the Neo4j provider twenty, two ahead, from the merge of #786 twenty-one, three ahead, from the merge of the Qdrant provider twenty-two, four ahead, from the merge of the Milvus provider twenty-three, five ahead, from the merge of the InfluxDB provider twenty-five, seven ahead, and from the merge of the Oxia provider twenty-six, eight ahead, until 0.18.0, which carries etcd, Neo4j, Db2 LUW, Qdrant, Milvus, InfluxDB and Oxia, moved CapRover's tag: the exception the merge of #1088 opened and 0.17.0 closed, opened once more.
-> From the merge of the Databend provider they say twenty-seven, one ahead of the 0.18.0 CapRover names and nine ahead of the 0.17.0 Railway still names, until the release that carries Databend moves both tags.
+> From the merge of the Databend provider they said twenty-seven, one ahead of the 0.18.0 CapRover named and nine ahead of the 0.17.0 Railway still names, until 0.18.1, which carries Databend, moved CapRover's tag; Railway stays nine ahead until its own template moves.
 > At the DuckDB release they said sixteen - and all three were still on fourteen when it landed, a full engine behind, because
 > libSQL had moved the code and not them. `deploy/railway/template.json` and
 > `deploy/caprover/libredb-studio.yml` were on thirteen once for the same reason: each channel
@@ -110,7 +110,7 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > day the next engine lands (issue #445) - but their exhaustive descriptions still name every
 > engine, and so does `desktop/src-tauri/tauri.conf.json`.
 > `packaging/linux/nfpm.yaml` and the operator CSVs are consumed at release time from `main`,
-> so `nfpm.yaml` names twenty-seven now, the operator CSVs name twenty-six until the release PR moves them with the chart, and the next tag publishes both.
+> so `nfpm.yaml` names twenty-seven now, the operator CSVs name twenty-seven since the 0.18.1 release PR moved them with the chart, and that tag publishes both.
 
 ## Listing facts
 

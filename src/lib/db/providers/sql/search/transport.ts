@@ -229,10 +229,11 @@ export interface SearchIndexInfo {
    *
    * Live-measured on a stock single node: OpenSearch 3.8.0 ships
    * `.plugins-ml-config` and `top_queries-<date>`, so two of three indices on an
-   * empty cluster are not the user's. Both products mark their own with a leading
-   * dot by convention, and the date-suffixed query-insights index is the exception
-   * that makes this a judgement rather than a rule - hence a flag the provider
-   * decides what to do with, rather than a filter applied here.
+   * empty cluster are not the user's. OpenSearch 3.9.0 also ships the security
+   * plugin's `security-auditlog-<date>`. Both products mark their own with a leading
+   * dot by convention, and those two undotted shapes are what makes this a judgement
+   * rather than a rule - hence a flag the provider decides what to do with, rather
+   * than a filter applied here.
    *
    * NOTE what this list does NOT contain: aliases and data streams. They are a
    * different endpoint, and this listing describes indices alone. They reach the tree

@@ -108,10 +108,12 @@ const WIRE_TOKENS = [
   "SemanticCheckException",
   "NumberFormatException",
   "ParserException",
-  // The system-index exception: measured on a stock OpenSearch 3.8.0,
-  // `top_queries-2026.08.18-74305` carries no dot, so the dot rule alone does not
-  // catch it and the name shape is part of the wire knowledge.
+  // The system-index exceptions. Measured on a stock OpenSearch 3.8.0,
+  // `top_queries-2026.08.18-74305` carries no dot, and on 3.9.0
+  // `security-auditlog-2026.10.04` does not either, so the dot rule alone does not
+  // catch them and the name shapes are part of the wire knowledge.
   "top_queries",
+  "security-auditlog",
 ];
 
 /**
@@ -512,6 +514,7 @@ export async function readIndices(origin: string) {
     ["an OpenSearch fault class", 'if (fault === "SemanticCheckException") return null;', "SemanticCheckException"],
     ["the parser-fault suffix rule", "const parserFault = /ParserException$/;", "ParserException"],
     ["the query-insights name shape", "const insights = /^top_queries-/;", "top_queries"],
+    ["the security-plugin audit index shape", "const audit = /^security-auditlog-/;", "security-auditlog"],
     ["an envelope key spelled as a string", 'const rows = envelope["datarows"];', "datarows"],
     ["the Elasticsearch rows key", 'const values = envelope["rows"];', "rows"],
     ["the OpenSearch columns key", 'const declared = envelope["schema"];', "schema"],

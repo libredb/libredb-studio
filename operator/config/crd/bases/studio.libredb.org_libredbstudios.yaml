@@ -31,6 +31,23 @@ spec:
             type: object
           spec:
             description: Spec defines the desired state of LibreDBStudio
+            properties:
+              extraObjects:
+                description: Not available through the operator. The operator
+                  applies the release with its own cluster-wide service account,
+                  so manifests listed here would be created with its permissions
+                  instead of those of whoever wrote this resource. Create such
+                  objects in the namespace directly.
+                items:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                type: array
+                x-kubernetes-validations:
+                - message: extraObjects is not available through the operator,
+                    because the operator would create these manifests with its
+                    own cluster-wide service account instead of your permissions;
+                    create them in the namespace directly
+                  rule: size(self) == 0
             type: object
             x-kubernetes-preserve-unknown-fields: true
           status:

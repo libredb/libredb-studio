@@ -1303,6 +1303,60 @@ describe("OpenSearchProvider monitoring", () => {
     expect("databaseSizeBytes" in overview).toBe(true);
   });
 
+  test("hides the security plugin's audit indices and keeps a user index of another name", async () => {
+    // OpenSearch 3.9.0 listed `security-auditlog-2026.10.04` as a table (#1428). The security
+    // plugin's default name is the rolling pattern security-auditlog-YYYY.MM.dd, so the rule is
+    // the prefix. `app-security-notes` shares none of it and stays; `security-auditlog` without
+    // the trailing hyphen-and-suffix is not the rolling pattern and stays too.
+    const provider = await connectProvider();
+    overridePath(
+      "/_cat/indices",
+      ok(
+        JSON.stringify([
+          {
+            health: "yellow",
+            status: "open",
+            index: "probe_orders",
+            "docs.count": "1",
+            "pri.store.size": "4807",
+          },
+          {
+            health: "green",
+            status: "open",
+            index: "security-auditlog-2026.10.04",
+            "docs.count": "40",
+            "pri.store.size": "9000",
+          },
+          {
+            health: "yellow",
+            status: "open",
+            index: "app-security-notes",
+            "docs.count": "3",
+            "pri.store.size": "100",
+          },
+          {
+            health: "yellow",
+            status: "open",
+            index: "security-auditlog",
+            "docs.count": "1",
+            "pri.store.size": "50",
+          },
+        ]),
+      ),
+    );
+
+    const stats = await provider.getTableStats();
+    const listed = (await provider.listObjects([], "index")).map((object) => object.name);
+
+    expect(stats.map((row) => row.tableName).sort()).toEqual([
+      "app-security-notes",
+      "probe_orders",
+      "security-auditlog",
+    ]);
+    expect(listed.sort()).toEqual(["app-security-notes", "probe_orders", "security-auditlog"]);
+    expect(stats.map((row) => row.tableName)).not.toContain("security-auditlog-2026.10.04");
+  });
+
   test("excludes the same bookkeeping indices from the table stats", async () => {
     const provider = await connectProvider();
 

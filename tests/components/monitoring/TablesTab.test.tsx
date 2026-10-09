@@ -537,6 +537,99 @@ describe("tables that carry no per-table bytes", () => {
   });
 });
 
+/**
+ * The rows RisingWave 3.1.0 produces through the PostgreSQL provider (#1436 review).
+ *
+ * Measured on 2026-10-08: `pg_table_size(relid)` answers 89 and `pg_indexes_size(relid)`
+ * answers 0, while `pg_total_relation_size` does not exist there at all. That left the row
+ * carrying a measured 89-byte table size beside a total of 0, and this card summed the 0 -
+ * because it gates on `tableSizeBytes` alone, which until then always arrived with a measured
+ * total. The provider now derives the total from the two parts PostgreSQL defines it as, so
+ * the card has a real figure to draw; where it cannot derive one, the parts go with it and the
+ * card's own absence gate answers N/A.
+ */
+describe("a row whose engine refuses only the total size", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const riseWaveRow = (over: Record<string, unknown>) => {
+    const data = makeData();
+    return {
+      ...data,
+      tables: [{ schemaName: "public", tableName: "probe_sized", rowCount: 2, bloatRatio: 0, ...over }],
+    } as unknown as MonitoringData;
+  };
+
+  test("the Size card draws the derived total, not 0 B", () => {
+    const { getByTestId, queryByText } = render(
+      <TablesTab
+        data={riseWaveRow({
+          tableSize: "89 B",
+          tableSizeBytes: 89,
+          indexSize: "0 B",
+          indexSizeBytes: 0,
+          totalSize: "89 B",
+          totalSizeBytes: 89,
+        })}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+      />,
+    );
+
+    expect(getByTestId("tables-stat-size").textContent).toBe("89 B");
+    // The card, not the page: this row's Index Size cell says "0 B" and means it, because
+    // RisingWave really answered 0 for pg_indexes_size. A measured zero stays a measurement.
+    expect(queryByText("Total")).not.toBeNull();
+  });
+
+  test("the row's own Size cell reads the derived total too", () => {
+    const { getAllByTestId } = render(
+      <TablesTab
+        data={riseWaveRow({
+          tableSize: "89 B",
+          tableSizeBytes: 89,
+          indexSize: "0 B",
+          indexSizeBytes: 0,
+          totalSize: "89 B",
+          totalSizeBytes: 89,
+        })}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+      />,
+    );
+
+    expect(getAllByTestId("table-row-size")[0]?.textContent).toBe("89 B");
+  });
+
+  // What the provider now refuses to send, pinned here so the card's answer to it is on
+  // record: a measured part beside the placeholder total is what drew "0 B".
+  test("a part without a total would still have summed to 0 B, which is why the provider drops it", () => {
+    const { getByTestId } = render(
+      <TablesTab
+        data={riseWaveRow({ tableSize: "89 B", tableSizeBytes: 89, totalSize: "N/A", totalSizeBytes: 0 })}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+      />,
+    );
+
+    expect(getByTestId("tables-stat-size").textContent).toBe("0 B");
+  });
+
+  test("with no total to derive, the parts go too and the card says N/A", () => {
+    const { getByTestId, queryByText } = render(
+      <TablesTab
+        data={riseWaveRow({ totalSize: "N/A", totalSizeBytes: 0 })}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+      />,
+    );
+
+    expect(getByTestId("tables-stat-size").textContent).toBe("N/A");
+    expect(queryByText("0 B")).toBeNull();
+  });
+});
+
 describe("per-row controls follow the provider's own declaration", () => {
   // Scoped here as well as in the blocks above: bun:test registers a hook on the
   // enclosing describe only, so without this the first render in this block leaks into

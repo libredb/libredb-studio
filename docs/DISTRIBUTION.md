@@ -384,7 +384,13 @@ an IPv6 address that refuses every connection, and the install notes warn about 
 
 `operator/` packages the published Helm chart as a codeless helm-operator
 (operator-sdk helm plugin): a `LibreDBStudio` custom resource whose spec mirrors
-the chart values. Publishing works in two stages:
+the chart values.
+
+The one value the spec does not mirror is `extraObjects`, which the CRD refuses with a CEL rule (#1526).
+The operator applies the release with its own cluster-wide service account, so a manifest listed there would be created with the operator's permissions instead of those of whoever wrote the resource, and the editor role is meant to grant no RBAC.
+Plain Helm applies a release with the installer's own credentials, and Argo CD within the limits of its AppProject, so the chart offers the value there.
+
+Publishing works in two stages:
 
 - **Controller image** — `.github/workflows/operator-release.yml` builds and
   pushes `ghcr.io/libredb/libredb-studio-operator:<version>` (amd64+arm64) on

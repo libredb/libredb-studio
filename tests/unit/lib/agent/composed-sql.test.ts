@@ -93,6 +93,9 @@ describe("composeCatalogRead — PostgreSQL", () => {
     for (const schema of [
       "pg_toast",
       "mz_catalog",
+      "mz_unsafe",
+      "mz_catalog_unstable",
+      "rw_catalog",
       "crdb_internal",
       "pg_extension",
       "_timescaledb_internal",

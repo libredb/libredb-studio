@@ -786,14 +786,20 @@ top_queries-2026.08.18-74305    (engine bookkeeping, NO leading dot)
 
 On an *empty* cluster two of three indices are the engine's. The dot convention catches the first and
 **not** the second, so the transport carries a second rule for the date-suffixed query-insights shape
-(`OPENSEARCH_QUERY_INSIGHTS`, `/^top_queries-\d{4}\.\d{2}\.\d{2}-\d+$/`,
-[http-transport.ts](../../src/lib/db/providers/sql/search/http-transport.ts)), which makes this a
-judgement rather than a rule, and is why the seam exposes a **flag** the provider decides about
-(`isSystemIndex()`, [introspect.ts](../../src/lib/db/providers/sql/search/introspect.ts)) rather
-than a filter applied on the wire. Hiding them is what the object surface does: `isSystemIndex()` is consulted for every listing and
-count, so a folder's badge and its rows agree about what is shown. An operator debugging ML inference
-would want `.plugins-ml-config` in the tree and a developer writing a query would not, and nothing in
-the surface expresses that choice today; the flag is where it would be made.
+(`/^top_queries-\d{4}\.\d{2}\.\d{2}-\d+$/`). A third shape is the security plugin's audit index.
+[Audit logs](https://docs.opensearch.org/latest/security/audit-logs/index/) default to the rolling name
+`security-auditlog-YYYY.MM.dd`, and OpenSearch 3.9.0 listed `security-auditlog-2026.10.04` as a table
+(and as the largest one). The transport flags `/^security-auditlog-/`, which also covers the weekly
+and other date patterns that setting accepts. A user index that does not start with that prefix stays
+listed. Both rules live in
+[http-transport.ts](../../src/lib/db/providers/sql/search/http-transport.ts) (`OPENSEARCH_QUERY_INSIGHTS`,
+`OPENSEARCH_SECURITY_AUDITLOG`), which makes this a judgement rather than a rule, and is why the seam
+exposes a **flag** the provider decides about (`isSystemIndex()`,
+[introspect.ts](../../src/lib/db/providers/sql/search/introspect.ts)) rather than a filter applied on
+the wire. Hiding them is what the object surface does: `isSystemIndex()` is consulted for every listing
+and count, so a folder's badge and its rows agree about what is shown. An operator debugging ML
+inference would want `.plugins-ml-config` in the tree and a developer writing a query would not, and
+nothing in the surface expresses that choice today; the flag is where it would be made.
 
 Note also that `top_queries-2026.08.18-74305` carries hyphens and dots, so it is a name SQL needs
 quoted. `DatabaseObject.name` is the index name **verbatim** — quoting belongs to whoever builds a
@@ -873,7 +879,7 @@ folders; first paint costs one `countObjects` and no container walk.
 
 | Kind | Role | Source | Filter |
 |---|---|---|---|
-| `index` | relation, accepts row writes | `GET /_cat/indices?format=json&bytes=b` | dot prefix, plus OpenSearch's date-suffixed `top_queries-*` |
+| `index` | relation, accepts row writes | `GET /_cat/indices?format=json&bytes=b` | dot prefix, OpenSearch's date-suffixed `top_queries-*`, and the security plugin's `security-auditlog-*` |
 | `alias` | relation | `GET /_alias`, flattened and deduplicated | dot prefix or `_meta.managed` |
 | `stream` | relation | `GET /_data_stream` | dot prefix or `_meta.managed` |
 | `pipeline` | config | `GET /_ingest/pipeline` | dot prefix or `_meta.managed` |

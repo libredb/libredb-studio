@@ -310,18 +310,41 @@ after an unplanned primary loss as up to 12 seconds and notes that network laten
 This provider used to hand that option `pool.acquireTimeout`, whose default is 60000
 ([`types.ts`](../../src/lib/db/types.ts)), so Test Connection to a host and port where nothing
 listens held the spinner for a minute (`Test Connection` passes `queryTimeout: 10000`, which
-`connect()` does not read). Measured here against a closed port on 127.0.0.1: 60.0 s before, 30.0 s
+`connect()` did not read). Measured here against a closed port on 127.0.0.1: 60.0 s before, 30.0 s
 after. `connectTimeoutMS` did not bound it and does not: that option caps ONE TCP attempt, and a
 refused connection fails its attempt at once.
 
 30 s is the driver's own default and sits above the election window, so a write issued right after
 an unplanned primary loss waits the election out instead of failing at the deadline. It is a
 ceiling under abnormal discovery, not a latency budget: a healthy deployment selects a server well
-before it, and a closed port is still reported only once the 30 s have passed, half the old
+before it, and a closed port used to be reported only after the full 30 s, half the old
 minute. The value is a constant in
 [`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts) rather than a second pool field,
 because it governs the whole client and not only the connect; `connectTimeoutMS` keeps following
 `pool.acquireTimeout` for the pool's own dial.
+
+**The connect itself is bounded by the request's `queryTimeout` (#1573).** The 30 s selection
+bound above is the client's, and a request that only wants to know whether the server is there
+should not wait it out: `connect()` races `MongoClient.connect()` against the `queryTimeout` the
+request already carries (10000 for Test Connection, `DEFAULT_QUERY_TIMEOUT` 60000 otherwise,
+[`types.ts`](../../src/lib/db/types.ts)), and closes the client when the deadline wins. The
+reported error is a `ConnectionError` naming the refusal the driver's monitoring saw (its last
+heartbeat failure, read from the `serverHeartbeatFailed` events the client relays), not a generic
+timeout. Two details the driver forces:
+
+- With `mongodb+srv`, `MongoClient._connect` resolves the SRV record before it creates the
+  topology and never checks `hasBeenClosed` (`mongo_client.js`), so a `close()` that lands during
+  a slow DNS lookup is a no-op. The client is closed again once the connect promise settles, so
+  no socket outlives the request either way.
+- A failed `connect()` closes the client and clears it, rather than leaving `this.client` set
+  with `this.db` null: on main the `connect()` guard only checks `this.client && this.db`, so a
+  failed ping used to leave the half-open client behind and a later `connect()` returned as if
+  it were connected.
+
+Measured against a closed port on 127.0.0.1 with `queryTimeout: 10000`: the refusal
+(`connect ECONNREFUSED`) arrives in 10.0 s instead of 30.0. The write path is unchanged: the
+30 s client-wide bound still governs every operation after the connect, and no failover was
+run to measure it here.
 
 ### 4.1 SSL / TLS
 
@@ -563,7 +586,8 @@ Inside a database, the reserved namespace prefix is **`system.` with the dot**. 
 `systemetrics` is created without complaint. The fixture holds `systemetrics`, so a rule written on
 the letters `system` without the dot fails a test by name. The two internal namespaces the fixture's
 own listing contains are `system.views` (created the moment a view is) and
-`system.buckets.readings` (the bucket collection behind the time series one).
+`system.buckets.readings` (the bucket collection behind the time series one). `getTableStats()`
+applies the same prefix, so Monitoring's Tables list does not show either of them.
 
 `listDatabases` is sent as `{ listDatabases: 1, nameOnly: true, authorizedDatabases: true }`. The
 flag is load-bearing rather than tidy: the server's default for it depends on whether the connecting
@@ -902,7 +926,7 @@ Every method is wrapped in try/catch. Degradation reports the absence rather tha
 | `getPerformanceMetrics()` | `serverStatus` (WiredTiger + opcounters) | cache-hit %, **ops/sec** (`query`+`insert`+`update`+`delete` opcounters ÷ uptime — *total operations, not just queries*), buffer-pool % (cache bytes), `deadlocks: 0`. **Every field is optional**: each one is present only if its reading was, and a failed `serverStatus` reports `{}` ([§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)) |
 | `getSlowQueries()` | `system.profile` | per-op time/returned; **`[]` if the profiler isn't enabled** (`db.setProfilingLevel(1)`); sorted by `millis` (slowest) — note `getHealth()`'s slow-query block instead sorts by `ts` (most recent) and emits a placeholder row when disabled |
 | `getActiveSessions()` | `currentOp` | opid, ns, lock waits, duration — ⚠️ the **`user` field is populated from `op.client`** (the client `host:port`), **not** an authenticated user |
-| `getTableStats()` | `collStats` per collection | row count + data/index/total sizes, `totalIndexSize` carried as the byte figure `indexSizeBytes` and not only as formatted text; a time series collection is **one** row, because the server's internal `system.buckets.<name>` duplicate is skipped rather than summed beside it |
+| `getTableStats()` | `collStats` per collection | row count + data/index/total sizes, `totalIndexSize` carried as the byte figure `indexSizeBytes` and not only as formatted text; a time series collection is **one** row, because the server's internal `system.buckets.<name>` duplicate is skipped rather than summed beside it; every other `system.*` namespace (`system.views` included) is skipped with the same `system.` prefix the object browser uses, so Monitoring lists the same collections the tree does. `systemetrics` does not start with that prefix and stays |
 | `getIndexStats()` | `$indexStats` + `indexes()` | **real `scans`** (`accesses.ops`); `indexSize` `N/A`; **`indexType` only distinguishes `text` vs `btree`** — `hashed`/`2dsphere`/`2d`/wildcard/clustered are all mislabelled `btree` |
 | `getStorageStats()` | `dbStats` + WiredTiger | Data / Indexes / Storage / WiredTiger cache (with usage %) |
 

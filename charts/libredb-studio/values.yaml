@@ -586,6 +586,30 @@ extraEnvFrom: []
 #  - configMapRef:
 #      name: my-config
 
+# -- Additional volumes for the pod, e.g. a private CA from a ConfigMap or Secret
+extraVolumes: []
+#  - name: internal-ca
+#    configMap:
+#      name: internal-ca
+
+# -- Additional volume mounts for the app container. With the volume above, point
+# NODE_EXTRA_CA_CERTS (extraEnv) at the file so the OIDC issuer or Vault is trusted.
+extraVolumeMounts: []
+#  - name: internal-ca
+#    mountPath: /etc/ssl/internal
+#    readOnly: true
+
+# -- Additional Kubernetes objects deployed with the release, each rendered
+# through tpl. A string item is taken as a template as it is. Write a literal
+# {{ as {{ "{{" }}, or the install fails.
+extraObjects: []
+#  - apiVersion: v1
+#    kind: ConfigMap
+#    metadata:
+#      name: my-config
+#    data:
+#      key: value
+
 # -- Seed connections: pre-configured database connections
 seedConnections:
   # -- Enable seed connections feature

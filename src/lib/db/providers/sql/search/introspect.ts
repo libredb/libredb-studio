@@ -101,7 +101,8 @@ export const SEARCH_CONTAINER_TYPES: readonly string[] = Object.freeze(["object"
  * Whether an index is the engine's own bookkeeping rather than a user's data.
  *
  * The transport flags it - dot-prefixed by both products' convention, plus
- * OpenSearch's date-suffixed query-insights indices, which break the convention -
+ * OpenSearch's date-suffixed query-insights indices and the security plugin's
+ * `security-auditlog-*` indices, which break the convention -
  * and the decision of what to DO about the flag is this file's, which is why the
  * seam exposes a boolean instead of filtering the list itself.
  *

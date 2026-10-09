@@ -431,16 +431,24 @@ const HTTP_FORBIDDEN = 403;
 /**
  * Index names the engine created for its own bookkeeping.
  *
- * Both products mark their own with a leading dot by convention. The exception,
- * measured on a stock OpenSearch 3.8.0 with nothing indexed by hand, is the
- * query-insights index `top_queries-2026.08.18-74305` - dateless-prefix, date, and
- * a numeric suffix - which carries no dot at all. Two of the three indices on that
- * empty cluster were therefore not the user's, and one of them is only
- * recognisable by name shape, which is why the seam exposes a FLAG the provider
+ * Both products mark their own with a leading dot by convention. Two exceptions
+ * carry no dot at all, both measured on OpenSearch, and a name shape is the only
+ * signal `_cat` gives for either. That is why the seam exposes a FLAG the provider
  * decides about rather than a filter applied here.
+ *
+ * The query-insights index `top_queries-2026.08.18-74305` - dateless-prefix, date,
+ * and a numeric suffix - was on a stock 3.8.0 cluster with nothing indexed by hand,
+ * so two of the three indices there were not the user's.
+ *
+ * The security plugin's audit index is the date-rolling default
+ * `security-auditlog-YYYY.MM.dd` (docs.opensearch.org/latest/security/audit-logs).
+ * OpenSearch 3.9.0 listed `security-auditlog-2026.10.04` as a table and as the
+ * largest one (#1428). The prefix is the rule: the plugin also accepts weekly and
+ * other date patterns, and a user index that does not start with it stays listed.
  */
 const DOT_PREFIXED = /^\./;
 const OPENSEARCH_QUERY_INSIGHTS = /^top_queries-\d{4}\.\d{2}\.\d{2}-\d+$/;
+const OPENSEARCH_SECURITY_AUDITLOG = /^security-auditlog-/;
 
 // ============================================================================
 // The dialect table: everything the two products disagree about
@@ -1006,7 +1014,8 @@ function toIndexInfo(row: Record<string, unknown>): SearchIndexInfo {
     // Copied verbatim: the seam promises the engine's own word, and both products
     // say `open` / `close` (not "closed" - measured).
     status: String(row[CAT_FIELDS.STATUS] ?? ""),
-    isSystem: DOT_PREFIXED.test(name) || OPENSEARCH_QUERY_INSIGHTS.test(name),
+    isSystem:
+      DOT_PREFIXED.test(name) || OPENSEARCH_QUERY_INSIGHTS.test(name) || OPENSEARCH_SECURITY_AUDITLOG.test(name),
   };
 }
 

@@ -108,7 +108,7 @@ mock.module("@/lib/db-ui-config", () => ({
 
 import { CONNECTION_FORM_DEFAULTS, offersReadOnlyToggle, useConnectionForm } from "@/hooks/use-connection-form";
 import { resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
-import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import { ENVIRONMENT_LABELS, type DatabaseConnection, type DatabaseType } from "@/lib/types";
 import {
   DATABEND_DSN_CAUTIONS,
   DATABEND_DSN_REFUSALS,
@@ -462,7 +462,7 @@ describe("useConnectionForm", () => {
     expect(result.current.sshPassword).toBe("");
     expect(result.current.sshPrivateKey).toBe("");
     expect(result.current.sshPassphrase).toBe("");
-    expect(result.current.environment).toBe("local");
+    expect(result.current.environment).toBe("other");
     expect(result.current.showAdvanced).toBe(false);
     expect(result.current.serviceName).toBe("");
     expect(result.current.instanceName).toBe("");
@@ -705,7 +705,7 @@ describe("useConnectionForm", () => {
     expect(second.host).toBe("db-b");
     expect(second.ssl).toBeUndefined();
     expect(second.sshTunnel).toBeUndefined();
-    expect(second.environment).toBe("local");
+    expect(second.environment).toBe("other");
   });
 
   /**
@@ -1826,12 +1826,50 @@ describe("useConnectionForm", () => {
     expect(result.current.testResult!.message).toContain("db2://");
   });
 
-  // ── environment defaults to 'local' ────────────────────────────────────────
+  // ── environment defaults to 'other' ────────────────────────────────────────
 
-  test("environment defaults to local", () => {
+  /**
+   * A new connection is not labelled until the user picks a label. It used to start as
+   * Local, so every connection nobody labelled, a Databend Cloud warehouse among them,
+   * carried a LOCAL badge in the header and the sidebar.
+   */
+  test("a new connection starts with environment other, which shows no badge", () => {
     const { result } = renderHook(() => useConnectionForm(defaultProps));
 
-    expect(result.current.environment).toBe("local");
+    expect(result.current.environment).toBe("other");
+    expect(ENVIRONMENT_LABELS[result.current.environment]).toBe("");
+  });
+
+  test("an edited connection with no environment stays unlabelled and keeps its color", async () => {
+    const source: DatabaseConnection = {
+      id: "unlabelled",
+      name: "Unlabelled",
+      type: "postgres",
+      host: "db.example.test",
+      port: 5432,
+      user: "fixture_user",
+      password: "fixture_password",
+      database: "app",
+      createdAt: new Date(0),
+      color: "#123456",
+    };
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        ...defaultProps,
+        editConnection: source,
+        onConnect,
+        onTestConnection: async () => ({ success: true }),
+      }),
+    );
+
+    expect(result.current.environment).toBe("other");
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    const saved = onConnect.mock.calls[0][0];
+    expect(saved.environment).toBe("other");
+    expect(saved.color).toBe("#123456");
   });
 
   // ── isEditMode is true when editConnection is provided ─────────────────────

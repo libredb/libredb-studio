@@ -249,6 +249,37 @@ a rejected read leaves its panel absent and records the engine's own sentence un
 `errors`, while an empty array claims the engine answered "nothing" — a measurement it
 never made, and one that throws away the sentence saying why.
 
+A refused **size builtin** is not one of those cases, and since #1436 does not reject.
+`pg_table_size()`, `pg_indexes_size()` and `pg_total_relation_size()` are three columns of a
+read whose other columns the engine answers, so each is dropped on its own
+(`queryTableStats()`) and the rows arrive with that size absent — never as a `0`, which
+would be a measurement nobody made ([D105](../BACKLOG.md)). Measured on RisingWave 3.1.0,
+which binds neither `pg_size_pretty()` nor `pg_total_relation_size()` but answers
+`pg_table_size(relid)` and `pg_indexes_size(relid)`: the panel now lists the tables with
+their sizes, where the whole read used to fail.
+
+**The total is the one size that can be derived rather than dropped**, and
+`totalSizeBytes()` does. PostgreSQL defines `pg_total_relation_size()` as `pg_table_size()`
+plus `pg_indexes_size()`, so adding the two measured parts is the engine's own arithmetic and
+not this provider's guess. It has to be derived rather than left absent because
+`totalSizeBytes` is a **required** field: an absent total still has to carry a number, and the
+`N/A`-beside-`0` spelling the other providers use is only safe where nothing else on the row
+claims a size. The Tables tab's Size card and the Storage tab's share both gate on
+`tableSizeBytes` alone — until #1436 a measured table size always arrived with a measured
+total — so a row carrying one part and the placeholder got that `0` summed and drawn as a
+reading. Measured on RisingWave 3.1.0 on 2026-10-08, one table of two rows:
+`pg_table_size` 89, `pg_indexes_size` 0, `pg_total_relation_size` *function
+pg_total_relation_size(integer) does not exist*. The card read **0 B** over a table with
+bytes in it; it now reads **89 B**. Where a part is refused as well there is nothing to add
+up, and the row publishes no sizes at all, so those gates read the absence and answer `N/A`
+instead of summing the placeholder. No engine measured here does that — RisingWave refuses
+the total alone, CockroachDB answers NULL for all three — so that arm closes the shape rather
+than one seen.
+
+Materialize's outcome is unchanged, because its refusal is not the size call alone: it has
+no `pg_stat_user_tables` either, so the statement still has nothing to read FROM and the
+panel still carries that sentence.
+
 The distinction a reader needs is then drawn where the sentence is rendered.
 `describesAbsentObject()` ([monitoring-absence.ts](../../src/lib/monitoring-absence.ts))
 asks whether the message names a `pg_`-prefixed object that is not there, and
@@ -334,22 +365,36 @@ All nine accept the clause. The listings and counts retry without it on an engin
 refuses `pg_depend` or `pg_extension`, through `queryListing()` and `queryCounts()`, and
 `describeObjects()` already runs through the fallback chain that drops it.
 
+Three places read other catalogs and needed the same test on their own (#1599). The
+Overview's table and index counts read `information_schema.tables` and `pg_indexes`, which
+name a table instead of carrying its oid, so `extensionMemberTableExclusion()` asks by
+schema and name; an index is left out by asking about the table it sits on. The Triggers
+folder's count, listing and source read leave out a trigger whose table an extension created,
+since that table is already hidden. Measured 2026-10-08 on the `postgis/postgis:17-3.5`
+image as it ships (PostgreSQL 17.5, PostGIS 3.5.2, with topology and the tiger geocoder),
+plus `orders` with one trigger and a second trigger added to `spatial_ref_sys`: the Overview
+went from 38 tables and 76 indexes to 1 and 1, and the Triggers folder from 2 triggers to
+one. CockroachDB 26.3.2 answers the new statements with the same counts as before.
+
 The fixed list stays for schemas the *engine itself* builds in, which are not
 extension-owned: measured, CockroachDB's `crdb_internal` and Cloudberry's `pg_ext_aux`
 return nothing from `pg_depend`.
 
 Citations, by engine: Materialize's
 [system catalog](https://materialize.com/docs/sql/system-catalog/) (`mz_catalog`, `mz_internal`,
-`mz_introspection`); CockroachDB's
+`mz_introspection`). `mz_unsafe` and `mz_catalog_unstable` are not on that page; Materialize
+v26.44.1 listed both beside a user's own schemas, so they are excluded on that measurement.
+RisingWave's [`rw_catalog`](https://docs.risingwave.com/sql/system-catalogs/rw-catalog) holds its
+system tables; RisingWave 3.1.0 listed 74 of them as user objects. CockroachDB's
 [system catalogs](https://www.cockroachlabs.com/docs/stable/system-catalogs), which enumerates
 exactly four (`crdb_internal` and `pg_extension` are the two stock PostgreSQL lacks); TimescaleDB's
 own `sql/pre_install/schemas.sql`, which creates all seven; Cloudberry's
 [schema documentation](https://cloudberry.apache.org/docs/operate-with-data/operate-with-db-objects/create-and-manage-schemas/)
-for `gp_toolkit`, `pg_aoseg` and `pg_bitmapindex`. Two entries rest on measurement rather than a
-document, and are marked as such in the code: Cloudberry's `pg_ext_aux` (the PAX auxiliary tables),
-which its schema page does not list, and AlloyDB's `google_ml`, which Google's docs never name —
-traced through `pg_depend` to the `google_ml_integration` extension the Omni image enables by
-default.
+for `gp_toolkit`, `pg_aoseg` and `pg_bitmapindex`. Entries that rest on measurement rather than a
+document are marked as such in the code: Cloudberry's `pg_ext_aux` (the PAX auxiliary tables),
+which its schema page does not list; Materialize's `mz_unsafe` and `mz_catalog_unstable`; and
+AlloyDB's `google_ml`, which Google's docs never name — traced through `pg_depend` to the
+`google_ml_integration` extension the Omni image enables by default.
 
 ### 3.1.4 What the object surface declares, and which catalog answers for it
 
@@ -1734,7 +1779,7 @@ base) fans these out in parallel.
 | `getPerformanceMetrics()` | `pg_statio_user_tables`, `pg_stat_database`, `pg_stat_checkpointer` (17+) or `pg_stat_bgwriter` | cache-hit % (omitted when unmeasurable), deadlocks, checkpoint write time (`N/A` when unreadable); **no buffer-pool %** — see [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `pg_stat_statements` → fallback `pg_stat_activity` | detailed per-statement stats; fallback shows live active queries |
 | `getActiveSessions()` | `pg_stat_activity` | pid, user, state, query, wait events, duration; excludes own backend |
-| `getTableStats()` | `pg_stat_user_tables` + size functions | live/dead tuples, sizes, last (auto)vacuum/analyze, bloat ratio |
+| `getTableStats()` | `pg_stat_user_tables` + `pg_table_size`/`pg_indexes_size`/`pg_total_relation_size`, each on `relid` | live/dead tuples, sizes (absent per function the engine refuses, [§3.1.2](#312-two-kinds-of-absence-and-why-neither-is-an-empty-array)), last (auto)vacuum/analyze, bloat ratio |
 | `getIndexStats()` | `pg_stat_user_indexes`, `pg_index`, `pg_am` | type, columns, unique/primary, size, scan count, usage ratio |
 | `getStorageStats()` | `pg_tablespace`, WAL functions | per-tablespace size; WAL size (superuser-gated, swallowed if denied) |
 | `getPgStatActivity()` | `pg_stat_activity` | raw passthrough for advanced views |
@@ -1761,6 +1806,14 @@ zero and is still published as `0`/`"0 B"`, which is the shared helper's contrac
 state this engine produces: `pg_database_size()` is a function, not an aggregate, and measured on
 PostgreSQL 18 a freshly created database answers 7774735 bytes, never `NULL` and never zero. MySQL's
 `SUM()` over an empty schema is where that null row is real.
+
+**The table sizes are read the same way (#1436).** `getTableStats()` selects the three byte figures
+only and spells each with `formatBytes()`, so it selects no `pg_size_pretty()` column either — the
+shape `getOverview()` above and the object surface already use. That makes one spelling of a byte
+count across the provider instead of two, and it is visible: a 16384-byte table reads `16 KB` where
+`pg_size_pretty()` wrote `16 kB`. The bytes are unchanged, and it removes a builtin RisingWave does
+not bind. Each size is absent, never `0`, where its builtin is refused or answers `NULL` — which is
+what CockroachDB v26.3.2 does for a table it has.
 
 ### 7.1 When the cache hit ratio is not measurable
 

@@ -481,10 +481,17 @@ const SYSTEM_SCHEMAS = [
   "pg_catalog",
   "information_schema",
   "pg_toast",
-  // Materialize - materialize.com/docs/sql/system-catalog/
+  // Materialize - materialize.com/docs/sql/system-catalog/ documents the first three.
+  // `mz_unsafe` and `mz_catalog_unstable` are not on that page; Materialize v26.44.1
+  // listed both beside a user's own schemas, so they are here on measurement (#1428).
   "mz_catalog",
   "mz_internal",
   "mz_introspection",
+  "mz_unsafe",
+  "mz_catalog_unstable",
+  // RisingWave - docs.risingwave.com/sql/system-catalogs/rw-catalog. The schema holds
+  // the system tables; RisingWave 3.1.0 listed 74 of them as user objects (#1428).
+  "rw_catalog",
   // CockroachDB - cockroachlabs.com/docs/stable/system-catalogs enumerates exactly
   // four schemas; the two below are the ones stock PostgreSQL does not also have.
   "crdb_internal",
@@ -574,6 +581,20 @@ function extensionMemberExclusion(oidColumn: string, catalog: "pg_class" | "pg_p
     `${oidColumn} NOT IN (SELECT d.objid FROM pg_depend d ` +
     `JOIN pg_extension e ON e.oid = d.refobjid ` +
     `WHERE d.classid = '${catalog}'::regclass AND d.deptype = 'e')`
+  );
+}
+
+// The same relation test for a catalog that names a table rather than carrying its oid:
+// information_schema.tables and pg_indexes, which the Overview counts read (#1599). An
+// index is not an extension member itself, it depends on its table, so `spatial_ref_sys_pkey`
+// is left out by asking about the table it sits on. Free of parentheses inside, like the two
+// tests above, so the same fallback strips it.
+function extensionMemberTableExclusion(schemaColumn: string, nameColumn: string): string {
+  return (
+    `(${schemaColumn}, ${nameColumn}) NOT IN (SELECT n.nspname, c.relname FROM pg_class c ` +
+    `JOIN pg_namespace n ON n.oid = c.relnamespace ` +
+    `JOIN pg_depend d ON d.objid = c.oid AND d.classid = 'pg_class'::regclass AND d.deptype = 'e' ` +
+    `JOIN pg_extension e ON e.oid = d.refobjid)`
   );
 }
 
@@ -741,10 +762,10 @@ function isMissingConstraintColumnUsageError(error: unknown): boolean {
 // the driver serves engines nobody here has run. One that has no pg_depend or
 // pg_extension drops the clause and keeps the fixed list, which is what it filtered
 // on before ownership was asked at all. Both forms go: the schema test and the
-// per-object test `extensionMemberExclusion()` writes.
+// per-object tests `extensionMemberExclusion()` and `extensionMemberTableExclusion()` write.
 function withoutExtensionOwnershipTest(sql: string): string {
   return sql.replace(
-    /\s+AND\s+[\w.]+ NOT IN \(SELECT (?:n\.nspname FROM pg_namespace n|d\.objid FROM pg_depend d) JOIN pg_[^)]*\)/g,
+    /\s+AND\s+(?:[\w.]+|\([\w., ]+\)) NOT IN \(SELECT (?:n\.nspname FROM pg_namespace n|d\.objid FROM pg_depend d|n\.nspname, c\.relname FROM pg_class c) JOIN pg_[^)]*\)/g,
     "",
   );
 }
@@ -864,13 +885,16 @@ const COUNTS_ROUTINE_ARM = `
 
 // `tgisinternal` excludes the triggers PostgreSQL creates for a foreign key or a
 // deferred unique constraint. A user never wrote them and cannot drop them on their own,
-// so counting them would report a number nobody could reconcile with their own DDL.
+// so counting them would report a number nobody could reconcile with their own DDL. A
+// trigger on a table an extension created goes with the table, which the Tables folder
+// already hides (#1599).
 const COUNTS_TRIGGER_ARM = `
           SELECT 'trigger'
           FROM pg_catalog.pg_trigger t
           JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-          WHERE n.nspname = $1 AND NOT t.tgisinternal`;
+          WHERE n.nspname = $1 AND NOT t.tgisinternal
+          AND ${extensionMemberExclusion("c.oid", "pg_class")}`;
 
 // One statement, one GROUP BY, one round trip for the whole folder row. `kind IS NULL`
 // drops the relkinds and prokinds the CASE has no name for (an index, a TOAST table, an
@@ -1005,7 +1029,8 @@ const LIST_TRIGGERS_SQL = `
         FROM pg_catalog.pg_trigger t
         JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = $1 AND NOT t.tgisinternal`;
+        WHERE n.nspname = $1 AND NOT t.tgisinternal
+          AND ${extensionMemberExclusion("c.oid", "pg_class")}`;
 
 // ============================================================================
 // Object source (#789 Phase 2)
@@ -1100,14 +1125,16 @@ const SOURCE_ROUTINE_SQL = `
 
 // Three binds, because a trigger is addressed by its TABLE as well as by its name: `tgname`
 // is unique per table and not per schema, which is the nesting `attachedTo: "table"` declares
-// and `LIST_TRIGGERS_SQL` produces. `NOT tgisinternal` is the same exclusion the listing and
-// the count apply, so a path this provider never listed cannot be read here either.
+// and `LIST_TRIGGERS_SQL` produces. `NOT tgisinternal` and the ownership test are the same
+// exclusions the listing and the count apply, so a path this provider never listed cannot be
+// read here either.
 const SOURCE_TRIGGER_SQL = `
         SELECT pg_catalog.pg_get_triggerdef(t.oid, false) AS definition
         FROM pg_catalog.pg_trigger t
         JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = $1 AND c.relname = $2 AND t.tgname = $3 AND NOT t.tgisinternal`;
+        WHERE n.nspname = $1 AND c.relname = $2 AND t.tgname = $3 AND NOT t.tgisinternal
+        AND ${extensionMemberExclusion("c.oid", "pg_class")}`;
 
 /**
  * What ONE kind's definition text is, alongside the statement that reads it.
@@ -1957,8 +1984,10 @@ const OVERVIEW_SIZE_SQL = `
 const OVERVIEW_COUNTS_SQL = `
         SELECT
           (SELECT count(*) FROM information_schema.tables
-            WHERE ${schemaExclusion("table_schema")} AND table_type IN (${USER_TABLE_TYPES})) as table_count,
-          (SELECT count(*) FROM pg_indexes WHERE ${schemaExclusion("schemaname")}) as index_count
+            WHERE ${schemaExclusion("table_schema")} AND table_type IN (${USER_TABLE_TYPES})
+            AND ${extensionMemberTableExclusion("table_schema", "table_name")}) as table_count,
+          (SELECT count(*) FROM pg_indexes WHERE ${schemaExclusion("schemaname")}
+            AND ${extensionMemberTableExclusion("schemaname", "tablename")}) as index_count
       `;
 
 // getPerformanceMetrics: buffer cache hit ratio. NULL when there is nothing to
@@ -2082,21 +2111,45 @@ const ACTIVE_SESSIONS_SQL = `
         LIMIT $2
       `;
 
-// getTableStats: per-table stats. A schema WHERE clause is interpolated
-// between the two fragments at the call site.
-const TABLE_STATS_SELECT_SQL = `
+// The three size builtins the table statistics read, each taking `relid` - the table's own
+// oid, which pg_stat_user_tables already carries.
+//
+// They used to take `quote_ident(schemaname) || '.' || quote_ident(relname)`. Stock
+// PostgreSQL casts that text to `regclass` implicitly; CockroachDB v26.3.2 answers
+// `unknown signature: pg_table_size(string)` and RisingWave 3.1.0 fails to bind it, so the
+// whole read died on both and took Monitoring > Tables, Storage and the Admin > Operations
+// table list - and every per-table maintenance action with it (#1436). An oid needs no cast
+// and no name re-parsing, so an identifier holding a dot or a quote cannot be mis-resolved
+// either. Measured 2026-10-04: on PostgreSQL 18.6 both forms answer the same bytes.
+//
+// Each is INDEPENDENTLY absent on some relative, which is why they are a list rather than one
+// clause: measured on RisingWave 3.1.0, pg_table_size(relid) and pg_indexes_size(relid)
+// answer (44 and 0 on a seeded table) while pg_total_relation_size does not bind at all.
+const TABLE_SIZE_FNS = ["pg_table_size", "pg_indexes_size", "pg_total_relation_size"] as const;
+
+// getTableStats: per-table stats, with the caller's schema WHERE clause.
+//
+// No `pg_size_pretty()`: RisingWave does not bind that one either, and `formatBytes()`
+// already spells every other size this provider reports - the database size here, and the
+// object surface's relation sizes. Asking the server to format what this process formats
+// everywhere else was one more builtin to depend on and a second spelling of a byte count.
+//
+// The ORDER BY names the OUTPUT ALIAS rather than repeating the size expression, so dropping
+// a refused builtin below repairs the sort with it instead of leaving a call behind in a
+// clause the SELECT no longer has. `NULLS LAST` keeps an unmeasured table from heading the
+// list, and the schema and table names are the tie-breaker that makes the order total:
+// without one, every row of an engine that publishes no size at all sorts equal.
+function tableStatsSql(whereClause: string): string {
+  return `
         SELECT
           schemaname as schema_name,
           relname as table_name,
           n_live_tup as live_row_count,
           n_dead_tup as dead_row_count,
           n_live_tup + n_dead_tup as row_count,
-          pg_size_pretty(pg_table_size(quote_ident(schemaname) || '.' || quote_ident(relname))) as table_size,
-          pg_table_size(quote_ident(schemaname) || '.' || quote_ident(relname)) as table_size_bytes,
-          pg_size_pretty(pg_indexes_size(quote_ident(schemaname) || '.' || quote_ident(relname))) as index_size,
-          pg_indexes_size(quote_ident(schemaname) || '.' || quote_ident(relname)) as index_size_bytes,
-          pg_size_pretty(pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname))) as total_size,
-          pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname)) as total_size_bytes,
+          pg_table_size(relid) as table_size_bytes,
+          pg_indexes_size(relid) as index_size_bytes,
+          pg_total_relation_size(relid) as total_size_bytes,
           last_vacuum,
           last_autovacuum,
           last_analyze,
@@ -2107,11 +2160,63 @@ const TABLE_STATS_SELECT_SQL = `
             ELSE 0
           END as bloat_ratio
         FROM pg_stat_user_tables
-        `;
-
-const TABLE_STATS_ORDER_SQL = `
-        ORDER BY pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname)) DESC
+        ${whereClause}
+        ORDER BY total_size_bytes DESC NULLS LAST, schema_name, table_name
       `;
+}
+
+// One refused size builtin, replaced by a typed NULL so the column keeps its place and the
+// row survives. `NULL::bigint` rather than a bare NULL because the value is read as a byte
+// count and the ORDER BY sorts on it; measured to bind on PostgreSQL 18.6, CockroachDB
+// v26.3.2 and RisingWave 3.1.0 alike.
+//
+// NOT a 0: a 0 is a measurement, and nobody measured this one. The Storage tab's
+// `tableSizeKnown` gate and the Tables tab both read the absence and draw "N/A", which is
+// the rule BACKLOG D105 states and the reason `tableSizeBytes` is optional at all.
+function withoutSizeFn(fn: string): (sql: string) => string {
+  return (sql) => sql.replaceAll(`${fn}(relid)`, "NULL::bigint");
+}
+
+function isMissingSizeFnError(fn: string): (error: unknown) => boolean {
+  return (error) => error instanceof Error && error.message.toLowerCase().includes(fn);
+}
+
+/**
+ * One size column as the bytes it measured, or `undefined` where the engine published none.
+ *
+ * `pg` hands a bigint back as a string, so the conversion is not optional. A NULL is an
+ * absence, and so is anything that is not a finite number: the value is drawn as a size and
+ * summed into the Storage tab's shares, and a NaN there would spread through both.
+ */
+function sizeBytesOf(raw: unknown): number | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  const bytes = Number(raw);
+  return Number.isFinite(bytes) ? bytes : undefined;
+}
+
+/**
+ * The total a row can stand behind: the engine's own figure, or the two parts PostgreSQL
+ * defines it as when only the total was refused.
+ *
+ * `pg_total_relation_size` is documented as `pg_table_size` plus `pg_indexes_size`, so adding
+ * them is the engine's own arithmetic rather than this provider's guess. RisingWave 3.1.0
+ * refuses that one builtin alone, which left a row carrying a measured 44-byte table size
+ * beside a total of 0. Both the Tables tab's Size card and the Storage tab's share gate on
+ * `tableSizeBytes` by itself, because until now a measured table size always arrived with a
+ * measured total, so that 0 was summed and drawn as "0 B" over a table with bytes in it -
+ * the fabricated zero BACKLOG D105 is about, and the one this read exists to stop writing.
+ *
+ * `undefined` where either part is missing too: there is nothing to add up, and the caller
+ * drops the parts with it so those gates read the absence instead of summing the placeholder.
+ */
+function totalSizeBytesOf(
+  measured: number | undefined,
+  tableBytes: number | undefined,
+  indexBytes: number | undefined,
+): number | undefined {
+  if (measured !== undefined) return measured;
+  return tableBytes !== undefined && indexBytes !== undefined ? tableBytes + indexBytes : undefined;
+}
 
 // getIndexStats: per-index stats. A schema WHERE clause is interpolated
 // between the two fragments at the call site. `attname` is cast to `text` because
@@ -3470,6 +3575,21 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   /**
+   * One source read, retried once without the extension ownership test the trigger statement
+   * carries (#1599), on the same engines and for the same reason as `queryCounts`. Every other
+   * refusal leaves raw, so `readObjectSource` still files a missing source catalog as an
+   * unavailable part and maps the rest.
+   */
+  private async querySource(client: PoolClient, sql: string, params: unknown[]) {
+    try {
+      return await client.query(sql, params);
+    } catch (error) {
+      if (!isMissingExtensionCatalogError(error)) throw error;
+      return client.query(withoutExtensionOwnershipTest(sql), params);
+    }
+  }
+
+  /**
    * How many objects of each declared kind one schema holds.
    *
    * Three outcomes, and the type keeps all three apart. A kind the GROUP BY answered for
@@ -3803,7 +3923,7 @@ export class PostgresProvider extends SQLBaseProvider {
     const client = await this.pool!.connect();
     let rows: SourceRow[];
     try {
-      rows = (await client.query(statement.sql, statement.params)).rows as SourceRow[];
+      rows = (await this.querySource(client, statement.sql, statement.params)).rows as SourceRow[];
     } catch (error) {
       if (!isMissingSourceCatalogError(error)) throw mapDatabaseError(error, "postgres", statement.sql);
       return {
@@ -5247,6 +5367,40 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   /**
+   * The table statistics, retried without whichever size builtin the engine refuses (#1436).
+   *
+   * One repair per builtin, each applied to whatever statement is current, so an engine that
+   * refuses two of the three still answers: RisingWave 3.1.0 publishes pg_table_size and
+   * pg_indexes_size and not pg_total_relation_size, and nothing here assumes the three stand
+   * or fall together.
+   *
+   * A refusal that is NOT one of them is rethrown, which is the distinction `MonitoringData`
+   * draws: an absent panel carries the engine's sentence and means "could not answer", while
+   * rows with an absent size mean "answered, and published no size". A missing
+   * `pg_stat_user_tables` or a planner restriction leaves nothing to answer with and still
+   * reaches the panel as itself.
+   */
+  private async queryTableStats(client: PoolClient, whereClause: string, params: unknown[]) {
+    const remainingFallbacks = TABLE_SIZE_FNS.map((fn) => ({
+      matches: isMissingSizeFnError(fn),
+      apply: withoutSizeFn(fn),
+    }));
+    let currentSql = tableStatsSql(whereClause);
+    for (;;) {
+      try {
+        return await client.query(currentSql, params);
+      } catch (error) {
+        const index = remainingFallbacks.findIndex((fallback) => fallback.matches(error));
+        // currentSql, not the original: after a repair the server received the rewritten
+        // statement, and quoting the first one would point a reader at text it never saw.
+        if (index === -1) throw mapDatabaseError(error, "postgres", currentSql);
+        currentSql = remainingFallbacks[index].apply(currentSql);
+        remainingFallbacks.splice(index, 1);
+      }
+    }
+  }
+
+  /**
    * Get table statistics
    */
   public async getTableStats(options?: { schema?: string }): Promise<TableStats[]> {
@@ -5259,24 +5413,49 @@ export class PostgresProvider extends SQLBaseProvider {
       const whereClause = schema ? `WHERE schemaname = $1` : `WHERE ${schemaExclusion("schemaname")}`;
       const params = schema ? [schema] : [];
 
-      const res = await client.query(`${TABLE_STATS_SELECT_SQL}${whereClause}${TABLE_STATS_ORDER_SQL}`, params);
+      const res = await this.queryTableStats(client, whereClause, params);
 
-      return res.rows.map((r) => ({
-        schemaName: r.schema_name,
-        tableName: r.table_name,
-        rowCount: parseInt(r.row_count || "0"),
-        liveRowCount: parseInt(r.live_row_count || "0"),
-        deadRowCount: parseInt(r.dead_row_count || "0"),
-        tableSize: r.table_size || "0 bytes",
-        tableSizeBytes: parseInt(r.table_size_bytes || "0"),
-        indexSize: r.index_size || "0 bytes",
-        indexSizeBytes: parseInt(r.index_size_bytes || "0"),
-        totalSize: r.total_size || "0 bytes",
-        totalSizeBytes: parseInt(r.total_size_bytes || "0"),
-        lastVacuum: r.last_vacuum || r.last_autovacuum ? new Date(r.last_vacuum || r.last_autovacuum) : undefined,
-        lastAnalyze: r.last_analyze || r.last_autoanalyze ? new Date(r.last_analyze || r.last_autoanalyze) : undefined,
-        bloatRatio: parseFloat(r.bloat_ratio || "0"),
-      }));
+      return res.rows.map((r) => {
+        // Each size is kept only where the engine published it. A refused builtin arrives as
+        // the typed NULL `withoutSizeFn()` left behind, and CockroachDB v26.3.2 answers
+        // `pg_table_size(<oid>)` with NULL for a table it has, so absence reaches here as a
+        // value and not only as a repair.
+        const tableBytes = sizeBytesOf(r.table_size_bytes);
+        const indexBytes = sizeBytesOf(r.index_size_bytes);
+        const totalBytes = totalSizeBytesOf(sizeBytesOf(r.total_size_bytes), tableBytes, indexBytes);
+        // A part is published only where the row can also stand behind a total. Those two
+        // panels read `tableSizeBytes` as "this engine publishes per-table bytes at all", and
+        // a part without a total leaves the required `totalSizeBytes` carrying the 0 they
+        // would then sum, so an underivable total takes the parts with it. No engine measured
+        // here refuses a part AND the total - RisingWave refuses the total alone, CockroachDB
+        // answers NULL for all three - so this is the shape being closed rather than one seen.
+        const sized = totalBytes !== undefined;
+        return {
+          schemaName: r.schema_name,
+          tableName: r.table_name,
+          rowCount: parseInt(r.row_count || "0"),
+          liveRowCount: parseInt(r.live_row_count || "0"),
+          deadRowCount: parseInt(r.dead_row_count || "0"),
+          ...(sized && tableBytes !== undefined
+            ? { tableSize: formatBytes(tableBytes), tableSizeBytes: tableBytes }
+            : {}),
+          ...(sized && indexBytes !== undefined
+            ? { indexSize: formatBytes(indexBytes), indexSizeBytes: indexBytes }
+            : {}),
+          // `totalSize` and `totalSizeBytes` are the two the type still demands, so an
+          // unmeasured total is spelled the way the other providers spell it, "N/A" beside a 0
+          // (`sqlite.ts`, `libsql/introspect.ts`). That residual 0 is D105's to remove, for
+          // every provider at once, and not this read's to invent a shape for. It is only ever
+          // read beside an absent `tableSizeBytes` now, which is what makes those panels
+          // show "N/A" rather than add it up.
+          totalSize: totalBytes === undefined ? "N/A" : formatBytes(totalBytes),
+          totalSizeBytes: totalBytes ?? 0,
+          lastVacuum: r.last_vacuum || r.last_autovacuum ? new Date(r.last_vacuum || r.last_autovacuum) : undefined,
+          lastAnalyze:
+            r.last_analyze || r.last_autoanalyze ? new Date(r.last_analyze || r.last_autoanalyze) : undefined,
+          bloatRatio: parseFloat(r.bloat_ratio || "0"),
+        };
+      });
     } finally {
       client.release();
     }

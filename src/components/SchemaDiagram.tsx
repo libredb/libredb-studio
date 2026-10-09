@@ -130,8 +130,8 @@ function SchemaDiagramInner({ schema, onClose, capabilities }: SchemaDiagramProp
   }, [relations, deferredQuery]);
 
   const graph = useMemo(
-    () => buildGraph(filteredSchema, { compact: compactMode, expandedTables: new Set(expandedTables) }),
-    [filteredSchema, compactMode, expandedTables],
+    () => buildGraph(filteredSchema, { compact: compactMode, expandedTables: new Set(expandedTables), capabilities }),
+    [filteredSchema, compactMode, expandedTables, capabilities],
   );
 
   // The STRUCTURE of the graph (tables, relationships, compact mode). Both the

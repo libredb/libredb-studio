@@ -6,11 +6,11 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.0.0
-    description: Open-source web-based SQL IDE for twenty-six engines - PostgreSQL,
+    description: Open-source web-based SQL IDE for twenty-seven engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
       ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra,
       libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB
-      3 and Oxia - with AI-powered query assistance.
+      3, Oxia and Databend - with AI-powered query assistance.
     olm.skipRange: '>=0.0.0 <0.0.0'
     repository: https://github.com/libredb/libredb-studio
     support: LibreDB
@@ -25,7 +25,8 @@ spec:
   customresourcedefinitions:
     owned:
     - description: A LibreDB Studio instance managed by the operator. The spec mirrors
-        the Helm chart values; every field left unset falls back to the chart defaults.
+        the Helm chart values except extraObjects, which the operator refuses; every
+        field left unset falls back to the chart defaults.
       displayName: LibreDB Studio
       kind: LibreDBStudio
       name: libredbstudios.studio.libredb.org
@@ -35,7 +36,7 @@ spec:
     MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
     ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache
     Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB,
-    InfluxDB 3 and Oxia from the browser,
+    InfluxDB 3, Oxia and Databend from the browser,
     with AI-powered query assistance (natural-language-to-SQL, explain, fix),
     an ERD viewer, schema diff and a data profiler. No desktop client required.
 
@@ -102,6 +103,7 @@ spec:
   - influxql
   - influxdb3
   - oxia
+  - databend
   links:
   - name: Website
     url: https://libredb.org

@@ -5,6 +5,7 @@ import { Handle, Position, useUpdateNodeInternals, type NodeProps } from "@xyflo
 import { Database, Hash, Key, Link2, Type } from "lucide-react";
 import { objectPathLabel } from "@/lib/db/object-path";
 import type { ColumnSchema } from "@/lib/types";
+import { isNumericType } from "../results-grid/numeric-sort";
 import { TABLE_SOURCE_HANDLE, TABLE_TARGET_HANDLE, type TableFlowNode } from "./graph";
 import { useDiagramActions } from "./diagram-context";
 import { useTableHighlighted } from "./highlight-store";
@@ -60,10 +61,7 @@ const ColumnRow = memo(function ColumnRow({ column, isFk, hasSourceHandle, hasTa
           <Key strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-yellow" />
         ) : isFk ? (
           <Link2 strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-blue" />
-        ) : // The FAMILY, where the provider reports one beside the declaration (#1033): MySQL
-        // and MariaDB report `enum('int','text')` in `type`, which contains the four
-        // characters this test looks for and is not an integer.
-        (column.baseType ?? column.type).toLowerCase().includes("int") ? (
+        ) : isNumericType(column.baseType ?? column.type) ? (
           <Hash strokeWidth={1.5} className="w-2.5 h-2.5 text-fg-muted" />
         ) : (
           <Type strokeWidth={1.5} className="w-2.5 h-2.5 text-fg-muted" />
@@ -78,7 +76,7 @@ const ColumnRow = memo(function ColumnRow({ column, isFk, hasSourceHandle, hasTa
       </div>
       <div className="flex items-center gap-1">
         {column.nullable === false && <span className="text-[0.5rem] text-hue-red/60">NN</span>}
-        <span className="text-[0.625rem] text-fg-subtle font-mono uppercase">{column.type}</span>
+        <span className="text-[0.625rem] text-fg-subtle font-mono">{column.type}</span>
       </div>
     </div>
   );
@@ -88,7 +86,7 @@ export const TableNode = memo(function TableNode({ id, data }: NodeProps<TableFl
   const highlighted = useTableHighlighted(id);
   const { toggleExpand } = useDiagramActions();
   const updateNodeInternals = useUpdateNodeInternals();
-  const { table, compact, visibleColumns, hiddenCount, sourceAnchors, targetAnchors } = data;
+  const { table, kindLabel, compact, visibleColumns, hiddenCount, sourceAnchors, targetAnchors } = data;
 
   // The rendered handle set changes with compact mode, column visibility and
   // FK anchors (which arrive asynchronously via the second-phase relations
@@ -136,6 +134,9 @@ export const TableNode = memo(function TableNode({ id, data }: NodeProps<TableFl
         <span className="text-xs font-medium text-fg" title={objectPathLabel(table.path)}>
           {table.name}
         </span>
+        {kindLabel && (
+          <span className="text-[0.625rem] text-fg-secondary border border-hairline rounded px-1">{kindLabel}</span>
+        )}
         <span className="text-[0.625rem] text-fg-subtle ml-auto">{table.columns?.length || 0} cols</span>
       </div>
       {!compact && (

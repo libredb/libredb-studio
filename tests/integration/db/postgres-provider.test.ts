@@ -729,6 +729,11 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
 
   // getTableStats: pg_stat_user_tables
   if (normalized.includes("pg_stat_user_tables") && normalized.includes("n_live_tup")) {
+    // A size column the statement no longer asks the engine for answers NULL, the way the
+    // server answers the `NULL::bigint` a refused builtin is rewritten to (#1436). Without
+    // this the mock would hand back bytes for a column the statement does not select, and a
+    // test of the repair would pass on rows no engine could have produced.
+    const sized = (fn: string, bytes: string): string | null => (normalized.includes(`${fn}(relid)`) ? bytes : null);
     return Promise.resolve({
       rows: [
         {
@@ -737,12 +742,9 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
           live_row_count: "1000",
           dead_row_count: "50",
           row_count: "1050",
-          table_size: "64 kB",
-          table_size_bytes: "65536",
-          index_size: "32 kB",
-          index_size_bytes: "32768",
-          total_size: "96 kB",
-          total_size_bytes: "98304",
+          table_size_bytes: sized("pg_table_size", "65536"),
+          index_size_bytes: sized("pg_indexes_size", "32768"),
+          total_size_bytes: sized("pg_total_relation_size", "98304"),
           last_vacuum: null,
           last_autovacuum: new Date().toISOString(),
           last_analyze: null,
@@ -755,12 +757,9 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
           live_row_count: "5000",
           dead_row_count: "200",
           row_count: "5200",
-          table_size: "256 kB",
-          table_size_bytes: "262144",
-          index_size: "128 kB",
-          index_size_bytes: "131072",
-          total_size: "384 kB",
-          total_size_bytes: "393216",
+          table_size_bytes: sized("pg_table_size", "262144"),
+          index_size_bytes: sized("pg_indexes_size", "131072"),
+          total_size_bytes: sized("pg_total_relation_size", "393216"),
           last_vacuum: new Date().toISOString(),
           last_autovacuum: null,
           last_analyze: new Date().toISOString(),
@@ -2273,10 +2272,15 @@ describe("PostgresProvider", () => {
     // confirmed against a live instance. They are the schemas a wire-compatible
     // engine puts in pg_tables/information_schema alongside a user's own tables.
     const DOCUMENTED_ENGINE_SCHEMAS = [
-      // Materialize - materialize.com/docs/sql/system-catalog/
+      // Materialize - materialize.com/docs/sql/system-catalog/ documents the first three.
+      // The other two were measured on v26.44.1 (#1428).
       "mz_catalog",
       "mz_internal",
       "mz_introspection",
+      "mz_unsafe",
+      "mz_catalog_unstable",
+      // RisingWave - docs.risingwave.com/sql/system-catalogs/rw-catalog. Measured on 3.1.0.
+      "rw_catalog",
       // CockroachDB - cockroachlabs.com/docs/stable/system-catalogs
       "crdb_internal",
       "pg_extension",
@@ -2423,7 +2427,11 @@ describe("PostgresProvider", () => {
     // PanelUnavailable then reads that sentence to decide whether the absence is an
     // engine limit or a refused statement (see monitoring-absence.ts).
 
-    test("getTableStats() surfaces the engine's sentence instead of an empty result", async () => {
+    // A refused SIZE is no longer a refused PANEL (#1436): the sizes are three columns of a
+    // read whose other columns the engine answers, so each is dropped on its own and the rows
+    // arrive with that size absent. What still rejects is a refusal that leaves NOTHING to
+    // answer with - the catalog itself, or a planner restriction, both below.
+    test("getTableStats() answers the rows when only the size builtin is refused", async () => {
       mockQueryFn = (sql: string) => {
         if (sql.includes("pg_table_size")) {
           return Promise.reject(new Error('function "pg_table_size" does not exist'));
@@ -2433,7 +2441,9 @@ describe("PostgresProvider", () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
-      await expect(provider.getTableStats()).rejects.toThrow(/pg_table_size/);
+      const stats = await provider.getTableStats();
+      expect(stats.length).toBe(2);
+      expect(stats[0].tableSizeBytes).toBeUndefined();
     });
 
     test("getIndexStats() surfaces the engine's sentence instead of an empty result", async () => {
@@ -3280,7 +3290,13 @@ describe("PostgresProvider", () => {
       expect(Array.isArray(stats)).toBe(true);
     });
 
-    test("quotes identifiers in the stats query for mixed-case safety", async () => {
+    // The size builtins used to take `quote_ident(schemaname) || '.' || quote_ident(relname)`.
+    // Stock PostgreSQL casts that text to regclass; CockroachDB v26.3.2 answers `unknown
+    // signature: pg_table_size(string)` and RisingWave 3.1.0 fails to bind it, which killed the
+    // whole read on both (#1436). `relid` is the table's oid, already in pg_stat_user_tables, so
+    // it needs no cast and no name re-parsing. No `pg_size_pretty()` either: RisingWave does not
+    // bind that one, and `formatBytes()` already spells every other size this provider reports.
+    test("the size builtins take relid, never a concatenated name", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       let capturedSql = "";
@@ -3289,8 +3305,109 @@ describe("PostgresProvider", () => {
         return defaultMockQuery(sql);
       };
       await provider.getTableStats();
-      expect(capturedSql).toContain("quote_ident(schemaname)");
-      expect(capturedSql).toContain("quote_ident(relname)");
+      expect(capturedSql).toContain("pg_table_size(relid)");
+      expect(capturedSql).toContain("pg_indexes_size(relid)");
+      expect(capturedSql).toContain("pg_total_relation_size(relid)");
+      expect(capturedSql).not.toContain("quote_ident");
+      expect(capturedSql).not.toContain("pg_size_pretty");
+    });
+
+    test("formats the sizes itself, from the bytes the engine answered", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const stats = await provider.getTableStats();
+      const users = stats.find((s) => s.tableName === "users")!;
+      expect(users.tableSizeBytes).toBe(65536);
+      expect(users.tableSize).toBe("64 KB");
+      expect(users.indexSize).toBe("32 KB");
+      expect(users.totalSize).toBe("96 KB");
+    });
+
+    // RisingWave 3.1.0's measured shape: pg_table_size and pg_indexes_size answer, and
+    // pg_total_relation_size does not bind. The rows and the two sizes that ARE published
+    // survive, and the total comes from PostgreSQL's own definition of it rather than from a
+    // 0 nobody measured (BACKLOG D105).
+    //
+    // Measured on RisingWave 3.1.0 on 2026-10-08, one table of two rows:
+    //   pg_table_size(relid)           -> 89
+    //   pg_indexes_size(relid)         -> 0
+    //   pg_total_relation_size(relid)  -> "function pg_total_relation_size(integer) does not exist"
+    //
+    // Before this, the row reached the Tables tab as tableSizeBytes 89 beside totalSizeBytes 0,
+    // and the Size card summed that 0 into "0 B" over a table with bytes in it, because the
+    // card and the Storage tab's share gate on `tableSizeBytes` alone.
+    test("a refused total is derived from the two parts the engine did publish", async () => {
+      let attempts = 0;
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("pg_total_relation_size")) {
+          attempts++;
+          return Promise.reject(new Error("Failed to bind expression: pg_total_relation_size"));
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const stats = await provider.getTableStats();
+      expect(attempts).toBe(1);
+      expect(stats.length).toBe(2);
+      const users = stats.find((s) => s.tableName === "users")!;
+      expect(users.tableSizeBytes).toBe(65536);
+      expect(users.indexSizeBytes).toBe(32768);
+      // pg_total_relation_size is documented as pg_table_size plus pg_indexes_size.
+      expect(users.totalSizeBytes).toBe(65536 + 32768);
+      expect(users.totalSize).toBe("96 KB");
+      // Never the placeholder beside a measured part, which is what drew "0 B".
+      expect(stats.every((s) => s.tableSizeBytes === undefined || s.totalSizeBytes > 0)).toBe(true);
+    });
+
+    // The shape no engine measured here produces, and the one the derivation cannot repair:
+    // with a part missing too there is nothing to add up. The parts go with the total, so the
+    // panels read the absence rather than summing the 0 the required field still carries.
+    test("a total that cannot be derived takes the measured part with it", async () => {
+      mockQueryFn = (sql: string) => {
+        for (const fn of ["pg_indexes_size", "pg_total_relation_size"]) {
+          if (sql.includes(`${fn}(relid)`)) {
+            return Promise.reject(new Error(`function "${fn}" does not exist`));
+          }
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const stats = await provider.getTableStats();
+      const users = stats.find((s) => s.tableName === "users")!;
+      expect(users.tableSizeBytes).toBeUndefined();
+      expect(users.indexSizeBytes).toBeUndefined();
+      expect(users.totalSize).toBe("N/A");
+      // The rows are what the panel was opened for, and they are still there.
+      expect(users.liveRowCount).toBe(1000);
+    });
+
+    test("each size builtin is dropped on its own, so one absence does not cost the others", async () => {
+      const refused: string[] = [];
+      mockQueryFn = (sql: string) => {
+        for (const fn of ["pg_table_size", "pg_indexes_size", "pg_total_relation_size"]) {
+          if (sql.includes(`${fn}(relid)`) && !refused.includes(fn)) {
+            refused.push(fn);
+            return Promise.reject(new Error(`function "${fn}" does not exist`));
+          }
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const stats = await provider.getTableStats();
+      expect(refused.length).toBe(3);
+      expect(stats.length).toBe(2);
+      const users = stats.find((s) => s.tableName === "users")!;
+      expect(users.tableSizeBytes).toBeUndefined();
+      expect(users.indexSizeBytes).toBeUndefined();
+      expect(users.totalSize).toBe("N/A");
+      // The rows are still the point: the row counts a user came to the panel for survive.
+      expect(users.liveRowCount).toBe(1000);
     });
   });
 
@@ -6471,6 +6588,108 @@ describe("PostgreSQL extension-owned objects (#1429)", () => {
 });
 
 /**
+ * The places #1429 did not reach, because they read other catalogs (#1599).
+ *
+ * With PostGIS in `public`, the Overview counted `spatial_ref_sys` as a table and its
+ * primary key as an index, and the Triggers folder listed a trigger on that table, while the
+ * Tables folder already hid the table. The mock answers the extension's objects unless the
+ * statement carries the ownership test for them, the same way the #1429 mock does.
+ */
+describe("PostgreSQL objects on extension-owned tables (#1599)", () => {
+  function makeProvider() {
+    return new PostgresProvider(makePgConfig());
+  }
+
+  const TRIGGER_DEFINITION =
+    "CREATE TRIGGER srs_audit AFTER UPDATE ON public.spatial_ref_sys FOR EACH ROW EXECUTE FUNCTION audit()";
+
+  function extensionTables(statements: string[], refuseOwnership = false) {
+    return async (sql: string) => {
+      statements.push(sql);
+      if (refuseOwnership && sql.includes("pg_depend")) {
+        throw Object.assign(new Error('relation "pg_depend" does not exist'), { code: "42P01" });
+      }
+      const tableOwnershipTested = /c\.oid NOT IN \(SELECT d\.objid FROM pg_depend d [^)]*'pg_class'::regclass/.test(
+        sql,
+      );
+      const tables = /table_schema, table_name\) NOT IN \(SELECT n\.nspname, c\.relname FROM pg_class c/.test(sql)
+        ? 1
+        : 2;
+      const indexes = /schemaname, tablename\) NOT IN \(SELECT n\.nspname, c\.relname FROM pg_class c/.test(sql)
+        ? 1
+        : 2;
+      const triggers = tableOwnershipTested
+        ? [{ name: "orders_stamp", parent: "orders" }]
+        : [
+            { name: "orders_stamp", parent: "orders" },
+            { name: "srs_audit", parent: "spatial_ref_sys" },
+          ];
+      if (sql.includes("as table_count")) {
+        return { rows: [{ table_count: String(tables), index_count: String(indexes) }] };
+      }
+      // COUNTS_SQL is one UNION whose relation arm carries the same pg_class test, so the trigger
+      // count is answered from the trigger arm's own text, which starts at SELECT 'trigger'.
+      if (sql.includes("GROUP BY kind")) {
+        const triggerArm = sql.slice(sql.indexOf("SELECT 'trigger'"));
+        const triggerArmTested = /c\.oid NOT IN \(SELECT d\.objid FROM pg_depend d [^)]*'pg_class'::regclass/.test(
+          triggerArm,
+        );
+        return { rows: [{ kind: "trigger", n: triggerArmTested ? 1 : 2 }] };
+      }
+      if (sql.includes("pg_get_triggerdef"))
+        return { rows: tableOwnershipTested ? [] : [{ definition: TRIGGER_DEFINITION }] };
+      if (sql.includes("tgname")) return { rows: triggers };
+      return defaultMockQuery(sql);
+    };
+  }
+
+  test("the Overview counts leave out a table an extension created, and its indexes", async () => {
+    mockQueryFn = extensionTables([]);
+    const provider = makeProvider();
+    await provider.connect();
+
+    const overview = await provider.getOverview();
+    expect(overview.tableCount).toBe(1);
+    expect(overview.indexCount).toBe(1);
+    await provider.disconnect();
+  });
+
+  test("the Triggers folder lists, counts and reads only triggers on the user's own tables", async () => {
+    mockQueryFn = extensionTables([]);
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect((await provider.listObjects(["public"], "trigger")).map((object) => object.path)).toEqual([
+      ["public", "orders", "orders_stamp"],
+    ]);
+    expect((await provider.countObjects(["public"])).trigger).toEqual({ count: 1 });
+    await expect(provider.readObjectSource(["public", "spatial_ref_sys", "srs_audit"], "trigger")).rejects.toThrow(
+      /holds no trigger called "srs_audit"/,
+    );
+    await provider.disconnect();
+  });
+
+  test("an engine without pg_depend still counts, lists and reads, with the test dropped", async () => {
+    const statements: string[] = [];
+    mockQueryFn = extensionTables(statements, true);
+    const provider = makeProvider();
+    await provider.connect();
+
+    const overview = await provider.getOverview();
+    expect(overview.tableCount).toBe(2);
+    expect(overview.indexCount).toBe(2);
+    expect(await provider.listObjects(["public"], "trigger")).toHaveLength(2);
+    expect(statements.at(-1)).not.toContain("pg_depend");
+    expect((await provider.countObjects(["public"])).trigger).toEqual({ count: 2 });
+    expect(statements.at(-1)).not.toContain("pg_depend");
+    const document = await provider.readObjectSource(["public", "spatial_ref_sys", "srs_audit"], "trigger");
+    expect(statements.at(-1)).not.toContain("pg_depend");
+    expect(document.parts[0]).toMatchObject({ text: TRIGGER_DEFINITION });
+    await provider.disconnect();
+  });
+});
+
+/**
  * The fifth provider method (#789): every relation of one kind in one schema, described in
  * ONE round trip.
  *
@@ -6952,7 +7171,9 @@ const EXPECTED_TRIGGER_SOURCE_SQL =
   "FROM pg_catalog.pg_trigger t " +
   "JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid " +
   "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace " +
-  "WHERE n.nspname = $1 AND c.relname = $2 AND t.tgname = $3 AND NOT t.tgisinternal";
+  "WHERE n.nspname = $1 AND c.relname = $2 AND t.tgname = $3 AND NOT t.tgisinternal " +
+  "AND c.oid NOT IN (SELECT d.objid FROM pg_depend d JOIN pg_extension e ON e.oid = d.refobjid " +
+  "WHERE d.classid = 'pg_class'::regclass AND d.deptype = 'e')";
 
 describe("PostgreSQL object source", () => {
   function makeProvider() {

@@ -21,14 +21,14 @@ metadata:
       ]
     capabilities: Basic Install
     categories: Database, Developer Tools
-    containerImage: ghcr.io/libredb/libredb-studio-operator:0.18.0
-    createdAt: "2026-10-05T09:28:45Z"
-    description: Open-source web-based SQL IDE for twenty-six engines - PostgreSQL,
+    containerImage: ghcr.io/libredb/libredb-studio-operator:0.18.1
+    createdAt: "2026-10-09T00:08:28Z"
+    description: Open-source web-based SQL IDE for twenty-seven engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
       ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra,
       libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB
-      3 and Oxia - with AI-powered query assistance.
-    olm.skipRange: '>=0.0.0 <0.18.0'
+      3, Oxia and Databend - with AI-powered query assistance.
+    olm.skipRange: '>=0.0.0 <0.18.1'
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: helm.sdk.operatorframework.io/v1
     repository: https://github.com/libredb/libredb-studio
@@ -37,14 +37,15 @@ metadata:
     operatorframework.io/arch.amd64: supported
     operatorframework.io/arch.arm64: supported
     operatorframework.io/os.linux: supported
-  name: libredb-studio-operator.v0.18.0
+  name: libredb-studio-operator.v0.18.1
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
   customresourcedefinitions:
     owned:
     - description: A LibreDB Studio instance managed by the operator. The spec mirrors
-        the Helm chart values; every field left unset falls back to the chart defaults.
+        the Helm chart values except extraObjects, which the operator refuses; every
+        field left unset falls back to the chart defaults.
       displayName: LibreDB Studio
       kind: LibreDBStudio
       name: libredbstudios.studio.libredb.org
@@ -54,7 +55,7 @@ spec:
     MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
     ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache
     Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB,
-    InfluxDB 3 and Oxia from the browser,
+    InfluxDB 3, Oxia and Databend from the browser,
     with AI-powered query assistance (natural-language-to-SQL, explain, fix),
     an ERD viewer, schema diff and a data profiler. No desktop client required.
 
@@ -262,7 +263,7 @@ spec:
                 - --leader-elect
                 - --leader-election-id=libredb-studio-operator
                 - --health-probe-bind-address=:8081
-                image: ghcr.io/libredb/libredb-studio-operator:0.18.0
+                image: ghcr.io/libredb/libredb-studio-operator:0.18.1
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -373,6 +374,7 @@ spec:
   - influxql
   - influxdb3
   - oxia
+  - databend
   links:
   - name: Website
     url: https://libredb.org
@@ -390,4 +392,4 @@ spec:
   provider:
     name: LibreDB
     url: https://libredb.org
-  version: 0.18.0
+  version: 0.18.1

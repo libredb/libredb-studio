@@ -185,10 +185,17 @@ const POSTGRES_SYSTEM_SCHEMAS = [
   "pg_catalog",
   "information_schema",
   "pg_toast",
-  // Materialize - materialize.com/docs/sql/system-catalog/
+  // Materialize - materialize.com/docs/sql/system-catalog/ documents the first three.
+  // `mz_unsafe` and `mz_catalog_unstable` are not on that page; Materialize v26.44.1
+  // listed both beside a user's own schemas, so they are here on measurement (#1428).
   "mz_catalog",
   "mz_internal",
   "mz_introspection",
+  "mz_unsafe",
+  "mz_catalog_unstable",
+  // RisingWave - docs.risingwave.com/sql/system-catalogs/rw-catalog. The schema holds
+  // the system tables; RisingWave 3.1.0 listed 74 of them as user objects (#1428).
+  "rw_catalog",
   // CockroachDB - cockroachlabs.com/docs/stable/system-catalogs enumerates exactly
   // four schemas; the two below are the ones stock PostgreSQL does not also have.
   "crdb_internal",

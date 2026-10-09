@@ -30,6 +30,7 @@
   <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
 </p>
 <p align="center">
+  <a href="https://node-oracledb.readthedocs.io/en/latest/user_guide/appendix_b.html#libredb-studio">Oracle</a>、
   <a href="https://planet.mysql.com/showcase/?search=LibreDB">MySQL</a>、
   <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>、
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>、
@@ -45,6 +46,8 @@
   <a href="https://docs.starrocks.io/docs/integrations/IDE_integrations/LibreDB_Studio/">StarRocks</a>、
   <a href="https://aiven.io/docs/products/postgresql/howto/connect-libredb-studio">Aiven for PostgreSQL</a>、
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>、
+  <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>、
+  <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>、
   <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>
   の公式ドキュメントにも掲載
 </p>

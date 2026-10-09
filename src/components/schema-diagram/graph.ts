@@ -2,6 +2,8 @@ import type { Edge, Node } from "@xyflow/react";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import { resolveObjectAddress } from "@/lib/db/object-address";
 import { pathKey } from "@/lib/db/object-path";
+import { findKind } from "@/lib/db/object-kinds";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema, ForeignKeySchema } from "@/lib/types";
 
 /** Maximum column rows rendered per table card before the "+N more" expander. */
@@ -12,6 +14,7 @@ export const TABLE_TARGET_HANDLE = "__table-target";
 
 export interface TableNodeData extends Record<string, unknown> {
   table: DetailedObject;
+  kindLabel?: string;
   compact: boolean;
   visibleColumns: readonly ColumnSchema[];
   hiddenCount: number;
@@ -35,6 +38,7 @@ export interface FkColumnMap {
 export interface BuildGraphOptions {
   compact: boolean;
   expandedTables?: Set<string>;
+  capabilities?: ProviderCapabilities;
 }
 
 export interface BuiltGraph {
@@ -260,7 +264,8 @@ function gridPosition(index: number, total: number, compact: boolean): { x: numb
  * lives in the highlight store so selecting a table never rebuilds the graph.
  */
 export function buildGraph(schema: readonly DetailedObject[], options: BuildGraphOptions): BuiltGraph {
-  const { compact, expandedTables } = options;
+  const { compact, expandedTables, capabilities } = options;
+  const showKindLabels = new Set(schema.map((table) => table.kind)).size > 1;
   const { sources, targets } = computeFkColumnMap(schema);
 
   const fkSpecs = collectFkEdgeSpecs(schema);
@@ -294,6 +299,7 @@ export function buildGraph(schema: readonly DetailedObject[], options: BuildGrap
       position: gridPosition(index, schema.length, compact),
       data: {
         table,
+        kindLabel: showKindLabels && capabilities ? findKind(capabilities, table.kind)?.label : undefined,
         compact,
         visibleColumns: visible,
         hiddenCount,

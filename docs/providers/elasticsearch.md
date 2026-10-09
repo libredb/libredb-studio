@@ -888,12 +888,13 @@ index would tell the user it is gone when it is merely closed, and a query again
 engine's own refusal, which says exactly what happened.
 
 **System indices are hidden by default.** The transport flags an index whose name is dot-prefixed, or
-which matches the fork's date-suffixed query-insights shape
-(`DOT_PREFIXED` and `OPENSEARCH_QUERY_INSIGHTS`, [http-transport.ts](../../src/lib/db/providers/sql/search/http-transport.ts)), and
-`isSystemIndex()` ([introspect.ts](../../src/lib/db/providers/sql/search/introspect.ts)) is where
-the product decides what to do with the flag. A stock Elasticsearch node ships none of these — the
-measured cluster listed only the three probe indices — but the same code hides two of three on a stock
-OpenSearch node, which is why the rule is a flag rather than a filter applied on the wire.
+which matches the fork's date-suffixed query-insights shape, or the security plugin's
+`security-auditlog-*` audit indices (measured on OpenSearch 3.9.0; the same flag, because the two
+products share the transport). `isSystemIndex()` in
+[introspect.ts](../../src/lib/db/providers/sql/search/introspect.ts) is where the product decides what
+to do with the flag. A stock Elasticsearch node ships none of these — the measured cluster listed only
+the three probe indices — but the same code hides the engine's own indices on a stock OpenSearch node,
+which is why the rule is a flag rather than a filter applied on the wire.
 Hiding them is what the object surface does: `isSystemIndex()` is consulted for every listing and
 count, so a folder's badge and its rows agree about what is shown.
 
@@ -921,7 +922,7 @@ folders; first paint costs one `countObjects` and no container walk.
 
 | Kind | Role | Source | Filter |
 |---|---|---|---|
-| `index` | relation, accepts row writes | `GET /_cat/indices?format=json&bytes=b` | dot prefix, plus OpenSearch's date-suffixed `top_queries-*` |
+| `index` | relation, accepts row writes | `GET /_cat/indices?format=json&bytes=b` | dot prefix, OpenSearch's date-suffixed `top_queries-*`, and the security plugin's `security-auditlog-*` |
 | `alias` | relation | `GET /_alias`, flattened and deduplicated | dot prefix or `_meta.managed` |
 | `stream` | relation | `GET /_data_stream` | dot prefix or `_meta.managed` |
 | `pipeline` | config | `GET /_ingest/pipeline` | dot prefix or `_meta.managed` |

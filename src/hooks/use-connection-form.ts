@@ -152,7 +152,9 @@ export const CONNECTION_FORM_DEFAULTS = {
   queryTimeout: "",
   connectionString: "",
   mongoConnectionMode: "host" as "host" | "connectionString",
-  environment: "local" as ConnectionEnvironment,
+  // Unlabelled until the user picks a label: Other shows no badge, where Local put a
+  // LOCAL badge on every connection nobody labelled, cloud ones included.
+  environment: "other" as ConnectionEnvironment,
   // SSL/TLS
   showSSL: false,
   sslMode: "disable" as SSLMode,
@@ -508,7 +510,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       setSchema(editConnection.schema || "");
       setQueryTimeout(editConnection.queryTimeout?.toString() ?? "");
       setConnectionString(editConnection.connectionString || "");
-      setEnvironment(editConnection.environment || "local");
+      setEnvironment(editConnection.environment || CONNECTION_FORM_DEFAULTS.environment);
       if (editConnection.connectionString) {
         setMongoConnectionMode("connectionString");
       }
@@ -731,7 +733,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       createdAt: editConnection?.createdAt || new Date(),
       environment,
       color:
-        editConnection?.color && (editConnection.environment ?? "local") === environment
+        editConnection?.color && (editConnection.environment ?? CONNECTION_FORM_DEFAULTS.environment) === environment
           ? editConnection.color
           : ENVIRONMENT_COLORS[environment],
       ...(sslConfig ? { ssl: sslConfig } : {}),

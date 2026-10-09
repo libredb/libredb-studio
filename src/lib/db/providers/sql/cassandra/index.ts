@@ -106,6 +106,7 @@ import {
   describeObjects as readObjectDetails,
   readObjectSource as readSource,
   listContainers as readContainers,
+  readEngineKeyspaces,
   listObjects as readObjects,
 } from "./objects";
 import { CassandraTransportError, type CassandraTransport } from "./transport";
@@ -192,6 +193,7 @@ export class CassandraProvider extends SQLBaseProvider {
    * connection object never carries the previous server's answer.
    */
   private facts: CassandraServerFacts | null;
+  private engineKeyspaces: readonly string[] = [];
 
   /**
    * The transport is injectable, and this is the only production-visible seam: the
@@ -436,6 +438,9 @@ export class CassandraProvider extends SQLBaseProvider {
       // reads key their degradation on instead of the wording of a refusal. It never
       // throws, so it cannot turn a working connection into a failed one.
       this.facts = await readServerFacts(transport);
+      // Which keyspaces this engine owns beyond Cassandra's, which the keyspace tree hides
+      // (#1428). One more statement per connection, and a refusal answers none.
+      this.engineKeyspaces = await readEngineKeyspaces(transport);
     } catch (error) {
       // `connect()` opens a pool with sockets and reconnection timers behind it, and
       // the identity read runs AFTER that - so a probe that fails leaks the pool
@@ -455,6 +460,7 @@ export class CassandraProvider extends SQLBaseProvider {
     const transport = this.transport;
     this.transport = null;
     this.facts = null;
+    this.engineKeyspaces = [];
     if (transport !== null) await transport.close();
     this.setConnected(false);
   }
@@ -665,7 +671,7 @@ export class CassandraProvider extends SQLBaseProvider {
    */
   public async listContainers(parent?: readonly string[]): Promise<Container[]> {
     const transport = this.requireTransport();
-    return this.guarded(() => readContainers(transport, this.config.database ?? "", parent));
+    return this.guarded(() => readContainers(transport, this.config.database ?? "", this.engineKeyspaces, parent));
   }
 
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
