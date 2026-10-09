@@ -213,8 +213,8 @@ function readLevel(body: Record<string, unknown>): boolean {
  *
  * A key walk's page is never counted here: a Redis `SCAN` page may hold more keys than `COUNT`.
  * A level page is held to its level: with `p` the pattern (or `""`) and `s` the separator, a prefix
- * starts with `p` and ends at the first `s` found from the end of `p`, which also makes it end with `s`
- * and hold no `s` before that one, overlapping occurrences of a longer separator included;
+ * starts with `p` and ends at the first `s` found from the end of `p` (so it ends with `s` and holds no
+ * `s` before that one, overlapping occurrences of a longer separator included);
  * no prefix appears twice; a key is not empty, starts with `p` and holds no `s` after it (a key equal
  * to `p`, a folder marker, passes); no key appears twice; and keys and prefixes together fit in `count`.
  */
@@ -230,9 +230,10 @@ function checkAnswer(type: string, page: KeyScanPage, options: KeyScanOptions, s
   const seen = new Set<string>();
   for (const prefix of prefixes) {
     // Searching from the end of the pattern, not between it and the last separator: "x:::" under "::"
-    // holds no "::" in "x:", yet its first one starts at index 1, so its level's folder is "x::".
-    const inLevel =
-      prefix.startsWith(pattern) && prefix.indexOf(separator, pattern.length) === prefix.length - separator.length;
+    // holds no "::" in "x:", yet its first one starts at index 1, so its level's folder is "x::". A search
+    // that finds nothing answers -1, which a folder one character shorter than the separator would match.
+    const first = prefix.indexOf(separator, pattern.length);
+    const inLevel = prefix.startsWith(pattern) && first !== -1 && first === prefix.length - separator.length;
     if (!inLevel) {
       throw new ObjectRouteError(
         `${type} answered a folder outside the level it was asked for: ${JSON.stringify(prefix)}`,

@@ -680,6 +680,23 @@ describe("POST /api/db/keys/scan for one level", () => {
     }
   });
 
+  test("answers 500 for a folder too short to hold the separator, which no separator search finds", async () => {
+    const twoCharacters = { ...LEVEL_SCAN, separator: "::" };
+    const cases = [
+      { keyScan: LEVEL_SCAN, request: { level: true }, prefix: "" },
+      { keyScan: twoCharacters, request: { level: true }, prefix: "x" },
+      { keyScan: twoCharacters, request: { level: true, pattern: "x" }, prefix: "x" },
+    ];
+    for (const { keyScan, request, prefix } of cases) {
+      activeProvider = levelProvider(async () => ({ ...EMPTY_LEVEL, prefixes: [prefix] }), keyScan);
+      const answer = await post(request);
+      expect({ prefix, status: answer.status }).toEqual({ prefix, status: 500 });
+      expect(answer.body.error).toBe(
+        `oxia answered a folder outside the level it was asked for: ${JSON.stringify(prefix)}`,
+      );
+    }
+  });
+
   test("answers 500 for the same key twice on one level page", async () => {
     activeProvider = levelProvider(async () => ({ ...EMPTY_LEVEL, keys: ["a/x", "a/y", "a/x"] }));
     const answer = await post({ level: true, pattern: "a/" });
