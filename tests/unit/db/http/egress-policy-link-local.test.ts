@@ -27,6 +27,7 @@ const ANSWERS = new Map<string, readonly LookupAddress[]>([
   ["local.test", [{ address: "127.0.0.1", family: 4 }]],
   ["empty.test", []],
   ["mismatch.test", [{ address: "10.0.0.5", family: 6 }]],
+  ["zoned.test", [{ address: "fe80::1%eth0", family: 6 }]],
 ]);
 
 mock.module("node:dns", () => ({
@@ -105,6 +106,11 @@ describe("assertNotLinkLocalLiteral", () => {
     "[fd00:ec2:0::254]",
     "[0:0:0:0:0:ffff:a9fe:a9fe]",
     "[FE80::1]",
+    // A zone index scopes an address to one interface: Bun's BlockList does not match fe80::1%eth0 where Node's does,
+    // so every zoned IPv6 literal is refused, whatever its address.
+    "[fe80::1%eth0]",
+    "[fe80::1%25eth0]",
+    "[::1%lo]",
   ])("refuses %s with the sentence and never echoes it", (host) => {
     const error = refusal(() => assertNotLinkLocalLiteral(host));
     expect(error).toBeInstanceOf(DatabaseConfigError);
@@ -145,6 +151,8 @@ describe("assertNoLinkLocalDnsAnswer", () => {
     ],
     ["an IPv6 link-local address", [{ address: "fe80::1", family: 6 }]],
     ["AWS's IPv6 metadata address", [{ address: "fd00:ec2::254", family: 6 }]],
+    ["a zoned IPv6 link-local address", [{ address: "fe80::1%eth0", family: 6 }]],
+    ["a zoned IPv6 loopback address", [{ address: "::1%lo", family: 6 }]],
   ] as const)("refuses %s with the link-local sentence", (_label, addresses) => {
     const error = refusal(() => assertNoLinkLocalDnsAnswer(addresses));
     expect(error).toBeInstanceOf(DatabaseConfigError);
@@ -190,6 +198,10 @@ describe("linkLocalRefusingLookup", () => {
     const answer = await look("metadata.test", false);
     expect(answer.error).toBeInstanceOf(DatabaseConfigError);
     expect(answer.error?.message).toBe(LINK_LOCAL);
+  });
+
+  test("refuses a name that resolves to a zoned link-local address", async () => {
+    expect((await look("zoned.test", true)).error?.message).toBe(LINK_LOCAL);
   });
 
   test("refuses a mixed answer", async () => {

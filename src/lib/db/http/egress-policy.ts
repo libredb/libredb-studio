@@ -144,16 +144,29 @@ export const LINK_LOCAL_NETWORKS: readonly (readonly [network: string, prefix: n
 const linkLocal = new BlockList();
 for (const [network, prefix, family] of LINK_LOCAL_NETWORKS) linkLocal.addSubnet(network, prefix, family);
 
-/** Refuses an IP literal inside LINK_LOCAL_NETWORKS (brackets stripped, IPv4-mapped forms included); a name passes. */
+/**
+ * Whether an address of family 4 or 6 is in LINK_LOCAL_NETWORKS or is an IPv6 address with a zone index. A zone is
+ * refused whatever its address, because the runtimes disagree on it: Node's BlockList matches fe80::1%eth0 against
+ * fe80::/10 and Bun's does not, and an address an object store is reached at never needs one.
+ */
+function isLinkLocal(address: string, family: number): boolean {
+  if (family === 6 && address.includes("%")) return true;
+  return linkLocal.check(address, family === 4 ? "ipv4" : "ipv6");
+}
+
+/**
+ * Refuses an IP literal inside LINK_LOCAL_NETWORKS (brackets stripped, IPv4-mapped forms included) and any IPv6
+ * literal with a zone index; a name passes.
+ */
 export function assertNotLinkLocalLiteral(host: string): void {
   const address = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const family = isIP(address);
-  if (family !== 0 && linkLocal.check(address, family === 4 ? "ipv4" : "ipv6")) {
+  if (family !== 0 && isLinkLocal(address, family)) {
     throw new DatabaseConfigError(LINK_LOCAL_HOST);
   }
 }
 
-/** Refuses an answer set holding any such address, or holding no usable address. */
+/** Refuses an answer set holding any such address or a zoned IPv6 address, or holding no usable address. */
 export function assertNoLinkLocalDnsAnswer(addresses: readonly LookupAddress[]): void {
   if (
     addresses.length === 0 ||
@@ -161,7 +174,7 @@ export function assertNoLinkLocalDnsAnswer(addresses: readonly LookupAddress[]):
   ) {
     throw new DatabaseConfigError(UNUSABLE_ANSWER);
   }
-  if (addresses.some(({ address, family }) => linkLocal.check(address, family === 4 ? "ipv4" : "ipv6"))) {
+  if (addresses.some(({ address, family }) => isLinkLocal(address, family))) {
     throw new DatabaseConfigError(LINK_LOCAL_HOST);
   }
 }
