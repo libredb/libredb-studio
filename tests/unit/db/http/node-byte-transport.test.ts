@@ -143,6 +143,13 @@ describe("the connection headers meet the rule a request's own headers meet, whe
     ["authorization", { authorization: "Bearer fixed" }, OWNED_BY_THE_TRANSPORT("authorization")],
     ["Authorization in another spelling", { Authorization: "Bearer fixed" }, OWNED_BY_THE_TRANSPORT("authorization")],
     ["a name that is not a token", { "x a": "1" }, "Invalid headers: expected lower-case header names"],
+    // The Kelvin sign lower-cases to "k", so a name is held to the token rule as it was written.
+    [
+      "a name that is a token only once lower-cased",
+      { "\u212Aey": "1" },
+      "Invalid headers: expected lower-case header names",
+    ],
+    ["one name in two spellings", { "X-A": "upper", "x-a": "lower" }, "Invalid headers: x-a is named twice"],
     ["an array value", { "x-a": ["1", "2"] }, VALUE("x-a")],
     ["a number value", { "x-a": 1 }, VALUE("x-a")],
     ["a latin1 value", { "x-a": "caf\u00e9" }, VALUE("x-a")],

@@ -2755,6 +2755,7 @@ Found 2026-10-10 by the whole-branch review of the S3 byte transport; pre-existi
 
 `createNodeTransport` in `src/lib/db/http/node-transport.ts` serialises a request's `form` with `payloadOf` after the request has taken its socket slot and outside the try that frees it, so a `form` that `URLSearchParams` cannot read rejects with the raw TypeError and the slot is never freed.
 Measured 2026-10-10 on Bun 1.4.2 with `maxSockets: 1` against a local `node:http` server: a POST whose form held a Symbol value rejected with "TypeError: Cannot convert a Symbol value to a string", and the next GET on the same transport waited until its 1.5 s deadline and failed as a timeout; origin/main behaves the same.
+Queued behind another request it is worse: the TypeError is thrown when the earlier request's answer frees the slot, so it escapes from that request's `end` listener as an uncaught exception, which ends a Node process with no handler, the earlier request never resolves, the queued one never settles, and the next request times out; measured the same day on Bun 1.4.2 and Node 24.14.0, on origin/main as well.
 No provider passes a form value that is not a string today, so this is hardening.
 
 Found 2026-10-10 by the adversarial review of the S3 byte transport; pre-existing in the text transport.

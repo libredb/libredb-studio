@@ -582,13 +582,16 @@ function isHeaderValue(value: unknown): value is string {
 
 const CONNECTION_NOT_A_RECORD = "Invalid headers: expected a plain record of header names and values";
 const INVALID_CONNECTION_HEADER_NAME = "Invalid headers: expected lower-case header names";
+/** A header name as a connection may write it: a token in either case, lower-cased only once it has passed. */
+const WRITTEN_HEADER_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
 
 /**
  * The byte transport's connection headers, held to the rule a request's own headers meet: one read of a plain record,
  * each name a token, never a name the transport owns, and each value a string of visible ASCII or space of at most
- * 1024 bytes. Authorization is an owned name, so on the byte transport a signer is the only way to set it. Names are
- * lower-cased first, as lowerCased does for the text transport, and a header node:http sets for each request keeps
- * lowerCased's sentence. A refusal names a lower-case token at most, never a value.
+ * 1024 bytes. Authorization is an owned name, so on the byte transport a signer is the only way to set it. A name is
+ * held to the token rule as written and then lower-cased, as lowerCased does for the text transport, and two spellings
+ * of one name are refused; a header node:http sets for each request keeps lowerCased's sentence. A refusal names a
+ * lower-case token at most, never a value.
  */
 function checkedConnectionHeaders(headers: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
   const record: unknown = headers;
@@ -599,13 +602,17 @@ function checkedConnectionHeaders(headers: Readonly<Record<string, string>>): Re
   if ((prototype !== Object.prototype && prototype !== null) || Reflect.ownKeys(record).length !== entries.length) {
     throw new DatabaseConfigError(CONNECTION_NOT_A_RECORD);
   }
-  const lowered = entries.map(([name, value]) => [name.toLowerCase(), value as unknown] as const);
   const checked: Record<string, string> = {};
-  for (const [name, value] of lowered) {
+  for (const [written, value] of entries) {
+    // The token rule holds for the name as written: lower-casing first would turn a name that is not a token,
+    // such as one spelled with the Kelvin sign, into one that is.
+    if (!WRITTEN_HEADER_NAME.test(written)) throw new DatabaseConfigError(INVALID_CONNECTION_HEADER_NAME);
+    const name = written.toLowerCase();
+    // Two spellings of one name would leave whichever came last, silently.
+    if (Object.hasOwn(checked, name)) throw new DatabaseConfigError(`Invalid headers: ${name} is named twice`);
     if (TRANSPORT_HEADERS.has(name)) {
       throw new DatabaseConfigError(`Invalid headers: ${name} is set by the transport for each request`);
     }
-    if (!HEADER_NAME.test(name)) throw new DatabaseConfigError(INVALID_CONNECTION_HEADER_NAME);
     if (isOwnedHeader(name)) {
       throw new DatabaseConfigError(
         `Invalid headers: ${name} is set by the transport or the signer, never by the connection`,
