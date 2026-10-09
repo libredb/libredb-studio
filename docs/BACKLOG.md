@@ -4288,17 +4288,17 @@ Found 2026-10-09 by an adversarial review of the folder-aware Keys panel; pre-ex
 
 **Done when:** the loop checks its walk generation before it writes anything, with a hook test for each of the two cases.
 
-### U107. A Scan more pressed while the Keys panel waits for a chosen database sends the old walk's cursor
+### U107. A Scan more pressed while the Keys panel waits for a database list sends the previous walk's cursor
 
-When the database the Keys panel walks changes, the panel's restart waits for the database list to answer before it resets the walk (`waitingForChosenDatabase` in `src/components/key-browser/KeyBrowser.tsx`), and `scanMore` in `src/components/key-browser/use-key-scan.ts` reads the walk's cursor from that unreset state.
-So a page asked for in that wait carries the previous database's cursor to the new database.
-Measured 2026-10-10 with a hook test under a Redis-shaped capability: with database 1, `scanMore()` answered cursor `"7"`; rerendered with database 2 and no reset, the next `scanMore()` sent `{"cursor":"7","database":2}`.
-Whether the panel offers Scan more during that wait was not measured.
+When the Keys panel is handed a database on a connection whose database list has not answered yet, its restart waits for that list before it resets the walk (`waitingForChosenDatabase` in `src/components/key-browser/KeyBrowser.tsx`), while Scan more and Scan all stay enabled, and `scanMore` in `src/components/key-browser/use-key-scan.ts` reads its cursor from the unreset walk.
+So a page asked for in that wait carries the previous walk's cursor to the new walk.
+Measured 2026-10-10 in a panel test with two Redis-shaped connections: the panel walked the first, which answered cursor `"7"`; re-rendered with the second connection and a requested database whose list never answered, Scan more was enabled and sent `{"cursor":"7"}` to the second connection, with no `database` field, because the panel names no database before the list answers.
+A hook test that changes the database without a reset sends `{"cursor":"7","database":2}` the same way.
 `main` has the same path.
 
 Found 2026-10-10 by an adversarial review of the folder-aware Keys panel; pre-existing.
 
-**Done when:** no page is asked for a question whose walk has not been reset, with a hook test that changes the database without a reset and finds no request carrying the old cursor.
+**Done when:** no page is asked for a walk that has not been reset, with a panel test that switches connection during the wait, presses Scan more, and finds no request carrying the previous walk's cursor.
 
 ## Dependencies
 

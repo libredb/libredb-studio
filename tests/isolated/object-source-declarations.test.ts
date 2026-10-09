@@ -454,8 +454,8 @@ function keyBrowserBreaches(type: string, capabilities: ProviderCapabilities): r
  * THE LEVEL DECLARATION, held to its rules (Keys panel levels, spec 3.8).
  *
  * `keyScan.levels` says an engine lists its key space one level at a time. A level is a prefix and a
- * separator, and a level page has no total, so `levels` needs `pattern: "prefix"`, a separator of one
- * character and `totalScope: "none"`. `levels.rootKind` names the kind whose rows are the key space's first segment,
+ * separator, and a level page has no total, so `levels` needs `pattern: "prefix"`, a separator one
+ * UTF-16 code unit long and `totalScope: "none"`. `levels.rootKind` names the kind whose rows are the key space's first segment,
  * so it must be a declared kind, a kind that draws rows (not one only the Keys panel enumerates), on an
  * engine with no container level, where the Sidebar sends no `database` beside the pattern.
  *
@@ -485,7 +485,7 @@ function levelBreaches(type: string, capabilities: ProviderCapabilities): readon
   // level the route judged it in.
   if (shape.separator.length !== 1) {
     breaches.push(
-      `${type} declares keyScan.levels with the separator ${JSON.stringify(shape.separator)}, and a level ends at a separator of one character`,
+      `${type} declares keyScan.levels with the separator ${JSON.stringify(shape.separator)}, and a level ends at a separator one UTF-16 code unit long`,
     );
   }
   const id = levels.rootKind;
@@ -620,7 +620,7 @@ describe("the key-browser declaration", () => {
     test("levels with a separator that is not one character is refused by name", () => {
       for (const separator of ["", "::"]) {
         expect(levelBreaches("store", store({ ...LEVELS, separator }))).toEqual([
-          `store declares keyScan.levels with the separator ${JSON.stringify(separator)}, and a level ends at a separator of one character`,
+          `store declares keyScan.levels with the separator ${JSON.stringify(separator)}, and a level ends at a separator one UTF-16 code unit long`,
         ]);
       }
     });
