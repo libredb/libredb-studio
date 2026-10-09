@@ -618,9 +618,12 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
       ? ""
       : `${node.children.length.toLocaleString("en-US")}${levelHasMore(pathKey(node.path)) ? "+" : ""}`;
   const levelBadgeTitle = (node: KeyTreeNode): string => {
+    // A folder whose page is in the air says so in the words its busy load-more row uses: until the
+    // page lands, "not listed yet" would ask for a press that has already been made.
+    if (nodeLoading.has(pathKey(node.path))) return "Listing this folder...";
     // A folder drawn open and not listed (a folder above the scope, drawn open on the way down) lists
     // its level on the next open, so the way there is to close it first.
-    if (unlistedFolder(node) && open.has(pathKey(node.path)) && !nodeLoading.has(pathKey(node.path))) {
+    if (unlistedFolder(node) && open.has(pathKey(node.path))) {
       return "Not listed yet: close and reopen the folder to list it";
     }
     if (unlistedFolder(node)) return "Not listed yet: open the folder to list it";

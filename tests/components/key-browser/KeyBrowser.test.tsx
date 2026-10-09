@@ -2824,6 +2824,34 @@ describe("a panel listed one level at a time", () => {
     }
   });
 
+  test("a server folder whose first listing is in flight says it is being listed, in the busy row's words", async () => {
+    // A no-op default rather than `| null`: the executor below replaces it before anything waits.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const route = levelRoute(["a/x", "a/y", "z/q"], 20);
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.clone().json()) as Record<string, unknown>;
+        if (body.pattern === "a/") await gate;
+        return route.handler(req);
+      },
+    });
+    renderLevels();
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0", "z/@0"]);
+    });
+
+    fireEvent.click(twisty("a/"));
+    expect(badgeCell("a/").getAttribute("title")).toBe("Listing this folder...");
+
+    release();
+    await waitFor(() => {
+      expect(badgeCell("a/").getAttribute("title")).toBe("2 entries listed in this folder");
+    });
+  });
+
   test("typing in the prefix box asks a new question and closes the folders the last one opened", async () => {
     const route = levelRoute(SPACE, 20);
     mockGlobalFetch({ "/api/db/keys/scan": route.handler });
