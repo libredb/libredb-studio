@@ -13,6 +13,7 @@
       "planStatementRetries": 0,
       "presentReminderLimit": 1,
       "verdictHoldLimit": 2,
+      "compareHoldLimit": 1,
       "retryEmptyTurn": false,
       "retryUnreadStop": false,
       "suppressPlanReasoning": false,
@@ -1110,6 +1111,44 @@
         "retryUnreadStop": [
           "What it was driven with: every run behind these numbers was taken where a model with no entry is sent the drive's own sentence for a stop that read nothing, so the entry states it once the entry exists.",
           "Nothing else departs from the defaults, and the entry states them anyway - a shared value is what has twice cost this repository a cell it had already won."
+        ]
+      }
+    },
+    {
+      "id": "laguna-xs-2.1:latest",
+      "measured": "6/6 locked, 30/30 - investigate 11s, optimize 56s, assess 38s, operate 15s, analyze 17s, plan 3s (medians of the passing runs; slowest run 135s, in optimize). Five cells closed at shipped settings on the first reading. Optimize took sixteen: it sat at 2/5 on defaults and the losses split two ways - runs that spent ten of eleven calls on run_read_query and hit the turn limit without a report, and runs that inspected plans and composed a report resting on no comparison between them. Nothing moved it alone. Temperature 0.3 read 3/5 twice, refusalExamples 1/5, verdictHoldLimit=5 2/5; the three together read 4/5 and held it across five rolls (4/5, 4/5, 1/5, 4/5, 4/5), always one run short, and the run it lost was the no-comparison one. Lowering unreportedCallCeiling to 6 on top of that document read 1/5 - narrowing the run early takes away calls it needs. What closed the cell was compareHoldLimit, which did not exist until this model was measured against it: the compare-before-report hold was the literal 1 in investigation.ts, so the sentence naming the two plan ids was said once and a run that reported anyway was never asked again.",
+      "settings": {
+        "sampling": {
+          "temperature": 0.3,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "verdictHoldLimit": 5,
+        "compareHoldLimit": 5,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": true
+      },
+      "rationale": {
+        "sampling": [
+          "At temperature 0 the retry after a notice repeats the turn word for word, so no sentence this loop delivers can change the answer - and this cell's losses are all answered with a sentence.",
+          "0.3 read 3/5 against a 2/5 baseline, twice. It is the floor the other two settings were measured on top of; at 0 the same document reads 2/5."
+        ],
+        "refusalExamples": [
+          "Its compose_report and recommend_change calls were refused repeatedly - UNVERIFIABLE_EVIDENCE and INVALID_TOOL_INPUT - and the refusal names the ids the run produced without showing the shape they belong in.",
+          "Alone it read 1/5 and is not defensible alone. With temperature 0.3 it read 3/5, and in the document that closed the cell it is load-bearing: removing it drops the reading to 2/5."
+        ],
+        "verdictHoldLimit": [
+          "Its reports earn their own verifier's rejection rather than arriving malformed, so the hold that tells a run why is the one it can act on.",
+          "Alone it read 2/5. The value is 5 because the hold is reachable only where a report already earning a shortfall is being submitted, so a run about to pass never meets it."
+        ],
+        "compareHoldLimit": [
+          "The loss that survived every other setting: runs holding four plans composed a report with no comparison between them, with the compare-before-report sentence delivered in every run of every roll.",
+          "The bound was the literal 1 in investigation.ts until this model was measured against it. At 1 the cell held 4/5 across five rolls; at 5 it read 5/5. The hold fires only on a run already earning no-plan-comparison, so raising it spends turns only on a run that has already lost."
         ]
       }
     }

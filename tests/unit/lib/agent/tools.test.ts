@@ -490,6 +490,55 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
   });
 
   /*
+    Measured 2026-10-05 on `qwen2.5:3b-instruct`, data-analysis: FIFTY-FIVE refusals in one
+    five-run cell, every one character for character `presentation belongs to present_answer,
+    send it there`. The model called `compose_report` carrying a `presentation`, was told where
+    that field lives, and sent the same call again - fifty-five times, until the runs ended
+    having reported nothing. The cell scored 0/5.
+
+    The sentence is true and it is not an instruction. It names a destination and leaves the
+    model to work out that there are TWO calls and which comes first. The house rule for the
+    difference is already written one layer down, where `present_answer` offers an id outside
+    `refusalExamples`: a whole worked call stays behind the lever because it crowds a small
+    model's turn, while a short concrete value goes to everyone, "because being told to cite
+    something somewhere and being handed the characters are different instructions".
+
+    An order is short. The refused tool does not have to be named - it is the one the model just
+    called - so this needs no new data threaded through `parseToolInput`, only the sentence
+    saying what to do rather than where to look.
+  */
+  test("a misfiled field is told which call to make first, not only where the field lives", async () => {
+    const h = harness();
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+    if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
+    const events: AgentRunEvent[] = [{ kind: "tool-completed", atMs: 1, stepId: "step_1", artifact: outcome.artifact }];
+
+    const report = composeReportTool(
+      h.context,
+      { runId: h.context.runId, events },
+      {
+        claims: [
+          {
+            claim: "orders has rows",
+            evidence: [{ source: "artifact", correlationId: outcome.artifact.correlationId }],
+          },
+        ],
+        // The field that belongs to the other tool, exactly as the losing runs sent it.
+        presentation: { kind: "table" },
+      },
+    );
+
+    if (report.kind !== "unavailable") throw new Error(`expected unavailable, got ${report.kind}`);
+    expect(report.reasonCode).toBe("INVALID_TOOL_INPUT");
+    // Where it lives, as it already said.
+    expect(report.modelText).toContain("presentation belongs to present_answer");
+    // And the part the model could act on: the order of the two calls.
+    expect(report.modelText).toContain("call present_answer with it first");
+    expect(report.modelText).toContain("without it");
+  });
+
+  /*
     Measured 2026-08-16 against a real Ollama endpoint: `qwen3.8` could not finish a
     data-analysis run, and the reason was an ENCODING rather than a capability. Kept as its own
     group because the fix belongs to the tool's input contract and to nothing else.

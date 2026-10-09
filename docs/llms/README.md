@@ -8,8 +8,8 @@ writes beautiful prose about a database and never calls a tool answers nothing h
 question these pages answer is not what a model knows but what it DOES on a run, and every figure
 comes from a run whose ledger is on disk.
 
-**Forty-four models are supported.** Each cleared all six surfaces — Investigate, Optimize, Assess,
-Operate, Analyze and Plan — five consecutive times: 1320 runs, 1170 passes.
+**Forty-five models are supported.** Each cleared all six surfaces — Investigate, Optimize, Assess,
+Operate, Analyze and Plan — five consecutive times: 1350 runs, 1200 passes.
 
 Twenty-six of the thirty-five cleared them at the 90-second per-turn limit the product ships. Nine
 carry a 150-second limit of their own — `qwen3.5:9b`, `qwen3.6:27b`, `qwen3.6:35b`, `gemma4:12b`,

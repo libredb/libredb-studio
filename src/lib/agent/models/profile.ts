@@ -117,6 +117,19 @@ export interface AgentModelProfile {
    * measured cell without re-measuring it. See `docs/BACKLOG.md`.
    */
   readonly retryUnreadStop?: boolean;
+  /**
+   * How many times a stop that read nothing is answered, where once is not enough.
+   *
+   * `retryUnreadStop` says WHETHER to answer; this says how often. The two are separate because a
+   * boolean can only ever give one ask, and the measurement says one is a bound rather than an
+   * answer: `devstral-small-2:24b` holds five of six surfaces at 5/5 and loses optimize on runs
+   * that call nothing - it says what it needs, is answered, says the same thing again, and the run
+   * ends. Three of five runs, `said=2` in each, fourteen to twenty seconds.
+   *
+   * A count for the reason `planStatementRetries` and `reportReminderLimit` are counts. Default
+   * one, so no measured model's turn count moves.
+   */
+  readonly unreadStopAsks?: number;
 
   /**
    * Whether this model's PLAN turn asks the endpoint for no reasoning at all.
@@ -181,6 +194,14 @@ export interface AgentModelProfile {
    * recorded, not because one has been.
    */
   readonly verdictHoldLimit?: number;
+
+  /**
+   * How many times this model's report may be held to ask for the comparison it rests on.
+   *
+   * Absent means one, which is the literal every entry written before this bound became per-model
+   * was measured under. See `DEFAULT_COMPARE_HOLD_LIMIT` for the measurement that asked for it.
+   */
+  readonly compareHoldLimit?: number;
 
   /**
    * How many times a report may be held to ask for the answer that belongs beside it.
@@ -361,6 +382,26 @@ export const DEFAULT_PRESENT_REMINDER_LIMIT = 1;
  * third; the value it moved with is the value it had.
  */
 export const DEFAULT_VERDICT_HOLD_LIMIT = 2;
+
+/**
+ * How many times a report may be held to ask for the comparison it rests on.
+ *
+ * The fourth of the reminder bounds, and the last one that was a literal: the loop read
+ * `compareReminders < 1`, so the sentence naming the two plan ids a run has already inspected was
+ * said exactly once and a model that reported anyway was never asked again.
+ *
+ * One is what the literal was, so moving it into a default changes nothing for any shipped model.
+ * It exists because `laguna-xs-2.1:latest` optimize was measured against it on 2026-10-09: five
+ * rolls of its best document read 4/5, 4/5, 1/5, 4/5, 4/5, and the loss that recurred was
+ * `report-composed` with `no-plan-comparison` on runs holding four plans, with `plan-bar` delivered
+ * in every run. The cell loses by one, to a sentence it hears once.
+ *
+ * Safe in the way `DEFAULT_VERDICT_HOLD_LIMIT` is safe: the hold fires only where `compose_report`
+ * is called by a run holding plans and no comparison between them, which is a run already earning
+ * `no-plan-comparison`. A run about to pass cannot reach it, so a raised limit spends turns only on
+ * a run that has already lost.
+ */
+export const DEFAULT_COMPARE_HOLD_LIMIT = 1;
 
 /**
  * Deterministic, and the setting five locked cells were won on.

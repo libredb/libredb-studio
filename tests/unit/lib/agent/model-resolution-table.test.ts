@@ -32,6 +32,7 @@ import {
   retriesUnreadStop,
   samplingFor,
   suppressesAgentReasoning,
+  compareHoldLimitFor,
   verdictHoldLimitFor,
   suppressesPlanReasoning,
   turnTimeoutMsFor,
@@ -66,8 +67,20 @@ interface ResolvedRow {
   readonly refusalExamples: boolean;
   /** Optional: two everywhere, because no model has been measured recovering on a third hold. */
   readonly verdictHoldLimit?: number;
+  /**
+   * Optional: one everywhere but the model that asked for it. The compare-before-report hold was a
+   * literal in the loop until `laguna-xs-2.1:latest` optimize was measured against it.
+   */
+  readonly compareHoldLimit?: number;
   readonly turnTimeoutMs: number | undefined;
-  /** Only the surfaces that differ from `PINNED`; every other surface resolves to it. */
+  /**
+   * The model's OWN sampling, which every surface inherits and which a run with no surface yet
+   * takes. Absent means `PINNED`, which is what every row meant before one of them differed:
+   * `laguna-xs-2.1:latest` is the first, because at temperature 0 the retry after a notice repeats
+   * the turn word for word and every loss in its optimize cell is answered with a notice.
+   */
+  readonly sampling?: { temperature: number; topP: number };
+  /** Only the surfaces that differ from the row's own sampling; every other surface resolves to it. */
   readonly samplingOverrides?: Readonly<Partial<Record<AgentRunWorkflowType, { temperature: number; topP: number }>>>;
 }
 
@@ -672,6 +685,25 @@ const RESOLVED: ResolvedRow[] = [
     suppressesPlanReasoning: true,
     turnTimeoutMs: undefined,
   },
+  // The forty-fifth, and the first row this table has carried with a per-model reminder bound on
+  // it. Its optimize cell closed on `compareHoldLimit`, which did not exist until this model was
+  // measured against it: the compare-before-report hold was a literal `1` in the loop, so a run
+  // holding two plans heard "compare them" once and was never asked again. At one the cell held
+  // 4/5 across five rolls; at five it read 5/5.
+  {
+    id: "laguna-xs-2.1:latest",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: true,
+    verdictHoldLimit: 5,
+    compareHoldLimit: 5,
+    turnTimeoutMs: undefined,
+    // Global rather than per-surface: the five locked cells were measured under it too.
+    sampling: { temperature: 0.3, topP: 1 },
+  },
 ];
 
 describe("every resolver's answer, pinned before the profiles moved", () => {
@@ -686,16 +718,20 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
     expect(suppressesAgentReasoning(row.id)).toBe(row.suppressesAgentReasoning ?? false);
     expect(offersRefusalExamples(row.id)).toBe(row.refusalExamples);
     expect(verdictHoldLimitFor(row.id)).toBe(row.verdictHoldLimit ?? 2);
+    expect(compareHoldLimitFor(row.id)).toBe(row.compareHoldLimit ?? 1);
     expect(turnTimeoutMsFor(row.id)).toBe(row.turnTimeoutMs);
   });
 
   test.each(RESOLVED)("$id samples every surface as measured", (row) => {
+    // A row may state the model's OWN sampling, which every surface inherits unless that surface is
+    // named. Absent means `PINNED`, which is what every row meant before one of them differed.
+    const own = row.sampling ?? PINNED;
     for (const workflow of WORKFLOWS) {
-      expect(samplingFor(row.id, workflow)).toEqual(row.samplingOverrides?.[workflow] ?? PINNED);
+      expect(samplingFor(row.id, workflow)).toEqual(row.samplingOverrides?.[workflow] ?? own);
     }
     // A run with no surface yet — the classifier has not answered — takes the model's own
     // sampling and never a surface's.
-    expect(samplingFor(row.id, undefined)).toEqual(PINNED);
+    expect(samplingFor(row.id, undefined)).toEqual(own);
   });
 
   test("the table covers every registered model, so a new one cannot arrive unpinned", () => {
@@ -707,7 +743,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
     // would assert 43 against 40 and deriving from the profiles would assert nothing at all. The
     // loop above is what guarantees coverage; this is the second half, that the roster is the size
     // the change intended. `model-roster-docs.test.ts` derives the same count for the docs.
-    expect(Object.keys(modelProfiles())).toHaveLength(44);
+    expect(Object.keys(modelProfiles())).toHaveLength(45);
   });
 });
 
@@ -791,6 +827,7 @@ describe("what each model records about the runs that earned its settings", () =
     "ornith-1.5:9b": "98cd715892ea02c6625bee605d2f90eb4e3d63fbc6db69e9c8cb760642d2096b",
     "qwen3.5:35b": "b32ca3f5bcb21ab7c084a53144438c95e277535735ee43c5840b5941a4b1a5c7",
     "qwen3:32b": "95abe040e1654ecf1462bd73d48079a6fb152723551bbc8001899facd16d70c0",
+    "laguna-xs-2.1:latest": "2fc40492ef6cb14b7eeb4eee05a95eef31feab539e693634adea21b22765b7c7",
   };
 
   test("every model's record survives the move, character for character", () => {

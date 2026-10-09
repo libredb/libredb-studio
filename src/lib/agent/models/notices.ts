@@ -52,6 +52,24 @@ export const BASELINE_NOTICES: AgentNotices = Object.freeze({
   ].join(" "),
   unreadStop: [
     "You have stopped without reading anything, and there is nobody to reply to you: this run has no correspondent, so a request for information ends it with nothing established.",
+    /*
+      The sentence that answers the question these runs actually ask.
+
+      "Read it yourself" answers "how do I read". Measured 2026-10-04, the question was WHICH
+      statement: `devstral-small-2:24b` holds five of six surfaces at 5/5 and loses optimize the
+      same way five times out of five - zero tools, stopped in nine to thirteen seconds with "I
+      need the query text to investigate why it is slow. Please provide the employee listing query
+      you are asking about." Told to call `inspect_plan` "for how a statement will run", it asked
+      again: `inspect_plan` takes a statement, and it had none.
+
+      It never would. The objective names a query in prose - this repository's own optimize
+      objective is "Why is the employee listing query slow?" - and the sample holds no
+      `employee_listing` object, which `composedSql`'s docblock records as the shape three other
+      families tripped on from the other side, calling `inspect_schema` for it and citing the empty
+      result. No run on any surface is handed SQL; every one drafts its own from the inventory it
+      was given. Saying so is what turns a reasonable question into a next step.
+    */
+    "No statement was given to you and none is coming: write the one you need from the schema inventory in this conversation, then inspect its plan.",
     "Read it yourself. Call inspect_schema for the tables and their columns, and inspect_plan for how a statement will run, then call compose_report with what you found.",
     CITATION_RULE,
   ].join(" "),

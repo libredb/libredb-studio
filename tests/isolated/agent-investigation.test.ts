@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { streamText, tool } from "ai";
+import { unreadStopAsksFor } from "@/lib/agent/models";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_REPORT_RESERVE_TURNS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -4289,6 +4290,75 @@ describe("a run that stops having read nothing is told to read it itself", () =>
     expect(events.filter((event) => event.kind === "guidance-issued").map((event) => event.notice)).not.toContain(
       "tool-call-as-text",
     );
+  });
+
+  test("it answers the question the run actually asked: WHICH statement", async () => {
+    /*
+      The half of this notice that did not answer the model, measured 2026-10-04.
+
+      `devstral-small-2:24b` holds five of six surfaces at 5/5 and loses optimize the same way
+      every time: five runs, ZERO tools, stopped in nine to thirteen seconds with
+
+          "I need the query text to investigate why it is slow.
+           Please provide the employee listing query you are asking about."
+
+      It is told to read it itself and to call `inspect_plan` "for how a statement will run" - and
+      it asks the same question again, because that sentence answers "how do I read" while the run
+      asked "which statement". `inspect_plan` takes a statement; the objective names one in prose
+      ("Why is the employee listing query slow?") and the sample has no `employee_listing` object,
+      which `composed-sql`'s own docblock records as the shape three other families tripped on.
+
+      Nothing was ever handed a statement here: every surface drafts its own from the schema. That
+      is the fact the notice was missing, and it is true on all of them, so it is said once in the
+      shared sentence rather than per workflow.
+    */
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(asksTheUser, callsTool("inspect_schema", { schema: "public" }), reportOn());
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const told = script.turns[1]?.transcript ?? "";
+    expect(told).toContain("No statement was given to you");
+    expect(told).toContain("write the one you need");
+  });
+
+  test("the ask count is a setting, and the default still asks exactly once", async () => {
+    /*
+      The field was a boolean, and the measurement says it has to be a count.
+
+      `devstral-small-2:24b` holds five of six surfaces at 5/5 and loses optimize on runs that call
+      NOTHING: it says what it needs, is answered with this notice, says the same thing again, and
+      the run ends. `said=2` in the ledger, three runs out of five, 14 to 20 seconds each.
+      Temperature 0.3 moved two of the five to a pass; a worked call made it worse (0/5). What the
+      three remaining losses show is not a model that will not start - it is a model that needs more
+      than one nudge, and `retryUnreadStop` as a boolean can only ever give one.
+
+      `planStatementRetries` is a count for the same reason and `reportReminderLimit` is a count, so
+      the shape is the repo's own. An operator document is where a candidate's count belongs until
+      it ships, which is what `unreadStopAsksFor` reads. What this pins is the default: nothing
+      measured moves, so an unmeasured model is asked exactly once, as before.
+    */
+    expect(unreadStopAsksFor("devstral-small-2:24b")).toBe(1);
+    expect(unreadStopAsksFor("a-model-nobody-measured:7b")).toBe(1);
+
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(asksTheUser, asksTheUser, answersProse("done"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const events = await eventsOf(b.store, run.runId);
+    const asks = events.filter((event) => event.kind === "guidance-issued" && event.notice === "unread-stop").length;
+    expect(asks).toBe(1);
   });
 
   test("a profile that states false is still obeyed", async () => {
