@@ -687,6 +687,13 @@ describe("POST /api/db/keys/scan for one level", () => {
     expect(answer.body.error).toBe('oxia answered the key "a/x" twice on one level page');
   });
 
+  test("answers 500 for an empty key on the top level, where no folder marker can be empty", async () => {
+    activeProvider = levelProvider(async () => ({ ...EMPTY_LEVEL, keys: [""] }));
+    const answer = await post({ level: true });
+    expect(answer.status).toBe(500);
+    expect(answer.body.error).toBe('oxia answered a key outside the level it was asked for: ""');
+  });
+
   test("answers level pages that keep to their level unchanged", async () => {
     const cases: Array<{ request: Record<string, unknown>; page: KeyScanPage }> = [
       // The top level, with no pattern.

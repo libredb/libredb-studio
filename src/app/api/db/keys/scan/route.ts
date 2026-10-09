@@ -215,8 +215,8 @@ function readLevel(body: Record<string, unknown>): boolean {
  * A level page is held to its level: with `p` the pattern (or `""`) and `s` the separator, a prefix
  * starts with `p` and ends at the first `s` found from the end of `p`, which also makes it end with `s`
  * and hold no `s` before that one, overlapping occurrences of a longer separator included;
- * no prefix appears twice; a key starts with `p` and holds no `s` after it (a key equal to `p`, a folder
- * marker, passes); no key appears twice; and keys and prefixes together fit in `count`.
+ * no prefix appears twice; a key is not empty, starts with `p` and holds no `s` after it (a key equal
+ * to `p`, a folder marker, passes); no key appears twice; and keys and prefixes together fit in `count`.
  */
 function checkAnswer(type: string, page: KeyScanPage, options: KeyScanOptions, separator: string): void {
   if (options.level !== true) {
@@ -246,7 +246,9 @@ function checkAnswer(type: string, page: KeyScanPage, options: KeyScanOptions, s
   }
   const seenKeys = new Set<string>();
   for (const key of page.keys) {
-    if (!key.startsWith(pattern) || key.slice(pattern.length).includes(separator)) {
+    // A key equal to the pattern passes as a folder marker, and a marker is never empty: an empty key
+    // would be a nameless row on the top level.
+    if (key === "" || !key.startsWith(pattern) || key.slice(pattern.length).includes(separator)) {
       throw new ObjectRouteError(
         `${type} answered a key outside the level it was asked for: ${JSON.stringify(key)}`,
         500,

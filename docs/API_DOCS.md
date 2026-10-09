@@ -1472,7 +1472,7 @@ etcd's cursor also carries a digest of the key ranges its walk may read, so a pa
 The caller then starts the walk again at `"0"`.
 
 A level page answers one level of the key space.
-Its `keys` are the keys directly under `pattern`, with no `separator` after it; a key equal to `pattern`, an object store's folder marker, is one of them.
+Its `keys` are the keys directly under `pattern`, with no `separator` after it; a key equal to a non-empty `pattern`, an object store's folder marker, is one of them, and no key is empty.
 Its `prefixes` are the folder prefixes one `separator` deeper.
 A provider that declares `levels` meets four rules:
 
