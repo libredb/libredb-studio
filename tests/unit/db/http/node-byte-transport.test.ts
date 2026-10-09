@@ -16,7 +16,9 @@ import {
   type NodeByteTransport,
   type NodeByteTransportOptions,
   nodeTlsMaterial,
+  type RequestSigner,
   selectedHeaders,
+  type SigningInput,
   TransportError,
 } from "@/lib/db/http/node-transport";
 import {
@@ -28,6 +30,7 @@ import {
   makeCertificates,
   rawAnswer,
   rawHttpListener,
+  silentListener,
   type TransportCertificates,
 } from "../../../helpers/node-transport-fixtures";
 
@@ -792,5 +795,356 @@ describe("redirects", () => {
       headers: [["x-amz-bucket-region", "us-east-2"]],
       headersTruncated: false,
     });
+  });
+});
+
+const SIGNER_FAILED = "The request signer failed, so the request was not sent";
+const INVALID_SIGNER = "Invalid signer: expected at least one lower-case header name";
+const SIGNER_ERROR = new Error("signer exploded");
+const AUTHORIZATION = "AWS4-HMAC-SHA256 Credential=test/20261009/us-east-1/s3/aws4_request";
+
+/** A signer listing authorization and x-amz-date that runs `onSign`, by default a fixed signature. */
+function signer(
+  onSign: (input: SigningInput) => Readonly<Record<string, string>> = () => ({
+    authorization: AUTHORIZATION,
+    "x-amz-date": "20261009T000000Z",
+  }),
+): RequestSigner {
+  return { headerNames: ["authorization", "x-amz-date"], sign: onSign };
+}
+
+/** A signer that throws SIGNER_ERROR for one path and signs every other. */
+function throwingOn(path: string): RequestSigner {
+  return signer((input) => {
+    if (input.path === path) throw SIGNER_ERROR;
+    return { authorization: AUTHORIZATION };
+  });
+}
+
+/** Records uncaught exceptions and unhandled rejections until stop(). */
+function watchUncaught(): { readonly seen: unknown[]; stop(): void } {
+  const seen: unknown[] = [];
+  const record = (error: unknown): void => {
+    seen.push(error);
+  };
+  process.on("uncaughtException", record);
+  process.on("unhandledRejection", record);
+  return {
+    seen,
+    stop() {
+      process.off("uncaughtException", record);
+      process.off("unhandledRejection", record);
+    },
+  };
+}
+
+/** A node:http listener that holds a request to /held until release() and answers every other request "ok". */
+async function holdingListener() {
+  let release: (() => void) | undefined;
+  const listener = await httpListener((request, response) => {
+    if (request.url === "/held") {
+      release = () => response.end("held");
+      return;
+    }
+    response.end("ok");
+  });
+  return { listener, release: () => release?.() };
+}
+
+describe("the signer's names, checked when the transport is built", () => {
+  test.each([
+    ["no names", [], INVALID_SIGNER],
+    ["an upper-case name", ["X-Amz-Date"], INVALID_SIGNER],
+    ["a name with a space", ["bad name"], INVALID_SIGNER],
+    ["host", ["host"], "Invalid signer: host is set by the transport, the connection or the request"],
+    [
+      "content-type",
+      ["content-type"],
+      "Invalid signer: content-type is set by the transport, the connection or the request",
+    ],
+    [
+      "accept-encoding",
+      ["accept-encoding"],
+      "Invalid signer: accept-encoding is set by the transport, the connection or the request",
+    ],
+    ["connection", ["connection"], "Invalid signer: connection is set by the transport, the connection or the request"],
+    [
+      "proxy-authorization",
+      ["proxy-authorization"],
+      "Invalid signer: proxy-authorization is set by the transport, the connection or the request",
+    ],
+    ["a connection header", ["x-api"], "Invalid signer: x-api is set by the transport, the connection or the request"],
+    [
+      "a request header name",
+      ["range"],
+      "Invalid signer: range is set by the transport, the connection or the request",
+    ],
+  ] as const)("%s is refused before any socket", async (_label, headerNames, sentence) => {
+    const listener = await rawHttpListener(OK);
+    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const error = refusal(() =>
+      createNodeByteTransport({
+        origin,
+        tls: null,
+        maxSockets: 1,
+        headers: { "x-api": "k" },
+        requestHeaderNames: ["range"],
+        signer: { headerNames, sign: () => ({}) },
+      }),
+    );
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error.message).toBe(sentence);
+    expect(listener.accepted()).toBe(0);
+  });
+
+  test("authorization is accepted", () => {
+    const origin = httpOrigin("http", "127.0.0.1", 9000);
+    expect(() =>
+      transports.push(createNodeByteTransport({ origin, tls: null, maxSockets: 1, headers: {}, signer: signer() })),
+    ).not.toThrow();
+  });
+});
+
+describe("the signer at send time", () => {
+  test("is handed the exact method, Host, target and a frozen copy of the headers the transport sets", async () => {
+    // A HEAD answer carries no body: a stray one would fail the request.
+    const listener = await rawHttpListener(() => rawAnswer("200 OK", ["content-length: 2"]));
+    const inputs: SigningInput[] = [];
+    const transport = connect(listener, {
+      headers: { "X-Conn": "c" },
+      requestHeaderNames: ["range"],
+      signer: signer((input) => {
+        inputs.push(input);
+        return { authorization: AUTHORIZATION };
+      }),
+    });
+    await transport.request({
+      ...get("/b/k", { headers: { range: "bytes=0-9" } }),
+      method: "HEAD",
+      target: { path: "/b/k", query: "versionId=v1&partNumber=1" },
+    });
+    expect(inputs).toEqual([
+      {
+        method: "HEAD",
+        host: `127.0.0.1:${listener.port}`,
+        path: "/b/k",
+        query: "versionId=v1&partNumber=1",
+        headers: {
+          "x-conn": "c",
+          range: "bytes=0-9",
+          host: `127.0.0.1:${listener.port}`,
+          "accept-encoding": "identity",
+        },
+      },
+    ]);
+    expect(Object.isFrozen(inputs[0].headers)).toBe(true);
+  });
+
+  test("its headers go on the wire after the transport's, with host exactly once", async () => {
+    const listener = await rawHttpListener(OK);
+    await connect(listener, { signer: signer() }).request(get("/b/k"));
+    expect(lines(listener.heads[0])).toEqual([
+      "GET /b/k HTTP/1.1",
+      `host: 127.0.0.1:${listener.port}`,
+      "accept-encoding: identity",
+      `authorization: ${AUTHORIZATION}`,
+      "x-amz-date: 20261009T000000Z",
+      "Connection: keep-alive",
+    ]);
+  });
+
+  test("with maxSockets 1, a queued request is signed only after the request ahead of it is answered", async () => {
+    const { listener, release } = await holdingListener();
+    const signed: string[] = [];
+    const transport = connect(listener, {
+      maxSockets: 1,
+      signer: signer((input) => {
+        signed.push(input.path);
+        return { authorization: AUTHORIZATION };
+      }),
+    });
+    const first = transport.request(get("/held"));
+    await eventually(() => listener.seen.length === 1, "the first request to reach the listener");
+    const second = transport.request(get("/second"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(signed).toEqual(["/held"]);
+    release();
+    await Promise.all([first, second]);
+    expect(signed).toEqual(["/held", "/second"]);
+  });
+
+  test("a request cancelled while queued is never signed", async () => {
+    const silent = await silentListener();
+    const signed: string[] = [];
+    const transport = connect(silent, {
+      maxSockets: 1,
+      signer: signer((input) => {
+        signed.push(input.path);
+        return { authorization: AUTHORIZATION };
+      }),
+    });
+    void transport.request(get("/first")).catch(() => {});
+    const controller = new AbortController();
+    const queued = failure(() => transport.request(get("/queued", { signal: controller.signal })));
+    controller.abort();
+    expect((await queued).message).toBe("The request was cancelled");
+    expect(signed).toEqual(["/first"]);
+  });
+
+  test("a signer that throws rejects with that same error and opens no socket", async () => {
+    const listener = await rawHttpListener(OK);
+    const error = await failure(() => connect(listener, { signer: throwingOn("/b/k") }).request(get("/b/k")));
+    expect(error).toBe(SIGNER_ERROR);
+    expect(listener.accepted()).toBe(0);
+  });
+
+  test("a signer that throws a string rejects with an Error carrying the signer-failed sentence", async () => {
+    const listener = await rawHttpListener(OK);
+    const transport = connect(listener, {
+      signer: signer(() => {
+        throw "not an Error";
+      }),
+    });
+    const error = await failure(() => transport.request(get("/b/k")));
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(TransportError);
+    expect(error.message).toBe(SIGNER_FAILED);
+    expect(listener.accepted()).toBe(0);
+  });
+
+  test.each([
+    [
+      "an unlisted name",
+      () => ({ authorization: AUTHORIZATION, "x-amz-security-token": "t" }),
+      "Invalid signature headers: the signer returned a header this transport does not list",
+    ],
+    [
+      "a line feed in a value",
+      () => ({ authorization: "AWS4\nx-injected: 1" }),
+      "Invalid signature headers: the value of authorization must be visible ASCII or space, at most 1024 bytes",
+    ],
+    [
+      "a 1025-character value",
+      () => ({ authorization: "a".repeat(1025) }),
+      "Invalid signature headers: the value of authorization must be visible ASCII or space, at most 1024 bytes",
+    ],
+    [
+      "an array",
+      () => [["authorization", AUTHORIZATION]] as unknown as Readonly<Record<string, string>>,
+      "Invalid signature headers: expected a plain record of header names and values",
+    ],
+    [
+      "a Map",
+      () => new Map([["authorization", AUTHORIZATION]]) as unknown as Readonly<Record<string, string>>,
+      "Invalid signature headers: expected a plain record of header names and values",
+    ],
+    [
+      "null",
+      () => null as unknown as Readonly<Record<string, string>>,
+      "Invalid signature headers: expected a plain record of header names and values",
+    ],
+  ] as const)("a signature with %s is refused and opens no socket", async (_label, onSign, sentence) => {
+    const listener = await rawHttpListener(OK);
+    const error = await failure(() => connect(listener, { signer: signer(onSign) }).request(get("/b/k")));
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error.message).toBe(sentence);
+    expect(listener.accepted()).toBe(0);
+  });
+
+  test("a 1024-character value is sent", async () => {
+    const listener = await rawHttpListener(OK);
+    await connect(listener, { signer: signer(() => ({ authorization: "a".repeat(1024) })) }).request(get("/b/k"));
+    expect(lines(listener.heads[0])).toContain(`authorization: ${"a".repeat(1024)}`);
+  });
+});
+
+describe("signer failures release their socket slot and escape nowhere", () => {
+  test("with maxSockets 1, a queued request whose signer throws on release rejects, and the next request completes", async () => {
+    const watch = watchUncaught();
+    try {
+      const { listener, release } = await holdingListener();
+      const transport = connect(listener, { maxSockets: 1, signer: throwingOn("/boom") });
+      const held = transport.request(get("/held"));
+      await eventually(() => listener.seen.length === 1, "request A to reach the listener");
+      const thrown = failure(() => transport.request(get("/boom")));
+      release();
+      expect((await held).bytes.toString()).toBe("held");
+      expect(await thrown).toBe(SIGNER_ERROR);
+      expect((await transport.request(get("/after"))).bytes.toString()).toBe("ok");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(watch.seen).toEqual([]);
+    } finally {
+      watch.stop();
+    }
+  });
+
+  test("with maxSockets 1, three requests whose signer throws at once leak no slot, and a fourth completes", async () => {
+    const watch = watchUncaught();
+    try {
+      const listener = await rawHttpListener(OK);
+      const transport = connect(listener, { maxSockets: 1, signer: throwingOn("/boom") });
+      const errors = await Promise.all([1, 2, 3].map(() => failure(() => transport.request(get("/boom")))));
+      expect(errors).toEqual([SIGNER_ERROR, SIGNER_ERROR, SIGNER_ERROR]);
+      expect((await transport.request(get("/ok"))).bytes.toString()).toBe("ok");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(watch.seen).toEqual([]);
+    } finally {
+      watch.stop();
+    }
+  });
+
+  test("a signer that assigns to input.headers rejects with a TypeError, sends nothing, and the next request completes", async () => {
+    const watch = watchUncaught();
+    try {
+      const listener = await rawHttpListener(OK);
+      const transport = connect(listener, {
+        maxSockets: 1,
+        signer: signer((input) => {
+          if (input.path === "/mutate") (input.headers as Record<string, string>)["x-extra"] = "1";
+          return { authorization: AUTHORIZATION };
+        }),
+      });
+      const error = await failure(() => transport.request(get("/mutate")));
+      expect(error).toBeInstanceOf(TypeError);
+      expect(listener.accepted()).toBe(0);
+      expect((await transport.request(get("/ok"))).bytes.toString()).toBe("ok");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(watch.seen).toEqual([]);
+    } finally {
+      watch.stop();
+    }
+  });
+
+  test("a signer that cancels its own request sends nothing, and the next request completes", async () => {
+    const listener = await rawHttpListener(OK);
+    const controller = new AbortController();
+    const transport = connect(listener, {
+      maxSockets: 1,
+      signer: signer((input) => {
+        if (input.path === "/cancel") controller.abort();
+        return { authorization: AUTHORIZATION };
+      }),
+    });
+    const error = await failure(() => transport.request(get("/cancel", { signal: controller.signal })));
+    expect(error.message).toBe("The request was cancelled");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(listener.accepted()).toBe(0);
+    expect((await transport.request(get("/ok"))).bytes.toString()).toBe("ok");
+  });
+
+  test("a signer that closes the transport sends nothing", async () => {
+    const listener = await rawHttpListener(OK);
+    const holder: { transport?: NodeByteTransport } = {};
+    const transport = connect(listener, {
+      signer: signer(() => {
+        holder.transport?.close();
+        return { authorization: AUTHORIZATION };
+      }),
+    });
+    holder.transport = transport;
+    const error = await failure(() => transport.request(get("/b/k")));
+    expect(error.message).toBe(CLOSED);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(listener.accepted()).toBe(0);
   });
 });

@@ -337,6 +337,12 @@ const MAX_CONTENT_ENCODING_LENGTH = 64;
 const INVALID_RESPONSE_HEADERS =
   "Invalid responseHeaders: expected at most 32 lower-case names and 8 lower-case prefixes ending in a hyphen";
 const NEVER_RETURNED_LISTED = "Invalid responseHeaders: location and set-cookie are never returned";
+const INVALID_SIGNER = "Invalid signer: expected at least one lower-case header name";
+const UNLISTED_SIGNATURE_HEADER =
+  "Invalid signature headers: the signer returned a header this transport does not list";
+const SIGNATURE_NOT_A_RECORD = "Invalid signature headers: expected a plain record of header names and values";
+/** What a request is rejected with when its signer throws something that is not an Error. */
+const SIGNER_FAILED = "The request signer failed, so the request was not sent";
 /**
  * Never handed back, even through a prefix: a Location path or query can carry a token and its userinfo a password,
  * which is why the redirect refusal names only its origin, and Set-Cookie is session material no caller needs.
@@ -550,6 +556,25 @@ function requestHeaderNamesOf(
   return listed;
 }
 
+/** The refusals of one kind of header record: a request's own headers or a signer's. */
+interface HeaderRecordRefusals {
+  readonly notARecord: string;
+  readonly unlisted: string;
+  /** Names the record in the value refusal, as in "Invalid request headers: the value of ...". */
+  readonly label: string;
+}
+
+const REQUEST_HEADER_REFUSALS: HeaderRecordRefusals = {
+  notARecord: NOT_A_RECORD,
+  unlisted: UNLISTED_HEADER,
+  label: "request headers",
+};
+const SIGNATURE_HEADER_REFUSALS: HeaderRecordRefusals = {
+  notARecord: SIGNATURE_NOT_A_RECORD,
+  unlisted: UNLISTED_SIGNATURE_HEADER,
+  label: "signature headers",
+};
+
 /**
  * A request's own headers, checked before any socket: an unlisted name is refused without being repeated, and a value
  * of the wrong kind is refused by its listed name, never its value.
@@ -558,20 +583,31 @@ function perRequestHeaders(
   headers: Readonly<Record<string, string>> | undefined,
   listed: ReadonlySet<string>,
 ): Readonly<Record<string, string>> {
+  return checkedHeaderRecord(headers ?? {}, listed, REQUEST_HEADER_REFUSALS);
+}
+
+/**
+ * The rule every header record meets, a request's own and a signer's: one read of a plain record, only listed names,
+ * each value visible ASCII or space and at most 1024 bytes. A refusal names a listed name, never a value.
+ */
+function checkedHeaderRecord(
+  record: object,
+  listed: ReadonlySet<string>,
+  refusals: HeaderRecordRefusals,
+): Readonly<Record<string, string>> {
   // One read, checked and then sent, so a record whose keys or values change between reads cannot pass one set.
-  const record = headers ?? {};
   const entries = Object.entries(record);
   // What that read cannot see, a Map's entries, a Symbol or a non-enumerable key, is refused rather than dropped; the
   // second key read only ever refuses, it never adds to what is sent.
   const prototype: unknown = Object.getPrototypeOf(record);
   if ((prototype !== Object.prototype && prototype !== null) || Reflect.ownKeys(record).length !== entries.length) {
-    throw new DatabaseConfigError(NOT_A_RECORD);
+    throw new DatabaseConfigError(refusals.notARecord);
   }
   for (const [name, value] of entries) {
-    if (!listed.has(name)) throw new DatabaseConfigError(UNLISTED_HEADER);
+    if (!listed.has(name)) throw new DatabaseConfigError(refusals.unlisted);
     if (typeof value !== "string" || value.length > MAX_HEADER_VALUE_BYTES || !HEADER_VALUE.test(value)) {
       throw new DatabaseConfigError(
-        `Invalid request headers: the value of ${name} must be visible ASCII or space, at most ${MAX_HEADER_VALUE_BYTES} bytes`,
+        `Invalid ${refusals.label}: the value of ${name} must be visible ASCII or space, at most ${MAX_HEADER_VALUE_BYTES} bytes`,
       );
     }
   }
@@ -714,6 +750,51 @@ export function selectedHeaders(
     headers.push([name, value]);
   }
   return { headers, truncated };
+}
+
+/** A signer with its closed list of names, checked once when the transport is built (byte transport design 3.3). */
+interface CheckedSigner {
+  readonly names: ReadonlySet<string>;
+  readonly signer: RequestSigner;
+}
+
+/**
+ * The signer's names: at least one lower-case token, never a name the transport owns except `authorization`, never a
+ * `content-` or `proxy-` name, never a connection header and never a per-request name, so a signer can neither
+ * replace a credential nor a request's own header. A refused name is a listed token, so naming it repeats no value.
+ */
+function checkedSigner(
+  signer: RequestSigner,
+  connection: Readonly<Record<string, string>>,
+  requestNames: ReadonlySet<string>,
+): CheckedSigner {
+  const names: unknown = signer.headerNames;
+  if (
+    !Array.isArray(names) ||
+    names.length === 0 ||
+    !Array.from(names).every((name) => typeof name === "string" && HEADER_NAME.test(name))
+  ) {
+    throw new DatabaseConfigError(INVALID_SIGNER);
+  }
+  const listed = names as string[];
+  for (const name of listed) {
+    if (
+      (OWNED_HEADERS.has(name) && name !== "authorization") ||
+      OWNED_HEADER_PREFIXES.some((prefix) => name.startsWith(prefix)) ||
+      Object.hasOwn(connection, name) ||
+      requestNames.has(name)
+    ) {
+      throw new DatabaseConfigError(`Invalid signer: ${name} is set by the transport, the connection or the request`);
+    }
+  }
+  return { names: new Set(listed), signer };
+}
+
+/** Calls the signer once and checks what it returned with the rule a request's own headers meet. */
+function signedHeaders(checked: CheckedSigner, input: SigningInput): Readonly<Record<string, string>> {
+  const record: unknown = checked.signer.sign(input);
+  if (typeof record !== "object" || record === null) throw new DatabaseConfigError(SIGNATURE_NOT_A_RECORD);
+  return checkedHeaderRecord(record, checked.names, SIGNATURE_HEADER_REFUSALS);
 }
 
 /**
@@ -1064,6 +1145,10 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
     // Set by the transport on every request, so the Host a signer signs is the Host on the wire (byte transport design 3.3).
     host: originHost(origin),
   }));
+  // Checked against the connection's headers and the request's names, so it follows connectionOf; the Agent built
+  // there has opened no socket yet.
+  const signer =
+    options.signer === undefined ? undefined : checkedSigner(options.signer, connectionHeaders, requestHeaderNames);
 
   const exchange = (
     request: NodeByteRequest,
@@ -1071,6 +1156,27 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
     perRequest: Readonly<Record<string, string>>,
   ): Promise<NodeByteResponse> =>
     core.queue<NodeByteResponse>(request.signal, (pending) => {
+      const headers = { ...connectionHeaders, ...perRequest, host: address.host, "accept-encoding": "identity" };
+      let signed: Readonly<Record<string, string>> = {};
+      if (signer !== undefined) {
+        // Its own try, never dispatch's: this runs from the Promise executor or from another request's release(), so a
+        // throw that escaped here would leak this socket slot or end the process, and failWith would turn a signer's
+        // Error into a network failure. fail() settles this request alone and frees its slot.
+        try {
+          signed = signedHeaders(signer, {
+            method: request.method,
+            host: address.host,
+            path: target.path,
+            query: target.query,
+            headers: Object.freeze({ ...headers }),
+          });
+        } catch (error) {
+          pending.fail(error instanceof Error ? error : new Error(SIGNER_FAILED));
+          return;
+        }
+        // A signer that cancelled this request or closed the transport has settled it already: nothing is sent.
+        if (pending.settled()) return;
+      }
       dispatch(
         core,
         pending,
@@ -1081,7 +1187,8 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
             // Written by node:http byte for byte, never parsed, so dot segments reach the server as given.
             path: pathAndQuery(target),
             method: request.method,
-            headers: { ...connectionHeaders, ...perRequest, host: address.host, "accept-encoding": "identity" },
+            // host is set explicitly, so node:http adds no second one and what was signed is what is sent.
+            headers: { ...headers, ...signed },
           },
         }),
         (answer, status, outgoing) => {
