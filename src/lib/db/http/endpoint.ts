@@ -236,9 +236,11 @@ const INVALID_TEXT = "Invalid text: expected well-formed Unicode, so it cannot b
 /**
  * Every UTF-8 byte outside A-Z a-z 0-9 - . _ ~ as %XX with upper-case hex; text with a lone surrogate is refused.
  *
- * This is SigV4's UriEncode alphabet, so a byte request target built from it is a canonical URI unchanged
- * (byte transport design 3.4). encodeURIComponent already writes upper-case hex and leaves only `!'()*` outside
- * that alphabet unescaped, and it throws URIError on a lone surrogate.
+ * This is SigV4's UriEncode alphabet, so each encoded segment, name or value is in its canonical form as it stands
+ * (byte transport design 3.4). It does not make every target valid: an empty first path segment gives "//x" and an
+ * empty query name gives "=v", which the byte transport's own check of the target refuses. encodeURIComponent already
+ * writes upper-case hex and leaves only `!'()*` outside that alphabet unescaped, and it throws URIError on a lone
+ * surrogate.
  */
 export function rfc3986Encode(text: string): string {
   let encoded: string;

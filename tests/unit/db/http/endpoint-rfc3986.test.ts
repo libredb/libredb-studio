@@ -2,8 +2,10 @@
  * The strict encoders a byte request target is built with, the Host value the byte transport sends, and the exported
  * loopback predicate (byte transport design 3.2 and 3.4).
  *
- * Every output of the encoders is in the request-target grammar the byte transport checks, which is also SigV4's
- * UriEncode alphabet with upper-case hex, so a path built here is a canonical URI as it stands.
+ * The encoders percent-encode every UTF-8 byte outside the unreserved set with upper-case hex, which is SigV4's UriEncode
+ * alphabet. That keeps the outputs below inside the request-target grammar the byte transport checks, but it is not a
+ * guarantee for every input: an empty first path segment gives "//x" and an empty query name gives "=v", and the
+ * grammar check is the byte transport's own.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";

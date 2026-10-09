@@ -17,7 +17,8 @@
  *   because an IP literal never reaches a lookup, and the guard's lookup goes on this connection's own Agent in place of
  *   the `agent: false` of guardedNodeOptions. The Agent never carries an unguarded request, so every socket it pools was
  *   opened through the guarded lookup, and a pooled socket costs one lookup rather than one per request.
- * - No redirect is followed: every 3xx goes to the shared rejectRedirect, and its body is released unread.
+ * - No redirect is followed: every 3xx goes to the shared rejectRedirect, a 304 to a conditional request included, and
+ *   its body is released unread.
  * - Every request asks for `accept-encoding: identity`, and nothing is decompressed. `createNodeTransport` refuses an
  *   answer with any other content-encoding before its body is read, so its byte cap always counts the bytes parsed.
  * - The body is counted as it streams. `createNodeTransport` destroys the socket the moment the body passes
@@ -1295,7 +1296,9 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
             chunks.push(chunk.subarray(0, limit - received));
             received = limit;
             // Resolve first and destroy second: after destroy neither end nor error fires, and a late event finds the
-            // request settled. A destroyed socket is never reused, so the next request opens a new one.
+            // request settled. A destroyed socket is never reused, so the next request opens a new one. The exchange
+            // still counts the answer as unfinished after this, which is harmless: only a failure reads that, and a
+            // failure after the request has settled is ignored.
             if (pending.resolve(respond(true))) {
               answer.destroy();
               outgoing.destroy();
