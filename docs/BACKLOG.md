@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D253, U17 · 157
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U103 · 95
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U104 · 96
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC18 · 15
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -2393,6 +2393,7 @@ Found 2026-10-04 while designing the Oxia provider (DECISIONS O10).
 
 Discovery runs on the first page of a walk with no pattern, within the bounds SB1-8.5 sets, and never under a folder, because under a folder its cost scales with the number of child nodes (O13; SPEC-RECONCILIATION cross-part ruling).
 A deeper or wider Pulsar tree is narrowed by prefix.
+`keyScan.levels`, the one-level listing the shared Keys panel gained for object stores, is the lazy children mechanism this entry asks for; Oxia does not declare it, so the entry stays open.
 
 Found 2026-10-04 while designing the Oxia provider (DECISIONS O13).
 
@@ -2419,6 +2420,7 @@ Found 2026-10-04 while designing the Oxia provider (DECISIONS O15).
 The shared Keys panel rows and the tab titles print a key as it is, so a key holding a control character is drawn with it.
 A key `a` followed by U+0000 shows as `a` and a box in its row and title, and its Source tab reads "Source: a", the same as a key `a`.
 Measured on Oxia, which reaches such a key from the Keys panel by design; the panel and the titles are shared, so every engine with such keys draws them the same way.
+The folder prefixes an engine that declares `keyScan.levels` answers are drawn by the same rows and are covered by the same fix.
 
 Found 2026-10-04 by the browser pass of the Oxia provider (step 4).
 
@@ -4254,6 +4256,15 @@ The decline path on `main` resets both flags the same way, for every engine.
 Found 2026-10-08 by the browser re-verification of the Databend provider (#1593); pre-existing.
 
 **Done when:** a declined Explain leaves a run in flight on its tab as it was, Cancel included, with a hook test that starts a run, has an Explain declined on the same tab before the run answers, and finds the tab executing until the run's answer.
+
+### U104. The Keys panel cannot be shown beside the object tree
+
+The Sidebar shows the Objects view or the Keys view, never both (`src/components/sidebar/Sidebar.tsx`), so a bucket selected in the tree with the Keys panel scoped to it beside the tree is reached in two steps: Browse Keys on the bucket row switches to the Keys view on `<bucket>/`, with that folder open and its top level listed.
+Showing both views at once would change the sidebar for Redis, etcd and Oxia, which the folder-aware Keys panel leaves unchanged.
+
+Found 2026-10-09 while designing the folder-aware Keys panel for object stores.
+
+**Done when:** a side-by-side layout is designed that leaves Redis, etcd and Oxia unchanged, or the owner declines it.
 
 ## Dependencies
 
