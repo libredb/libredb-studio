@@ -74,6 +74,8 @@ import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compat
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { declaredKinds, findKind } from "@/lib/db/object-kinds";
 import type { DatabaseObject, ObjectKindSpec, ProviderCapabilities } from "@/lib/db/types";
+import { containerDepth } from "@/lib/db/object-kinds";
+import { keyScanShape } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../helpers/census-connection";
 
@@ -448,6 +450,55 @@ function keyBrowserBreaches(type: string, capabilities: ProviderCapabilities): r
   return breaches;
 }
 
+/**
+ * THE LEVEL DECLARATION, held to its rules (Keys panel levels, spec 3.8).
+ *
+ * `keyScan.levels` says an engine lists its key space one level at a time. A level is a prefix and a
+ * separator, and a level page has no total, so `levels` needs `pattern: "prefix"` and
+ * `totalScope: "none"`. `levels.rootKind` names the kind whose rows are the key space's first segment,
+ * so it must be a declared kind, a kind that draws rows (not one only the Keys panel enumerates), on an
+ * engine with no container level, where the Sidebar sends no `database` beside the pattern.
+ *
+ * `LEVEL_SCAN_TYPES` is the committed list of type ids that declare `levels`; the registration of an
+ * engine that declares it moves the list. The planted declarations, in the key-browser block below so
+ * they share its key-browser kind, show each rule refuses what it names.
+ */
+const LEVEL_SCAN_TYPES: readonly string[] = Object.freeze([]);
+
+/** The breaches of the level rules in one declaration, one sentence each. */
+function levelBreaches(type: string, capabilities: ProviderCapabilities): readonly string[] {
+  const keyScan = capabilities.keyScan;
+  const levels = keyScan?.levels;
+  if (keyScan === undefined || levels === undefined) return [];
+  const shape = keyScanShape(keyScan);
+  const breaches: string[] = [];
+  if (shape.pattern !== "prefix") {
+    breaches.push(
+      `${type} declares keyScan.levels on a walk whose pattern is not "prefix", and a level is a prefix and a separator`,
+    );
+  }
+  if (shape.totalScope !== "none") {
+    breaches.push(`${type} declares keyScan.levels with a total, and a level page has no total to count`);
+  }
+  const id = levels.rootKind;
+  if (id !== undefined) {
+    const kind = findKind(capabilities, id);
+    if (kind === undefined) {
+      breaches.push(`${type} names keyScan.levels.rootKind "${id}", which it does not declare`);
+    } else if (kind.enumeratedBy !== undefined) {
+      breaches.push(
+        `${type} names the key-browser kind "${id}" as keyScan.levels.rootKind, and that kind draws no row to offer it on`,
+      );
+    }
+    if (containerDepth(capabilities) > 0) {
+      breaches.push(
+        `${type} names keyScan.levels.rootKind on an engine with a container level, and a root kind names the first segment of one key space`,
+      );
+    }
+  }
+  return breaches;
+}
+
 describe("the key-browser declaration", () => {
   test("the fleet declares exactly the committed key-browser kinds, and no declaration breaches the rules", async () => {
     const rows = await censusKinds();
@@ -506,6 +557,84 @@ describe("the key-browser declaration", () => {
     expect(keyBrowserBreaches("kv", keyValue([PREFIX, KEY], false))).toEqual([
       'kv declares key enumeratedBy "key-browser" and no keyScan, so no Keys panel enumerates it',
     ]);
+  });
+
+  describe("the level declaration", () => {
+    test("the fleet declares exactly the committed level types, and no declaration breaches the rules", async () => {
+      const fleet = await Promise.all(
+        CENSUS_TYPES.map(async (type) => ({
+          type,
+          capabilities: (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities(),
+        })),
+      );
+      const declaring: readonly string[] = fleet
+        .filter(({ capabilities }) => capabilities.keyScan?.levels !== undefined)
+        .map(({ type }) => type);
+      const breaches = fleet.flatMap(({ type, capabilities }) => levelBreaches(type, capabilities));
+      expect(declaring).toEqual([...LEVEL_SCAN_TYPES]);
+      expect(breaches).toEqual([]);
+    });
+
+    // PLANTED declarations, because no engine in the fleet declares levels yet, so without them each rule
+    // would be certified by nothing. `KEY` is the key-browser kind the block above plants.
+    const BUCKET: ObjectKindSpec = { id: "bucket", role: "config", label: "Bucket", labelPlural: "Buckets" };
+    const LEVELS = {
+      defaultCount: 500,
+      maxCount: 1000,
+      separator: "/",
+      cursor: "opaque",
+      pattern: "prefix",
+      totalScope: "none",
+      levels: { rootKind: "bucket" },
+    } as const;
+    const store = (
+      keyScan: Record<string, unknown> = LEVELS,
+      extra: Record<string, unknown> = {},
+    ): ProviderCapabilities =>
+      ({
+        queryLanguage: "json",
+        containerLevels: [],
+        objectKinds: [BUCKET, KEY],
+        keyScan,
+        ...extra,
+      }) as unknown as ProviderCapabilities;
+
+    test("a declaration that keeps every rule has no breach, the control for the five below", () => {
+      expect(levelBreaches("store", store())).toEqual([]);
+    });
+
+    test("levels on a walk whose pattern is not prefix is refused by name", () => {
+      expect(levelBreaches("store", store({ ...LEVELS, pattern: "glob" }))).toEqual([
+        'store declares keyScan.levels on a walk whose pattern is not "prefix", and a level is a prefix and a separator',
+      ]);
+    });
+
+    test("levels on a counted walk is refused by name", () => {
+      expect(levelBreaches("store", store({ ...LEVELS, totalScope: "walk" }))).toEqual([
+        "store declares keyScan.levels with a total, and a level page has no total to count",
+      ]);
+    });
+
+    test("a root kind the engine does not declare is refused by name", () => {
+      expect(levelBreaches("store", store({ ...LEVELS, levels: { rootKind: "vault" } }))).toEqual([
+        'store names keyScan.levels.rootKind "vault", which it does not declare',
+      ]);
+    });
+
+    test("a key-browser kind named as the root kind is refused by name", () => {
+      expect(levelBreaches("store", store({ ...LEVELS, levels: { rootKind: "key" } }))).toEqual([
+        'store names the key-browser kind "key" as keyScan.levels.rootKind, and that kind draws no row to offer it on',
+      ]);
+    });
+
+    test("a root kind on an engine with a container level is refused by name", () => {
+      const withLevel = store(LEVELS, {
+        containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+      });
+      expect(levelBreaches("store", withLevel)).toEqual([
+        "store names keyScan.levels.rootKind on an engine with a container level, and a root kind names the first segment of one key space",
+      ]);
+    });
   });
 });
 
