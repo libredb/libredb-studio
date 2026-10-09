@@ -2229,6 +2229,7 @@ describe("a panel listed one level at a time", () => {
     "Listing this folder",
     "Load more of the top level",
     "Listing the top level",
+    "next page of the top level",
     "entries listed",
     "entry listed",
     "Nothing is listed",
@@ -2907,6 +2908,9 @@ describe("a panel listed one level at a time", () => {
     await waitFor(() => {
       expect(loadMoreRows()[0]?.textContent).toContain("Load more of the top level");
     });
+    expect(loadMoreRows()[0]?.getAttribute("title")).toBe(
+      "Ask the server for the next page of the top level. A page lists folders and keys of this level only, and each folder lists its own level when opened.",
+    );
 
     fireEvent.click(loadMoreRows()[0]);
     await waitFor(() => {

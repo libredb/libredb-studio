@@ -980,7 +980,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                    */
                   title={
                     levels
-                      ? "Ask the server for the next page of this folder. A page lists folders and keys of this level only, and each folder lists its own level when opened."
+                      ? `Ask the server for the next page of ${topLevel ? "the top level" : "this folder"}. A page lists folders and keys of this level only, and each folder lists its own level when opened.`
                       : prefixed
                         ? "Ask the server for the next page of the keys under this prefix. The walk above reads the same range in the same order, so a page can hold only keys already loaded."
                         : "Ask the server for one more page under this prefix. It answers a batch of buckets rather than a listing, so a page can hold only keys already loaded."
