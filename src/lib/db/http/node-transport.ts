@@ -1147,6 +1147,8 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
           });
           answer.on("end", () => {
             pending.ended();
+            // An end after a failure, a cancel or close() decodes nothing: nothing would receive it.
+            if (pending.settled()) return;
             pending.resolve({
               status,
               contentType: answer.headers["content-type"] ?? null,
