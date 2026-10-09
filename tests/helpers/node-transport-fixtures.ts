@@ -291,3 +291,45 @@ export function countingListener(): Promise<Listener> {
     "127.0.0.1",
   );
 }
+
+/** A listener that records each request head byte for byte, as rawHttpListener does. */
+export interface RawListener extends Listener {
+  /** Every request head received, the request line and header lines as sent, without the closing blank line. */
+  readonly heads: Buffer[];
+}
+
+/**
+ * A raw node:net listener for byte-exact wire assertions (byte transport design 4): it splits what each socket sends
+ * into request heads at each blank line, records every head as received, and writes back what `script` returns for
+ * it, keeping the socket open, so keep-alive reuse is counted by `accepted()`. A node:http server is not used here
+ * because its parsing of dot segments in a request path is not what a server receives. GET and HEAD carry no body, so
+ * a blank line always ends one request.
+ */
+export function rawHttpListener(
+  script: (head: Buffer, index: number) => Buffer,
+  host = "127.0.0.1",
+): Promise<RawListener> {
+  const heads: Buffer[] = [];
+  const server = createTcpServer((socket) => {
+    // A client that destroys its socket mid-answer, as truncateAt does, resets the write; that is the test's subject.
+    socket.on("error", () => {});
+    let pending = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      pending = Buffer.concat([pending, chunk]);
+      for (let end = pending.indexOf("\r\n\r\n"); end !== -1; end = pending.indexOf("\r\n\r\n")) {
+        const head = Buffer.from(pending.subarray(0, end));
+        pending = pending.subarray(end + 4);
+        heads.push(head);
+        const answer = script(head, heads.length - 1);
+        if (!socket.destroyed) socket.write(answer);
+      }
+    });
+  });
+  return observe(server, [], host).then((listener) => ({ ...listener, heads }));
+}
+
+/** One raw HTTP/1.1 answer: the status line, each header line as given in UTF-8, a blank line, then `body`. */
+export function rawAnswer(status: string, headerLines: readonly string[], body: Buffer | string = ""): Buffer {
+  const head = `HTTP/1.1 ${status}\r\n${headerLines.map((line) => `${line}\r\n`).join("")}\r\n`;
+  return Buffer.concat([Buffer.from(head, "utf8"), typeof body === "string" ? Buffer.from(body, "utf8") : body]);
+}

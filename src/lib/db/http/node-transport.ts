@@ -33,6 +33,7 @@ import {
   type AgentOptions,
   type ClientRequest,
   type IncomingMessage,
+  type RequestOptions,
   request as httpRequest,
 } from "node:http";
 import { Agent as HttpsAgent, type AgentOptions as HttpsAgentOptions, request as httpsRequest } from "node:https";
@@ -41,7 +42,7 @@ import { checkServerIdentity, type PeerCertificate } from "node:tls";
 import { urlToHttpOptions } from "node:url";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { guardedNodeOptions } from "@/lib/db/http/egress-policy";
-import { endpointUrl, type HttpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { endpointUrl, type HttpOrigin, originHost, rejectRedirect } from "@/lib/db/http/endpoint";
 import type { SSLConfig, SSLMode } from "@/lib/types";
 
 /** The SSL / TLS panel as node:https takes it. */
@@ -141,6 +142,91 @@ export interface NodeTransport {
   close(): void;
 }
 
+/** Which response headers a byte transport hands back; checked once when the transport is built. */
+export interface ResponseHeaderSelection {
+  /** Exact lower-case names, at most 32. */
+  readonly names: readonly string[];
+  /** Lower-case name prefixes such as "x-amz-meta-", at most 8, each at least 3 characters and ending in "-". */
+  readonly prefixes?: readonly string[];
+}
+
+/**
+ * What the signer is given: the method, Host, target and every header the transport sets, before the signer's own.
+ * The runtime also appends `Connection: keep-alive` after these, which is not in `headers` and must not be signed.
+ */
+export interface SigningInput {
+  readonly method: "GET" | "HEAD";
+  /** The Host header value the transport sends, from originHost(origin). */
+  readonly host: string;
+  /** The request-target path, byte for byte as sent; for SigV4 it is the canonical URI unchanged. */
+  readonly path: string;
+  /**
+   * The query without "?", byte for byte as sent, in the caller's order; "" when there is none.
+   * It is NOT a SigV4 canonical query: that is the same encoded pairs sorted by encoded name, which the signer builds.
+   * The transport never reorders a query.
+   */
+  readonly query: string;
+  /**
+   * Every header the transport sets, except the signer's: connection headers, per-request headers, `host` and
+   * `accept-encoding`, with lower-case names. A frozen copy: a signer cannot add to what is sent through it.
+   */
+  readonly headers: Readonly<Record<string, string>>;
+}
+
+export interface RequestSigner {
+  /** The lower-case names `sign` may return, a closed list; "authorization" is the one owned name it may hold. */
+  readonly headerNames: readonly string[];
+  /** Called once per request, synchronously, when a socket is free and just before the request is written. */
+  sign(input: SigningInput): Readonly<Record<string, string>>;
+}
+
+export interface NodeByteTransportOptions extends NodeTransportOptions {
+  /** Absent: no response header is returned and `headers` is []. */
+  readonly responseHeaders?: ResponseHeaderSelection;
+  /** Absent: the request is sent unsigned, with no credential the connection headers do not carry. */
+  readonly signer?: RequestSigner;
+}
+
+export interface RequestTarget {
+  /** Absolute; only A-Z a-z 0-9 - . _ ~ / and upper-case %XX escapes; never starting with "//". */
+  readonly path: string;
+  /** name=value pairs of the same characters (no "/"), joined by "&"; "" for none. */
+  readonly query: string;
+}
+
+export interface NodeByteRequest {
+  readonly method: "GET" | "HEAD";
+  readonly target: RequestTarget;
+  /** As NodeRequest.headers: names from requestHeaderNames only, values visible ASCII or space, at most 1024 bytes. */
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly signal: AbortSignal;
+  readonly maxResponseBytes: number;
+  /** Keep at most this many body bytes and report the cut instead of failing; at most maxResponseBytes. */
+  readonly truncateAt?: number;
+}
+
+export interface NodeByteResponse {
+  readonly status: number;
+  /** The content-type header read as the text path reads it (answer.headers, so the first of repeated values), cut to 1024 characters; null when absent. */
+  readonly contentType: string | null;
+  /** The content-encoding header read the same way, cut to 64 characters; null when absent. The body is never decoded. */
+  readonly contentEncoding: string | null;
+  /** The Retry-After header through the text path's retryAfterOf, cut to 64 characters; null when absent. */
+  readonly retryAfter: string | null;
+  /** The selected headers in received order, duplicates kept. */
+  readonly headers: readonly ResponseHeader[];
+  /** True when a header was dropped or a value cut by the limits of the response-header selection. */
+  readonly headersTruncated: boolean;
+  readonly bytes: Buffer;
+  /** True only when truncateAt stopped the body; a server that ends early is still TransportError "network" with truncated. */
+  readonly truncated: boolean;
+}
+
+export interface NodeByteTransport {
+  request(request: NodeByteRequest): Promise<NodeByteResponse>;
+  close(): void;
+}
+
 /**
  * The default `rejectUnauthorized` of each SSL mode, null for plaintext: the repository's one rule,
  * rejectUnauthorized = ssl.rejectUnauthorized ?? ssl.mode !== "require". `require` encrypts without checking, because a
@@ -229,6 +315,28 @@ const BODY_AND_FORM = "Invalid request: give a body or form fields, not both";
 const INVALID_HEADER_NAMES = "Invalid requestHeaderNames: expected lower-case header names";
 const UNLISTED_HEADER = "Invalid request headers: a header this transport does not list was given";
 const NOT_A_RECORD = "Invalid request headers: expected a plain record of header names and values";
+const INVALID_METHOD = "Invalid method: this transport sends GET and HEAD only";
+const INVALID_TARGET = "Invalid request target: expected a path and a query";
+const INVALID_TARGET_PATH =
+  "Invalid request path: expected an absolute path of unreserved characters, slashes and upper-case percent escapes";
+const INVALID_TARGET_QUERY =
+  "Invalid request query: expected name=value pairs of unreserved characters and upper-case percent escapes, joined by &";
+const TARGET_TOO_LONG = "Invalid request target: the path and query exceed 16384 bytes";
+
+/**
+ * The byte request target grammar (byte transport design 3.4): exactly the output alphabet of rfc3986Path and
+ * rfc3986Query, which is SigV4's UriEncode alphabet with upper-case hex. ASCII 0x21 to 0x7E only, so node:http's
+ * latin1 rewrite and its unescaped-character refusal are never reached.
+ */
+const TARGET_PATH = /^\/(?!\/)(?:[A-Za-z0-9._~/-]|%[0-9A-F]{2})*$/;
+const TARGET_QUERY_CHARACTER = "(?:[A-Za-z0-9._~-]|%[0-9A-F]{2})";
+const TARGET_QUERY = new RegExp(
+  `^(?:${TARGET_QUERY_CHARACTER}+=${TARGET_QUERY_CHARACTER}*(?:&${TARGET_QUERY_CHARACTER}+=${TARGET_QUERY_CHARACTER}*)*)?$`,
+);
+/** A fully escaped 1,024-byte key or prefix plus a long continuation token fits; MinIO caps a path at 32 KiB. */
+const MAX_TARGET_LENGTH = 16384;
+const MAX_CONTENT_TYPE_LENGTH = 1024;
+const MAX_CONTENT_ENCODING_LENGTH = 64;
 
 /** A runtime error code named in a failure; any other value is left out of the message. */
 const ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
@@ -500,6 +608,27 @@ function parsedUrl(text: string): URL | null {
 }
 
 /**
+ * The request target, read once and checked before any socket (byte transport design 3.4 and 3.8). Only a plain
+ * object is read, as perRequestHeaders reads a record, so a getter on a class or a Map's entries never stand in for it.
+ */
+function requestTargetOf(target: unknown): RequestTarget {
+  if (typeof target !== "object" || target === null) throw new DatabaseConfigError(INVALID_TARGET);
+  const prototype: unknown = Object.getPrototypeOf(target);
+  if (prototype !== Object.prototype && prototype !== null) throw new DatabaseConfigError(INVALID_TARGET);
+  const { path, query } = target as { readonly path?: unknown; readonly query?: unknown };
+  if (typeof path !== "string" || typeof query !== "string") throw new DatabaseConfigError(INVALID_TARGET);
+  if (!TARGET_PATH.test(path)) throw new DatabaseConfigError(INVALID_TARGET_PATH);
+  if (!TARGET_QUERY.test(query)) throw new DatabaseConfigError(INVALID_TARGET_QUERY);
+  if (path.length + 1 + query.length > MAX_TARGET_LENGTH) throw new DatabaseConfigError(TARGET_TOO_LONG);
+  return { path, query };
+}
+
+/** A header value cut to `limit` characters, or null when absent. */
+function cut(value: string | undefined, limit: number): string | null {
+  return value === undefined ? null : value.slice(0, limit);
+}
+
+/**
  * The TLS options of node:https under its own names, set once on the connection's Agent. The server name is the
  * identity when it is a DNS name; for an IP literal none is sent. Every certificate is checked against the identity,
  * which through an SSH tunnel is the far end, never the local forward the socket dials; for an IP identity Node's own
@@ -659,11 +788,19 @@ function transportCore(settings: CoreSettings): TransportCore {
   };
 }
 
+/** What both factories build from their options: the origin's address as each reads it, the headers and the core. */
+interface Connection<A> {
+  readonly address: A;
+  readonly connectionHeaders: Readonly<Record<string, string>>;
+  readonly requestHeaderNames: ReadonlySet<string>;
+  readonly core: TransportCore;
+}
+
 /**
- * One connection's text transport: GET and POST to a URL on the connection's origin, the answer decoded as UTF-8.
- * The constructor opens nothing; the first request opens the first socket.
+ * The checks both factories run when a transport is built, in this order, and the core they then share. `address`
+ * reads the origin once the guard has passed it: the text factory's origin string, the byte factory's Host.
  */
-export function createNodeTransport(options: NodeTransportOptions): NodeTransport {
+function connectionOf<A>(options: NodeTransportOptions, address: (origin: HttpOrigin) => A): Connection<A> {
   const { origin, tls, maxSockets } = options;
   if (!isPositiveInteger(maxSockets)) throw new DatabaseConfigError(INVALID_MAX_SOCKETS);
   if ((origin.scheme === "https") !== (tls !== null)) throw new DatabaseConfigError(SCHEME_MISMATCH);
@@ -671,10 +808,65 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
   // never reaches a lookup, and hands back the guard's lookup for this connection's own Agent. Its `agent: false` is not
   // taken: the Agent below belongs to this connection alone and never carries an unguarded request (R44 QM1).
   const { lookup } = guardedNodeOptions(origin.host);
-  const connectionOrigin = new URL(endpointUrl(origin, "/")).origin;
+  const addressed = address(origin);
   const connectionHeaders = lowerCased(options.headers);
   const requestHeaderNames = requestHeaderNamesOf(options.requestHeaderNames, connectionHeaders);
   const core = transportCore({ tls, maxSockets, idleSocketMs: options.idleSocketMs, lookup });
+  return { address: addressed, connectionHeaders, requestHeaderNames, core };
+}
+
+/** The refusals every request meets first, in this order: a closed transport, then a signal already aborted. */
+function admit(core: TransportCore, signal: AbortSignal): void {
+  if (core.isClosed()) throw new TransportError("aborted", CLOSED);
+  // An already-aborted signal never fires "abort" again, and node:http would send the request regardless.
+  if (signal.aborted) throw abortFailure(signal);
+}
+
+/** What one request writes: node:http's options without the Agent, which is always the core's, and its body. */
+interface Prepared {
+  readonly options: Omit<RequestOptions, "agent">;
+  readonly body?: string;
+}
+
+/**
+ * Writes one request on the core's Agent, once its socket slot is free. `prepare` runs inside the same try as the
+ * write, so whatever throws there or in node:http fails this request alone and frees its slot. `answered` is handed the
+ * answer and its status once the answer's own errors are wired to the exchange.
+ */
+function dispatch<T>(
+  core: TransportCore,
+  pending: Exchange<T>,
+  prepare: () => Prepared,
+  answered: (answer: IncomingMessage, status: number) => void,
+): void {
+  try {
+    const { options, body } = prepare();
+    const outgoing = core.send({ ...options, agent: core.agent }, (answer) => {
+      pending.answered(answer);
+      answer.on("error", pending.failWith);
+      // Set on every answer a ClientRequest receives; the type is shared with server-side requests.
+      answered(answer, answer.statusCode ?? 0);
+    });
+    pending.sent(outgoing);
+    outgoing.on("error", pending.failWith);
+    outgoing.end(body);
+  } catch (error) {
+    // node:http refuses some requests by throwing before anything is sent: a header value with a line feed.
+    pending.failWith(error);
+  }
+}
+
+/**
+ * One connection's text transport: GET and POST to a URL on the connection's origin, the answer decoded as UTF-8.
+ * The constructor opens nothing; the first request opens the first socket.
+ */
+export function createNodeTransport(options: NodeTransportOptions): NodeTransport {
+  const {
+    address: connectionOrigin,
+    connectionHeaders,
+    requestHeaderNames,
+    core,
+  } = connectionOf(options, (origin) => new URL(endpointUrl(origin, "/")).origin);
 
   const exchange = (
     request: NodeRequest,
@@ -684,71 +876,61 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
     core.queue<NodeResponse>(request.signal, (pending) => {
       const { hostname, port, path } = urlToHttpOptions(target);
       const payload = payloadOf(request);
-      try {
-        const outgoing = core.send(
-          {
+      dispatch(
+        core,
+        pending,
+        () => ({
+          options: {
             hostname,
             port,
             path,
             method: request.method,
-            agent: core.agent,
             headers: requestHeaders(connectionHeaders, perRequest, payload),
           },
-          (answer) => {
-            pending.answered(answer);
-            answer.on("error", pending.failWith);
-            // Set on every answer a ClientRequest receives; the type is shared with server-side requests.
-            const status = answer.statusCode ?? 0;
-            try {
-              // The shared refusal reads a fetch-shaped status and Location, so the adapter hands it those two.
-              const location = answer.headers.location;
-              rejectRedirect({ status, headers: new Headers(location === undefined ? {} : { location }) }, request.url);
-            } catch (refusal) {
-              // Released unread: fail() destroys the answer, so no redirect is followed and no body is read.
-              pending.fail(new TransportError("redirect", (refusal as Error).message));
+          body: payload?.text,
+        }),
+        (answer, status) => {
+          try {
+            // The shared refusal reads a fetch-shaped status and Location, so the adapter hands it those two.
+            const location = answer.headers.location;
+            rejectRedirect({ status, headers: new Headers(location === undefined ? {} : { location }) }, request.url);
+          } catch (refusal) {
+            // Released unread: fail() destroys the answer, so no redirect is followed and no body is read.
+            pending.fail(new TransportError("redirect", (refusal as Error).message));
+            return;
+          }
+          const encoding = answer.headers["content-encoding"];
+          if (encoding !== undefined && encoding.trim().toLowerCase() !== "identity") {
+            // Refused before a byte of the body is read, so maxResponseBytes always counts the bytes that are parsed.
+            pending.fail(encodingRefusal(encoding));
+            return;
+          }
+          const chunks: Buffer[] = [];
+          let received = 0;
+          answer.on("data", (chunk: Buffer) => {
+            received += chunk.length;
+            if (received > request.maxResponseBytes) {
+              pending.fail(tooLarge(request.maxResponseBytes));
               return;
             }
-            const encoding = answer.headers["content-encoding"];
-            if (encoding !== undefined && encoding.trim().toLowerCase() !== "identity") {
-              // Refused before a byte of the body is read, so maxResponseBytes always counts the bytes that are parsed.
-              pending.fail(encodingRefusal(encoding));
-              return;
-            }
-            const chunks: Buffer[] = [];
-            let received = 0;
-            answer.on("data", (chunk: Buffer) => {
-              received += chunk.length;
-              if (received > request.maxResponseBytes) {
-                pending.fail(tooLarge(request.maxResponseBytes));
-                return;
-              }
-              chunks.push(chunk);
+            chunks.push(chunk);
+          });
+          answer.on("end", () => {
+            pending.ended();
+            pending.resolve({
+              status,
+              contentType: answer.headers["content-type"] ?? null,
+              retryAfter: retryAfterOf(answer.headers["retry-after"]),
+              text: Buffer.concat(chunks).toString("utf8"),
             });
-            answer.on("end", () => {
-              pending.ended();
-              pending.resolve({
-                status,
-                contentType: answer.headers["content-type"] ?? null,
-                retryAfter: retryAfterOf(answer.headers["retry-after"]),
-                text: Buffer.concat(chunks).toString("utf8"),
-              });
-            });
-          },
-        );
-        pending.sent(outgoing);
-        outgoing.on("error", pending.failWith);
-        outgoing.end(payload?.text);
-      } catch (error) {
-        // node:http refuses some requests by throwing before anything is sent: a header value with a line feed.
-        pending.failWith(error);
-      }
+          });
+        },
+      );
     });
 
   return {
     async request(request) {
-      if (core.isClosed()) throw new TransportError("aborted", CLOSED);
-      // An already-aborted signal never fires "abort" again, and node:http would send the request regardless.
-      if (request.signal.aborted) throw abortFailure(request.signal);
+      admit(core, request.signal);
       if (!isPositiveInteger(request.maxResponseBytes)) throw new DatabaseConfigError(INVALID_MAX_RESPONSE_BYTES);
       // Neither is dropped silently: a request naming both is refused before any socket.
       if (request.body !== undefined && request.form !== undefined) throw new DatabaseConfigError(BODY_AND_FORM);
@@ -758,6 +940,83 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
       if (target === null || target.origin !== connectionOrigin || target.username !== "" || target.password !== "") {
         throw new DatabaseConfigError(FOREIGN_URL);
       }
+      return exchange(request, target, perRequest);
+    },
+    close() {
+      core.close();
+    },
+  };
+}
+
+/**
+ * One connection's byte transport (byte transport design 3): GET and HEAD to an exact request target on the
+ * connection's origin, the body returned as bytes. It shares the text transport's core, so the socket, proxy, TLS,
+ * cap, cancel and egress rules exist once. The constructor opens nothing; the first request opens the first socket.
+ */
+export function createNodeByteTransport(options: NodeByteTransportOptions): NodeByteTransport {
+  const { port } = options.origin;
+  const { address, connectionHeaders, requestHeaderNames, core } = connectionOf(options, (origin) => ({
+    hostname: unbracketed(origin.host),
+    // Set by the transport on every request, so the Host a signer signs is the Host on the wire (byte transport design 3.3).
+    host: originHost(origin),
+  }));
+
+  const exchange = (
+    request: NodeByteRequest,
+    target: RequestTarget,
+    perRequest: Readonly<Record<string, string>>,
+  ): Promise<NodeByteResponse> =>
+    core.queue<NodeByteResponse>(request.signal, (pending) => {
+      dispatch(
+        core,
+        pending,
+        () => ({
+          options: {
+            hostname: address.hostname,
+            port,
+            // Written by node:http byte for byte, never parsed, so dot segments reach the server as given.
+            path: target.query === "" ? target.path : `${target.path}?${target.query}`,
+            method: request.method,
+            headers: { ...connectionHeaders, ...perRequest, host: address.host, "accept-encoding": "identity" },
+          },
+        }),
+        (answer, status) => {
+          const chunks: Buffer[] = [];
+          let received = 0;
+          answer.on("data", (chunk: Buffer) => {
+            received += chunk.length;
+            if (received > request.maxResponseBytes) {
+              pending.fail(tooLarge(request.maxResponseBytes));
+              return;
+            }
+            chunks.push(chunk);
+          });
+          answer.on("end", () => {
+            pending.ended();
+            // An end after a failure, a cancel or close() builds no answer: nothing would receive it.
+            if (pending.settled()) return;
+            pending.resolve({
+              status,
+              contentType: cut(answer.headers["content-type"], MAX_CONTENT_TYPE_LENGTH),
+              contentEncoding: cut(answer.headers["content-encoding"], MAX_CONTENT_ENCODING_LENGTH),
+              retryAfter: retryAfterOf(answer.headers["retry-after"]),
+              headers: [],
+              headersTruncated: false,
+              bytes: Buffer.concat(chunks),
+              truncated: false,
+            });
+          });
+        },
+      );
+    });
+
+  return {
+    async request(request) {
+      admit(core, request.signal);
+      if (request.method !== "GET" && request.method !== "HEAD") throw new DatabaseConfigError(INVALID_METHOD);
+      if (!isPositiveInteger(request.maxResponseBytes)) throw new DatabaseConfigError(INVALID_MAX_RESPONSE_BYTES);
+      const perRequest = perRequestHeaders(request.headers, requestHeaderNames);
+      const target = requestTargetOf(request.target);
       return exchange(request, target, perRequest);
     },
     close() {
