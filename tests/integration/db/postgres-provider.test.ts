@@ -2983,6 +2983,25 @@ describe("PostgresProvider", () => {
       expect(sizeRead).not.toContain("pg_size_pretty");
       expect(sizeRead).toContain("database_size_bytes");
     });
+
+    test("the table count reads BASE TABLE alone, so materialized views stay out (#1439)", async () => {
+      // RisingWave and Materialize report their materialized views through
+      // information_schema.tables under 'MATERIALIZED VIEW'. The object tree lists those
+      // in a folder of their own, so counting the type here made Overview's "Tables" tile
+      // read 5 for a schema with 3 tables and 2 materialized views. Measured on
+      // RisingWave 3.1.0 and Materialize v26.44.1.
+      let countsSql = "";
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("as table_count")) countsSql = sql;
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.getOverview();
+
+      expect(countsSql).toContain("table_type = 'BASE TABLE'");
+      expect(countsSql).not.toContain("MATERIALIZED VIEW");
+    });
   });
 
   // --------------------------------------------------------------------------

@@ -558,12 +558,6 @@ const EXTENSION_OWNED_SCHEMAS_SQL =
   "JOIN pg_depend d ON d.objid = n.oid AND d.classid = 'pg_namespace'::regclass AND d.deptype = 'e' " +
   "JOIN pg_extension e ON e.oid = d.refobjid";
 
-// What counts as a table, single-sourced because two readers ask: the object browser
-// and the overview's count. They answered from different catalogs and disagreed twice
-// - 98 against 2 on CockroachDB, then 4 against 3 on Materialize once materialized
-// views joined the browser - so both now read information_schema.tables through this.
-const USER_TABLE_TYPES = "'BASE TABLE', 'MATERIALIZED VIEW'";
-
 // The full "this schema is not the engine's own" test for one column: a fixed list of
 // engine-builtin schemas, plus anything an extension created.
 function schemaExclusion(column: string): string {
@@ -1981,10 +1975,17 @@ const OVERVIEW_SIZE_SQL = `
       `;
 
 // getOverview: user table and index counts across all user schemas.
+//
+// `table_type = 'BASE TABLE'`, matching the object tree's Tables folder. RisingWave and
+// Materialize report their materialized views through information_schema.tables under
+// 'MATERIALIZED VIEW', and the tree lists those in a folder of their own (from
+// `pg_class.relkind = 'm'`), so including the type here made Overview's "Tables" tile
+// disagree with the folder (#1439). The object browser no longer reads this catalog, so
+// there is no second reader left to keep in step: only base tables are tables.
 const OVERVIEW_COUNTS_SQL = `
         SELECT
           (SELECT count(*) FROM information_schema.tables
-            WHERE ${schemaExclusion("table_schema")} AND table_type IN (${USER_TABLE_TYPES})
+            WHERE ${schemaExclusion("table_schema")} AND table_type = 'BASE TABLE'
             AND ${extensionMemberTableExclusion("table_schema", "table_name")}) as table_count,
           (SELECT count(*) FROM pg_indexes WHERE ${schemaExclusion("schemaname")}
             AND ${extensionMemberTableExclusion("schemaname", "tablename")}) as index_count

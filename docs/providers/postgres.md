@@ -235,10 +235,20 @@ not "anything that is not a view", so a `FOREIGN` or `SYSTEM VIEW` row still sta
 `information_schema.tables` under that type and whose users work with them rather than with base
 tables: listing only `BASE TABLE` hid the engine's central object while showing its plain tables.
 
-It is a measured no-op everywhere else. PostgreSQL leaves materialized views out of
-`information_schema.tables` altogether — its `table_type` is only `BASE TABLE`, `VIEW`, `FOREIGN` or
-`LOCAL TEMPORARY` — and TimescaleDB, YugabyteDB, Cloudberry, AlloyDB Omni and CockroachDB were each
-asked on a live instance and emit no such row (CockroachDB's third value is `SYSTEM VIEW`).
+**The Overview's table count does not follow the listing here (#1439).** The object tree lists
+materialized views in a folder of their own — a kind it resolves from `pg_class.relkind = 'm'`, not
+from `information_schema` — so `OVERVIEW_COUNTS_SQL` counts `table_type = 'BASE TABLE'` alone.
+Counting `MATERIALIZED VIEW` there made Overview's "Tables" tile read 5 for a schema with 3 tables
+and 2 materialized views on RisingWave 3.1.0 and Materialize v26.44.1, where the tree's Tables
+folder said 3. Two facts wear the word "table": what the tree groups under Tables, and what the
+listing's positive list admits so Materialize's central object is browsable at all. The count is the
+first.
+
+Including `MATERIALIZED VIEW` in the listing is a measured no-op everywhere else. PostgreSQL leaves
+materialized views out of `information_schema.tables` altogether — its `table_type` is only
+`BASE TABLE`, `VIEW`, `FOREIGN` or `LOCAL TEMPORARY` — and TimescaleDB, YugabyteDB, Cloudberry,
+AlloyDB Omni and CockroachDB were each asked on a live instance and emit no such row (CockroachDB's
+third value is `SYSTEM VIEW`), so the Overview's count is unchanged on every one of them.
 
 ### 3.1.2 Two kinds of absence, and why neither is an empty array
 
@@ -320,10 +330,11 @@ directions because the two readers use different catalogs:
 - **`OVERVIEW_COUNTS_SQL`** counted `pg_tables` directly, which has no `table_type` column to
   filter on. On CockroachDB that answered 98 for the same 2 tables — 93 `crdb_internal`, 3
   `pg_extension` — so the Monitoring overview and the Explorer badge disagreed inside one app.
-  It now counts `information_schema.tables` through the same `USER_TABLE_TYPES` list the browser
-  uses, because the two disagreed a second time once materialized views joined the browser
-  (4 against 3 on Materialize). One definition of "a table", or they drift apart on the next
-  engine. The index count still reads `pg_indexes`, which has no equivalent second reader.
+  It now counts `information_schema.tables` through the same `schemaExclusion()` clause the rest
+  of the file uses, so an engine-internal schema is left out of the count exactly as it is left
+  out of the object tree. The count takes `table_type = 'BASE TABLE'` alone (#1439) — a
+  materialized view is its own folder in the tree — and the index count still reads `pg_indexes`,
+  which has no equivalent second reader.
 
 Every CTE in the schema queries carries the filter, not just some: `pk_info` and `fk_info` were
 missing it while `tables_info`, `columns_info` and `index_info` had it, which let the deleted
@@ -1775,7 +1786,7 @@ base) fans these out in parallel.
 | Method | Primary source | Notes |
 |--------|----------------|-------|
 | `getHealth()` | `pg_stat_activity`, `pg_database_size`, `pg_statio_user_tables`, `pg_stat_statements` | connections, size, cache-hit % (`N/A` when unmeasurable — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)), top-5 slow queries (single placeholder row if the extension is absent), 10 sessions |
-| `getOverview()` | `version()`, `pg_postmaster_start_time()`, `pg_settings`, `pg_database_size`, `pg_tables`/`pg_indexes` | version, uptime, conns, max_conns, size, table/index counts |
+| `getOverview()` | `version()`, `pg_postmaster_start_time()`, `pg_settings`, `pg_database_size`, `information_schema.tables`/`pg_indexes` | version, uptime, conns, max_conns, size, table/index counts |
 | `getPerformanceMetrics()` | `pg_statio_user_tables`, `pg_stat_database`, `pg_stat_checkpointer` (17+) or `pg_stat_bgwriter` | cache-hit % (omitted when unmeasurable), deadlocks, checkpoint write time (`N/A` when unreadable); **no buffer-pool %** — see [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `pg_stat_statements` → fallback `pg_stat_activity` | detailed per-statement stats; fallback shows live active queries |
 | `getActiveSessions()` | `pg_stat_activity` | pid, user, state, query, wait events, duration; excludes own backend |
