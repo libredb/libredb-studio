@@ -513,6 +513,31 @@ async function runByteCases(
       transport.close();
     }
   }
+  // Under maxSockets 1, a request queued behind a truncated answer and cancelled as that answer resolves: the cut
+  // socket still counted against the Agent's maxSockets when the slot was freed, so the queued request went to the
+  // Agent's own queue, and Node dialled a socket for it after the cancel. The parent counts that socket.
+  await record("byte: a request cancelled as the truncated answer ahead of it resolves", async () => {
+    const transport = deps.createNodeByteTransport({
+      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort),
+      tls: null,
+      maxSockets: 1,
+      headers: {},
+    });
+    try {
+      const controller = new AbortController();
+      const cut = transport.request(request("/b/big", { truncateAt: 10 }));
+      const queued = transport.request({ ...request("/b/never"), signal: controller.signal });
+      const answer = await cut.then((value) => {
+        controller.abort();
+        return value;
+      });
+      await queued.catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return answer;
+    } finally {
+      transport.close();
+    }
+  });
   return { byteOutcomes: outcomes, byteGlobalAgentCalls: globalCalls };
 }
 
@@ -848,6 +873,8 @@ interface ChildRun {
     readonly farName: number;
     readonly farAddress: number;
     readonly byteHeads: number;
+    /** byteAccepted when this child started. */
+    readonly byteAccepted: number;
   };
 }
 
@@ -859,6 +886,7 @@ async function runChild(binary: string): Promise<ChildRun> {
     farName: farName.seen.length,
     farAddress: farAddress.seen.length,
     byteHeads: byteHeads.length,
+    byteAccepted,
   };
   const child = Bun.spawn([binary, at("entry.mjs"), at("plan.json")], {
     cwd: dir,
@@ -1051,6 +1079,14 @@ const BYTE_EXPECTED: Readonly<Record<string, ByteOutcome>> = {
   },
   "byte: metadata.test with the guard off": { ok: false, errorName: "DatabaseConfigError", message: LINK_LOCAL },
   "byte: 5000 queued requests refused by their signer": { ok: true, length: 5000 },
+  "byte: a request cancelled as the truncated answer ahead of it resolves": {
+    ok: true,
+    status: 200,
+    length: 10,
+    digest: byteDigest(BYTE_BIG.subarray(0, 10)),
+    truncated: true,
+    contentEncoding: null,
+  },
 };
 
 function expectCase(report: Report | undefined, name: string): void {
@@ -1195,6 +1231,12 @@ for (const [label, binary] of RUNTIMES) {
       ]);
       expect(new Set(headThenGet.map(({ socket }) => socket)).size).toBe(1);
       expect(heads.map(({ line }) => line)).toContain("GET /b/sp/./dot.txt HTTP/1.1");
+    });
+
+    test("every socket the byte cases opened carried a request, so no cancelled request was dialled", () => {
+      const carried = new Set(byteHeads.slice(run?.from.byteHeads).map(({ socket }) => socket));
+      expect(byteAccepted - (run?.from.byteAccepted ?? 0)).toBe(carried.size);
+      expect(byteHeads.slice(run?.from.byteHeads).map(({ line }) => line)).not.toContain("GET /b/never HTTP/1.1");
     });
   });
 }

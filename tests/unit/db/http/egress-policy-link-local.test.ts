@@ -351,6 +351,10 @@ describe("a byte transport refuses every link-local form whatever the guard flag
     ["mixed.test", "off", LINK_LOCAL],
     ["metadata.test", "on", BLOCKED],
     ["mixed.test", "on", BLOCKED],
+    ["zoned.test", "off", LINK_LOCAL],
+    // The guard's own answer check has no zone rule, and Bun's BlockList does not match fe80::1%eth0 against
+    // fe80::/10, so on Bun the guard passes this answer and the link-local check, run after it, refuses it.
+    ["zoned.test", "on", LINK_LOCAL],
   ] as const)(
     "the name %s with the guard %s is refused at the lookup, and nothing is accepted",
     async (host, guard, sentence) => {

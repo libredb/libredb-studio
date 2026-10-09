@@ -124,6 +124,58 @@ describe("refusals when the transport is built", () => {
   });
 });
 
+describe("the connection headers meet the rule a request's own headers meet, when the transport is built", () => {
+  const OWNED_BY_THE_TRANSPORT = (name: string) =>
+    `Invalid headers: ${name} is set by the transport or the signer, never by the connection`;
+  const VALUE = (name: string) =>
+    `Invalid headers: the value of ${name} must be visible ASCII or space, at most 1024 bytes`;
+  const NOT_A_RECORD = "Invalid headers: expected a plain record of header names and values";
+
+  test.each([
+    ["connection", { connection: "close" }, OWNED_BY_THE_TRANSPORT("connection")],
+    ["upgrade", { upgrade: "websocket" }, OWNED_BY_THE_TRANSPORT("upgrade")],
+    ["expect", { expect: "100-continue" }, OWNED_BY_THE_TRANSPORT("expect")],
+    ["te", { te: "trailers" }, OWNED_BY_THE_TRANSPORT("te")],
+    ["keep-alive", { "keep-alive": "timeout=5" }, OWNED_BY_THE_TRANSPORT("keep-alive")],
+    ["accept-encoding", { "accept-encoding": "gzip" }, OWNED_BY_THE_TRANSPORT("accept-encoding")],
+    ["a proxy- name", { "proxy-authorization": "Basic eDp5" }, OWNED_BY_THE_TRANSPORT("proxy-authorization")],
+    ["a content- name", { "content-type": "text/plain" }, OWNED_BY_THE_TRANSPORT("content-type")],
+    ["authorization", { authorization: "Bearer fixed" }, OWNED_BY_THE_TRANSPORT("authorization")],
+    ["Authorization in another spelling", { Authorization: "Bearer fixed" }, OWNED_BY_THE_TRANSPORT("authorization")],
+    ["a name that is not a token", { "x a": "1" }, "Invalid headers: expected lower-case header names"],
+    ["an array value", { "x-a": ["1", "2"] }, VALUE("x-a")],
+    ["a number value", { "x-a": 1 }, VALUE("x-a")],
+    ["a latin1 value", { "x-a": "caf\u00e9" }, VALUE("x-a")],
+    ["a line feed in a value", { "x-a": "a\nx-injected: 1" }, VALUE("x-a")],
+    ["a 1025-character value", { "x-a": "a".repeat(1025) }, VALUE("x-a")],
+    ["an array", [["x-a", "1"]], NOT_A_RECORD],
+    ["a Map", new Map([["x-a", "1"]]), NOT_A_RECORD],
+    ["null", null, NOT_A_RECORD],
+  ] as const)("%s is refused, and no socket is opened", async (_label, headers, sentence) => {
+    const listener = await rawHttpListener(OK);
+    const error = refusal(() => connect(listener, { headers: headers as unknown as Record<string, string> }));
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error.message).toBe(sentence);
+    expect(listener.accepted()).toBe(0);
+  });
+
+  test("the text transport still takes those headers as it did", () => {
+    const transport = createNodeTransport({
+      origin: httpOrigin("http", "127.0.0.1", 9),
+      tls: null,
+      maxSockets: 1,
+      headers: { authorization: "Bearer fixed", connection: "close" },
+    });
+    transport.close();
+  });
+
+  test("a plain header and a 1024-character value are sent as given", async () => {
+    const listener = await rawHttpListener(OK);
+    await connect(listener, { headers: { "x-tenant": "t1", "x-long": "a".repeat(1024) } }).request(get("/b/k"));
+    expect(lines(listener.heads[0])).toEqual(expect.arrayContaining(["x-tenant: t1", `x-long: ${"a".repeat(1024)}`]));
+  });
+});
+
 describe("request refusals before any socket", () => {
   test.each([
     ["a POST", { method: "POST" as unknown as "GET" }, INVALID_METHOD],
@@ -223,18 +275,6 @@ describe("request refusals before any socket", () => {
     expect(error.message).toBe("The request was cancelled");
     expect(listener.accepted()).toBe(0);
   });
-
-  test("a request node:http refuses as it is written fails alone and frees its socket slot for the next", async () => {
-    const listener = await rawHttpListener(OK);
-    const transport = connect(listener, { maxSockets: 1, headers: { "x-conn": "a\nx-injected: 1" } });
-    const sentence = "The request failed before a complete response arrived (ERR_INVALID_CHAR)";
-    const [first, second] = await Promise.all([
-      failure(() => transport.request(get("/b/1"))),
-      failure(() => transport.request(get("/b/2"))),
-    ]);
-    expect([first.message, second.message]).toEqual([sentence, sentence]);
-    expect(listener.accepted()).toBe(0);
-  });
 });
 
 /** A request whose field `name` answers `first` on its first read and `later` on every read after it. */
@@ -292,6 +332,87 @@ describe("a request's fields are read once, so what is checked is what is sent",
     controller.abort();
     expect((await pending).message).toBe("The request was cancelled");
   });
+});
+
+describe("a request is admitted only after every field of it has been read", () => {
+  /** A record whose x-a header runs `effect` when it is read, then answers "v". */
+  function headersThat(effect: () => void): Record<string, string> {
+    const headers = {};
+    Object.defineProperty(headers, "x-a", {
+      enumerable: true,
+      get: () => {
+        effect();
+        return "v";
+      },
+    });
+    return headers as Record<string, string>;
+  }
+
+  test("a header getter that cancels the signal is refused as a cancel, and nothing is sent", async () => {
+    const listener = await rawHttpListener(OK);
+    const controller = new AbortController();
+    const transport = connect(listener, { requestHeaderNames: ["x-a"] });
+    const error = await failure(() =>
+      transport.request(get("/b/k", { headers: headersThat(() => controller.abort()), signal: controller.signal })),
+    );
+    expect(error.message).toBe("The request was cancelled");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(listener.accepted()).toBe(0);
+  });
+
+  test("a header getter that closes the transport is refused with the closed sentence, and nothing is sent", async () => {
+    const listener = await rawHttpListener(OK);
+    const transport = connect(listener, { requestHeaderNames: ["x-a"] });
+    const error = await failure(() =>
+      transport.request(get("/b/k", { headers: headersThat(() => transport.close()) })),
+    );
+    expect(error.message).toBe(CLOSED);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(listener.accepted()).toBe(0);
+  });
+
+  test("a target getter that cancels the signal is refused as a cancel, and nothing is sent", async () => {
+    const listener = await rawHttpListener(OK);
+    const controller = new AbortController();
+    const target = {
+      get path() {
+        controller.abort();
+        return "/b/k";
+      },
+      query: "",
+    };
+    const error = await failure(() => connect(listener).request(get("/b/k", { target, signal: controller.signal })));
+    expect(error.message).toBe("The request was cancelled");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(listener.accepted()).toBe(0);
+  });
+});
+
+describe("a 101 answer", () => {
+  const SWITCHED =
+    "The server switched the connection to another protocol, and this transport reads HTTP only, so the response was not read";
+
+  test.each(["GET", "HEAD"] as const)(
+    "to a %s fails at once as a network failure, closes its socket and frees its slot",
+    async (method) => {
+      const listener = await rawHttpListener((_head, index) =>
+        index === 0
+          ? rawAnswer("101 Switching Protocols", ["connection: upgrade", "upgrade: websocket"], "junk")
+          : OK(),
+      );
+      const transport = connect(listener, { maxSockets: 1 });
+      const started = Date.now();
+      const error = (await failure(() => transport.request(get("/b/k", { method })))) as TransportError;
+      expect({ name: error.name, kind: error.kind, message: error.message }).toEqual({
+        name: "TransportError",
+        kind: "network",
+        message: SWITCHED,
+      });
+      expect(Date.now() - started).toBeLessThan(1000);
+      await eventually(() => listener.open() === 0, "the switched socket to close");
+      expect((await transport.request(get("/b/next"))).bytes.toString()).toBe("ok");
+    },
+  );
 });
 
 describe("the exact request target", () => {
@@ -801,6 +922,19 @@ describe("truncateAt", () => {
 });
 
 describe("redirects", () => {
+  test("a TransportError with no redirect detail has exactly the own keys it had before the detail existed", () => {
+    const error = new TransportError("network", "x");
+    expect(Object.keys(error)).toEqual(["provider", "code", "query", "name", "host", "port", "kind", "truncated"]);
+    expect(Object.hasOwn(error, "redirect")).toBe(false);
+  });
+
+  test("a TransportError with a redirect detail carries it as its own key", () => {
+    const detail = { status: 301, headers: [], headersTruncated: false };
+    const error = new TransportError("redirect", "x", { redirect: detail });
+    expect(Object.keys(error)).toContain("redirect");
+    expect(error.redirect).toBe(detail);
+  });
+
   test("a 301 with x-amz-bucket-region and no Location carries its status and selected headers", async () => {
     const listener = await rawHttpListener(() =>
       rawAnswer("301 Moved Permanently", ["x-amz-bucket-region: eu-west-1", "content-length: 0"]),

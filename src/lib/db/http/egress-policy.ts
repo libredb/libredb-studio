@@ -183,6 +183,16 @@ export function assertNoLinkLocalDnsAnswer(addresses: readonly LookupAddress[]):
 export const linkLocalRefusingLookup: LookupFunction = checkedLookup(assertNoLinkLocalDnsAnswer);
 
 /**
+ * The byte transport's lookup with DB_HTTP_BLOCK_PRIVATE_HOSTS on: both checks on every answer, the guard's first, so
+ * its sentence wins where both refuse. The guard's check alone is not enough here: it has no zone rule, and Bun's
+ * BlockList does not match a zoned fe80::/10 address, so fe80::1%lo passed it and was dialled.
+ */
+export const guardedLinkLocalRefusingLookup: LookupFunction = checkedLookup((addresses) => {
+  assertPublicDnsAnswers(addresses);
+  assertNoLinkLocalDnsAnswer(addresses);
+});
+
+/**
  * The restricted mode uses Node's request socket so its DNS lookup can validate and
  * pin the address. The default path remains the transport's native fetch, including
  * its test injection point and normal local-network behavior.

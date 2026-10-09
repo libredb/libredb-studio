@@ -62,11 +62,16 @@ import {
   request as httpRequest,
 } from "node:http";
 import { Agent as HttpsAgent, type AgentOptions as HttpsAgentOptions, request as httpsRequest } from "node:https";
-import { isIP, type LookupFunction } from "node:net";
+import { isIP, type LookupFunction, type Socket } from "node:net";
 import { checkServerIdentity, type PeerCertificate } from "node:tls";
 import { urlToHttpOptions } from "node:url";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
-import { assertNotLinkLocalLiteral, guardedNodeOptions, linkLocalRefusingLookup } from "@/lib/db/http/egress-policy";
+import {
+  assertNotLinkLocalLiteral,
+  guardedLinkLocalRefusingLookup,
+  guardedNodeOptions,
+  linkLocalRefusingLookup,
+} from "@/lib/db/http/egress-policy";
 import { endpointUrl, type HttpOrigin, originHost, rejectRedirect } from "@/lib/db/http/endpoint";
 import type { SSLConfig, SSLMode } from "@/lib/types";
 
@@ -142,8 +147,11 @@ interface RedirectDetail {
 export class TransportError extends ConnectionError {
   /** True only with kind "network": the response callback had run and the body had not ended when the request failed. */
   readonly truncated: boolean;
-  /** On kind "redirect" from a byte transport: the refused status and the selected headers. Undefined everywhere else. */
-  readonly redirect?: RedirectDetail;
+  /**
+   * On kind "redirect" from a byte transport: the refused status and the selected headers. An own property only then,
+   * so every other TransportError has the same own keys as before the detail existed.
+   */
+  declare readonly redirect?: RedirectDetail;
 
   constructor(
     readonly kind: "timeout" | "aborted" | "too-large" | "redirect" | "encoding" | "tls" | "network",
@@ -152,7 +160,7 @@ export class TransportError extends ConnectionError {
   ) {
     super(message);
     this.truncated = options?.truncated ?? false;
-    this.redirect = options?.redirect;
+    if (options?.redirect !== undefined) this.redirect = options.redirect;
     this.name = "TransportError";
     Object.setPrototypeOf(this, TransportError.prototype);
   }
@@ -332,6 +340,8 @@ const SCHEME_MISMATCH = "Invalid TLS settings: an https origin needs TLS materia
 const CLOSED = "The connection was closed, so the request did not complete";
 const NETWORK_FAILURE = "The request failed before a complete response arrived";
 const TRUNCATED = "The server ended the response before it was complete";
+const SWITCHED_PROTOCOLS =
+  "The server switched the connection to another protocol, and this transport reads HTTP only, so the response was not read";
 const BODY_AND_FORM = "Invalid request: give a body or form fields, not both";
 const INVALID_HEADER_NAMES = "Invalid requestHeaderNames: expected lower-case header names";
 const UNLISTED_HEADER = "Invalid request headers: a header this transport does not list was given";
@@ -548,11 +558,61 @@ const OWNED_HEADERS: ReadonlySet<string> = new Set([
 ]);
 const OWNED_HEADER_PREFIXES: readonly string[] = ["content-", "proxy-"];
 
+function isOwnedHeader(name: string): boolean {
+  return OWNED_HEADERS.has(name) || OWNED_HEADER_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
 /** An HTTP field name (RFC 9110 token) in lower case. */
 const HEADER_NAME = /^[a-z0-9!#$%&'*+.^_`|~-]+$/;
 /** Visible ASCII and space: no CR or LF to split a header, no control and nothing node:http would re-encode. */
 const HEADER_VALUE = /^[\x20-\x7e]*$/;
 const MAX_HEADER_VALUE_BYTES = 1024;
+
+/** A header value a request, a signer or a byte transport's connection may send: a string the two checks above pass. */
+function isHeaderValue(value: unknown): value is string {
+  return typeof value === "string" && value.length <= MAX_HEADER_VALUE_BYTES && HEADER_VALUE.test(value);
+}
+
+const CONNECTION_NOT_A_RECORD = "Invalid headers: expected a plain record of header names and values";
+const INVALID_CONNECTION_HEADER_NAME = "Invalid headers: expected lower-case header names";
+
+/**
+ * The byte transport's connection headers, held to the rule a request's own headers meet: one read of a plain record,
+ * each name a token, never a name the transport owns, and each value a string of visible ASCII or space of at most
+ * 1024 bytes. Authorization is an owned name, so on the byte transport a signer is the only way to set it. Names are
+ * lower-cased first, as lowerCased does for the text transport, and a header node:http sets for each request keeps
+ * lowerCased's sentence. A refusal names a lower-case token at most, never a value.
+ */
+function checkedConnectionHeaders(headers: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
+  const record: unknown = headers;
+  if (typeof record !== "object" || record === null) throw new DatabaseConfigError(CONNECTION_NOT_A_RECORD);
+  // One read, checked and then sent, as checkedHeaderRecord reads a request's own headers.
+  const entries = Object.entries(record);
+  const prototype: unknown = Object.getPrototypeOf(record);
+  if ((prototype !== Object.prototype && prototype !== null) || Reflect.ownKeys(record).length !== entries.length) {
+    throw new DatabaseConfigError(CONNECTION_NOT_A_RECORD);
+  }
+  const lowered = entries.map(([name, value]) => [name.toLowerCase(), value as unknown] as const);
+  const checked: Record<string, string> = {};
+  for (const [name, value] of lowered) {
+    if (TRANSPORT_HEADERS.has(name)) {
+      throw new DatabaseConfigError(`Invalid headers: ${name} is set by the transport for each request`);
+    }
+    if (!HEADER_NAME.test(name)) throw new DatabaseConfigError(INVALID_CONNECTION_HEADER_NAME);
+    if (isOwnedHeader(name)) {
+      throw new DatabaseConfigError(
+        `Invalid headers: ${name} is set by the transport or the signer, never by the connection`,
+      );
+    }
+    if (!isHeaderValue(value)) {
+      throw new DatabaseConfigError(
+        `Invalid headers: the value of ${name} must be visible ASCII or space, at most ${MAX_HEADER_VALUE_BYTES} bytes`,
+      );
+    }
+    checked[name] = value;
+  }
+  return checked;
+}
 
 /**
  * The closed list of per-request header names, checked once when the transport is built: a name that is not a
@@ -630,7 +690,7 @@ function checkedHeaderRecord(
   }
   for (const [name, value] of entries) {
     if (!listed.has(name)) throw new DatabaseConfigError(refusals.unlisted);
-    if (typeof value !== "string" || value.length > MAX_HEADER_VALUE_BYTES || !HEADER_VALUE.test(value)) {
+    if (!isHeaderValue(value)) {
       throw new DatabaseConfigError(
         `Invalid ${refusals.label}: the value of ${name} must be visible ASCII or space, at most ${MAX_HEADER_VALUE_BYTES} bytes`,
       );
@@ -855,6 +915,12 @@ interface Exchange<T> {
   ended(): void;
   /** Settles with `value` and frees the socket slot; false, with nothing resolved, when the request had settled. */
   resolve(value: T): boolean;
+  /**
+   * resolve() for an answer cut short on purpose, whose request the caller destroys next: the slot is freed only once
+   * `outgoing` has closed, because the Agent counts that socket against maxSockets until then, and a request handed to
+   * it before then would wait in the Agent's own queue, where Node dials a socket even for a request cancelled there.
+   */
+  resolveCut(value: T, outgoing: ClientRequest): boolean;
   /** Settles with `failure`, destroys the request and its answer, and frees the socket slot. */
   fail(failure: Error): void;
   /** fail() with whatever the runtime raised, read by failureFrom. */
@@ -938,13 +1004,16 @@ function transportCore(settings: CoreSettings): TransportCore {
       let started = false;
       // Set when the response callback runs and cleared when the body ends: a failure in between is a truncation.
       let responded = false;
-      const settle = (): boolean => {
+      const settle = (closing?: ClientRequest): boolean => {
         if (settled) return false;
         settled = true;
         active.delete(fail);
         signal.removeEventListener("abort", onAbort);
-        if (started) release();
-        else waiting.splice(waiting.indexOf(start), 1);
+        if (!started) waiting.splice(waiting.indexOf(start), 1);
+        else if (closing === undefined) release();
+        // Both runtimes emit the request's close after the Agent has dropped its socket (measured on Bun 1.4.2 and
+        // Node 24.14 and 26.10); close() destroys the socket too, so the slot is always freed.
+        else closing.once("close", release);
         return true;
       };
       const fail = (failure: Error): void => {
@@ -969,6 +1038,11 @@ function transportCore(settings: CoreSettings): TransportCore {
         },
         resolve: (value) => {
           if (!settle()) return false;
+          resolve(value);
+          return true;
+        },
+        resolveCut: (value, closing) => {
+          if (!settle(closing)) return false;
           resolve(value);
           return true;
         },
@@ -1015,6 +1089,8 @@ interface ConnectionRules {
    * it connects.
    */
   readonly refusesLinkLocal: boolean;
+  /** The connection's headers as checked: lowerCased for the text factory, checkedConnectionHeaders for the byte one. */
+  readonly headersOf: (headers: Readonly<Record<string, string>>) => Readonly<Record<string, string>>;
 }
 
 /**
@@ -1027,7 +1103,7 @@ interface ConnectionRules {
 function connectionOf<A>(
   options: NodeTransportOptions,
   address: (origin: HttpOrigin) => A,
-  { refusesLinkLocal }: ConnectionRules,
+  { refusesLinkLocal, headersOf }: ConnectionRules,
 ): Connection<A> {
   const { origin, tls, maxSockets } = options;
   if (!isPositiveInteger(maxSockets)) throw new DatabaseConfigError(INVALID_MAX_SOCKETS);
@@ -1037,14 +1113,15 @@ function connectionOf<A>(
   // taken: the Agent built from these settings belongs to this connection alone and never carries an unguarded request
   // (R44 QM1).
   // With refusesLinkLocal, and whatever the flag says, a link-local or metadata literal is refused next, so the guard's
-  // sentence wins when it is on, and every socket is opened through a lookup that checks the answer it dials: the
-  // guard's, whose blocked list holds every link-local network, or else linkLocalRefusingLookup (byte transport
-  // design 3.9).
+  // sentence wins when it is on, and every socket is opened through a lookup that checks the answer it dials: with the
+  // guard on, its check and then the link-local check, because the guard's has no zone rule; with it off,
+  // linkLocalRefusingLookup (byte transport design 3.9). The text factory keeps the guard's lookup alone.
   const { lookup: guardLookup } = guardedNodeOptions(origin.host);
   if (refusesLinkLocal) assertNotLinkLocalLiteral(origin.host);
-  const lookup = refusesLinkLocal ? (guardLookup ?? linkLocalRefusingLookup) : guardLookup;
+  const linkLocalLookup = guardLookup === undefined ? linkLocalRefusingLookup : guardedLinkLocalRefusingLookup;
+  const lookup = refusesLinkLocal ? linkLocalLookup : guardLookup;
   const addressed = address(origin);
-  const connectionHeaders = lowerCased(options.headers);
+  const connectionHeaders = headersOf(options.headers);
   const requestHeaderNames = requestHeaderNamesOf(options.requestHeaderNames, connectionHeaders);
   const coreSettings = { tls, maxSockets, idleSocketMs: options.idleSocketMs, lookup };
   return { address: addressed, connectionHeaders, requestHeaderNames, coreSettings };
@@ -1067,12 +1144,17 @@ interface Prepared {
  * Writes one request on the core's Agent, once its socket slot is free. `prepare` runs inside the same try as the
  * write, so whatever throws there or in node:http fails this request alone and frees its slot. `answered` is handed the
  * answer, its status and the request that carried it once the answer's own errors are wired to the exchange.
+ *
+ * With `refusesUpgrade`, the byte transport's, a 101 answer fails the request at once as a network failure and its
+ * socket is destroyed. node:http hands a 101 to the request's `upgrade` event, never to the response callback, so
+ * without it the request never settles: it holds its slot until its deadline and is reported as a timeout.
  */
 function dispatch<T>(
   core: TransportCore,
   pending: Exchange<T>,
   prepare: () => Prepared,
   answered: (answer: IncomingMessage, status: number, outgoing: ClientRequest) => void,
+  refusesUpgrade = false,
 ): void {
   try {
     const { options, body } = prepare();
@@ -1084,6 +1166,13 @@ function dispatch<T>(
     });
     pending.sent(outgoing);
     outgoing.on("error", pending.failWith);
+    if (refusesUpgrade) {
+      outgoing.on("upgrade", (_answer: IncomingMessage, socket: Socket) => {
+        // The switched socket is handed over and no longer the request's, so destroying the request leaves it open.
+        socket.destroy();
+        pending.fail(new TransportError("network", SWITCHED_PROTOCOLS));
+      });
+    }
     outgoing.end(body);
   } catch (error) {
     // node:http refuses some requests by throwing before anything is sent: a header value with a line feed.
@@ -1115,7 +1204,10 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
     connectionHeaders,
     requestHeaderNames,
     coreSettings,
-  } = connectionOf(options, (origin) => new URL(endpointUrl(origin, "/")).origin, { refusesLinkLocal: false });
+  } = connectionOf(options, (origin) => new URL(endpointUrl(origin, "/")).origin, {
+    refusesLinkLocal: false,
+    headersOf: lowerCased,
+  });
   const core = transportCore(coreSettings);
 
   const exchange = (
@@ -1225,7 +1317,7 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
       // Set by the transport on every request, so the Host a signer signs is the Host on the wire (byte transport design 3.3).
       host: originHost(origin),
     }),
-    { refusesLinkLocal: true },
+    { refusesLinkLocal: true, headersOf: checkedConnectionHeaders },
   );
   // Checked against the connection's headers and the request's names, so it follows connectionOf, and before the
   // core, so a refused signer builds no Agent.
@@ -1319,10 +1411,11 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
             chunks.push(chunk.subarray(0, limit - received));
             received = limit;
             // Resolve first and destroy second: after destroy neither end nor error fires, and a late event finds the
-            // request settled. A destroyed socket is never reused, so the next request opens a new one. The exchange
-            // still counts the answer as unfinished after this, which is harmless: only a failure reads that, and a
-            // failure after the request has settled is ignored.
-            if (pending.resolve(respond(true))) {
+            // request settled. A destroyed socket is never reused, so the next request opens a new one, and the slot
+            // is freed only once this one has closed (resolveCut). The exchange still counts the answer as unfinished
+            // after this, which is harmless: only a failure reads that, and a failure after the request has settled
+            // is ignored.
+            if (pending.resolveCut(respond(true), outgoing)) {
               answer.destroy();
               outgoing.destroy();
             }
@@ -1334,6 +1427,7 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
             pending.resolve(respond(false));
           });
         },
+        true,
       );
     });
 
@@ -1349,6 +1443,9 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
       }
       const perRequest = perRequestHeaders(request.headers, requestHeaderNames);
       const target = requestTargetOf(request.target);
+      // Again once every field has been read: a getter in the headers or the target can cancel the signal or close the
+      // transport after the first admit, and a request admitted only before that would be sent regardless.
+      admit(core, signal);
       return exchange({ method, target, perRequest, signal, maxResponseBytes, truncateAt });
     },
     close() {
