@@ -503,6 +503,7 @@ describe("db-ui-config", () => {
           "apiKeySecret",
           "saslMechanism",
           "warehouse",
+          "region",
         ] as const;
         for (const type of ALL_TYPES) {
           for (const field of FIELDS) {
@@ -635,6 +636,7 @@ const FIELD_CHECKLIST: Record<ConnectionField, true> = {
   allowInsecureAuth: true,
   dataServers: true,
   warehouse: true,
+  region: true,
 };
 const EVERY_FIELD = Object.keys(FIELD_CHECKLIST) as ConnectionField[];
 

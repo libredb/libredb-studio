@@ -1624,6 +1624,7 @@ describe("ConnectionModal", () => {
       "allowInsecureAuth",
       "dataServers",
       "warehouse",
+      "region",
     ] as const;
 
     /** Each connection-field label a render draws, keyed by the input it names (`htmlFor`). */

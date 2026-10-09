@@ -83,6 +83,8 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   dataServers: "edited",
   // Databend's Warehouse box owns it, so emptying it has to CLEAR it, as dataServers.
   warehouse: "edited",
+  // S3's Region box owns it, so emptying it has to CLEAR it, as warehouse.
+  region: "edited",
   group: "preserved",
   managed: "preserved",
   seedId: "preserved",

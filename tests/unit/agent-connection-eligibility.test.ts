@@ -146,6 +146,15 @@ describe("which connection a run may be started on", () => {
     expect(startableId(browserCopy(server, { warehouse: undefined }), loaded(server))).toBeNull();
   });
 
+  test("a copy naming another region, or none, is not startable by the seed id", () => {
+    // The scope every S3 request is signed for: a server with a region of its own refuses another one, so the
+    // region is a resolution field, on the warehouse reasoning. The field is read the same way on every type.
+    const server = descriptor({ region: "eu-central-1" });
+    expect(startableId(browserCopy(server), loaded(server))).toBe("seed:sales");
+    expect(startableId(browserCopy(server, { region: "us-east-1" }), loaded(server))).toBeNull();
+    expect(startableId(browserCopy(server, { region: undefined }), loaded(server))).toBeNull();
+  });
+
   // The field a hand-written comparison forgets: it changes which role the agent
   // executes as, which is the whole point of the least-privilege profile (#328).
   test("a copy carrying its own agent credentials is not startable", () => {

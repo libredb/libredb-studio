@@ -206,3 +206,12 @@ describe("the warehouse field", () => {
     expect(DATA_TYPES).toMatch(/warehouse\?: string; +\/\/ Databend only:/);
   });
 });
+
+describe("the region field", () => {
+  test("docs/API_DOCS.md names it among the fields the server reads, as S3's, right after the warehouse", () => {
+    expect(API_DOCS).toContain("`warehouse` (Databend), `region` (S3)");
+    const fields = topLevelFields(DATA_TYPES, "DatabaseConnection");
+    expect(fields.indexOf("region")).toBe(fields.indexOf("warehouse") + 1);
+    expect(DATA_TYPES).toMatch(/region\?: string; +\/\/ S3-compatible object storage only:/);
+  });
+});

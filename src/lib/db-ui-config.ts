@@ -64,14 +64,17 @@ export interface DatabaseUIConfig {
     // Kafka only (#1088): which SASL mechanism checks the user and password, drawn as the select
     // `fieldOptions` below declares.
     | "saslMechanism"
-    // Db2 (#786), both InfluxDB types (InfluxDB spec I7), and Oxia for its token: the consent to send the password
-    // without TLS, drawn as a checkbox while SSL Mode is disable, under the sentence the type declares in
-    // `fieldHints`. The provider refuses a connection with no TLS unless it is set.
+    // Db2 (#786), both InfluxDB types (InfluxDB spec I7), Oxia for its token, Databend for its password, and
+    // S3-compatible object storage for the connection itself: the consent to connect without TLS, drawn as a checkbox
+    // while SSL Mode is disable, under the sentence the type declares in `fieldHints`. The provider refuses a
+    // connection with no TLS unless it is set.
     | "allowInsecureAuth"
     // Oxia only (O6): a cluster's data-server addresses, one text box.
     | "dataServers"
     // Databend only (design 6.1): the warehouse every statement runs on, one text box.
     | "warehouse"
+    // S3-compatible object storage only: the signing region, one text box.
+    | "region"
   )[];
   /**
    * The connection dialog's label for a field, where this engine names the field differently from
@@ -88,7 +91,7 @@ export interface DatabaseUIConfig {
   fieldHints?: Partial<Record<ConnectionField, string>>;
   /**
    * The connection dialog's placeholder for a field, where this engine's example differs from the dialog's own.
-   * Read through `connectionFieldPlaceholder`; only the `database` box reads it so far.
+   * Read through `connectionFieldPlaceholder`; the `database` and `region` boxes read it.
    */
   fieldPlaceholders?: Partial<Record<ConnectionField, string>>;
   /**

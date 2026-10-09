@@ -343,8 +343,12 @@ export interface DatabaseConnection {
    * InfluxDB types (`influxdb`, `influxdb3`, InfluxDB spec I7), each of which refuses a non-empty secret
    * with TLS off, to a host that is not loopback and outside a tunnel, unless this is `true`. Oxia reads
    * it too (DECISIONS O7): its bearer token crosses the network on every call, so an Oxia connection with
-   * a token and no TLS to a host other than this machine is refused unless this is `true`. Read by no
-   * other engine: each of those either encrypts the password itself or follows its own driver's default.
+   * a token and no TLS to a host other than this machine is refused unless this is `true`. Databend reads it
+   * for its password, which it refuses to send with no TLS to a host that is not loopback unless this is `true`.
+   * S3-compatible object storage reads it for the connection itself: the secret access key signs and is never
+   * sent, but listings and previews are, so a connection with no TLS to a host that is not loopback and outside
+   * a tunnel is refused unless this is `true`, signed or unsigned. Read by no other engine: each of those either
+   * encrypts the password itself or follows its own driver's default.
    */
   allowInsecureAuth?: boolean;
   /**
@@ -364,6 +368,15 @@ export interface DatabaseConnection {
    * empty are one value. Read by no other engine.
    */
   warehouse?: string;
+  /**
+   * S3-compatible object storage only: the region every request is signed for, the region part of the SigV4 credential
+   * scope. Absent and empty are one value, meaning `us-east-1`. Garage refuses every request signed for a region
+   * other than its `s3_region`; MinIO started with `MINIO_SITE_REGION` refuses bucket and object requests signed for
+   * another region but answers ListBuckets signed for `us-east-1`; RustFS accepts any region. The provider's refusal
+   * names the region the server expects. It names no credential and no address, and it is not a secret. Read by no
+   * other engine.
+   */
+  region?: string;
   /**
    * Read no catalog when this connection opens.
    *
