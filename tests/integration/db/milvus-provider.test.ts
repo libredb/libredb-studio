@@ -24,6 +24,7 @@ import {
 import { MilvusProvider } from "@/lib/db/providers/vector/milvus/index";
 import type { DescribeCollectionResponse } from "@/lib/db/providers/vector/milvus/client";
 import { collectionColumns } from "@/lib/db/providers/vector/milvus/schema";
+import { milvusSelectQuery } from "@/lib/db/providers/vector/milvus/generators";
 import { milvusSourceParts } from "@/lib/db/providers/vector/milvus/source";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { DOCS_INT64, DOCS_INT64_INDEX, FTS, SYSTEM_INFO } from "../../helpers/milvus-catalog-client";
@@ -137,6 +138,31 @@ describe("connect, on one channel", () => {
 });
 
 describe("the object surface over the adapter", () => {
+  test("a dynamic collection exposes $meta for Generate Command even when DescribeCollection omits it (#1417)", async () => {
+    const schema = DOCS_INT64.schema!;
+    const described = {
+      ...DOCS_INT64,
+      schema: {
+        ...schema,
+        fields: schema.fields.filter((field) => field.name !== "$meta"),
+        enable_dynamic_field: true,
+      },
+    };
+    const { provider } = await connected({
+      DescribeCollection: () => described,
+      BatchDescribeCollection: () => ({ status: okStatus, responses: [described] }),
+    });
+    const detail = await provider.describeObject(["default", "docs_int64"], "collection");
+    expect(detail.columns?.filter((column) => column.name === "$meta")).toEqual([
+      { name: "$meta", type: "JSON (dynamic)", nullable: true, isPrimary: false },
+    ]);
+    const batch = await provider.describeObjects(["default"], "collection");
+    expect(batch.details[0].columns).toEqual(detail.columns);
+    const command = milvusSelectQuery(["default", "docs_int64"], detail.columns!);
+    expect(command).toContain('"maybe_count", "$meta"]');
+    await provider.disconnect();
+  });
+
   test("the tree: the databases, then one ShowCollections that carries its database", async () => {
     const { provider, wire } = await connected();
     expect((await provider.listContainers()).map((container) => container.name)).toEqual(["default", "probe_db"]);

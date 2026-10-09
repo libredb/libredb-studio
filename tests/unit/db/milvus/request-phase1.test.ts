@@ -90,6 +90,37 @@ describe("the metadata routes lower to one client call each, reading nothing fir
 });
 
 describe("entities/query (5.4)", () => {
+  describe("dynamic fields omitted from DescribeCollection.fields (#1417)", () => {
+    const fields = [
+      fieldSchema({ name: "id", data_type: "Int64", is_primary_key: true }),
+      fieldSchema({ name: "title", data_type: "VarChar" }),
+      fieldSchema({ name: "vec", data_type: "FloatVector", type_params: [{ key: "dim", value: "4" }] }),
+    ];
+
+    test.each(["entities/query", "entities/get"])("%s includes and resolves $meta when enabled", (route) => {
+      const reads = {
+        collection: describeAnswer(collectionSchema("docs", fields, { enable_dynamic_field: true })),
+        index: NOT_READ,
+      };
+      for (const outputFields of [undefined, ["$meta"]]) {
+        const body = { collectionName: "docs", ...(route === "entities/get" ? { id: [1] } : {}), outputFields };
+        const operation = lower(`POST ${route}\n${JSON.stringify(body)}`, reads);
+        expect(operation.kind === "query" && operation.request.output_fields).toEqual(
+          outputFields ?? ["id", "title", "$meta"],
+        );
+      }
+    });
+
+    test("a collection with dynamic fields disabled excludes $meta and refuses it without recommending it", () => {
+      const reads = { collection: describeAnswer(collectionSchema("docs", fields)), index: NOT_READ };
+      const operation = lower('POST entities/query\n{"collectionName":"docs"}', reads);
+      expect(operation.kind === "query" && operation.request.output_fields).toEqual(["id", "title"]);
+      expect(() => lower('POST entities/query\n{"collectionName":"docs","outputFields":["$meta"]}', reads)).toThrow(
+        '"$meta" is not a field of docs, and docs has no dynamic field.',
+      );
+    });
+  });
+
   test("example 3: the outputs as named, the dynamic key sent bare, limit and offset always sent (R43)", () => {
     const operation = lowerOn("docs_int64", "/v2/vectordb/entities/query", {
       collectionName: "docs_int64",

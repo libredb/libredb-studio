@@ -256,6 +256,8 @@ A body takes no `//` comment (`docs/BACKLOG.md` D158).
 - The filter is Milvus's own expression, which the server parses and type-checks; every filter of one request together is at most 64 KiB.
 - Every search parameter is checked per index type before the request is sent, and every key outside the table of section 5.6 is refused by name although the server ignores it.
 
+Milvus 3.0.2 can return `enable_dynamic_field: true` from DescribeCollection without listing `$meta` in `schema.fields` (#1417). Studio uses that flag to include `$meta` in the default projection and accept an explicit `"outputFields": ["$meta"]`, whether or not the field is listed. The object tree exposes one nullable `$meta` column of type `JSON (dynamic)` in either case. On a collection without dynamic fields, requesting `$meta` is refused with a message saying that the collection has no dynamic field.
+
 ### 5.3 Examples
 
 ```text
@@ -391,6 +393,7 @@ A function's name, type and input and output fields are shown, and none of its p
 
 A click on a collection runs `entities/query` with its database and name, an empty filter and a limit of 100; on an unloaded collection it answers the not-loaded sentence and never loads.
 Generate Command writes a runnable search over the collection's first dense vector field with a probe vector of the right dimension, a comment naming the field, and a comment for each other vector field; a collection whose only vectors are sparse gets both forms as comments, and a BM25 output field a text search.
+Its `outputFields` includes the scalar fields and `$meta` when dynamic fields are enabled, so the generated search returns dynamic keys too.
 Generate Code, Profile, Generate Test Data, Generate Count Query and the SQL INSERT and DDL export formats are not offered.
 
 ### 6.4 Object edit (#789): nothing to write
