@@ -34,18 +34,24 @@
  * - reports a stored content-encoding in `contentEncoding` and returns its bytes as received, never decoded and never
  *   refused, counted against the cap as received;
  * - with `truncateAt`, keeps the first `truncateAt` bytes of a longer body, resolves with `truncated: true`, and then
- *   destroys the socket, which is never reused;
+ *   destroys the socket, which is never reused, and frees its socket slot only once that socket has closed;
  * - besides `contentType`, `contentEncoding` and `retryAfter`, which every response carries whatever the selection
  *   says, returns only the response headers its `responseHeaders` selection names, read from the raw header list in
  *   received order, at most 64, 1024 characters a value and 16384 characters in all, and never Location or Set-Cookie;
  * - hands a `signer` the exact method, Host, path and query and every header the transport sets, just before the
  *   request is written, and adds only the header names the signer lists; the transport sets Host itself, so the Host
  *   signed is the Host sent, while a header node:http adds on its own, such as Connection, is never shown to it;
+ * - holds its connection headers to the rule a request's own headers meet, so they never carry Authorization, and a
+ *   signer is the only way to set it;
+ * - admits a request again once every field has been read, and fails a request taken from the queue already cancelled
+ *   before it is signed, so neither is sent;
+ * - fails a 101 answer at once as a network failure and destroys the socket it switched;
  * - on a refused 3xx, carries its status and the selected headers in `TransportError.redirect`, still without
  *   following it;
  * - never reaches a link-local address or AWS's IPv6 instance metadata address (LINK_LOCAL_NETWORKS in
  *   egress-policy.ts), whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says: a literal is refused when the transport is built,
- *   and every socket is opened through a lookup that checks the address it dials.
+ *   and every socket is opened through a lookup that checks the address it dials, after the guard's own check when the
+ *   flag is on.
  *
  * `nodeTlsMaterial` is the TLS mapping D37 counts, shared here so that a new REST provider takes it instead of
  * writing another copy.
@@ -212,7 +218,7 @@ export interface RequestSigner {
 export interface NodeByteTransportOptions extends NodeTransportOptions {
   /** Absent: no response header is returned and `headers` is []. */
   readonly responseHeaders?: ResponseHeaderSelection;
-  /** Absent: the request is sent unsigned, with no credential the connection headers do not carry. */
+  /** Absent: the request is sent unsigned, with no Authorization header, which the connection headers never carry. */
   readonly signer?: RequestSigner;
 }
 
@@ -541,8 +547,9 @@ function lowerCased(headers: Readonly<Record<string, string>>): Record<string, s
 
 /**
  * Names a per-request header may never take: those node:http or this transport set for each request, those that frame
- * or govern the connection rather than one request, and the Authorization credential, which belongs to the connection's
- * own headers. Every `content-` and `proxy-` name is refused by its prefix.
+ * or govern the connection rather than one request, and the Authorization credential, which belongs to the text
+ * transport's connection headers and to the byte transport's signer. Every `content-` and `proxy-` name is refused by
+ * its prefix.
  */
 const OWNED_HEADERS: ReadonlySet<string> = new Set([
   "host",
@@ -970,7 +977,9 @@ function transportCore(settings: CoreSettings): TransportCore {
   /**
    * The transport holds the requests beyond maxSockets itself and hands one to the Agent only when a socket is free,
    * because the Agent keeps a request destroyed in its own queue and later dials a socket for it, so a cancel would
-   * still cost a lookup and a handshake. A request stopped while it waits here never reaches the Agent.
+   * still cost a lookup and a handshake. A request stopped while it waits here never reaches the Agent. One stopped by
+   * the signal that also stopped the request ahead of it can be started before its own abort listener runs: the byte
+   * transport fails it then, before it is signed, and the text transport still sends it (docs/BACKLOG.md D258).
    */
   let sending = 0;
   const waiting: Array<() => void> = [];
