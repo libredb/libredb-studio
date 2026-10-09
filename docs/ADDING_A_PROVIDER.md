@@ -132,7 +132,7 @@ With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, the egress guard's lookup runs on that Ag
 A provider that needs headers per request lists their lower-case names in `requestHeaderNames` and passes them in `NodeRequest.headers`; a name the transport or the connection owns is refused when the transport is built.
 A provider that reads stored objects instead of statement results builds on `createNodeByteTransport` in the same file.
 It sends GET and HEAD only, to an exact request target built with `rfc3986Path` and `rfc3986Query` from [`endpoint.ts`](../src/lib/db/http/endpoint.ts), and returns the body as bytes, never decoded, with an optional `truncateAt` that keeps the first bytes and says so.
-It returns only the response headers its connection selects, never Location or Set-Cookie, and on a refused redirect it carries the status and those headers without following it.
+Besides `contentType`, `contentEncoding` and `retryAfter`, it returns only the response headers its connection selects, never Location or Set-Cookie, and on a refused redirect it carries the status and those headers without following it.
 A `signer` is called once per request just before it is written, with the exact method, Host, path, query and headers, and adds only the header names it lists.
 It never reaches a link-local address or AWS's IPv6 instance metadata address, whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says.
 The older HTTP providers keep their own transports until D37 in [`BACKLOG.md`](BACKLOG.md) moves them.

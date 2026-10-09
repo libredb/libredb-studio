@@ -25,17 +25,19 @@
  * - A deadline or a cancel destroys the socket; the signal's reason tells the two apart.
  * - Nothing is retried: an answer that never arrived is reported as lost, and the request is never sent again.
  * - No message carries a header, the key, a URL query string or a body: a failure names its kind, a runtime code, an
- *   origin or a number.
+ *   origin or a number. A signer's own Error is the provider's text and is passed through as thrown.
  *
  * The byte transport, `createNodeByteTransport`, in addition:
  * - reports a stored content-encoding in `contentEncoding` and returns its bytes as received, never decoded and never
  *   refused, counted against the cap as received;
  * - with `truncateAt`, keeps the first `truncateAt` bytes of a longer body, resolves with `truncated: true`, and then
  *   destroys the socket, which is never reused;
- * - returns only the response headers its `responseHeaders` selection names, read from the raw header list in received
- *   order, at most 64, 1024 characters a value and 16384 characters in all, and never Location or Set-Cookie;
- * - hands a `signer` the exact method, Host, path, query and headers just before the request is written, and adds only
- *   the header names the signer lists; the transport sets Host itself, so what is signed is what is sent;
+ * - besides `contentType`, `contentEncoding` and `retryAfter`, which every response carries whatever the selection
+ *   says, returns only the response headers its `responseHeaders` selection names, read from the raw header list in
+ *   received order, at most 64, 1024 characters a value and 16384 characters in all, and never Location or Set-Cookie;
+ * - hands a `signer` the exact method, Host, path and query and every header the transport sets, just before the
+ *   request is written, and adds only the header names the signer lists; the transport sets Host itself, so the Host
+ *   signed is the Host sent, while a header node:http adds on its own, such as Connection, is never shown to it;
  * - on a refused 3xx, carries its status and the selected headers in `TransportError.redirect`, still without
  *   following it;
  * - never reaches a link-local address or AWS's IPv6 instance metadata address (LINK_LOCAL_NETWORKS in
