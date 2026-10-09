@@ -654,6 +654,32 @@ describe("POST /api/db/keys/scan for one level", () => {
     }
   });
 
+  test("ends a folder at the first separator after the pattern, even where two occurrences overlap", async () => {
+    const twoCharacters = { ...LEVEL_SCAN, separator: "::" };
+    // "x:::" holds its first "::" at index 1: the level's folder is "x::", and "x:::" is one level deeper.
+    const outside = [
+      { request: { level: true }, prefix: "x:::" },
+      { request: { level: true, pattern: "a::" }, prefix: "a::x:::" },
+    ];
+    for (const { request, prefix } of outside) {
+      activeProvider = levelProvider(async () => ({ ...EMPTY_LEVEL, prefixes: [prefix] }), twoCharacters);
+      const answer = await post(request);
+      expect({ prefix, status: answer.status }).toEqual({ prefix, status: 500 });
+      expect(answer.body.error).toBe(
+        `oxia answered a folder outside the level it was asked for: ${JSON.stringify(prefix)}`,
+      );
+    }
+    const inside = [
+      { request: { level: true }, prefix: "x::" },
+      { request: { level: true, pattern: "a::" }, prefix: "a::x::" },
+    ];
+    for (const { request, prefix } of inside) {
+      activeProvider = levelProvider(async () => ({ ...EMPTY_LEVEL, prefixes: [prefix] }), twoCharacters);
+      const answer = await post(request);
+      expect({ prefix, status: answer.status }).toEqual({ prefix, status: 200 });
+    }
+  });
+
   test("answers level pages that keep to their level unchanged", async () => {
     const cases: Array<{ request: Record<string, unknown>; page: KeyScanPage }> = [
       // The top level, with no pattern.

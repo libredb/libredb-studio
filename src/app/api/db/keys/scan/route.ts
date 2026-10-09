@@ -213,7 +213,8 @@ function readLevel(body: Record<string, unknown>): boolean {
  *
  * A key walk's page is never counted here: a Redis `SCAN` page may hold more keys than `COUNT`.
  * A level page is held to its level: with `p` the pattern (or `""`) and `s` the separator, a prefix
- * starts with `p`, ends with `s`, is at least `p.length + s.length` long and holds no `s` between them;
+ * starts with `p` and ends at the first `s` found from the end of `p`, which also makes it end with `s`
+ * and hold no `s` before that one, overlapping occurrences of a longer separator included;
  * no prefix appears twice; a key starts with `p` and holds no `s` after it (a key equal to `p`, a folder
  * marker, passes); and keys and prefixes together fit in `count`.
  */
@@ -228,11 +229,10 @@ function checkAnswer(type: string, page: KeyScanPage, options: KeyScanOptions, s
   const prefixes = page.prefixes ?? [];
   const seen = new Set<string>();
   for (const prefix of prefixes) {
+    // Searching from the end of the pattern, not between it and the last separator: "x:::" under "::"
+    // holds no "::" in "x:", yet its first one starts at index 1, so its level's folder is "x::".
     const inLevel =
-      prefix.startsWith(pattern) &&
-      prefix.endsWith(separator) &&
-      prefix.length >= pattern.length + separator.length &&
-      !prefix.slice(pattern.length, prefix.length - separator.length).includes(separator);
+      prefix.startsWith(pattern) && prefix.indexOf(separator, pattern.length) === prefix.length - separator.length;
     if (!inLevel) {
       throw new ObjectRouteError(
         `${type} answered a folder outside the level it was asked for: ${JSON.stringify(prefix)}`,
