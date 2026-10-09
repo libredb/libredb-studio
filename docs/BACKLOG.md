@@ -4355,17 +4355,18 @@ Found 2026-10-09 by an adversarial review of the folder-aware Keys panel; pre-ex
 
 **Done when:** the loop checks its walk generation before it writes anything, with a hook test for each of the two cases.
 
-### U107. A Scan more pressed while the Keys panel waits for a database list sends the previous walk's cursor
+### U107. While the Keys panel waits for a database list, the previous walk stays live
 
-When the Keys panel is handed a database on a connection whose database list has not answered yet, its restart waits for that list before it resets the walk (`waitingForChosenDatabase` in `src/components/key-browser/KeyBrowser.tsx`), while Scan more and Scan all stay enabled, and `scanMore` in `src/components/key-browser/use-key-scan.ts` reads its cursor from the unreset walk.
-So a page asked for in that wait carries the previous walk's cursor to the new walk.
+When the Keys panel is handed a database on a connection whose database list has not answered yet, its restart waits for that list before it resets the walk (`waitingForChosenDatabase` in `src/components/key-browser/KeyBrowser.tsx`), so until then the previous walk's state is the panel's state.
+Its rows and progress line stay drawn under the new connection and its keys open on it, and Scan more, Scan all and a folder's Load more stay enabled and send the previous walk's cursors (`scanMore` and `loadMoreUnder` in `src/components/key-browser/use-key-scan.ts` read them from the unreset walk).
 Measured 2026-10-10 in a panel test with two Redis-shaped connections: the panel walked the first, which answered cursor `"7"`; re-rendered with the second connection and a requested database whose list never answered, Scan more was enabled and sent `{"cursor":"7"}` to the second connection, with no `database` field, because the panel names no database before the list answers.
-A hook test that changes the database without a reset sends `{"cursor":"7","database":2}` the same way.
+A panel test the same day drew the first connection's rows (`old:*`) and its progress line (`Scanned 2/900`) under the second connection during the wait, and a hook test that changes the database without a reset sends `{"cursor":"7","database":2}`.
+A page asked for by the previous walk no longer writes anything once the question changes; what that walk already drew is what stays.
 `main` has the same path.
 
 Found 2026-10-10 by an adversarial review of the folder-aware Keys panel; pre-existing.
 
-**Done when:** no page is asked for a walk that has not been reset, with a panel test that switches connection during the wait, presses Scan more, and finds no request carrying the previous walk's cursor.
+**Done when:** the walk is reset when the question changes, whether or not the panel waits, and no page is asked for until the chosen database's list answers, with a panel test that switches connection during the wait and finds none of the previous walk's rows, no enabled Scan more, Scan all or Load more, and no request carrying its cursors.
 
 ### U108. The Keys panel carries a Browse Keys pattern to the next connection
 

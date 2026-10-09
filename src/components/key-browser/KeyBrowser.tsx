@@ -458,10 +458,12 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         if (filtering || heldFull) return false;
         const key = pathKey(path);
         if (key === scopeKey) return !exhausted;
-        // A folder above the scope pages its level only once it has been listed: before that the walk
-        // drew it open on the way down, and a row under it would offer a level nobody asked for.
-        if (ancestorKeys.has(key)) return nodeCursors.has(key) && nodeCursors.get(key) !== "0";
-        return serverFolderKeys.has(key) && nodeCursors.get(key) !== "0";
+        // A folder pages its level once it has been listed, and its row is drawn while its listing is in
+        // flight, because the row's "Listing this folder..." is the folder's one busy sign. A folder above
+        // the scope drawn open on the way down, or a server folder whose first listing failed, has neither
+        // and offers no row: a level nobody has listed retries by close and reopen.
+        if (!ancestorKeys.has(key) && !serverFolderKeys.has(key)) return false;
+        return nodeLoading.has(key) || (nodeCursors.has(key) && nodeCursors.get(key) !== "0");
       }
       /*
        * THREE REASONS NOT TO OFFER IT, and each is a fact rather than a preference.
@@ -481,7 +483,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
       if (exhausted || filtering || heldFull) return false;
       return nodeCursors.get(pathKey(path)) !== "0";
     },
-    [ancestorKeys, exhausted, filtering, heldFull, levels, nodeCursors, scopeKey, serverFolderKeys],
+    [ancestorKeys, exhausted, filtering, heldFull, levels, nodeCursors, nodeLoading, scopeKey, serverFolderKeys],
   );
   const rows = useMemo(
     () =>
@@ -618,9 +620,12 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
       ? ""
       : `${node.children.length.toLocaleString("en-US")}${levelHasMore(pathKey(node.path)) ? "+" : ""}`;
   const levelBadgeTitle = (node: KeyTreeNode): string => {
+    // A folder whose page is in the air says so in the words its busy load-more row uses: until the
+    // page lands, "not listed yet" would ask for a press that has already been made.
+    if (nodeLoading.has(pathKey(node.path))) return "Listing this folder...";
     // A folder drawn open and not listed (a folder above the scope, drawn open on the way down) lists
     // its level on the next open, so the way there is to close it first.
-    if (unlistedFolder(node) && open.has(pathKey(node.path)) && !nodeLoading.has(pathKey(node.path))) {
+    if (unlistedFolder(node) && open.has(pathKey(node.path))) {
       return "Not listed yet: close and reopen the folder to list it";
     }
     if (unlistedFolder(node)) return "Not listed yet: open the folder to list it";
@@ -957,6 +962,8 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
               // other row presses its folder's own listing (Keys panel levels, spec 3.6).
               const ownLevel = levels && key === scopeKey;
               const loading = ownLevel ? busy : nodeLoading.has(key);
+              // The top level is no folder, so its row names its level; every folder's row names the folder.
+              const topLevel = ownLevel && scope.length === 0;
               return (
                 <button
                   key={`more:${key}`}
@@ -973,7 +980,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                    */
                   title={
                     levels
-                      ? "Ask the server for the next page of this folder. A page lists folders and keys of this level only, and each folder lists its own level when opened."
+                      ? `Ask the server for the next page of ${topLevel ? "the top level" : "this folder"}. A page lists folders and keys of this level only, and each folder lists its own level when opened.`
                       : prefixed
                         ? "Ask the server for the next page of the keys under this prefix. The walk above reads the same range in the same order, so a page can hold only keys already loaded."
                         : "Ask the server for one more page under this prefix. It answers a batch of buckets rather than a listing, so a page can hold only keys already loaded."
@@ -999,9 +1006,11 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                   <span className="truncate text-xs text-muted-foreground">
                     {loading
                       ? levels
-                        ? "Listing this folder..."
+                        ? topLevel
+                          ? "Listing the top level..."
+                          : "Listing this folder..."
                         : "Asking for one more page..."
-                      : `${levels ? "Load more of this folder" : "Click to load more"}${outcomeOf(nodeAdded.get(key))}`}
+                      : `${levels ? (topLevel ? "Load more of the top level" : "Load more of this folder") : "Click to load more"}${outcomeOf(nodeAdded.get(key))}`}
                   </span>
                   {/*
                       THE COUNT THIS PRESS IS MEASURED AGAINST, in the same right-hand column every

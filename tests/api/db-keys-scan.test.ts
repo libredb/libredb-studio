@@ -16,6 +16,8 @@ import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 import { createMockProvider } from "../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import type { DatabaseProvider, KeyScanOptions, KeyScanPage } from "@/lib/db/types";
+import { ETCD_KEY_SCAN } from "@/lib/db/providers/keyvalue/etcd/key-scan";
+import { OXIA_KEY_SCAN } from "@/lib/db/providers/keyvalue/oxia/key-scan";
 import {
   DatabaseError,
   DatabaseConfigError,
@@ -469,7 +471,6 @@ describe("POST /api/db/keys/scan for one level", () => {
     pattern: "prefix",
     totalScope: "walk",
   } as const;
-  const OXIA_LIKE = { ...ETCD_LIKE, totalScope: "none" } as const;
   const EMPTY_LEVEL: KeyScanPage = { keys: [], prefixes: [], cursor: "0", total: 0, types: {} };
 
   /** A provider with the given walk declaration and no container level, its walk supplied per test. */
@@ -493,15 +494,17 @@ describe("POST /api/db/keys/scan for one level", () => {
     return call[0] as Record<string, unknown>;
   }
 
-  test("forwards exactly today's four keys, with no level key, to a Redis, an etcd and an Oxia walk", async () => {
+  test("forwards exactly today's four keys, with no level key, to the shipped etcd and Oxia walks and a Redis lookalike", async () => {
     const shapes = [
       {
         type: "redis",
+        // A lookalike: Redis declares its walk inline in its capabilities and exports no constant, so
+        // this copies `src/lib/db/providers/keyvalue/redis.ts` by hand. etcd and Oxia are the shipped ones.
         keyScan: { defaultCount: 500, maxCount: 1000 },
         containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
       },
-      { type: "etcd", keyScan: ETCD_LIKE, containerLevels: [] },
-      { type: "oxia", keyScan: OXIA_LIKE, containerLevels: [] },
+      { type: "etcd", keyScan: ETCD_KEY_SCAN, containerLevels: [] },
+      { type: "oxia", keyScan: OXIA_KEY_SCAN, containerLevels: [] },
     ] as const;
     for (const shape of shapes) {
       const walk = mock<(options: KeyScanOptions) => Promise<KeyScanPage>>(async () => PAGE);
@@ -543,6 +546,21 @@ describe("POST /api/db/keys/scan for one level", () => {
     activeProvider = levelProvider(walk);
 
     for (const level of [false, "true", 1, null]) {
+      const { status, body } = await post({ level });
+      expect({ level, status }).toEqual({ level, status: 400 });
+      expect(body.error).toBe('"level" must be true, or absent for a walk of keys only');
+    }
+    expect(walk).not.toHaveBeenCalled();
+  });
+
+  test("refuses level: false and level: null on an engine without levels, in the level sentence", async () => {
+    // Spec-mandated (SPEC-2 3.3): main answered these with a page; a level that is present and not
+    // true is a malformed body whatever the engine declares.
+    const walk = mock<(options: KeyScanOptions) => Promise<KeyScanPage>>(async () => PAGE);
+    activeProvider = declaringProvider(walk);
+
+    for (const level of [false, null]) {
+      // oxlint-disable-next-line no-await-in-loop -- one body at a time: each reads the one active provider.
       const { status, body } = await post({ level });
       expect({ level, status }).toEqual({ level, status: 400 });
       expect(body.error).toBe('"level" must be true, or absent for a walk of keys only');
@@ -627,6 +645,21 @@ describe("POST /api/db/keys/scan for one level", () => {
     expect(level.body.error).toBe("oxia answered folder prefixes to a walk that asked for keys only");
 
     activeProvider = declaringProvider(async () => stray);
+    const redis = await post({});
+    expect(redis.status).toBe(500);
+    expect(redis.body.error).toBe("redis answered folder prefixes to a walk that asked for keys only");
+  });
+
+  test("answers 500 for an empty folder list on a walk that asked for keys only, as for a full one", async () => {
+    // Present is the defect, not non-empty: a key walk's page carries no `prefixes` at all.
+    const empty: KeyScanPage = { keys: ["a/x"], prefixes: [], cursor: "0", total: 0, types: {} };
+
+    activeProvider = levelProvider(async () => empty);
+    const level = await post({});
+    expect(level.status).toBe(500);
+    expect(level.body.error).toBe("oxia answered folder prefixes to a walk that asked for keys only");
+
+    activeProvider = declaringProvider(async () => empty);
     const redis = await post({});
     expect(redis.status).toBe(500);
     expect(redis.body.error).toBe("redis answered folder prefixes to a walk that asked for keys only");

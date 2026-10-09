@@ -21,7 +21,7 @@
  * in keys, and the panel says so in its own words when a walk stops on it — a cap nobody can see is
  * the defect that sentence exists to prevent.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import { keyScanShape, type KeyScanCapability, type KeyScanOptions, type KeyScanPage } from "@/lib/db/types";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
@@ -220,10 +220,10 @@ export function useKeyScan(options: {
    *
    * The keys wait for `reset` to clear them, which the caller runs from an effect, and only once the new
    * walk can start: a panel waiting on its database list runs none at all. Until then a page of the old
-   * walk is still in the current generation and lands, and a folder from a walk in another shape is no
-   * prefix in this one, which the tree refuses outright. Tagged, such a page fills `heldFolders` and
-   * never reaches the tree, and the first render of a new question hands back none, before any effect.
-   * Only the folders are held to this; an engine without levels has none, so it is unchanged.
+   * walk is still in the current generation and lands. Such a page writes nothing (see `askedNow`), and
+   * the tag covers the renders before that: the first render of a new question hands back no folder,
+   * before any effect, because a folder from a walk in another shape is no prefix in this one, which
+   * the tree refuses outright.
    *
    * EACH TIME A QUESTION IS ASKED IS ITS OWN OBJECT, and the folders are tagged with that object rather
    * than with its inputs. The inputs are compared by identity to notice a new question, stored on the
@@ -302,18 +302,31 @@ export function useKeyScan(options: {
    * The server folders the tree has been handed, for the reason `walked` holds keys: a folder named by
    * two pages is one folder, and the list the tree is built from must not grow with repeats.
    *
-   * ONE QUESTION'S FOLDERS, like the state they feed. `askedNow` is the question the last commit asked,
-   * and the effect below starts an empty set whenever it changes: a folder of the last question would
-   * otherwise count against this one's held limit and hide the same folder when this one names it.
+   * ONE QUESTION'S FOLDERS, like the state they feed: the effect below starts an empty set whenever the
+   * question changes, because a folder of the last question would otherwise count against this one's
+   * held limit and hide the same folder when this one names it.
    */
   const heldFolders = useRef(new Set<string>());
+  /*
+   * THE QUESTION THE LAST COMMIT ASKED, which every page is held to beside its walk generation.
+   *
+   * A page whose question is no longer this one writes nothing, on every engine: not its keys, its
+   * types, its cursor, its counts or its folders. It clears nothing either: what the last walk already
+   * holds stays until the caller resets the walk, which a panel waiting on its database list does only
+   * once that list answers. Recorded in a layout effect so it is current from the commit on, before any
+   * page can land.
+   */
   const askedNow = useRef(asked);
-  useEffect(() => {
-    // A page of the last question that landed before this ran is cleared here; one that lands after
-    // it finds its question replaced and adds nothing (see `absorbFolders`).
+  useLayoutEffect(() => {
     askedNow.current = asked;
     heldFolders.current.clear();
   }, [asked]);
+  /** Whether a page asked for `question` in walk `mine` may still write: the walk and the question are both current. */
+  const stillAsked = useCallback(
+    (mine: number, question: Question): boolean =>
+      alive.current && mine === walk.current && question === askedNow.current,
+    [],
+  );
   /*
    * Each prefix's own walk, keyed by `pathKey`. In a ref because the read has to see what the last
    * scoped page wrote, exactly as the global cursor does, and mirrored into state below because a row
@@ -430,9 +443,6 @@ export function useKeyScan(options: {
    */
   const absorbFolders = useCallback(
     (prefixes: readonly string[], question: Question): string[] => {
-      // A page asked for a question that is no longer the current one adds nothing and leaves the folder
-      // state alone: its folders belong to a tree nobody is drawing.
-      if (question !== askedNow.current) return [];
       const fresh: string[] = [];
       for (const prefix of prefixes) {
         if (heldFolders.current.has(prefix)) continue;
@@ -480,10 +490,11 @@ export function useKeyScan(options: {
 
     try {
       const page = await readPageAt(cursor.current, pattern, batchSize(capability));
-      // The walk this page belongs to may have been thrown away while it was in the air, and a
-      // discarded walk's answer is not an answer to the current one: it would land keys from a
-      // database or a pattern nobody is looking at any more, beside a cursor from that walk.
-      if (!alive.current || mine !== walk.current) return true;
+      // The walk this page belongs to may have been thrown away while it was in the air, or its question
+      // replaced before anybody reset it, and either way its answer is not an answer to the current
+      // one: it would land keys from a database or a pattern nobody is looking at any more, beside a
+      // cursor from that walk. `asked` is the question this callback closed over.
+      if (!stillAsked(mine, asked)) return true;
       cursor.current = page.cursor;
       // A level page's folders are entries the walk was handed, as its keys are (Keys panel levels,
       // spec 3.5), so the progress line and Scan all's budget count both.
@@ -501,8 +512,8 @@ export function useKeyScan(options: {
         };
         setSkipped(skippedKeys.current);
       }
-      // Folders before keys, so a panel that fills keeps the level's structure ahead of its leaves. They
-      // carry `asked` as this callback closed over it: the question the page was asked for (see `folders`).
+      // Folders before keys, so a panel that fills keeps the level's structure ahead of its leaves, tagged
+      // with the question the page was asked for (see `folders`).
       absorbFolders(page.prefixes ?? [], asked);
       const fresh = absorb(page.keys);
       absorbTypes(page);
@@ -521,7 +532,7 @@ export function useKeyScan(options: {
       // A failure from an abandoned walk is dropped for the reason its answer would be: it describes
       // a read the panel has already replaced, and reporting it would put a sentence about the old
       // walk on the new one.
-      if (!alive.current || mine !== walk.current) return true;
+      if (!stillAsked(mine, asked)) return true;
       // The cursor is deliberately NOT advanced on a failure. The position already held is the
       // last one the server acknowledged, so retrying re-asks the batch that failed rather than
       // skipping it.
@@ -536,7 +547,7 @@ export function useKeyScan(options: {
       if (alive.current && mine === walk.current) setBusy(false);
     }
     return true;
-  }, [absorb, absorbFolders, absorbTypes, asked, capability, heldEntries, pattern, readPageAt]);
+  }, [absorb, absorbFolders, absorbTypes, asked, capability, heldEntries, pattern, readPageAt, stillAsked]);
 
   const scanAll = useCallback(async (): Promise<void> => {
     // A page in flight for the CURRENT walk is one this loop is already waiting on, so a second press
@@ -561,7 +572,7 @@ export function useKeyScan(options: {
     let reason: string | null = null;
     while (!stopped.current && !spent.current && failure.current === null) {
       // oxlint-disable-next-line no-await-in-loop -- each page starts at the cursor the last one wrote.
-      const asked = await scanMore();
+      const took = await scanMore();
       /*
        * A REFUSAL ENDS THE LOOP. Asked again, `scanMore` would refuse again, and awaiting a promise
        * that has already resolved never yields to the event loop: no page, no render and no Stop
@@ -570,7 +581,13 @@ export function useKeyScan(options: {
        * `HELD_KEY_LIMIT` while the walk is short of its cap and its cursor is live. The limit's
        * sentence is the panel's, drawn from the tree's size, so this exit adds none of its own.
        */
-      if (!asked) break;
+      if (!took) break;
+      /*
+       * A QUESTION REPLACED UNDER THE LOOP ENDS IT too. Its pages write nothing any more (see
+       * `askedNow`), so the cursor it reads does not move, and asked again it would take the same page
+       * for ever. `asked` is the question this callback closed over.
+       */
+      if (asked !== askedNow.current) break;
       // The keys the walk was handed and the keys its pages left out: see `SCAN_ALL_MAX_KEYS`.
       const walkedKeys = scannedKeys.current + (skippedKeys.current?.count ?? 0);
       if (walkedKeys >= SCAN_ALL_MAX_KEYS && !spent.current) {
@@ -592,7 +609,7 @@ export function useKeyScan(options: {
     // Applied after the cap's sentence rather than instead of it, so a Stop pressed in the same turn
     // is what a reader sees: the two are ordered, not merged.
     if (stopped.current) setStoppedBy("Stopped.");
-  }, [levels, scanMore, shape]);
+  }, [asked, levels, scanMore, shape]);
 
   /**
    * One page of a walk scoped to ONE PREFIX, for the Load more row under an open folder.
@@ -667,7 +684,7 @@ export function useKeyScan(options: {
            */
           capability.maxCount,
         );
-        if (!alive.current || mine !== walk.current) return;
+        if (!stillAsked(mine, asked)) return;
         nodeCursor.current.set(key, page.cursor);
         setNodeCursors(new Map(nodeCursor.current));
 
@@ -686,7 +703,7 @@ export function useKeyScan(options: {
         setNodeAdded((previous) => new Map(previous).set(key, fresh.length + freshFolders.length));
         setError(null);
       } catch (thrown) {
-        if (!alive.current || mine !== walk.current) return;
+        if (!stillAsked(mine, asked)) return;
         // NOT written to the loop's failure flag: see this callback's own note. The panel shows the
         // sentence and keeps the keys it already has, because a page that failed did not invalidate
         // the pages that did not.
@@ -707,7 +724,7 @@ export function useKeyScan(options: {
         }
       }
     },
-    [absorb, absorbFolders, absorbTypes, asked, capability, heldEntries, readPageAt, shape],
+    [absorb, absorbFolders, absorbTypes, asked, capability, heldEntries, readPageAt, shape, stillAsked],
   );
 
   const stop = useCallback((): void => {

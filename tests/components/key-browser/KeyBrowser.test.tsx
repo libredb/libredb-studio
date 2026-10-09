@@ -867,6 +867,57 @@ describe("KeyBrowser", () => {
   });
 
   describe("the database the walk is in", () => {
+    test("a page of the last connection landing while the next one waits on its database list draws none of its keys", async () => {
+      // No-op defaults rather than `| null`: the executors below replace them before anything waits.
+      let releasePage: () => void = () => {};
+      const pageGate = new Promise<void>((resolve) => {
+        releasePage = resolve;
+      });
+      let releaseList: () => void = () => {};
+      const listGate = new Promise<void>((resolve) => {
+        releaseList = resolve;
+      });
+      let call = 0;
+      mockGlobalFetch({
+        "/api/db/keys/scan": async () => {
+          call += 1;
+          if (call === 1) {
+            await pageGate;
+            return page(["old:1", "old:2"], "5", 900);
+          }
+          return page(["app:env"], "0", 31);
+        },
+        "/api/db/objects/containers": async () => {
+          await listGate;
+          return { json: DATABASES };
+        },
+      });
+      const view = renderBrowser();
+      await waitFor(() => {
+        expect(call).toBe(1);
+      });
+
+      view.rerender(
+        <KeyBrowser
+          connection={{ ...CONNECTION, id: "redis-2" }}
+          capability={CAPABILITY}
+          databaseLevel={LEVEL}
+          request={{ pattern: "", database: "1" }}
+        />,
+      );
+      const before = progress();
+      releasePage();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(rows().some((row) => row.startsWith("old:"))).toBe(false);
+      expect(progress()).toBe(before);
+
+      releaseList();
+      await waitFor(() => {
+        expect(rows()).toEqual(["1@0", "app:*@1"]);
+      });
+    });
+
     test("draws it as the tree's root, and walks the session's own until somebody chooses", async () => {
       const fetchMock = mockGlobalFetch(redisRoutes(page(["app:env"], "0", 1531)));
       renderLevel();
@@ -2176,6 +2227,9 @@ describe("a panel listed one level at a time", () => {
     "List all of this level",
     "Load more of this folder",
     "Listing this folder",
+    "Load more of the top level",
+    "Listing the top level",
+    "next page of the top level",
     "entries listed",
     "entry listed",
     "Nothing is listed",
@@ -2586,7 +2640,7 @@ describe("a panel listed one level at a time", () => {
     });
   });
 
-  test("a level page landing while a Redis panel waits on its database list never reaches the tree", async () => {
+  test("a level page landing while a Redis panel waits on its database list draws none of its folders or keys", async () => {
     // No-op defaults rather than `| null`: the executors below replace them before anything waits.
     let releasePage: () => void = () => {};
     const pageGate = new Promise<void>((resolve) => {
@@ -2630,8 +2684,9 @@ describe("a panel listed one level at a time", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // No throw, and no folder of the level walk under the Redis database it now draws.
+    // No throw, and nothing of the level walk's page: none of its folders and none of its keys.
     expect(rows().some((row) => row.endsWith("/@0"))).toBe(false);
+    expect(rows().some((row) => row.startsWith("top.txt@"))).toBe(false);
 
     releaseList();
     await waitFor(() => {
@@ -2770,6 +2825,162 @@ describe("a panel listed one level at a time", () => {
       view.unmount();
       restoreGlobalFetch();
     }
+  });
+
+  test("a server folder whose first listing is in flight says it is being listed, in the busy row's words", async () => {
+    // A no-op default rather than `| null`: the executor below replaces it before anything waits.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const route = levelRoute(["a/x", "a/y", "z/q"], 20);
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.clone().json()) as Record<string, unknown>;
+        if (body.pattern === "a/") await gate;
+        return route.handler(req);
+      },
+    });
+    renderLevels();
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0", "z/@0"]);
+    });
+
+    fireEvent.click(twisty("a/"));
+    expect(badgeCell("a/").getAttribute("title")).toBe("Listing this folder...");
+
+    release();
+    await waitFor(() => {
+      expect(badgeCell("a/").getAttribute("title")).toBe("2 entries listed in this folder");
+    });
+  });
+
+  test("a server folder whose first listing failed offers close and reopen only, which lists it again", async () => {
+    const route = levelRoute(["a/x", "a/y", "z/q"], 20);
+    let failed = false;
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.clone().json()) as Record<string, unknown>;
+        if (body.pattern === "a/" && !failed) {
+          failed = true;
+          return { status: 500, json: { error: "the listing failed" } };
+        }
+        return route.handler(req);
+      },
+    });
+    renderLevels();
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0", "z/@0"]);
+    });
+
+    fireEvent.click(twisty("a/"));
+    await waitFor(() => {
+      expect(screen.getByText("the listing failed")).toBeDefined();
+    });
+
+    // One way to retry, the one a folder above the prefix offers: no row under a folder never listed.
+    expect(loadMoreRows()).toHaveLength(0);
+    expect(badgeCell("a/").getAttribute("title")).toBe("Not listed yet: close and reopen the folder to list it");
+
+    fireEvent.click(twisty("a/"));
+    fireEvent.click(twisty("a/"));
+    await waitFor(() => {
+      expect(rows()).toContain("a/x@1");
+    });
+    expect(route.seen.filter((body) => body.pattern === "a/")).toHaveLength(1);
+  });
+
+  test("a server folder's first listing draws its busy row, which goes when the listing fails", async () => {
+    // A no-op default rather than `| null`: the executor below replaces it before anything waits.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const route = levelRoute(["a/x", "a/y", "z/q"], 20);
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.clone().json()) as Record<string, unknown>;
+        if (body.pattern === "a/") {
+          await gate;
+          return { status: 500, json: { error: "the listing failed" } };
+        }
+        return route.handler(req);
+      },
+    });
+    renderLevels();
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0", "z/@0"]);
+    });
+
+    fireEvent.click(twisty("a/"));
+    await waitFor(() => {
+      expect(loadMoreRows()).toHaveLength(1);
+    });
+    expect(loadMoreRows()[0]?.textContent).toContain("Listing this folder...");
+
+    release();
+    await waitFor(() => {
+      expect(loadMoreRows()).toHaveLength(0);
+    });
+    expect(badgeCell("a/").getAttribute("title")).toBe("Not listed yet: close and reopen the folder to list it");
+  });
+
+  test("words the top level's own row by its level, while it asks and after", async () => {
+    // A no-op default rather than `| null`: the executor below replaces it before anything waits.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const route = levelRoute(["a/x", "b/y", "c.txt"], 2);
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.clone().json()) as Record<string, unknown>;
+        if (body.cursor === "i:2") await gate;
+        return route.handler(req);
+      },
+    });
+    renderLevels();
+    await waitFor(() => {
+      expect(loadMoreRows()[0]?.textContent).toContain("Load more of the top level");
+    });
+    expect(loadMoreRows()[0]?.getAttribute("title")).toBe(
+      "Ask the server for the next page of the top level. A page lists folders and keys of this level only, and each folder lists its own level when opened.",
+    );
+
+    fireEvent.click(loadMoreRows()[0]);
+    await waitFor(() => {
+      expect(loadMoreRows()[0]?.textContent).toContain("Listing the top level...");
+    });
+    release();
+    await waitFor(() => {
+      expect(rows()).toContain("c.txt@0");
+    });
+    expect(loadMoreRows()).toEqual([]);
+  });
+
+  test("on mount, the top level's busy row is the loading state and the empty state's spinner is not drawn", async () => {
+    // A no-op default rather than `| null`: the executor below replaces it before anything waits.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const route = levelRoute(["a/x", "b/y", "c.txt"], 2);
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        await gate;
+        return route.handler(req);
+      },
+    });
+    renderLevels();
+    await waitFor(() => {
+      expect(loadMoreRows()[0]?.textContent).toContain("Listing the top level...");
+    });
+    expect(screen.queryByTestId("key-browser-empty")).toBeNull();
+
+    release();
+    await waitFor(() => {
+      expect(rows()).toEqual(["a/@0", "b/@0"]);
+    });
   });
 
   test("typing in the prefix box asks a new question and closes the folders the last one opened", async () => {
