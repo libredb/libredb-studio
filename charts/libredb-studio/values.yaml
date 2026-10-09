@@ -600,7 +600,8 @@ extraVolumeMounts: []
 #    readOnly: true
 
 # -- Additional Kubernetes objects deployed with the release, each rendered
-# through tpl. A string item is taken as a template as it is.
+# through tpl. A string item is taken as a template as it is. Write a literal
+# {{ as {{ "{{" }}, or the install fails.
 extraObjects: []
 #  - apiVersion: v1
 #    kind: ConfigMap

@@ -105,4 +105,20 @@ describe("extraObjects (#1526)", () => {
     expect(rendered?.kind).toBe("ConfigMap");
     expect(rendered?.data).toEqual({ namespace: "studio" });
   });
+
+  test('a literal {{ fails the render, and the README\'s {{ "{{" }} escape keeps it', () => {
+    const alertText = (summary: string) => ({
+      apiVersion: "v1",
+      kind: "ConfigMap",
+      metadata: { name: "alert-text" },
+      data: { summary },
+    });
+    expect(() => render(extraObjects(alertText("{{ $labels.instance }} is down")))).toThrow(
+      'undefined variable "$labels"',
+    );
+    const { docs } = render(extraObjects(alertText('{{ "{{" }} $labels.instance }} is down')));
+    expect(docs.find((doc) => doc.metadata?.name === "alert-text")?.data).toEqual({
+      summary: "{{ $labels.instance }} is down",
+    });
+  });
 });

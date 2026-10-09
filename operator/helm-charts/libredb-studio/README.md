@@ -192,7 +192,9 @@ helm install libredb libredb/libredb-studio \
 
 ## Trusting a private CA
 
-When the OIDC issuer, Vault or a database server uses a certificate from an internal CA, Node.js rejects it unless the CA is added to `NODE_EXTRA_CA_CERTS`. Mount the CA from a ConfigMap or Secret already in the namespace with `extraVolumes` and `extraVolumeMounts`, and point the variable at the file through `extraEnv`:
+When the OIDC issuer or Vault uses a certificate from an internal CA, Node.js rejects it unless the CA is added to `NODE_EXTRA_CA_CERTS`.
+A database connection takes its CA in its own TLS settings instead, except where the provider's page under [docs/providers](https://github.com/libredb/libredb-studio/tree/main/docs/providers) says `ssl.caCert` is not honoured; such a database needs this too.
+Mount the CA from a ConfigMap or Secret already in the namespace with `extraVolumes` and `extraVolumeMounts`, and point the variable at the file through `extraEnv`:
 
 ```yaml
 extraVolumes:
@@ -723,7 +725,7 @@ helm uninstall libredb
 | `postgresql.enabled` | Deploy PostgreSQL subchart | `false` |
 | `extraVolumes` | Additional pod volumes (Kubernetes `Volume` objects), such as a private CA from a ConfigMap or Secret | `[]` |
 | `extraVolumeMounts` | Additional volume mounts for the app container (Kubernetes `VolumeMount` objects). With a CA mounted, set `NODE_EXTRA_CA_CERTS` to the file through `extraEnv` so an OIDC issuer or Vault on an internal CA is trusted | `[]` |
-| `extraObjects` | Additional Kubernetes manifests deployed with the release, each rendered through `tpl` so it can use release values and the chart's helpers; a string item is taken as a template as it is. Not available through the OpenShift operator, whose CRD refuses it | `[]` |
+| `extraObjects` | Additional Kubernetes manifests deployed with the release, each rendered through `tpl` so it can use release values and the chart's helpers; a string item is taken as a template as it is. Write a literal `{{`, such as one in a Prometheus alert, as `{{ "{{" }}`, or the install fails. Not available through the OpenShift operator, whose CRD refuses it | `[]` |
 | `global.compatibility.openshift.adaptSecurityContext` | Drop fixed UID/GID fields for the OpenShift SCC: `auto`, `force`, or `disabled` | `auto` |
 
 See [values.yaml](values.yaml) for the complete list of configurable parameters.
