@@ -2693,6 +2693,28 @@ describe("a panel listed one level at a time", () => {
     expect(fetchMock.mock.calls.length).toBe(before);
   });
 
+  test("a folder above the prefix reopened under a filter opens and asks the server for nothing", async () => {
+    const route = levelRoute(["a/b/k1", "a/b/k2", "a/c/x", "a/top"], 20);
+    mockGlobalFetch({ "/api/db/keys/scan": route.handler });
+    renderLevels({ pattern: "a/b/" });
+    await waitFor(() => {
+      expect(rows()).toContain("b/@1");
+    });
+    const before = route.seen.length;
+    const filter = screen.getByLabelText("Filter the folders and keys listed");
+
+    fireEvent.click(twisty("a/"));
+    fireEvent.change(filter, { target: { value: "k1" } });
+    fireEvent.click(twisty("a/"));
+    // A request the click fired would land a tick later, so the tick is waited for before asserting none.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(route.seen.length).toBe(before);
+    expect(twisty("a/").getAttribute("aria-label")).toBe("Collapse a");
+    fireEvent.change(filter, { target: { value: "" } });
+    expect(twisty("a/").getAttribute("aria-label")).toBe("Collapse a");
+  });
+
   test("an unlisted folder's twisty under a filter leaves it closed once the filter is cleared", async () => {
     const route = levelRoute(["a/x", "ab/y", "readme", "z/q"], 3);
     mockGlobalFetch({ "/api/db/keys/scan": route.handler });

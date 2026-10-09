@@ -435,7 +435,8 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
       // or with the panel held full, it would open empty with no row to list it, so the press changes
       // nothing. One whose rows are already held, a folder above the prefix, opens without a listing.
       if (levels && unlisted && node.children.length === 0 && !open.has(key) && (filtering || heldFull)) return;
-      if (levels && !open.has(key) && unlisted) void loadMoreUnder(node.path);
+      // Nothing is listed while a filter is on, whatever the folder holds: typing must not fan out requests.
+      if (levels && !filtering && !open.has(key) && unlisted) void loadMoreUnder(node.path);
       setOpen((previous) => {
         const next = new Set(previous);
         // One write for both directions: a twisty that only ever added would be a row that cannot be
