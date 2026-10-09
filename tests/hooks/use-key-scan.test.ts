@@ -1904,4 +1904,42 @@ describe("a walk listed one level at a time", () => {
     expect(seen.slice(before).every((folders) => folders.length === 0)).toBe(true);
     expect(seen.length).toBeGreaterThan(before);
   });
+
+  test("a level page landing after the question changed, with no reset between, never hands back its folders", async () => {
+    // A no-op default rather than `| null`: the executor below replaces it before anything waits.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockGlobalFetch({
+      "/api/db/keys/scan": async () => {
+        await gate;
+        return levelPage(["readme"], ["a/", "z/"], "c1");
+      },
+    });
+    const seen: Array<readonly string[]> = [];
+    const { result, rerender } = renderHook(
+      ({ capability }: { capability: typeof LEVEL_SCAN | typeof CAPABILITY }) => {
+        const scan = useKeyScan({ connection: CONNECTION, capability, pattern: "" });
+        seen.push(scan.folders);
+        return scan;
+      },
+      { initialProps: { capability: LEVEL_SCAN as typeof LEVEL_SCAN | typeof CAPABILITY } },
+    );
+
+    let held: Promise<unknown> = Promise.resolve();
+    act(() => {
+      held = result.current.scanMore();
+    });
+    // The caller has not reset yet, as a panel waiting on its database list has not: the page in the
+    // air still belongs to the current walk generation.
+    rerender({ capability: CAPABILITY });
+    release();
+    await act(async () => {
+      await held;
+    });
+
+    expect(result.current.folders).toEqual([]);
+    expect(seen.some((folders) => folders.length > 0)).toBe(false);
+  });
 });

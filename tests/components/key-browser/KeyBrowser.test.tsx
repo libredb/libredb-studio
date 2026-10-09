@@ -2584,6 +2584,59 @@ describe("a panel listed one level at a time", () => {
     });
   });
 
+  test("a level page landing while a Redis panel waits on its database list never reaches the tree", async () => {
+    // No-op defaults rather than `| null`: the executors below replace them before anything waits.
+    let releasePage: () => void = () => {};
+    const pageGate = new Promise<void>((resolve) => {
+      releasePage = resolve;
+    });
+    let releaseList: () => void = () => {};
+    const listGate = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    const route = levelRoute(SPACE, 20);
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.clone().json()) as Record<string, unknown>;
+        if (body.level !== true) return page(["app:env", "app:cache:ttl"], "0", 2);
+        await pageGate;
+        return route.handler(req);
+      },
+      "/api/db/objects/containers": async () => {
+        await listGate;
+        return { json: DATABASES };
+      },
+    });
+    const view = renderLevels();
+    await waitFor(() => {
+      expect(route.seen).toHaveLength(0);
+    });
+
+    // The Redis panel asks for database 1, so its walk waits on the list and nothing resets the level
+    // walk whose first page is still in the air.
+    view.rerender(
+      <KeyBrowser
+        connection={{ ...CONNECTION, id: "redis-2" }}
+        capability={CAPABILITY}
+        databaseLevel={LEVEL}
+        request={{ pattern: "", database: "1" }}
+      />,
+    );
+    releasePage();
+    await waitFor(() => {
+      expect(route.seen).toHaveLength(1);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // No throw, and no folder of the level walk under the Redis database it now draws.
+    expect(rows().some((row) => row.endsWith("/@0"))).toBe(false);
+
+    releaseList();
+    await waitFor(() => {
+      expect(rows()).toEqual(["1@0", "app:*@1"]);
+    });
+  });
+
   test("an unlisted folder's twisty at the held limit leaves it closed and asks for nothing", async () => {
     const fetchMock = mockGlobalFetch({
       "/api/db/keys/scan": {
