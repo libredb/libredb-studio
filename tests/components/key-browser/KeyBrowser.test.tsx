@@ -2383,10 +2383,12 @@ describe("a panel listed one level at a time", () => {
   });
 
   test("disables List more and List all of this level once keys plus folders reach the held limit", async () => {
+    // The keys sit in three sub-folders, as in the held-key suite above, so the panel draws a handful of
+    // rows rather than ten thousand: the assertion is about the offer, not the render.
     mockGlobalFetch({
       "/api/db/keys/scan": {
         json: {
-          keys: Array.from({ length: HELD_KEY_LIMIT - 2 }, (_, index) => `k${index}`),
+          keys: Array.from({ length: HELD_KEY_LIMIT - 2 }, (_, index) => `bulk/${index % 3}/${index}`),
           prefixes: ["a/", "b/"],
           cursor: "c1",
           total: 0,
@@ -2638,10 +2640,11 @@ describe("a panel listed one level at a time", () => {
   });
 
   test("an unlisted folder's twisty at the held limit leaves it closed and asks for nothing", async () => {
+    // Three sub-folders hold the keys, so the render stays small and the test is about the twisty.
     const fetchMock = mockGlobalFetch({
       "/api/db/keys/scan": {
         json: {
-          keys: Array.from({ length: HELD_KEY_LIMIT - 2 }, (_, index) => `k${index}`),
+          keys: Array.from({ length: HELD_KEY_LIMIT - 2 }, (_, index) => `bulk/${index % 3}/${index}`),
           prefixes: ["a/", "b/"],
           cursor: "c1",
           total: 0,
@@ -2665,10 +2668,12 @@ describe("a panel listed one level at a time", () => {
   });
 
   test("a folder above the prefix that holds its rows reopens at the held limit, asking for nothing", async () => {
+    // Three sub-folders under the prefix hold the keys, so the render stays small and the test is about
+    // the reopen.
     const fetchMock = mockGlobalFetch({
       "/api/db/keys/scan": {
         json: {
-          keys: Array.from({ length: HELD_KEY_LIMIT }, (_, index) => `a/b/k${index}`),
+          keys: Array.from({ length: HELD_KEY_LIMIT }, (_, index) => `a/b/${index % 3}/k${index}`),
           prefixes: [],
           cursor: "c1",
           total: 0,
