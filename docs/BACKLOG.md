@@ -2734,6 +2734,7 @@ The byte transport refuses the entries of `LINK_LOCAL_NETWORKS` in `src/lib/db/h
 A metadata service a cloud serves at any other address is reachable with the guard off, and no primary source for such addresses was read when the list was written.
 The first candidate to verify is Alibaba Cloud's `100.100.100.200`, reported by a reviewer and not yet sourced; it sits in CGNAT `100.64.0.0/10`, which the byte transport refuses only when `DB_HTTP_BLOCK_PRIVATE_HOSTS` is on.
 The second is `169.254.0.0/16` behind the NAT64 local-use prefix `64:ff9b:1::/48`, which the guard's own list holds and `LINK_LOCAL_NETWORKS` does not, so with the guard off the byte transport reaches it.
+The third is the IPv4-compatible form `::169.254.169.254`, which `LINK_LOCAL_NETWORKS` does not match on Bun 1.4.2, Node 24.14 or Node 26.10 (measured 2026-10-10 with the same `BlockList`); the kernel it was probed on does not route `::a.b.c.d` to IPv4, and no primary source says whether any platform does.
 
 Found 2026-10-09 while designing the S3 provider.
 
@@ -2798,6 +2799,7 @@ Found 2026-10-10 by the adversarial review of the S3 byte transport; pre-existin
 When a request fails after its socket was opened, by a cancel, a deadline or the byte cap, the shared queue in `src/lib/db/http/node-transport.ts` frees its slot at once, but the Agent counts the destroyed socket against `maxSockets` until it has closed, so the next queued request goes to the Agent's own queue, where Node dials a socket even for a request cancelled there.
 Measured 2026-10-10 on Node 24.14 with the byte transport and `maxSockets: 1`: in ten rounds of a GET that failed as `too-large` followed by a queued GET cancelled as the first failed, the listener accepted ten empty connections besides the ten requests; Bun 1.4.2 accepted one.
 The text transport shares the queue, so it behaves the same.
+On the byte transport that next request is signed and handed to the Agent while the Agent still counts the failed request's socket, so it is signed before it reaches a socket; a SigV4 signature stays valid for 15 minutes, so the wait costs no signature.
 A byte answer cut by `truncateAt` already frees its slot only once its request has closed (`resolveCut`).
 
 Found 2026-10-10 while fixing the adversarial review of the S3 byte transport; pre-existing in the shared queue.
