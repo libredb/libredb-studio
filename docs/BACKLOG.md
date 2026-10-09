@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D260, U17 · 164
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U103 · 94
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U108 · 99
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC20 · 17
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -2393,6 +2393,7 @@ Found 2026-10-04 while designing the Oxia provider (DECISIONS O10).
 
 Discovery runs on the first page of a walk with no pattern, within the bounds SB1-8.5 sets, and never under a folder, because under a folder its cost scales with the number of child nodes (O13; SPEC-RECONCILIATION cross-part ruling).
 A deeper or wider Pulsar tree is narrowed by prefix.
+`keyScan.levels`, the one-level listing the shared Keys panel gained for object stores, is the lazy children mechanism this entry asks for; Oxia does not declare it, so the entry stays open.
 
 Found 2026-10-04 while designing the Oxia provider (DECISIONS O13).
 
@@ -2419,6 +2420,7 @@ Found 2026-10-04 while designing the Oxia provider (DECISIONS O15).
 The shared Keys panel rows and the tab titles print a key as it is, so a key holding a control character is drawn with it.
 A key `a` followed by U+0000 shows as `a` and a box in its row and title, and its Source tab reads "Source: a", the same as a key `a`.
 Measured on Oxia, which reaches such a key from the Keys panel by design; the panel and the titles are shared, so every engine with such keys draws them the same way.
+The folder prefixes an engine that declares `keyScan.levels` answers are drawn by the same rows and are covered by the same fix.
 
 Found 2026-10-04 by the browser pass of the Oxia provider (step 4).
 
@@ -4321,6 +4323,60 @@ The decline path on `main` resets both flags the same way, for every engine.
 Found 2026-10-08 by the browser re-verification of the Databend provider (#1593); pre-existing.
 
 **Done when:** a declined Explain leaves a run in flight on its tab as it was, Cancel included, with a hook test that starts a run, has an Explain declined on the same tab before the run answers, and finds the tab executing until the run's answer.
+
+### U104. The Keys panel cannot be shown beside the object tree
+
+The Sidebar shows the Objects view or the Keys view, never both (`src/components/sidebar/Sidebar.tsx`), so a bucket selected in the tree with the Keys panel scoped to it beside the tree is reached in two steps: Browse Keys on the bucket row switches to the Keys view on `<bucket>/`, with that folder open and its top level listed.
+Showing both views at once would change the sidebar for Redis, etcd and Oxia, which the folder-aware Keys panel leaves unchanged.
+
+Found 2026-10-09 while designing the folder-aware Keys panel for object stores.
+
+**Done when:** a side-by-side layout is designed that leaves Redis, etcd and Oxia unchanged, or the owner declines it.
+
+### U105. The key scan route passes on a cursor its own next request refuses
+
+`POST /api/db/keys/scan` holds the cursor a caller sends to the walk's declared shape (`readCursor` in `src/app/api/db/keys/scan/route.ts`), but returns the cursor a provider answers without looking at it.
+So a provider that declares a `decimal` cursor and answers a page with another one gets that page through with `200`, and the reader's next page is refused with `400` `"cursor" must be a decimal cursor the previous page answered with`, a sentence that blames the reader for the provider's defect.
+Measured 2026-10-10 with test doubles on the folder-aware Keys panel branch: a decimal level walk answering cursor `"a"` and a plain decimal key walk answering cursor `"k"` both gave `200` on the first page and that `400` on the second.
+
+Found 2026-10-09 by an adversarial review of the folder-aware Keys panel.
+
+**Done when:** the route refuses an answered cursor that does not match the declared shape with a `500` naming the provider, on every walk, with route tests for a `decimal` and an `"opaque"` declaration.
+
+### U106. A Scan all whose walk was reset writes its ending onto the next walk
+
+`scanAll` in `src/components/key-browser/use-key-scan.ts` applies its ending after its loop, `setScanningAll(false)` and, when `stopped.current` is set, `setStoppedBy("Stopped.")`, without checking that its walk is still the current one.
+`reset` sets `stopped.current` to end that loop, so a Scan all whose page is in flight when the walk is reset writes `Stopped.` onto the fresh walk.
+Measured 2026-10-10 with a hook test: start `scanAll()` with its first page held, call `reset()` and release the page, and `stoppedBy` reads `"Stopped."` where `null` is expected.
+Read from the code and not measured: a Scan all started on the new walk sets `stopped.current` back to `false`, so the old loop asks for another page, is refused while the new page is in flight, and calls `setScanningAll(false)` while the new loop still runs.
+`main` has the same tail.
+
+Found 2026-10-09 by an adversarial review of the folder-aware Keys panel; pre-existing.
+
+**Done when:** the loop checks its walk generation before it writes anything, with a hook test for each of the two cases.
+
+### U107. A Scan more pressed while the Keys panel waits for a database list sends the previous walk's cursor
+
+When the Keys panel is handed a database on a connection whose database list has not answered yet, its restart waits for that list before it resets the walk (`waitingForChosenDatabase` in `src/components/key-browser/KeyBrowser.tsx`), while Scan more and Scan all stay enabled, and `scanMore` in `src/components/key-browser/use-key-scan.ts` reads its cursor from the unreset walk.
+So a page asked for in that wait carries the previous walk's cursor to the new walk.
+Measured 2026-10-10 in a panel test with two Redis-shaped connections: the panel walked the first, which answered cursor `"7"`; re-rendered with the second connection and a requested database whose list never answered, Scan more was enabled and sent `{"cursor":"7"}` to the second connection, with no `database` field, because the panel names no database before the list answers.
+A hook test that changes the database without a reset sends `{"cursor":"7","database":2}` the same way.
+`main` has the same path.
+
+Found 2026-10-10 by an adversarial review of the folder-aware Keys panel; pre-existing.
+
+**Done when:** no page is asked for a walk that has not been reset, with a panel test that switches connection during the wait, presses Scan more, and finds no request carrying the previous walk's cursor.
+
+### U108. The Keys panel carries a Browse Keys pattern to the next connection
+
+Browse Keys hands the Keys panel its pattern through a request the Sidebar keeps in state (`keyPatternRequest` in `src/components/sidebar/Sidebar.tsx`), which stays set when the reader switches connection, and the panel starts its pattern from that request (`useState(request?.pattern ?? "")` in `src/components/key-browser/KeyBrowser.tsx`).
+So the Keys panel of the next connection opens on the previous connection's pattern, which may match nothing there.
+Measured 2026-10-10 in a browser on the folder-aware Keys panel branch: after Browse Keys on the Redis row `bulk:*`, the Keys panels of an etcd connection, an Oxia connection and a second etcd connection opened with the key prefix `bulk:*` and read `Scanned 0`.
+`main` has the same code in both places.
+
+Found 2026-10-10 by the browser pass of the folder-aware Keys panel; pre-existing.
+
+**Done when:** a Browse Keys request belongs to the connection it was made on, so the Keys panel of another connection opens without it, with a Sidebar test that does Browse Keys, switches connection, and finds the panel's pattern empty.
 
 ## Dependencies
 

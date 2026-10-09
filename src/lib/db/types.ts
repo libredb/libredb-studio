@@ -626,6 +626,22 @@ export type ContainerLevels =
   | readonly [ContainerLevelSpec, ContainerLevelSpec];
 
 /**
+ * How an engine lists its key space ONE LEVEL AT A TIME under `separator`, for an engine whose server
+ * groups keys into folder prefixes (S3's `delimiter` and `CommonPrefixes`).
+ * Absent: the walk pages keys only, which is every walk declared before this field existed.
+ */
+export interface KeyScanLevels {
+  /**
+   * The object kind whose rows name the key space's FIRST SEGMENT, when one does: a row of this kind
+   * named `sales` is the folder `sales<separator>` of the walk. The row menu offers Browse Keys on it.
+   * Only for an engine with no container level: a key space per container has no first segment
+   * that a row could name.
+   * Absent: no tree row stands for a folder of the walk.
+   */
+  readonly rootKind?: string;
+}
+
+/**
  * Whether an engine can page a resumable walk of its own KEY SPACE, and the batch sizes it
  * will accept.
  *
@@ -684,6 +700,23 @@ export interface KeyScanCapability {
    * an engine that publishes no count and pins no revision: `total` is not read, and a provider answers 0.
    */
   readonly totalScope?: "database" | "walk" | "none";
+  /**
+   * Present iff `scanKeysPage` also answers a LEVEL page: asked with `KeyScanOptions.level`, it returns
+   * the keys directly under the pattern and the folder prefixes one separator deeper, each folder once,
+   * at most `count` entries in all, and the cursor of that level. Requires `pattern: "prefix"`,
+   * `totalScope: "none"` and a separator one UTF-16 code unit long, such as `/`.
+   * A provider that declares it still answers a walk without `level` exactly as before.
+   *
+   * THE LEVEL-PROVIDER CONTRACT (Keys panel levels, spec 3.3). A level page never holds more than `count`
+   * entries, keys and prefixes together, whatever the server returns in one response, and no prefix or
+   * key twice. A provider whose server answers a level unpaged removes repeated entries, sorts the full answer
+   * by UTF-8 byte order, returns the first `count` entries after the cursor, and spells its cursor as the
+   * last entry returned (start-after semantics), so a list that changes order between calls neither skips
+   * nor repeats an entry. A level cursor is valid in every process that serves the connection: a provider
+   * may bind it to the request's scope but not to its own instance. The route enforces the count and the
+   * no-repeat rule; the ordering and cursor rules are the provider's to meet.
+   */
+  readonly levels?: KeyScanLevels;
 }
 
 /**
@@ -731,6 +764,12 @@ export interface KeyScanOptions {
    * that declares none walks one key space, and both key routes refuse the field for it (spec 3.4).
    */
   readonly database?: number;
+  /**
+   * List one level: the keys whose text after `pattern` holds no separator, and the folder prefixes
+   * that end at the first separator after `pattern`. Sent only to an engine that declares
+   * `KeyScanCapability.levels`; absent is the key walk every engine answers.
+   */
+  readonly level?: true;
 }
 
 export interface KeyScanPage {
@@ -755,6 +794,10 @@ export interface KeyScanPage {
    * WHAT IT DESCRIBES IS THE MOMENT IT WAS READ. The walk is a sample and so is this: a key whose
    * type changed between two pages is described by the earlier page's answer for as long as that
    * answer is what the caller holds.
+   *
+   * An engine that declares a key-browser kind opens a key's Source tab rather than a typed read, so the
+   * value it carries here is not read as a type; such an engine may carry a short descriptor of the key
+   * instead, which the panel draws in the same cell.
    */
   readonly types: Readonly<Record<string, string>>;
   /**
@@ -793,6 +836,13 @@ export interface KeyScanPage {
    * words. Redis's pages never carry it.
    */
   readonly skipped?: { readonly count: number; readonly reason: string };
+  /**
+   * The folder prefixes of a LEVEL page, each the full prefix ending in the separator, each one
+   * separator deeper than the pattern asked about, none twice. Present only on an answer to `level`;
+   * a folder is complete for its level, so a reader lists it by asking for its own level and never
+   * infers it from keys. Counted with `keys` against the page's `count`.
+   */
+  readonly prefixes?: readonly string[];
 }
 
 export interface ProviderCapabilities {

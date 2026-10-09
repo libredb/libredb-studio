@@ -86,7 +86,7 @@ describe("milvusSelectQuery, Generate Command", () => {
         "POST /v2/vectordb/entities/search",
         '{"dbName": "default", "collectionName": "docs_int64", "annsField": "vec",',
         ' "data": [[0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338]],',
-        ' "outputFields": ["id", "seq", "title", "meta", "tags", "maybe_count"], "limit": 10}',
+        ' "outputFields": ["id", "seq", "title", "meta", "tags", "maybe_count", "$meta"], "limit": 10}',
       ].join("\n"),
     );
     expect(parsed(text).route.template).toBe("entities/search");

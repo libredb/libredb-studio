@@ -721,6 +721,50 @@ describe("useKeyScan", () => {
       expect(result.current.error).toBeNull();
       expect(result.current.keys).toEqual(["fresh"]);
     });
+
+    test("a folder page landing after a reset leaves the new walk's page for that folder in flight", async () => {
+      const gates = [gate(), gate()];
+      let call = 0;
+      const fetchMock = mockGlobalFetch({
+        "/api/db/keys/scan": async () => {
+          const mine = gates[call];
+          call += 1;
+          await mine?.held;
+          return page(["a:x"], "7");
+        },
+      });
+      const { result } = hook();
+
+      let stale: Promise<unknown> = Promise.resolve();
+      act(() => {
+        stale = result.current.loadMoreUnder(["a"]);
+      });
+      act(() => {
+        result.current.reset();
+      });
+      let current: Promise<unknown> = Promise.resolve();
+      act(() => {
+        current = result.current.loadMoreUnder(["a"]);
+      });
+      gates[0]?.release();
+      await act(async () => {
+        await stale;
+      });
+
+      // The discarded page owned the slot of a walk that is gone: freeing the folder here would let a
+      // second page of the CURRENT walk start from the same cursor as the one still in the air.
+      expect(result.current.nodeLoading.has(pathKey(["a"]))).toBe(true);
+      await act(async () => {
+        await result.current.loadMoreUnder(["a"]);
+      });
+      expect(fetchMock.mock.calls.length).toBe(2);
+
+      gates[1]?.release();
+      await act(async () => {
+        await current;
+      });
+      expect(result.current.nodeLoading.size).toBe(0);
+    });
   });
 
   /**
@@ -1502,5 +1546,568 @@ describe("a walk in a declared shape", () => {
     expect(result.current.keys.length).toBe(HELD_KEY_LIMIT);
     expect(result.current.scanningAll).toBe(false);
     expect(result.current.stoppedBy).toBeNull();
+  });
+});
+
+/**
+ * A walk listed ONE LEVEL AT A TIME (Keys panel levels, spec 3.5): an engine that declares `levels`
+ * is asked for a level, answers the folder prefixes of that level beside its keys, and the hook holds
+ * the folders as the tree's server folders. The three shipped engines declare no levels and send
+ * exactly the bodies they always did.
+ */
+describe("a walk listed one level at a time", () => {
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  const LEVEL_SCAN = {
+    defaultCount: 500,
+    maxCount: 1000,
+    separator: "/",
+    cursor: "opaque",
+    pattern: "prefix",
+    totalScope: "none",
+    levels: { rootKind: "bucket" },
+  } as const;
+  const ETCD_LIKE = {
+    defaultCount: 500,
+    maxCount: 1000,
+    separator: "/",
+    cursor: "opaque",
+    pattern: "prefix",
+    totalScope: "walk",
+  } as const;
+  const OXIA_LIKE = { ...ETCD_LIKE, totalScope: "none" } as const;
+
+  /** A level page, in the shape the route answers with. */
+  function levelPage(keys: string[], prefixes: string[], cursor: string): MockFetchResponse {
+    return { json: { keys, prefixes, cursor, total: 0, types: {} } };
+  }
+
+  function levelHook() {
+    return renderHook(() => useKeyScan({ connection: CONNECTION, capability: LEVEL_SCAN, pattern: "" }));
+  }
+
+  test("sends no level key and holds no folders under the Redis, etcd and Oxia declarations", async () => {
+    for (const capability of [CAPABILITY, ETCD_LIKE, OXIA_LIKE]) {
+      const fetchMock = mockGlobalFetch({ "/api/db/keys/scan": page(["a/x", "a:y"], "c1") });
+      const { result, unmount } = renderHook(() => useKeyScan({ connection: CONNECTION, capability, pattern: "" }));
+
+      // oxlint-disable-next-line no-await-in-loop -- one declaration at a time: each owns the global fetch mock.
+      await act(async () => {
+        await result.current.scanMore();
+      });
+      // oxlint-disable-next-line no-await-in-loop -- one declaration at a time: each owns the global fetch mock.
+      await act(async () => {
+        await result.current.loadMoreUnder(["a"]);
+      });
+
+      const bodies = bodiesOf(fetchMock);
+      expect(bodies.length).toBe(2);
+      expect(bodies.some((body) => "level" in body)).toBe(false);
+      expect(result.current.folders).toEqual([]);
+      unmount();
+      restoreGlobalFetch();
+    }
+  });
+
+  test("asks for a level and holds the page's folders, counting keys and folders as listed", async () => {
+    const fetchMock = mockGlobalFetch({ "/api/db/keys/scan": levelPage(["readme"], ["a/", "z/"], "c1") });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    const body = bodiesOf(fetchMock)[0];
+    expect(body).toMatchObject({ cursor: "0", count: 500, level: true });
+    expect("pattern" in body).toBe(false);
+    expect(result.current.folders).toEqual(["a/", "z/"]);
+    expect(result.current.keys).toEqual(["readme"]);
+    expect(result.current.scanned).toBe(3);
+  });
+
+  test("lists a folder's own level with the largest batch, and continues it from its own cursor", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as { pattern?: string; cursor: string };
+        if (body.pattern === undefined) return levelPage([], ["a/"], "0");
+        // `b/x/` is outside the folder asked about, and is held to the folder's segments as a key is.
+        return body.cursor === "0"
+          ? levelPage(["a/k1"], ["a/b/", "a/c/", "b/x/"], "a:1")
+          : levelPage(["a/k2"], ["a/d/"], "0");
+      },
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder(["a"]);
+    });
+
+    expect(bodiesOf(fetchMock)[1]).toMatchObject({ cursor: "0", pattern: "a/", count: 1000, level: true });
+    expect(result.current.folders).toEqual(["a/", "a/b/", "a/c/"]);
+    expect(result.current.keys).toEqual(["a/k1"]);
+    expect(result.current.nodeAdded.get(pathKey(["a"]))).toBe(3);
+    // The folder's page is not the panel's walk, so the progress stays the walk's own.
+    expect(result.current.scanned).toBe(1);
+
+    await act(async () => {
+      await result.current.loadMoreUnder(["a"]);
+    });
+
+    expect(bodiesOf(fetchMock)[2]).toMatchObject({ cursor: "a:1", pattern: "a/", level: true });
+    expect(result.current.folders).toEqual(["a/", "a/b/", "a/c/", "a/d/"]);
+    expect(result.current.keys).toEqual(["a/k1", "a/k2"]);
+    expect(result.current.nodeCursors.get(pathKey(["a"]))).toBe("0");
+  });
+
+  test("a spent level stops the panel's walk and leaves a folder's own listing working", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as { pattern?: string };
+        return body.pattern === undefined ? levelPage([], ["a/"], "0") : levelPage(["a/x"], [], "0");
+      },
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    expect(result.current.exhausted).toBe(true);
+
+    let asked = true;
+    await act(async () => {
+      asked = await result.current.scanMore();
+    });
+    expect(asked).toBe(false);
+    expect(fetchMock.mock.calls.length).toBe(1);
+
+    await act(async () => {
+      await result.current.loadMoreUnder(["a"]);
+    });
+    expect(fetchMock.mock.calls.length).toBe(2);
+    expect(result.current.keys).toEqual(["a/x"]);
+  });
+
+  test("reset empties the folders and drops a folder's page that lands after it", async () => {
+    // A no-op default rather than `| null`: the executor below replaces it before anything waits.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as { pattern?: string };
+        if (body.pattern === undefined) return levelPage([], ["a/"], "0");
+        await gate;
+        return levelPage(["a/x"], ["a/b/"], "0");
+      },
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    expect(result.current.folders).toEqual(["a/"]);
+
+    let pending: Promise<void> = Promise.resolve();
+    act(() => {
+      pending = result.current.loadMoreUnder(["a"]);
+    });
+    act(() => {
+      result.current.reset();
+    });
+    expect(result.current.folders).toEqual([]);
+
+    release();
+    await act(async () => {
+      await pending;
+    });
+    expect(result.current.folders).toEqual([]);
+    expect(result.current.keys).toEqual([]);
+  });
+
+  /**
+   * A server folder whose last segment is empty (`a//`) or is a lone `*` lists ITS OWN
+   * range when opened. `pathPattern` reads the path, never the name, so `["a", "*"]` is not read
+   * as the folder mark of `a/`.
+   */
+  test("a folder whose last segment is empty or * lists its own range", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as { pattern?: string };
+        if (body.pattern === "a//") return levelPage(["a//k"], ["a//b/"], "0");
+        if (body.pattern === "a/*/") return levelPage(["a/*/x"], [], "0");
+        return levelPage([], ["a/"], "0");
+      },
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder(["a", ""]);
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder(["a", "*"]);
+    });
+
+    const bodies = bodiesOf(fetchMock);
+    expect(bodies[1]).toMatchObject({ pattern: "a//", level: true });
+    expect(bodies[2]).toMatchObject({ pattern: "a/*/", level: true });
+    expect(result.current.folders).toEqual(["a/", "a//b/"]);
+    expect(result.current.keys).toEqual(["a//k", "a/*/x"]);
+  });
+
+  test("counts held folders and keys against one limit, absorbing a page's folders first", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": levelPage(
+        Array.from({ length: HELD_KEY_LIMIT - 1 }, (_, index) => `k${index}`),
+        ["a/", "b/"],
+        "c1",
+      ),
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    // 9,999 keys and 2 folders were handed over: the folders went in first, and the keys stopped at
+    // ten thousand entries in all.
+    expect(result.current.folders).toEqual(["a/", "b/"]);
+    expect(result.current.keys.length).toBe(HELD_KEY_LIMIT - 2);
+
+    // Full, so neither the walk nor a folder's own listing buys a page it would drop.
+    let asked = true;
+    await act(async () => {
+      asked = await result.current.scanMore();
+    });
+    expect(asked).toBe(false);
+    await act(async () => {
+      await result.current.loadMoreUnder(["a"]);
+    });
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(result.current.nodeCursors.size).toBe(0);
+  });
+
+  test("under the Redis declaration the limit falls at the same key as it always did", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": page(
+        Array.from({ length: HELD_KEY_LIMIT + 1 }, (_, index) => `bulk:${index}`),
+        "7",
+      ),
+    });
+    const { result } = hook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    expect(result.current.keys.length).toBe(HELD_KEY_LIMIT);
+    expect(result.current.keys.at(-1)).toBe(`bulk:${HELD_KEY_LIMIT - 1}`);
+    expect(result.current.folders).toEqual([]);
+  });
+
+  test("ends a Scan all at 10,000 entries with the level sentence", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": levelPage(
+        Array.from({ length: SCAN_ALL_MAX_KEYS - 10 }, (_, index) => `k${index}`),
+        Array.from({ length: 10 }, (_, index) => `p${index}/`),
+        "c1",
+      ),
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanAll();
+    });
+
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(result.current.stoppedBy).toBe(
+      "Stopped after 10,000 entries. Narrow the prefix to list a smaller part of the key space.",
+    );
+  });
+
+  test("holds a folder marker twice: its folder in the parent level and its key in its own", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as { pattern?: string };
+        return body.pattern === "m/" ? levelPage(["m/", "m/x"], [], "0") : levelPage([], ["m/"], "0");
+      },
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder(["m"]);
+    });
+
+    expect(result.current.folders).toEqual(["m/"]);
+    expect(result.current.keys).toEqual(["m/", "m/x"]);
+  });
+
+  test("with 9,998 other keys held, the marker's folder and key reach the limit and the next key is dropped", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as { pattern?: string };
+        if (body.pattern === "m/") return levelPage(["m/", "m/x"], [], "0");
+        return levelPage(
+          Array.from({ length: HELD_KEY_LIMIT - 2 }, (_, index) => `k${index}`),
+          ["m/"],
+          "0",
+        );
+      },
+    });
+    const { result } = levelHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder(["m"]);
+    });
+
+    expect(result.current.folders).toEqual(["m/"]);
+    expect(result.current.keys.length).toBe(HELD_KEY_LIMIT - 1);
+    expect(result.current.keys).toContain("m/");
+    expect(result.current.keys).not.toContain("m/x");
+  });
+
+  test("hands back no folder of the last question on the first render of a question with another capability", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": levelPage(["readme"], ["a/", "z/"], "c1") });
+    // Every render's folders, in order, read inside the render itself: an effect cannot have run yet
+    // on the first render of a new question, so this is what the panel's tree is built from there.
+    const seen: Array<readonly string[]> = [];
+    const { result, rerender } = renderHook(
+      ({ capability }: { capability: typeof LEVEL_SCAN | typeof CAPABILITY }) => {
+        const scan = useKeyScan({ connection: CONNECTION, capability, pattern: "" });
+        seen.push(scan.folders);
+        return scan;
+      },
+      { initialProps: { capability: LEVEL_SCAN as typeof LEVEL_SCAN | typeof CAPABILITY } },
+    );
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    expect(result.current.folders).toEqual(["a/", "z/"]);
+    const before = seen.length;
+
+    rerender({ capability: CAPABILITY });
+
+    expect(seen.slice(before).every((folders) => folders.length === 0)).toBe(true);
+    expect(seen.length).toBeGreaterThan(before);
+  });
+
+  test("a level page landing after the question changed, with no reset between, never hands back its folders", async () => {
+    // A no-op default rather than `| null`: the executor below replaces it before anything waits.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockGlobalFetch({
+      "/api/db/keys/scan": async () => {
+        await gate;
+        return levelPage(["readme"], ["a/", "z/"], "c1");
+      },
+    });
+    const seen: Array<readonly string[]> = [];
+    const { result, rerender } = renderHook(
+      ({ capability }: { capability: typeof LEVEL_SCAN | typeof CAPABILITY }) => {
+        const scan = useKeyScan({ connection: CONNECTION, capability, pattern: "" });
+        seen.push(scan.folders);
+        return scan;
+      },
+      { initialProps: { capability: LEVEL_SCAN as typeof LEVEL_SCAN | typeof CAPABILITY } },
+    );
+
+    let held: Promise<unknown> = Promise.resolve();
+    act(() => {
+      held = result.current.scanMore();
+    });
+    // The caller has not reset yet, as a panel waiting on its database list has not: the page in the
+    // air still belongs to the current walk generation.
+    rerender({ capability: CAPABILITY });
+    release();
+    await act(async () => {
+      await held;
+    });
+
+    expect(result.current.folders).toEqual([]);
+    expect(seen.some((folders) => folders.length > 0)).toBe(false);
+  });
+
+  /**
+   * A page held until the test opens its gate, then answered with whatever the test hands `release`.
+   * A no-op default rather than `| null`: the executor below replaces it before anything waits.
+   */
+  function heldAnswer() {
+    let release: (answer: MockFetchResponse) => void = () => {};
+    const answered = new Promise<MockFetchResponse>((resolve) => {
+      release = resolve;
+    });
+    return { answered, release: (answer: MockFetchResponse) => release(answer) };
+  }
+
+  /** The hook driven by its props, so a test can change the question without anybody calling `reset`. */
+  function questionHook(initialProps: { capability: typeof LEVEL_SCAN | typeof CAPABILITY; database?: number }) {
+    return renderHook(
+      ({ capability, database }: { capability: typeof LEVEL_SCAN | typeof CAPABILITY; database?: number }) =>
+        useKeyScan({ connection: CONNECTION, capability, pattern: "", database }),
+      { initialProps },
+    );
+  }
+
+  test("a stale page's folders do not count against the held limit of the question that replaced it", async () => {
+    const stale = heldAnswer();
+    let call = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async () => {
+        call += 1;
+        if (call === 1) return stale.answered;
+        return page(["fresh"], "9");
+      },
+    });
+    const { result, rerender } = questionHook({ capability: LEVEL_SCAN });
+
+    let held: Promise<unknown> = Promise.resolve();
+    act(() => {
+      held = result.current.scanMore();
+    });
+    rerender({ capability: CAPABILITY });
+    stale.release(
+      levelPage(
+        Array.from({ length: HELD_KEY_LIMIT - 1 }, (_, index) => `k${index}`),
+        ["a/"],
+        "c1",
+      ),
+    );
+    await act(async () => {
+      await held;
+    });
+
+    let asked = false;
+    await act(async () => {
+      asked = await result.current.scanMore();
+    });
+    expect(asked).toBe(true);
+    expect(fetchMock.mock.calls.length).toBe(2);
+  });
+
+  test("a stale page's folder does not hide the same folder named by the question that replaced it", async () => {
+    const stale = heldAnswer();
+    let call = 0;
+    mockGlobalFetch({
+      "/api/db/keys/scan": async () => {
+        call += 1;
+        if (call === 1) return stale.answered;
+        return levelPage([], ["a/"], "c2");
+      },
+    });
+    const { result, rerender } = questionHook({ capability: LEVEL_SCAN, database: 1 });
+
+    let held: Promise<unknown> = Promise.resolve();
+    act(() => {
+      held = result.current.scanMore();
+    });
+    rerender({ capability: LEVEL_SCAN, database: 2 });
+    stale.release(levelPage([], ["a/"], "c1"));
+    await act(async () => {
+      await held;
+    });
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    expect(result.current.folders).toEqual(["a/"]);
+  });
+
+  test("a stale folder page does not take the folders over from the question that replaced it", async () => {
+    const stale = heldAnswer();
+    let call = 0;
+    mockGlobalFetch({
+      "/api/db/keys/scan": async () => {
+        call += 1;
+        if (call === 1) return stale.answered;
+        if (call === 2) return levelPage([], ["x/"], "c2");
+        return levelPage([], ["x/", "y/"], "c3");
+      },
+    });
+    const { result, rerender } = questionHook({ capability: LEVEL_SCAN, database: 1 });
+
+    // A folder's page rather than the walk's own: the walk refuses a second page of its generation while
+    // one is in the air, and a folder's page does not stand in its way.
+    let held: Promise<unknown> = Promise.resolve();
+    act(() => {
+      held = result.current.loadMoreUnder(["a"]);
+    });
+    rerender({ capability: LEVEL_SCAN, database: 2 });
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    stale.release(levelPage([], ["a/b/"], "c1"));
+    await act(async () => {
+      await held;
+    });
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    expect(result.current.folders).toEqual(["x/", "y/"]);
+  });
+
+  test("a question asked again lists its folders once, without the ones it held before", async () => {
+    let call = 0;
+    mockGlobalFetch({
+      "/api/db/keys/scan": async () => {
+        call += 1;
+        return call === 1 ? levelPage([], ["a/"], "c1") : levelPage([], ["a/", "b/"], "c2");
+      },
+    });
+    const { result, rerender } = questionHook({ capability: LEVEL_SCAN, database: 1 });
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    rerender({ capability: LEVEL_SCAN, database: 2 });
+    rerender({ capability: LEVEL_SCAN, database: 1 });
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    expect(result.current.folders).toEqual(["a/", "b/"]);
+  });
+
+  test("a question asked again counts no folder against the held limit that it no longer shows", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": levelPage(
+        Array.from({ length: HELD_KEY_LIMIT - 1 }, (_, index) => `k${index}`),
+        ["a/"],
+        "c1",
+      ),
+    });
+    const { result, rerender } = questionHook({ capability: LEVEL_SCAN, database: 1 });
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    rerender({ capability: LEVEL_SCAN, database: 2 });
+    rerender({ capability: LEVEL_SCAN, database: 1 });
+
+    // The keys are still held (only `reset` clears them), and with the folder gone from both the list
+    // and its count, the panel and the hook agree on one entry left: the next page is asked for.
+    expect(result.current.folders).toEqual([]);
+    let asked = true;
+    await act(async () => {
+      asked = await result.current.scanMore();
+    });
+    expect(asked).toBe(true);
+    expect(fetchMock.mock.calls.length).toBe(2);
   });
 });

@@ -630,6 +630,51 @@ describe("Browse Keys is gated on the walk and on the rows being key patterns", 
     expect(seen).toEqual([grouping]);
     expect(seen[0].name).toBe("user:*");
   });
+
+  /**
+   * The second reason (Keys panel levels, spec 3.7): an engine that lists its key space one level at a
+   * time may name the kind whose rows are the key space's first segment, a bucket, and Browse Keys is
+   * offered on those rows. Still two declarations and no kind id written here: `keyScan` and its
+   * `levels.rootKind`.
+   */
+  const bucket = { id: "bucket", role: "config", label: "Bucket", labelPlural: "Buckets" } as const;
+  const objectKind = { id: "object", role: "config", label: "Object", labelPlural: "Objects" } as const;
+  const levelWalk = {
+    defaultCount: 500,
+    maxCount: 1000,
+    separator: "/",
+    cursor: "opaque",
+    pattern: "prefix",
+    totalScope: "none",
+    levels: { rootKind: "bucket" },
+  } as const;
+  const store = capabilitiesOf({ objectKinds: [bucket, objectKind], keyScan: levelWalk });
+  const sales: DatabaseObject = { path: ["sales"], name: "sales", kind: "bucket" };
+
+  test("is offered on a row of the declared root kind, and on a row of no other kind", () => {
+    expect(idsFor(store, sales, allHandlers(), objectRow("bucket"))).toEqual(["browse-keys"]);
+    expect(
+      idsFor(store, { path: ["sales"], name: "sales", kind: "object" }, allHandlers(), objectRow("object")),
+    ).toEqual([]);
+  });
+
+  test("is withheld from a root-kind row when the shell passes no handler", () => {
+    expect(idsFor(store, sales, {}, objectRow("bucket"))).toEqual([]);
+  });
+
+  test("is offered once on a Redis grouping row, as today", () => {
+    expect(idsFor(redis).filter((id) => id === "browse-keys")).toHaveLength(1);
+  });
+
+  test("is offered once when a relation kind of a grouping engine is also named as the root kind", () => {
+    const planted = capabilitiesOf({
+      objectKinds: [keyspace],
+      tablesAreDerivedGroupings: true,
+      keyScan: { ...walk, levels: { rootKind: "keyspace" } },
+    });
+
+    expect(idsFor(planted).filter((id) => id === "browse-keys")).toHaveLength(1);
+  });
 });
 
 /**

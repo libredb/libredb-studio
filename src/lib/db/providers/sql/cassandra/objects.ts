@@ -410,7 +410,7 @@ interface ObjectCatalogSpec {
    */
   readonly describeTarget?: string;
   /**
-   * The value the reply's own `type` column carries for a row of this kind.
+   * The value, or values, the reply's own `type` column carries for a row of this kind.
    *
    * It exists because `DESCRIBE TABLE` DOES NOT ANSWER ONE ROW. Measured on 5.0.9,
    * `DESCRIBE TABLE probe.customers` answers FOUR: the table, its two indexes and the
@@ -418,7 +418,7 @@ interface ObjectCatalogSpec {
    * addressable object in this tree with its own Source, so the read selects the row the
    * CALLER asked for and the others are reached under their own paths.
    */
-  readonly describeType?: string;
+  readonly describeType?: string | readonly string[];
 }
 
 const CASSANDRA_OBJECT_CATALOGS: Readonly<Record<string, ObjectCatalogSpec>> = Object.freeze({
@@ -436,7 +436,9 @@ const CASSANDRA_OBJECT_CATALOGS: Readonly<Record<string, ObjectCatalogSpec>> = O
     projection: ["view_name"],
     orderColumn: "view_name",
     describeTarget: "MATERIALIZED VIEW",
-    describeType: "materialized_view",
+    // ScyllaDB answers `view` for a materialized view (and for secondary-index backing views);
+    // Cassandra answers `materialized_view` (measured on 5.0.9, ScyllaDB 2026.2.4 and 2026.3.2).
+    describeType: ["materialized_view", "view"],
   },
   index: {
     table: "indexes",
@@ -1364,6 +1366,11 @@ function describeSignature(name: string): string | undefined {
   return normalizeSignature(name.slice(open + 1, -1));
 }
 
+function matchesDescribeType(actual: string, expected: string | readonly string[] | undefined): boolean {
+  if (expected === undefined) return false;
+  return typeof expected === "string" ? actual === expected : expected.includes(actual);
+}
+
 /**
  * The catalog row an OVERLOADED kind's path segment addresses, or undefined for none.
  *
@@ -1460,7 +1467,7 @@ export async function readObjectSource(
   const rows = await describeRows(transport, cql);
   const row = rows.find(
     (candidate) =>
-      readText(candidate.type) === catalog.describeType &&
+      matchesDescribeType(readText(candidate.type), catalog.describeType) &&
       (signature === undefined || describeSignature(readText(candidate.name)) === signature),
   );
   if (row === undefined) {

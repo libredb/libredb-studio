@@ -1141,18 +1141,24 @@ function schemaOf(reads: MilvusPhase1Reads): WireCollectionSchema {
   return schema;
 }
 
-/** Every name a projection can resolve under rule 1: the fields, the dynamic field when listed, struct arrays. */
+/** Every name a projection can resolve: fields, struct arrays, and $meta whenever dynamic fields are enabled. */
 function declaredNames(schema: WireCollectionSchema): ReadonlySet<string> {
   return new Set([
     ...schema.fields.map((field) => field.name),
     ...schema.struct_array_fields.map((field) => field.name),
+    ...(schema.enable_dynamic_field ? ["$meta"] : []),
   ]);
 }
 
 /** outputFields after phase 1: the three projection rules of 5.4, or the default list of 5.4. */
 function projectOutput(output: OutputSelection, schema: WireCollectionSchema, collection: string): string[] {
   if (output.kind === "default") {
-    return schema.fields.filter((field) => !isVectorType(field.data_type)).map((field) => field.name);
+    return [
+      ...new Set([
+        ...schema.fields.filter((field) => !isVectorType(field.data_type)).map((field) => field.name),
+        ...(schema.enable_dynamic_field ? ["$meta"] : []),
+      ]),
+    ];
   }
   if (output.kind === "count") return [COUNT_STAR];
   const names = declaredNames(schema);

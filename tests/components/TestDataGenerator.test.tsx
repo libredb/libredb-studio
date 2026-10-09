@@ -24,6 +24,7 @@ const jsonCaps = capsOf({
 });
 const postgresCaps = capsOf({ defaultPort: 5432 });
 const mssqlCaps = capsOf({ defaultPort: 1433 });
+const oracleCaps = capsOf({ defaultPort: 1521 });
 
 // The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
 // `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
@@ -997,7 +998,11 @@ function withDeterministicRandom<T>(run: () => T): T {
 }
 
 /** Renders the dialog and returns the statement Execute hands over. */
-function executed(tableSchema: DetailedObject, capabilities: ProviderCapabilities | undefined): string {
+function executed(
+  tableSchema: DetailedObject,
+  capabilities: ProviderCapabilities | undefined,
+  databaseType: string = capabilities === jsonCaps ? "mongodb" : "postgres",
+): string {
   const onExecuteQuery = mock((query: string) => {
     void query;
   });
@@ -1007,7 +1012,7 @@ function executed(tableSchema: DetailedObject, capabilities: ProviderCapabilitie
       onClose={mock(() => {})}
       tablePath={tableSchema.path}
       tableSchema={tableSchema}
-      databaseType={capabilities === jsonCaps ? "mongodb" : "postgres"}
+      databaseType={databaseType}
       capabilities={capabilities}
       onExecuteQuery={onExecuteQuery}
     />,
@@ -1489,5 +1494,83 @@ describe("TestDataGenerator foreign keys and unique columns (#1400)", () => {
       .map((line) => line.replace(/[,;]$/, ""));
     expect(rows).toHaveLength(10);
     expect(new Set(rows).size).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("TestDataGenerator Oracle literals (#1400)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  /**
+   * `APP.EMP` as the Oracle provider reports it: `type` is the declaration and `baseType` is
+   * `DATA_TYPE` where the two differ, so `NUMBER(10,2)` and `NUMBER(5)` both reach the generator
+   * as `NUMBER` and the scale is not in view. `DATE` and `TIMESTAMP(6)` carry no `baseType`.
+   */
+  const emp: DetailedObject = {
+    name: "EMP",
+    kind: "table",
+    path: ["APP", "EMP"],
+    indexes: [],
+    columns: [
+      { name: "NAME", type: "VARCHAR2(100 BYTE)", baseType: "VARCHAR2", nullable: false, isPrimary: false },
+      { name: "SALARY", type: "NUMBER(10,2)", baseType: "NUMBER", nullable: true, isPrimary: false },
+      { name: "QTY", type: "NUMBER(5)", baseType: "NUMBER", nullable: true, isPrimary: false },
+      { name: "RATIO", type: "NUMBER", nullable: true, isPrimary: false },
+      { name: "HIRED", type: "DATE", nullable: true, isPrimary: false },
+      { name: "UPDATED", type: "TIMESTAMP(6)", nullable: true, isPrimary: false },
+    ],
+  };
+
+  test("a NUMBER column is generated as a number and written unquoted", () => {
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={emp.path}
+        tableSchema={emp}
+        databaseType="oracle"
+        capabilities={oracleCaps}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    const text = container.textContent || "";
+    expect(text).toContain("QTY: integer");
+    expect(text).toContain("RATIO: integer");
+    expect(text).toContain("SALARY: price");
+    cleanup();
+    const statement = executed(emp, oracleCaps, "oracle");
+    // NAME quoted, then SALARY, QTY and RATIO as bare numbers: before #1400 SALARY was
+    // `'88.24'` and QTY and RATIO were `'Sample text'`, which is ORA-01722 on a NUMBER.
+    const rows = statement.split("\n").filter((line) => line.startsWith("  ("));
+    expect(rows).toHaveLength(10);
+    for (const row of rows) expect(row).toMatch(/^ {2}\('[^']+', \d+\.\d{2}, \d+, \d+, TO_DATE\(/);
+  });
+
+  test("a DATE value is written through TO_DATE and a TIMESTAMP through TO_TIMESTAMP", () => {
+    const statement = executed(emp, oracleCaps, "oracle");
+    expect(statement.match(/TO_DATE\('\d{4}-\d{2}-\d{2}', 'YYYY-MM-DD'\)/g)).toHaveLength(10);
+    expect(
+      statement.match(/TO_TIMESTAMP\('\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', 'YYYY-MM-DD HH24:MI:SS'\)/g),
+    ).toHaveLength(10);
+    // No date reaches the statement as the quoted text Oracle refuses (ORA-01861).
+    expect(statement).not.toMatch(/, '\d{4}-\d{2}-\d{2}/);
+  });
+
+  test("every other dialect keeps writing a date and a timestamp as quoted text", () => {
+    const events: DetailedObject = {
+      name: "events",
+      kind: "table",
+      path: ["public", "events"],
+      indexes: [],
+      columns: [
+        { name: "on_day", type: "date", nullable: true, isPrimary: false },
+        { name: "at", type: "timestamp without time zone", nullable: true, isPrimary: false },
+      ],
+    };
+    const statement = executed(events, postgresCaps);
+    expect(statement).not.toContain("TO_DATE");
+    expect(statement).not.toContain("TO_TIMESTAMP");
+    expect(statement.match(/\('\d{4}-\d{2}-\d{2}', '\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'\)/g)).toHaveLength(10);
   });
 });

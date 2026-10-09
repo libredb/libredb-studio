@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { positionalPlaceholder, quoteLiteral, unquoteLiteral } from "@/lib/sql/values";
+import { positionalPlaceholder, quoteLiteral, temporalLiteral, unquoteLiteral } from "@/lib/sql/values";
 import type { DatabaseType } from "@/lib/types";
 
 // A value reaching SQL generation is arbitrary text — a pasted cell, an imported
@@ -315,5 +315,33 @@ describe("unquoteLiteral", () => {
         expect(unquoteLiteral(quoteLiteral(value, dialect), dialect)).toBe(value);
       }
     }
+  });
+});
+
+// Oracle reads a quoted string in a date position through the session's NLS_DATE_FORMAT,
+// `DD-MON-RR` by default, so the ISO text the generators write is refused with ORA-01861
+// (#1400). The literal names its own mask instead, the way the SQL export does.
+describe("temporalLiteral", () => {
+  test("writes an Oracle date through TO_DATE with the mask of the text's own form", () => {
+    expect(temporalLiteral("2026-01-27", "date", "oracle")).toBe("TO_DATE('2026-01-27', 'YYYY-MM-DD')");
+  });
+
+  test("writes an Oracle timestamp through TO_TIMESTAMP", () => {
+    expect(temporalLiteral("2026-01-27 14:30:00", "timestamp", "oracle")).toBe(
+      "TO_TIMESTAMP('2026-01-27 14:30:00', 'YYYY-MM-DD HH24:MI:SS')",
+    );
+  });
+
+  test("quotes text the mask would not read, rather than writing a literal that fails", () => {
+    expect(temporalLiteral("yesterday", "date", "oracle")).toBe("'yesterday'");
+    expect(temporalLiteral("2026-01-27", "timestamp", "oracle")).toBe("'2026-01-27'");
+    expect(temporalLiteral("2026-01-27T14:30:00Z", "timestamp", "oracle")).toBe("'2026-01-27T14:30:00Z'");
+  });
+
+  test("every other dialect, and no dialect, keeps the quoted text it had", () => {
+    expect(temporalLiteral("2026-01-27", "date", "postgres")).toBe("'2026-01-27'");
+    expect(temporalLiteral("2026-01-27 14:30:00", "timestamp", "mysql")).toBe("'2026-01-27 14:30:00'");
+    expect(temporalLiteral("2026-01-27", "date", "mssql")).toBe("N'2026-01-27'");
+    expect(temporalLiteral("2026-01-27", "date", undefined)).toBe("'2026-01-27'");
   });
 });

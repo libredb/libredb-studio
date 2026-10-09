@@ -2798,6 +2798,49 @@ describe("the object source read, against the committed fixture", () => {
   });
 
   /**
+   * ScyllaDB types a materialized view's `DESCRIBE` row as `view`, not `materialized_view`
+   * (issue #1415, measured on ScyllaDB 2026.3.2). Cassandra's `materialized_view` spelling is
+   * unchanged and covered by the fixture above.
+   */
+  test("a materialized view whose DESCRIBE row is typed view still answers its source", async () => {
+    const mvCreate = DESCRIBE_VIEW_CUSTOMERS_BY_CITY.rows[0]!.create_statement as string;
+    const { provider } = await connectedProvider(
+      objectReplies({
+        [cassandraDescribeCql(KEYSPACE, "materialized_view", "customers_by_city")!]: describeResult([
+          { type: "view", name: "customers_by_city", create_statement: mvCreate },
+        ]),
+      }),
+    );
+
+    const document = await provider.readObjectSource!([KEYSPACE, "customers_by_city"], "materialized_view");
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.text.startsWith("CREATE MATERIALIZED VIEW")).toBe(true);
+  });
+
+  test("a materialized view read ignores a same-named row of an unrelated type", async () => {
+    const mvCreate = DESCRIBE_VIEW_CUSTOMERS_BY_CITY.rows[0]!.create_statement as string;
+    const { provider } = await connectedProvider(
+      objectReplies({
+        [cassandraDescribeCql(KEYSPACE, "materialized_view", "customers_by_city")!]: describeResult([
+          {
+            type: "index",
+            name: "customers_by_city",
+            create_statement: "CREATE INDEX customers_by_city ON probe.customers (city);",
+          },
+          { type: "view", name: "customers_by_city", create_statement: mvCreate },
+        ]),
+      }),
+    );
+
+    const document = await provider.readObjectSource!([KEYSPACE, "customers_by_city"], "materialized_view");
+    const [part] = document.parts;
+    if (isSourcePartUnavailable(part)) throw new Error("narrowing");
+    expect(part.text.startsWith("CREATE MATERIALIZED VIEW")).toBe(true);
+    expect(part.text).not.toContain("CREATE INDEX");
+  });
+
+  /**
    * The overload selection, which is the one place a byte equality would have been wrong.
    *
    * `DESCRIBE FUNCTION probe.render` answers both rows; the caller asked for one. And

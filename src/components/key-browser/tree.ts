@@ -73,6 +73,13 @@ export interface KeyTreeNode {
   readonly count: number;
   /** True when a scanned key ends exactly here. */
   readonly isKey: boolean;
+  /**
+   * Present, and `true`, only on a node the SERVER named as a folder: a prefix of a level page
+   * (Keys panel levels, spec 3.4). Absent on every other node, so a tree built without folders is
+   * byte-identical to the tree before the field existed. A server folder is a folder before anything
+   * under it is listed, because the server said it holds something.
+   */
+  readonly serverFolder?: true;
 }
 
 interface MutableNode {
@@ -81,6 +88,7 @@ interface MutableNode {
   readonly children: Map<string, MutableNode>;
   count: number;
   isKey: boolean;
+  serverFolder: boolean;
 }
 
 /**
@@ -95,12 +103,31 @@ interface MutableNode {
 const collator = new Intl.Collator("en", { numeric: true });
 
 function compareNodes(left: KeyTreeNode, right: KeyTreeNode): number {
-  const byFolders = Number(right.children.length > 0) - Number(left.children.length > 0);
+  const byFolders = Number(isFolder(right)) - Number(isFolder(left));
   return byFolders !== 0 ? byFolders : collator.compare(left.segment, right.segment);
 }
 
+/**
+ * Whether a node is drawn as a folder: it holds rows, or the server named it a folder (Keys panel
+ * levels, spec 3.4). A server folder with nothing listed yet is still a folder, because listing it is
+ * what opening it does.
+ */
+export function isFolder(node: KeyTreeNode): boolean {
+  return node.children.length > 0 || node.serverFolder === true;
+}
+
 function createNode(segment: string, path: string[]): MutableNode {
-  return { segment, path, children: new Map(), count: 0, isKey: false };
+  return { segment, path, children: new Map(), count: 0, isKey: false, serverFolder: false };
+}
+
+/** The child of `node` named `segment`, created on first use, so both walks of `buildKeyTree` share one path. */
+function childNode(node: MutableNode, segment: string): MutableNode {
+  let child = node.children.get(segment);
+  if (child === undefined) {
+    child = createNode(segment, [...node.path, segment]);
+    node.children.set(segment, child);
+  }
+  return child;
 }
 
 /**
@@ -126,6 +153,17 @@ export function keyName(path: readonly string[], shape: KeyScanShape = UNDECLARE
 }
 
 /**
+ * The path whose LEVEL the panel's own walk lists, for the pattern it sent (Keys panel levels, spec 3.4).
+ *
+ * Every segment of the pattern but the last: the last is the part of a name the level is listed
+ * under, so `sales/` gives `["sales"]`, `sales/2026/ord` gives `["sales", "2026"]`, and `sales`, a
+ * pattern with no separator, lists the top level. The empty pattern is the top level too.
+ */
+export function levelScope(sent: string, shape: KeyScanShape): readonly string[] {
+  return sent === "" ? [] : splitKey(sent, shape).slice(0, -1);
+}
+
+/**
  * Arrange scanned key names into a tree, merging duplicates.
  *
  * The input is an iterable because the caller has pages and not a list: successive `SCAN` batches
@@ -133,8 +171,17 @@ export function keyName(path: readonly string[], shape: KeyScanShape = UNDECLARE
  * inserting into a live tree is what keeps this a pure function of the keys seen — a panel that
  * mutated one tree in place would have two sources of truth for its counts the moment a walk
  * restarted from cursor `"0"`.
+ *
+ * `folders` are the folder prefixes an engine that lists one level at a time answered (Keys panel
+ * levels, spec 3.4). Each is a full prefix ending in the separator, so its path is every segment but
+ * the last, empty one; every node on that path is created if absent and the last is marked a server
+ * folder. A folder adds nothing to any `count`, which stays the distinct keys at or under a node.
  */
-export function buildKeyTree(keys: Iterable<string>, shape: KeyScanShape = UNDECLARED): KeyTreeNode {
+export function buildKeyTree(
+  keys: Iterable<string>,
+  shape: KeyScanShape = UNDECLARED,
+  folders: Iterable<string> = [],
+): KeyTreeNode {
   const root = createNode("", []);
   const seen = new Set<string>();
 
@@ -147,15 +194,21 @@ export function buildKeyTree(keys: Iterable<string>, shape: KeyScanShape = UNDEC
     let node = root;
     node.count += 1;
     for (const segment of splitKey(key, shape)) {
-      let child = node.children.get(segment);
-      if (child === undefined) {
-        child = createNode(segment, [...node.path, segment]);
-        node.children.set(segment, child);
-      }
-      child.count += 1;
-      node = child;
+      node = childNode(node, segment);
+      node.count += 1;
     }
     node.isKey = true;
+  }
+
+  for (const folder of folders) {
+    // A folder the server named is a full prefix; anything else is a defect in the caller, and the
+    // message names the defect without the folder's text, which is the user's data.
+    if (!folder.endsWith(shape.separator)) {
+      throw new Error("A server folder must be a non-empty prefix ending in the separator.");
+    }
+    let node = root;
+    for (const segment of splitKey(folder, shape).slice(0, -1)) node = childNode(node, segment);
+    node.serverFolder = true;
   }
 
   return toTreeNode(root);
@@ -163,7 +216,9 @@ export function buildKeyTree(keys: Iterable<string>, shape: KeyScanShape = UNDEC
 
 function toTreeNode(node: MutableNode): KeyTreeNode {
   const children = [...node.children.values()].map(toTreeNode).sort(compareNodes);
-  return { segment: node.segment, path: node.path, children, count: node.count, isKey: node.isKey };
+  const built = { segment: node.segment, path: node.path, children, count: node.count, isKey: node.isKey };
+  // The flag is added only where it is true, so a tree with no server folders has no such property.
+  return node.serverFolder ? { ...built, serverFolder: true } : built;
 }
 
 /**
@@ -230,12 +285,25 @@ export function flattenKeyTree(
   root: KeyTreeNode,
   isExpanded: (path: readonly string[]) => boolean,
   canLoadMore: (path: readonly string[]) => boolean = () => false,
+  /*
+   * Two switches for an engine that lists one level at a time (Keys panel levels, spec 3.4), both off
+   * by default so no existing caller gains a row or a changed number.
+   *
+   * `rootLoadMore`: the top level is a level too, with its own Load more row, emitted last at depth 0
+   * when `canLoadMore([])` answers true.
+   *
+   * `countRows`: a Load more row counts the ROWS listed in its folder, `children.length`, because a
+   * folder holding only server folders holds no keys, and "0 keys" beside several drawn folders would
+   * be false.
+   */
+  options: { readonly rootLoadMore?: boolean; readonly countRows?: boolean } = {},
 ): KeyTreeRow[] {
   const rows: KeyTreeRow[] = [];
+  const countOf = (node: KeyTreeNode): number => (options.countRows === true ? node.children.length : node.count);
 
   const walk = (node: KeyTreeNode, depth: number): void => {
     for (const child of node.children) {
-      const folder = child.children.length > 0;
+      const folder = isFolder(child);
       rows.push({ kind: "node", node: child, depth, folder, setSize: 0, posInSet: 0 });
       if (!folder || !isExpanded(child.path)) continue;
       walk(child, depth + 1);
@@ -244,7 +312,7 @@ export function flattenKeyTree(
           kind: "loadMore",
           path: child.path,
           depth: depth + 1,
-          count: child.count,
+          count: countOf(child),
           setSize: 0,
           posInSet: 0,
         });
@@ -253,6 +321,9 @@ export function flattenKeyTree(
   };
 
   walk(root, 0);
+  if (options.rootLoadMore === true && canLoadMore([])) {
+    rows.push({ kind: "loadMore", path: [], depth: 0, count: countOf(root), setSize: 0, posInSet: 0 });
+  }
   return numberSiblings(rows);
 }
 
@@ -387,15 +458,20 @@ export function keyRowNames(
   node: KeyTreeNode,
   folder: boolean,
   shape: KeyScanShape = UNDECLARED,
+  /*
+   * An engine that lists one level at a time (Keys panel levels, spec 3.4): its folders are folders the
+   * server named, not globs a walk matched, so the folder mark is the separator alone (`2026/`), and a
+   * row that is both says "a key and a folder".
+   */
+  levels = false,
 ): { readonly label: string; readonly title: string; readonly toggle: string } {
   const name = keyName(node.path, shape);
-  const marker = `${shape.separator}*`;
+  const marker = levels ? shape.separator : `${shape.separator}*`;
   const label = folder && !node.isKey ? `${node.segment}${marker}` : name;
-  const title = folder
-    ? node.isKey
-      ? `${name} is a key of this database and a prefix: ${name}${marker}`
-      : `${name}${marker}`
-    : name;
+  const both = levels
+    ? `${name} is a key and a folder: ${name}${marker}`
+    : `${name} is a key of this database and a prefix: ${name}${marker}`;
+  const title = folder ? (node.isKey ? both : `${name}${marker}`) : name;
   return { label, title, toggle: name === "" ? shape.separator : name };
 }
 

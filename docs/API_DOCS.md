@@ -1415,6 +1415,11 @@ The declaration also states the walk's shape, in four optional fields that each 
 A `totalScope` of `"none"` is an engine that publishes no count and pins no revision: `total` is not read, and a provider answers 0.
 etcd declares `"/"`, `"opaque"`, `"prefix"` and `"walk"`: a cursor only it can read, a literal prefix instead of a glob, and a total that counts the keys the walk covers.
 Oxia declares `"/"`, `"opaque"`, `"prefix"` and `"none"`: a cursor only it can read, a literal prefix, and no count.
+An engine whose server groups keys into folder prefixes may also declare `levels`: its walk can list one level of the key space at a time under `separator`.
+A `levels` declaration needs `pattern: "prefix"` and `totalScope: "none"`, and any other pair is a defect of the declaration, answered `500` on every request.
+Its `separator` is one UTF-16 code unit long, such as `/`: an empty one is found in every key, and a longer one can overlap itself or be cut by a pattern that ends inside it, so the panel could draw an entry below the level the route judged it in.
+The route does not check the separator's length; every provider in this repository is held to it by a test of its declaration.
+`levels.rootKind`, when present, names the object kind whose rows name the key space's first segment; the row menu offers Browse Keys on those rows and opens the panel on `<name><separator>`, on an engine with no container level.
 
 **Authentication:** Required.
 No admin gate, for the same reason the object routes have none: the role decides which connection may
@@ -1438,6 +1443,7 @@ be OPENED and nothing about what may be read through it.
 | `pattern` | string | No | The walk's pattern, in the shape the declaration names. Absent means every key, which is NOT the same as an empty string, which is refused: `MATCH ""` is a pattern no key satisfies. Under `"glob"` (Redis) it is a `MATCH` pattern, trimmed and then forwarded, and a caller scoping a walk has two things to know. `MATCH` is applied per batch server-side and is **not indexed**, so a scoped walk costs the server a full pass over the keyspace rather than a lookup. And it is a glob with **no escape**, so a key segment that contains `*`, `?` or `[` matches more than the prefix asked about: the answer must be filtered by the caller, compared segment by segment (`app:envelope` is not under `app:env`). Under `"prefix"` (etcd) it is the literal prefix every walked key begins with, forwarded exactly as sent, with nothing trimmed and nothing escaped, because a prefix is bytes and a space at either end is part of the range it names |
 | `count` | number | No | The batch size. Absent takes the provider's declared `defaultCount`. A value above the declared `maxCount` is **refused rather than clamped**, because a silent clamp answers a request for 10,000 with 1,000 and says nothing |
 | `database` | number | No | Which numbered database to walk, taken only from an engine that declares a container level to name (Redis). Absent means the one the session is in, since `SELECT` state lives on the connection and not in this route. A caller offering the choice reads the engine's own list from `POST /api/db/objects/containers`, the same container level the object tree's top level comes from, rather than assuming a count: the same server answers 16 outside cluster mode and 1 inside it. An engine that walks one key space and declares no level (etcd, Oxia) refuses the field |
+| `level` | `true` | No | List one level: the keys directly under `pattern` and the folder prefixes one `separator` deeper. Sent only to an engine that declares `levels`, and refused for any other engine. Any value other than `true` is refused; absent is the key walk every engine answers, and a request without it forwards exactly the fields above |
 
 **Response (200 OK):**
 
@@ -1454,10 +1460,11 @@ be OPENED and nothing about what may be read through it.
 |-------|-------------|
 | `keys` | The batch. Under `"glob"` (Redis) it is **not deduplicated and not ordered**: `SCAN` promises neither, so a key present for the whole walk may be returned twice while the table rehashes, and the order is the hash table's rather than the caller's. Under `"prefix"` (etcd) the pages of one walk read an ordered key range at one pinned revision, so they are one consistent view. Oxia also declares `"prefix"` and pins no revision: each page reads the namespace in its own key order, resumed after the last key the previous page answered |
 | `cursor` | The cursor for the next page. `"0"` means the walk reached the end, and it is the only end-of-walk signal the engine publishes |
-| `types` | Each key's value type, **by key name**. It travels with the page rather than being asked for separately: `TYPE` takes one key and Redis publishes no batch form, so the provider pipelines one call per key and the cost is ONE extra round trip per page whatever the page holds. A key **absent** from the map is one whose type could not be read and a caller should draw nothing for it; a key that vanished between the walk and this read is present with the server's own `"none"`. What it describes is the moment it was read, like everything else in a sampled walk |
+| `types` | Each key's value type, **by key name**. It travels with the page rather than being asked for separately: `TYPE` takes one key and Redis publishes no batch form, so the provider pipelines one call per key and the cost is ONE extra round trip per page whatever the page holds. A key **absent** from the map is one whose type could not be read and a caller should draw nothing for it; a key that vanished between the walk and this read is present with the server's own `"none"`. What it describes is the moment it was read, like everything else in a sampled walk. An engine that declares a key-browser kind opens a key's Source tab rather than a typed read, so the value here is not read as a type; such an engine may carry a short descriptor of the key instead, which the panel draws in the same cell |
 | `total` | What a progress indicator divides by, in the scope the declaration's `totalScope` names. Under `"database"` (Redis) it is `DBSIZE` for the database walked: the engine's own key count, and the only denominator a progress indicator can divide by, since a cursor says nothing about how much is left. On a clustered deployment it is the LOCAL node's count: `SCAN` walks one node's slots and `DBSIZE` has no cluster-wide form. Under `"walk"` (etcd) it is the exact count of the keys the walk covers, the pattern's prefix range or the whole key space, at the revision the walk's pages are pinned to; for a user whose grants are narrower, it counts the keys of the ranges that user may read. Under `"none"` the engine publishes no count and pins no revision: the field is not read, and a provider answers 0. |
 | `clustered` | Present and `true` only when the server's own `INFO cluster` reply says this deployment is clustered. `SCAN` and `DBSIZE` are per node and neither has a cluster-wide form, so on a cluster `keys` and `total` describe the node that answered and nothing else. **Absent** means the deployment does not say it is clustered, which is the ordinary server; a reply the provider could not read is absent rather than a guess. The fact is read in the same round trip as `total` |
 | `skipped` | Present only when the page left keys out: `{ "count", "reason" }`, how many keys this page read and could not name, and why. On etcd a key that is not UTF-8 text is counted here rather than listed, because a name decoded with replacement characters would address a different key. Redis never sends it |
+| `prefixes` | Present only on an answer to `level`: the folder prefixes of this level, each the full prefix ending in `separator`, each one `separator` deeper than `pattern`, none twice. They count with `keys` against `count`. A folder is complete for its level, so a reader lists it by asking for its own level and never infers it from keys |
 
 The cursor belongs to the CALLER.
 Nothing is retained between two pages, so a page costs a round trip rather than a session, and a cursor arriving after a reconnect is still valid: it is a position, not a handle, spelled as the declaration's `cursor` says.
@@ -1465,6 +1472,18 @@ Under `"decimal"` (Redis) it is a position in a hash table.
 Under `"opaque"` (etcd) it is a string only the provider that wrote it can read, and the engine can overtake it between two pages: etcd's cursor carries the revision its walk is pinned to, and once a compaction passes that revision the next page answers etcd's compacted error in place of keys.
 etcd's cursor also carries a digest of the key ranges its walk may read, so a page whose ranges differ, because the provider read the user's grants again since the first page or the `pattern` changed, is refused before etcd is asked, with the instruction to start the walk again.
 The caller then starts the walk again at `"0"`.
+
+A level page answers one level of the key space.
+Its `keys` are the keys directly under `pattern`, with no `separator` after it; a key equal to a non-empty `pattern`, an object store's folder marker, is one of them, and no key is empty.
+Its `prefixes` are the folder prefixes one `separator` deeper.
+A provider that declares `levels` meets four rules:
+
+- A level page never holds more than `count` entries, keys and prefixes together, whatever the server returns in one response.
+- No prefix and no key appears twice on one page.
+- A provider whose server answers a level unpaged removes repeated entries, sorts the full answer by UTF-8 byte order, returns the first `count` entries after the cursor, and spells its cursor as the last entry returned, so a list that changes order between calls neither skips nor repeats an entry.
+- A level cursor is valid in every process that serves the connection: a provider may bind it to the request's scope but not to its own instance.
+
+The route checks every level page and answers `500` for a prefix or a key outside the level, a prefix twice, or more entries than `count`; the ordering and cursor rules are the provider's to meet.
 
 **Statuses:**
 
@@ -1481,6 +1500,15 @@ The caller then starts the walk again at `"0"`.
 | `database` is negative or not an integer | `400` | `{ "error": "\"database\" must be a non-negative integer" }` |
 | `database` is present and the engine declares no container level | `400` | `{ "error": "<type> walks one key space and declares no database level: \"database\" names the numbered database to walk, and this engine has none to name" }` |
 | The engine declares `keyScan` and implements no walk | `500` | `{ "error": "<type> declares keyScan but implements no scanKeysPage" }` |
+| `level` is present and not `true` | `400` | `{ "error": "\"level\" must be true, or absent for a walk of keys only" }` |
+| `level` is `true` and the engine declares no `levels` | `400` | `{ "error": "<type> declares no folder listing: its walk pages keys only, so \"level\" has nothing to ask for" }` |
+| The engine declares `levels` on a walk whose `pattern` is not `"prefix"` or whose `totalScope` is not `"none"`, on any request | `500` | `{ "error": "<type> declares levels on a walk that is not an uncounted prefix walk: levels need pattern \"prefix\" and totalScope \"none\"" }` |
+| A key walk's answer carries `prefixes` | `500` | `{ "error": "<type> answered folder prefixes to a walk that asked for keys only" }` |
+| A level answer carries a prefix outside the level | `500` | `{ "error": "<type> answered a folder outside the level it was asked for: \"<prefix>\"" }` |
+| A level answer carries one prefix twice | `500` | `{ "error": "<type> answered the folder \"<prefix>\" twice on one level page" }` |
+| A level answer carries a key outside the level | `500` | `{ "error": "<type> answered a key outside the level it was asked for: \"<key>\"" }` |
+| A level answer carries one key twice | `500` | `{ "error": "<type> answered the key \"<key>\" twice on one level page" }` |
+| A level answer carries more entries than `count` | `500` | `{ "error": "<type> answered <n> entries to a level page of at most <count>" }` |
 | Rate limited | `429` | `{ "error": "...", "code": "RATE_LIMITED" }` |
 
 A failed page does not advance the caller's cursor. The position already held is the last one the

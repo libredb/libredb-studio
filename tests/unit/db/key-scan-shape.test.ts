@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { keyScanShape, type KeyScanCapability, type KeyScanShape } from "@/lib/db/types";
+import type { KeyScanOptions, KeyScanPage } from "@/lib/db/types";
 
 /**
  * `keyScanShape`, the one reader of `KeyScanCapability`'s four optional fields (spec 3.4).
@@ -97,5 +98,41 @@ describe("keyScanShape()", () => {
       "separator",
       "totalScope",
     ]);
+  });
+});
+
+/**
+ * The level declaration (Keys panel levels, spec 3.1): an optional field on the capability that the
+ * shape does not read, so the four `toEqual` pins on the shape stay byte-identical.
+ */
+describe("keyScanShape() and the level declaration", () => {
+  test("answers the same four fields for a declaration with levels as without it", () => {
+    const withoutLevels: KeyScanCapability = {
+      defaultCount: 500,
+      maxCount: 1000,
+      separator: "/",
+      cursor: "opaque",
+      pattern: "prefix",
+      totalScope: "none",
+    };
+    const withLevels: KeyScanCapability = { ...withoutLevels, levels: { rootKind: "bucket" } };
+
+    expect(keyScanShape(withLevels)).toStrictEqual(keyScanShape(withoutLevels));
+    expect(Object.keys(keyScanShape(withLevels)).sort()).toEqual(["cursor", "pattern", "separator", "totalScope"]);
+  });
+
+  test("types the level option and the folder prefixes as optional additions, and levels alone moves no default", () => {
+    const options = { cursor: "0", count: 1, level: true } satisfies KeyScanOptions;
+    const page = { keys: [], cursor: "0", total: 0, types: {}, prefixes: ["a/"] } satisfies KeyScanPage;
+
+    expect(options.level).toBe(true);
+    expect(page.prefixes).toEqual(["a/"]);
+    // A declaration with levels and none of the four fields still reads as today's walk.
+    expect(keyScanShape({ defaultCount: 1, maxCount: 1, levels: {} })).toStrictEqual({
+      separator: ":",
+      cursor: "decimal",
+      pattern: "glob",
+      totalScope: "database",
+    });
   });
 });

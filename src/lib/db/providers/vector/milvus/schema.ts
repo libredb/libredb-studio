@@ -34,7 +34,8 @@ export function describedSchema(describe: DescribeCollectionResponse): WireColle
 
 /**
  * The collection's columns, in the described order: the fields, then each struct array field as one column. The
- * dynamic field is nullable, because a row may hold no dynamic key.
+ * dynamic field is nullable, because a row may hold no dynamic key. Milvus 3.0.2 can enable it without listing
+ * $meta in fields; expose that column once so generated commands can explicitly request the dynamic keys.
  */
 export function collectionColumns(describe: DescribeCollectionResponse): ColumnSchema[] {
   const schema = describedSchema(describe);
@@ -45,6 +46,9 @@ export function collectionColumns(describe: DescribeCollectionResponse): ColumnS
       nullable: field.nullable || field.is_dynamic,
       isPrimary: field.is_primary_key,
     })),
+    ...(schema.enable_dynamic_field && !schema.fields.some((field) => field.name === "$meta")
+      ? [{ name: "$meta", type: "JSON (dynamic)", nullable: true, isPrimary: false }]
+      : []),
     ...schema.struct_array_fields.map((struct) => ({
       name: struct.name,
       type: STRUCT_ARRAY_TYPE,

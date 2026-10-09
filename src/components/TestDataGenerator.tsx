@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/copy-button";
 import { DatabaseType } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
-import { quoteLiteral } from "@/lib/sql/values";
+import { quoteLiteral, temporalLiteral } from "@/lib/sql/values";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import { jsonCommandAddress, quoteIdentifier, quoteObjectPath } from "@/lib/query-generators";
@@ -89,6 +89,12 @@ function inferFakerType(colName: string, colType: string): { generator: string; 
   if (type.includes("int")) return { generator: "integer", example: "42" };
   if (type.includes("float") || type.includes("double") || type.includes("decimal") || type.includes("numeric"))
     return { generator: "decimal", example: "3.14" };
+  // Oracle's one numeric family (#1400). `NUMBER(10,2)` reaches here as its `baseType`, `NUMBER`,
+  // so precision and scale are not in view. An integer avoids a fraction that a scale of 0 would
+  // round away, but it is not bounded by the precision: the generator draws up to 9999, which a
+  // narrow column such as `NUMBER(1)` or `NUMBER(5,2)` refuses with ORA-01438. Without this arm
+  // the column got `Sample text`.
+  if (type.startsWith("number")) return { generator: "integer", example: "42" };
   if (type.includes("date") && !type.includes("time")) return { generator: "date", example: "2024-03-15" };
   if (type.includes("time")) return { generator: "datetime", example: "2024-03-15 14:30:00" };
   if (type.includes("uuid")) return { generator: "uuid", example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890" };
@@ -489,10 +495,17 @@ export function TestDataGenerator({
             type.includes("double") ||
             type.includes("decimal") ||
             type.includes("numeric") ||
-            type.includes("real")) &&
+            type.includes("real") ||
+            type.startsWith("number")) &&
           /^-?\d+(\.\d+)?$/.test(val)
         )
           return val;
+        // A date or a timestamp in the dialect's own literal (#1400): Oracle refuses the
+        // quoted ISO text, and `temporalLiteral` holds which dialects write what.
+        if (col.faker.generator === "date")
+          return temporalLiteral(val, "date", databaseType as DatabaseType | undefined);
+        if (col.faker.generator === "datetime")
+          return temporalLiteral(val, "timestamp", databaseType as DatabaseType | undefined);
         // No generator can produce a quote or a backslash today, so the quoting
         // itself is shared rather than a fix: the next generator added inherits a
         // literal the connected engine reads as data (#290).

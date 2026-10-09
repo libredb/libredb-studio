@@ -57,6 +57,27 @@ export const SCAN_ALL_MAX_KEYS = 10_000;
  */
 export const HELD_KEY_LIMIT = 10_000;
 
+/** The folders a render hands back while the held ones belong to another question: one value, so its identity holds. */
+const NO_FOLDERS: readonly string[] = [];
+
+/** The inputs a walk keys on: a page carries the folders of the question it was asked for. */
+interface Question {
+  readonly connection: DatabaseConnection;
+  readonly capability: KeyScanCapability;
+  readonly pattern: string;
+  readonly database: number | undefined;
+}
+
+/** Whether two questions have the same inputs, each compared by identity as the walk compares them. */
+function sameQuestion(a: Question, b: Question): boolean {
+  return (
+    a.connection === b.connection &&
+    a.capability === b.capability &&
+    a.pattern === b.pattern &&
+    a.database === b.database
+  );
+}
+
 /** The batch size to ask for, kept inside what the provider declared it will accept. */
 function batchSize(capability: KeyScanCapability): number {
   return Math.min(capability.defaultCount, capability.maxCount);
@@ -65,6 +86,11 @@ function batchSize(capability: KeyScanCapability): number {
 export interface KeyScanResult {
   /** Distinct keys the walk has seen, in the order it saw them. */
   readonly keys: readonly string[];
+  /**
+   * The folder prefixes the server named, distinct, in the order they arrived (Keys panel levels,
+   * spec 3.5). Always empty on an engine that declares no `levels`: only a level page carries them.
+   */
+  readonly folders: readonly string[];
   /** Keys the walk has been handed, repeats included. */
   readonly scanned: number;
   /**
@@ -181,8 +207,38 @@ export function useKeyScan(options: {
    * prefix with, the pattern it builds, and the word the Scan all sentence uses.
    */
   const shape = useMemo(() => keyScanShape(capability), [capability]);
+  /**
+   * Whether this engine lists its key space one level at a time (Keys panel levels, spec 3.5). Read
+   * once: every request then asks for a level, and every page's folders are held beside its keys.
+   */
+  const levels = capability.levels !== undefined;
 
   const [keys, setKeys] = useState<readonly string[]>([]);
+  /*
+   * THE FOLDERS AND THE QUESTION WHOSE PAGE CARRIED THEM, and they are handed back only while that is
+   * the question being asked (Keys panel levels, spec 3.5).
+   *
+   * The keys wait for `reset` to clear them, which the caller runs from an effect, and only once the new
+   * walk can start: a panel waiting on its database list runs none at all. Until then a page of the old
+   * walk is still in the current generation and lands, and a folder from a walk in another shape is no
+   * prefix in this one, which the tree refuses outright. Tagged, such a page fills `heldFolders` and
+   * never reaches the tree, and the first render of a new question hands back none, before any effect.
+   * Only the folders are held to this; an engine without levels has none, so it is unchanged.
+   *
+   * EACH TIME A QUESTION IS ASKED IS ITS OWN OBJECT, and the folders are tagged with that object rather
+   * than with its inputs. The inputs are compared by identity to notice a new question, stored on the
+   * render that notices it, and a question asked again after another one is a new object: the folders
+   * it held the first time, whose count `heldFolders` has already dropped, are not shown again.
+   */
+  const inputs: Question = { connection, capability, pattern, database };
+  const [askedBefore, setAskedBefore] = useState(inputs);
+  const newQuestion = !sameQuestion(askedBefore, inputs);
+  if (newQuestion) setAskedBefore(inputs);
+  const asked = newQuestion ? inputs : askedBefore;
+  const [folders, setFolders] = useState<{ readonly question: Question | null; readonly list: readonly string[] }>({
+    question: null,
+    list: [],
+  });
   const [scanned, setScanned] = useState(0);
   const [total, setTotal] = useState<number | null>(null);
   const [clustered, setClustered] = useState<boolean | undefined>(undefined);
@@ -243,6 +299,22 @@ export function useKeyScan(options: {
    */
   const walked = useRef(new Set<string>());
   /*
+   * The server folders the tree has been handed, for the reason `walked` holds keys: a folder named by
+   * two pages is one folder, and the list the tree is built from must not grow with repeats.
+   *
+   * ONE QUESTION'S FOLDERS, like the state they feed. `askedNow` is the question the last commit asked,
+   * and the effect below starts an empty set whenever it changes: a folder of the last question would
+   * otherwise count against this one's held limit and hide the same folder when this one names it.
+   */
+  const heldFolders = useRef(new Set<string>());
+  const askedNow = useRef(asked);
+  useEffect(() => {
+    // A page of the last question that landed before this ran is cleared here; one that lands after
+    // it finds its question replaced and adds nothing (see `absorbFolders`).
+    askedNow.current = asked;
+    heldFolders.current.clear();
+  }, [asked]);
+  /*
    * Each prefix's own walk, keyed by `pathKey`. In a ref because the read has to see what the last
    * scoped page wrote, exactly as the global cursor does, and mirrored into state below because a row
    * has to RENDER the difference between "never asked" and "asked and there is no more".
@@ -284,6 +356,9 @@ export function useKeyScan(options: {
         // reads an absent `database` as "the session's", which is exactly what a panel with no
         // database chosen means.
         ...(database === undefined ? {} : { database }),
+        // Only an engine that declares levels is asked for one (Keys panel levels, spec 3.5); every other
+        // engine's body is byte-identical to the one it always received.
+        ...(levels ? { level: true as const } : {}),
       };
       const response = await appFetch("/api/db/keys/scan", {
         method: "POST",
@@ -308,10 +383,23 @@ export function useKeyScan(options: {
         clustered: body.clustered,
         // Passed through as it came: `scanMore` adds it up and `loadMoreUnder` leaves it alone (spec 4.6).
         skipped: body.skipped,
+        // A level page's folders, absent on every other page (Keys panel levels, spec 3.5).
+        prefixes: body.prefixes,
       };
     },
-    [connection, database],
+    [connection, database, levels],
   );
+
+  /**
+   * What the panel HOLDS: keys plus server folders (Keys panel levels, spec 3.5), each a drawn row.
+   *
+   * THE ONLY READER OF `HELD_KEY_LIMIT` in this hook: `absorb`, `absorbFolders` and the guards of
+   * `scanMore` and `loadMoreUnder` all ask it, so no guard buys a page that `absorb` would drop, and
+   * the panel's own `heldFull` reads the same sum. A folder marker is held twice on purpose, its
+   * folder in the parent level and its key in its own, because both are drawn. With no folders this
+   * is `walked.current.size`, so an engine without levels meets the limit at the same key it always did.
+   */
+  const heldEntries = useCallback((): number => walked.current.size + heldFolders.current.size, []);
 
   /**
    * The names in a page the tree does not hold yet, and the record that it now does.
@@ -319,19 +407,50 @@ export function useKeyScan(options: {
    * One function because two callers need the same two steps in the same order, and a caller that
    * read `walked` before the other had written it would append a batch twice.
    */
-  const absorb = useCallback((names: readonly string[]): string[] => {
-    const fresh: string[] = [];
-    for (const name of names) {
-      // A repeat is skipped before the limit is even consulted: a key already held is not a key that
-      // the limit is being asked about, and a page of nothing but repeats must not be read as "the
-      // tree is full" when it is merely "you have seen these".
-      if (walked.current.has(name)) continue;
-      if (walked.current.size >= HELD_KEY_LIMIT) break;
-      walked.current.add(name);
-      fresh.push(name);
-    }
-    return fresh;
-  }, []);
+  const absorb = useCallback(
+    (names: readonly string[]): string[] => {
+      const fresh: string[] = [];
+      for (const name of names) {
+        // A repeat is skipped before the limit is even consulted: a key already held is not a key that
+        // the limit is being asked about, and a page of nothing but repeats must not be read as "the
+        // tree is full" when it is merely "you have seen these".
+        if (walked.current.has(name)) continue;
+        if (heldEntries() >= HELD_KEY_LIMIT) break;
+        walked.current.add(name);
+        fresh.push(name);
+      }
+      return fresh;
+    },
+    [heldEntries],
+  );
+
+  /**
+   * The folders in a page the tree does not hold yet, and the record that it now does (Keys panel
+   * levels, spec 3.5). The same two steps `absorb` takes for keys, for the server's folder prefixes.
+   */
+  const absorbFolders = useCallback(
+    (prefixes: readonly string[], question: Question): string[] => {
+      // A page asked for a question that is no longer the current one adds nothing and leaves the folder
+      // state alone: its folders belong to a tree nobody is drawing.
+      if (question !== askedNow.current) return [];
+      const fresh: string[] = [];
+      for (const prefix of prefixes) {
+        if (heldFolders.current.has(prefix)) continue;
+        if (heldEntries() >= HELD_KEY_LIMIT) break;
+        heldFolders.current.add(prefix);
+        fresh.push(prefix);
+      }
+      // A page of another question starts the list again rather than joining it: the two never share a tree.
+      if (fresh.length > 0) {
+        setFolders((previous) => ({
+          question,
+          list: previous.question === question ? [...previous.list, ...fresh] : fresh,
+        }));
+      }
+      return fresh;
+    },
+    [heldEntries],
+  );
 
   /**
    * Record what a page said about its keys' types.
@@ -354,7 +473,7 @@ export function useKeyScan(options: {
     const mine = walk.current;
     // A tree that is FULL cannot be given anything, so this walk would buy a page to drop it: the
     // panel's own sentence is what the reader should be reading instead of a request in flight.
-    if (walked.current.size >= HELD_KEY_LIMIT) return false;
+    if (heldEntries() >= HELD_KEY_LIMIT) return false;
     if (spent.current || pageInFlight.current === mine) return false;
     pageInFlight.current = mine;
     setBusy(true);
@@ -366,7 +485,9 @@ export function useKeyScan(options: {
       // database or a pattern nobody is looking at any more, beside a cursor from that walk.
       if (!alive.current || mine !== walk.current) return true;
       cursor.current = page.cursor;
-      scannedKeys.current += page.keys.length;
+      // A level page's folders are entries the walk was handed, as its keys are (Keys panel levels,
+      // spec 3.5), so the progress line and Scan all's budget count both.
+      scannedKeys.current += page.keys.length + (page.prefixes?.length ?? 0);
       failure.current = null;
       /*
        * What the page LEFT OUT, added up across the global walk's pages (spec 4.6). A page that left
@@ -380,6 +501,9 @@ export function useKeyScan(options: {
         };
         setSkipped(skippedKeys.current);
       }
+      // Folders before keys, so a panel that fills keeps the level's structure ahead of its leaves. They
+      // carry `asked` as this callback closed over it: the question the page was asked for (see `folders`).
+      absorbFolders(page.prefixes ?? [], asked);
       const fresh = absorb(page.keys);
       absorbTypes(page);
       setKeys((previous) => (fresh.length === 0 ? previous : [...previous, ...fresh]));
@@ -412,7 +536,7 @@ export function useKeyScan(options: {
       if (alive.current && mine === walk.current) setBusy(false);
     }
     return true;
-  }, [absorb, absorbTypes, capability, pattern, readPageAt]);
+  }, [absorb, absorbFolders, absorbTypes, asked, capability, heldEntries, pattern, readPageAt]);
 
   const scanAll = useCallback(async (): Promise<void> => {
     // A page in flight for the CURRENT walk is one this loop is already waiting on, so a second press
@@ -453,7 +577,11 @@ export function useKeyScan(options: {
         const limit = SCAN_ALL_MAX_KEYS.toLocaleString("en-US");
         // The word for what narrows a walk follows the declaration: a prefix, or a `MATCH` pattern.
         const narrow = shape.pattern === "prefix" ? "prefix" : "pattern";
-        reason = `Stopped after ${limit} keys. Narrow the ${narrow} to walk a smaller key space.`;
+        // A level walk counts folders and keys alike, so its sentence says entries (Keys panel levels,
+        // spec 3.5).
+        reason = levels
+          ? `Stopped after ${limit} entries. Narrow the prefix to list a smaller part of the key space.`
+          : `Stopped after ${limit} keys. Narrow the ${narrow} to walk a smaller key space.`;
         break;
       }
     }
@@ -464,7 +592,7 @@ export function useKeyScan(options: {
     // Applied after the cap's sentence rather than instead of it, so a Stop pressed in the same turn
     // is what a reader sees: the two are ordered, not merged.
     if (stopped.current) setStoppedBy("Stopped.");
-  }, [scanMore, shape]);
+  }, [levels, scanMore, shape]);
 
   /**
    * One page of a walk scoped to ONE PREFIX, for the Load more row under an open folder.
@@ -499,7 +627,7 @@ export function useKeyScan(options: {
       // The tree is full: a scoped page would be filtered, deduplicated against a tree that already
       // holds its keys, and dropped — so the row is not offered and a press that somehow arrives
       // spends nothing.
-      if (walked.current.size >= HELD_KEY_LIMIT) return;
+      if (heldEntries() >= HELD_KEY_LIMIT) return;
 
       // One page per prefix at a time, for the reason `scanMore` gives about the global walk: two in
       // flight would both read this prefix's cursor and both advance from it.
@@ -543,12 +671,19 @@ export function useKeyScan(options: {
         nodeCursor.current.set(key, page.cursor);
         setNodeCursors(new Map(nodeCursor.current));
 
+        // The folder's own level (Keys panel levels, spec 3.5): its prefixes are held to its segments as
+        // its keys are, and absorbed first.
+        const freshFolders = absorbFolders(
+          (page.prefixes ?? []).filter((name) => isUnderPrefix(name, path, shape)),
+          asked,
+        );
         const fresh = absorb(page.keys.filter((name) => isUnderPrefix(name, path, shape)));
         absorbTypes(page);
         setKeys((previous) => (fresh.length === 0 ? previous : [...previous, ...fresh]));
         // Recorded whatever the answer: a page that added nothing is the case this number exists to
-        // report, and leaving it out would draw that press as one that never happened.
-        setNodeAdded((previous) => new Map(previous).set(key, fresh.length));
+        // report, and leaving it out would draw that press as one that never happened. A folder the
+        // page named is something it added, as a key is.
+        setNodeAdded((previous) => new Map(previous).set(key, fresh.length + freshFolders.length));
         setError(null);
       } catch (thrown) {
         if (!alive.current || mine !== walk.current) return;
@@ -557,17 +692,22 @@ export function useKeyScan(options: {
         // the pages that did not.
         setError(thrown instanceof Error ? thrown.message : String(thrown));
       } finally {
-        nodeInFlight.current.delete(key);
-        if (alive.current) {
-          setNodeLoading((previous) => {
-            const next = new Set(previous);
-            next.delete(key);
-            return next;
-          });
+        // Only a page of the walk still current frees its folder, the guard the page itself is held
+        // to: `reset` already cleared a discarded walk's slots, and the slot this key holds now may be
+        // the current walk's own page in the air, which a stale landing must not release.
+        if (mine === walk.current) {
+          nodeInFlight.current.delete(key);
+          if (alive.current) {
+            setNodeLoading((previous) => {
+              const next = new Set(previous);
+              next.delete(key);
+              return next;
+            });
+          }
         }
       }
     },
-    [absorb, absorbTypes, capability, readPageAt, shape],
+    [absorb, absorbFolders, absorbTypes, asked, capability, heldEntries, readPageAt, shape],
   );
 
   const stop = useCallback((): void => {
@@ -592,8 +732,10 @@ export function useKeyScan(options: {
     nodeCursor.current.clear();
     nodeInFlight.current.clear();
     walked.current.clear();
+    heldFolders.current.clear();
     knownTypes.current.clear();
     setKeys([]);
+    setFolders({ question: null, list: [] });
     setScanned(0);
     setSkipped(null);
     setTotal(null);
@@ -609,6 +751,7 @@ export function useKeyScan(options: {
 
   return {
     keys,
+    folders: folders.question === asked ? folders.list : NO_FOLDERS,
     scanned,
     total,
     clustered,
