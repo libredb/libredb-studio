@@ -633,11 +633,92 @@ export function boundedLz4(input: Uint8Array, outputLength: number): Uint8Array 
   return boundedLz4Raw(input, outputLength);
 }
 
+/** The bounded zstd decoder's refusal of a frame that breaks the format; previewParquet reports it as R-PQ-DECODE. */
+const ZSTD_MALFORMED = "The ZSTD data is malformed";
+
+/** The bytes of the dictionary id each value of a frame header's dictionary flag declares. */
+const ZSTD_DICTIONARY_BYTES = [0, 1, 2, 4];
+
+/**
+ * Reads the zstd frame header at `start` and walks its block headers without decoding them: where the frame ends and
+ * the content size it declares. A frame that declares no content size, or one past `room`, is refused before any work,
+ * and so are raw and RLE blocks whose sizes pass that content size.
+ */
+function zstdFrame(input: Uint8Array, start: number, room: number): { readonly end: number; readonly size: number } {
+  if (start + 5 > input.length) throw new Error(ZSTD_MALFORMED);
+  const descriptor = input[start + 4];
+  if ((descriptor & 0x08) !== 0) throw new Error(ZSTD_MALFORMED);
+  const singleSegment = (descriptor >> 5) & 1;
+  const sizeFlag = descriptor >> 6;
+  const sizeBytes = sizeFlag === 0 ? singleSegment : 1 << sizeFlag;
+  if (sizeBytes === 0) throw new Error(DECODE_OVER_BUDGET);
+  let at = start + 5 + (1 - singleSegment) + ZSTD_DICTIONARY_BYTES[descriptor & 3];
+  if (at + sizeBytes > input.length) throw new Error(ZSTD_MALFORMED);
+  let size = 0;
+  for (let byte = sizeBytes - 1; byte >= 0; byte -= 1) size = size * 256 + input[at + byte];
+  if (sizeBytes === 2) size += 256;
+  if (size > room) throw new Error(DECODE_OVER_BUDGET);
+  at += sizeBytes;
+  let regenerated = 0;
+  for (let last = false; !last; ) {
+    if (at + 3 > input.length) throw new Error(ZSTD_MALFORMED);
+    const header = input[at] | (input[at + 1] << 8) | (input[at + 2] << 16);
+    const type = (header >> 1) & 3;
+    const blockSize = header >>> 3;
+    if (type === 3) throw new Error(ZSTD_MALFORMED);
+    const body = type === 1 ? 1 : blockSize;
+    if (at + 3 + body > input.length) throw new Error(ZSTD_MALFORMED);
+    if (type !== 2) {
+      regenerated += blockSize;
+      if (regenerated > size) throw new Error(DECODE_OVER_BUDGET);
+    }
+    at += 3 + body;
+    last = (header & 1) === 1;
+  }
+  if ((descriptor & 0x04) !== 0) {
+    if (at + 4 > input.length) throw new Error(ZSTD_MALFORMED);
+    at += 4;
+  }
+  return { end: at, size };
+}
+
+/**
+ * zstd bounded by `outputLength`: fzstd given one output buffer starts every frame at its offset 0, so an input of many
+ * frames would do that buffer's work once per frame. Each frame must declare its content size, the sizes may not pass
+ * `outputLength`, and each frame decodes into its own part of the output; skippable frames are skipped by their length.
+ * An output shorter than `outputLength` is refused with DECODE_OVER_BUDGET.
+ */
+export function boundedZstd(input: Uint8Array, outputLength: number, decompress: ParquetCodecs["zstd"]): Uint8Array {
+  const output = new Uint8Array(outputLength);
+  const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
+  let at = 0;
+  let out = 0;
+  while (at < input.length) {
+    if (at + 4 > input.length) throw new Error(ZSTD_MALFORMED);
+    const magic = view.getUint32(at, true);
+    if (magic >>> 4 === 0x184d2a5) {
+      if (at + 8 > input.length) throw new Error(ZSTD_MALFORMED);
+      const skip = view.getUint32(at + 4, true);
+      if (at + 8 + skip > input.length) throw new Error(ZSTD_MALFORMED);
+      at += 8 + skip;
+      continue;
+    }
+    if (magic !== 0xfd2fb528) throw new Error(ZSTD_MALFORMED);
+    const frame = zstdFrame(input, at, outputLength - out);
+    decompress(input.subarray(at, frame.end), output.subarray(out, out + frame.size));
+    out += frame.size;
+    at = frame.end;
+  }
+  if (out !== outputLength) throw new Error(DECODE_OVER_BUDGET);
+  return output;
+}
+
 /**
  * The second line behind the pre-scan: each codec checks that the declared output length is a non-negative
  * integer within the budget left before it runs, then spends it, so no call can leave the budget anything but a
  * whole number. Snappy is hyparquet's own pure-JavaScript decoder, so hysnappy's shared WASM
- * memory is never grown; zstd gets a buffer of the declared size, since fzstd otherwise sizes from the frame. Gzip and
+ * memory is never grown; zstd decodes through the frame walk above, each frame into its own part of a buffer of the
+ * declared size, since fzstd otherwise sizes from the frame and, given a buffer, restarts it for every frame. Gzip and
  * brotli decode through node:zlib with the declared length as the output limit, because the package decoders size
  * their output from the stream, and both LZ4 codecs through the bounded decoders above, because the package decoder
  * keeps copying a match past its output.
@@ -661,7 +742,7 @@ export function guardedCompressors(budget: number, modules: ParquetModules): Com
     }),
     GZIP: guard(modules.codecs.gzip),
     BROTLI: guard(modules.codecs.brotli),
-    ZSTD: guard((input, outputLength) => modules.codecs.zstd(input, new Uint8Array(outputLength))),
+    ZSTD: guard((input, outputLength) => boundedZstd(input, outputLength, modules.codecs.zstd)),
     LZ4: guard(modules.codecs.lz4),
     LZ4_RAW: guard(modules.codecs.lz4Raw),
   };

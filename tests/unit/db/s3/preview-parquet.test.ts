@@ -13,6 +13,7 @@ import {
   boundedLz4,
   boundedLz4Raw,
   boundedZlib,
+  boundedZstd,
   createDecodeSlots,
   DECODE_OVER_BUDGET,
   type DecodeSlots,
@@ -1497,5 +1498,112 @@ describe("an empty column chunk", () => {
     });
     expect(reader.calls.filter((call) => call.range.kind === "span")).toEqual([]);
     expect(calls.read).toEqual([]);
+  });
+});
+
+/** A zstd block header: 3 little-endian bytes of last flag, type (0 raw, 1 RLE, 2 compressed) and size. */
+const zstdBlock = (type: number, size: number, last: boolean, body: readonly number[]): number[] => {
+  const header = (size << 3) | (type << 1) | (last ? 1 : 0);
+  return [header & 0xff, (header >> 8) & 0xff, (header >> 16) & 0xff, ...body];
+};
+const ZSTD_MAGIC = [0x28, 0xb5, 0x2f, 0xfd];
+/** A single-segment zstd frame declaring `contentSize`, then the blocks given. */
+const zstdFrame = (contentSize: number, blocks: readonly number[], options: { checksum?: boolean } = {}): number[] => {
+  const checksum = options.checksum === true ? 0x04 : 0;
+  let size: number[];
+  let flag: number;
+  if (contentSize < 256) {
+    flag = 0;
+    size = [contentSize];
+  } else if (contentSize < 65_536 + 256) {
+    flag = 1;
+    size = [(contentSize - 256) & 0xff, (contentSize - 256) >> 8];
+  } else {
+    flag = 2;
+    size = [contentSize & 0xff, (contentSize >> 8) & 0xff, (contentSize >> 16) & 0xff, contentSize >>> 24];
+  }
+  return [...ZSTD_MAGIC, (flag << 6) | 0x20 | checksum, ...size, ...blocks, ...(checksum ? [0, 0, 0, 0] : [])];
+};
+const text = (bytes: Uint8Array): string => new TextDecoder().decode(bytes);
+const MiB = 1_048_576;
+
+describe("the bounded zstd decoder", () => {
+  test("a page of many concatenated RLE frames under a declared length of 1 MiB is refused with DECODE_OVER_BUDGET within a short time", async () => {
+    const { codecs } = await loadParquetModules();
+    const frame = zstdFrame(MiB, zstdBlock(1, MiB, true, [0x61]));
+    const input = Uint8Array.from(Array.from({ length: 1_000 }, () => frame).flat());
+    const started = performance.now();
+    expect(() => boundedZstd(input, MiB, codecs.zstd)).toThrow(DECODE_OVER_BUDGET);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    const compressors = guardedCompressors(8 * MiB, await loadParquetModules());
+    expect(() => compressors.ZSTD?.(input, MiB)).toThrow(DECODE_OVER_BUDGET);
+  });
+
+  test("a frame that declares no content size is refused before it decodes", async () => {
+    const { codecs } = await loadParquetModules();
+    let calls = 0;
+    const counting = (input: Uint8Array, output: Uint8Array): Uint8Array => {
+      calls += 1;
+      return codecs.zstd(input, output);
+    };
+    const noSize = Uint8Array.from([...ZSTD_MAGIC, 0x00, 0x50, ...zstdBlock(1, MiB, true, [0x61])]);
+    expect(() => boundedZstd(noSize, MiB, counting)).toThrow(DECODE_OVER_BUDGET);
+    expect(calls).toBe(0);
+  });
+
+  test("a valid single frame, and two frames whose content sizes sum to the declared length, decode", async () => {
+    const { codecs } = await loadParquetModules();
+    const raw = zstdFrame(5, zstdBlock(0, 5, true, [...new TextEncoder().encode("hello")]));
+    expect(text(boundedZstd(Uint8Array.from(raw), 5, codecs.zstd))).toBe("hello");
+    const rle = zstdFrame(300, zstdBlock(1, 300, true, [0x78]), { checksum: true });
+    const two = boundedZstd(Uint8Array.from([...raw, ...rle]), 305, codecs.zstd);
+    expect(text(two)).toBe(`hello${"x".repeat(300)}`);
+    const wide = zstdFrame(70_000, zstdBlock(1, 70_000, true, [0x79]));
+    expect(boundedZstd(Uint8Array.from(wide), 70_000, codecs.zstd)).toEqual(new Uint8Array(70_000).fill(0x79));
+    const compressors = guardedCompressors(1_024, await loadParquetModules());
+    expect(text(compressors.ZSTD?.(Uint8Array.from(raw), 5) as Uint8Array)).toBe("hello");
+  });
+
+  test("a skippable frame is skipped by its length", async () => {
+    const { codecs } = await loadParquetModules();
+    const skippable = [0x5a, 0x2a, 0x4d, 0x18, 3, 0, 0, 0, 1, 2, 3];
+    const raw = zstdFrame(2, zstdBlock(0, 2, true, [0x6f, 0x6b]));
+    expect(text(boundedZstd(Uint8Array.from([...skippable, ...raw]), 2, codecs.zstd))).toBe("ok");
+  });
+
+  test("frames or blocks that declare more than the declared length are refused, and so is a short output", async () => {
+    const { codecs } = await loadParquetModules();
+    const raw = zstdFrame(2, zstdBlock(0, 2, true, [0x6f, 0x6b]));
+    expect(() => boundedZstd(Uint8Array.from([...raw, ...raw]), 3, codecs.zstd)).toThrow(DECODE_OVER_BUDGET);
+    expect(() => boundedZstd(Uint8Array.from(raw), 1, codecs.zstd)).toThrow(DECODE_OVER_BUDGET);
+    expect(() => boundedZstd(Uint8Array.from(raw), 3, codecs.zstd)).toThrow(DECODE_OVER_BUDGET);
+    const blocksOver = zstdFrame(4, [...zstdBlock(1, 3, false, [0x61]), ...zstdBlock(0, 2, true, [0x62, 0x63])]);
+    expect(() => boundedZstd(Uint8Array.from(blocksOver), 4, codecs.zstd)).toThrow(DECODE_OVER_BUDGET);
+    const huge = [...ZSTD_MAGIC, 0xe0, 0, 0, 0, 0, 0, 0, 0, 1, ...zstdBlock(0, 0, true, [])];
+    expect(() => boundedZstd(Uint8Array.from(huge), MiB, codecs.zstd)).toThrow(DECODE_OVER_BUDGET);
+    expect(boundedZstd(new Uint8Array(0), 0, codecs.zstd)).toEqual(new Uint8Array(0));
+  });
+
+  test("malformed frames throw an error of their own", async () => {
+    const { codecs } = await loadParquetModules();
+    const malformed = "The ZSTD data is malformed";
+    const raw = zstdFrame(2, zstdBlock(0, 2, true, [0x6f, 0x6b]));
+    const cases: readonly (readonly number[])[] = [
+      [0x01, 0x02, 0x03],
+      [0x00, 0x00, 0x00, 0x00],
+      [...ZSTD_MAGIC],
+      [...ZSTD_MAGIC, 0x28, 2],
+      [...ZSTD_MAGIC, 0x80],
+      [...ZSTD_MAGIC, 0x20, 2, 0x00],
+      [...ZSTD_MAGIC, 0x20, 2, ...zstdBlock(3, 2, true, [0, 0])],
+      [...ZSTD_MAGIC, 0x20, 2, ...zstdBlock(0, 2, true, [0])],
+      [...ZSTD_MAGIC, 0x24, 2, ...zstdBlock(0, 2, true, [0, 0]), 0, 0],
+      [0x5a, 0x2a, 0x4d, 0x18, 3, 0],
+      [0x5a, 0x2a, 0x4d, 0x18, 3, 0, 0, 0, 1],
+      raw.slice(0, raw.length - 1),
+    ];
+    for (const input of cases) {
+      expect(() => boundedZstd(Uint8Array.from(input), 2, codecs.zstd), input.join(",")).toThrow(malformed);
+    }
   });
 });
