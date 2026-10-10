@@ -46,6 +46,7 @@ import {
 import { runS3Scenario, S3_LIVE_ONLY_ROWS, scenariosFor } from "../../../live/s3-evidence-plan";
 import {
   checkS3Step,
+  escapeMatrixCell,
   levelPageDefect,
   readmeRows,
   readS3Principals,
@@ -1496,6 +1497,11 @@ describe("the acceptance matrix S3_ACCEPTANCE", () => {
     const doc = readFileSync(path.join(ROOT, DOC), "utf8");
     expect(matrixDocFindings(doc)).toEqual([]);
     expect(matrixDocFindings(doc.replace("| A1 |", "| A1x |"))[0]).toContain("is not renderS3Acceptance()");
+  });
+
+  test("a matrix cell escapes its backslashes before its pipes and angle brackets", () => {
+    expect(escapeMatrixCell("a\\|b | c\\d")).toBe("a\\\\\\|b \\| c\\\\d");
+    expect(escapeMatrixCell("fx-<codec>.parquet")).toBe("fx-\\<codec\\>.parquet");
   });
 
   test("every row is unique, in one group, has a cell on every target, and names only sentences the provider exports", () => {

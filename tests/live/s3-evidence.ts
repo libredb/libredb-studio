@@ -39,6 +39,7 @@ import type { S3Capture, S3TransportFactory } from "../helpers/s3-wire";
 import { runS3Scenario, S3_SCENARIOS, scenariosFor } from "./s3-evidence-plan";
 import {
   checkS3Step,
+  escapeMatrixCell,
   fixtureSecrets,
   readS3Principals,
   ROOT,
@@ -223,7 +224,7 @@ try {
   const readme = renderCapturesReadme(
     sets,
     digests,
-    S3_SCENARIOS.map((scenario) => ({ name: scenario.name, shows: scenario.shows })),
+    S3_SCENARIOS.map((scenario) => ({ name: scenario.name, shows: escapeMatrixCell(scenario.shows) })),
   );
   if (readDigestTable(readme).length !== digests.length) throw new Error("the README's digest table did not read back");
   mkdirSync(directory, { recursive: true });

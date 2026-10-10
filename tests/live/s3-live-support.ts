@@ -1114,7 +1114,7 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
   },
   {
     id: "A38",
-    behaviour: "parquet/fx-\\<codec\\>.parquet for the six codecs, fx-two-groups.parquet, fx-empty.parquet",
+    behaviour: "parquet/fx-<codec>.parquet for the six codecs, fx-two-groups.parquet, fx-empty.parquet",
     expect: cells({
       minio: [
         ...CODECS.map((codec) => ({
@@ -1799,6 +1799,14 @@ function describeRef(ref: string): string {
   return `the sentence for ${answer.status}${answer.code === undefined ? "" : ` ${answer.code}`}${answer.message === undefined ? "" : ` "${answer.message}"`} to ${answer.operation}`;
 }
 
+/**
+ * Escapes a Markdown table cell: backslashes first, so a cell holding `\|` keeps both characters, then pipes, and
+ * angle brackets, so a placeholder such as `<codec>` is not read as an HTML tag.
+ */
+export function escapeMatrixCell(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/[|<>]/g, "\\$&");
+}
+
 function cellText(cell: readonly S3Step[]): string {
   const texts = cell.map(({ step, outcome }) => {
     const text =
@@ -1811,7 +1819,7 @@ function cellText(cell: readonly S3Step[]): string {
             : `refused before any request, ${describeRef(outcome.sentence)}`;
     return cell.length === 1 ? text : `${step}: ${text}`;
   });
-  return texts.join("; ").replace(/\|/g, "\\|").replace(/\n/g, " ");
+  return escapeMatrixCell(texts.join("; ")).replace(/\n/g, " ");
 }
 
 /** The Markdown block between docs/providers/s3.md's s3-acceptance markers. */
@@ -1829,7 +1837,7 @@ export function renderS3Acceptance(): string {
       const row = byId.get(id as S3AcceptanceRow["id"]);
       if (row === undefined) throw new Error(`S3_ACCEPTANCE_GROUPS names ${id}, which S3_ACCEPTANCE does not hold`);
       lines.push(
-        `| ${row.id} | ${row.behaviour.replace(/\|/g, "\\|")} | ${S3_MATRIX_COLUMNS.map((target) => cellText(row.expect[target])).join(" | ")} |`,
+        `| ${row.id} | ${escapeMatrixCell(row.behaviour)} | ${S3_MATRIX_COLUMNS.map((target) => cellText(row.expect[target])).join(" | ")} |`,
       );
     }
     lines.push("");

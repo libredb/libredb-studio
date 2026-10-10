@@ -21,7 +21,7 @@ interface Received {
   readonly method: string;
   readonly path: string;
   readonly query: string;
-  readonly headers: Readonly<Record<string, string>>;
+  readonly headers: ReadonlyMap<string, string>;
 }
 
 const CREDENTIALS = { accessKeyId: "AKIDTESTKEY", secretAccessKey: "test-secret-key" };
@@ -60,10 +60,10 @@ function serve(socket: Socket): void {
       buffer = buffer.slice(end + 4);
       const [method, target] = line.split(" ");
       const at = target.indexOf("?");
-      const headers: Record<string, string> = {};
+      const headers = new Map<string, string>();
       for (const header of headerLines) {
         const colon = header.indexOf(":");
-        headers[header.slice(0, colon).toLowerCase()] = header.slice(colon + 1).trim();
+        headers.set(header.slice(0, colon).toLowerCase(), header.slice(colon + 1).trim());
       }
       const request = {
         method,
@@ -105,9 +105,16 @@ function clientWith(maxSockets: number): S3Client {
 
 const CALL = () => ({ signal: AbortSignal.timeout(10_000), deadline: Date.now() + 10_000 });
 
+/** One header the listener received; a missing one fails the test by name. */
+function headerOf(request: Received, name: string): string {
+  const value = request.headers.get(name);
+  if (value === undefined) throw new Error(`The request carried no ${name} header`);
+  return value;
+}
+
 /** Recomputes the signature from what the listener received, and checks the Host and query rules. */
 function verify(request: Received): void {
-  const authorization = request.headers.authorization;
+  const authorization = headerOf(request, "authorization");
   const match =
     /^AWS4-HMAC-SHA256 Credential=AKIDTESTKEY\/(\d{8})\/us-east-1\/s3\/aws4_request, SignedHeaders=([a-z0-9;-]+), Signature=([0-9a-f]{64})$/.exec(
       authorization,
@@ -118,20 +125,20 @@ function verify(request: Received): void {
   expect(signed).toContain("host");
   expect(signed).not.toContain("accept-encoding");
   expect(signed).not.toContain("connection");
-  for (const name of Object.keys(request.headers)) if (name.startsWith("x-amz-")) expect(signed).toContain(name);
-  expect(request.headers.host).toBe(`127.0.0.1:${port}`);
-  expect(request.headers["x-amz-date"].slice(0, 8)).toBe(day);
+  for (const name of request.headers.keys()) if (name.startsWith("x-amz-")) expect(signed).toContain(name);
+  expect(request.headers.get("host")).toBe(`127.0.0.1:${port}`);
+  expect(headerOf(request, "x-amz-date").slice(0, 8)).toBe(day);
   expect(canonicalQueryOf(request.query)).toBe(request.query);
   const recomputed = signatureV4(
     {
       method: request.method,
       canonicalUri: request.path,
       canonicalQuery: canonicalQueryOf(request.query),
-      headers: Object.fromEntries(signed.map((name) => [name, request.headers[name]])),
-      payloadHash: request.headers["x-amz-content-sha256"],
+      headers: Object.fromEntries(signed.map((name) => [name, headerOf(request, name)])),
+      payloadHash: headerOf(request, "x-amz-content-sha256"),
     },
     CREDENTIALS,
-    { region: "us-east-1", service: "s3", amzDate: request.headers["x-amz-date"] },
+    { region: "us-east-1", service: "s3", amzDate: headerOf(request, "x-amz-date") },
   );
   expect(recomputed.split("Signature=")[1]).toBe(signature);
 }
@@ -223,8 +230,8 @@ describe("every operation on the wire", () => {
       { bucket: "sales", key: "a.csv", range: { first: 0, last: 2 }, maxBytes: 10 },
       CALL(),
     );
-    expect(received[0].headers.range).toBe("bytes=0-2");
-    expect(received[0].headers.authorization).toContain("SignedHeaders=host;range;");
+    expect(received[0].headers.get("range")).toBe("bytes=0-2");
+    expect(received[0].headers.get("authorization")).toContain("SignedHeaders=host;range;");
     verify(received[0]);
   });
 });
@@ -238,7 +245,7 @@ test("x-amz-date is read when a queued request leaves the queue", async () => {
   } finally {
     holdFirstMs = 0;
   }
-  const dates = received.map((request) => request.headers["x-amz-date"]);
+  const dates = received.map((request) => headerOf(request, "x-amz-date"));
   expect(dates[1] > dates[0]).toBe(true);
   for (const request of received) verify(request);
 });
@@ -435,12 +442,12 @@ for (const binary of nodeBinaries()) {
     });
 
     test("the ranged GET signed its range", () => {
-      expect(sent[QUEUED_FIRST - 1].headers.range).toBe("bytes=0-2");
-      expect(sent[QUEUED_FIRST - 1].headers.authorization).toContain("SignedHeaders=host;range;");
+      expect(sent[QUEUED_FIRST - 1].headers.get("range")).toBe("bytes=0-2");
+      expect(sent[QUEUED_FIRST - 1].headers.get("authorization")).toContain("SignedHeaders=host;range;");
     });
 
     test("x-amz-date is read when a queued request leaves the queue", () => {
-      expect(sent[QUEUED_FIRST + 1].headers["x-amz-date"] > sent[QUEUED_FIRST].headers["x-amz-date"]).toBe(true);
+      expect(headerOf(sent[QUEUED_FIRST + 1], "x-amz-date") > headerOf(sent[QUEUED_FIRST], "x-amz-date")).toBe(true);
     });
   });
 }
