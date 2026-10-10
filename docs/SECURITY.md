@@ -574,7 +574,7 @@ A key's `.` and `..` segments are resolved with empty segments skipped, the read
 With the HTTP guard off, an endpoint of `http://169.254.169.254` would put instance metadata one GET away, which is why the byte transport S3 uses refuses the link-local networks and AWS's IPv6 metadata address whether or not the guard is on (row 0.6), before the S3-proving connect probe ever runs, while loopback and private addresses stay usable for local servers.
 Elsewhere, the connect probe is what keeps a host that does not speak S3 from having a body read: a connection reads no object until its probe parsed as S3 XML.
 A metadata service a cloud serves outside those networks is not refused; none is claimed.
-A Parquet footer and its page headers are data the object supplies, so the preview checks them before its decoder reads them: a varint longer than its type allows or a long-form field id outside 1 to 32,767 is refused, so the check and the decoder read the same values, and a size, count or offset that is negative or past 2^53 is refused, so no value can lower a sum below its cap.
+A Parquet footer and its page headers are data the object supplies, so the preview checks them before its decoder reads them: a varint longer than its type allows or a long-form field id outside 1 to 32,767 is refused, so the check and the decoder read the same values, and a size, count or offset that is negative or above 2^53 - 1 is refused, so no value can lower a sum below its cap.
 A rendered cell is cut while its string is escaped, never escaped whole and cut afterwards, so a decoded string far past the cell bound costs no more memory than the cell.
 
 ## Known limits

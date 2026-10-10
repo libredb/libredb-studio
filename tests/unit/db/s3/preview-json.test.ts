@@ -70,7 +70,7 @@ describe("ndjsonRows", () => {
   });
 
   test("CRLF lines, blank lines skipped and a leading byte order mark removed", () => {
-    expect(ndjsonRows(input('﻿{"a":1}\r\n\r\n  \n{"a":2}\r\n'))).toEqual({
+    expect(ndjsonRows(input('\uFEFF{"a":1}\r\n\r\n  \n{"a":2}\r\n'))).toEqual({
       kind: "rows",
       rows: { columns: [{ name: "a", type: "number" }], rows: [[1], [2]] },
       notices: [],

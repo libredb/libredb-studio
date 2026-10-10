@@ -27,8 +27,8 @@ const chain = (groups: number): SchemaElementLike[] => [
 ];
 
 describe("walkParquetSchema: the refusals", () => {
-  test("a chain of parquetMaxSchemaDepth + 1 groups is refused, and one of parquetMaxSchemaDepth - 1 passes", () => {
-    expect(walk(chain(S3_PREVIEW_LIMITS.parquetMaxSchemaDepth + 1))).toEqual({ ok: false });
+  test("a chain of parquetMaxSchemaDepth groups is refused, and one of parquetMaxSchemaDepth - 1 passes", () => {
+    expect(walk(chain(S3_PREVIEW_LIMITS.parquetMaxSchemaDepth))).toEqual({ ok: false });
     expect(walk(chain(S3_PREVIEW_LIMITS.parquetMaxSchemaDepth - 1)).ok).toBe(true);
   });
 
@@ -80,9 +80,18 @@ describe("walkParquetSchema: the refusals", () => {
     expect(walk([root(1), { name: "d", type: "INT64", converted_type: "DECIMAL", precision: 9 }])).toEqual(malformed);
   });
 
-  test("a chain of 100,000 groups is refused without a stack overflow", () => {
-    expect(() => walk(chain(100_000))).not.toThrow();
-    expect(walk(chain(100_000))).toEqual({ ok: false });
+  test("a chain of 100,000 groups inside the element bound is refused by the depth check, without a throw", () => {
+    const wide = { ...S3_PREVIEW_LIMITS, parquetMaxLeafColumns: 200_000 };
+    expect(chain(100_000).length).toBeLessThanOrEqual(wide.parquetMaxLeafColumns * S3_PREVIEW_ELEMENTS_PER_COLUMN);
+    expect(() => walkParquetSchema(chain(100_000), wide)).not.toThrow();
+    expect(walkParquetSchema(chain(100_000), wide)).toEqual({ ok: false });
+  });
+
+  test("a chain of 10,000 groups is walked to its leaf when the limits allow it, without a throw", () => {
+    const deep = { ...S3_PREVIEW_LIMITS, parquetMaxSchemaDepth: 200_000, parquetMaxLeafColumns: 200_000 };
+    const shape = walkParquetSchema(chain(10_000), deep);
+    expect(shape.ok).toBe(true);
+    expect(shape.ok && shape.leaves[0].path).toHaveLength(10_001);
   });
 });
 

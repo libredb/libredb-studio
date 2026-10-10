@@ -2526,6 +2526,10 @@ describe("generateTableQuery and generateSelectQuery: S3", () => {
   test("Generate Command writes the listing, with two reads as comments", () => {
     const text = generateSelectQuery(["sales"], [], s3Caps);
     expect(text).toBe(s3SelectQuery(["sales"]));
+    expect(text.split("\n").slice(1)).toEqual([
+      "# aws s3api list-objects-v2 --bucket sales --delimiter / --max-items 50",
+      "# aws s3api get-bucket-versioning --bucket sales",
+    ]);
     expect(parseS3Command(text, {}).ok).toBe(true);
   });
 

@@ -167,8 +167,13 @@ describe("the read-on command the read-on notice names for ls", () => {
         expectParses(text);
       }
     }
-    expect(s3ReadOnCommand({ bucket: "sales", prefix: "-x", delimiter: true, startingToken: token })).toContain(
-      "--prefix=-x",
-    );
+    const spelled = (prefix: string) =>
+      s3ReadOnCommand({ bucket: "sales", prefix, delimiter: true, startingToken: token });
+    const tail = `--delimiter / --starting-token ${token}`;
+    expect(spelled("-x")).toBe(`aws s3api list-objects-v2 --bucket sales --prefix=-x ${tail}`);
+    expect(spelled("-x y")).toBe(`aws s3api list-objects-v2 --bucket sales --prefix='-x y' ${tail}`);
+    expect(spelled("a b")).toBe(`aws s3api list-objects-v2 --bucket sales --prefix 'a b' ${tail}`);
+    expect(spelled("^")).toBe(`aws s3api list-objects-v2 --bucket sales --prefix '^' ${tail}`);
+    expect(spelled("it's/")).toBe(`aws s3api list-objects-v2 --bucket sales --prefix 'it'\\''s/' ${tail}`);
   });
 });

@@ -106,12 +106,16 @@ describe("rangeReader", () => {
       "bytes=-2",
       "bytes=10-11",
     ]);
-    expect(requests[0]).toMatchObject({ bucket: "sales", key: "a.csv", maxBytes: 2, truncateAt: 2 });
+    expect(requests).toHaveLength(3);
+    for (const request of requests)
+      expect(request).toMatchObject({ bucket: "sales", key: "a.csv", maxBytes: 2, truncateAt: 2 });
     // The client reads at least its small-response bound so an error body arrives whole, and cuts data answers itself.
-    expect(fake.exchanges[0].request).toMatchObject({
-      maxResponseBytes: S3_SMALL_RESPONSE_BYTES,
-      truncateAt: S3_SMALL_RESPONSE_BYTES,
-    });
+    expect(fake.exchanges).toHaveLength(3);
+    for (const exchange of fake.exchanges)
+      expect(exchange.request).toMatchObject({
+        maxResponseBytes: S3_SMALL_RESPONSE_BYTES,
+        truncateAt: S3_SMALL_RESPONSE_BYTES,
+      });
   });
 
   test.each([

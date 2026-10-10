@@ -950,6 +950,7 @@ describe("docs/providers/s3.md: the probe, the declarations and the errors, as t
 
   test("27. section 8 is runMaintenance()'s refusal", async () => {
     expect(flat(sectionOf(DOC, "## 8. Maintenance"))).toContain(S3_LABELS.vacuumGlobalDesc);
+    await expect(provider.runMaintenance()).rejects.toThrow(S3_LABELS.vacuumGlobalDesc);
   });
 
   test("28. every row of section 10 is the sentence the error mapping gives for that answer", () => {
@@ -1227,22 +1228,20 @@ describe("docs/SECURITY.md: the S3 rows and limits", () => {
 
   test("41. the notes 3.18 and 3.19 are word for word", () => {
     expect(SECURITY).toContain(
-      "**3.18.** The S3 client is built over a method set of GET and HEAD alone, so no code path in Studio can send a write to an S3 server, whatever the parser or the mode decide.\nThe console's commands are a closed table, and a command or flag outside it is refused before any request with the sentence its row names.",
-    );
-    expect(SECURITY).toContain(
-      "A key's `.` and `..` segments are resolved with empty segments skipped, the reading with the fewest levels, so a key that stays inside its bucket on a server that keeps empty segments cannot leave it through a proxy that merges slashes; `objectPath` applies the same check to every caller, so a caller that skips the Source tab's check still cannot build such a path.",
-    );
-    expect(SECURITY).toContain(
-      "**3.19.** An S3 provider that fell back to the server's own credentials would hand every Studio user the server's cloud identity, so Studio has no such fallback: an empty key pair is an unsigned request, never an ambient one.",
-    );
-    expect(SECURITY).toContain(
-      "A metadata service a cloud serves outside those networks is not refused; none is claimed.",
-    );
-    expect(SECURITY).toContain(
-      "A Parquet footer and its page headers are data the object supplies, so the preview checks them before its decoder reads them: a varint longer than its type allows or a long-form field id outside 1 to 32,767 is refused, so the check and the decoder read the same values, and a size, count or offset that is negative or past 2^53 is refused, so no value can lower a sum below its cap.",
-    );
-    expect(SECURITY).toContain(
-      "A rendered cell is cut while its string is escaped, never escaped whole and cut afterwards, so a decoded string far past the cell bound costs no more memory than the cell.",
+      [
+        "**3.18.** The S3 client is built over a method set of GET and HEAD alone, so no code path in Studio can send a write to an S3 server, whatever the parser or the mode decide.",
+        "The console's commands are a closed table, and a command or flag outside it is refused before any request with the sentence its row names.",
+        "A key's `.` and `..` segments are resolved with empty segments skipped, the reading with the fewest levels, so a key that stays inside its bucket on a server that keeps empty segments cannot leave it through a proxy that merges slashes; `objectPath` applies the same check to every caller, so a caller that skips the Source tab's check still cannot build such a path.",
+        "",
+        "**3.19.** An S3 provider that fell back to the server's own credentials would hand every Studio user the server's cloud identity, so Studio has no such fallback: an empty key pair is an unsigned request, never an ambient one.",
+        "With the HTTP guard off, an endpoint of `http://169.254.169.254` would put instance metadata one GET away, which is why the byte transport S3 uses refuses the link-local networks and AWS's IPv6 metadata address whether or not the guard is on (row 0.6), before the S3-proving connect probe ever runs, while loopback and private addresses stay usable for local servers.",
+        "Elsewhere, the connect probe is what keeps a host that does not speak S3 from having a body read: a connection reads no object until its probe parsed as S3 XML.",
+        "A metadata service a cloud serves outside those networks is not refused; none is claimed.",
+        "A Parquet footer and its page headers are data the object supplies, so the preview checks them before its decoder reads them: a varint longer than its type allows or a long-form field id outside 1 to 32,767 is refused, so the check and the decoder read the same values, and a size, count or offset that is negative or above 2^53 - 1 is refused, so no value can lower a sum below its cap.",
+        "A rendered cell is cut while its string is escaped, never escaped whole and cut afterwards, so a decoded string far past the cell bound costs no more memory than the cell.",
+        "",
+        "## Known limits",
+      ].join("\n"),
     );
   });
 

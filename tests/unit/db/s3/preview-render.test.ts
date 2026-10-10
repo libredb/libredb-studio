@@ -417,8 +417,11 @@ describe("previewSourceParts", () => {
     ]);
   });
 
-  test("1,024 columns of 65,536-character statistics and 100 rows of 1,024 such cells stay within SOURCE_CHARACTER_LIMIT", () => {
+  test("1,024 columns of 65,536-character statistics and one row whose cells pass SOURCE_CHARACTER_LIMIT stay within it", () => {
     const long = "m".repeat(65_536);
+    // 1,024 cells of 977 characters hold 1,000,448 characters, just over the bound before any key or quote is counted.
+    const cell = "m".repeat(Math.ceil((SOURCE_CHARACTER_LIMIT + 1) / 1_024));
+    expect(cell.length * 1_024).toBeGreaterThan(SOURCE_CHARACTER_LIMIT);
     const columns = Array.from({ length: 1_024 }, (_, index) => ({
       path: `c${index}`,
       type: "BYTE_ARRAY",
@@ -435,7 +438,7 @@ describe("previewSourceParts", () => {
         summary: { ...summary, columns },
         rows: {
           columns: columns.map((column) => ({ name: column.path, type: "BYTE_ARRAY" })),
-          rows: Array.from({ length: 100 }, () => columns.map(() => long)),
+          rows: [columns.map(() => cell)],
         },
         notices: [],
       },
