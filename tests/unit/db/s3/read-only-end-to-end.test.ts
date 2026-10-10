@@ -112,18 +112,32 @@ describe.each([
       { readOnly: executionReadOnly },
     );
     await provider.connect();
-    await provider.countObjects([]);
-    await provider.listObjects([], "bucket");
-    await provider.scanKeysPage?.({ cursor: "0", count: 10, pattern: "", level: true });
-    await provider.scanKeysPage?.({ cursor: "0", count: 10, pattern: "sales/", level: true });
-    await provider.readObjectSource?.(["sales"], "bucket");
-    await provider.readObjectSource?.(["sales/a.csv"], "object");
-    await provider.getHealth();
-    await provider.getOverview();
+    const scanKeysPage = provider.scanKeysPage?.bind(provider);
+    const readObjectSource = provider.readObjectSource?.bind(provider);
+    expect(typeof scanKeysPage).toBe("function");
+    expect(typeof readObjectSource).toBe("function");
+    if (scanKeysPage === undefined || readObjectSource === undefined) return;
+    /** Runs one surface call alone and proves it reached the server. */
+    const sends = async (call: () => Promise<unknown>): Promise<void> => {
+      const sent = methods.length;
+      await call();
+      expect(methods.length).toBeGreaterThan(sent);
+    };
+    // The listing runs before the count: a listing after a count takes the count's bucket list and sends nothing.
+    await sends(() => provider.listObjects([], "bucket"));
+    await sends(() => provider.countObjects([]));
+    await sends(() => scanKeysPage({ cursor: "0", count: 10, pattern: "", level: true }));
+    await sends(() => scanKeysPage({ cursor: "0", count: 10, pattern: "sales/", level: true }));
+    await sends(() => readObjectSource(["sales"], "bucket"));
+    await sends(() => readObjectSource(["sales/a.csv"], "object"));
+    await sends(() => provider.getHealth());
+    await sends(() => provider.getOverview());
     for (const text of READS) {
       // oxlint-disable-next-line no-await-in-loop -- one command at a time, so every request is one command's.
-      const result = await provider.query(text);
-      expect(Array.isArray(result.rows)).toBe(true);
+      await sends(async () => {
+        const result = await provider.query(text);
+        expect(Array.isArray(result.rows)).toBe(true);
+      });
     }
     const context = {
       endpoint: `http://127.0.0.1:${port}`,
