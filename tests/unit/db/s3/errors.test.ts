@@ -152,8 +152,11 @@ describe("E1 to E7: transport failures", () => {
   });
 
   test("E4: a cap that is not a whole number of MiB is worded in KiB, in bytes, or as one byte", () => {
-    const tooLarge = (capBytes: number) =>
-      mapped(named(new TransportError("too-large", "too large"), capBytes), "GetObject").message;
+    const tooLarge = (capBytes: number) => {
+      const error = new TransportError("too-large", "too large");
+      noteRequestNames(error, { bucket: "sales", key: "a.csv", capBytes });
+      return mapped(error, "GetObject").message;
+    };
     expect(tooLarge(S3_SMALL_RESPONSE_BYTES)).toContain("passed 64 KiB, the most Studio reads for it");
     expect(tooLarge(1_500)).toContain("passed 1,500 bytes, the most Studio reads for it");
     expect(tooLarge(S3_HEAD_RESPONSE_BYTES)).toContain("passed 1 byte, the most Studio reads for it");
@@ -619,6 +622,68 @@ describe("E7b to E34: server answers", () => {
 
   test("E34: any other status with no code", () => {
     expectRow(mapped(server({ status: 418 })), QueryError, `The server answered HTTP 418 to ${LIST} with no reason.`);
+  });
+});
+
+describe("a value the failed request must carry is a defect when it was never noted", () => {
+  const defect = (operation: S3Operation, what: string) =>
+    `The S3 error mapping got a failed ${operation} with no ${what} noted.`;
+
+  test("a ListBuckets failure asks for no name", () => {
+    expectRow(
+      mapped(new TransportError("timeout", "timed out"), "ListBuckets", SIGNED, { timeoutMs: 10_000 }),
+      TimeoutError,
+      "The S3 server at http://localhost:9000 did not answer list buckets within 10 seconds; nothing was retried.",
+    );
+    expect(
+      mapped(server({ status: 403, operation: "ListBuckets", bucket: undefined, code: "AccessDenied" }), "ListBuckets"),
+    ).toBeInstanceOf(QueryError);
+  });
+
+  test("a transport failure of a bucket verb with no bucket noted", () => {
+    expect(() => mapped(new TransportError("timeout", "timed out"), "ListObjectsV2")).toThrow(
+      defect("ListObjectsV2", "bucket"),
+    );
+  });
+
+  test("a transport failure of an object verb with no key noted", () => {
+    const error = new TransportError("timeout", "timed out");
+    noteRequestNames(error, { bucket: "sales" });
+    expect(() => mapped(error, "GetObject")).toThrow(defect("GetObject", "key"));
+  });
+
+  test("an answer over its cap with no cap noted", () => {
+    const error = new TransportError("too-large", "too large");
+    noteRequestNames(error, { bucket: "sales" });
+    expect(() => mapped(error)).toThrow(defect("ListObjectsV2", "response cap"));
+  });
+
+  test("a redirect that carries no status", () => {
+    const error = new TransportError("redirect", "redirected");
+    noteRequestNames(error, { bucket: "sales" });
+    expect(() => mapped(error)).toThrow(defect("ListObjectsV2", "redirect status"));
+  });
+
+  test("a server answer to a bucket verb with no bucket", () => {
+    expect(() => mapped(server({ status: 403, bucket: undefined, code: "AccessDenied" }))).toThrow(
+      defect("ListObjectsV2", "bucket"),
+    );
+  });
+
+  test("a server answer to an object verb with no key", () => {
+    expect(() => mapped(server({ status: 404, operation: "GetObject", code: "NoSuchKey" }), "GetObject")).toThrow(
+      defect("GetObject", "key"),
+    );
+  });
+
+  test("a row that quotes a key the bucket verb never carried", () => {
+    expect(() => mapped(server({ status: 404, code: "NoSuchKey" }))).toThrow(defect("ListObjectsV2", "key"));
+  });
+
+  test("a row that quotes a bucket the ListBuckets request never carried", () => {
+    expect(() =>
+      mapped(server({ status: 404, operation: "ListBuckets", bucket: undefined, code: "NoSuchBucket" }), "ListBuckets"),
+    ).toThrow(defect("ListBuckets", "bucket"));
   });
 });
 

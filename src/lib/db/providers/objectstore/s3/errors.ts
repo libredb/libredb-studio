@@ -287,8 +287,22 @@ function capWords(bytes: number): string {
   return bytes === 1 ? "1 byte" : `${bytes.toLocaleString("en-US")} bytes`;
 }
 
+/** A value the failed request must carry: one the client never noted is a defect, never a sentence. */
+function noted<T>(value: T | undefined, what: string, operation: S3Operation): T {
+  if (value === undefined) throw new Error(`The S3 error mapping got a failed ${operation} with no ${what} noted.`);
+  return value;
+}
+
+/**
+ * The verb's words with its shown names. A verb asks only for the names it carries: ListBuckets for none, a bucket
+ * verb for its bucket, an object verb for its bucket and key; a name a verb does not carry is passed as "" and never
+ * read.
+ */
 function opWords(operation: S3Operation, names: { readonly bucket?: string; readonly key?: string }): string {
-  return S3_VERBS[operation].op(shownName(names.bucket ?? ""), shownName(names.key ?? ""));
+  const verb = S3_VERBS[operation];
+  if (!verb.named) return verb.op("", "");
+  const bucket = shownName(noted(names.bucket, "bucket", operation));
+  return verb.op(bucket, verb.noun === "object" ? shownName(noted(names.key, "key", operation)) : "");
 }
 
 /** A server-named region, when it may be quoted. */
@@ -342,27 +356,30 @@ function transportFailure(
   context: S3ClientContext,
   details: S3FailureDetails,
 ): Error {
-  const op = opWords(operation, names);
+  const op = (): string => opWords(operation, names);
   switch (error.kind) {
     case "timeout":
-      return timeoutError(op, context, details);
+      return timeoutError(op(), context, details);
     case "aborted": {
       const reason: unknown = details.signal?.reason;
       if (reason instanceof QueryCancelledError) return reason;
       return new ConnectionError(S3_ERROR_SENTENCES.closed, S3_TYPE);
     }
     case "too-large": {
-      const cap = capWords(names.capBytes ?? 0);
+      const cap = capWords(noted(names.capBytes, "response cap", operation));
       return new QueryError(
-        operation === "ListBuckets" ? S3_ERROR_SENTENCES.bucketListTooLarge(cap) : S3_ERROR_SENTENCES.tooLarge(op, cap),
+        operation === "ListBuckets"
+          ? S3_ERROR_SENTENCES.bucketListTooLarge(cap)
+          : S3_ERROR_SENTENCES.tooLarge(op(), cap),
         S3_TYPE,
       );
     }
     case "redirect": {
-      const region = quotableRegion(firstHeader(error.redirect?.headers ?? [], "x-amz-bucket-region"), context);
+      const redirect = noted(error.redirect, "redirect status", operation);
+      const region = quotableRegion(firstHeader(redirect.headers, "x-amz-bucket-region"), context);
       if (region !== undefined && region !== context.region)
         return new DatabaseConfigError(S3_ERROR_SENTENCES.bucketRegion(region, context.region), S3_TYPE);
-      return new ConnectionError(S3_ERROR_SENTENCES.redirect(op, error.redirect?.status ?? 301), S3_TYPE);
+      return new ConnectionError(S3_ERROR_SENTENCES.redirect(op(), redirect.status), S3_TYPE);
     }
     default:
       return new ConnectionError(S3_ERROR_SENTENCES.unreachable(context.endpointText, error.message), S3_TYPE);
@@ -374,8 +391,8 @@ function denied(error: S3ServerError, op: string, context: S3ClientContext): str
   const name = !verb.named
     ? undefined
     : verb.noun === "bucket"
-      ? shownName(error.bucket ?? "")
-      : shownName(error.key ?? "");
+      ? shownName(noted(error.bucket, "bucket", error.operation))
+      : shownName(noted(error.key, "key", error.operation));
   const sentence = context.signs
     ? S3_ERROR_SENTENCES.deniedSigned(op, verb.action, verb.noun, name)
     : S3_ERROR_SENTENCES.deniedUnsigned(op, verb.action, verb.noun);
@@ -384,9 +401,9 @@ function denied(error: S3ServerError, op: string, context: S3ClientContext): str
 
 /** Rows E7b to E34, in order. */
 function serverFailure(error: S3ServerError, context: S3ClientContext): Error {
-  const b = shownName(error.bucket ?? "");
-  const k = shownName(error.key ?? "");
-  const op = S3_VERBS[error.operation].op(b, k);
+  const op = opWords(error.operation, error);
+  const b = (): string => shownName(noted(error.bucket, "bucket", error.operation));
+  const k = (): string => shownName(noted(error.key, "key", error.operation));
   const { status, code, problem } = error;
   const message = error.serverMessage ?? "";
   const signing = context.region;
@@ -436,11 +453,11 @@ function serverFailure(error: S3ServerError, context: S3ClientContext): Error {
     );
   if (code === "AccessDenied" && ANONYMOUS.test(message)) return new AuthenticationError(sentence.anonymous, S3_TYPE);
   if (code === "NoSuchBucket" || (status === 404 && error.operation === "HeadBucket"))
-    return new QueryError(sentence.noBucket(b), S3_TYPE);
-  if (status === 404 && error.deleteMarker === true) return new QueryError(sentence.deleteMarker(k, b), S3_TYPE);
-  if (code === "NoSuchKey") return new QueryError(sentence.noKey(k, b), S3_TYPE);
+    return new QueryError(sentence.noBucket(b()), S3_TYPE);
+  if (status === 404 && error.deleteMarker === true) return new QueryError(sentence.deleteMarker(k(), b()), S3_TYPE);
+  if (code === "NoSuchKey") return new QueryError(sentence.noKey(k(), b()), S3_TYPE);
   if (status === 404 && error.operation === "HeadObject" && code === undefined)
-    return new QueryError(sentence.headNotFound(k, b), S3_TYPE);
+    return new QueryError(sentence.headNotFound(k(), b()), S3_TYPE);
   if (problem?.kind === "not-s3" && status >= 200 && status < 300)
     return new QueryError(
       error.operation === "ListBuckets" && problem.xml === "too-many"
@@ -465,7 +482,7 @@ function serverFailure(error: S3ServerError, context: S3ClientContext): Error {
   if (code === "XMinioInvalidObjectName") return new QueryError(sentence.objectName, S3_TYPE);
   if (code === "XMinioInvalidResourceName" || (code === "InvalidArgument" && hasDotSegment(error.key ?? error.prefix)))
     return new QueryError(sentence.dotSegment, S3_TYPE);
-  if (code === "InvalidObjectState") return new QueryError(sentence.archived(k), S3_TYPE);
+  if (code === "InvalidObjectState") return new QueryError(sentence.archived(k()), S3_TYPE);
   if (code === "SlowDown" || status === 503)
     return new ConnectionError(sentence.overloaded(codeWords(code, status, context)), S3_TYPE);
   if (status >= 500 && status <= 599)
