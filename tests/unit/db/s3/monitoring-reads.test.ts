@@ -185,7 +185,16 @@ describe("health and the overview", () => {
 
   test("the empty panels answer [] once connected, and refuse before", async () => {
     const { s3, fake } = provider(() => xmlAnswer(bucketsXml(["sales"])));
-    await expect(s3.getStorageStats()).rejects.toThrow("Provider is not connected. Call connect() first.");
+    await Promise.all(
+      [
+        s3.getStorageStats(),
+        s3.getTableStats(),
+        s3.getIndexStats(),
+        s3.getSlowQueries(),
+        s3.getActiveSessions(),
+        s3.getPerformanceMetrics(),
+      ].map((panel) => expect(panel).rejects.toThrow("Provider is not connected. Call connect() first.")),
+    );
     await s3.connect();
     expect(await s3.getStorageStats()).toEqual([]);
     expect(await s3.getTableStats()).toEqual([]);

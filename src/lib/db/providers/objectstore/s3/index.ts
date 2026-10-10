@@ -550,8 +550,9 @@ export class S3Provider extends BaseDatabaseProvider {
     return [];
   }
 
-  /** Nothing is measured, so every optional figure is absent. */
+  /** Nothing is measured, so every optional figure is absent; refused before connect, as every other panel is. */
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    this.ensureConnected();
     return {};
   }
 
