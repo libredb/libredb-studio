@@ -71,3 +71,66 @@ export const S3_ACCESS_KEY_ID_PATTERN = /^[\x21-\x2b\x2d\x2e\x30-\x3c\x3e-\x7e]+
 export const S3_BUCKET_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,253}[A-Za-z0-9])?$/;
 /** 1 to 64 letters, digits, hyphens or underscores. */
 export const S3_REGION_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+// Object preview bounds. The three numbers the console and the preview share are read from their
+// single definitions above; every other number of the preview is defined here once.
+
+/** Every bound of one object preview; tests pass a smaller copy so fixtures stay small. */
+export interface S3PreviewLimits {
+  readonly textFetchBytes: number;
+  readonly gzipFetchBytes: number;
+  readonly decodedTextBytes: number;
+  readonly hexBytes: number;
+  readonly parquetTailBytes: number;
+  readonly parquetFooterMaxBytes: number;
+  readonly parquetFetchBudget: number;
+  readonly parquetDecodeBudget: number;
+  readonly parquetMaxPageValues: number;
+  readonly parquetMaxChunkValues: number;
+  readonly parquetMaxTotalValues: number;
+  readonly parquetMaxLeafColumns: number;
+  readonly parquetMaxSchemaDepth: number;
+  readonly thriftMaxDepth: number;
+  readonly sourceRows: number;
+  readonly defaultRows: number;
+  readonly maxRows: number;
+  readonly cellChars: number;
+  readonly summaryCellChars: number;
+  readonly cellMaxDepth: number;
+  readonly outputChars: number;
+  readonly maxColumns: number;
+  readonly csvSniffRecords: number;
+}
+
+/** The preview's bounds, each with its basis in docs/providers/s3.md, "Object preview". */
+export const S3_PREVIEW_LIMITS: S3PreviewLimits = Object.freeze({
+  textFetchBytes: 1_000_000,
+  gzipFetchBytes: 1_000_000,
+  decodedTextBytes: 1_000_000,
+  hexBytes: 65_536,
+  parquetTailBytes: 65_536,
+  parquetFooterMaxBytes: 1_048_576,
+  parquetFetchBudget: 8_388_608,
+  parquetDecodeBudget: 33_554_432,
+  parquetMaxPageValues: 524_288,
+  parquetMaxChunkValues: 524_288,
+  parquetMaxTotalValues: 524_288,
+  parquetMaxLeafColumns: 128,
+  parquetMaxSchemaDepth: 64,
+  thriftMaxDepth: 32,
+  sourceRows: 100,
+  defaultRows: S3_PREVIEW_DEFAULT_ROWS,
+  maxRows: S3_RESULT_MAX_ROWS,
+  cellChars: S3_CELL_CHARS,
+  summaryCellChars: 256,
+  cellMaxDepth: 64,
+  outputChars: 4_194_304,
+  maxColumns: 1_024,
+  csvSniffRecords: 20,
+});
+
+/** At most two Parquet decodes run at once in one process, whatever the provider, connection or user. */
+export const S3_PARQUET_DECODE_SLOTS = 2;
+
+/** At most this many previews wait for a decode slot; equal to the provider's request bound. */
+export const S3_PARQUET_DECODE_QUEUE = S3_LIMITER_OPTIONS.perProvider;
