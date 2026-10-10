@@ -1,10 +1,15 @@
 /**
  * A structural check of Thrift compact bytes. Browser-safe and pure. It walks one
  * struct without building values and never allocates per declared element: a list may declare at most the bytes left
- * (every compact element takes at least one), a binary at most the bytes left, a varint at most 10 bytes, nesting at
- * most `maxDepth`, and only the types hyparquet reads (thrift.js:6-16). Every footer and page header passes it before
- * any hyparquet parser sees it. A caller may also cap the list elements of the whole struct, since hyparquet builds an
- * object or a value for each one.
+ * (every compact element takes at least one), a binary at most the bytes left, nesting at most `maxDepth`, and only
+ * the types hyparquet reads (thrift.js:6-16). Every footer and page header passes it before any hyparquet parser sees
+ * it. A caller may also cap the list elements of the whole struct, since hyparquet builds an object or a value for
+ * each one.
+ *
+ * It accepts only bytes hyparquet's reader reads to the same values. hyparquet decodes a varint with 32-bit bitwise
+ * arithmetic, so a field id, an i16, an i32, a binary length or a list size may take at most 5 bytes, the fifth
+ * holding no bit past 32, and is decoded with hyparquet's own expressions; an i64 may take 10 bytes. A long-form field
+ * id must lie in 1 to 32,767, and a length or size that reads as negative is refused.
  */
 
 export type ThriftGuardResult =
@@ -39,18 +44,30 @@ const count = (value: number): string => value.toLocaleString("en-US");
 const stop = (reason: string): never => {
   throw new GuardStop(reason);
 };
-const unzigzag = (value: number): number => (value % 2 === 0 ? value / 2 : -(value + 1) / 2);
+/** hyparquet's zigzag decode of a 32-bit varint (thrift.js readZigZag). */
+const unzigzag = (zigzag: number): number => (zigzag >>> 1) ^ -(zigzag & 1);
 
-function readVarint(walk: Walk): number {
-  let value = 0;
-  let scale = 1;
+/** Skips an i64 varint of at most 10 bytes; hyparquet reads it as a bigint, which the guard never reports. */
+function skipVarint64(walk: Walk): void {
   for (let read = 0; read < 10; read += 1) {
     if (walk.offset >= walk.bytes.length) break;
     const byte = walk.bytes[walk.offset];
     walk.offset += 1;
-    value += (byte & 0x7f) * scale;
-    if ((byte & 0x80) === 0) return value;
-    scale *= 128;
+    if ((byte & 0x80) === 0) return;
+  }
+  stop("a number runs past the end");
+}
+
+/** A 32-bit varint as hyparquet's readVarInt computes it: at most 5 bytes, the fifth no larger than 0x0f. */
+function readVarint32(walk: Walk): number {
+  let result = 0;
+  for (let shift = 0; shift < 35; shift += 7) {
+    if (walk.offset >= walk.bytes.length) break;
+    const byte = walk.bytes[walk.offset];
+    walk.offset += 1;
+    if (shift === 28 && byte > 0x0f) stop("a number takes more than 32 bits");
+    result |= (byte & 0x7f) << shift;
+    if ((byte & 0x80) === 0) return result;
   }
   return stop("a number runs past the end");
 }
@@ -85,17 +102,17 @@ function walkValue(
       return undefined;
     case 4:
     case 5:
-      return unzigzag(readVarint(walk));
+      return unzigzag(readVarint32(walk));
     case 6:
-      readVarint(walk);
+      skipVarint64(walk);
       return undefined;
     case 7:
       skip(walk, 8);
       return undefined;
     case 8: {
-      const length = readVarint(walk);
+      const length = readVarint32(walk);
       const left = walk.bytes.length - walk.offset;
-      if (length > left) stop(`a string declares ${count(length)} bytes in ${count(left)} bytes`);
+      if (length < 0 || length > left) stop(`a string declares ${count(length)} bytes in ${count(left)} bytes`);
       walk.offset += length;
       return undefined;
     }
@@ -111,10 +128,10 @@ function walkList(walk: Walk, depth: number): number {
   if (depth > walk.maxDepth) stop(`nesting deeper than ${walk.maxDepth} levels`);
   const header = readByte(walk);
   const type = header & 0x0f;
-  const size = header >> 4 === 15 ? readVarint(walk) : header >> 4;
+  const size = header >> 4 === 15 ? readVarint32(walk) : header >> 4;
   if (!KNOWN_TYPES.has(type)) stop(`an unknown Thrift type ${type}`);
   const left = walk.bytes.length - walk.offset;
-  if (size > left) stop(`a list declares ${count(size)} elements in ${count(left)} bytes`);
+  if (size < 0 || size > left) stop(`a list declares ${count(size)} elements in ${count(left)} bytes`);
   walk.listElements += size;
   if (walk.listElements > walk.maxListElements)
     stop(`the lists declare more than ${count(walk.maxListElements)} elements in all`);
@@ -131,7 +148,11 @@ function walkStruct(walk: Walk, depth: number, path: readonly number[] | undefin
     if (type === 0) return;
     if (!KNOWN_TYPES.has(type)) stop(`an unknown Thrift type ${type}`);
     const delta = byte >> 4;
-    field = delta !== 0 ? field + delta : unzigzag(readVarint(walk));
+    if (delta !== 0) field += delta;
+    else {
+      field = unzigzag(readVarint32(walk));
+      if (field < 1 || field > 32_767) stop("a field id outside 1 to 32,767");
+    }
     const fieldPath = path === undefined ? undefined : [...path, field];
     const value = walkValue(walk, type, depth, fieldPath, false);
     if (fieldPath !== undefined) walk.onField?.(fieldPath, type, value);

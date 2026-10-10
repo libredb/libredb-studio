@@ -9,7 +9,7 @@ import path from "node:path";
 import { deserializeTCompactProtocol } from "hyparquet/src/thrift.js";
 import { guardThriftStruct, readPageHeader } from "@/lib/db/providers/objectstore/s3/parquet-thrift-guard";
 import { fixture, PREVIEW_FIXTURES } from "../../../helpers/s3-preview-reader";
-import { THRIFT, type ThriftField, thriftStruct, varint } from "../../../helpers/thrift-compact";
+import { THRIFT, type ThriftField, type ThriftValue, thriftStruct, varint } from "../../../helpers/thrift-compact";
 
 const guard = (bytes: Uint8Array, maxDepth = 32) => guardThriftStruct(bytes, 0, maxDepth);
 /** A struct whose field 1 holds a struct, `levels` deep, the innermost holding one i32. */
@@ -47,7 +47,7 @@ describe("guardThriftStruct: the structural rules", () => {
   });
 
   test("a varint of 11 bytes, and one that runs past the input, are refused", () => {
-    expect(guard(Uint8Array.of(0x15, ...new Array(10).fill(0xff), 0x01))).toEqual({
+    expect(guard(Uint8Array.of(0x16, ...new Array(10).fill(0xff), 0x01))).toEqual({
       ok: false,
       reason: "a number runs past the end",
     });
@@ -550,5 +550,248 @@ describe("the committed preview fixtures", () => {
       const footer = bytes.subarray(bytes.length - 8 - length, bytes.length - 8);
       expect(guardThriftStruct(footer, 0, 32), name).toMatchObject({ ok: true });
     }
+  });
+});
+
+/** A field header in long form: the type byte, then the id as a zigzag varint of the bytes given. */
+const longForm = (type: number, idBytes: readonly number[]): number[] => [type, ...idBytes];
+/** The zigzag of `value` as an unsigned LEB128 of exactly the bytes it needs. */
+const zigzagVarint = (value: bigint): number[] =>
+  varint(value >= BigInt(0) ? value * BigInt(2) : -value * BigInt(2) - BigInt(1));
+
+describe("guardThriftStruct reads numbers the way hyparquet does", () => {
+  test("a page header carrying a second field 2 under a long-form id that wraps to 2 in 32-bit arithmetic is refused", () => {
+    const wrapped = BigInt(2) ** BigInt(32) + BigInt(2);
+    const head = pageHeader([[1, { i32: 0 }], ...sizes, [5, { struct: [[1, { i32: 1 }]] }]]);
+    const bytes = Uint8Array.from([
+      ...head.subarray(0, head.length - 1),
+      ...longForm(THRIFT.I32, zigzagVarint(wrapped)),
+      ...varint(big * 2),
+      0x00,
+    ]);
+    const hyparquet = deserializeTCompactProtocol({ view: new DataView(bytes.buffer), offset: 0 });
+    expect(hyparquet.field_2).toBe(big);
+    expect(readPageHeader(bytes, 0, 32)).toEqual({ ok: false, reason: "a number takes more than 32 bits" });
+  });
+
+  test("a 32-bit varint of more than 5 bytes, or whose fifth byte holds bits past 32, is refused", () => {
+    expect(guard(Uint8Array.of(0x15, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00, 0x00))).toEqual({
+      ok: false,
+      reason: "a number takes more than 32 bits",
+    });
+    expect(guard(Uint8Array.of(0x15, 0x80, 0x80, 0x80, 0x80, 0x10, 0x00))).toEqual({
+      ok: false,
+      reason: "a number takes more than 32 bits",
+    });
+    expect(guard(Uint8Array.of(0x18, 0x80, 0x80, 0x80, 0x80, 0x10, 0x00))).toEqual({
+      ok: false,
+      reason: "a number takes more than 32 bits",
+    });
+    expect(guard(Uint8Array.of(0x19, 0xf5, 0x80, 0x80, 0x80, 0x80, 0x10, 0x00))).toEqual({
+      ok: false,
+      reason: "a number takes more than 32 bits",
+    });
+    expect(guard(Uint8Array.of(0x15, 0x80, 0x80, 0x80, 0x80, 0x0f, 0x00))).toMatchObject({ ok: true });
+  });
+
+  test("an i64 varint may take 10 bytes", () => {
+    expect(guard(Uint8Array.of(0x16, ...new Array(9).fill(0xff), 0x01, 0x00))).toEqual({ ok: true, end: 12 });
+  });
+
+  test("an i32 whose fifth byte sets bit 31 reports the value hyparquet reads", () => {
+    const seen: number[] = [];
+    const bytes = Uint8Array.of(0x15, 0xfe, 0xff, 0xff, 0xff, 0x0f, 0x00);
+    guardThriftStruct(bytes, 0, 32, { onField: (_path, _type, value) => seen.push(value as number) });
+    const hyparquet = deserializeTCompactProtocol({ view: new DataView(bytes.buffer), offset: 0 });
+    expect(seen).toEqual([hyparquet.field_1 as number]);
+    expect(seen).toEqual([2_147_483_647]);
+    const negative = Uint8Array.of(0x15, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x00);
+    const values: number[] = [];
+    guardThriftStruct(negative, 0, 32, { onField: (_path, _type, value) => values.push(value as number) });
+    expect(values).toEqual([deserializeTCompactProtocol({ view: new DataView(negative.buffer), offset: 0 }).field_1]);
+    expect(values).toEqual([-2_147_483_648]);
+  });
+
+  test("a long-form field id outside 1 to 32,767 is refused", () => {
+    expect(guard(Uint8Array.from([...longForm(THRIFT.I32, zigzagVarint(BigInt(0))), 0x02, 0x00]))).toEqual({
+      ok: false,
+      reason: "a field id outside 1 to 32,767",
+    });
+    expect(guard(Uint8Array.from([...longForm(THRIFT.I32, zigzagVarint(BigInt(-1))), 0x02, 0x00]))).toEqual({
+      ok: false,
+      reason: "a field id outside 1 to 32,767",
+    });
+    expect(guard(Uint8Array.from([...longForm(THRIFT.I32, zigzagVarint(BigInt(32_768))), 0x02, 0x00]))).toEqual({
+      ok: false,
+      reason: "a field id outside 1 to 32,767",
+    });
+    expect(guard(Uint8Array.from([...longForm(THRIFT.I32, zigzagVarint(BigInt(32_767))), 0x02, 0x00]))).toMatchObject({
+      ok: true,
+    });
+  });
+
+  test("a string or a list whose 32-bit length reads as negative is refused", () => {
+    expect(guard(Uint8Array.of(0x18, 0x80, 0x80, 0x80, 0x80, 0x08, 0x00))).toEqual({
+      ok: false,
+      reason: "a string declares -2,147,483,648 bytes in 1 bytes",
+    });
+    expect(guard(Uint8Array.of(0x19, 0xf5, 0x80, 0x80, 0x80, 0x80, 0x08, 0x00))).toEqual({
+      ok: false,
+      reason: "a list declares -2,147,483,648 elements in 1 bytes",
+    });
+  });
+});
+
+/** mulberry32: the fixed-seed generator of the differential cases. */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
+/** Random Thrift values and structs, and byte mutations of them, for the differential test. */
+function generator(seed: number) {
+  const random = seeded(seed);
+  const below = (n: number): number => Math.floor(random() * n);
+  const pick = <T>(items: readonly T[]): T => items[below(items.length)];
+  const integer = (): number =>
+    pick([0, 1, 2, 3, 5, 7, 100, -1, -5, big, -big, 2_147_483_647, -2_147_483_648, below(1_000_000)]);
+  const value = (depth: number): ThriftValue => {
+    const kind = below(depth > 2 ? 6 : 8);
+    if (kind === 0) return { i32: integer() };
+    if (kind === 1) return { i16: pick([0, 1, -1, 300, 32_767]) };
+    if (kind === 2) return { i64: BigInt(integer()) };
+    if (kind === 3) return { double: pick([0, 1.5, Number.NaN, big]) };
+    if (kind === 4) return { binary: "x".repeat(below(4)) };
+    if (kind === 5) return { bool: random() < 0.5 };
+    if (kind === 6) {
+      const type = pick([THRIFT.I32, THRIFT.BINARY, THRIFT.STRUCT, THRIFT.TRUE]);
+      const items = Array.from({ length: below(4) }, (): ThriftValue => {
+        if (type === THRIFT.I32) return { i32: integer() };
+        if (type === THRIFT.BINARY) return { binary: "ab" };
+        if (type === THRIFT.TRUE) return { bool: random() < 0.5 };
+        return { struct: fields(depth + 1, 3) };
+      });
+      return { list: { type, items } };
+    }
+    return { struct: fields(depth + 1, 4) };
+  };
+  const fields = (depth: number, most: number): ThriftField[] => {
+    const out: ThriftField[] = [];
+    let id = 0;
+    for (let count = below(most + 1); count > 0; count -= 1) {
+      id = random() < 0.15 ? below(40) + 1 : id + below(3) + 1;
+      out.push([id, value(depth)]);
+    }
+    return out;
+  };
+  const header = (): Uint8Array => {
+    const type = pick([0, 1, 2, 3, 0, 2]);
+    const holder = { 0: 5, 2: 7, 3: 8 }[type as 0 | 2 | 3];
+    const count = random() < 0.8 ? below(50) : integer();
+    const own: ThriftField[] = [
+      [1, { i32: type }],
+      [2, { i32: random() < 0.8 ? below(40) : integer() }],
+      [3, { i32: random() < 0.8 ? below(40) : integer() }],
+    ];
+    if (holder !== undefined) {
+      const inner: ThriftField[] = [[1, random() < 0.9 ? { i32: count } : value(3)]];
+      if (type === 3) {
+        inner.push([2, { i32: random() < 0.8 ? below(count + 1) : integer() }]);
+        inner.push([5, { i32: random() < 0.8 ? 0 : integer() }], [6, { i32: random() < 0.8 ? 0 : integer() }]);
+        if (random() < 0.5) inner.push([7, random() < 0.8 ? { bool: random() < 0.5 } : value(3)]);
+      }
+      own.push([holder, { struct: inner }]);
+    }
+    if (random() < 0.3) own.push([below(4) + 9, value(1)]);
+    return thriftStruct(own);
+  };
+  const footer = (): Uint8Array => thriftStruct(fields(1, 8));
+  const mutate = (bytes: Uint8Array): Uint8Array => {
+    const out = [...bytes];
+    for (let edits = below(3) + 1; edits > 0; edits -= 1) {
+      const at = below(out.length + 1);
+      const kind = below(5);
+      if (kind === 0 && out.length > 0) out[Math.min(at, out.length - 1)] = below(256);
+      else if (kind === 1) out.splice(at, 0, below(256));
+      else if (kind === 2) out.splice(at, 1);
+      else if (kind === 3)
+        out.splice(at, 0, pick([0x05, 0x15, 0x19, 0x18]), ...varint(BigInt(below(2 ** 30)) * BigInt(below(64) + 1)));
+      else
+        out.splice(
+          at,
+          0,
+          pick([0x05, 0x06, 0x08]),
+          0x80 | below(128),
+          0x80 | below(128),
+          0x80,
+          0x80,
+          below(256),
+          below(2),
+        );
+    }
+    return Uint8Array.from(out);
+  };
+  return { random, header, footer, mutate };
+}
+
+/** hyparquet's struct read of `bytes`, with where it stopped, or the error it threw. */
+function hyparquetRead(bytes: Uint8Array) {
+  const reader = { view: new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), offset: 0 };
+  try {
+    return { value: deserializeTCompactProtocol(reader), end: reader.offset };
+  } catch (error) {
+    return { error: String(error) };
+  }
+}
+
+describe("the guard and hyparquet agree wherever the guard accepts", () => {
+  test("a fixed-seed run of generated and mutated page headers: hyparquet reads the guard's four facts", () => {
+    const { random, header, mutate } = generator(20_261_010);
+    let accepted = 0;
+    let refused = 0;
+    for (let index = 0; index < 4_000; index += 1) {
+      const clean = header();
+      const bytes = random() < 0.6 ? mutate(clean) : clean;
+      const facts = readPageHeader(bytes, 0, 32);
+      if (!("headerBytes" in facts)) {
+        refused += 1;
+        continue;
+      }
+      accepted += 1;
+      const read = hyparquetRead(bytes);
+      const label = `case ${index}: ${Array.from(bytes).join(",")}`;
+      expect(read.error, label).toBeUndefined();
+      const expected = hyparquetFacts(bytes);
+      expect(facts.type, label).toBe(expected.type);
+      expect(facts.uncompressedPageSize, label).toBe(expected.uncompressedPageSize);
+      expect(facts.compressedPageSize, label).toBe(expected.compressedPageSize);
+      expect(facts.numValues as unknown, label).toBe(expected.numValues);
+      expect(facts.headerBytes, label).toBe(read.end);
+    }
+    expect(accepted).toBeGreaterThan(500);
+    expect(refused).toBeGreaterThan(500);
+  });
+
+  test("a fixed-seed run of generated and mutated structs: hyparquet ends where the guard ends", () => {
+    const { random, footer, mutate } = generator(1_337);
+    let accepted = 0;
+    for (let index = 0; index < 3_000; index += 1) {
+      const clean = footer();
+      const bytes = random() < 0.6 ? mutate(clean) : clean;
+      const result = guardThriftStruct(bytes, 0, 32, { maxListElements: 1_000 });
+      if (!result.ok) continue;
+      accepted += 1;
+      const read = hyparquetRead(bytes);
+      const label = `case ${index}: ${Array.from(bytes).join(",")}`;
+      expect(read.error, label).toBeUndefined();
+      expect(read.end, label).toBe(result.end);
+    }
+    expect(accepted).toBeGreaterThan(1_000);
   });
 });
