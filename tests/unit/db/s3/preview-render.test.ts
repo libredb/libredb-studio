@@ -228,22 +228,24 @@ describe("a failure of the quoting itself is not read as a name with no spelling
 });
 
 describe("previewSourceParts", () => {
-  test("empty, the gzip-empty sentence, and a refusal are one unavailable Preview part", () => {
+  test("empty and the gzip-empty sentence are one available Preview part; a refusal is one unavailable part", () => {
+    const rendered = (text: string) => ({
+      id: "preview",
+      label: "Preview",
+      text,
+      language: "plaintext",
+      form: "complete" as const,
+      origin: "rendered" as const,
+    });
     expect(previewSourceParts({ kind: "empty", notices: [] }, place)).toEqual([
-      { id: "preview", label: "Preview", unavailable: "The object is empty: 0 bytes." },
+      rendered("The object is empty: 0 bytes."),
     ]);
     expect(
       previewSourceParts(
         { kind: "empty", notices: ["The object is gzip-compressed and its decoded content is empty."] },
         place,
       ),
-    ).toEqual([
-      {
-        id: "preview",
-        label: "Preview",
-        unavailable: "The object is gzip-compressed and its decoded content is empty.",
-      },
-    ]);
+    ).toEqual([rendered("The object is gzip-compressed and its decoded content is empty.")]);
     expect(
       previewSourceParts({ kind: "refused", sentence: "The Parquet data could not be decoded.", notices: [] }, place),
     ).toEqual([{ id: "preview", label: "Preview", unavailable: "The Parquet data could not be decoded." }]);

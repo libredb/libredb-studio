@@ -65,6 +65,31 @@ describe("gunzipPrefix", () => {
     expect(await gunzipPrefix(stored, 1_000, true)).toEqual({ bad: true });
   });
 
+  test("a whole object whose gzip stream is cut gives ended false", async () => {
+    const stored = gzip(utf8(sample.slice(0, 140_000)));
+    const result = await gunzipPrefix(stored.subarray(0, Math.floor(stored.length * 0.6)), 1_000_000, true);
+    expect(result.bad).toBe(false);
+    if (result.bad) return;
+    expect(result.ended).toBe(false);
+    expect(result.bytes.length).toBeGreaterThan(0);
+    expect(sample.startsWith(text(result.bytes))).toBe(true);
+  });
+
+  test("a whole object whose gzip stream lacks its 8-byte trailer gives ended false", async () => {
+    const decoded = utf8(sample.slice(0, 140_000));
+    const stored = gzip(decoded);
+    const result = await gunzipPrefix(stored.subarray(0, stored.length - 8), 1_000_000, true);
+    expect(result).toEqual({ bad: false, bytes: decoded, ended: false });
+  });
+
+  test("an empty gzip member read whole ends", async () => {
+    expect(await gunzipPrefix(gzip(new Uint8Array(0)), 1_000, true)).toEqual({
+      bad: false,
+      bytes: new Uint8Array(0),
+      ended: true,
+    });
+  });
+
   test("two members decode as one stream", async () => {
     const stored = new Uint8Array([...gzip(utf8("ab")), ...gzip(utf8("cd"))]);
     expect(await gunzipPrefix(stored, 1_000, true)).toEqual({ bad: false, bytes: utf8("abcd"), ended: true });

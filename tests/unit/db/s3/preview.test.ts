@@ -375,6 +375,22 @@ describe("previewObject: the gzip layer and other encodings", () => {
     );
   });
 
+  test("a whole gzip object whose stream is cut is a cut read: CSV is cut, JSON gives N-JSON-CUT", async () => {
+    const lines = Array.from({ length: 10_000 }, (_, index) => `${index},name ${(index * 7919) % 10_007}`);
+    const csv = gz(utf8(`id,name\n${lines.join("\n")}\n`));
+    const cutCsv = csv.subarray(0, Math.floor(csv.length * 0.6));
+    expect((await run(cutCsv, "rows.csv.gz", { purpose: "source" })).preview).toMatchObject({
+      kind: "text",
+      format: "csv",
+      cut: true,
+    });
+    const json = gz(utf8(JSON.stringify(Array.from({ length: 10_000 }, (_, index) => ({ index, name: `n${index}` })))));
+    const { preview } = await run(json.subarray(0, Math.floor(json.length * 0.6)), "doc.json.gz");
+    expect(preview).toMatchObject({ kind: "text", format: "json", language: "plaintext", cut: true });
+    expect(preview.notices).toContain(previewSentence("N-JSON-CUT", { n: S3_PREVIEW_LIMITS.decodedTextBytes }));
+    expect(preview.notices).not.toContain("The object is not valid JSON, so it is shown as text.");
+  });
+
   test("nested gzip, bytes that are not gzip, an empty decoded output, and Parquet under gzip", async () => {
     expect((await run(gz(gz(utf8("x"))), "a.gz")).preview).toMatchObject({
       kind: "hex",

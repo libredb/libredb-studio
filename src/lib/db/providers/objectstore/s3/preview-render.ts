@@ -308,7 +308,16 @@ export function previewSourceParts(
 ): SourceParts {
   switch (preview.kind) {
     case "empty":
-      return [{ id: "preview", label: "Preview", unavailable: preview.notices[0] ?? EMPTY_OBJECT_SENTENCE }];
+      return [
+        textPart(
+          "preview",
+          "Preview",
+          preview.notices[0] ?? EMPTY_OBJECT_SENTENCE,
+          "plaintext",
+          "rendered",
+          place.limit,
+        ),
+      ];
     case "refused":
       return [{ id: "preview", label: "Preview", unavailable: preview.sentence }];
     case "hex":

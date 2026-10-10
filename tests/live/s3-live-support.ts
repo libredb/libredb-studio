@@ -1044,7 +1044,9 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
     behaviour: "data/empty.txt",
     expect: cells({
       minio: one(
-        ok("the Source tab says the object is empty; no error", { headers: { preview: "unavailable" } }),
+        ok("the Source tab says the object is empty; no error", {
+          headers: { preview: "The object is empty: 0 bytes." },
+        }),
         "source",
       ),
     }),

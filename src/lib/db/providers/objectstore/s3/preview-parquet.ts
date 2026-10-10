@@ -31,8 +31,9 @@ import type {
 import { buildRows, cutText, renderCell } from "./preview-cells";
 import { FOOTER_BAD_BARE, inMiB, PreviewRefusal, previewSentence, spellName } from "./preview-render";
 
-/** The five codec functions the guarded compressors call. */
+/** The six codec functions the guarded compressors call. */
 export interface ParquetCodecs {
+  readonly snappy: (input: Uint8Array, outputLength: number) => Uint8Array;
   readonly gzip: (input: Uint8Array, outputLength: number) => Uint8Array;
   readonly brotli: (input: Uint8Array, outputLength: number) => Uint8Array;
   readonly zstd: (input: Uint8Array, output: Uint8Array) => Uint8Array;
@@ -44,7 +45,6 @@ export interface ParquetCodecs {
 export interface ParquetModules {
   readonly parquetMetadata: typeof Hyparquet.parquetMetadata;
   readonly parquetReadObjects: typeof Hyparquet.parquetReadObjects;
-  readonly snappyUncompress: (input: Uint8Array, output: Uint8Array) => void;
   readonly codecs: ParquetCodecs;
 }
 
@@ -53,8 +53,8 @@ async function importParquetModules(): Promise<ParquetModules> {
   return {
     parquetMetadata: hyparquet.parquetMetadata,
     parquetReadObjects: hyparquet.parquetReadObjects,
-    snappyUncompress: hyparquet.snappyUncompress,
     codecs: {
+      snappy: boundedSnappy,
       gzip: boundedZlib(gunzipSync),
       brotli: boundedZlib(brotliDecompressSync),
       zstd: compressors.decompressZstd,
@@ -676,6 +676,69 @@ export function boundedLz4(input: Uint8Array, outputLength: number): Uint8Array 
   return boundedLz4Raw(input, outputLength);
 }
 
+/** The bounded Snappy decoder's refusal of input that breaks the format; previewParquet reports it as R-PQ-DECODE. */
+const SNAPPY_MALFORMED = "The Snappy data is malformed";
+
+/** `size` little-endian bytes of `input` from `at`, read as an unsigned number. */
+function littleEndian(input: Uint8Array, at: number, size: number): number {
+  let value = 0;
+  for (let index = size - 1; index >= 0; index -= 1) value = value * 256 + input[at + index];
+  return value;
+}
+
+/**
+ * Snappy, decoded to exactly `outputLength` bytes: the preamble must declare that length, and each literal or copy is
+ * checked against the input and against `outputLength` before any byte of it is written, so the work is bounded by
+ * the input and the declared length, not by the lengths the elements declare. A run that would pass `outputLength`, or
+ * an output left short, throws DECODE_OVER_BUDGET; anything else that breaks the format throws its own error.
+ * `output` is where the bytes go, a new array of `outputLength` bytes unless the caller passes one.
+ */
+export function boundedSnappy(
+  input: Uint8Array,
+  outputLength: number,
+  output: Uint8Array = new Uint8Array(outputLength),
+): Uint8Array {
+  let pos = 0;
+  let declared = 0;
+  for (let shift = 0; ; shift += 7) {
+    if (pos >= input.length || shift > 28) throw new Error(SNAPPY_MALFORMED);
+    const byte = input[pos];
+    pos += 1;
+    declared += (byte & 0x7f) * 2 ** shift;
+    if (byte < 128) break;
+  }
+  if (declared !== outputLength) throw new Error(DECODE_OVER_BUDGET);
+  let out = 0;
+  while (pos < input.length) {
+    const tag = input[pos];
+    pos += 1;
+    const kind = tag & 3;
+    if (kind === 0) {
+      let length = (tag >>> 2) + 1;
+      if (length > 60) {
+        const size = length - 60;
+        if (pos + size > input.length) throw new Error(SNAPPY_MALFORMED);
+        length = littleEndian(input, pos, size) + 1;
+        pos += size;
+      }
+      if (pos + length > input.length) throw new Error(SNAPPY_MALFORMED);
+      if (out + length > outputLength) throw new Error(DECODE_OVER_BUDGET);
+      for (const end = pos + length; pos < end; pos += 1, out += 1) output[out] = input[pos];
+      continue;
+    }
+    const size = kind === 3 ? 4 : kind;
+    if (pos + size > input.length) throw new Error(SNAPPY_MALFORMED);
+    const length = kind === 1 ? ((tag >>> 2) & 7) + 4 : (tag >>> 2) + 1;
+    const offset = kind === 1 ? ((tag >>> 5) << 8) + input[pos] : littleEndian(input, pos, size);
+    pos += size;
+    if (offset === 0 || offset > out) throw new Error(SNAPPY_MALFORMED);
+    if (out + length > outputLength) throw new Error(DECODE_OVER_BUDGET);
+    for (const end = out + length; out < end; out += 1) output[out] = output[out - offset];
+  }
+  if (out !== outputLength) throw new Error(DECODE_OVER_BUDGET);
+  return output;
+}
+
 /** The bounded zstd decoder's refusal of a frame that breaks the format; previewParquet reports it as R-PQ-DECODE. */
 const ZSTD_MALFORMED = "The ZSTD data is malformed";
 
@@ -1015,8 +1078,8 @@ export function boundedZstd(input: Uint8Array, outputLength: number, decompress:
 /**
  * The second line behind the pre-scan: each codec checks that the declared output length is a non-negative
  * integer within the budget left before it runs, then spends it, so no call can leave the budget anything but a
- * whole number. Snappy is hyparquet's own pure-JavaScript decoder, so hysnappy's shared WASM
- * memory is never grown; zstd decodes through the frame and sequence walk above, each frame into its own part of a
+ * whole number. Snappy decodes through the bounded decoder above, never hysnappy, whose shared WASM memory would
+ * grow, nor hyparquet's own decoder, which bounds a copy by neither its input nor its output; zstd decodes through the frame and sequence walk above, each frame into its own part of a
  * buffer of the declared size, since fzstd otherwise sizes from the frame, given a buffer restarts it for every frame,
  * and copies a match for its declared length past its output. Gzip and
  * brotli decode through node:zlib with the declared length as the output limit, because the package decoders size
@@ -1035,11 +1098,7 @@ export function guardedCompressors(budget: number, modules: ParquetModules): Com
       return output;
     };
   return {
-    SNAPPY: guard((input, outputLength) => {
-      const output = new Uint8Array(outputLength);
-      modules.snappyUncompress(input, output);
-      return output;
-    }),
+    SNAPPY: guard(modules.codecs.snappy),
     GZIP: guard(modules.codecs.gzip),
     BROTLI: guard(modules.codecs.brotli),
     ZSTD: guard((input, outputLength) => boundedZstd(input, outputLength, modules.codecs.zstd)),

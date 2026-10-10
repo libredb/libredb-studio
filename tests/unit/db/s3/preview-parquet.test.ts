@@ -20,6 +20,7 @@ import type { S3PreviewCell } from "@/lib/db/providers/objectstore/s3/preview";
 import {
   boundedLz4,
   boundedLz4Raw,
+  boundedSnappy,
   boundedZlib,
   boundedZstd,
   createDecodeSlots,
@@ -1074,10 +1075,14 @@ describe("guardedCompressors", () => {
     };
     const spied: ParquetModules = {
       ...modules,
-      snappyUncompress: () => {
-        calls += 1;
+      codecs: {
+        snappy: counting,
+        gzip: counting,
+        brotli: counting,
+        zstd: () => new Uint8Array(0),
+        lz4: counting,
+        lz4Raw: counting,
       },
-      codecs: { gzip: counting, brotli: counting, zstd: () => new Uint8Array(0), lz4: counting, lz4Raw: counting },
     };
     for (const codec of ["SNAPPY", "GZIP", "BROTLI", "ZSTD", "LZ4", "LZ4_RAW"] as const) {
       const compressors = guardedCompressors(1_024, spied);
@@ -1500,6 +1505,82 @@ describe("the bounded LZ4 decoders", () => {
     expect(() => boundedLz4(misframed, 13)).toThrow("The LZ4 data is malformed");
     const overlong = Uint8Array.from(hadoopFrame(LZ4_BLOCK, 99));
     expect(() => boundedLz4(overlong, 13)).toThrow("The LZ4 data is malformed");
+  });
+});
+
+describe("boundedSnappy", () => {
+  const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+  const counted = (length: number) => {
+    const writes = { count: 0 };
+    const output = new Proxy(new Uint8Array(length), {
+      set(target, key, value) {
+        writes.count += 1;
+        return Reflect.set(target, key, value);
+      },
+    });
+    return { output, writes };
+  };
+  const malformed = (input: number[], outputLength: number): string => {
+    try {
+      boundedSnappy(Uint8Array.from(input), outputLength);
+    } catch (error) {
+      return (error as Error).message;
+    }
+    return "decoded";
+  };
+
+  test("a Snappy copy longer than the room left is refused before it writes", () => {
+    const short = counted(1);
+    expect(() => boundedSnappy(Uint8Array.from([1, 0, 65, 254, 1, 0]), 1, short.output)).toThrow(DECODE_OVER_BUDGET);
+    expect(short.writes.count).toBeLessThanOrEqual(1);
+    const repeated = new Uint8Array(3 + 3 * 1_000_000);
+    repeated.set([1, 0, 65]);
+    for (let at = 3; at < repeated.length; at += 3) repeated.set([254, 1, 0], at);
+    const long = counted(1);
+    expect(() => boundedSnappy(repeated, 1, long.output)).toThrow(DECODE_OVER_BUDGET);
+    expect(long.writes.count).toBeLessThanOrEqual(1);
+  });
+
+  test("a preamble that differs from the declared length is refused", () => {
+    expect(() => boundedSnappy(Uint8Array.from([2, 0, 65]), 1)).toThrow(DECODE_OVER_BUDGET);
+    expect(() => boundedSnappy(Uint8Array.from([1, 0, 65]), 2)).toThrow(DECODE_OVER_BUDGET);
+  });
+
+  test("literals and the three copy forms decode to exactly the declared length", () => {
+    expect(text(boundedSnappy(Uint8Array.from([5, 0x10, ...new TextEncoder().encode("hello")]), 5))).toBe("hello");
+    expect(text(boundedSnappy(Uint8Array.from([8, 0x04, 97, 98, 0x09, 2]), 8))).toBe("abababab");
+    expect(text(boundedSnappy(Uint8Array.from([8, 0x04, 97, 98, 0x16, 2, 0]), 8))).toBe("abababab");
+    expect(text(boundedSnappy(Uint8Array.from([8, 0x04, 97, 98, 0x17, 2, 0, 0, 0]), 8))).toBe("abababab");
+    const long = Array.from({ length: 61 }, (_, index) => 97 + (index % 26));
+    expect(boundedSnappy(Uint8Array.from([61, 0xf0, 60, ...long]), 61)).toEqual(Uint8Array.from(long));
+    expect(boundedSnappy(Uint8Array.from([0]), 0)).toHaveLength(0);
+    expect(boundedSnappy(Uint8Array.from([0x80, 0x01, 0xf4, 0x7f, 0x00, ...new Array(128).fill(1)]), 128)).toHaveLength(
+      128,
+    );
+  });
+
+  test("a literal that would pass the declared length, or an output left short, is refused with DECODE_OVER_BUDGET", () => {
+    expect(() => boundedSnappy(Uint8Array.from([1, 0x04, 97, 98]), 1)).toThrow(DECODE_OVER_BUDGET);
+    expect(() => boundedSnappy(Uint8Array.from([3, 0x04, 97, 98]), 3)).toThrow(DECODE_OVER_BUDGET);
+    expect(() => boundedSnappy(Uint8Array.from([3, 0x04, 97, 98, 0x01, 1]), 3)).toThrow(DECODE_OVER_BUDGET);
+  });
+
+  test("malformed input throws an error of its own", () => {
+    for (const [input, outputLength] of [
+      [[], 0],
+      [[0x80], 0],
+      [[0x80, 0x80, 0x80, 0x80, 0x80, 0x00], 0],
+      [[4, 0xf0], 4],
+      [[4, 0x0c, 97], 4],
+      [[4, 0x01], 4],
+      [[4, 0x02, 1], 4],
+      [[4, 0x03, 1, 0, 0], 4],
+      [[4, 0x01, 0], 4],
+      [[4, 0x01, 1], 4],
+      [[5, 0x00, 97, 0x01, 2], 5],
+    ] as const) {
+      expect(malformed([...input], outputLength), `${input}`).toBe("The Snappy data is malformed");
+    }
   });
 });
 
