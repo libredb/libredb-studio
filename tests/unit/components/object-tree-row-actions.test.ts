@@ -35,6 +35,7 @@ type Model = Partial<
     | "maintenanceOperationSpecs"
     | "tablesAreDerivedGroupings"
     | "keyScan"
+    | "rowActions"
   >
 >;
 
@@ -67,6 +68,7 @@ function allHandlers(record: string[] = []): TreeRowActionHandlers {
     onCreateObject: () => record.push("create"),
     onViewSource: () => record.push("view-source"),
     onBrowseKeys: () => record.push("browse-keys"),
+    onRowAction: (_object, actionId) => record.push(`row-action:${actionId}`),
   };
 }
 
@@ -962,5 +964,69 @@ describe("rowActions and declared per-row operations (spec 3.11)", () => {
 
   test("a whole-database operation outside MaintenanceType is not a row item", () => {
     expect(idsFor(objectRow("table"), declared)).not.toContain("maintenance-defragment");
+  });
+});
+
+/**
+ * Declared row actions (`ProviderCapabilities.rowActions`): Describe and Logs on the kinds a provider
+ * names, gated by that declaration alone, the way Browse Keys reads `keyScan.levels.rootKind`.
+ */
+describe("rowActions: declared row actions", () => {
+  const pod = { id: "pods", role: "config", label: "Pod", labelPlural: "Pods", hasSource: true } as const;
+  const node = { id: "nodes", role: "config", label: "Node", labelPlural: "Nodes", hasSource: true } as const;
+  const crd = {
+    id: "custom-resources",
+    role: "config",
+    label: "Resource Type",
+    labelPlural: "Custom Resources",
+  } as const;
+  const cluster = capabilitiesOf({
+    queryLanguage: "json",
+    objectKinds: [pod, node, crd],
+    rowActions: [
+      { id: "describe", label: "Describe", kinds: ["pods", "nodes"] },
+      { id: "logs", label: "Logs", kinds: ["pods"] },
+      { id: "list", label: "List", kinds: ["custom-resources"] },
+    ],
+  });
+  const webPod: DatabaseObject = { path: ["shop", "pod/web-1"], name: "pod/web-1", kind: "pods" };
+
+  test("each kind offers the actions that name it, last and in declaration order", () => {
+    expect(idsFor(objectRow("pods"), cluster, allHandlers(), webPod)).toEqual([
+      "view-source",
+      "row-action:describe",
+      "row-action:logs",
+    ]);
+    expect(idsFor(objectRow("nodes"), cluster, allHandlers(), webPod)).toEqual(["view-source", "row-action:describe"]);
+    expect(idsFor(objectRow("custom-resources"), cluster, allHandlers(), webPod)).toEqual(["row-action:list"]);
+  });
+
+  test("an item carries the declared label and hands the shell the object and the action id", () => {
+    const ran: [DatabaseObject, string][] = [];
+    const actions = rowActions({
+      row: objectRow("pods"),
+      object: webPod,
+      capabilities: cluster,
+      handlers: { onRowAction: (object, actionId) => ran.push([object, actionId]) },
+    });
+    expect(actions.map((action) => action.label)).toEqual(["Describe", "Logs"]);
+    for (const action of actions) action.run();
+    expect(ran).toEqual([
+      [webPod, "describe"],
+      [webPod, "logs"],
+    ]);
+  });
+
+  test("a shell that cannot run a tab is offered none, and neither is a folder, a group or a container row", () => {
+    expect(idsFor(objectRow("pods"), cluster, { onViewSource: () => {} }, webPod)).toEqual(["view-source"]);
+    expect(idsFor(folderRow("pods"), cluster)).toEqual([]);
+    expect(
+      idsFor({ ...containerRow, id: "group%3Ashop/workloads", kind: "group", label: "Workloads" }, cluster),
+    ).toEqual([]);
+    expect(idsFor(containerRow, cluster)).toEqual([]);
+  });
+
+  test("an engine that declares no row actions offers none, whatever the shell can do", () => {
+    expect(idsFor(objectRow("table"), postgres).filter((id) => id.startsWith("row-action:"))).toEqual([]);
   });
 });

@@ -352,7 +352,7 @@ src/
 │   │   ├── RowMenu.tsx       # The row menu, rendered as a sibling of the tree element, not inside it
 │   │   ├── flatten.ts        # Expansion state to a flat row list, with each row's ARIA position (pure)
 │   │   ├── use-tree-nodes.ts # The lazy cache: containers, counts, a folder's objects, a row's columns
-│   │   ├── row-actions.ts    # What a row may be asked to do, read off the kind's own declaration
+│   │   ├── row-actions.ts    # What a row may be asked to do, read off the kind's own declaration and the declared row actions
 │   │   └── index.ts          # What a shell imports: ObjectTree plus the two types its handlers need
 │   ├── schema-explorer/     # SchemaExplorer (the flat list: mobile schema tab, published export)
 │   └── ui/                  # Shadcn/UI primitives

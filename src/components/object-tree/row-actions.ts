@@ -63,6 +63,7 @@ import {
   Funnel,
   Hash,
   KeyRound,
+  Play,
   Plus,
   Search,
   Trash2,
@@ -70,7 +71,13 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import { findKind, kindAcceptsRowWrites, kindHasSource, offersTestDataGeneration } from "@/lib/db/object-kinds";
+import {
+  findKind,
+  kindAcceptsRowWrites,
+  kindHasSource,
+  offersTestDataGeneration,
+  rowActionsForKind,
+} from "@/lib/db/object-kinds";
 import {
   declaredEntityOperations,
   maintenanceControl,
@@ -125,6 +132,12 @@ export interface TreeRowActionHandlers {
    * this and no row offers the item.
    */
   readonly onBrowseKeys?: (object: DatabaseObject) => void;
+  /**
+   * Run one of the row actions the provider declared on this object's kind (`ProviderCapabilities.rowActions`),
+   * by its id, in a new tab of its own. A shell that cannot open and run a tab does not pass it, and no
+   * declared action is drawn.
+   */
+  readonly onRowAction?: (object: DatabaseObject, actionId: string) => void;
 }
 
 /** One item of a row's menu. `id` is stable and is what a test asserts; `label` is read. */
@@ -326,6 +339,24 @@ function objectActions(
     const groupingRow = isRelation && capabilities.tablesAreDerivedGroupings === true;
     if (groupingRow || rootKind === kind.id) {
       actions.push({ id: "browse-keys", label: "Browse Keys", icon: KeyRound, run: () => browseKeys(object) });
+    }
+  }
+
+  /*
+   * The provider's own row actions (Describe, Logs, List), the way Browse Keys reads
+   * `keyScan.levels.rootKind`: the declaration names the kinds, so no kind id is written here and no
+   * role is asked, because these exist for kinds no role-gated item above serves. LAST, so no existing
+   * row's menu is reordered, and in declaration order, under ids no other item uses.
+   */
+  const runRowAction = handlers.onRowAction;
+  if (runRowAction !== undefined) {
+    for (const action of rowActionsForKind(capabilities, kind.id)) {
+      actions.push({
+        id: `row-action:${action.id}`,
+        label: action.label,
+        icon: Play,
+        run: () => runRowAction(object, action.id),
+      });
     }
   }
   return actions;
