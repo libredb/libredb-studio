@@ -6,8 +6,9 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import type { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
 import type { NodeByteRequest, RequestSigner } from "@/lib/db/http/node-transport";
+import { parseS3Command } from "@/lib/db/providers/objectstore/s3/console/commands";
 import { S3_SURFACE_DEADLINE_MS } from "@/lib/db/providers/objectstore/s3/constants";
 import { encodeS3Cursor } from "@/lib/db/providers/objectstore/s3/cursor";
 import { S3_RESPONSE_HEADERS } from "@/lib/db/providers/objectstore/s3/headers";
@@ -16,11 +17,13 @@ import { joinVirtualKey } from "@/lib/db/providers/objectstore/s3/names";
 import { previewObject, type S3RangeReader } from "@/lib/db/providers/objectstore/s3/preview";
 import { S3_PREVIEW_ADAPTER_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-adapter";
 import { previewSourceParts } from "@/lib/db/providers/objectstore/s3/preview-render";
+import { LimiterFullError } from "@/lib/db/utils/bounded-limiter";
 import type { DatabaseConnection } from "@/lib/types";
 import { s3Connection } from "../../../helpers/s3-connection";
 import {
   bucketsXml,
   errorXml,
+  type FakeS3Answer,
   type FakeS3Handler,
   fakeS3Transport,
   objectsXml,
@@ -472,5 +475,130 @@ describe("object names through the Source tab", () => {
     expect(document.parts[0].id).toBe("metadata");
     expect(document.parts.slice(1)).toEqual(previewSourceParts(empty, { bucket: "sales", key: "logs/" }));
     expect(fake.lines().slice(1)).toEqual(["HEAD /sales/logs/"]);
+  });
+});
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 25));
+
+/** A provider whose requests after connect wait until the test releases them, one resolver per request. */
+function held(overrides: Partial<DatabaseConnection> = {}, queryTimeout?: number) {
+  const waiting: (() => void)[] = [];
+  let holding = false;
+  const made = provider(
+    (request) =>
+      holding
+        ? new Promise<FakeS3Answer>((resolve) => waiting.push(() => resolve(BUCKETS(request))))
+        : BUCKETS(request),
+    overrides,
+    queryTimeout,
+  );
+  const hold = (): void => {
+    holding = true;
+  };
+  return { ...made, waiting, hold };
+}
+
+describe("the console query", () => {
+  test("parameters are refused before anything runs", async () => {
+    const { s3, fake } = provider(BUCKETS);
+    await s3.connect();
+    await expect(s3.query("aws s3 ls", [1])).rejects.toThrow(
+      "S3 commands take no parameters: write the values in the command.",
+    );
+    expect(fake.exchanges).toHaveLength(1);
+  });
+
+  test("a refused command is the parser's sentence, with no request", async () => {
+    const { s3, fake } = provider(BUCKETS);
+    await s3.connect();
+    const text = "aws s3 rm s3://sales/a.csv";
+    const parsed = parseS3Command(text, { endpoint: "http://localhost:9000", region: "us-east-1", readOnly: false });
+    expect(parsed.ok).toBe(false);
+    const error = await s3.query(text).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(parsed.ok ? "" : parsed.refusal.message);
+    expect(fake.exchanges).toHaveLength(1);
+  });
+
+  test("a read command runs through the console part and answers a grid", async () => {
+    const { s3, fake } = provider(BUCKETS);
+    await s3.connect();
+    const result = await s3.query("aws s3api list-buckets");
+    expect(Array.isArray(result.rows)).toBe(true);
+    expect(fake.lines()).toEqual(["GET /?max-buckets=10000", "GET /?max-buckets=10000"]);
+  });
+
+  test("a run past the query timeout is E1", async () => {
+    const { s3, hold } = held({}, 1_000);
+    await s3.connect();
+    hold();
+    const error = await s3.query("aws s3api list-buckets").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(TimeoutError);
+    expect((error as Error).message).toContain("within 1 seconds; nothing was retried.");
+  });
+
+  test("cancel of a running run, and of an id that names none", async () => {
+    const { s3, hold } = held();
+    await s3.connect();
+    hold();
+    const pending = s3.query("aws s3api list-buckets", undefined, "q-running").catch((caught: unknown) => caught);
+    await tick();
+    expect(await s3.cancelQuery("q-running")).toBe(true);
+    const error = await pending;
+    expect(error).toBeInstanceOf(QueryCancelledError);
+    expect((error as Error).message).toBe("The query was cancelled.");
+    expect(await s3.cancelQuery("q-none")).toBe(false);
+    await s3.disconnect();
+  });
+
+  test("cancel of a queued run: it never leaves the queue", async () => {
+    const { s3, fake, hold } = held();
+    await s3.connect();
+    hold();
+    const busy = Array.from({ length: 4 }, () => s3.getOverview().catch((caught: unknown) => caught));
+    await tick();
+    expect(fake.exchanges).toHaveLength(5);
+    const queued = s3.query("aws s3api list-buckets", undefined, "q-queued").catch((caught: unknown) => caught);
+    await tick();
+    expect(await s3.cancelQuery("q-queued")).toBe(true);
+    expect(await queued).toBeInstanceOf(QueryCancelledError);
+    expect(fake.exchanges).toHaveLength(5);
+    await s3.disconnect();
+    await Promise.all(busy);
+  });
+});
+
+describe("the limiter", () => {
+  test("at most 4 calls in flight per provider", async () => {
+    const { s3, fake, waiting, hold } = held();
+    await s3.connect();
+    hold();
+    const calls = Array.from({ length: 5 }, () => s3.getOverview());
+    await tick();
+    expect(fake.exchanges).toHaveLength(1 + 4);
+    waiting.shift()?.();
+    await tick();
+    expect(fake.exchanges).toHaveLength(1 + 5);
+    while (waiting.length > 0) waiting.shift()?.();
+    await Promise.all(calls);
+  });
+
+  test("at most 16 in flight per process, a queue of 64, and a full queue refuses at once", async () => {
+    const providers = Array.from({ length: 21 }, () => held());
+    for (const one of providers) await one.s3.connect();
+    for (const one of providers) one.hold();
+    const calls = providers.flatMap((one) => Array.from({ length: 4 }, () => one.s3.getOverview()));
+    // Settled from the start: a full queue refuses at once, before any later await could observe the rejection.
+    const outcomes = Promise.allSettled(calls);
+    await tick();
+    const inFlight = providers.reduce((sum, one) => sum + one.fake.exchanges.length - 1, 0);
+    expect(inFlight).toBe(16);
+    // disconnect() runs to its end synchronously, so every session ends before a freed permit admits a waiter.
+    await Promise.all(providers.map((one) => one.s3.disconnect()));
+    const settled = await outcomes;
+    const refused = settled.filter(
+      (outcome) => outcome.status === "rejected" && outcome.reason instanceof LimiterFullError,
+    );
+    expect(refused).toHaveLength(4);
   });
 });

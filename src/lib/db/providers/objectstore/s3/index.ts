@@ -46,11 +46,17 @@ import type {
   ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
+  QueryResult,
   SlowQueryStats,
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
-import { engineLimiter, type ProviderLimiter } from "@/lib/db/utils/bounded-limiter";
+import {
+  createRunRegistry,
+  engineLimiter,
+  type ProviderLimiter,
+  type RunRegistry,
+} from "@/lib/db/utils/bounded-limiter";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { QueryWarning } from "@/lib/types";
 import {
@@ -63,6 +69,9 @@ import {
   type S3Operation,
   type S3Surface,
 } from "./client";
+import { parseS3Command } from "./console/commands";
+import { executeS3Command } from "./console/execute";
+import { s3Result } from "./console/results";
 import { buildS3ConnectionOptions, type S3ConnectionOptions, s3EndpointText } from "./connection-options";
 import { S3_DEFAULT_PORT, S3_HEALTH_DEADLINE_MS, S3_LIMITER_OPTIONS, S3_MAX_SOCKETS, S3_TYPE } from "./constants";
 import { toProviderError } from "./errors";
@@ -102,6 +111,9 @@ const DEFAULT_DEPS: S3ProviderDeps = {
   signerWrapper: (signer) => signer,
 };
 
+/** A command has no binding, and dropping the values would run another command than the one written. */
+export const S3_PARAMETERS_REFUSAL = "S3 commands take no parameters: write the values in the command.";
+
 /** One connected session: its transport, what the connection resolved to, and what every call of it shares. */
 interface S3Session {
   readonly transport: NodeByteTransport;
@@ -124,6 +136,7 @@ interface S3Session {
 export class S3Provider extends BaseDatabaseProvider {
   private session: S3Session | null = null;
   private readonly limiter: ProviderLimiter = s3Limiter();
+  private readonly runs: RunRegistry = createRunRegistry();
   private readonly deps: S3ProviderDeps;
 
   /**
@@ -301,6 +314,52 @@ export class S3Provider extends BaseDatabaseProvider {
   /** Options and cursor are refused by key-scan.ts before any request; a page is one server call at most. */
   public async scanKeysPage(options: KeyScanOptions): Promise<KeyScanPage> {
     return this.read((surface, call) => scanS3KeysPage(surface, options, call), "ListObjectsV2");
+  }
+
+  // ==========================================================================
+  // Query path (the grammar and the run are the console part's)
+  // ==========================================================================
+
+  /**
+   * One console command: re-parsed here with the connection's own context, so the server is the authority whatever
+   * the browser sent, then run under the run registry and the query timeout. Every request of the run shares the
+   * run's signal and one deadline; each takes its own permit.
+   */
+  public async query(text: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
+    if (params !== undefined && params.length > 0) throw new DatabaseConfigError(S3_PARAMETERS_REFUSAL, S3_TYPE);
+    const session = this.requireSession();
+    const { options } = session;
+    const pin = options.pinnedBucket === undefined ? {} : { pinnedBucket: options.pinnedBucket };
+    const parsed = parseS3Command(text, {
+      endpoint: s3EndpointText(options),
+      region: options.region,
+      ...pin,
+      // The mode is named while it holds, whatever set it.
+      readOnly: options.readOnly !== undefined,
+    });
+    if (!parsed.ok) throw new QueryError(parsed.refusal.message, S3_TYPE);
+    const run = this.runs.begin(queryId, session.lifetime.signal);
+    const timeoutMs = options.callTimeoutMs;
+    const surface = this.surfaceFor(session, timeoutMs, run.signal);
+    try {
+      const started = Date.now();
+      const outcome = await executeS3Command(surface, parsed.parsed, {
+        call: this.callFor(session, timeoutMs, run.signal),
+        ...pin,
+      });
+      return s3Result(outcome, parsed.parsed, Date.now() - started);
+    } catch (error) {
+      // The console words each call's failure with its own operation; what reaches here is already a DatabaseError
+      // (row E0a) or a defect (row E0d), neither of which reads the operation named.
+      throw surface.fail(error, "ListBuckets");
+    } finally {
+      run.end();
+    }
+  }
+
+  /** Stops a running or queued run by its id and answers true; an id that names no run answers false. */
+  public async cancelQuery(queryId: string): Promise<boolean> {
+    return this.runs.cancel(queryId);
   }
 
   // ==========================================================================
