@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>probe-a</Name><Prefix>a/</Prefix><KeyCount>2</KeyCount><MaxKeys>1000</MaxKeys><Delimiter>/</Delimiter><IsTruncated>false</IsTruncated><Contents><Key>a/top.txt</Key><LastModified>2026-10-09T13:13:17.493Z</LastModified><ETag>&#34;937ec4c10eb20c1f3324ef927697ea66&#34;</ETag><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents><CommonPrefixes><Prefix>a/b/</Prefix></CommonPrefixes></ListBucketResult>

@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>probe-a</Name><CreationDate>2026-10-09T13:13:17.442Z</CreationDate></Bucket><Bucket><Name>probe-b</Name><CreationDate>2026-10-09T13:13:17.444Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>
