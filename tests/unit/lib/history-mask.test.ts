@@ -48,6 +48,25 @@ describe("maskStatementForHistory: a text that reads as one command line", () =>
       `cli get pods --token ${SECRET}\n# --password=${SECRET} |`,
       "cli get pods --token ***\n# --password ***",
     ],
+    [
+      "a no-break space between flag and value",
+      `cli get pods --token\u00a0${SECRET} -n x`,
+      "cli get pods --token *** -n x",
+    ],
+    ["a colon between flag and value", `cli get pods --token:${SECRET}`, "cli get pods --token ***"],
+    ["a flag in capitals with =", `cli get pods --TOKEN=${SECRET}`, "cli get pods --TOKEN ***"],
+    ["a flag in capitals with a separate value", `cli get pods --TOKEN ${SECRET}`, "cli get pods --TOKEN ***"],
+    ["a quoted flag and value in one word", `cli get pods "--token ${SECRET}"`, "cli get pods --token ***"],
+    [
+      "a continuation that glues the flag to the word before it",
+      `cli get pods\\\n--token ${SECRET}`,
+      "cli get pods\\\n--token ***",
+    ],
+    [
+      "a continuation that glues a flag and its value to the word before it",
+      `cli get pods\\\n--token:${SECRET}`,
+      "cli get pods\\\n--token ***",
+    ],
   ])("%s", (_name, text, masked) => {
     expect(maskStatementForHistory(text, MASK)).toBe(masked);
     expect(maskStatementForHistory(text, MASK)).not.toContain(SECRET);
@@ -88,6 +107,14 @@ describe("maskStatementForHistory: a text the shell reader refuses", () => {
     ["a flag inside a command substitution", `cli get pods $(--token ${SECRET})`, "cli get pods $(--token ***"],
     ["a flag inside backquotes", `cli get pods \`--token ${SECRET}\``, "cli get pods `--token ***"],
     ["a flag glued to a redirection", `cli get pods >--token ${SECRET}`, "cli get pods >--token ***"],
+    ["a flag name joined from quoted parts", `cli get pods --to"ken"=${SECRET} 'x`, `cli get pods --to"ken" ***`],
+    ["a flag name joined by a backslash", `cli get pods --to\\ken=${SECRET} 'x`, "cli get pods --to\\ken ***"],
+    [
+      "an escaped double quote inside the value that carries it to the next line",
+      `cli get pods --token="${SECRET}\\"\n${SECRET}" 'x`,
+      "cli get pods --token ***",
+    ],
+    ["a no-break space in a refused text", `cli get pods --token\u00a0${SECRET} 'x`, "cli get pods --token ***"],
   ])("%s", (_name, text, masked) => {
     expect(maskStatementForHistory(text, MASK)).toBe(masked);
     expect(maskStatementForHistory(text, MASK)).not.toContain(SECRET);
