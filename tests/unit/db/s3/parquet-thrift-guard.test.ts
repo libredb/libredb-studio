@@ -795,3 +795,108 @@ describe("the guard and hyparquet agree wherever the guard accepts", () => {
     expect(accepted).toBeGreaterThan(1_000);
   });
 });
+
+/** A valid data page header's facts, then `count` short-form boolean fields with distinct ids. */
+const manyBooleanFields = (count: number): Uint8Array => {
+  const head = pageHeader([
+    [1, { i32: 0 }],
+    [2, { i32: 4 }],
+    [3, { i32: 4 }],
+    [5, { struct: [[1, { i32: 1 }]] }],
+  ]);
+  const bytes = new Uint8Array(head.length - 1 + count + 1);
+  bytes.set(head.subarray(0, head.length - 1));
+  bytes.fill(0x11, head.length - 1, head.length - 1 + count);
+  return bytes;
+};
+
+/** A valid data page header carrying field 9: a list of `count` empty structs. */
+const longList = (count: number): Uint8Array => {
+  const head = pageHeader([
+    [1, { i32: 0 }],
+    [2, { i32: 4 }],
+    [3, { i32: 4 }],
+    [5, { struct: [[1, { i32: 1 }]] }],
+  ]);
+  return Uint8Array.from([
+    ...head.subarray(0, head.length - 1),
+    0x49,
+    0xfc,
+    ...varint(count),
+    ...new Uint8Array(count),
+    0x00,
+  ]);
+};
+
+describe("the field budget", () => {
+  test("structs that declare more fields in all than the budget are refused; at the budget they pass", () => {
+    const flat = Uint8Array.from([...new Array(10).fill(0x11), 0x00]);
+    expect(guardThriftStruct(flat, 0, 32, { maxFields: 10 })).toEqual({ ok: true, end: 11 });
+    expect(guardThriftStruct(flat, 0, 32, { maxFields: 9 })).toEqual({
+      ok: false,
+      reason: "the structs declare more than 9 fields in all",
+    });
+    const nestedInList = thriftStruct([
+      [
+        1,
+        {
+          list: {
+            type: THRIFT.STRUCT,
+            items: [
+              {
+                struct: [
+                  [1, { i32: 1 }],
+                  [2, { i32: 2 }],
+                ],
+              },
+            ],
+          },
+        },
+      ],
+      [2, { struct: [[1, { bool: true }]] }],
+    ]);
+    expect(guardThriftStruct(nestedInList, 0, 32, { maxFields: 5 })).toMatchObject({ ok: true });
+    expect(guardThriftStruct(nestedInList, 0, 32, { maxFields: 4 })).toMatchObject({ ok: false });
+  });
+
+  test("a page header of 100,000 distinct boolean fields is refused", () => {
+    expect(readPageHeader(manyBooleanFields(100_000), 0, 32)).toEqual({
+      ok: false,
+      reason: "the structs declare more than 64 fields in all",
+    });
+  });
+
+  test("a page header carrying a list of 100,000 elements is refused", () => {
+    expect(readPageHeader(longList(100_000), 0, 32)).toEqual({
+      ok: false,
+      reason: "the lists declare more than 8 elements in all",
+    });
+    expect(readPageHeader(longList(8), 0, 32)).toMatchObject({ type: 0, numValues: 1 });
+  });
+
+  test("a page header with every field the format defines, statistics included, passes", () => {
+    const statistics: ThriftField = [
+      5,
+      {
+        struct: [
+          [1, { binary: "z" }],
+          [2, { binary: "a" }],
+          [3, { i64: 0 }],
+          [4, { i64: 2 }],
+          [5, { binary: "z" }],
+          [6, { binary: "a" }],
+          [7, { bool: true }],
+          [8, { bool: true }],
+        ],
+      },
+    ];
+    const v1 = pageHeader([
+      [1, { i32: 0 }],
+      [2, { i32: 4 }],
+      [3, { i32: 4 }],
+      [4, { i32: 7 }],
+      [5, { struct: [[1, { i32: 1 }], [2, { i32: 0 }], [3, { i32: 3 }], [4, { i32: 3 }], statistics] }],
+    ]);
+    expect(readPageHeader(v1, 0, 32)).toMatchObject({ type: 0, numValues: 1 });
+  });
+});

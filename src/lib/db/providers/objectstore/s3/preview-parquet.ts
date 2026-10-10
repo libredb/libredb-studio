@@ -149,6 +149,16 @@ const refused = (sentence: string): FooterOutcome => ({ kind: "refused", sentenc
 const FOOTER_LIST_ELEMENTS_PER_SCHEMA_ELEMENT = 128;
 
 /**
+ * The footer's fields in all, at every depth. hyparquet builds a property for each field, and a struct object for
+ * each struct field, before the schema walk runs, and a 1 MiB footer can declare a million one-byte fields: measured
+ * on Node 26.10.0 under a 128 MiB old-space limit, 1,000,000 distinct boolean fields grow the heap by 95 MiB in
+ * parquetMetadata, while at this bound the worst shape measured (131,072 empty struct fields beside a list of 131,072
+ * empty structs) grows it by 31 MiB in 66 ms. A DuckDB column chunk with statistics holds 18 fields, so this admits a
+ * footer of about 7,000 such chunks.
+ */
+const FOOTER_MAX_FIELDS = 131_072;
+
+/**
  * Parquet writes a row group's column chunks one per schema leaf, in schema order; the plan and the summary pair
  * them by that order, so a chunk list of another length, a chunk with no metadata, or a chunk whose path is not the
  * leaf's at its position is refused.
@@ -188,6 +198,7 @@ export async function readParquetFooter(input: ParquetPreviewInput, modules: Par
   let schemaElements = 0;
   const guard = guardThriftStruct(footerBytes.subarray(0, footerLength), 0, limits.thriftMaxDepth, {
     maxListElements: schemaBound * FOOTER_LIST_ELEMENTS_PER_SCHEMA_ELEMENT,
+    maxFields: FOOTER_MAX_FIELDS,
     onField: (path, type, value) => {
       if (path.length === 1 && path[0] === 2 && type === 9) schemaElements = Math.max(schemaElements, value as number);
     },

@@ -3,8 +3,8 @@
  * struct without building values and never allocates per declared element: a list may declare at most the bytes left
  * (every compact element takes at least one), a binary at most the bytes left, nesting at most `maxDepth`, and only
  * the types hyparquet reads (thrift.js:6-16). Every footer and page header passes it before any hyparquet parser sees
- * it. A caller may also cap the list elements of the whole struct, since hyparquet builds an object or a value for
- * each one.
+ * it. A caller may also cap the list elements and the fields of the whole struct, since hyparquet builds an object or
+ * a value for each list element and a property for each field.
  *
  * It accepts only bytes hyparquet's reader reads to the same values. hyparquet decodes a varint with 32-bit bitwise
  * arithmetic, so a field id, an i16, an i32, a binary length or a list size may take at most 5 bytes, the fifth
@@ -24,6 +24,8 @@ class GuardStop extends Error {}
 export interface ThriftGuardOptions {
   /** The most elements all lists of the struct may declare together, at any depth. */
   readonly maxListElements?: number;
+  /** The most fields all structs may declare together, at any depth and inside lists; checked before each is walked. */
+  readonly maxFields?: number;
   /**
    * Called with each field outside any list, after its value: its path of field ids, its Thrift type, and its value
    * when an i16 or i32, or its declared size when a list.
@@ -37,6 +39,8 @@ interface Walk {
   readonly maxDepth: number;
   readonly maxListElements: number;
   listElements: number;
+  readonly maxFields: number;
+  fields: number;
   readonly onField?: ThriftGuardOptions["onField"];
 }
 
@@ -147,6 +151,8 @@ function walkStruct(walk: Walk, depth: number, path: readonly number[] | undefin
     const type = byte & 0x0f;
     if (type === 0) return;
     if (!KNOWN_TYPES.has(type)) stop(`an unknown Thrift type ${type}`);
+    walk.fields += 1;
+    if (walk.fields > walk.maxFields) stop(`the structs declare more than ${count(walk.maxFields)} fields in all`);
     const delta = byte >> 4;
     if (delta !== 0) field += delta;
     else {
@@ -182,6 +188,8 @@ export function guardThriftStruct(
     maxDepth,
     maxListElements: options.maxListElements ?? Number.POSITIVE_INFINITY,
     listElements: 0,
+    maxFields: options.maxFields ?? Number.POSITIVE_INFINITY,
+    fields: 0,
     onField: options.onField,
   });
 }
@@ -198,6 +206,17 @@ export interface PageHeaderFacts {
 
 /** The field holding the value count of each page type, as hyparquet's readPage reads it (column.js:96-141). */
 const COUNT_HOLDER: Readonly<Record<number, number>> = { 0: 5, 2: 7, 3: 8 };
+
+/** The page header fields the facts read; the reader records no other. */
+const FACT_KEYS: ReadonlySet<string> = new Set(["1", "2", "3", "5", "7", "8", "5.1", "7.1", "8.1", "8.2"]);
+
+/**
+ * A page header's bounds. The format's PageHeader holds at most 8 fields, its largest nested header 8 more and a
+ * Statistics struct 8 more, and none of them holds a list, so these bound what hyparquet builds from one header
+ * without refusing any header a writer emits.
+ */
+const PAGE_HEADER_MAX_FIELDS = 64;
+const PAGE_HEADER_MAX_LIST_ELEMENTS = 8;
 
 interface SeenField {
   readonly type: number;
@@ -218,9 +237,12 @@ export function readPageHeader(
 ): PageHeaderFacts | { readonly ok: false; readonly reason: string } {
   const fields = new Map<string, SeenField>();
   const result = guardThriftStruct(bytes, offset, maxDepth, {
+    maxFields: PAGE_HEADER_MAX_FIELDS,
+    maxListElements: PAGE_HEADER_MAX_LIST_ELEMENTS,
     onField: (path, type, value) => {
       if (path.length > 2) return;
       const key = path.join(".");
+      if (!FACT_KEYS.has(key)) return;
       fields.set(key, { type, value, times: (fields.get(key)?.times ?? 0) + 1 });
     },
   });

@@ -1317,3 +1317,58 @@ describe("leading mode drops the columns past the pre-scan's value total", () =>
     expect(totals.values).toBe(33);
   });
 });
+
+/** The bytes of one page header: a valid data page's facts and a 4-byte body, then `extra` before the stop byte. */
+const headerWith = (extra: readonly number[]): Uint8Array => {
+  const head = thriftStruct([
+    [1, { i32: 0 }],
+    [2, { i32: 4 }],
+    [3, { i32: 4 }],
+    [5, { struct: [[1, { i32: 1 }]] }],
+  ]);
+  return Uint8Array.from([...head.subarray(0, head.length - 1), ...extra, 0x00, 1, 2, 3, 4]);
+};
+
+describe("the page header and footer field budgets", () => {
+  const heapNow = (): number => {
+    Bun.gc(true);
+    return process.memoryUsage().heapUsed;
+  };
+
+  test("prescanChunk refuses a page header of 100,000 distinct boolean fields with R-PQ-PAGES, holding little heap", () => {
+    const bytes = headerWith(new Array(100_000).fill(0x11));
+    const before = heapNow();
+    let caught: unknown;
+    try {
+      prescanChunk(bytes, 1, "id", S3_PREVIEW_LIMITS, { values: 0, decoded: 0 });
+    } catch (error) {
+      caught = error;
+    }
+    expect(heapNow() - before).toBeLessThan(4 * 1_048_576);
+    expect(caught).toBeInstanceOf(PreviewRefusal);
+    expect((caught as PreviewRefusal).sentence).toBe(
+      "The pages of column id do not fill its column chunk, so the file is not previewed.",
+    );
+  });
+
+  test("prescanChunk refuses a page header carrying a list of 100,000 elements with R-PQ-PAGES", () => {
+    const bytes = headerWith([0x99, 0xfc, 0xa0, 0x8d, 0x06, ...new Array(100_000).fill(0)]);
+    expect(() => prescanChunk(bytes, 1, "id", S3_PREVIEW_LIMITS, { values: 0, decoded: 0 })).toThrow(PreviewRefusal);
+  });
+
+  test("a footer of 200,000 distinct boolean fields is refused with R-PQ-FOOTER-BAD before parquetMetadata runs", async () => {
+    const { modules, calls } = await spiedModules();
+    const footer = new Uint8Array(200_001).fill(0x11);
+    footer[200_000] = 0;
+    const length = new Uint8Array(4);
+    new DataView(length.buffer).setUint32(0, footer.length, true);
+    const magic = [0x50, 0x41, 0x52, 0x31];
+    const object = Uint8Array.from([...magic, ...footer, ...length, ...magic]);
+    expect(await previewParquet(inputFor(object, "f.parquet").input, depsOf(modules))).toEqual({
+      kind: "refused",
+      sentence: "The Parquet footer could not be read: the structs declare more than 131,072 fields in all.",
+      notices: [],
+    });
+    expect(calls.metadata).toBe(0);
+  });
+});
