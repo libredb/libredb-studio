@@ -162,7 +162,7 @@ export const Sidebar = React.memo(function Sidebar({
    *
    * `objects` is the default and stays the default for every engine: the key browser is an ADDITION
    * to the sidebar rather than a replacement for the object tree, so an engine that gains the
-   * capability gains a tab and the other sixteen shipped type ids are untouched by it.
+   * capability gains a tab and every engine without it is untouched by it.
    *
    * Deliberately not reset when the connection changes. A reader who chose Keys and then switched
    * between two Redis servers meant to keep looking at keys, and the capability check below is what
@@ -338,9 +338,9 @@ export const Sidebar = React.memo(function Sidebar({
         of what it found.
 
         Nothing is drawn while the declaration is missing, and that is not caution: an
-        absent `containerLevels` reads as depth 0, which is a REAL answer for five engines,
-        so a placeholder declaration would make a one-level engine read the counts of a
-        container that does not exist instead of listing its schemas.
+        absent `containerLevels` reads as depth 0, which is a REAL answer for every engine
+        with no container level, so a placeholder declaration would make a one-level engine
+        read the counts of a container that does not exist instead of listing its schemas.
 
         THE PANEL IS A COLUMN, AND EACH READING OF IT IS ONE FLEX CHILD. Only one of them occupies
         it: the key panel is `display:none` whenever the tree is the reading on screen, so the tree

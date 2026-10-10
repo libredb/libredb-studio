@@ -704,6 +704,21 @@ const RESOLVED: ResolvedRow[] = [
     // Global rather than per-surface: the five locked cells were measured under it too.
     sampling: { temperature: 0.3, topP: 1 },
   },
+  // The forty-sixth, and the second row to state its own sampling: every one of its six cells
+  // closed at temperature 0.3 on the first attempt, with nothing else moved. It came off the
+  // library listing with four other untried names; two of those answered `does not support chat`
+  // and this is the one that cleared both the probe and the board.
+  {
+    id: "qwen3.8:27b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+    sampling: { temperature: 0.3, topP: 1 },
+  },
 ];
 
 describe("every resolver's answer, pinned before the profiles moved", () => {
@@ -743,7 +758,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
     // would assert 43 against 40 and deriving from the profiles would assert nothing at all. The
     // loop above is what guarantees coverage; this is the second half, that the roster is the size
     // the change intended. `model-roster-docs.test.ts` derives the same count for the docs.
-    expect(Object.keys(modelProfiles())).toHaveLength(45);
+    expect(Object.keys(modelProfiles())).toHaveLength(46);
   });
 });
 
@@ -828,6 +843,7 @@ describe("what each model records about the runs that earned its settings", () =
     "qwen3.5:35b": "b32ca3f5bcb21ab7c084a53144438c95e277535735ee43c5840b5941a4b1a5c7",
     "qwen3:32b": "95abe040e1654ecf1462bd73d48079a6fb152723551bbc8001899facd16d70c0",
     "laguna-xs-2.1:latest": "2fc40492ef6cb14b7eeb4eee05a95eef31feab539e693634adea21b22765b7c7",
+    "qwen3.8:27b": "5948f3803fc6daf3d9ae0255f14e09a35099a6149a20611d885ff3365d1f834e",
   };
 
   test("every model's record survives the move, character for character", () => {

@@ -1264,7 +1264,7 @@ two reasons the object surface gives. Zero columns **raises**: every object of e
 least one column, so an empty answer means the object is not there under that name in this schema.
 
 All three kinds declare `hasColumns`, so every object row in the tree expands and there is no kind
-here whose `describeObject` answers `columns: []` (#789). That makes Druid one of the three engines
+here whose `describeObject` answers `columns: []` (#789). That makes Druid one of the engines
 whose conformance expectation must set `noAbstainingKinds`: the invariant's negative direction, which
 asserts that a kind declaring nothing answers no column, iterates zero times on this provider, and the
 positive direction is the only one carrying it. `lookup` is the case worth naming: it is
@@ -1304,9 +1304,9 @@ Five decisions, each measured on Apache Druid 37.0.0 rather than reasoned about.
    the object surface is pinned to `TABLE_SCHEMA = 'druid'` (`DATASOURCE_SCHEMA_FILTER`), so it cannot
    see a lookup or a system table at all, and the bulk read answers for every schema the cluster
    publishes.
-2. **No kind answers an empty batch without a round trip**, which is what makes Druid unlike the
-   other sixteen providers: `INFORMATION_SCHEMA.COLUMNS` answers for a datasource, for a lookup's
-   `k` and `v` and for a `sys` table alike, measured, so the columnless-kind guard the reference
+2. **No kind answers an empty batch without a round trip**, which is what makes Druid unlike providers
+   such as PostgreSQL, MySQL and Cassandra: `INFORMATION_SCHEMA.COLUMNS` answers for a datasource, for a
+   lookup's `k` and `v` and for a `sys` table alike, measured, so the columnless-kind guard the reference
    implementation writes has nothing to guard here and is deliberately absent rather than written
    as an unreachable branch.
 3. **The bound is `LIMIT n+1` INSIDE the target**, interpolated rather than bound: this transport

@@ -805,6 +805,38 @@ channels:
         'libredb-studio:(\d+\.\d+\.\d+)'; both the pin URL and any bump PR must target v3. Deploys a
         container to the user's Docker host, so the platform is container.
 
+  - id: portainer-templates-as93
+    name: Portainer templates (lissy93 aggregator)
+    short_name: Portainer templates (as93)
+    status: live
+    category: paas-catalogs
+    platforms: [container]
+    runtime: channel_supplied
+    tier: 3
+    kind: one-click-template
+    update:
+      method: commit
+      sla: on_demand
+    links:
+      first_pr: https://github.com/lissy93/portainer-templates/pull/140
+      upstream_repo: https://github.com/lissy93/portainer-templates
+      get: https://portainer-templates.as93.net
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: none
+      note: A third-party aggregator, and a different row from `portainer` above, which is the official
+        portainer/templates repo. It served a copy of our template inside its own
+        sources/local/development_templates.json, added by lissy93/portainer-templates#140, which said
+        "sixteen database engines" and set no STORAGE_PROVIDER, so the volume it declared held none of
+        the user's saved connections. Its documented model runs the other way round, with the app
+        keeping portainer-template.json on its own default branch while the project pulls it daily, so
+        the copy at this repository's root is now the source and the local copy goes in the same
+        upstream PR. There is no version to pin, by design, because the template names
+        ghcr.io/libredb/libredb-studio:latest, which their guide allows for a tag we keep publishing,
+        so it needs no release-time bump. What can go stale instead is the copy, which is why
+        portainer-template.json is listed in COPY_FILES of
+        tests/unit/lib/catalog-copy-engine-count.test.ts, where the engine numerals are gated.
+
   - id: operatorhub-community
     name: OperatorHub / OpenShift community operator catalogs
     short_name: OperatorHub / OpenShift

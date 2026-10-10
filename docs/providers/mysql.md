@@ -1696,10 +1696,9 @@ CALL bulk26a1.seed();
 #### Object source (#789)
 
 `readObjectSource(path, kind, limit?)` answers one object's definition text as a document of named
-parts. **Every kind either server declares can answer**, which makes this the one provider in the
-fleet with no kind that declares nothing: MySQL's six and MariaDB's eight each have a `SHOW CREATE`
-form. The Monaco language id is `mysql` on all eight; `mysql` is an id the installed monaco-editor
-0.57.0 bundle really registers, unlike `plsql`, `tsql` and `cql`.
+parts. **Every kind either server declares can answer**: MySQL's six and MariaDB's eight each have a
+`SHOW CREATE` form. The Monaco language id is `mysql` on all eight; `mysql` is an id the installed
+monaco-editor 0.57.0 bundle really registers, unlike `plsql`, `tsql` and `cql`.
 
 Measured 2026-09-13 on **MySQL 26.7.0** and **MariaDB 12.3.2** against the two committed fixtures.
 
@@ -2441,8 +2440,8 @@ Its reach is exactly the rules it carries, and only over statements a test actua
 installs that fixture *and* sends a `sql_text` statement, so nothing asks it the question. The guard
 closes the door on a fixture that lies when asked; it does not interrogate fixtures nobody asks.
 The list stays in this file rather than in `tests/helpers/` until a second engine has a measured
-refusal of its own. The other sixteen provider test files would receive an empty rule list, which
-proves nothing about their fixtures and reads as coverage. That condition is recorded in the list's
+refusal of its own. Every other provider test file would receive an empty rule list, which
+proves nothing about its fixtures and reads as coverage. That condition is recorded in the list's
 own docblock, where a second engine's implementer will meet it.
 
 And the mock connection answers **both `query` and `execute`**, recording which one each statement

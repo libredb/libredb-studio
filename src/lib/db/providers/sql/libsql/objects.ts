@@ -559,8 +559,8 @@ function rowsOrThrow(reader: LibSQLObjectReader, outcome: LibSQLBatchOutcome, sq
  * database and every object in it is addressed by a bare name. The tree reads
  * `containerDepth()` off the same declaration, sees 0 and draws the kind folders at the
  * root under the empty container path. Inventing a synthetic `main` container to make the
- * shape match the other sixteen engines would put a row in the tree that names nothing a
- * user can act on.
+ * shape match the engines that do have a container level, such as PostgreSQL's schemas,
+ * would put a row in the tree that names nothing a user can act on.
  */
 export function listObjectContainers(): Container[] {
   return [];

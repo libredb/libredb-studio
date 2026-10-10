@@ -63,6 +63,7 @@ const COPY_FILES: ReadonlyArray<{ path: string; from?: string; to?: string }> = 
   { path: "deploy/rancher/pcsc-listing.html" },
   { path: "packaging/aur/PKGBUILD", from: "pkgdesc=", to: "\narch=" },
   { path: "deploy/digitalocean/assets/description-long.md" },
+  { path: "portainer-template.json" },
 ];
 
 const NUMERAL_WORDS: Record<string, number> = {

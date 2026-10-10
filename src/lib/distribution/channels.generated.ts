@@ -41,6 +41,7 @@ export const LIVE_CHANNELS: readonly ShowcaseChannel[] = [
   { id: "truenas-scale", label: "TrueNAS SCALE apps", group: "paas" },
   { id: "casaos", label: "CasaOS App Store", group: "paas" },
   { id: "okxlin-appstore", label: "1Panel community store", group: "paas" },
+  { id: "portainer-templates-as93", label: "Portainer templates (as93)", group: "paas" },
   { id: "operatorhub-community", label: "OperatorHub / OpenShift", group: "kubernetes" },
   { id: "zopdev-helm-charts", label: "ZopDev Helm Charts", group: "kubernetes" },
   { id: "yunohost", label: "YunoHost", group: "paas" },

@@ -2628,8 +2628,8 @@ export class MongoDBProvider extends BaseDatabaseProvider {
    *      same collection without complaint.
    *
    * So the index reads are one per described object, issued in PARALLEL and bounded by the
-   * caller's `limit`, and this method is the ONE place in the seventeen providers where a
-   * per-object read survives. It is still not the N+1 the inventory route removed: that was
+   * caller's `limit`. This per-object read is one of several in Studio's providers, and
+   * it is still not the N+1 the inventory route removed: that was
    * up to 5,000 SEQUENTIAL round trips over the whole listing, while this is one parallel
    * batch over the objects the caller asked for. Measured over 200 collections: 171 ms for
    * the sequential fan-out a loop over `describeObject` costs, 67 ms for the same fan-out

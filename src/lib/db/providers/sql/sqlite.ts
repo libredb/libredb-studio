@@ -1581,8 +1581,9 @@ export class SQLiteProvider extends SQLBaseProvider {
    * `containerDepth()` off the same declaration, sees 0, and draws the kind folders at the
    * root under the empty container path; `enumerateContainers()` in
    * `src/lib/api/object-route.ts` answers `[[]]` for the same engines. Inventing a
-   * synthetic `main` container to make the shape match the other sixteen engines would put
-   * a row in the tree that names nothing a user can act on.
+   * synthetic `main` container to make the shape match the engines that do have a
+   * container level, such as PostgreSQL's schemas, would put a row in the tree that
+   * names nothing a user can act on.
    *
    * Takes no `parent`, which the optional interface parameter allows: there is no level
    * for one to name, so accepting and ignoring it would be the same answer written twice.
@@ -1876,8 +1877,8 @@ export class SQLiteProvider extends SQLBaseProvider {
    * EVERY DECLARED KIND CAN ANSWER, and this is the simplest source story in the fleet:
    * `sqlite_schema` keeps one row per object and `sql` on that row is the text somebody
    * typed. So `form` is `complete` - every one of them runs as given - and `origin` is
-   * `stored`, which on this engine is a real distinction rather than a formality. It is the
-   * one engine family where the `stored` arm has a producer at all among the SQL providers,
+   * `stored`, which on this engine is a real distinction rather than a formality.
+   * Several other SQL providers rebuild their text from a catalog instead,
    * and the caption's whole job is to stop a REGENERATION reading as the user's own text: if
    * every engine said `regenerated` the distinction would be decoration.
    *
