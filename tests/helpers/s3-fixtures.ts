@@ -81,8 +81,7 @@ export function captureSets(root: string = S3_CAPTURES_ROOT): S3CaptureSet[] {
     .sort()
     .map((entry) => {
       const set = parseSetName(entry);
-      if (set === undefined)
-        throw new Error(`tests/fixtures/s3/captures/${entry} is not a <target>-<date>-<version> set`);
+      if (set === undefined) throw new Error(`${path.join(root, entry)} is not a <target>-<date>-<version> set`);
       return set;
     });
 }
@@ -93,8 +92,13 @@ export function loadS3Capture(file: string, root: string = S3_CAPTURES_ROOT): S3
   return capture;
 }
 
+/** A set's manifest; one naming a target other than its set name's is refused. */
 export function loadManifest(set: string, root: string = S3_CAPTURES_ROOT): S3Manifest {
-  return JSON.parse(readFileSync(path.join(root, set, "manifest.json"), "utf8")) as S3Manifest;
+  const manifest = JSON.parse(readFileSync(path.join(root, set, "manifest.json"), "utf8")) as S3Manifest;
+  const target = parseSetName(set)?.target;
+  if (manifest.target !== target)
+    throw new Error(`${set}/manifest.json names target ${manifest.target}, not ${target}`);
+  return manifest;
 }
 
 export function renderCapturesReadme(

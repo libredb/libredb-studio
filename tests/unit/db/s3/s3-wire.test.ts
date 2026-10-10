@@ -27,6 +27,7 @@ import {
 import {
   captureFilesOnDisk,
   captureSets,
+  loadManifest,
   loadS3Capture,
   parseSetName,
   readDigestTable,
@@ -502,5 +503,18 @@ describe("the capture loader tests/helpers/s3-fixtures.ts", () => {
     expect(loadS3Capture(file, root).scenario).toBe("A1");
     writeFileSync(path.join(root, file), JSON.stringify({ ...written, file: "other/A1.json" }));
     expect(() => loadS3Capture(file, root)).toThrow(`${file} names itself other/A1.json`);
+  });
+
+  test("a directory that is not a set is named under the root passed, and a manifest naming another target is refused", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "s3-captures-"));
+    mkdirSync(path.join(root, "not-a-set"));
+    expect(() => captureSets(root)).toThrow(`${path.join(root, "not-a-set")} is not a <target>-<date>-<version> set`);
+    const other = mkdtempSync(path.join(tmpdir(), "s3-captures-"));
+    const set = "silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z";
+    mkdirSync(path.join(other, set));
+    writeFileSync(path.join(other, set, "manifest.json"), JSON.stringify({ target: "garage" }));
+    expect(() => loadManifest(set, other)).toThrow(`${set}/manifest.json names target garage, not silo`);
+    writeFileSync(path.join(other, set, "manifest.json"), JSON.stringify({ target: "silo" }));
+    expect(loadManifest(set, other).target).toBe("silo");
   });
 });

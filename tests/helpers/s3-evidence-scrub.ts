@@ -91,6 +91,12 @@ export function secretEncodings(value: string): readonly { readonly encoding: st
       ];
     }),
   ];
+  // A spelling of under 4 characters would mask every run of those characters in a line; such a secret is refused.
+  const shortest = Math.min(...spellings.map(({ text }) => text.length));
+  if (shortest < 4)
+    throw new Error(
+      `a fixture secret whose shortest spelling holds ${shortest} characters cannot be masked: use a longer secret`,
+    );
   const seen = new Set<string>();
   return spellings.filter(({ text }) => (seen.has(text) ? false : (seen.add(text), true)));
 }
@@ -128,7 +134,9 @@ function allowed(name: string): boolean {
 function scrubExchange(file: string, exchange: S3Exchange): S3Exchange {
   const size = bodyBytes(exchange.answer.body).length;
   if (size > S3_EXCHANGE_BODY_MAX_BYTES)
-    throw new Error(`${file} step ${exchange.step}: the answer body holds ${size} bytes, over 512 KiB`);
+    throw new Error(
+      `${file} step ${exchange.step}: the answer body holds ${size} bytes, over ${S3_EXCHANGE_BODY_MAX_BYTES / 1024} KiB`,
+    );
   const requestHeaders = Object.fromEntries(
     Object.entries(exchange.request.headers).filter(([name]) => name !== "authorization"),
   );

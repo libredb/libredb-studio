@@ -51,7 +51,8 @@ const TARGETS: Readonly<Record<string, SeedTarget>> = {
 };
 
 const args = process.argv.slice(2);
-const target = args[0] === "--target" && args.length === 2 ? TARGETS[args[1]] : undefined;
+const target =
+  args[0] === "--target" && args.length === 2 && Object.hasOwn(TARGETS, args[1]) ? TARGETS[args[1]] : undefined;
 if (target === undefined) {
   console.error(`s3-seed-raw.ts: --target must be one of ${Object.keys(TARGETS).join(", ")}`);
   process.exit(2);

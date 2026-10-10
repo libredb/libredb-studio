@@ -187,6 +187,16 @@ describe("secretHits and normalizeMessage", () => {
   });
 });
 
+describe("a secret too short to mask", () => {
+  test("an empty secret, or one whose shortest spelling holds under 4 characters, is refused instead of masked", () => {
+    expect(() => secretEncodings("")).toThrow("a fixture secret whose shortest spelling holds 0 characters");
+    expect(() => secretEncodings("abc")).toThrow("a fixture secret whose shortest spelling holds 3 characters");
+    expect(() => maskSecrets("PASS A1 list", [{ label: "short", value: "abc" }])).toThrow("cannot be masked");
+    expect(() => secretHits("PASS A1 list", [{ label: "empty", value: "" }])).toThrow("cannot be masked");
+    expect(Math.min(...secretEncodings("abcd").map(({ text }) => text.length))).toBe(4);
+  });
+});
+
 describe("maskSecrets", () => {
   test("a FAIL line holding the percent-encoded and the base64 spelling of a secret prints <secret> for both", () => {
     const secret = SECRETS[0];

@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import path from "node:path";
 import { createNodeByteTransport } from "@/lib/db/http/node-transport";
 import { assertObjectSurface } from "../helpers/object-surface-conformance";
-import { maskSecrets, scrubCapture } from "../helpers/s3-evidence-scrub";
+import { maskSecrets, type S3FixtureSecret, scrubCapture } from "../helpers/s3-evidence-scrub";
 import {
   captureFilesOnDisk,
   captureSets,
@@ -94,8 +94,8 @@ for (const name of only ?? [])
   if (!planned.some(({ scenario }) => scenario.name === name)) usage(`${target} does not record the scenario ${name}`);
 const selected = only === undefined ? planned : planned.filter(({ scenario }) => only.includes(scenario.name));
 
-const principals = readS3Principals(target, options["garage-keys"]);
-const secrets = fixtureSecrets(target, principals);
+// Assigned inside the try below, so a failure to read the principals is printed through mask like any other.
+let secrets: readonly S3FixtureSecret[] = [];
 const mask = (text: string) => maskSecrets(text, secrets);
 
 function image(): string {
@@ -110,7 +110,7 @@ function image(): string {
     ["run", "--rm", "--entrypoint", "head", id, "-n", "3", "/usr/bin/minio.buildinfo"],
     { encoding: "utf8" },
   );
-  return `${id} ${buildinfo.trim().split("\n").join(" ")}`;
+  return `${id} ${buildinfo.trim().split("\n").join(" ").replaceAll("\t", " ")}`;
 }
 
 function uncommitted(): string[] {
@@ -130,6 +130,8 @@ const directory = path.join(S3_CAPTURES_ROOT, set);
 const production: S3TransportFactory = (transportOptions) => createNodeByteTransport(transportOptions);
 
 try {
+  const principals = readS3Principals(target, options["garage-keys"]);
+  secrets = fixtureSecrets(target, principals);
   if (parseSetName(set) === undefined) throw new Error(`${set} is not a set name`);
   const writes = new Map<string, string>();
   const scenarios: S3Manifest["scenarios"][number][] = [];
@@ -202,25 +204,30 @@ try {
         throw new Error(
           `${set}/${existing} exists and this run does not write it: move the set aside or capture every scenario`,
         );
-  mkdirSync(directory, { recursive: true });
-  for (const [file, text] of writes) writeFileSync(path.join(S3_CAPTURES_ROOT, file), text);
-  const digests = captureFilesOnDisk().map((file) => ({
+  // The README is rendered and read back before anything is written, from the files on disk with this run's writes
+  // laid over them, so a table that does not read back leaves the captures as they were.
+  const files = [...new Set([...captureFilesOnDisk(), ...writes.keys()])].sort();
+  const digests = files.map((file) => ({
     file,
     sha256: createHash("sha256")
-      .update(readFileSync(path.join(S3_CAPTURES_ROOT, file)))
+      .update(writes.get(file) ?? readFileSync(path.join(S3_CAPTURES_ROOT, file)))
       .digest("hex"),
   }));
-  const sets = captureSets().map((captureSet) => ({ set: captureSet, manifest: loadManifest(captureSet.name) }));
-  writeFileSync(
-    path.join(S3_CAPTURES_ROOT, "README.md"),
-    renderCapturesReadme(
-      sets,
-      digests,
-      S3_SCENARIOS.map((scenario) => ({ name: scenario.name, shows: scenario.shows })),
-    ),
+  const setNames = [...new Set([...captureSets().map((captureSet) => captureSet.name), set])].sort();
+  const sets = setNames.map((name) => {
+    const captureSet = parseSetName(name);
+    if (captureSet === undefined) throw new Error(`${name} is not a set name`);
+    return { set: captureSet, manifest: name === set ? manifest : loadManifest(name) };
+  });
+  const readme = renderCapturesReadme(
+    sets,
+    digests,
+    S3_SCENARIOS.map((scenario) => ({ name: scenario.name, shows: scenario.shows })),
   );
-  if (readDigestTable(readFileSync(path.join(S3_CAPTURES_ROOT, "README.md"), "utf8")).length !== digests.length)
-    throw new Error("the README's digest table did not read back");
+  if (readDigestTable(readme).length !== digests.length) throw new Error("the README's digest table did not read back");
+  mkdirSync(directory, { recursive: true });
+  for (const [file, text] of writes) writeFileSync(path.join(S3_CAPTURES_ROOT, file), text);
+  writeFileSync(path.join(S3_CAPTURES_ROOT, "README.md"), readme);
   console.log(mask(`wrote ${writes.size} files to tests/fixtures/s3/captures/${set}`));
 } catch (error) {
   console.error(mask(`s3-evidence.ts: ${error instanceof Error ? error.message : String(error)}`));

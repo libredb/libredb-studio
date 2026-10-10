@@ -1534,6 +1534,10 @@ const NO_SENTENCE: S3ResolvedSentence = { pattern: /(?!)/, anyNumber: false };
 
 /** A date an hour ahead of now, so a skew answer resolves to the sentence that names the measured minutes. */
 const skewedServerDate = () => new Date(Date.now() + 3_600_000).toUTCString();
+/** The answers that refuse a request for clock skew: RequestTimeTooSkewed, and Garage's past-window refusal. */
+const isSkewAnswer = (answer: { readonly code?: string; readonly message?: string }): boolean =>
+  answer.code === "RequestTimeTooSkewed" ||
+  (answer.code === "InvalidRequest" && /^(Bad request: )?Date is too old$/.test(answer.message ?? ""));
 
 function connectionOptions(connection: DatabaseConnection) {
   return buildS3ConnectionOptions(connection as Parameters<typeof buildS3ConnectionOptions>[0], {
@@ -1581,8 +1585,9 @@ export function resolveS3Sentence(ref: string, context: S3SentenceContext): S3Re
   if (ref === "connection")
     return { text: thrown(() => connectionOptions(context.connection), "buildS3ConnectionOptions"), anyNumber: false };
   if (ref === "console") {
+    if (context.command === undefined) throw new Error("a console step names no command");
     const options = connectionOptions(context.connection);
-    const parsed = parseS3Command(context.command ?? "", {
+    const parsed = parseS3Command(context.command, {
       endpoint: s3EndpointText(options),
       region: options.region,
       ...(options.pinnedBucket === undefined ? {} : { pinnedBucket: options.pinnedBucket }),
@@ -1594,14 +1599,14 @@ export function resolveS3Sentence(ref: string, context: S3SentenceContext): S3Re
       );
     return { text: parsed.refusal.message, anyNumber: false };
   }
-  if (ref === "keys")
+  if (ref === "keys") {
+    const scan = context.scan;
+    if (scan === undefined) throw new Error("a keys step names no scan");
     return {
-      text: thrown(
-        () => readS3KeyScanRequest(context.scan as KeyScanOptions, context.connection.database || undefined),
-        "readS3KeyScanRequest",
-      ),
+      text: thrown(() => readS3KeyScanRequest(scan, context.connection.database || undefined), "readS3KeyScanRequest"),
       anyNumber: false,
     };
+  }
   if (ref.startsWith("egress:link-local:"))
     return {
       text: thrown(() => assertNotLinkLocalLiteral(ref.slice(18)), "assertNotLinkLocalLiteral"),
@@ -1659,7 +1664,7 @@ export function resolveS3Sentence(ref: string, context: S3SentenceContext): S3Re
       ...(answer.bucket === undefined ? {} : { bucket: answer.bucket }),
       ...(answer.key === undefined ? {} : { key: answer.key }),
       ...(answer.sentToken === undefined ? {} : { sentToken: answer.sentToken }),
-      ...(answer.anyNumber === true ? { serverDate: skewedServerDate() } : {}),
+      ...(answer.anyNumber === true && isSkewAnswer(answer) ? { serverDate: skewedServerDate() } : {}),
     });
     const mapped = toProviderError(error, answer.operation, {
       region: options.region,
@@ -2857,6 +2862,10 @@ export async function s3Fingerprint(
       if (bucket === "studio-versions") {
         try {
           const versions = await client.listObjectVersions({ bucket, prefix: "", maxKeys: 1000 }, call());
+          if (versions.isTruncated)
+            throw new Error(
+              `the ListObjectVersions listing of ${bucket} is truncated, so the fingerprint would miss entries`,
+            );
           for (const entry of versions.entries)
             hash.update(
               `v\u0000${entry.key}\u0000${entry.versionId ?? ""}\u0000${entry.deleteMarker}\u0000${entry.size ?? ""}\u0000${entry.etag ?? ""}\n`,

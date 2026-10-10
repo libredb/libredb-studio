@@ -33,7 +33,7 @@
  * It prints one line per step, then `<passed> of <total> checks passed on <target> (<version>, <runtime>)`, and
  * exits 1 on any failure; SKIP appears only for a cell S3_ACCEPTANCE marks not applicable on the target.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { networkInterfaces, tmpdir } from "node:os";
 import path from "node:path";
@@ -94,6 +94,10 @@ if (target === "silo-tls" && options.ca === undefined)
   usage("--ca <copy of the s3-certs volume>/ca.pem is required for silo-tls");
 if (target === "garage" && options["garage-keys"] === undefined)
   usage("--garage-keys <copy of the s3-garage-keys volume> is required for garage");
+
+if (options.ca !== undefined && !existsSync(options.ca)) usage(`--ca ${options.ca} does not exist`);
+if (options["garage-keys"] !== undefined && !existsSync(options["garage-keys"]))
+  usage(`--garage-keys ${options["garage-keys"]} does not exist`);
 
 const ca = options.ca === undefined ? undefined : readFileSync(options.ca, "utf8");
 const principals = readS3Principals(target, options["garage-keys"]);
@@ -216,7 +220,9 @@ async function runRow(id: string): Promise<void> {
         : checkS3Step(outcome, stepRun.summary, stepRun.context, stepRun.sockets);
     line(
       failure === undefined ? "PASS" : "FAIL",
-      failure === undefined ? `${id} ${stepRun.summary.step} (${ms} ms)` : `${id} ${stepRun.summary.step}: ${failure}`,
+      failure === undefined
+        ? `${id} ${stepRun.summary.step} (row time ${ms} ms)`
+        : `${id} ${stepRun.summary.step}: ${failure}`,
     );
   }
   if (id === "A65") {

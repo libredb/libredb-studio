@@ -1395,7 +1395,7 @@ describe("the run-time object generator tests/live/s3-seed-raw.ts", () => {
   });
 
   test("refuses silo-tls and any target outside the loopback table before anything runs", () => {
-    for (const target of ["silo-tls", "10.0.0.5:9000", "aws"]) {
+    for (const target of ["silo-tls", "10.0.0.5:9000", "aws", "toString"]) {
       const run = Bun.spawnSync([process.execPath, path.join(ROOT, SEED_RAW), "--target", target], {
         cwd: ROOT,
         env: { ...process.env, PATH: "/nonexistent" },
@@ -1549,6 +1549,31 @@ describe("the acceptance matrix S3_ACCEPTANCE", () => {
     expect(checkS3Step(expectation, { step: "ahead", refused: measured, exchanges: 1 }, { connection }, 1)).toBe(
       undefined,
     );
+  });
+
+  test("the evaluator: a skewed server date is injected only for a skew answer, never for another anyNumber ref", () => {
+    const connection = s3LiveConnection("silo", readS3Principals("silo"), { role: "root" });
+    const resolved = (answer: object) => resolveS3Sentence(`server:${JSON.stringify(answer)}`, { connection }).text;
+    const plain = { operation: "ListBuckets", status: 403 };
+    expect(resolved({ ...plain, anyNumber: true })).toBe(resolved(plain));
+    expect(resolved({ ...plain, code: "RequestTimeTooSkewed", anyNumber: true })).toContain(
+      "differ by about 60 minutes",
+    );
+    expect(
+      resolved({
+        operation: "ListBuckets",
+        status: 400,
+        code: "InvalidRequest",
+        message: "Bad request: Date is too old",
+        anyNumber: true,
+      }),
+    ).toContain("differ by about 60 minutes");
+  });
+
+  test("the evaluator: a console ref with no command and a keys ref with no scan are errors of their own", () => {
+    const connection = s3LiveConnection("silo", readS3Principals("silo"), { role: "root" });
+    expect(() => resolveS3Sentence("console", { connection })).toThrow("a console step names no command");
+    expect(() => resolveS3Sentence("keys", { connection })).toThrow("a keys step names no scan");
   });
 
   test("the evaluator: a notice check with names holds the kept columns exactly, in order", () => {
@@ -1852,7 +1877,7 @@ function fingerprintSteps(versions: S3RecordedAnswer, etag = "0f343b0931126a20f1
             answer: versions,
             synthetic: true as const,
             source: "Garage, measured live: ListObjectVersions answers 501",
-            expect: { path: "/studio-versions" },
+            expect: { path: "/studio-versions", query: "encoding-type=url&max-keys=1000&prefix=&versions=" },
           },
         ]
       : []),
@@ -1870,7 +1895,40 @@ describe("the bucket fingerprint", () => {
 
   test("any other error to ListObjectVersions fails the fingerprint", async () => {
     const scripted = scriptedS3Transport(fingerprintSteps(ACCESS_DENIED));
-    await expect(s3Fingerprint("garage", { ...readS3Principals("silo") }, scripted.createTransport)).rejects.toThrow();
+    await expect(
+      s3Fingerprint("garage", { ...readS3Principals("silo") }, scripted.createTransport),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
+  test("a truncated listing page with no continuation token fails the fingerprint instead of ending the walk", async () => {
+    // The client's own page check refuses such a page, so the walk never reads a missing token as its end.
+    const page = listing("studio-demo", "root.txt", "0f343b0931126a20f133d67c2b018a3b");
+    const truncated = {
+      ...page,
+      body: { text: (page.body as { text: string }).text.replace("<IsTruncated>false", "<IsTruncated>true") },
+    };
+    const scripted = scriptedS3Transport([
+      {
+        answer: truncated,
+        synthetic: true,
+        source: "a page shape no server was seen to send",
+        expect: { path: "/studio-demo" },
+      },
+    ]);
+    await expect(
+      s3Fingerprint("garage", { ...readS3Principals("silo") }, scripted.createTransport),
+    ).rejects.toMatchObject({ problem: { kind: "page", what: "a truncated page and no continuation token" } });
+  });
+
+  test("a truncated versions listing fails the fingerprint, since one page would miss entries", async () => {
+    const truncatedVersions = xmlAnswer(
+      200,
+      '<?xml version="1.0" encoding="UTF-8"?><ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>studio-versions</Name><Prefix></Prefix><KeyMarker></KeyMarker><VersionIdMarker></VersionIdMarker><NextKeyMarker>a.txt</NextKeyMarker><NextVersionIdMarker>v1</NextVersionIdMarker><MaxKeys>1000</MaxKeys><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated></ListVersionsResult>',
+    );
+    const scripted = scriptedS3Transport(fingerprintSteps(truncatedVersions));
+    await expect(s3Fingerprint("garage", { ...readS3Principals("silo") }, scripted.createTransport)).rejects.toThrow(
+      "the ListObjectVersions listing of studio-versions is truncated, so the fingerprint would miss entries",
+    );
   });
 
   test("a changed ETag changes that bucket's fingerprint", async () => {
@@ -2066,6 +2124,19 @@ describe("the live check tests/live/s3-live-check.ts", () => {
       const run = Bun.spawnSync([process.execPath, path.join(ROOT, LIVE_CHECK), ...args], { cwd: ROOT });
       expect(run.exitCode).toBe(2);
       expect(run.stderr.toString()).toContain(message);
+    }
+  });
+
+  test("a --ca file or a --garage-keys directory that does not exist is refused with exit 2 naming the path", () => {
+    const missing = path.join(ROOT, "tests/fixtures/s3/no-such-path");
+    for (const args of [
+      ["--target", "silo-tls", "--ca", `${missing}/ca.pem`],
+      ["--target", "garage", "--garage-keys", missing],
+    ]) {
+      const run = Bun.spawnSync([process.execPath, path.join(ROOT, LIVE_CHECK), ...args], { cwd: ROOT });
+      expect({ args, exit: run.exitCode }).toEqual({ args, exit: 2 });
+      expect(run.stderr.toString()).toContain(args[3]);
+      expect(run.stderr.toString()).toContain("usage:");
     }
   });
 });
