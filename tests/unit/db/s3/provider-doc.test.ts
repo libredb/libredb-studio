@@ -16,7 +16,13 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { connectionFieldHint, DB_UI_CONFIG, hostUriSchemes, offersSshTunnel, readOnlyHint } from "@/lib/db-ui-config";
-import { EXTERNAL_DATABASE_TYPES, MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import {
+  connectableProductCount,
+  EXTERNAL_DATABASE_TYPES,
+  MCP_EXPOSABLE,
+  READ_ONLY_ENFORCED,
+  WIRE_COMPATIBLE_ENGINES,
+} from "@/lib/db/compatibility";
 import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import { assertNotLinkLocalLiteral, LINK_LOCAL_NETWORKS } from "@/lib/db/http/egress-policy";
 import {
@@ -1274,5 +1280,101 @@ describe("packaging and listing copy no count gate reads", () => {
     expect(read("deploy/railway/TEMPLATE_OVERVIEW.md")).toContain(`any of the ${engines} engines above`);
     expect(read("packaging/aur/README.md")).toContain(`The files here name ${engines} engines`);
     expect(read("packaging/aur/.SRCINFO")).toContain(`for ${engines} database engines`);
+  });
+});
+
+/** The part of `database-compose.yml` the fixture tables are held to. */
+interface ComposeService {
+  readonly ports?: readonly string[];
+  readonly profiles?: readonly string[];
+}
+const COMPOSE = parseYaml(read("database-compose.yml"), { merge: true }) as {
+  readonly services: Readonly<Record<string, ComposeService>>;
+};
+
+/** The host port compose publishes for `service`, from `127.0.0.1:<host>:<container>`. */
+function hostPort(service: string): string {
+  const published = COMPOSE.services[service]?.ports?.[0];
+  if (published === undefined) throw new Error(`database-compose.yml publishes no port for ${service}`);
+  return published.split(":").at(-2) ?? "";
+}
+
+/** The six S3 fixture targets, by the name the fixture tables give each. */
+const S3_FIXTURES: ReadonlyArray<{ readonly name: string; readonly service: string }> = [
+  { name: "MinIO", service: "minio" },
+  { name: "MinIO with a site region", service: "minio-region" },
+  { name: "Silo", service: "silo" },
+  { name: "Silo over TLS", service: "silo-tls" },
+  { name: "Garage", service: "garage" },
+  { name: "RustFS", service: "rustfs" },
+];
+
+/** A README fixture row's first cell: the bold engine name, the target, and its compose profile when it has one. */
+function fixtureCell(fixture: (typeof S3_FIXTURES)[number]): string {
+  const profile = COMPOSE.services[fixture.service]?.profiles?.[0];
+  return `**S3-compatible object storage**, ${fixture.name}${profile === undefined ? "" : ` (profile \`${profile}\`)`}`;
+}
+
+/** The README line inserted above Databend's, exactly. */
+const README_S3_LINE =
+  "S3-compatible object storage is the newest: AWS CLI read commands typed in the editor, such as `aws s3api list-buckets`, `aws s3 ls`, `aws s3api head-object` and `aws s3api list-object-versions`, and Studio's own `preview` read buckets and objects over the S3 REST API with no SDK, signed by Studio's own code with only the keys typed into the connection; the tree shows buckets, the Keys panel walks folders one level at a time, and an object opens with its metadata and a capped preview of text, JSON, CSV or Parquet, read-only by construction, because Studio sends only GET and HEAD requests; it is verified on MinIO, Silo, Garage and RustFS, and not on AWS S3 or any hosted service.";
+
+/** The README engine-table row, exactly. */
+const README_S3_ROW =
+  "| **S3-compatible object storage** | none, HTTP (the S3 REST API, path style, signed by Studio's own SigV4 code; `hyparquet` for Parquet previews) | Read-only AWS CLI read commands such as `aws s3api list-buckets`, `aws s3 ls`, `aws s3api head-object` and `aws s3api list-object-versions`, plus Studio's own `preview`; buckets in the tree and folders in the Keys panel, one level at a time; an object's metadata and a capped preview of text, JSON, NDJSON, CSV, TSV and Parquet, hex for anything else. Only the keys typed into the connection sign, never the server's own AWS identity, and the link-local networks, where AWS, Azure and Google Cloud serve instance metadata, are always refused, as is AWS's IPv6 metadata address. Verified on MinIO, Silo, Garage and RustFS; AWS S3 and hosted services are not verified |";
+
+describe("README.md and its translations", () => {
+  const readme = read("README.md");
+  const engines = EXTERNAL_DATABASE_TYPES.length;
+
+  test("45. each README numeral counts its own denominator", () => {
+    expect(readme).toContain(`${Word(engines)} engines share one interface:`);
+    expect(readme).toContain(`Three of the ${word(engines)} are read-only because their own SQL is`);
+    expect(readme).toContain(`- **${Word(engines)} engines, one interface**:`);
+    expect(readme).toContain(`> **${Word(WIRE_COMPATIBLE_ENGINES.length)} more engines have no driver of their own.**`);
+    expect(readme).toContain(`The ${word(engines)} above are the drivers this build ships.`);
+    expect(readme).toContain(
+      `so ${word(engines)} drivers reach ${word(connectableProductCount())} named engines in all.`,
+    );
+  });
+
+  test("46. the S3 line and row are word for word, and the row's networks are LINK_LOCAL_NETWORKS", () => {
+    expect(readme).toContain(`${README_S3_LINE}\nDatabend came before S3-compatible object storage:`);
+    const lines = readme.split("\n");
+    const oxia = lines.findIndex((line) => line.startsWith("| **Oxia** | `@grpc/grpc-js`"));
+    expect(lines[oxia + 1]).toBe(README_S3_ROW);
+    // The row names the networks in words: "the link-local networks" are 169.254.0.0/16 with its NAT64 form and
+    // fe80::/10, and "AWS's IPv6 metadata address" is fd00:ec2::254. A network added to LINK_LOCAL_NETWORKS fails
+    // here until the row's words are re-read against it.
+    expect([...networkWords()].sort()).toEqual(["169.254.0.0/16", "NAT64", "fd00:ec2::254", "fe80::/10"].sort());
+  });
+
+  test("47. every S3 fixture row names the port compose publishes", () => {
+    for (const file of ["README.md", "README_zh.md"]) {
+      const lines = read(file).split("\n");
+      for (const fixture of S3_FIXTURES) {
+        const row = lines.find((line) => line.startsWith(`| ${fixtureCell(fixture)} |`));
+        expect(row, `${file} ${fixture.service}`).toBeDefined();
+        expect(row?.split(" | ")[2], `${file} ${fixture.service}`).toBe(hostPort(fixture.service));
+      }
+    }
+  });
+
+  test("48. every translation carries the S3 row under the same bold name", () => {
+    for (const file of [
+      "README_zh.md",
+      "README_ja.md",
+      "README_es.md",
+      "README_ur.md",
+      "README_hi.md",
+      "README_pt.md",
+      "README_ru.md",
+      "README_ko.md",
+    ]) {
+      const rows = read(file)
+        .split("\n")
+        .filter((line) => line.startsWith("| **S3-compatible object storage** |"));
+      expect(rows, file).toHaveLength(1);
+    }
   });
 });

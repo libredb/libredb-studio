@@ -110,3 +110,25 @@ describe("the guard refuses the claims it exists to catch and accepts the S3 cop
     expect(claimProblems(text, "fixture")).toEqual([]);
   });
 });
+
+describe("a translated README names AWS S3 only in its S3 engine row", () => {
+  // The English rules cannot read a translated negation, so a translation is held to a narrower rule: the one
+  // line that may say AWS S3 is the S3 row, whose last sentence says, in that language, that AWS S3 is not verified.
+  test.each(
+    [
+      "README_zh.md",
+      "README_ja.md",
+      "README_es.md",
+      "README_ur.md",
+      "README_hi.md",
+      "README_pt.md",
+      "README_ru.md",
+      "README_ko.md",
+    ].map((file) => [file] as const),
+  )("%s", (file) => {
+    const lines = read(file).split("\n");
+    const row = lines.filter((line) => line.startsWith("| **S3-compatible object storage** |"));
+    expect(row).toHaveLength(1);
+    expect(lines.filter((line) => AWS_NAME.test(line))).toEqual(row);
+  });
+});
