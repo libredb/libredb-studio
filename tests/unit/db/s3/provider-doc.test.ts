@@ -55,6 +55,7 @@ import {
 } from "@/lib/db/providers/objectstore/s3/constants";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import { S3_OBJECTS_LISTED_ELSEWHERE } from "@/lib/db/providers/objectstore/s3/objects";
+import { S3_PREVIEW_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-render";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
 import { SeedConfigSchema } from "@/lib/seed/types";
 import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
@@ -640,5 +641,23 @@ describe("docs/providers/s3.md: the provider's shape, as the built provider decl
       expect(basis, name).toBeDefined();
       expect(basis?.startsWith("Measured"), name).toBe(false);
     }
+  });
+});
+
+describe("docs/providers/s3.md: the object preview's sentences, read back from preview-render.ts", () => {
+  test("every preview sentence is its row of the Object preview table, verbatim", () => {
+    const preview = sectionOf(DOC, "#### Object preview");
+    for (const [id, sentence] of Object.entries(S3_PREVIEW_SENTENCES)) {
+      expect(rowOf(preview, id), id).toBe(`| ${id} | \`${sentence}\` |`);
+    }
+  });
+
+  test("the table holds no sentence row the module does not export", () => {
+    const preview = sectionOf(DOC, "#### Object preview");
+    const ids = preview
+      .split("\n")
+      .filter((line) => /^\| [NR]-[A-Z0-9-]+ \| `/.test(line))
+      .map((line) => line.slice(2, line.indexOf(" |", 2)));
+    expect(ids.sort()).toEqual(Object.keys(S3_PREVIEW_SENTENCES).sort());
   });
 });
