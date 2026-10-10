@@ -198,7 +198,7 @@ describe("listKubernetesObjects", () => {
       { queryTimeout: 150 },
     );
     await expect(listKubernetesObjects(surface, ["shop"], "pods")).rejects.toThrow(
-      "The API server did not answer the request to list pods in the namespace shop within 0.15 s.",
+      "The API server did not answer every page needed to list pods in the namespace shop within 0.15 s, the connection's query timeout.",
     );
   });
 

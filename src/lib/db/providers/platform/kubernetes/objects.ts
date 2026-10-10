@@ -37,7 +37,7 @@ import {
   type ResourceIndex,
   withTypeRefresh,
 } from "./discovery";
-import { KubernetesRequestError, notServedSentence } from "./errors";
+import { KubernetesRequestError, notServedSentence, requestWords } from "./errors";
 import {
   BUILT_IN_API_GROUPS,
   type BuiltInKind,
@@ -50,7 +50,7 @@ import {
 } from "./kinds";
 import { KUBERNETES_MAX_IN_FLIGHT, KUBERNETES_PAGE_SIZE, KUBERNETES_TREE_OBJECT_CAP, KUBERNETES_TYPE } from "./limits";
 import { redactResponse } from "./redaction";
-import { isRequestableName } from "./request-policy";
+import { isRequestableName, type KubernetesRequest, planRequest } from "./request-policy";
 import { cellOf, type KubeTable, parseTable, scanTable, type TableRow } from "./table";
 
 /** What every tree read goes through: the client, the discovery cache, the connection's namespaces and a fresh call. */
@@ -145,19 +145,29 @@ function tableReader(
   const walk = surface.call();
   const deadline = AbortSignal.any([walk.signal, AbortSignal.timeout(walk.timeoutMs)]);
   return async (page: { readonly continueToken?: string; readonly limit: number }): Promise<KubeTable> => {
-    const body = await surface.client.json(
-      {
-        op: "list",
-        target,
-        ...(namespace === undefined ? {} : { namespace }),
-        query: {
-          limit: page.limit,
-          includeObject,
-          ...(page.continueToken === undefined ? {} : { continue: page.continueToken }),
-        },
+    const request: KubernetesRequest = {
+      op: "list",
+      target,
+      ...(namespace === undefined ? {} : { namespace }),
+      query: {
+        limit: page.limit,
+        includeObject,
+        ...(page.continueToken === undefined ? {} : { continue: page.continueToken }),
       },
-      { ...walk, signal: deadline, accept: ACCEPT_TABLE },
-    );
+    };
+    let body: unknown;
+    try {
+      body = await surface.client.json(request, { ...walk, signal: deadline, accept: ACCEPT_TABLE });
+    } catch (error) {
+      // The walk's deadline, not one request's: the sentence names the list the walk was reading.
+      if (error instanceof TimeoutError && deadline.aborted && !walk.signal.aborted)
+        throw new TimeoutError(
+          `The API server did not answer every page needed to ${requestWords(planRequest(request).context)} within ${walk.timeoutMs / 1000} s, the connection's query timeout.`,
+          KUBERNETES_TYPE,
+          walk.timeoutMs,
+        );
+      throw error;
+    }
     return parseTable(redactResponse(target, body));
   };
 }
