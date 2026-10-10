@@ -262,8 +262,8 @@ const keyedRows = (rows: S3PreviewRows): Record<string, S3PreviewCell>[] =>
   rows.rows.map((cells) => Object.fromEntries(rows.columns.map((column, index) => [column.name, cells[index]])));
 
 /**
- * N-PQ-SUMMARY filled from a summary: the row count in the singular for exactly 1, as a sentence writes counts; a
- * count past 2^53 - 1 arrives as its decimal text and is written as read, in the plural.
+ * N-PQ-SUMMARY filled from a summary: the row count and the row group count each in the singular for exactly 1, as a
+ * sentence writes counts; a row count past 2^53 - 1 arrives as its decimal text and is written as read, in the plural.
  */
 const summarySentence = (summary: { readonly rows: S3PreviewCell; readonly rowGroups: number }): string =>
   previewSentence("N-PQ-SUMMARY", {

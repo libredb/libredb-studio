@@ -281,12 +281,9 @@ export async function readParquetFooter(
   if (metadata === undefined) return refused(FOOTER_BAD_BARE);
   const shape = walkParquetSchema(metadata.schema, limits);
   if (!shape.ok) {
-    const id = shape.duplicateName
-      ? "R-PQ-SCHEMA-NAMES"
-      : shape.malformedDecimal
-        ? "R-PQ-SCHEMA-DECIMAL"
-        : "R-PQ-SCHEMA";
-    return refused(previewSentence(id));
+    if (shape.duplicateName) return refused(previewSentence("R-PQ-SCHEMA-NAMES"));
+    if (shape.malformedDecimal) return refused(previewSentence("R-PQ-SCHEMA-DECIMAL"));
+    return refused(previewSentence("R-PQ-SCHEMA"));
   }
   const first = metadata.row_groups[0];
   if (first !== undefined && !chunksMatchLeaves(first.columns, shape)) return refused(FOOTER_BAD_BARE);
