@@ -14,6 +14,7 @@ import {
   containerDepth,
   isCountSampled,
   isCountUnavailable,
+  kindGroup,
   kindHasColumns,
 } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, KindCount, ObjectDetail, ObjectKindSpec } from "@/lib/db/types";
@@ -31,9 +32,13 @@ import type { ColumnSchema } from "@/lib/types";
  */
 export interface TreeRowModel {
   readonly id: string;
-  readonly kind: "container" | "folder" | "object" | "column";
   /**
-   * What a person reads. A container's own name, the engine's plural for a folder,
+   * A `group` row is a folder of kind folders (`ObjectKindSpec.group`): it opens and closes, reads
+   * nothing, carries no badge and offers no menu. Its id sits outside `pathKey`'s image, see `groupRowId`.
+   */
+  readonly kind: "container" | "group" | "folder" | "object" | "column";
+  /**
+   * What a person reads. A container's own name, the group's label for a group, the engine's plural for a folder,
    * `DatabaseObject.name` for an object, which is NOT the last path segment (an
    * overloaded routine is addressed as `order_total(integer)` and labelled
    * `order_total`), and the column's own name for a column.
@@ -74,7 +79,7 @@ export interface TreeRowModel {
    */
   readonly unavailable?: string;
   /**
-   * The container path for a container and a folder, the object path for an object, and the
+   * The container path for a container, a group and a folder, the object path for an object, and the
    * object path plus the column's name for a column.
    *
    * A column row therefore addresses something no `listObjects` answer ever named, which is
@@ -191,7 +196,10 @@ export function flattenTree(state: FlattenTreeState): readonly TreeRowModel[] {
 }
 
 /** One pending row of a container's child group, built in full before any of it is emitted. */
-type ContainerChild = { readonly container: Container } | { readonly spec: ObjectKindSpec };
+type ContainerChild =
+  | { readonly container: Container }
+  | { readonly spec: ObjectKindSpec }
+  | { readonly group: NonNullable<ObjectKindSpec["group"]>; readonly specs: readonly ObjectKindSpec[] };
 
 /**
  * The rows one container level down, as ONE sibling group.
@@ -219,14 +227,48 @@ function appendContainerChildren(
       .filter((candidate) => isChildPath(parentPath, candidate.path))
       .map((container) => ({ container })),
     ...(depth >= state.containerDepth
-      ? applicableKinds(state.kinds, containerKinds(state, parentPath)).map((spec) => ({ spec }))
+      ? kindChildren(applicableKinds(state.kinds, containerKinds(state, parentPath)))
       : []),
   ];
 
   children.forEach((child, index) => {
     if ("container" in child) appendContainer(state, rows, child.container, depth, children.length, index + 1);
+    else if ("group" in child) appendGroup(state, rows, parentPath, child, depth, children.length, index + 1);
     else appendFolder(state, rows, parentPath, child.spec, depth, children.length, index + 1);
   });
+}
+
+/**
+ * One container's applicable kinds as the rows directly under it: each kind's folder, except that
+ * kinds sharing an `ObjectKindSpec.group` are drawn inside one group row, placed where the first of
+ * them sits in declaration order, under the label of that first one.
+ *
+ * A group with only one applicable kind is not drawn, and that kind's folder sits directly under the
+ * container: a folder holding one folder is a click that shows nothing new. A group with no applicable
+ * kind is not drawn either, because none of its kinds reached this list. The group is read through
+ * `kindGroup`, so a host's malformed one draws its kind flat instead of throwing inside the render.
+ */
+function kindChildren(specs: readonly ObjectKindSpec[]): readonly ContainerChild[] {
+  const members = new Map<string, ObjectKindSpec[]>();
+  for (const spec of specs) {
+    const group = kindGroup(spec);
+    if (group === undefined) continue;
+    const list = members.get(group.id);
+    if (list === undefined) members.set(group.id, [spec]);
+    else list.push(spec);
+  }
+  const children: ContainerChild[] = [];
+  const placed = new Set<string>();
+  for (const spec of specs) {
+    const group = kindGroup(spec);
+    const grouped = group === undefined ? [] : (members.get(group.id) ?? []);
+    if (group === undefined || grouped.length < 2) children.push({ spec });
+    else if (!placed.has(group.id)) {
+      placed.add(group.id);
+      children.push({ group, specs: grouped });
+    }
+  }
+  return children;
 }
 
 /** What the walk reads: the caller's state, plus each container's named kinds indexed once per walk. */
@@ -315,6 +357,19 @@ export function containerRowId(path: readonly string[]): string {
   return pathKey(path);
 }
 
+/**
+ * A group row's id, OUTSIDE `pathKey`'s image for the reason `columnRowId` gives: `pathKey` emits `%`
+ * only as `%25` and `%2F`, so no container, folder or object id can start with this prefix, whatever
+ * a group's id is. The naive `pathKey([...container, group.id])` would collide with the folder of a
+ * kind whose id equals the group's, and a group named `events` holding the kind `events` is exactly
+ * what a provider writes. Exported because the tree filter opens group rows it has not seen drawn.
+ */
+const GROUP_ROW_PREFIX = "group%3A";
+
+export function groupRowId(containerPath: readonly string[], groupId: string): string {
+  return `${GROUP_ROW_PREFIX}${pathKey([...containerPath, groupId])}`;
+}
+
 function appendContainer(
   state: WalkState,
   rows: TreeRowModel[],
@@ -336,6 +391,29 @@ function appendContainer(
     path: container.path,
   });
   if (expanded) appendContainerChildren(state, rows, container.path, depth);
+}
+
+/**
+ * A group row, then its kinds' folders one level deeper when it is open. The folders keep the ids,
+ * paths and reads they have outside a group, so a folder's cached objects and its count do not move
+ * when a provider adds a group.
+ */
+function appendGroup(
+  state: FlattenTreeState,
+  rows: TreeRowModel[],
+  parentPath: readonly string[],
+  child: Extract<ContainerChild, { readonly group: unknown }>,
+  depth: number,
+  setSize: number,
+  posInSet: number,
+): void {
+  const id = groupRowId(parentPath, child.group.id);
+  const expanded = state.expanded.has(id);
+  rows.push({ id, kind: "group", label: child.group.label, depth, setSize, posInSet, expanded, path: parentPath });
+  if (!expanded) return;
+  child.specs.forEach((spec, index) =>
+    appendFolder(state, rows, parentPath, spec, depth + 1, child.specs.length, index + 1),
+  );
 }
 
 /**

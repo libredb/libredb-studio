@@ -346,7 +346,7 @@ src/
 │   ├── results-grid/        # ResultCard, RowDetailSheet, StatsBar
 │   ├── admin/               # AdminDashboard shell (section routes) + tabs/ panels
 │   ├── monitoring/          # MonitoringDashboard + tabs
-│   ├── object-tree/         # The desktop sidebar's lazy object tree (containers, folders, objects, columns)
+│   ├── object-tree/         # The desktop sidebar's lazy object tree (containers, kind groups, folders, objects, columns)
 │   │   ├── ObjectTree.tsx    # Tree shell: hand-rolled window, roving tabindex, keyboard, menu anchor
 │   │   ├── TreeRow.tsx       # One row, ARIA numbers taken verbatim; the chevron is its own hit target
 │   │   ├── RowMenu.tsx       # The row menu, rendered as a sibling of the tree element, not inside it

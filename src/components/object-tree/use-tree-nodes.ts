@@ -262,8 +262,9 @@ function readFor(row: TreeRowModel, depth: 0 | 1 | 2): TreeRead | undefined {
       ? childContainersRead(row.path)
       : { request: { route: "counts", container: row.path }, slot: { kind: "counts", key: pathKey(row.path) } };
   }
-  // A COLUMN row, which is a leaf and asks for nothing. Stated rather than reached by falling off
-  // the end, so a later arm cannot silently start answering for it.
+  // A COLUMN row, which is a leaf and asks for nothing, and a GROUP row, which only holds folders
+  // whose own rows ask for their reads. Stated rather than reached by falling off the end, so a later
+  // arm cannot silently start answering for either.
   return undefined;
 }
 

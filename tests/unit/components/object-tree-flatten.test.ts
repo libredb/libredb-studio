@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { flattenTree, type FlattenTreeState, type TreeRowModel } from "@/components/object-tree/flatten";
+import { flattenTree, groupRowId, type FlattenTreeState, type TreeRowModel } from "@/components/object-tree/flatten";
 import { TreeRow, type TreeRowProps } from "@/components/object-tree/TreeRow";
 import { containerDepth } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
@@ -1262,5 +1262,127 @@ describe("flattenTree kinds per container", () => {
       expect(rows).toHaveLength(named ? 2 * COUNT : 4 * COUNT);
       expect(keyed).toBeLessThan(20 * COUNT);
     }
+  });
+});
+
+/**
+ * Kind groups (`ObjectKindSpec.group`): a folder of kind folders between a container and its kinds,
+ * drawn only where it holds two or more applicable kinds, with an id no container, folder or object can
+ * take.
+ */
+describe("flattenTree kind groups", () => {
+  const WORKLOADS = { id: "workloads", label: "Workloads" } as const;
+  const CONFIG = { id: "config", label: "Config" } as const;
+  const EVENTS_GROUP = { id: "events", label: "Events" } as const;
+  const grouped = [
+    { id: "pods", role: "config", label: "Pod", labelPlural: "Pods", group: WORKLOADS },
+    { id: "configmaps", role: "config", label: "Config Map", labelPlural: "Config Maps", group: CONFIG },
+    { id: "deployments", role: "config", label: "Deployment", labelPlural: "Deployments", group: WORKLOADS },
+    { id: "nodes", role: "config", label: "Node", labelPlural: "Nodes" },
+    { id: "events", role: "config", label: "Event", labelPlural: "Events", group: EVENTS_GROUP },
+    { id: "leases", role: "config", label: "Lease", labelPlural: "Leases", group: CONFIG },
+  ] as const;
+
+  function rowsOf(containerKinds: readonly string[] | undefined, expanded: readonly string[]): readonly TreeRowModel[] {
+    return flattenTree(
+      stateOf({
+        kinds: grouped,
+        containerDepth: 1,
+        containers: [{ path: ["shop"], name: "shop", level: 0, ...(containerKinds ? { kinds: containerKinds } : {}) }],
+        expanded: new Set(["shop", ...expanded]),
+        counts: { shop: { pods: { count: 3 }, deployments: { count: 1 } } },
+        objects: {},
+      }),
+    );
+  }
+
+  test("a group sits where its first kind is declared, and draws its kinds one level deeper when open", () => {
+    const rows = rowsOf(undefined, [groupRowId(["shop"], "workloads")]);
+    expect(rows.map((row) => `${row.depth}:${row.kind}:${row.label}:${row.posInSet}/${row.setSize}`)).toEqual([
+      "0:container:shop:1/1",
+      "1:group:Workloads:1/4",
+      "2:folder:Pods:1/2",
+      "2:folder:Deployments:2/2",
+      "1:group:Config:2/4",
+      "1:folder:Nodes:3/4",
+      "1:folder:Events:4/4",
+    ]);
+  });
+
+  test("a group keeps each folder's own id, path and count, so a cached listing does not move", () => {
+    const rows = rowsOf(undefined, [groupRowId(["shop"], "workloads")]);
+    expect(rows.find((row) => row.kindId === "pods")).toMatchObject({
+      id: "shop/pods",
+      kind: "folder",
+      path: ["shop"],
+      badge: "3",
+    });
+  });
+
+  test("a group holding one applicable kind is not drawn, and that kind sits directly under the container", () => {
+    const rows = rowsOf(["pods", "configmaps", "nodes"], []);
+    expect(rows.map((row) => `${row.depth}:${row.kind}:${row.label}`)).toEqual([
+      "0:container:shop",
+      "1:folder:Pods",
+      "1:folder:Config Maps",
+      "1:folder:Nodes",
+    ]);
+  });
+
+  test("a group with no applicable kind in a container is not drawn there", () => {
+    const rows = rowsOf(["nodes"], []);
+    expect(rows.map((row) => row.label)).toEqual(["shop", "Nodes"]);
+  });
+
+  test("a group named like its only kind is not drawn, and a group's id never equals a folder's", () => {
+    // The `events` group holds the `events` kind alone, so the folder is drawn flat: no double folder.
+    expect(
+      rowsOf(undefined, [])
+        .filter((row) => row.label === "Events")
+        .map((row) => row.kind),
+    ).toEqual(["folder"]);
+    // And where such a group IS drawn, its id is outside the space every folder id is in.
+    expect(groupRowId(["shop"], "events")).not.toBe("shop/events");
+    expect(groupRowId(["shop"], "events").startsWith("group%3A")).toBe(true);
+  });
+
+  test("a closed group draws no folder and is expandable", () => {
+    const rows = rowsOf(undefined, []);
+    expect(rows.find((row) => row.kind === "group" && row.label === "Workloads")).toMatchObject({
+      id: groupRowId(["shop"], "workloads"),
+      expanded: false,
+      path: ["shop"],
+    });
+    expect(rows.some((row) => row.label === "Pods")).toBe(false);
+  });
+
+  test("a group row draws its own icon and states whether it is open", () => {
+    const row = rowsOf(undefined, []).find((candidate) => candidate.kind === "group");
+    if (row === undefined) throw new Error("no group row was drawn");
+    const drawn = drawRow({ row }).querySelector('[role="treeitem"]');
+    expect(drawn?.getAttribute("aria-expanded")).toBe("false");
+    expect(drawn?.querySelector("svg.lucide-layers")).not.toBeNull();
+  });
+
+  test("a group a host declares malformed draws its kinds flat rather than throwing inside the render", () => {
+    const malformed = [
+      { id: "pods", role: "config", label: "Pod", labelPlural: "Pods", group: null },
+      { id: "deployments", role: "config", label: "Deployment", labelPlural: "Deployments", group: { id: 5 } },
+    ] as unknown as FlattenTreeState["kinds"];
+    const rows = flattenTree(
+      stateOf({
+        kinds: malformed,
+        containerDepth: 1,
+        containers: [{ path: ["shop"], name: "shop", level: 0 }],
+        expanded: new Set(["shop"]),
+        counts: {},
+        objects: {},
+      }),
+    );
+    expect(rows.map((row) => `${row.depth}:${row.kind}:${row.label}`)).toEqual([
+      "0:container:shop",
+      "1:folder:Pods",
+      "1:folder:Deployments",
+    ]);
   });
 });

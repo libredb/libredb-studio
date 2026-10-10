@@ -19,6 +19,7 @@ import {
   EllipsisVertical,
   Folder,
   Key,
+  Layers,
   LoaderCircle,
   Table2,
   TriangleAlert,
@@ -50,7 +51,7 @@ const ROW_PADDING_RIGHT = "pr-7";
  * until the fourth row kind is answered, which is the only automatic guard on this side, and it is
  * answered by a narrowing below rather than by a fallback.
  */
-const ROW_ICONS = { container: Database, folder: Folder, object: Table2 } as const;
+const ROW_ICONS = { container: Database, group: Layers, folder: Folder, object: Table2 } as const;
 
 /**
  * The non-primary column's mark, carried over from the flat explorer VERBATIM: a 4px dot in a
