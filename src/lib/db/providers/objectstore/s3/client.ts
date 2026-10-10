@@ -347,6 +347,9 @@ async function shaped<T>(
  * A HEAD; when it fails with no code (RustFS and Garage always, Silo on skew), exactly one follow-up GET reads an
  * error code, in the same permit because the limited client wraps this whole function. A 2xx
  * follow-up, or one with no code, leaves the HEAD's status to be classified; the HEAD is never sent again.
+ * The object follow-up carries truncateAt at its own cap, S3_SMALL_RESPONSE_BYTES: the transport cuts every
+ * status at truncateAt, so an error body of up to that cap is read whole, and a server that ignores Range and
+ * answers 200 with the whole object resolves as cut data, never as too-large.
  */
 async function headWithFollowUp(
   transport: NodeByteTransport,
@@ -543,7 +546,7 @@ export function createS3Client(transport: NodeByteTransport): S3Client {
           path,
           query: "",
           capBytes: S3_SMALL_RESPONSE_BYTES,
-          truncateAt: 1,
+          truncateAt: S3_SMALL_RESPONSE_BYTES,
           headers: { range: "bytes=0-0" },
           bucket,
           key,

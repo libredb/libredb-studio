@@ -264,7 +264,7 @@ describe("the HEAD follow-up", () => {
     });
   });
 
-  test("an object follow-up carries truncateAt 1, so a 200 with a whole object classifies the HEAD's status", async () => {
+  test("an object follow-up carries truncateAt at its cap, so a 200 with a whole object classifies the HEAD's status", async () => {
     const { client, fake } = clientOf((request) =>
       request.method === "HEAD" ? { status: 404 } : { status: 200, body: "x".repeat(1024 * 1024) },
     );
@@ -273,12 +273,33 @@ describe("the HEAD follow-up", () => {
       method: "GET",
       headers: { range: "bytes=0-0" },
       maxResponseBytes: 65_536,
-      truncateAt: 1,
+      truncateAt: 65_536,
     });
     expect(error).toMatchObject({ operation: "HeadObject", status: 404 });
     expect(error.code).toBeUndefined();
     expect((toProviderError(error, "HeadObject", CONTEXT) as Error).message).toBe(
       'The server answered 404 Not Found for "a.csv" in bucket "sales": the object, or the bucket, does not exist.',
+    );
+  });
+
+  test("an object HEAD 403 with no code: the follow-up 403's XML code gives that code's sentence", async () => {
+    const { client, fake } = clientOf((request) =>
+      request.method === "HEAD"
+        ? { status: 403 }
+        : xmlAnswer(errorXml("SignatureDoesNotMatch", "The request signature we calculated does not match"), 403),
+    );
+    const error = (await failure(client.headObject("sales", "a.csv", CALL))) as S3ServerError;
+    expect(fake.lines()).toEqual(["HEAD /sales/a.csv", "GET /sales/a.csv"]);
+    expect(error).toMatchObject({
+      operation: "HeadObject",
+      method: "HEAD",
+      status: 403,
+      code: "SignatureDoesNotMatch",
+      bucket: "sales",
+      key: "a.csv",
+    });
+    expect((toProviderError(error, "HeadObject", CONTEXT) as Error).message).toBe(
+      "The server refused the request signature: check Secret access key. A proxy between Studio and the server that changes the Host header or the request path causes the same refusal.",
     );
   });
 
