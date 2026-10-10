@@ -13,7 +13,7 @@
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T154406Z",
+          "x-amz-date": "20261010T191049Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -43,7 +43,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 15:44:06 GMT"
+            "Sat, 10 Oct 2026 19:10:49 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -65,7 +65,7 @@
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T154406Z",
+          "x-amz-date": "20261010T191049Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -102,12 +102,12 @@
             "libredb"
           ],
           [
-            "x-amz-meta-note",
-            "=?UTF-8?B?Y2Fmw6k=?="
-          ],
-          [
             "x-amz-meta-owner",
             "probe"
+          ],
+          [
+            "x-amz-meta-note",
+            "=?UTF-8?B?Y2Fmw6k=?="
           ],
           [
             "x-amz-tagging-count",
@@ -123,7 +123,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 15:44:06 GMT"
+            "Sat, 10 Oct 2026 19:10:49 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -145,7 +145,7 @@
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T154406Z",
+          "x-amz-date": "20261010T191049Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -175,7 +175,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 15:44:06 GMT"
+            "Sat, 10 Oct 2026 19:10:49 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -198,7 +198,7 @@
           "range": "bytes=0-11",
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T154406Z",
+          "x-amz-date": "20261010T191049Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -236,12 +236,12 @@
             "probe"
           ],
           [
-            "x-amz-meta-note",
-            "=?UTF-8?B?Y2Fmw6k=?="
-          ],
-          [
             "x-amz-meta-project",
             "libredb"
+          ],
+          [
+            "x-amz-meta-note",
+            "=?UTF-8?B?Y2Fmw6k=?="
           ],
           [
             "accept-ranges",
@@ -257,7 +257,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 15:44:06 GMT"
+            "Sat, 10 Oct 2026 19:10:49 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -291,8 +291,8 @@
           "archive_status": "null",
           "tags": "env=probe&tier=gold",
           "user_metadata.project": "libredb",
-          "user_metadata.note": "=?UTF-8?B?Y2Fmw6k=?=",
           "user_metadata.owner": "probe",
+          "user_metadata.note": "=?UTF-8?B?Y2Fmw6k=?=",
           "missing_user_metadata": "null",
           "metadata_cut": "false",
           "preview": "hello depth",

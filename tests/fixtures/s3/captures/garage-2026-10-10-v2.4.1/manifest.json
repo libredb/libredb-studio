@@ -1,6 +1,6 @@
 {
   "target": "garage",
-  "commit": "b2d3cf1af6dc84ecccd42a7baa1c5e4c960850fa",
+  "commit": "fefffc604b6f055c99c25b3c06c46a94f18e5a58",
   "uncommitted": [],
   "image": "dxflrs/garage@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020",
   "version": "v2.4.1",
@@ -8,25 +8,25 @@
   "scenarios": [
     {
       "name": "surface",
-      "ms": 17,
+      "ms": 13,
       "exchanges": 8,
       "clockOffsetMs": 0
     },
     {
       "name": "A1",
-      "ms": 4,
+      "ms": 5,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
     {
       "name": "A2",
-      "ms": 3,
+      "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
     {
       "name": "A3",
-      "ms": 3,
+      "ms": 1,
       "exchanges": 1,
       "clockOffsetMs": 0
     },
@@ -38,7 +38,7 @@
     },
     {
       "name": "A4p",
-      "ms": 2,
+      "ms": 1,
       "exchanges": 1,
       "clockOffsetMs": 0
     },
@@ -62,13 +62,13 @@
     },
     {
       "name": "A8",
-      "ms": 3,
+      "ms": 2,
       "exchanges": 3,
       "clockOffsetMs": 1200000
     },
     {
       "name": "A10",
-      "ms": 2,
+      "ms": 1,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
@@ -80,7 +80,7 @@
     },
     {
       "name": "A12",
-      "ms": 3,
+      "ms": 2,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
@@ -116,31 +116,31 @@
     },
     {
       "name": "A16",
-      "ms": 5,
+      "ms": 4,
       "exchanges": 5,
       "clockOffsetMs": 0
     },
     {
       "name": "A17",
-      "ms": 28,
+      "ms": 26,
       "exchanges": 35,
       "clockOffsetMs": 0
     },
     {
       "name": "A17b",
-      "ms": 6,
+      "ms": 5,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
     {
       "name": "A18",
-      "ms": 7,
+      "ms": 9,
       "exchanges": 10,
       "clockOffsetMs": 0
     },
     {
       "name": "A19",
-      "ms": 6,
+      "ms": 7,
       "exchanges": 11,
       "clockOffsetMs": 0
     },
@@ -152,31 +152,31 @@
     },
     {
       "name": "A22",
-      "ms": 16,
+      "ms": 17,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
     {
       "name": "A23",
-      "ms": 19,
+      "ms": 14,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
     {
       "name": "A24",
-      "ms": 5,
+      "ms": 4,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
     {
       "name": "A24b",
-      "ms": 22,
+      "ms": 21,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
     {
       "name": "A25",
-      "ms": 9,
+      "ms": 7,
       "exchanges": 6,
       "clockOffsetMs": 0
     },
@@ -194,49 +194,49 @@
     },
     {
       "name": "A31",
-      "ms": 39,
+      "ms": 29,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
     {
       "name": "A32",
-      "ms": 3,
+      "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
     {
       "name": "A35",
-      "ms": 6,
-      "exchanges": 3,
-      "clockOffsetMs": 0
-    },
-    {
-      "name": "A35b",
-      "ms": 46,
-      "exchanges": 6,
-      "clockOffsetMs": 0
-    },
-    {
-      "name": "A36",
       "ms": 4,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
     {
+      "name": "A35b",
+      "ms": 41,
+      "exchanges": 6,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A36",
+      "ms": 3,
+      "exchanges": 3,
+      "clockOffsetMs": 0
+    },
+    {
       "name": "A37",
-      "ms": 13,
+      "ms": 9,
       "exchanges": 9,
       "clockOffsetMs": 0
     },
     {
       "name": "A38",
-      "ms": 59,
+      "ms": 58,
       "exchanges": 31,
       "clockOffsetMs": 0
     },
     {
       "name": "A40",
-      "ms": 93,
+      "ms": 92,
       "exchanges": 8,
       "clockOffsetMs": 0
     },
@@ -278,25 +278,25 @@
     },
     {
       "name": "A49",
-      "ms": 8,
+      "ms": 15,
       "exchanges": 7,
       "clockOffsetMs": 0
     },
     {
       "name": "A50",
-      "ms": 4,
+      "ms": 6,
       "exchanges": 5,
       "clockOffsetMs": 0
     },
     {
       "name": "A51",
-      "ms": 19,
+      "ms": 23,
       "exchanges": 21,
       "clockOffsetMs": 0
     },
     {
       "name": "A58",
-      "ms": 3,
+      "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
@@ -314,7 +314,7 @@
     },
     {
       "name": "A61",
-      "ms": 2,
+      "ms": 1,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
@@ -332,19 +332,19 @@
     },
     {
       "name": "A66",
-      "ms": 3,
+      "ms": 5,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
     {
       "name": "A66b",
-      "ms": 23,
+      "ms": 15,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
     {
       "name": "A52",
-      "ms": 3,
+      "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
@@ -362,25 +362,25 @@
     },
     {
       "name": "console-list-objects-v2-token",
-      "ms": 5,
+      "ms": 3,
       "exchanges": 5,
       "clockOffsetMs": 0
     },
     {
       "name": "console-head-object",
-      "ms": 2,
+      "ms": 1,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
     {
       "name": "console-preview",
-      "ms": 3,
+      "ms": 2,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
     {
       "name": "preview-source",
-      "ms": 22,
+      "ms": 21,
       "exchanges": 11,
       "clockOffsetMs": 0
     }

@@ -1,14 +1,14 @@
 {
   "target": "minio-region",
-  "commit": "b2d3cf1af6dc84ecccd42a7baa1c5e4c960850fa",
+  "commit": "fefffc604b6f055c99c25b3c06c46a94f18e5a58",
   "uncommitted": [],
-  "image": "sha256:69125710d74c800f9c3e17569715a25b9a6a56994f4551af0911e0efe4e13343 /go/bin/minio: go1.24.13 \tpath\tgithub.com/minio/minio \tmod\tgithub.com/minio/minio\tv0.0.0-20251015172955-9e49d5e7a648\th1:6TdolSCLSs2nwm8i0PpWDqf9iX2Ty9WQK8wmr7dCnUM=",
+  "image": "sha256:69125710d74c800f9c3e17569715a25b9a6a56994f4551af0911e0efe4e13343 /go/bin/minio: go1.24.13  path github.com/minio/minio  mod github.com/minio/minio v0.0.0-20251015172955-9e49d5e7a648 h1:6TdolSCLSs2nwm8i0PpWDqf9iX2Ty9WQK8wmr7dCnUM=",
   "version": "RELEASE.2025-10-15T17-29-55Z",
   "date": "2026-10-10",
   "scenarios": [
     {
       "name": "surface",
-      "ms": 15,
+      "ms": 20,
       "exchanges": 8,
       "clockOffsetMs": 0
     },
@@ -26,7 +26,7 @@
     },
     {
       "name": "A3",
-      "ms": 2,
+      "ms": 3,
       "exchanges": 1,
       "clockOffsetMs": 0
     },
@@ -74,7 +74,7 @@
     },
     {
       "name": "A11",
-      "ms": 9,
+      "ms": 8,
       "exchanges": 7,
       "clockOffsetMs": 0
     },
@@ -86,7 +86,7 @@
     },
     {
       "name": "A55",
-      "ms": 2,
+      "ms": 1,
       "exchanges": 0,
       "clockOffsetMs": 0
     },
@@ -98,7 +98,7 @@
     },
     {
       "name": "A13",
-      "ms": 1,
+      "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
@@ -110,7 +110,7 @@
     },
     {
       "name": "A15",
-      "ms": 1,
+      "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
@@ -122,7 +122,7 @@
     },
     {
       "name": "A17",
-      "ms": 30,
+      "ms": 29,
       "exchanges": 35,
       "clockOffsetMs": 0
     },
@@ -152,19 +152,19 @@
     },
     {
       "name": "A22",
-      "ms": 17,
+      "ms": 15,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
     {
       "name": "A23",
-      "ms": 26,
+      "ms": 20,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
     {
       "name": "A23b",
-      "ms": 4,
+      "ms": 8,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
@@ -182,13 +182,13 @@
     },
     {
       "name": "A25",
-      "ms": 6,
+      "ms": 5,
       "exchanges": 6,
       "clockOffsetMs": 0
     },
     {
       "name": "A28",
-      "ms": 4,
+      "ms": 3,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
@@ -200,7 +200,7 @@
     },
     {
       "name": "A31",
-      "ms": 29,
+      "ms": 24,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
@@ -212,7 +212,7 @@
     },
     {
       "name": "A35",
-      "ms": 5,
+      "ms": 4,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
@@ -236,25 +236,25 @@
     },
     {
       "name": "A38",
-      "ms": 50,
+      "ms": 48,
       "exchanges": 31,
       "clockOffsetMs": 0
     },
     {
       "name": "A40",
-      "ms": 9,
+      "ms": 8,
       "exchanges": 8,
       "clockOffsetMs": 0
     },
     {
       "name": "A41",
-      "ms": 6,
+      "ms": 5,
       "exchanges": 6,
       "clockOffsetMs": 0
     },
     {
       "name": "A42",
-      "ms": 3,
+      "ms": 2,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
@@ -266,37 +266,37 @@
     },
     {
       "name": "A46",
-      "ms": 2,
+      "ms": 1,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
     {
       "name": "A47",
-      "ms": 6,
+      "ms": 5,
       "exchanges": 6,
       "clockOffsetMs": 0
     },
     {
       "name": "A48",
-      "ms": 2,
+      "ms": 1,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
     {
       "name": "A49",
-      "ms": 10,
+      "ms": 11,
       "exchanges": 7,
       "clockOffsetMs": 0
     },
     {
       "name": "A50",
-      "ms": 4,
+      "ms": 5,
       "exchanges": 5,
       "clockOffsetMs": 0
     },
     {
       "name": "A51",
-      "ms": 16,
+      "ms": 19,
       "exchanges": 21,
       "clockOffsetMs": 0
     },
@@ -320,7 +320,7 @@
     },
     {
       "name": "A61",
-      "ms": 9,
+      "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
@@ -344,7 +344,7 @@
     },
     {
       "name": "A66b",
-      "ms": 19,
+      "ms": 17,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
@@ -362,7 +362,7 @@
     },
     {
       "name": "console-list-objects-v2-token",
-      "ms": 57,
+      "ms": 59,
       "exchanges": 5,
       "clockOffsetMs": 0
     },
@@ -374,13 +374,13 @@
     },
     {
       "name": "console-preview",
-      "ms": 2,
+      "ms": 3,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
     {
       "name": "preview-source",
-      "ms": 14,
+      "ms": 18,
       "exchanges": 11,
       "clockOffsetMs": 0
     }
