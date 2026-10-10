@@ -342,6 +342,20 @@ describe("the HEAD follow-up", () => {
     );
   });
 
+  test("a follow-up's code is reported with the follow-up's own request id", async () => {
+    const { client } = clientOf((request) =>
+      request.method === "HEAD"
+        ? { status: 403, headers: [["x-amz-request-id", "HEADID"]] }
+        : {
+            ...xmlAnswer(errorXml("SomeNewCode", "refused"), 403),
+            headers: [["x-amz-request-id", "FOLLOWID"]],
+          },
+    );
+    const error = (await failure(client.headObject("sales", "a.csv", CALL))) as S3ServerError;
+    expect(error).toMatchObject({ status: 403, code: "SomeNewCode", requestId: "FOLLOWID" });
+    expect((toProviderError(error, "HeadObject", CONTEXT) as Error).message).toContain("(request id FOLLOWID)");
+  });
+
   test("a HEAD error carrying x-minio-error-code needs no follow-up", async () => {
     const { client, fake } = clientOf(() => ({
       status: 404,
