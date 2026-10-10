@@ -1599,7 +1599,8 @@ describe("SQLiteProvider object surface (#789)", () => {
     objects = await connectedWithObjects();
 
     // `[]` is SQLite saying it has no container level. It must not raise, and it must not
-    // invent a `main` row to make the shape match the other sixteen engines.
+    // invent a `main` row to make the shape match the engines that do have a container
+    // level, such as PostgreSQL's schemas.
     await expect(objects.listContainers()).resolves.toEqual([]);
     // Still a catalog method: it is not answerable off a closed handle.
     await expect(new SQLiteProvider(makeSQLiteConfig()).listContainers()).rejects.toThrow();
