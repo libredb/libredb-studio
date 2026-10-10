@@ -5,7 +5,7 @@
  * This file holds the value types the console and the preview call with; the functions
  * follow them.
  */
-import type { NodeByteResponse, NodeByteTransport } from "@/lib/db/http/node-transport";
+import { type NodeByteResponse, type NodeByteTransport, TransportError } from "@/lib/db/http/node-transport";
 import type { LimiterTicket, ProviderLimiter } from "@/lib/db/utils/bounded-limiter";
 import type { S3ConnectionOptions } from "./connection-options";
 import {
@@ -221,6 +221,8 @@ interface Sent {
   readonly path: string;
   readonly query: string;
   readonly capBytes: number;
+  /** The transport's bound when it is above capBytes, so an error body is read whole; capBytes when absent. */
+  readonly readBytes?: number;
   readonly headers?: Readonly<Record<string, string>>;
   readonly truncateAt?: number;
   readonly bucket?: string;
@@ -259,7 +261,7 @@ async function send(transport: NodeByteTransport, sent: Sent, call: S3CallOption
       method: sent.method,
       target: { path: sent.path, query: sent.query },
       signal: call.signal,
-      maxResponseBytes: sent.capBytes,
+      maxResponseBytes: sent.readBytes ?? sent.capBytes,
       ...(sent.headers === undefined ? {} : { headers: sent.headers }),
       ...(sent.truncateAt === undefined ? {} : { truncateAt: sent.truncateAt }),
     });
@@ -557,13 +559,17 @@ export function createS3Client(transport: NodeByteTransport): S3Client {
     },
 
     async getObjectRange(request, call) {
+      // The transport bounds every status alike, so it reads at least S3_SMALL_RESPONSE_BYTES and an error body
+      // of up to that size reaches errorOf whole; the caller's own bound is applied below, to data answers only.
+      const { maxBytes, truncateAt } = request;
       const sent: Sent = {
         operation: "GetObject",
         method: "GET",
         path: objectPath(request.bucket, request.key),
         query: "",
-        capBytes: request.maxBytes,
-        ...(request.truncateAt === undefined ? {} : { truncateAt: request.truncateAt }),
+        capBytes: maxBytes,
+        readBytes: Math.max(maxBytes, S3_SMALL_RESPONSE_BYTES),
+        ...(truncateAt === undefined ? {} : { truncateAt: Math.max(truncateAt, S3_SMALL_RESPONSE_BYTES) }),
         ...(request.range === undefined ? {} : { headers: { range: rangeHeader(request.range) } }),
         bucket: request.bucket,
         key: request.key,
@@ -571,11 +577,21 @@ export function createS3Client(transport: NodeByteTransport): S3Client {
       const response = await send(transport, sent, call);
       const { status } = response;
       if (status !== 200 && status !== 206 && status !== 416) throw errorOf(sent, response, false);
+      const limit = truncateAt ?? maxBytes;
+      const over = status !== 416 && response.bytes.length > limit;
+      if (over && truncateAt === undefined) {
+        const error = new TransportError(
+          "too-large",
+          `The response exceeded the ${maxBytes}-byte limit for one response, so it was not read to the end`,
+        );
+        noteRequestNames(error, namesOf(sent));
+        throw error;
+      }
       const etag = firstHeader(response.headers, "etag");
       return {
         status,
-        bytes: status === 416 ? Buffer.alloc(0) : response.bytes,
-        truncated: response.truncated,
+        bytes: status === 416 ? Buffer.alloc(0) : over ? response.bytes.subarray(0, limit) : response.bytes,
+        truncated: over || response.truncated,
         contentRange: firstHeader(response.headers, "content-range") ?? null,
         contentType: response.contentType,
         contentEncoding: response.contentEncoding,

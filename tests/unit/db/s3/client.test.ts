@@ -134,7 +134,9 @@ describe("each operation's method, target and cap", () => {
       { range: "bytes=5-" },
       undefined,
     ]);
-    expect(fake.exchanges[0].request).toMatchObject({ maxResponseBytes: 100, truncateAt: 100 });
+    expect(fake.exchanges[0].request).toMatchObject({ maxResponseBytes: 65_536, truncateAt: 65_536 });
+    expect(fake.exchanges[1].request).toMatchObject({ maxResponseBytes: 65_536 });
+    expect(fake.exchanges[1].request.truncateAt).toBeUndefined();
   });
 
   test("the client exposes only its read operations, and close closes the transport", () => {
@@ -434,6 +436,10 @@ describe("answers that are not what was asked for", () => {
   });
 });
 
+const NO_SUCH_KEY_SENTENCE = 'The server has no object "a.parquet" in bucket "sales".';
+const TOO_LARGE_SENTENCE =
+  'The server\'s answer to read object "a.csv" in bucket "sales" passed 4 bytes, the most Studio reads for it, so it was dropped; narrow the prefix.';
+
 describe("GetObject", () => {
   test("200, 206 and 416 are data, with the ETag unquoted and the length read", async () => {
     const answers = [
@@ -493,6 +499,47 @@ describe("GetObject", () => {
       await failure(missing.client.getObjectRange({ bucket: "sales", key: "a.csv", maxBytes: 1024 }, CALL)),
     ).toMatchObject({ code: "NoSuchKey", key: "a.csv" });
   });
+
+  test.each([
+    ["with truncateAt", 8],
+    ["without truncateAt", undefined],
+  ])("a small read %s answered with an S3 error document reads its code whole", async (_name, truncateAt) => {
+    const { client } = clientOf(() => xmlAnswer(errorXml("NoSuchKey", "The specified key does not exist."), 404));
+    const request = {
+      bucket: "sales",
+      key: "a.parquet",
+      range: { suffix: 8 },
+      maxBytes: 8,
+      ...(truncateAt === undefined ? {} : { truncateAt }),
+    };
+    const error = (await failure(client.getObjectRange(request, CALL))) as S3ServerError;
+    expect(error).toMatchObject({ operation: "GetObject", status: 404, code: "NoSuchKey", key: "a.parquet" });
+    expect((toProviderError(error, "GetObject", CONTEXT) as Error).message).toBe(NO_SUCH_KEY_SENTENCE);
+  });
+
+  test.each([200, 206])(
+    "a %d longer than the caller's truncateAt is cut there and marked truncated",
+    async (status) => {
+      const { client } = clientOf(() => ({ status, body: "abcdefghij" }));
+      const request = { bucket: "sales", key: "a.csv", range: { first: 0, last: 9 }, maxBytes: 4, truncateAt: 4 };
+      expect(await client.getObjectRange(request, CALL)).toMatchObject({
+        status,
+        bytes: Buffer.from("abcd"),
+        truncated: true,
+      });
+    },
+  );
+
+  test.each([200, 206])(
+    "a %d longer than the caller's maxBytes with no truncateAt is too large, worded with that cap",
+    async (status) => {
+      const { client } = clientOf(() => ({ status, body: "abcdefghij" }));
+      const error = await failure(client.getObjectRange({ bucket: "sales", key: "a.csv", maxBytes: 4 }, CALL));
+      expect(error).toBeInstanceOf(TransportError);
+      expect(error).toMatchObject({ kind: "too-large" });
+      expect((toProviderError(error, "GetObject", CONTEXT) as Error).message).toBe(TOO_LARGE_SENTENCE);
+    },
+  );
 });
 
 describe("nothing ambient", () => {
