@@ -541,6 +541,35 @@ describe("summarizeParquet", () => {
     expect(cut.notices.at(-1)).toMatch(/^\d+ cell\(s\) were cut at 3 characters\.$/);
   });
 
+  test("a column path longer than the summary cap is cut at it and counted in N-CELLS", async () => {
+    const name = "a".repeat(10);
+    const footer = await footerOf(
+      syntheticParquet({
+        schema: [
+          { name: "schema", children: 1 },
+          { name, type: PHYSICAL.INT32 },
+        ],
+        rowGroups: [{ numRows: 1, chunks: [int32Chunk(name, [1])] }],
+      }),
+    );
+    const { summary, notices } = summarizeParquet(footer, limits({ summaryCellChars: 4 }));
+    expect(summary.columns[0].path).toBe("aaaa");
+    expect(notices).toEqual(["1 cell(s) were cut at 4 characters."]);
+  });
+
+  test("a console summary carries the request's row count for its grid, or the default; the Source tab's none", async () => {
+    const object = fixture("fx-zstd.parquet");
+    const run = async (changes: Partial<ParquetPreviewInput>) =>
+      previewParquet(inputFor(object, "f.parquet", changes).input, depsOf(await loadParquetModules()));
+    expect(await run({ request: { schemaOnly: true } })).toMatchObject({
+      kind: "parquet",
+      summaryRows: S3_PREVIEW_LIMITS.defaultRows,
+    });
+    expect(await run({ request: { schemaOnly: true, maxRows: 7 } })).toMatchObject({ summaryRows: 7 });
+    const source = await run({ request: { schemaOnly: true }, purpose: "source" });
+    expect(source.kind === "parquet" && "summaryRows" in source).toBe(false);
+  });
+
   test("a leaf under a VARIANT element is typed group VARIANT, with no statistics", async () => {
     const { summary } = summarizeParquet(await footerOf(withVariant()), S3_PREVIEW_LIMITS);
     expect(summary.columns.map((column) => [column.path, column.type, column.nulls, column.min, column.max])).toEqual([
@@ -1473,6 +1502,7 @@ describe("leading mode drops the columns past the pre-scan's value total", () =>
     expect(outcome).toEqual({
       kind: "parquet",
       summary: summarizeParquet(footer, capped).summary,
+      summaryRows: S3_PREVIEW_LIMITS.defaultRows,
       notices: [
         `The first row group is too large to preview: its first column stores ${inMiB(Number(a?.total_compressed_size))} MiB (${inMiB(Number(a?.total_uncompressed_size))} MiB decoded), over the 8.00 MiB read and 32.00 MiB decode budgets, or holds more leaf columns or values than a preview reads. The schema, row count and first-row-group statistics are shown instead.`,
         ...summarizeParquet(footer, capped).notices,

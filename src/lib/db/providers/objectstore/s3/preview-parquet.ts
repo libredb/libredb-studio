@@ -311,8 +311,10 @@ export function summarizeParquet(
     const meta = metaOf(chunk);
     const leaf = shape.leaves[index];
     const statistics = leaf.underVariant ? undefined : meta.statistics;
+    const path = cutText(meta.path_in_schema.join("."), limits.summaryCellChars);
+    if (path.cut) cutCells += 1;
     return {
-      path: meta.path_in_schema.join("."),
+      path: path.text,
       type: leaf.type,
       codec: codecOf(meta),
       nulls: cell(statistics?.null_count),
@@ -1324,9 +1326,13 @@ export async function previewParquet(
     if (outcome.kind === "refused") return { kind: "refused", sentence: outcome.sentence, notices: [] };
     const { summary, notices: summaryNotices } = summarizeParquet(outcome.footer, input.limits);
     const plan = planParquet(outcome.footer, input.request, input.purpose, input.limits);
-    if (plan.kind === "summary") return { kind: "parquet", summary, notices: [...plan.notices, ...summaryNotices] };
+    const summaryOnly = (notices: readonly string[]): ParquetOutcome =>
+      input.purpose === "source"
+        ? { kind: "parquet", summary, notices }
+        : { kind: "parquet", summary, summaryRows: input.request.maxRows ?? input.limits.defaultRows, notices };
+    if (plan.kind === "summary") return summaryOnly([...plan.notices, ...summaryNotices]);
     const read = await readPlannedRows(input, outcome.footer, plan, modules, deps.slots);
-    if (read.kind === "summary") return { kind: "parquet", summary, notices: [...read.notices, ...summaryNotices] };
+    if (read.kind === "summary") return summaryOnly([...read.notices, ...summaryNotices]);
     return {
       kind: "parquet",
       summary,

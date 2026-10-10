@@ -6,10 +6,10 @@
 import { applySourceBound, SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import type { ObjectSourcePart } from "@/lib/db/types";
 import type { QueryResult } from "@/lib/types";
-import { S3_PREVIEW_LIMITS, S3_SHOWN_NAME_CHARS } from "./constants";
+import { S3_SHOWN_NAME_CHARS } from "./constants";
 import { shellSpelling } from "./names";
 import type { ParquetSummary, S3Preview, S3PreviewCell, S3PreviewRows } from "./preview";
-import { hexDump, hexRows, textLines } from "./preview-text";
+import { hexDump } from "./preview-text";
 
 /** Every notice and refusal of the preview, by id; placeholders are filled by `previewSentence`. */
 export const S3_PREVIEW_SENTENCES = Object.freeze({
@@ -358,40 +358,25 @@ const bare = (message: string, executionTime: number): QueryResult => ({
 });
 
 /**
- * The console grid of a preview: the rows of a row format or of Parquet; a text's lines; hex rows of 16 bytes, taken
- * from the preview when it carries them; a Parquet summary as one row per leaf column; an empty or refused preview as
- * its sentence alone.
+ * The console grid of a console-purpose preview: the rows it carries (a row format's, a text's lines, hex rows, or
+ * Parquet's); a Parquet summary as one row per leaf column, at most the preview's summaryRows; an empty or refused
+ * preview as its sentence alone. A text or hex preview without rows, or a summary without summaryRows, is a
+ * Source-purpose preview, and passing one is a defect that throws.
  */
 export function previewQueryResult(preview: S3Preview, executionTime: number): QueryResult {
-  const maxRows = S3_PREVIEW_LIMITS.maxRows;
   switch (preview.kind) {
     case "empty":
       return bare(preview.notices[0] ?? EMPTY_OBJECT_SENTENCE, executionTime);
     case "refused":
       return bare(preview.sentence, executionTime);
-    case "hex": {
-      if (preview.rows !== undefined) return grid(preview.rows, preview.notices, executionTime);
-      const hex = hexRows(preview.bytes, maxRows);
-      const columns = ["offset", "hex", "text"].map((name) => ({ name, type: "text" }));
-      const warnings = hex.more ? [...preview.notices, previewSentence("N-ROWS", { cap: maxRows })] : preview.notices;
-      return grid({ columns, rows: hex.rows }, warnings, executionTime);
-    }
-    case "text": {
-      if (preview.rows !== undefined) return grid(preview.rows, preview.notices, executionTime);
-      const lines = textLines(preview.text, maxRows);
-      const columns = [
-        { name: "line", type: "number" },
-        { name: "text", type: "text" },
-      ];
-      return grid(
-        { columns, rows: lines.lines.map((line, index) => [index + 1, line]) },
-        preview.notices,
-        executionTime,
-      );
-    }
+    case "hex":
+    case "text":
+      if (preview.rows === undefined) throw new Error("a console preview without rows");
+      return grid(preview.rows, preview.notices, executionTime);
     default: {
       if (preview.rows !== undefined) return grid(preview.rows, preview.notices, executionTime);
-      const { summary } = preview;
+      const { summary, summaryRows } = preview;
+      if (summaryRows === undefined) throw new Error("a console Parquet summary without its row count");
       const columns = [
         { name: "column", type: "text" },
         { name: "type", type: "text" },
@@ -402,19 +387,22 @@ export function previewQueryResult(preview: S3Preview, executionTime: number): Q
         { name: "compressed_bytes", type: "number" },
         { name: "uncompressed_bytes", type: "number" },
       ];
-      const rows = summary.columns.map((column) => [
-        column.path,
-        column.type,
-        column.codec,
-        column.nulls,
-        column.min,
-        column.max,
-        column.compressedBytes,
-        column.uncompressedBytes,
-      ]);
+      const rows = summary.columns
+        .slice(0, summaryRows)
+        .map((column) => [
+          column.path,
+          column.type,
+          column.codec,
+          column.nulls,
+          column.min,
+          column.max,
+          column.compressedBytes,
+          column.uncompressedBytes,
+        ]);
       const warnings = [
         ...preview.notices,
         previewSentence("N-PQ-SUMMARY", { rows: countCell(summary.rows), groups: summary.rowGroups }),
+        ...(summary.columns.length > summaryRows ? [previewSentence("N-ROWS", { cap: summaryRows })] : []),
       ];
       return grid({ columns, rows }, warnings, executionTime);
     }

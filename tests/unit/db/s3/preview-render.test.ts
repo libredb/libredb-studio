@@ -463,29 +463,11 @@ describe("previewQueryResult", () => {
     ).toBe(false);
   });
 
-  test("a text with no rows answers its lines", () => {
-    expect(previewQueryResult(text({ text: "a\nb\n" }), 1)).toMatchObject({
-      fields: ["line", "text"],
-      rows: [
-        { line: 1, text: "a" },
-        { line: 2, text: "b" },
-      ],
-      columnTypes: { line: "number", text: "text" },
-    });
-  });
-
-  test("hex: offset, hex and text columns of 16 bytes, at most 500 rows with N-ROWS", () => {
-    const small = previewQueryResult({ kind: "hex", bytes: Uint8Array.of(0x41, 0x42), objectBytes: 2, notices: [] }, 1);
-    expect(small).toMatchObject({
-      fields: ["offset", "hex", "text"],
-      rows: [{ offset: "00000000", hex: "41 42", text: "AB" }],
-    });
-    const large = previewQueryResult(
-      { kind: "hex", bytes: new Uint8Array(65_536), objectBytes: 65_536, notices: [] },
-      1,
-    );
-    expect(large.rowCount).toBe(500);
-    expect(large.warnings).toEqual([{ message: "The preview stops at 500 rows." }]);
+  test("a text or hex preview without rows is not a console preview, and throws", () => {
+    expect(() => previewQueryResult(text({ text: "a\nb\n" }), 1)).toThrow("a console preview without rows");
+    expect(() =>
+      previewQueryResult({ kind: "hex", bytes: Uint8Array.of(0x41, 0x42), objectBytes: 2, notices: [] }, 1),
+    ).toThrow("a console preview without rows");
   });
 
   test("hex: rows the preview carries are the grid, with the preview's notices as its warnings", () => {
@@ -512,7 +494,7 @@ describe("previewQueryResult", () => {
   });
 
   test("Parquet summary only: one row per leaf column, with N-PQ-SUMMARY", () => {
-    expect(previewQueryResult({ kind: "parquet", summary, notices: [] }, 1)).toMatchObject({
+    expect(previewQueryResult({ kind: "parquet", summary, summaryRows: 100, notices: [] }, 1)).toMatchObject({
       fields: ["column", "type", "codec", "nulls", "min", "max", "compressed_bytes", "uncompressed_bytes"],
       rows: [
         {
@@ -528,6 +510,29 @@ describe("previewQueryResult", () => {
       ],
       warnings: [{ message: "3 rows in 1 row group(s); statistics are the first row group's." }],
     });
+  });
+
+  test("Parquet summary only: at most the preview's row count, with N-ROWS when leaves are left", () => {
+    const leaves = {
+      ...summary,
+      columns: Array.from({ length: 600 }, (_, index) => ({ ...summary.columns[0], path: `c${index}` })),
+    };
+    const byDefault = previewQueryResult({ kind: "parquet", summary: leaves, summaryRows: 100, notices: [] }, 1);
+    expect(byDefault.rowCount).toBe(100);
+    expect(byDefault.warnings).toEqual([
+      { message: "3 rows in 1 row group(s); statistics are the first row group's." },
+      { message: "The preview stops at 100 rows." },
+    ]);
+    const asked = previewQueryResult({ kind: "parquet", summary: leaves, summaryRows: 10, notices: [] }, 1);
+    expect(asked.rows.map((row) => row.column)).toEqual(Array.from({ length: 10 }, (_, index) => `c${index}`));
+    const exact = previewQueryResult({ kind: "parquet", summary, summaryRows: 1, notices: [] }, 1);
+    expect(exact.warnings).toEqual([{ message: "3 rows in 1 row group(s); statistics are the first row group's." }]);
+  });
+
+  test("a Parquet summary without its row count is not a console preview, and throws", () => {
+    expect(() => previewQueryResult({ kind: "parquet", summary, notices: [] }, 1)).toThrow(
+      "a console Parquet summary without its row count",
+    );
   });
 
   test("empty and refused: no columns, no rows, the sentence as the only warning", () => {

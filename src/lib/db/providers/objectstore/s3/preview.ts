@@ -141,6 +141,8 @@ export type S3Preview =
       readonly kind: "parquet";
       readonly summary: ParquetSummary;
       readonly rows?: S3PreviewRows;
+      /** Console purpose, summary only: the most summary rows the grid shows, the request's maxRows or defaultRows. */
+      readonly summaryRows?: number;
       readonly notices: readonly string[];
     }
   | { readonly kind: "refused"; readonly sentence: string; readonly notices: readonly string[] };
