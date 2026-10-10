@@ -565,3 +565,222 @@ describe("the S3 services in database-compose.yml", () => {
     );
   });
 });
+
+// -- docker/s3 principals, Garage and TLS material -------------------------------------------------------------
+
+const GARAGE_KEY_FILES = [
+  "rpc.secret",
+  "admin.token",
+  "metrics.token",
+  "rw.secret",
+  "browse.secret",
+  "scoped.secret",
+  "none.secret",
+];
+const GARAGE_KEY_IDS = [
+  "GK000000000000000000000001",
+  "GK000000000000000000000002",
+  "GK000000000000000000000003",
+  "GK000000000000000000000004",
+];
+
+/** A shell script without its whole-line comments, so a comment that names a tool is not a call to it. */
+function shellCode(script: string): string {
+  return script
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+}
+
+function garageConfigFindings({ files, services }: S3Fixtures): string[] {
+  const toml = files["docker/s3/garage.toml"];
+  if (toml === undefined) return ["docker/s3/garage.toml is missing"];
+  const findings: string[] = [];
+  for (const key of ["rpc_secret", "admin_token", "metrics_token"])
+    if (new RegExp(`^\\s*${key}\\s*=`, "m").test(toml)) findings.push(`garage.toml sets ${key}, a secret`);
+  for (const line of [
+    's3_region = "garage"',
+    'api_bind_addr = "[::]:3900"',
+    'api_bind_addr = "[::]:3903"',
+    "replication_factor = 1",
+  ])
+    if (!toml.includes(line)) findings.push(`garage.toml does not set ${line}`);
+  if (/root_domain/.test(toml)) findings.push("garage.toml sets root_domain, an untested virtual-hosted listener");
+  const environment = services.garage?.environment ?? {};
+  for (const [name, file] of [
+    ["GARAGE_RPC_SECRET_FILE", "/keys/rpc.secret"],
+    ["GARAGE_ADMIN_TOKEN_FILE", "/keys/admin.token"],
+    ["GARAGE_METRICS_TOKEN_FILE", "/keys/metrics.token"],
+  ] as const)
+    if (environment[name] !== file) findings.push(`garage does not read ${name} from ${file}`);
+  return findings;
+}
+
+function garageKeysFindings({ files }: S3Fixtures): string[] {
+  const script = files["docker/s3/garage-keys.sh"];
+  if (script === undefined) return ["docker/s3/garage-keys.sh is missing"];
+  const findings = GARAGE_KEY_FILES.filter((name) => !script.includes(name)).map(
+    (name) => `garage-keys.sh does not write ${name}`,
+  );
+  if (!script.includes("openssl rand -hex 32"))
+    findings.push("garage-keys.sh does not draw each secret with openssl rand -hex 32");
+  if (!script.includes('[ -s "$DIR/$name" ] && continue'))
+    findings.push("garage-keys.sh rewrites a secret that exists");
+  if (!script.includes("chmod 0600")) findings.push("garage-keys.sh leaves a secret readable");
+  return findings;
+}
+
+function garageSetupFindings({ files }: S3Fixtures): string[] {
+  const script = files["docker/s3/garage-setup.sh"];
+  if (script === undefined) return ["docker/s3/garage-setup.sh is missing"];
+  const calls = [
+    "/v2/GetClusterStatus",
+    "/v2/UpdateClusterLayout",
+    "/v2/ApplyClusterLayout",
+    "/v2/GetBucketInfo",
+    "/v2/CreateBucket",
+    "/v2/GetKeyInfo",
+    "/v2/ImportKey",
+    "/v2/AllowBucketKey",
+    "/v2/AddBucketAlias",
+    "/v2/GetClusterHealth",
+  ];
+  const findings = calls.filter((call) => !script.includes(call)).map((call) => `garage-setup.sh never calls ${call}`);
+  for (const id of GARAGE_KEY_IDS) if (!script.includes(id)) findings.push(`garage-setup.sh does not import ${id}`);
+  if (!script.includes("scoped-local")) findings.push("garage-setup.sh does not add the local alias scoped-local");
+  if (/\bjq\b/.test(shellCode(script))) findings.push("garage-setup.sh calls jq, which alpine/curl does not carry");
+  return findings;
+}
+
+function principalsFindings({ files }: S3Fixtures): string[] {
+  const script = files["docker/s3/principals.sh"];
+  if (script === undefined) return ["docker/s3/principals.sh is missing"];
+  const findings: string[] = [];
+  for (const user of ["studio-browse", "studio-scoped", "studio-getonly"])
+    if (!script.includes(user)) findings.push(`principals.sh does not add ${user}`);
+  for (const policy of ["studio-browse", "studio-scoped", "readonly"])
+    if (!script.includes(`attach ${policy === "readonly" ? "studio-getonly readonly" : `${policy} ${policy}`}`))
+      findings.push(`principals.sh does not attach ${policy}`);
+  if (/\bgrep\b/.test(shellCode(script)))
+    findings.push("principals.sh calls grep, which the Silo-line mc image may not carry");
+  return findings;
+}
+
+function policyFindings({ files }: S3Fixtures): string[] {
+  const findings: string[] = [];
+  const browse = files["docker/s3/policies/studio-browse.json"];
+  const scoped = files["docker/s3/policies/studio-scoped.json"];
+  if (browse === undefined) return ["docker/s3/policies/studio-browse.json is missing"];
+  if (scoped === undefined) return ["docker/s3/policies/studio-scoped.json is missing"];
+  const actions = (text: string) =>
+    (JSON.parse(text) as { Statement: { Action: string[] }[] }).Statement.flatMap(
+      (statement) => statement.Action,
+    ).sort();
+  const browseActions = [
+    "s3:GetBucketLocation",
+    "s3:GetObject",
+    "s3:GetObjectVersion",
+    "s3:ListAllMyBuckets",
+    "s3:ListBucket",
+    "s3:ListBucketVersions",
+  ];
+  if (!Bun.deepEquals(actions(browse), browseActions))
+    findings.push(`studio-browse allows ${actions(browse).join(", ")}`);
+  if (!Bun.deepEquals(actions(scoped), ["s3:GetBucketLocation", "s3:GetObject", "s3:ListBucket"]))
+    findings.push(`studio-scoped allows ${actions(scoped).join(", ")}`);
+  if (!scoped.includes("arn:aws:s3:::studio-scoped") || scoped.includes("arn:aws:s3:::*"))
+    findings.push("studio-scoped reaches beyond studio-scoped");
+  return findings;
+}
+
+function certsFindings({ files }: S3Fixtures): string[] {
+  const script = files["docker/s3/certs.sh"];
+  if (script === undefined) return ["docker/s3/certs.sh is missing"];
+  const findings: string[] = [];
+  for (const name of ["public.crt", "private.key", "CAs/ca.crt", "ca.pem"])
+    if (!script.includes(name)) findings.push(`certs.sh does not write ${name}`);
+  for (const san of ["DNS:localhost", "IP:127.0.0.1", "DNS:silo-tls"])
+    if (!script.includes(san)) findings.push(`certs.sh does not name ${san}`);
+  if (!script.includes("chmod 0600")) findings.push("certs.sh leaves the private key readable");
+  return findings;
+}
+
+describe("the principals, Garage and TLS material of docker/s3", () => {
+  test("garage.toml holds no secret, and Garage reads its three secrets from the keys volume", () => {
+    clean(garageConfigFindings(real));
+    const leaked = planted(real, (draft) => void (draft.files["docker/s3/garage.toml"] += '\nrpc_secret = "00"\n'));
+    finds(garageConfigFindings(leaked), "garage.toml sets rpc_secret");
+    const unread = planted(real, (draft) => void delete draft.services.garage.environment?.GARAGE_ADMIN_TOKEN_FILE);
+    finds(garageConfigFindings(unread), "garage does not read GARAGE_ADMIN_TOKEN_FILE");
+  });
+
+  test("garage-keys.sh writes the seven secrets only when missing, private to the volume", () => {
+    clean(garageKeysFindings(real));
+    const rewrite = planted(real, (draft) => {
+      draft.files["docker/s3/garage-keys.sh"] = draft.files["docker/s3/garage-keys.sh"].replace(
+        '[ -s "$DIR/$name" ] && continue',
+        ":",
+      );
+    });
+    finds(garageKeysFindings(rewrite), "rewrites a secret that exists");
+  });
+
+  test("garage-setup.sh makes every admin API call the Garage setup needs, and no jq", () => {
+    clean(garageSetupFindings(real));
+    finds(
+      garageSetupFindings(planted(real, (draft) => void (draft.files["docker/s3/garage-setup.sh"] += "\njq .\n"))),
+      "calls jq",
+    );
+    clean(
+      garageSetupFindings(
+        planted(
+          real,
+          (draft) => void (draft.files["docker/s3/garage-setup.sh"] += "\n  # alpine/curl carries no jq\n"),
+        ),
+      ),
+    );
+  });
+
+  test("principals.sh adds the three users and attaches their policies, with no grep", () => {
+    clean(principalsFindings(real));
+    finds(
+      principalsFindings(planted(real, (draft) => void (draft.files["docker/s3/principals.sh"] += "\ngrep x\n"))),
+      "calls grep",
+    );
+    clean(
+      principalsFindings(
+        planted(
+          real,
+          (draft) => void (draft.files["docker/s3/principals.sh"] += "\n# not every mc image carries grep\n"),
+        ),
+      ),
+    );
+  });
+
+  test("the browse policy is the least privilege Studio needs and the scoped one names one bucket", () => {
+    clean(policyFindings(real));
+    const wider = planted(real, (draft) => {
+      draft.files["docker/s3/policies/studio-browse.json"] = draft.files[
+        "docker/s3/policies/studio-browse.json"
+      ].replace('"s3:GetObject",', '"s3:GetObject", "s3:PutObject",');
+    });
+    finds(policyFindings(wider), "studio-browse allows", "s3:PutObject");
+  });
+
+  test("certs.sh names localhost, 127.0.0.1 and silo-tls and keeps the key private", () => {
+    clean(certsFindings(real));
+    finds(
+      certsFindings(
+        planted(
+          real,
+          (draft) =>
+            void (draft.files["docker/s3/certs.sh"] = draft.files["docker/s3/certs.sh"].replace(
+              "DNS:silo-tls",
+              "DNS:silo",
+            )),
+        ),
+      ),
+      "DNS:silo-tls",
+    );
+  });
+});
