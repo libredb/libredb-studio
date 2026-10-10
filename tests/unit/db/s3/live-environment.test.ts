@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { rfc3986Path } from "@/lib/db/http/endpoint";
 import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -902,5 +903,134 @@ describe("the seed's own sample files in docker/s3/data", () => {
   test("the UTF-8 boundary file follows the provider's text read cap", () => {
     clean(utf8BoundaryFindings(real, S3_PREVIEW_LIMITS.textFetchBytes));
     finds(utf8BoundaryFindings(real, S3_PREVIEW_LIMITS.textFetchBytes + 64), "run bun docker/s3/make-data.ts");
+  });
+});
+
+// -- docker/s3/seed.sh ----------------------------------------------------------------------------------------------
+
+const SEED = "docker/s3/seed.sh";
+const OUTCOME = /^(stored|measure|[45]\d\d:[A-Za-z]+)$/;
+const LAST_OBJECTS = ["parquet/truncated.parquet", "b-only/table.csv", "ver/zz-last.txt", "mixed/k-1199/inner.txt"];
+const PARTIAL_SENTENCE = "studio-versions holds a partial seed; reset the server with rm -s -f -v and run again";
+
+/** `abcdefghijklmnopqrstuvwxyz` repeated and cut to n characters, as seed.sh's seg() writes it. */
+function segment(n: number): string {
+  return "abcdefghijklmnopqrstuvwxyz".repeat(10).slice(0, n);
+}
+const LONG = `${segment(250)}/${segment(250)}/${segment(250)}/${segment(245)}`;
+
+interface SpecialKey {
+  readonly wire: string;
+  readonly outcomes: readonly string[];
+}
+
+/** The rows of seed.sh's SPECIAL_KEYS table, with @LONG@ expanded as seed.sh expands it. */
+function specialKeys(script: string): SpecialKey[] {
+  const table = /^SPECIAL_KEYS='\n([\s\S]*?)\n'$/m.exec(script)?.[1] ?? "";
+  return table
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => {
+      const [wire, ...outcomes] = line.split("|");
+      return { wire: wire.replace("@LONG@", LONG), outcomes };
+    });
+}
+
+/** Percent-decodes a wire form to its UTF-8 text, or undefined when the bytes are not text. */
+function decodeWire(wire: string): string | undefined {
+  const bytes: number[] = [];
+  for (let at = 0; at < wire.length; at++) {
+    if (wire[at] === "%") {
+      bytes.push(Number.parseInt(wire.slice(at + 1, at + 3), 16));
+      at += 2;
+    } else bytes.push(wire.charCodeAt(at));
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes));
+  } catch {
+    return undefined;
+  }
+}
+
+function seedFindings({ files }: S3Fixtures): string[] {
+  const script = files[SEED];
+  if (script === undefined) return [`${SEED} is missing`];
+  const findings: string[] = [];
+  script.split("\n").forEach((line, index) => {
+    if (/^\s*#/.test(line) || !/\bcurl\b/.test(line)) return;
+    if (!line.includes("--path-as-is")) findings.push(`${SEED}:${index + 1} runs curl without --path-as-is`);
+  });
+  const keys = specialKeys(script);
+  if (keys.length !== 14) findings.push(`${SEED} lists ${keys.length} special keys, not 14`);
+  for (const { wire, outcomes } of keys) {
+    const decoded = decodeWire(wire);
+    if (decoded === undefined) findings.push(`the special key ${wire} is not UTF-8 text`);
+    else if (rfc3986Path(decoded.split("/")).slice(1) !== wire)
+      findings.push(`the special key ${wire} is not the RFC 3986 form of ${JSON.stringify(decoded)}`);
+    if (outcomes.length !== 4 || !outcomes.every((outcome) => OUTCOME.test(outcome)))
+      findings.push(`the special key ${wire} has the outcomes ${outcomes.join("|")}`);
+  }
+  const long = keys.find((key) => key.wire.startsWith("long/"));
+  if (long === undefined || new TextEncoder().encode(long.wire).length !== 1_003)
+    findings.push("the long key is not 1,003 bytes");
+  for (const last of LAST_OBJECTS)
+    if (!script.includes(`/${last}`)) findings.push(`${SEED} never checks the last object ${last}`);
+  if (!script.includes(PARTIAL_SENTENCE)) findings.push(`${SEED} does not stop on a partial studio-versions`);
+  if (!/-H 'x-amz-meta-[a-z]+: [^'\n]*[^\x00-\x7f][^'\n]*'/.test(script))
+    findings.push(`${SEED} gives meta/tagged.txt no user metadata value with non-ASCII UTF-8 text`);
+  if (!script.includes("measured $SERVER studio-demo/meta/tagged.txt"))
+    findings.push(`${SEED} does not print each server's answer to the non-ASCII metadata value`);
+  return findings;
+}
+
+function seedSourceFindings({ files }: S3Fixtures): string[] {
+  const script = files[SEED] ?? "";
+  const findings: string[] = [];
+  for (const [, name] of script.matchAll(/\/preview\/([A-Za-z0-9._-]+)/g))
+    if (!existsSync(path.join(ROOT, "tests/fixtures/s3/preview", name)))
+      findings.push(`${SEED} uploads /preview/${name}, which is not committed`);
+  for (const [, name] of script.matchAll(/\/s3\/data\/([A-Za-z0-9._-]+)/g))
+    if (!(DATA_FILES as readonly string[]).includes(name))
+      findings.push(`${SEED} uploads /s3/data/${name}, which make-data.ts does not write`);
+  return findings;
+}
+
+describe("the object seed docker/s3/seed.sh", () => {
+  test("every curl keeps dot segments, every special key is sent in its RFC 3986 form, and each bucket ends on a known object", () => {
+    clean(seedFindings(real));
+    const resolving = planted(real, (draft) => {
+      draft.files[SEED] = draft.files[SEED].replace("curl --path-as-is", "curl");
+    });
+    finds(seedFindings(resolving), "runs curl without --path-as-is");
+    const plus = planted(real, (draft) => {
+      draft.files[SEED] = draft.files[SEED].replace("sp/plus%2Bsign.txt|", "sp/plus+sign.txt|");
+    });
+    finds(seedFindings(plus), "sp/plus+sign.txt is not the RFC 3986 form");
+    const lower = planted(real, (draft) => {
+      draft.files[SEED] = draft.files[SEED].replace("%C3%BCn", "%c3%bcn");
+    });
+    finds(seedFindings(lower), "is not the RFC 3986 form");
+  });
+
+  test("meta/tagged.txt carries one user metadata value with non-ASCII UTF-8 text, and each server's answer is printed", () => {
+    const ascii = planted(real, (draft) => {
+      draft.files[SEED] = draft.files[SEED].replace("café", "cafe");
+    });
+    finds(seedFindings(ascii), "no user metadata value with non-ASCII UTF-8 text");
+    const silent = planted(real, (draft) => {
+      draft.files[SEED] = draft.files[SEED].replaceAll("measured $SERVER studio-demo/meta/tagged.txt", "stored");
+    });
+    finds(seedFindings(silent), "does not print each server's answer");
+  });
+
+  test("every file the seed uploads exists: the committed preview fixtures and make-data.ts's files", () => {
+    clean(seedSourceFindings(real));
+    const missing = planted(real, (draft) => void (draft.files[SEED] += "\n# /preview/no-such.parquet\n"));
+    finds(seedSourceFindings(missing), "/preview/no-such.parquet, which is not committed");
+  });
+
+  test("the script parses under sh", () => {
+    const parsed = Bun.spawnSync(["sh", "-n", path.join(ROOT, SEED)]);
+    expect({ exit: parsed.exitCode, stderr: parsed.stderr.toString() }).toEqual({ exit: 0, stderr: "" });
   });
 });
