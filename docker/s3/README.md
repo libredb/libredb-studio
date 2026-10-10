@@ -100,7 +100,7 @@ Garage has no users or policies, only per-key, per-bucket grants, so it gets fou
 | `studio-demo` | Depth, folder markers, special keys, every preview format | A13 to A20, A28 to A42, A47 to A49, A58 to A61 |
 | `studio-scoped` | `b-only/x.txt`, `b-only/table.csv` | A10, A12 |
 | `studio-versions` | Versioning enabled (not on Garage): two versions of `ver/doc.txt`, a delete marker on `ver/deleted.txt`, then `ver/zz-last.txt` | A23b, A43, A62 |
-| `studio-bulk` | 2,500 objects under `many/`, 1,100 one-object folders under `folders/`, 600 objects interleaved with 600 folders under `mixed/`; after the raw seed, 10,050 one-byte objects under `held/` | A21 to A23, B6 |
+| `studio-bulk` | 2,500 objects under `many/`, 1,100 one-object folders under `folders/`, 600 objects interleaved with 600 folders under `mixed/`; after the raw seed, 10,050 one-byte objects under `held/` | A21 to A23, and the browser pass of the Keys panel's held limit |
 | `studio-empty` | nothing | The empty-state rows of the browser pass |
 
 Every object body comes from a fixed `printf` in `seed.sh`, from the committed preview fixtures under `tests/fixtures/s3/preview/` (mounted at `/preview`), or from `data/`, so every server holds byte-identical objects.

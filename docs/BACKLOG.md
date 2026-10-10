@@ -28,12 +28,12 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D274, U17 · 177
+- [Drivers and connections](#drivers-and-connections) — D1-D276, U17 · 179
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U110 · 101
 - [Dependencies](#dependencies) — P1-P9 · 7
-- [Documentation](#documentation) — DOC3-DOC20 · 17
+- [Documentation](#documentation) — DOC3-DOC21 · 18
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
@@ -2924,6 +2924,24 @@ Found 2026-10-10 while measuring the S3 provider's Parquet preview.
 
 **Done when:** the preview either decodes only the first data page of each column chunk or weights its value caps by decoded cost, a pyarrow file written with the default row group size shows rows, and every cap the change touches is re-measured under the same 128 MiB bound, with tests at each cap and one over it.
 
+### D275. An S3 disconnect during connect's probe is undone when the probe ends
+
+`connect()` in `src/lib/db/providers/objectstore/s3/index.ts` opens its session, awaits the S3-proving probe, and then stores the session and marks the provider connected.
+A `disconnect()` that runs while the probe is in flight finds no stored session, so it closes nothing; when the probe then succeeds, `connect()` stores the session anyway, and the provider is connected with a live transport after the caller asked it to disconnect.
+
+Found 2026-10-10 by the review of the S3 provider; not reached by any shipped flow, which awaits `connect()` before it can call `disconnect()`.
+
+**Done when:** a `disconnect()` during `connect()`'s probe leaves the provider disconnected and the probe's transport closed once the probe settles, with a test that holds the probe, disconnects, releases it, and expects no stored session and one closed transport.
+
+### D276. A sessionless S3 health check racing connect replaces connect's session and leaks its transport
+
+`getHealth()` in `src/lib/db/providers/objectstore/s3/index.ts` opens a session of its own when none is stored and stores it when its read succeeds.
+When it runs while `connect()` is probing, both open a session; whichever finishes last overwrites `this.session`, and the transport of the other is never closed.
+
+Found 2026-10-10 by the review of the S3 provider.
+
+**Done when:** a health check that starts without a session and a `connect()` that overlaps it leave exactly one stored session and close every other transport they opened, with a test that runs the two concurrently in both finishing orders and counts the closed transports.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -4923,6 +4941,15 @@ Found 2026-10-09 while designing the S3 provider; pre-existing.
 
 **Done when:** each count is derived from the code it describes, the label table matches `ProviderLabels`, and the guide states one driver-free count with the list it counts.
 
+### DOC21. docs/TOOLCHAIN.md counts the providers the factory tests construct as seventeen
+
+`docs/TOOLCHAIN.md` says two `tests/unit` files "construct all seventeen providers through the real factory"; the shipped type-ids have grown well past seventeen since, the S3 provider among them, so the number no longer counts what those files construct.
+The other stale fleet counts the same sweep found (`docs/providers/mongodb.md` three times, `druid.md`, `mysql.md`, `sqlite.md` and `e2e/login.spec.ts`) are the ones DOC6 already lists, and each is further behind by the providers added since.
+
+Found 2026-10-10 by the documentation sweep of the S3 provider; pre-existing.
+
+**Done when:** the TOOLCHAIN.md sentence names the set those two files construct, or the number that set has, derived from the factory, and DOC6's entries are settled by its own Done when.
+
 ## Release pipeline
 
 ### REL1. No CI job installs the released chart artifact with a Helm 3 client
@@ -6289,7 +6316,7 @@ Found 2026-10-07 while designing the Databend provider (design 5.7).
 
 Found 2026-10-09 while designing the S3 provider.
 
-**Done when:** an MCP metadata surface that lists buckets and never returns an object key is designed, `MCP_EXPOSABLE.s3` turns true for it, and `run_read_query` and agent execution serve a `queryReadOnly` that runs one console read command, with tests; cited in `docs/AGENT.md` beside B100.
+**Done when:** an MCP metadata surface that lists buckets and never returns an object key is designed, `MCP_EXPOSABLE.s3` turns true for it, and `run_read_query` and agent execution serve a `queryReadOnly` that runs one console read command, with tests; cited in `docs/AGENT.md` beside B103.
 
 ## Passkey deferrals (#785)
 

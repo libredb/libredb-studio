@@ -1450,6 +1450,23 @@ function matrixShapeFindings(): string[] {
 }
 
 describe("the acceptance matrix S3_ACCEPTANCE", () => {
+  test("every row id docker/s3/README.md cites is a row of S3_ACCEPTANCE", () => {
+    const readme = real.files[README];
+    if (readme === undefined) throw new Error(`${README} is missing`);
+    const ids = new Set<string>(S3_ACCEPTANCE.map((row) => row.id));
+    const at = readme.indexOf("\n## Seeded data\n");
+    if (at === -1) throw new Error(`${README} has no Seeded data section`);
+    const section = readme.slice(at + 1, readme.indexOf("\n## ", at + 1));
+    // The Rows cell of each bucket row, such as "A21 to A23"; every id there must name a matrix row.
+    const rowsCells = section
+      .split("\n")
+      .filter((line) => line.startsWith("| `"))
+      .map((line) => line.split(" | ").at(-1) ?? "");
+    const cited = [...new Set(rowsCells.flatMap((cell) => cell.match(/\b[A-Z][0-9]{1,3}[a-z]?\b/g) ?? []))];
+    expect(cited.length).toBeGreaterThan(0);
+    expect(cited.filter((id) => !ids.has(id))).toEqual([]);
+  });
+
   test("docs/providers/s3.md carries exactly the matrix renderS3Acceptance renders", () => {
     const doc = readFileSync(path.join(ROOT, DOC), "utf8");
     expect(matrixDocFindings(doc)).toEqual([]);
