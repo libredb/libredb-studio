@@ -41,6 +41,8 @@ import {
   DEFAULT_PORT,
   startupUrl,
   LauncherUsageError,
+  LOOPBACK_PLAINTEXT_FLAG,
+  loopbackPlaintextEnv,
   mcpUrlFor,
   parseLauncherArgs,
   parseSha256Sums,
@@ -326,6 +328,8 @@ function startServer(payloadDir, port, host) {
     systemHostname: os.hostname(),
   });
   if (!env.NODE_ENV) env.NODE_ENV = "production";
+  // kubectl proxy (plain HTTP to this machine) is offered only by a server no other machine can reach.
+  Object.assign(env, loopbackPlaintextEnv(env.HOSTNAME, env[LOOPBACK_PLAINTEXT_FLAG]));
   // The agent's run history (#331 T5). The server is spawned with cwd set to the
   // payload directory, so the workflow SDK's cwd-relative default would put the
   // ledger inside a cache that re-extraction does not preserve — and the agent

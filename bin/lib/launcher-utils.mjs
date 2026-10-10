@@ -159,6 +159,39 @@ export function resolveBindAddress({ host, libredbBind, hostnameEnv, systemHostn
 }
 
 /**
+ * The variable the Kubernetes provider reads before it lets a connection reach this machine over plain HTTP, the
+ * kubectl proxy route. Set by the launcher only when the server binds to loopback, so a server other machines can
+ * reach never offers the route; Docker, Helm and the operator never set it.
+ */
+export const LOOPBACK_PLAINTEXT_FLAG = "KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT";
+
+/**
+ * Whether a bind address is this machine only: 127.0.0.0/8, ::1 (bracketed or not) or localhost, in any case.
+ *
+ * @param {unknown} hostname
+ * @returns {boolean}
+ */
+export function isLoopbackBind(hostname) {
+  const host = envText(hostname)
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/, "$1");
+  return host === "localhost" || host === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
+/**
+ * The environment the launcher adds for the Kubernetes provider: the loopback plain-HTTP flag when the server binds
+ * to loopback and the operator set no value of their own, nothing otherwise. Pure.
+ *
+ * @param {unknown} hostname the address the server binds
+ * @param {unknown} current the flag's value in the launcher's environment
+ * @returns {Record<string, string>}
+ */
+export function loopbackPlaintextEnv(hostname, current) {
+  if (envText(current) !== "" || !isLoopbackBind(hostname)) return {};
+  return { [LOOPBACK_PLAINTEXT_FLAG]: "true" };
+}
+
+/**
  * Platform/arch pairs the release workflow builds standalone payloads for
  * (must mirror the build jobs in .github/workflows/release-artifacts.yml).
  */

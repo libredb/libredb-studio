@@ -56,6 +56,8 @@ pub fn sidecar_env(port: u16, storage_db: &Path) -> Vec<(String, String)> {
         ("PORT".to_string(), port.to_string()),
         ("STORAGE_PROVIDER".to_string(), "sqlite".to_string()),
         ("STORAGE_SQLITE_PATH".to_string(), storage_db.display().to_string()),
+        // The server binds to loopback only, so kubectl proxy (plain HTTP to this machine) may be reached.
+        ("KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT".to_string(), "true".to_string()),
     ]
 }
 
@@ -247,6 +249,7 @@ mod tests {
         assert_eq!(lookup("STORAGE_PROVIDER"), Some("sqlite"));
         assert_eq!(lookup("STORAGE_SQLITE_PATH"), Some("/data/libredb-storage.db"));
         assert_eq!(lookup("NODE_ENV"), Some("production"));
+        assert_eq!(lookup("KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT"), Some("true"));
     }
 
     #[test]
