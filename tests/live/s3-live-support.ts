@@ -22,6 +22,7 @@
  *
  * Loads under Node as well as Bun: the repository root is the working directory when import.meta.dir is absent.
  */
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -29,14 +30,17 @@ import { QueryCancelledError } from "@/lib/db/errors";
 import { assertNotLinkLocalLiteral, assertPublicLiteralHost } from "@/lib/db/http/egress-policy";
 import { validateHost } from "@/lib/db/http/endpoint";
 import type { NodeByteTransportOptions, RequestSigner } from "@/lib/db/http/node-transport";
+import { createS3Client } from "@/lib/db/providers/objectstore/s3/client";
 import { buildS3ConnectionOptions, s3EndpointText } from "@/lib/db/providers/objectstore/s3/connection-options";
 import { parseS3Command } from "@/lib/db/providers/objectstore/s3/console/commands";
 import { S3_PREVIEW_DEFAULT_ROWS } from "@/lib/db/providers/objectstore/s3/constants";
 import { S3ServerError, toProviderError } from "@/lib/db/providers/objectstore/s3/errors";
+import { S3_RESPONSE_HEADERS } from "@/lib/db/providers/objectstore/s3/headers";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import { readS3KeyScanOptions } from "@/lib/db/providers/objectstore/s3/key-scan";
 import { joinVirtualKey } from "@/lib/db/providers/objectstore/s3/names";
 import { S3_PREVIEW_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-render";
+import { s3Signer } from "@/lib/db/providers/objectstore/s3/sigv4";
 import type { DatabaseProvider, KeyScanOptions, KeyScanPage } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ObjectSurfaceExpectation } from "../helpers/object-surface-conformance";
@@ -2661,4 +2665,79 @@ export async function runS3Surface(
       withProvider(provider(run, wire, connection), async (p) => (await assertSurface(p), {})),
     ),
   ];
+}
+
+// ============================================================================
+// The bucket fingerprint: proof that a run changed nothing
+// ============================================================================
+
+export const S3_FIXTURE_BUCKETS = [
+  "studio-demo",
+  "studio-scoped",
+  "studio-versions",
+  "studio-bulk",
+  "studio-empty",
+] as const;
+
+function call() {
+  return { signal: AbortSignal.timeout(60_000), deadline: Date.now() + 60_000 };
+}
+
+/**
+ * The sha256 per fixture bucket of every key, size and ETag a ListObjectsV2 walk answers, and for studio-versions of
+ * every version entry as well. A server that answers ListObjectVersions with 501 (Garage) has no versions to hash, so
+ * that bucket's digest is its listing alone; any other error fails the fingerprint.
+ */
+export async function s3Fingerprint(
+  target: S3Target,
+  principals: S3Principals,
+  createTransport: S3TransportFactory,
+  clock: () => Date = () => new Date(),
+  ca?: string,
+): Promise<Readonly<Record<string, string>>> {
+  const options = buildS3ConnectionOptions(
+    s3LiveConnection(target, principals, { role: "root" }, ca) as Parameters<typeof buildS3ConnectionOptions>[0],
+    { executionReadOnly: true, queryTimeout: 60_000 },
+  );
+  if (options.credentials === null) throw new Error("the fingerprint signs as root, and root has no key pair");
+  const transport = createTransport({
+    origin: options.origin,
+    tls: options.tls,
+    maxSockets: 1,
+    headers: {},
+    requestHeaderNames: ["range"],
+    responseHeaders: S3_RESPONSE_HEADERS,
+    signer: s3Signer(options.credentials, options.region, clock),
+  });
+  const client = createS3Client(transport);
+  try {
+    const fingerprint: Record<string, string> = {};
+    for (const bucket of S3_FIXTURE_BUCKETS) {
+      const hash = createHash("sha256");
+      let token: string | undefined;
+      do {
+        const page = await client.listObjectsV2(
+          { bucket, prefix: "", maxKeys: 1000, ...(token === undefined ? {} : { continuationToken: token }) },
+          call(),
+        );
+        for (const entry of page.keys) hash.update(`${entry.key}\u0000${entry.size}\u0000${entry.etag ?? ""}\n`);
+        token = page.isTruncated ? page.nextToken : undefined;
+      } while (token !== undefined);
+      if (bucket === "studio-versions") {
+        try {
+          const versions = await client.listObjectVersions({ bucket, prefix: "", maxKeys: 1000 }, call());
+          for (const entry of versions.entries)
+            hash.update(
+              `v\u0000${entry.key}\u0000${entry.versionId ?? ""}\u0000${entry.deleteMarker}\u0000${entry.size ?? ""}\u0000${entry.etag ?? ""}\n`,
+            );
+        } catch (error) {
+          if (!(error instanceof S3ServerError && error.status === 501)) throw error;
+        }
+      }
+      fingerprint[bucket] = hash.digest("hex");
+    }
+    return fingerprint;
+  } finally {
+    transport.close();
+  }
 }

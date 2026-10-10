@@ -19,7 +19,7 @@ import { rfc3986Path, validateHost } from "@/lib/db/http/endpoint";
 import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
 import { SeedConfigSchema } from "@/lib/seed/types";
 import { S3_CAPTURE_TARGETS } from "../../../helpers/s3-fixtures";
-import type { S3RecordedRequest } from "../../../helpers/s3-wire";
+import { type S3RecordedAnswer, type S3RecordedRequest, scriptedS3Transport } from "../../../helpers/s3-wire";
 import { S3_LIVE_ONLY_ROWS, scenariosFor } from "../../../live/s3-evidence-plan";
 import {
   checkS3Step,
@@ -28,8 +28,10 @@ import {
   renderS3Acceptance,
   S3_ACCEPTANCE,
   S3_ACCEPTANCE_GROUPS,
+  S3_FIXTURE_BUCKETS,
   S3_RUNNERS,
   S3_TARGET_NAMES,
+  s3Fingerprint,
   s3LiveConnection,
   sentenceRefFinding,
   wireViolations,
@@ -1542,5 +1544,87 @@ describe("the runners and the scenario list", () => {
     expect(a37?.steps).toEqual(["csv", "tsv", "json"]);
     const a23b = scenariosFor("garage").find(({ scenario }) => scenario.name === "A23b");
     expect(a23b).toBeUndefined();
+  });
+});
+
+// -- tests/live/s3-live-support.ts: the bucket fingerprint ----------------------------------------------------------
+
+function xmlAnswer(status: number, body: string): S3RecordedAnswer {
+  return {
+    status,
+    headers: [["date", "Fri, 09 Oct 2026 14:19:00 GMT"]],
+    headersTruncated: false,
+    contentType: "application/xml",
+    contentEncoding: null,
+    retryAfter: null,
+    truncated: false,
+    body: { text: body },
+  };
+}
+
+/** A one-key ListBucketResult page, in the shape MinIO answers with encoding-type=url. */
+function listing(bucket: string, key: string, etag: string): S3RecordedAnswer {
+  return xmlAnswer(
+    200,
+    `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>${bucket}</Name><Prefix></Prefix><KeyCount>1</KeyCount><MaxKeys>1000</MaxKeys><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated><Contents><Key>${key}</Key><LastModified>2026-10-09T14:19:00.000Z</LastModified><ETag>&quot;${etag}&quot;</ETag><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>`,
+  );
+}
+
+const NOT_IMPLEMENTED = xmlAnswer(
+  501,
+  '<?xml version="1.0" encoding="UTF-8"?><Error><Code>NotImplemented</Code><Message>Not implemented</Message></Error>',
+);
+const ACCESS_DENIED = xmlAnswer(
+  403,
+  '<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message>Access Denied.</Message></Error>',
+);
+
+function fingerprintSteps(versions: S3RecordedAnswer, etag = "0f343b0931126a20f133d67c2b018a3b") {
+  return S3_FIXTURE_BUCKETS.flatMap((bucket) => [
+    {
+      answer: listing(bucket, "root.txt", etag),
+      synthetic: true as const,
+      source: "MinIO, measured live",
+      expect: { path: `/${bucket}` },
+    },
+    ...(bucket === "studio-versions"
+      ? [
+          {
+            answer: versions,
+            synthetic: true as const,
+            source: "Garage, measured live: ListObjectVersions answers 501",
+            expect: { path: "/studio-versions" },
+          },
+        ]
+      : []),
+  ]);
+}
+
+describe("the bucket fingerprint", () => {
+  test("a 501 to ListObjectVersions leaves versions out, and the fingerprint still covers every bucket", async () => {
+    const scripted = scriptedS3Transport(fingerprintSteps(NOT_IMPLEMENTED));
+    const fingerprint = await s3Fingerprint("garage", { ...readS3Principals("silo") }, scripted.createTransport);
+    expect(Object.keys(fingerprint)).toEqual([...S3_FIXTURE_BUCKETS]);
+    scripted.assertConsumed();
+    expect(scripted.sent.every((request) => request.method === "GET")).toBe(true);
+  });
+
+  test("any other error to ListObjectVersions fails the fingerprint", async () => {
+    const scripted = scriptedS3Transport(fingerprintSteps(ACCESS_DENIED));
+    await expect(s3Fingerprint("garage", { ...readS3Principals("silo") }, scripted.createTransport)).rejects.toThrow();
+  });
+
+  test("a changed ETag changes that bucket's fingerprint", async () => {
+    const first = await s3Fingerprint(
+      "garage",
+      { ...readS3Principals("silo") },
+      scriptedS3Transport(fingerprintSteps(NOT_IMPLEMENTED)).createTransport,
+    );
+    const second = await s3Fingerprint(
+      "garage",
+      { ...readS3Principals("silo") },
+      scriptedS3Transport(fingerprintSteps(NOT_IMPLEMENTED, "1f343b0931126a20f133d67c2b018a3b")).createTransport,
+    );
+    expect(second["studio-demo"]).not.toBe(first["studio-demo"]);
   });
 });
