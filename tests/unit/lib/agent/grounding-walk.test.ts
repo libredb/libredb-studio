@@ -197,6 +197,21 @@ describe("a kind whose names are withheld", () => {
 
     for (const packed of packings(snapshot)) expect(packed).toContain("this server counted at least 3 of them");
   });
+
+  test("a count in one container and a refusal in another is said as a floor beside the provider's sentence", async () => {
+    const refusal = "Listing Secrets in shop is forbidden for this identity";
+    const { snapshot } = await captured({
+      counts: (container): Record<string, KindCount> =>
+        container[0] === "default"
+          ? { pods: { count: 1 }, secrets: { count: 3 } }
+          : { pods: { count: 1 }, secrets: { unavailable: refusal } },
+    });
+
+    for (const packed of packings(snapshot)) {
+      expect(packed).toContain(`The Secrets could not be read: ${refusal}.`);
+      expect(packed).toContain("this server counted at least 3 of them");
+    }
+  });
 });
 
 describe("a listing its provider capped", () => {
@@ -241,9 +256,43 @@ describe("a scoped walk", () => {
     });
 
     expect(harness.countObjects.mock.calls.map((call) => call[0])).toEqual([["Cluster"], ["default"]]);
-    expect(snapshot.unreadContainers).toEqual({ count: 2, label: "Namespace", labelPlural: "Namespaces" });
+    expect(snapshot.unreadContainers).toEqual({
+      count: 2,
+      label: "Namespace",
+      labelPlural: "Namespaces",
+      read: ["Cluster", "default"],
+    });
     for (const packed of packings(snapshot)) {
-      expect(packed).toContain("Not read: 2 other Namespaces.");
+      expect(packed).toContain(
+        'Not read: 2 other Namespaces. This inventory covers only the 2 Namespaces it read ("Cluster", "default"),',
+      );
+    }
+  });
+
+  test("a read that lists nothing still names the containers it read", async () => {
+    const { snapshot } = await captured({
+      containers: containers.slice(0, 3),
+      counts: () => ({ pods: { count: 0 }, secrets: { count: 2 } }),
+      extra: { agentWalkScope: { mode: "session-default", alsoWalk: [["Cluster"]] } },
+    });
+
+    expect(snapshot.objects).toEqual([]);
+    for (const packed of packings(snapshot)) {
+      expect(packed).toContain(
+        'Not read: 1 other Namespace. This inventory covers only the 2 Namespaces it read ("Cluster", "default"),',
+      );
+    }
+  });
+
+  test("one container read is named in the singular", async () => {
+    const { snapshot } = await captured({
+      kinds: [POD],
+      containers: containers.slice(1, 3),
+      extra: { agentWalkScope: { mode: "session-default" } },
+    });
+
+    for (const packed of packings(snapshot)) {
+      expect(packed).toContain('This inventory covers only the 1 Namespace it read ("default"),');
     }
   });
 

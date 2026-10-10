@@ -523,6 +523,8 @@ docker compose -f docker-compose.vault-demo.yml exec -T postgres \
 
 In a real deployment the policy is one read on one path — `path "secret/data/prod/postgres" { capabilities = ["read"] }` — and the Kubernetes auth role binds that policy to the pod's service account. Prefer `VAULT_ROLE` to `VAULT_TOKEN`, so the credential is a lease rather than something long-lived.
 
+With the Helm chart, the pod mounts its service account token only when `serviceAccount.automountServiceAccountToken` is `true`, and it defaults to `false`: set it, or project a token through `extraVolumes` and `extraVolumeMounts` and point `VAULT_K8S_TOKEN_PATH` at it.
+
 ### Credential Sources by Deployment
 
 | Deployment | How to provide credentials |

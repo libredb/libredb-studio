@@ -66,6 +66,11 @@ securityContext:
 - `/tmp` — emptyDir; temporary files
 - `/app/data` — data directory (`auth-bootstrap.json`, sample database): emptyDir by default, the PVC when persistence is enabled
 
+**No API token in the pod by default**: `serviceAccount.automountServiceAccountToken` defaults to `false` and is written on the pod spec as well as on the ServiceAccount the chart creates.
+The pod field wins over the account's, so `serviceAccount.create=false` with the namespace's `default` account mounts no token either; only an explicit `true` mounts one.
+Studio reads the pod's token only for Vault Kubernetes auth (`VAULT_ROLE`, `docs/SEED_CONNECTIONS.md`); such an install sets the value to `true`, or projects a token through `extraVolumes` and points `VAULT_K8S_TOKEN_PATH` at it.
+`tests/unit/helm-chart-service-account-token.test.ts` renders both `serviceAccount.create` values.
+
 **OpenShift adaptation**: OpenShift's `restricted-v2` SCC assigns
 `runAsUser`/`fsGroup` from a per-namespace range and rejects pods that
 hard-code IDs outside it. `global.compatibility.openshift.adaptSecurityContext`

@@ -545,9 +545,12 @@ function finalize(tables: TableIndex): AgentInventoryObject[] {
  * marker travels on the snapshot beside the fingerprint, where every reader of the
  * inventory sees it.
  *
- * `kinds` is not in it either, for the narrower reason that it is DERIVED: it is the
- * provider's declaration plus what the counts said, and nothing in it varies while the
- * objects stay the same.
+ * `kinds` is not in it either, for truncation's reason: it is the provider's declaration
+ * plus what the counts said, a property of the READING. Most of it follows the objects,
+ * but a withheld kind's count (`withheldCount`, `withheldUncounted`) does not, since no
+ * object of that kind is listed: a withheld object added or removed leaves the fingerprint
+ * as it was, and a snapshot reused under that fingerprint says the count as of its capture.
+ * The same holds for `unreadContainers`, which says what a scoped walk read.
  *
  * Nor is an object's `partlyReadable`, for truncation's reason: it says what this
  * connection's grants let it read (#1089 4.7), a property of the READING and not of the
@@ -1338,10 +1341,11 @@ function renderColumn(table: AgentInventoryObject, column: ColumnSchema): string
  *    means, and neither names what the grants read, which may be a key (E13).
  *  - **A kind whose names are withheld.** `ObjectKindSpec.machineNames` keeps a kind's object names off
  *    every machine surface, so the walk counted it and listed none of it. The note says how many were
- *    counted, or that none was, and that none is below, and it is not gated on what was rendered, for the
- *    reason above.
+ *    counted, as a floor where a count was sampled, refused or not given in some container, or that none
+ *    was, and that none is below, and it is not gated on what was rendered, for the reason above.
  *  - **Containers a scoped walk did not read.** `ProviderCapabilities.agentWalkScope` reads the
- *    session-default container and the ones the provider names, and the note says how many others exist.
+ *    session-default container and the ones the provider names, and the note says how many others exist and
+ *    names the ones read, since a read that lists no object names none of them through its entries.
  *
  * Inside the fence with the inventory rather than in the preface, the same as the omission
  * notice already is: each one is about the lines beside it, and the bound belongs to the
@@ -1356,9 +1360,11 @@ function inventoryNotes(inventory: AgentInventory, shown: readonly AgentInventor
     );
   }
   if (unreadContainers !== undefined) {
-    const word = unreadContainers.count === 1 ? unreadContainers.label : unreadContainers.labelPlural;
+    const { count, label, labelPlural, read } = unreadContainers;
+    // The containers read are named here, not left to the entries: a read that lists nothing names none.
+    const names = read.map((path) => JSON.stringify(path)).join(", ");
     notes.push(
-      `Not read: ${unreadContainers.count} other ${word}. This inventory covers only the ${unreadContainers.labelPlural} its entries are named under, so an object in any other one is not listed below. Do not read its absence as an absence in the database.`,
+      `Not read: ${count} other ${count === 1 ? label : labelPlural}. This inventory covers only the ${read.length} ${read.length === 1 ? label : labelPlural} it read (${names}), so an object in any other one is not listed below. Do not read its absence as an absence in the database.`,
     );
   }
   // Each kind note says "the X BELOW are", so it is gated on the kind being in what was
@@ -1376,7 +1382,8 @@ function inventoryNotes(inventory: AgentInventory, shown: readonly AgentInventor
     }
     // Not gated on what was rendered either: a withheld kind has nothing below it by design.
     if (kind.withheldCount !== undefined) {
-      const floor = kind.sampledFrom !== undefined || kind.withheldUncounted === true;
+      // A container that refused the count or gave none, or a sampled count, leaves the sum a floor.
+      const floor = kind.sampledFrom !== undefined || kind.withheldUncounted === true || kind.unavailable !== undefined;
       notes.push(
         `The names of the ${kind.labelPlural} are withheld from this inventory: this server counted ${floor ? "at least " : ""}${kind.withheldCount} of them in what it read, and none is listed below. Do not read their absence below as an absence in the database.`,
       );
