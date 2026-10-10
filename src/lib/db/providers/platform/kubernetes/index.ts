@@ -13,7 +13,7 @@
  * no agent statement execution and no MCP read. The clock, the randomness and the transport factory are seams.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type {
   ActiveSessionDetails,
   Container,
@@ -59,6 +59,10 @@ import { readKubernetesSource } from "./source";
 export const KUBERNETES_CONSOLE_PENDING =
   "The kubectl console is not part of this build yet: the tree and the YAML view read this cluster, and no statement is sent.";
 
+/** What a connect or a health check still opening answers once a disconnect or a newer connect closed its session. */
+export const KUBERNETES_CLOSED_WHILE_OPENING =
+  "The connection was closed while Studio was still opening it, so nothing was kept; connect again to use it.";
+
 /** One connected session: the endpoint, the surface every module reads through and its lifetime. */
 interface KubernetesSession {
   readonly endpoint: ClusterEndpoint;
@@ -67,8 +71,23 @@ interface KubernetesSession {
   readonly lifetime: AbortController;
 }
 
+/** Aborts every request of a session and closes its transport; a second call changes nothing. */
+function closeSession(session: KubernetesSession): void {
+  // Aborted and closed go together, so an aborted session is already closed.
+  if (session.lifetime.signal.aborted) return;
+  session.lifetime.abort();
+  session.surface.client.close();
+}
+
+/** Refuses to go on with a session a disconnect or a newer connect closed while it was being opened. */
+function requireOpen(session: KubernetesSession): void {
+  if (session.lifetime.signal.aborted) throw new ConnectionError(KUBERNETES_CLOSED_WHILE_OPENING, KUBERNETES_TYPE);
+}
+
 export class KubernetesProvider extends BaseDatabaseProvider {
   private session: KubernetesSession | null = null;
+  /** Sessions a connect or a health check is still opening: a disconnect closes them too. */
+  private readonly opening = new Set<KubernetesSession>();
   private warnings: QueryWarning[] = [];
   private readonly seams: KubernetesSeams;
 
@@ -127,21 +146,28 @@ export class KubernetesProvider extends BaseDatabaseProvider {
 
   /**
    * The endpoint, the client, discovery (which also proves the credential), the 1.28 floor, then Test Connection's
-   * warnings.
+   * warnings. A session still being opened, by an earlier connect or a health check, is closed first, and a disconnect
+   * before the reads end closes this one: it is then not kept, and nothing more is sent on it.
    */
   public async connect(): Promise<void> {
-    if (this.session !== null) await this.disconnect();
+    await this.disconnect();
     const session = this.openSession();
+    this.opening.add(session);
+    let warnings: QueryWarning[];
     try {
       const index = await session.surface.discovery.refresh();
+      requireOpen(session);
       requireSupportedServer(index);
-      this.warnings = await kubernetesConnectWarnings(session.surface, index);
+      warnings = await kubernetesConnectWarnings(session.surface, index);
+      requireOpen(session);
     } catch (error) {
-      session.lifetime.abort();
-      session.surface.client.close();
+      this.opening.delete(session);
+      closeSession(session);
       throw error;
     }
+    this.opening.delete(session);
     this.session = session;
+    this.warnings = warnings;
     this.setConnected(true);
   }
 
@@ -158,13 +184,12 @@ export class KubernetesProvider extends BaseDatabaseProvider {
   }
 
   public async disconnect(): Promise<void> {
-    const session = this.session;
+    const sessions = [...this.opening, ...(this.session === null ? [] : [this.session])];
+    this.opening.clear();
     this.session = null;
     this.warnings = [];
     this.setConnected(false);
-    if (session === null) return;
-    session.lifetime.abort();
-    session.surface.client.close();
+    for (const session of sessions) closeSession(session);
   }
 
   /** The warnings the last `connect()` computed, for Test Connection. */
@@ -224,22 +249,24 @@ export class KubernetesProvider extends BaseDatabaseProvider {
   // Monitoring, answered by monitoring.ts
   // ==========================================================================
 
-  /** Connects if needed, without the connect reads; a session opened here is kept when health answers. */
+  /**
+   * Connects if needed, without the connect reads; a session opened here is kept when health answers, unless a
+   * disconnect or a connect closed it meanwhile.
+   */
   public async getHealth(): Promise<HealthInfo> {
-    const opened = this.session === null;
-    const session = this.session ?? this.openSession();
+    if (this.session !== null) return kubernetesHealth(this.session.surface);
+    const session = this.openSession();
+    this.opening.add(session);
     try {
       const health = await kubernetesHealth(session.surface);
-      if (opened) {
-        this.session = session;
-        this.setConnected(true);
-      }
+      requireOpen(session);
+      this.opening.delete(session);
+      this.session = session;
+      this.setConnected(true);
       return health;
     } catch (error) {
-      if (opened) {
-        session.lifetime.abort();
-        session.surface.client.close();
-      }
+      this.opening.delete(session);
+      closeSession(session);
       throw error;
     }
   }

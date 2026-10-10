@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { AuthenticationError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import { VERSION_FLOOR_SENTENCE } from "@/lib/db/providers/platform/kubernetes/discovery";
-import { KUBERNETES_CONSOLE_PENDING, KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
+import { KUBERNETES_MAX_EMPTY_PAGES } from "@/lib/db/providers/platform/kubernetes/limits";
+import { EMPTY_PAGES_SENTENCE } from "@/lib/db/providers/platform/kubernetes/table";
+import {
+  KUBERNETES_CLOSED_WHILE_OPENING,
+  KUBERNETES_CONSOLE_PENDING,
+  KubernetesProvider,
+} from "@/lib/db/providers/platform/kubernetes/index";
 import { KUBERNETES_OBJECT_KINDS, KUBERNETES_ROW_ACTIONS } from "@/lib/db/providers/platform/kubernetes/kinds";
 import { KUBERNETES_LABELS } from "@/lib/db/providers/platform/kubernetes/labels";
 import type { DatabaseConnection } from "@/lib/types";
@@ -9,6 +15,7 @@ import { fakeCluster, type FakeClusterOptions } from "../../../helpers/kubernete
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
 import { discoveryList, resource } from "../../../helpers/kubernetes-discovery";
 import {
+  jsonAnswer,
   type KubernetesAnswerFn,
   recordingKubernetesTransport,
   statusAnswer,
@@ -23,6 +30,26 @@ function providerWith(answer: KubernetesAnswerFn, overrides?: Partial<DatabaseCo
     testSeams(transport),
   );
   return { provider, transport };
+}
+
+/** Holds every request whose line is `line` until `release()`; `reached` settles when the first one arrives. */
+function gate(answer: KubernetesAnswerFn, line: string) {
+  let release = (): void => {};
+  let arrived = (): void => {};
+  const reached = new Promise<void>((resolve) => {
+    arrived = resolve;
+  });
+  const opened = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const gated: KubernetesAnswerFn = async (request, requestLine) => {
+    if (requestLine === line) {
+      arrived();
+      await opened;
+    }
+    return answer(request, requestLine);
+  };
+  return { gated, reached, release: () => release() };
 }
 
 const SHOP: FakeClusterOptions = {
@@ -136,6 +163,91 @@ describe("connect", () => {
     expect(provider.connectWarnings()).toEqual([]);
     await provider.disconnect();
     expect(transport.closed()).toBe(2);
+  });
+});
+
+describe("a session being opened", () => {
+  test("disconnect during connect aborts it: connect rejects, nothing more is sent and the provider stays closed", async () => {
+    const held = gate(fakeCluster(SHOP), "GET /apis");
+    const { provider, transport } = providerWith(held.gated);
+    const connecting = provider.connect();
+    await held.reached;
+    await provider.disconnect();
+    expect(transport.closed()).toBe(1);
+    const sent = transport.calls.length;
+    held.release();
+    await expect(connecting).rejects.toThrow(KUBERNETES_CLOSED_WHILE_OPENING);
+    await expect(connecting).rejects.toBeInstanceOf(ConnectionError);
+    expect(transport.calls).toHaveLength(sent);
+    expect(provider.isConnected()).toBe(false);
+    expect(transport.closed()).toBe(1);
+    await expect(provider.listContainers()).rejects.toThrow("Provider is not connected");
+  });
+
+  test("disconnect while connect reads its warnings aborts it too, and keeps no warning", async () => {
+    const held = gate(
+      fakeCluster({ ...SHOP, allows: () => true }),
+      "GET /api/v1/namespaces?limit=500&includeObject=None",
+    );
+    const { provider, transport } = providerWith(held.gated);
+    const connecting = provider.connect();
+    await held.reached;
+    await provider.disconnect();
+    held.release();
+    await expect(connecting).rejects.toThrow(KUBERNETES_CLOSED_WHILE_OPENING);
+    expect(provider.isConnected()).toBe(false);
+    expect(provider.connectWarnings()).toEqual([]);
+    expect(transport.closed()).toBe(1);
+  });
+
+  test("a second connect aborts the first one still opening, and only the second session is kept", async () => {
+    const held = gate(fakeCluster(SHOP), "GET /apis");
+    const { provider, transport } = providerWith(held.gated);
+    const first = provider.connect();
+    await held.reached;
+    const second = provider.connect();
+    held.release();
+    await expect(first).rejects.toThrow(KUBERNETES_CLOSED_WHILE_OPENING);
+    await second;
+    expect(provider.isConnected()).toBe(true);
+    expect(transport.built).toHaveLength(2);
+    expect(transport.closed()).toBe(1);
+    await provider.disconnect();
+    expect(transport.closed()).toBe(2);
+  });
+
+  test("a connect while health opens a session aborts the health one, which is closed and not kept", async () => {
+    const held = gate(fakeCluster(SHOP), "GET /readyz");
+    const { provider, transport } = providerWith(held.gated);
+    const health = provider.getHealth();
+    await held.reached;
+    await provider.connect();
+    held.release();
+    await expect(health).rejects.toThrow(KUBERNETES_CLOSED_WHILE_OPENING);
+    expect(provider.isConnected()).toBe(true);
+    expect(transport.built).toHaveLength(2);
+    expect(transport.closed()).toBe(1);
+    expect((await provider.listContainers()).map((container) => container.name)).toEqual([
+      "Cluster",
+      "default",
+      "shop",
+    ]);
+  });
+});
+
+describe("the namespace walk Test Connection runs", () => {
+  test("a server answering empty pages with a fresh continue token is stopped, and connect answers", async () => {
+    let lists = 0;
+    const answer = fakeCluster(SHOP);
+    const { provider, transport } = providerWith((request, line) => {
+      if (!line.startsWith("GET /api/v1/namespaces?")) return answer(request, line);
+      lists += 1;
+      return jsonAnswer({ kind: "Table", columnDefinitions: [], rows: [], metadata: { continue: `t${lists}` } });
+    });
+    await expect(provider.connect()).rejects.toThrow(EMPTY_PAGES_SENTENCE);
+    expect(lists).toBe(KUBERNETES_MAX_EMPTY_PAGES);
+    expect(provider.isConnected()).toBe(false);
+    expect(transport.closed()).toBe(1);
   });
 });
 
