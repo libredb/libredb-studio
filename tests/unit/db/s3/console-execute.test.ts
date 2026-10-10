@@ -216,6 +216,29 @@ describe("ListObjectsV2 runs", () => {
     expect(keysOf(outcome)).toEqual(["k3", "k4", "q/", "k5"]);
   });
 
+  test("the CLI's null-token resume sends no continuation token and skips the truncate amount", async () => {
+    const pages: ObjectListing[] = [
+      {
+        keys: ["k1", "k2", "k3", "k4"].map((key) => ({ key, size: 1 })),
+        prefixes: ["p/"],
+        undecodable: 0,
+        isTruncated: true,
+        nextToken: "n1",
+      },
+    ];
+    const { surface, calls } = fakeSurface({ listObjectsV2: () => pages.shift() });
+    // {"ContinuationToken": null, "boto_truncate_amount": 2}, as the AWS CLI writes it after --max-items 2.
+    const token = "eyJDb250aW51YXRpb25Ub2tlbiI6IG51bGwsICJib3RvX3RydW5jYXRlX2Ftb3VudCI6IDJ9";
+    const outcome = await executeS3Command(
+      surface,
+      parsed(`aws s3api list-objects-v2 --bucket b --delimiter / --max-items 2 --starting-token ${token}`),
+      { call: CALL },
+    );
+    expect(calls.map((call) => call.args[0])).toEqual([{ bucket: "b", prefix: "", delimiter: "/", maxKeys: 4 }]);
+    expect(keysOf(outcome)).toEqual(["k3", "k4"]);
+    expect(outcome).toMatchObject({ kind: "objects", stop: "rows", nextToken: "n1", requests: 1 });
+  });
+
   test("a truncate amount larger than the first page skips that page and nothing on the next", async () => {
     const pages: ObjectListing[] = [
       {

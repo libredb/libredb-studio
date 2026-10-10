@@ -17,7 +17,7 @@ import { exceedsUtf8Bytes, utf8ByteLength } from "@/lib/db/console/bounds";
 import type { ShellRefusalCode, ShellWord } from "@/lib/db/console/shell-words";
 import { bucketAddressRefusal, objectAddressRefusal } from "../names";
 import type { S3PreviewFormat, S3PreviewRequest } from "../preview";
-import { previewMaxRowsSentence } from "../preview-render";
+import { counted, previewMaxRowsSentence, previewSentence } from "../preview-render";
 import {
   S3_ECHO_WORD_CHARS,
   S3_KEY_MAX_BYTES,
@@ -25,6 +25,7 @@ import {
   S3_MAX_BUCKET_BYTES,
   S3_MAX_TEXT_BYTES,
   S3_PREVIEW_DEFAULT_ROWS,
+  S3_PREVIEW_LIMITS,
   S3_RESULT_MAX_ROWS,
 } from "./constants";
 import { isOptionWord, s3CommandShape, s3Words } from "./lexer";
@@ -300,6 +301,8 @@ const PREVIEW_ONE_PATH = "preview takes one path: write preview s3://bucket/key,
 const BUCKET_SLASH = "--bucket takes a bucket name, which holds no /: write the key with --key.";
 const BUCKET_TOO_LONG = `--bucket takes a name of at most ${count(S3_MAX_BUCKET_BYTES)} bytes.`;
 const COLUMNS = "--columns takes a comma-separated list of column names.";
+/** The preview's own repeat sentence spells the name, which a console refusal never quotes. */
+const COLUMNS_REPEATED = "--columns names a column more than once: name each column once.";
 const PATH_LOCAL_FILE =
   "The path begins with file:// or fileb://, which the AWS CLI reads as a local file and Studio never does: write s3://bucket/prefix.";
 const S3_WRITE_VERBS: readonly string[] = ["rm", "mb", "rb", "website"];
@@ -869,6 +872,15 @@ function buildPreview(r: Reading, operationWord: ShellWord): S3ConsoleCommand | 
   const columns = textOf(state, "--columns")
     ?.split(",")
     .map((column) => column.trim());
+  // The preview checks the list again before its GET; here it is refused before the HEAD that precedes it.
+  if (columns !== undefined && new Set(columns).size < columns.length)
+    return refusal("bad-value", COLUMNS_REPEATED, state.words.get("--columns"));
+  if (columns !== undefined && columns.length > S3_PREVIEW_LIMITS.maxColumns)
+    return refusal(
+      "bad-value",
+      previewSentence("R-COLUMNS-MANY", { most: counted(S3_PREVIEW_LIMITS.maxColumns, "name", "names") }),
+      state.words.get("--columns"),
+    );
   const request: S3PreviewRequest = {
     ...(format === undefined ? {} : { format }),
     ...(columns === undefined ? {} : { columns }),

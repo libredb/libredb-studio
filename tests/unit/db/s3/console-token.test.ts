@@ -58,6 +58,13 @@ describe("decodeS3StartingToken", () => {
     );
   });
 
+  test("the CLI's token for --max-items inside the first page has a null token and a truncate amount", () => {
+    // {"ContinuationToken": null, "boto_truncate_amount": 2}, as the AWS CLI writes it.
+    expect(decodeS3StartingToken("eyJDb250aW51YXRpb25Ub2tlbiI6IG51bGwsICJib3RvX3RydW5jYXRlX2Ftb3VudCI6IDJ9")).toEqual({
+      truncateAmount: 2,
+    });
+  });
+
   test("a truncate amount from 0 to 1,000 is read", () => {
     expect(decodeS3StartingToken(btoa('{"ContinuationToken":"a","boto_truncate_amount":0}'))).toEqual({
       continuationToken: "a",
@@ -90,6 +97,12 @@ describe("decodeS3StartingToken", () => {
     ["no ContinuationToken", btoa('{"boto_truncate_amount":1}')],
     ["an empty ContinuationToken", btoa('{"ContinuationToken":""}')],
     ["a ContinuationToken that is not a string", btoa('{"ContinuationToken":1}')],
+    ["a null ContinuationToken with no truncate amount", btoa('{"ContinuationToken":null}')],
+    [
+      "a null ContinuationToken with a null truncate amount",
+      btoa('{"ContinuationToken":null,"boto_truncate_amount":null}'),
+    ],
+    ["a null truncate amount", btoa('{"ContinuationToken":"a","boto_truncate_amount":null}')],
     ["a ContinuationToken holding a lone surrogate", "eyJDb250aW51YXRpb25Ub2tlbiI6Ilx1ZDgwMCJ9"],
     ["a negative truncate amount", btoa('{"ContinuationToken":"a","boto_truncate_amount":-1}')],
     ["a fractional truncate amount", btoa('{"ContinuationToken":"a","boto_truncate_amount":1.5}')],
@@ -103,6 +116,13 @@ describe("decodeS3StartingToken", () => {
     const written = encodeS3StartingToken("t".repeat(4_096));
     expect(written.length).toBeLessThanOrEqual(S3_MAX_TOKEN_CHARS);
     expect(decodeS3StartingToken(written)).toEqual({ continuationToken: "t".repeat(4_096) });
+  });
+
+  test("a service token longer than the client reads is refused, though its written form fits the bound", () => {
+    const written = encodeS3StartingToken("t".repeat(S3_CURSOR_TOKEN_MAX_CHARS + 1));
+    expect(written.length).toBeLessThanOrEqual(S3_MAX_TOKEN_CHARS);
+    expect(decodeS3StartingToken(written)).toBeUndefined();
+    expect(decodeS3StartingToken(encodeS3StartingToken("t".repeat(20_000)))).toBeUndefined();
   });
 
   test.each([

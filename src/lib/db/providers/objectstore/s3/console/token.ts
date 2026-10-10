@@ -5,15 +5,21 @@
  * `base64(json.dumps({"ContinuationToken": token}))`, with `boto_truncate_amount` when `--max-items` fell inside a
  * page. Studio writes the same object with `JSON.stringify`, compact and with JavaScript's escaping, which the CLI
  * reads because it decodes any valid JSON; Studio reads any valid JSON too, so a CLI-written token resumes here.
+ * When `--max-items` fell inside the first page, the CLI writes a null token with the truncate amount: that resume
+ * sends no continuation token and skips the amount, as the CLI does. A service token longer than the client reads
+ * from a server is refused, so the editor and not the transport answers it.
  * Tokens Studio never needs are refused: `boto_encoded_keys`, a list-object-versions marker token and the CLI's
  * legacy `___` form. A token is not authenticated: every request it starts still names the typed
  * or pinned bucket and is signed with the connection's own keys.
  */
-import { S3_KEY_SCAN_MAX_COUNT, S3_MAX_TOKEN_CHARS } from "./constants";
+import { S3_CURSOR_TOKEN_MAX_CHARS, S3_KEY_SCAN_MAX_COUNT, S3_MAX_TOKEN_CHARS } from "./constants";
 
-/** A decoded token: the service's continuation token, and how many objects of its first page to skip. */
+/**
+ * A decoded token: the service's continuation token, absent when the CLI wrote a null one, and how many objects of its
+ * first page to skip.
+ */
 export interface S3ResumeToken {
-  readonly continuationToken: string;
+  readonly continuationToken?: string;
   readonly truncateAmount?: number;
 }
 
@@ -45,13 +51,23 @@ export function decodeS3StartingToken(text: string): S3ResumeToken | undefined {
   const keys = Object.keys(fields);
   if (!keys.every((key) => key === TOKEN_KEY || key === TRUNCATE_KEY)) return undefined;
   const continuationToken = fields[TOKEN_KEY];
-  // JSON escapes can spell a lone surrogate, which no request query can percent-encode.
-  if (typeof continuationToken !== "string" || continuationToken === "" || !continuationToken.isWellFormed())
-    return undefined;
-  if (!keys.includes(TRUNCATE_KEY)) return { continuationToken };
+  const truncated = keys.includes(TRUNCATE_KEY);
+  // The CLI writes a null token only with a truncate amount, for a first page it cut: that resume sends no token.
+  const token = isServiceToken(continuationToken)
+    ? { continuationToken }
+    : continuationToken === null && truncated
+      ? {}
+      : undefined;
+  if (token === undefined || !truncated) return token;
   const amount = fields[TRUNCATE_KEY];
   // The truncate amount counts objects of one page, so it is at most the largest page.
   if (typeof amount !== "number" || !Number.isInteger(amount) || amount < 0 || amount > S3_KEY_SCAN_MAX_COUNT)
     return undefined;
-  return { continuationToken, truncateAmount: amount };
+  return { ...token, truncateAmount: amount };
+}
+
+/** A service token the client could have read from a server: a non-empty string no longer than it reads. */
+function isServiceToken(value: unknown): value is string {
+  // JSON escapes can spell a lone surrogate, which no request query can percent-encode.
+  return typeof value === "string" && value !== "" && value.length <= S3_CURSOR_TOKEN_MAX_CHARS && value.isWellFormed();
 }

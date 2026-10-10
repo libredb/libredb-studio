@@ -13,6 +13,7 @@ import {
   S3_GLOBAL_OPTION_VALUES,
   type S3ParseContext,
 } from "@/lib/db/providers/objectstore/s3/console/commands";
+import { encodeS3StartingToken } from "@/lib/db/providers/objectstore/s3/console/token";
 
 const SERVER: S3ParseContext = { endpoint: "http://localhost:9000", region: "us-east-1", readOnly: false };
 const PINNED: S3ParseContext = { ...SERVER, pinnedBucket: "sales" };
@@ -434,6 +435,28 @@ describe("value shapes and their bounds", () => {
     expect(refused(text)).toBe(sentence);
   });
 
+  test("a --columns list that names a column twice or more than 1,024 columns is refused at --columns", () => {
+    const many = Array.from({ length: 1_025 }, (_, index) => `c${index}`).join(",");
+    for (const [text, sentence] of [
+      ["preview s3://bucket/file.csv --columns a,a", "--columns names a column more than once: name each column once."],
+      [
+        "preview s3://bucket/file.csv --columns ' a ,b, a'",
+        "--columns names a column more than once: name each column once.",
+      ],
+      [`preview s3://bucket/file.csv --columns ${many}`, "The column list holds more than 1,024 names."],
+    ]) {
+      const result = parseS3Command(text, {});
+      expect(result).toEqual({
+        ok: false,
+        refusal: { code: "bad-value", message: sentence, line: 1, column: text.indexOf("--columns") },
+      });
+    }
+    const most = Array.from({ length: 1_024 }, (_, index) => `c${index}`);
+    expect(command(`preview s3://bucket/file.csv --columns ${most.join(",")}`)).toMatchObject({
+      request: { columns: most },
+    });
+  });
+
   test("the largest values pass", () => {
     expect(command(`aws s3api head-bucket --bucket ${"a".repeat(255)}`)).toEqual({
       kind: "head-bucket",
@@ -805,6 +828,20 @@ describe("the starting token", () => {
     expect(refused(`aws s3api list-objects-v2 --bucket b --starting-token ${token}`)).toBe(TOKEN);
   });
 
+  test("a service token longer than the client reads is refused before any request", () => {
+    const token = encodeS3StartingToken("t".repeat(20_000));
+    expect(codeOf(`aws s3api list-objects-v2 --bucket b --starting-token ${token}`)).toBe("bad-token");
+    expect(refused(`aws s3api list-objects-v2 --bucket b --starting-token ${token}`)).toBe(TOKEN);
+  });
+
+  test("the CLI's token with a null service token and a truncate amount is read", () => {
+    expect(
+      command(
+        "aws s3api list-objects-v2 --bucket b --max-items 2 --starting-token eyJDb250aW51YXRpb25Ub2tlbiI6IG51bGwsICJib3RvX3RydW5jYXRlX2Ftb3VudCI6IDJ9",
+      ),
+    ).toMatchObject({ resume: { truncateAmount: 2 } });
+  });
+
   test("a CLI token with a truncate amount is read", () => {
     expect(
       command(
@@ -922,6 +959,8 @@ describe("no typed value reaches a sentence", () => {
     `aws s3 ls --output ${SECRET}`,
     `aws s3api list-objects-v2 --bucket b --prefix file://${SECRET}`,
     `aws s3api list-objects-v2 --bucket b --starting-token ${SECRET}`,
+    `preview s3://b/k --columns ${SECRET},${SECRET}`,
+    `preview s3://b/k --columns ${Array.from({ length: 1_025 }, (_, index) => `${SECRET}${index}`).join(",")}`,
     `aws s3 ls s3://b/ --recursive=${SECRET}`,
     `aws s3api head-bucket --bucket b --frob=${SECRET}`,
     `aws s3api head-bucket --buck=${SECRET}`,

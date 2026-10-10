@@ -508,6 +508,7 @@ const REQUIRED_REFUSALS: readonly string[] = [
   "aws s3api list-object-versions --bucket sales --page-size 10",
   "aws s3api head-object --bucket sales --key a.txt --version-id 1",
   "aws s3api head-object --bucket sales --key a.txt --sse-customer-key k",
+  "preview s3://sales/2026/orders.csv --columns region,region",
 ];
 
 /** Every bound section 5.6 names, with the value its module exports. */
@@ -552,6 +553,15 @@ describe("docs/providers/s3.md: the query interface, as the console's modules st
       expect(sentence, input).toBeDefined();
       expect(rows[at], input).toBe(`| \`${input}\` | ${sentence} |`);
     }
+  });
+
+  test("16. section 5.2 states the console's two column-list refusals", () => {
+    const many = Array.from({ length: S3_PREVIEW_LIMITS.maxColumns + 1 }, (_, index) => `c${index}`).join(",");
+    const repeated = s3Refusal("preview s3://sales/a.csv --columns a,a");
+    const tooMany = s3Refusal(`preview s3://sales/a.csv --columns ${many}`);
+    expect(flat(sectionOf(DOC, "### 5.2 Commands and flags"))).toContain(
+      `A \`preview --columns\` list that names a column twice, or names more columns than the preview's \`maxColumns\`, is refused in the editor, with the sentences "${repeated}" and "${tooMany}".`,
+    );
   });
 
   test("17. every bound of section 5.6 is its constant, and the text bound is the editor's", () => {

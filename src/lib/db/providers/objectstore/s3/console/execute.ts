@@ -80,7 +80,7 @@ interface ObjectRun {
   readonly delimiter: boolean;
   readonly maxItems: number;
   readonly pageSize: number;
-  readonly resume?: { readonly continuationToken: string; readonly truncateAmount?: number };
+  readonly resume?: { readonly continuationToken?: string; readonly truncateAmount?: number };
 }
 
 /**
