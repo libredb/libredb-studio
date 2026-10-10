@@ -17,7 +17,7 @@
  * transaction methods: each is detected by presence.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { QueryError } from "@/lib/db/errors";
+import { AuthenticationError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import {
   createNodeByteTransport,
   type NodeByteTransport,
@@ -38,6 +38,8 @@ import type {
   MaintenanceResult,
   ObjectDetail,
   ObjectDetailBatch,
+  ObjectSourceDocument,
+  ObjectSourcePart,
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
@@ -73,9 +75,14 @@ import {
   describeS3Object,
   describeS3Objects,
   listS3Objects,
+  readS3ObjectSource,
   requireS3Root,
   S3_OBJECT_KINDS,
+  type S3PreviewParts,
 } from "./objects";
+import { previewObject } from "./preview";
+import { rangeReader, toPreviewHead } from "./preview-adapter";
+import { previewSourceParts } from "./preview-render";
 import { s3Signer } from "./sigv4";
 
 export type { S3Surface } from "./client";
@@ -238,6 +245,53 @@ export class S3Provider extends BaseDatabaseProvider {
   public async describeObjects(container: readonly string[], kind: string): Promise<ObjectDetailBatch> {
     requireS3Root(container);
     return describeS3Objects(kind);
+  }
+
+  /** A bucket's three parts, or an object's Metadata part and its preview parts. */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    return this.read(
+      (surface, call) =>
+        readS3ObjectSource(surface, path, kind, limit, call, {
+          created: this.requireSession().created,
+          previewParts: (input) => this.previewParts(surface, input),
+        }),
+      kind === "bucket" ? "GetBucketLocation" : "HeadObject",
+    );
+  }
+
+  /**
+   * The object preview after the HEAD, through the one adapter: no second HEAD, every ranged GET under the call's one
+   * deadline and its own permit. A refusal is the Preview part's sentence; anything else fails the document.
+   */
+  private async previewParts(
+    surface: S3Surface,
+    input: Parameters<S3PreviewParts>[0],
+  ): Promise<readonly ObjectSourcePart[]> {
+    const head = toPreviewHead(input.head, input.bucket, input.key);
+    if (typeof head === "string") return [{ id: "preview", label: "Preview", unavailable: head }];
+    try {
+      const preview = await previewObject({
+        head,
+        reader: rangeReader(surface.client, input.bucket, input.key, input.call),
+        request: {},
+        purpose: "source",
+        signal: input.call.signal,
+      });
+      return previewSourceParts(preview, {
+        bucket: input.bucket,
+        key: input.key,
+        ...(input.limit === undefined ? {} : { limit: input.limit }),
+      });
+    } catch (error) {
+      const failure = surface.fail(error, "GetObject");
+      if (
+        failure instanceof QueryError ||
+        failure instanceof AuthenticationError ||
+        failure instanceof DatabaseConfigError
+      )
+        return [{ id: "preview", label: "Preview", unavailable: failure.message }];
+      throw failure;
+    }
   }
 
   // ==========================================================================

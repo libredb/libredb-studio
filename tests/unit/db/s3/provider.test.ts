@@ -7,15 +7,20 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
-import type { RequestSigner } from "@/lib/db/http/node-transport";
+import type { NodeByteRequest, RequestSigner } from "@/lib/db/http/node-transport";
 import { S3_SURFACE_DEADLINE_MS } from "@/lib/db/providers/objectstore/s3/constants";
 import { encodeS3Cursor } from "@/lib/db/providers/objectstore/s3/cursor";
 import { S3_RESPONSE_HEADERS } from "@/lib/db/providers/objectstore/s3/headers";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
+import { joinVirtualKey } from "@/lib/db/providers/objectstore/s3/names";
+import { previewObject, type S3RangeReader } from "@/lib/db/providers/objectstore/s3/preview";
+import { S3_PREVIEW_ADAPTER_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-adapter";
+import { previewSourceParts } from "@/lib/db/providers/objectstore/s3/preview-render";
 import type { DatabaseConnection } from "@/lib/types";
 import { s3Connection } from "../../../helpers/s3-connection";
 import {
   bucketsXml,
+  errorXml,
   type FakeS3Handler,
   fakeS3Transport,
   objectsXml,
@@ -282,5 +287,175 @@ describe("the Keys panel through the provider", () => {
     await first.s3.connect();
     await first.s3.scanKeysPage({ cursor: written.cursor, count: 1, pattern: "sales/", level: true });
     expect(first.fake.lines().at(-1)).toContain("continuation-token=server-token");
+  });
+});
+
+describe("the Source tab", () => {
+  const CSV = new TextEncoder().encode("id,name\n1,alpha\n2,beta\n3,gamma\n");
+  const ETAG = '"e1"';
+
+  /** An object served by byte range, as a server that honours Range answers. */
+  function rangedObject(request: NodeByteRequest) {
+    if (request.method === "HEAD")
+      return {
+        status: 200,
+        contentType: "text/csv",
+        headers: [
+          ["content-length", String(CSV.length)],
+          ["etag", ETAG],
+        ] as const,
+      };
+    const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers?.range ?? "");
+    if (range === null)
+      return {
+        status: 200,
+        body: CSV,
+        headers: [
+          ["content-length", String(CSV.length)],
+          ["etag", ETAG],
+        ] as const,
+      };
+    const start = range[1] === "" ? CSV.length - Number(range[2]) : Number(range[1]);
+    const end = range[1] === "" || range[2] === "" ? CSV.length - 1 : Math.min(Number(range[2]), CSV.length - 1);
+    return {
+      status: 206,
+      body: CSV.subarray(start, end + 1),
+      headers: [
+        ["content-range", `bytes ${start}-${end}/${CSV.length}`],
+        ["etag", ETAG],
+      ] as const,
+    };
+  }
+
+  /** The same object as the preview's reader port, for the expected parts. */
+  const servedReader: S3RangeReader = {
+    async read(range, maxBytes) {
+      const start = range.kind === "first" ? 0 : range.kind === "suffix" ? CSV.length - range.length : range.start;
+      const end = range.kind === "span" ? range.end : range.kind === "first" ? range.length : CSV.length;
+      return { bytes: CSV.subarray(start, Math.min(end, start + maxBytes)), start, total: CSV.length, etag: ETAG };
+    },
+  };
+
+  test("an object: the Metadata part, then exactly the parts the preview renders, read with GET ranges only", async () => {
+    const { s3, fake } = provider(
+      (request) => (request.target.query.includes("list-type=2") ? xmlAnswer(objectsXml({})) : rangedObject(request)),
+      { database: "sales" },
+    );
+    await s3.connect();
+    const document = await s3.readObjectSource(["sales/a.csv"], "object");
+    const preview = await previewObject({
+      head: { bucket: "sales", key: "a.csv", size: CSV.length, etag: ETAG, contentType: "text/csv" },
+      reader: servedReader,
+      request: {},
+      purpose: "source",
+      signal: new AbortController().signal,
+    });
+    expect(document.parts[0].id).toBe("metadata");
+    expect(document.parts.slice(1)).toEqual(previewSourceParts(preview, { bucket: "sales", key: "a.csv" }));
+    const reads = fake.exchanges.slice(2);
+    expect(reads.length).toBeGreaterThan(0);
+    for (const exchange of reads) {
+      expect(exchange.request.method).toBe("GET");
+      expect(exchange.request.headers?.range).toMatch(/^bytes=/);
+    }
+  });
+
+  test("a HEAD with no ETag: one unavailable Preview part, and no GET", async () => {
+    const { s3, fake } = provider(
+      (request) =>
+        request.method === "HEAD" ? { status: 200, headers: [["content-length", "10"]] } : xmlAnswer(objectsXml({})),
+      { database: "sales" },
+    );
+    await s3.connect();
+    const document = await s3.readObjectSource(["sales/a.csv"], "object");
+    expect(document.parts[1]).toEqual({
+      id: "preview",
+      label: "Preview",
+      unavailable: S3_PREVIEW_ADAPTER_SENTENCES.noHead,
+    });
+    expect(fake.lines().slice(1)).toEqual(["HEAD /sales/a.csv"]);
+  });
+
+  test("a refused preview read is an unavailable Preview part beside the Metadata part", async () => {
+    const { s3 } = provider(
+      (request) => {
+        if (request.method === "HEAD") return rangedObject(request);
+        if (request.target.query.includes("list-type=2")) return xmlAnswer(objectsXml({}));
+        return xmlAnswer(errorXml("AccessDenied", "Access Denied."), 403);
+      },
+      { database: "sales" },
+    );
+    await s3.connect();
+    const document = await s3.readObjectSource(["sales/a.csv"], "object");
+    expect(document.parts[0].id).toBe("metadata");
+    expect(document.parts[1]).toEqual({
+      id: "preview",
+      label: "Preview",
+      unavailable:
+        'This access key may not read object "a.csv" in bucket "sales" (s3:GetObject). The server answers the same way for an object that does not exist, so this does not say that object "a.csv" exists.',
+    });
+  });
+
+  test("a bucket: its creation date from the tree's listing", async () => {
+    const { s3 } = provider((request) => {
+      if (request.target.path === "/") return xmlAnswer(bucketsXml(["sales"]));
+      return request.target.query === "location="
+        ? xmlAnswer("<LocationConstraint/>")
+        : xmlAnswer("<VersioningConfiguration/>");
+    });
+    await s3.connect();
+    await s3.listObjects([], "bucket");
+    const document = await s3.readObjectSource(["sales"], "bucket");
+    expect(JSON.parse((document.parts[0] as { text: string }).text)).toMatchObject({
+      created: "2026-10-09T13:13:17.442Z",
+      pinned: false,
+    });
+  });
+});
+
+describe("PR 3 review focus: object names through the Source tab", () => {
+  const PINNED = { database: "sales" };
+
+  /** The pinned probe's listing, then a HEAD of `size` bytes, with an ETag only when one is given. */
+  function listOrHead(size: number, etag?: string) {
+    return (request: NodeByteRequest) => {
+      if (request.target.query.includes("list-type=2")) return xmlAnswer(objectsXml({}));
+      const headers: [string, string][] = [["content-length", String(size)]];
+      if (etag !== undefined) headers.push(["etag", etag]);
+      return { status: 200, headers };
+    };
+  }
+
+  test.each([
+    ["a b+c%/ü.csv", "HEAD /sales/a%20b%2Bc%25/%C3%BC.csv"],
+    ["logs//2026/x.csv", "HEAD /sales/logs//2026/x.csv"],
+  ])("the key %p is sent encoded once per segment, slashes kept", async (key, line) => {
+    const { s3, fake } = provider(listOrHead(10), PINNED);
+    await s3.connect();
+    const document = await s3.readObjectSource([joinVirtualKey("sales", key)], "object");
+    expect(document.parts[0].id).toBe("metadata");
+    expect(fake.lines().slice(1)).toEqual([line]);
+  });
+
+  test("a zero-byte folder marker opens as an empty object and sends only its HEAD", async () => {
+    const etag = '"d41d8cd98f00b204e9800998ecf8427e"';
+    const { s3, fake } = provider(listOrHead(0, etag), PINNED);
+    await s3.connect();
+    const document = await s3.readObjectSource([joinVirtualKey("sales", "logs/")], "object");
+    const empty = await previewObject({
+      head: { bucket: "sales", key: "logs/", size: 0, etag },
+      reader: {
+        read: async () => {
+          throw new Error("an empty object is never read");
+        },
+      },
+      request: {},
+      purpose: "source",
+      signal: new AbortController().signal,
+    });
+    expect(empty).toEqual({ kind: "empty", notices: [] });
+    expect(document.parts[0].id).toBe("metadata");
+    expect(document.parts.slice(1)).toEqual(previewSourceParts(empty, { bucket: "sales", key: "logs/" }));
+    expect(fake.lines().slice(1)).toEqual(["HEAD /sales/logs/"]);
   });
 });
