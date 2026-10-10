@@ -19,6 +19,8 @@ export interface SyntheticSchemaElement {
   readonly children?: number;
   /** Writes the VARIANT logical type (LogicalType field 16). */
   readonly variant?: boolean;
+  /** Writes the DECIMAL converted type (field 6), with the scale (7) and precision (8) given. */
+  readonly decimal?: { readonly precision?: number; readonly scale?: number };
 }
 
 export interface SyntheticPage {
@@ -119,6 +121,11 @@ function schemaFields(element: SyntheticSchemaElement): ThriftField[] {
   if (element.type !== undefined || element.variant === true) fields.push([3, { i32: 0 }]);
   fields.push([4, { binary: element.name }]);
   if (element.children !== undefined) fields.push([5, { i32: element.children }]);
+  if (element.decimal !== undefined) {
+    fields.push([6, { i32: 5 }]);
+    if (element.decimal.scale !== undefined) fields.push([7, { i32: element.decimal.scale }]);
+    if (element.decimal.precision !== undefined) fields.push([8, { i32: element.decimal.precision }]);
+  }
   if (element.variant === true) fields.push([10, { struct: [[16, { struct: [] }]] }]);
   return fields;
 }

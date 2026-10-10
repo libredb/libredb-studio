@@ -280,7 +280,14 @@ export async function readParquetFooter(
   const metadata = await parseFooter(input, footerBytes, modules, slots);
   if (metadata === undefined) return refused(FOOTER_BAD_BARE);
   const shape = walkParquetSchema(metadata.schema, limits);
-  if (!shape.ok) return refused(previewSentence(shape.duplicateName ? "R-PQ-SCHEMA-NAMES" : "R-PQ-SCHEMA"));
+  if (!shape.ok) {
+    const id = shape.duplicateName
+      ? "R-PQ-SCHEMA-NAMES"
+      : shape.malformedDecimal
+        ? "R-PQ-SCHEMA-DECIMAL"
+        : "R-PQ-SCHEMA";
+    return refused(previewSentence(id));
+  }
   const first = metadata.row_groups[0];
   if (first !== undefined && !chunksMatchLeaves(first.columns, shape)) return refused(FOOTER_BAD_BARE);
   if (!footerValuesHold(metadata)) return refused(FOOTER_BAD_BARE);

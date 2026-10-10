@@ -5,8 +5,8 @@
  * child counts, and refuses an empty list, a list over 8 elements per allowed leaf column, a depth past the limit, a
  * child count larger than the elements left, a DECIMAL type lacking its precision or its scale, elements after the
  * root's subtree ends, and two children of one group with the same name, since a column is chosen and its chunks
- * matched by name, so a second one of a name would be read through the first one's chunks; that last refusal carries
- * `duplicateName` so the preview names it.
+ * matched by name, so a second one of a name would be read through the first one's chunks. The DECIMAL refusal
+ * carries `malformedDecimal` and the duplicate-name refusal `duplicateName`, so the preview names each.
  */
 import { S3_PREVIEW_ELEMENTS_PER_COLUMN, type S3PreviewLimits } from "./constants";
 
@@ -53,6 +53,8 @@ export interface ParquetSchemaShape {
 const REFUSED = { ok: false } as const;
 /** Two children of one group share a name; the preview refuses it with a sentence of its own. */
 const DUPLICATE_NAME = { ok: false, duplicateName: true } as const;
+/** A DECIMAL type lacks its precision or its scale; the preview refuses it with a sentence of its own. */
+const MALFORMED_DECIMAL = { ok: false, malformedDecimal: true } as const;
 
 /** The type string of one element with `children` children. */
 export function parquetTypeString(element: SchemaElementLike, children: number): string {
@@ -104,7 +106,7 @@ interface Frame {
 export function walkParquetSchema(
   schema: readonly SchemaElementLike[],
   limits: Pick<S3PreviewLimits, "parquetMaxSchemaDepth" | "parquetMaxLeafColumns">,
-): ParquetSchemaShape | { readonly ok: false; readonly duplicateName?: true } {
+): ParquetSchemaShape | { readonly ok: false; readonly duplicateName?: true; readonly malformedDecimal?: true } {
   if (schema.length === 0 || schema.length > limits.parquetMaxLeafColumns * S3_PREVIEW_ELEMENTS_PER_COLUMN)
     return REFUSED;
   const columns: { name: string; type: string; leaves: number; variant: boolean }[] = [];
@@ -123,7 +125,8 @@ export function walkParquetSchema(
     next += 1;
     const children = element.num_children ?? 0;
     const decimal = decimalOf(element);
-    if (children < 0 || decimal === "malformed") return REFUSED;
+    if (children < 0) return REFUSED;
+    if (decimal === "malformed") return MALFORMED_DECIMAL;
     if (frame.names.has(element.name)) return DUPLICATE_NAME;
     frame.names.add(element.name);
     const isVariant = element.logical_type?.type === "VARIANT";

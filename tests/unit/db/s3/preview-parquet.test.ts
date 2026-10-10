@@ -287,6 +287,21 @@ describe("readParquetFooter", () => {
     });
   });
 
+  test("a DECIMAL column lacking its precision is refused with a sentence of its own before any plan", async () => {
+    const object = syntheticParquet({
+      schema: [
+        { name: "schema", children: 1 },
+        { name: "d", type: PHYSICAL.INT32, decimal: { scale: 2 } },
+      ],
+      rowGroups: [{ numRows: 1, chunks: [int32Chunk("d", [1])] }],
+    });
+    expect(await footerOutcome(object)).toEqual({
+      kind: "refused",
+      sentence:
+        "The Parquet schema declares a DECIMAL type without its precision or its scale, so the file is not previewed.",
+    });
+  });
+
   test("two top-level columns of one name are refused before any plan", async () => {
     const object = syntheticParquet({
       schema: [
