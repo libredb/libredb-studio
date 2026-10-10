@@ -72,7 +72,7 @@ describe("the connect probe", () => {
     );
   });
 
-  test("a redirect at connect (Review Focus 2)", async () => {
+  test("a redirect at connect", async () => {
     const { error } = await connectFailure(() => {
       throw new TransportError("redirect", "redirected", {
         redirect: { status: 307, headers: [], headersTruncated: false },
@@ -84,7 +84,7 @@ describe("the connect probe", () => {
     );
   });
 
-  test("a pinned bucket the server does not have (Review Focus 3)", async () => {
+  test("a pinned bucket the server does not have", async () => {
     const { error } = await connectFailure(
       () => xmlAnswer(errorXml("NoSuchBucket", "The specified bucket does not exist"), 404),
       { database: "slaes" },
