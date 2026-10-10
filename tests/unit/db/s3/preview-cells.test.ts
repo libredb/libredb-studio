@@ -9,7 +9,9 @@ import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
 import {
   buildRows,
   cutText,
+  jsonString,
   renderCell,
+  scalarJson,
   selectColumns,
   serializeBounded,
 } from "@/lib/db/providers/objectstore/s3/preview-cells";
@@ -92,6 +94,30 @@ describe("serializeBounded", () => {
       64,
     );
     expect(rendered).toEqual({ text: "[0,1,2,3,4", cut: true });
+  });
+
+  test("a string far past cellChars of characters that escape to six gives the same cut cell", () => {
+    const long = "\u0001".repeat(4_000_000);
+    expect(serializeBounded({ k: long }, 20, 64)).toEqual({ text: '{"k":"\\u0001\\u0001\\u', cut: true });
+    expect(serializeBounded({ [long]: 1 }, 20, 64)).toEqual({ text: '{"\\u0001\\u0001\\u0001', cut: true });
+    expect(serializeBounded([Uint8Array.of(0xab, 0xcd, 0xef)], 4, 64)).toEqual({ text: '["ab', cut: true });
+  });
+
+  test("the bounded escape writes at most the budget plus one escaped input character, and past the budget", () => {
+    const long = "\u0001".repeat(4_000_000);
+    const escaped = jsonString(long, 100);
+    expect(escaped.length).toBeGreaterThan(100);
+    expect(escaped.length).toBeLessThanOrEqual(1 + 6 * 101);
+    expect(escaped).toBe(`"${"\\u0001".repeat(101)}`);
+    expect(jsonString("a\u{1F600}b", 1)).toBe('"a\u{1F600}');
+    expect(jsonString("ab", -5)).toBe('"');
+    expect(jsonString("ab", 3)).toBe('"ab"');
+  });
+
+  test("bytes are hex-written only as far as the budget needs", () => {
+    const hex = scalarJson(new Uint8Array(8_000_000), 10);
+    expect(hex).toBe(`"${"00".repeat(6)}`);
+    expect(scalarJson(Uint8Array.of(0xab), 10)).toBe('"ab"');
   });
 
   test("renderCell never calls JSON.stringify", () => {

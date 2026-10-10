@@ -38,11 +38,17 @@ const unicodeEscape = (code: number): string => `\\u${code.toString(16).padStart
 /**
  * A JSON string literal, escaped as JSON.stringify escapes one (quote, backslash, C0 controls, lone surrogates),
  * written by one loop over the code units rather than by calling it or by a control-character regular expression.
+ * Only the first `budget` + 1 input characters are escaped (a pair at that edge is kept whole), and a literal cut
+ * that way has no closing quote: every input character writes at least one output character, so the output is
+ * still longer than `budget` and a cut stays a cut, while a long string of characters that escape to six is never
+ * escaped whole only to be cut afterwards.
  */
-function jsonString(text: string): string {
+export function jsonString(text: string, budget = Number.POSITIVE_INFINITY): string {
+  const limit = Math.min(text.length, Math.max(0, budget + 1));
   let out = '"';
   let run = 0;
-  for (let index = 0; index < text.length; index += 1) {
+  let index = 0;
+  for (; index < limit; index += 1) {
     const code = text.charCodeAt(index);
     let escape: string | undefined;
     if (code === 0x22) escape = '\\"';
@@ -61,18 +67,24 @@ function jsonString(text: string): string {
       run = index + 1;
     }
   }
-  return `${out}${text.slice(run)}"`;
+  return `${out}${text.slice(run, index)}${index < text.length ? "" : '"'}`;
 }
 
-function scalarJson(value: unknown): string {
+/** One scalar as JSON text; a string or bytes value is written only as far as `budget` needs (as `jsonString`). */
+export function scalarJson(value: unknown, budget = Number.POSITIVE_INFINITY): string {
   if (value === null || value === undefined) return "null";
   if (typeof value === "boolean") return String(value);
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : jsonString(String(value));
-  if (typeof value === "bigint") return jsonString(value.toString());
-  if (typeof value === "string") return jsonString(value);
-  if (value instanceof Uint8Array) return jsonString(Array.from(value, hex2).join(""));
+  if (typeof value === "bigint") return jsonString(value.toString(), budget);
+  if (typeof value === "string") return jsonString(value, budget);
+  if (value instanceof Uint8Array) {
+    // Two hex digits per byte and nothing to escape: one byte past half the budget already writes past it, and a
+    // literal cut that way has no closing quote, as in `jsonString`.
+    const kept = Math.min(value.length, Math.max(0, Math.floor(budget / 2) + 1));
+    return `"${Array.from(value.subarray(0, kept), hex2).join("")}${kept < value.length ? "" : '"'}`;
+  }
   if (value instanceof Date) return jsonString(dateText(value));
-  return jsonString(String(value));
+  return jsonString(String(value), budget);
 }
 
 const isContainer = (value: unknown): value is object =>
@@ -89,7 +101,8 @@ interface Frame {
  * JSON text of a nested value, written iteratively with an explicit stack: bigints as digit strings, bytes as a hex
  * string, a Date without Z, keys from Object.keys written as JSON strings (so `__proto__` is a key). Stops as soon as
  * more than `cellChars` characters are written (then cut), and writes `...` for a container nested deeper than
- * `maxDepth` (also counted as cut).
+ * `maxDepth` (also counted as cut). The cell bound applies before the work, not after: each key or string value is
+ * escaped only as far as the characters left in the cell need.
  */
 export function serializeBounded(
   value: unknown,
@@ -106,7 +119,7 @@ export function serializeBounded(
   };
   const writeValue = (item: unknown): void => {
     if (!isContainer(item)) {
-      write(scalarJson(item));
+      write(scalarJson(item, cellChars - length));
     } else if (stack.length >= maxDepth) {
       write("...");
       deep = true;
@@ -137,7 +150,7 @@ export function serializeBounded(
     } else {
       const key = frame.keys[frame.index];
       frame.index += 1;
-      write(`${jsonString(key)}:`);
+      write(`${jsonString(key, cellChars - length)}:`);
       writeValue((frame.source as Readonly<Record<string, unknown>>)[key]);
     }
   }
