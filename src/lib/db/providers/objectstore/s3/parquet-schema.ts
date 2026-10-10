@@ -3,7 +3,9 @@
  * flat list `parquetMetadata` maps (which builds no tree) before anything calls `parquetSchema`, `getSchemaPath` or
  * `parquetReadObjects`, each of which builds the tree recursively; the walk is iterative, with a stack of remaining
  * child counts, and refuses an empty list, a list over 8 elements per allowed leaf column, a depth past the limit, a
- * child count larger than the elements left, and elements after the root's subtree ends.
+ * child count larger than the elements left, elements after the root's subtree ends, and two children of one group
+ * with the same name, since a column is chosen and its chunks matched by name, so a second one of a name would be
+ * read through the first one's chunks.
  */
 import type { S3PreviewLimits } from "./constants";
 
@@ -84,6 +86,8 @@ interface Frame {
   remaining: number;
   readonly path: readonly string[];
   readonly variant: boolean;
+  /** The names of the children walked so far. */
+  readonly names: Set<string>;
 }
 
 /** Walks the flat schema list once, iteratively; see the module docblock for what it refuses. */
@@ -94,7 +98,7 @@ export function walkParquetSchema(
   if (schema.length === 0 || schema.length > limits.parquetMaxLeafColumns * 8) return REFUSED;
   const columns: { name: string; type: string; leaves: number; variant: boolean }[] = [];
   const leaves: ParquetLeaf[] = [];
-  const stack: Frame[] = [{ remaining: schema[0].num_children ?? 0, path: [], variant: false }];
+  const stack: Frame[] = [{ remaining: schema[0].num_children ?? 0, path: [], variant: false, names: new Set() }];
   let next = 1;
   while (stack.length > 0) {
     const frame = stack[stack.length - 1];
@@ -107,7 +111,8 @@ export function walkParquetSchema(
     const element = schema[next];
     next += 1;
     const children = element.num_children ?? 0;
-    if (children < 0) return REFUSED;
+    if (children < 0 || frame.names.has(element.name)) return REFUSED;
+    frame.names.add(element.name);
     const isVariant = element.logical_type?.type === "VARIANT";
     const variant = frame.variant || isVariant;
     const path = [...frame.path, element.name];
@@ -116,7 +121,7 @@ export function walkParquetSchema(
     const top = columns[columns.length - 1];
     if (variant) top.variant = true;
     if (children > 0) {
-      stack.push({ remaining: children, path, variant });
+      stack.push({ remaining: children, path, variant, names: new Set() });
     } else {
       top.leaves += 1;
       const decimal = decimalOf(element);

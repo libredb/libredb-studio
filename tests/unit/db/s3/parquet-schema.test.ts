@@ -55,6 +55,19 @@ describe("walkParquetSchema: the refusals", () => {
     expect(walk([root(1), { name: "s", num_children: -1 }])).toEqual({ ok: false });
   });
 
+  test("two children of one group with the same name are refused, at the root and below it", () => {
+    expect(walk([root(2), leaf("v"), leaf("v")])).toEqual({ ok: false });
+    expect(
+      walk([root(2), group("v", 2, "VARIANT"), leaf("metadata"), leaf("value"), group("v", 1), leaf("value")]),
+    ).toEqual({ ok: false });
+    expect(walk([root(1), group("s", 2), leaf("a"), leaf("a")])).toEqual({ ok: false });
+  });
+
+  test("the same name under two different groups, or at two levels, passes", () => {
+    expect(walk([root(2), group("a", 1), leaf("x"), group("b", 1), leaf("x")]).ok).toBe(true);
+    expect(walk([root(1), group("x", 1), leaf("x")]).ok).toBe(true);
+  });
+
   test("a chain of 100,000 groups is refused without a stack overflow", () => {
     expect(() => walk(chain(100_000))).not.toThrow();
     expect(walk(chain(100_000))).toEqual({ ok: false });

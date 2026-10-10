@@ -696,6 +696,39 @@ describe("previewParquet: what never reaches hyparquet", () => {
     expect(calls.read).toEqual([["id"]]);
   });
 
+  test("two top-level columns of one name, a VARIANT group then a plain group, are refused before parquetReadObjects", async () => {
+    const { modules, calls } = await spiedModules();
+    const byteChunk = (leaf: string, last: number) => ({
+      path: ["v", leaf],
+      type: PHYSICAL.BYTE_ARRAY,
+      pages: [{ kind: "data" as const, numValues: 1, body: Uint8Array.of(1, 0, 0, 0, last) }],
+    });
+    const object = syntheticParquet({
+      schema: [
+        { name: "schema", children: 2 },
+        { name: "v", children: 2, variant: true },
+        { name: "metadata", type: PHYSICAL.BYTE_ARRAY },
+        { name: "value", type: PHYSICAL.BYTE_ARRAY },
+        { name: "v", children: 2 },
+        { name: "metadata", type: PHYSICAL.BYTE_ARRAY },
+        { name: "value", type: PHYSICAL.BYTE_ARRAY },
+      ],
+      rowGroups: [
+        {
+          numRows: 1,
+          chunks: [byteChunk("metadata", 1), byteChunk("value", 0), byteChunk("metadata", 1), byteChunk("value", 0)],
+        },
+      ],
+    });
+    expect(
+      await previewParquet(inputFor(object, "v.parquet", { request: { columns: ["v"] } }).input, depsOf(modules)),
+    ).toMatchObject({
+      kind: "refused",
+      sentence: "The Parquet schema is nested deeper or wider than the preview reads, so the file is not previewed.",
+    });
+    expect(calls.read).toEqual([]);
+  });
+
   test("three BOOLEAN columns of half the value cap decode two; understated footer counts are refused by the pre-scan before decode", async () => {
     const { modules, calls } = await spiedModules();
     const two = await previewParquet(inputFor(threeBooleans(), "b.parquet").input, depsOf(modules));
