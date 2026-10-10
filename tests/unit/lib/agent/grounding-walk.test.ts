@@ -198,3 +198,29 @@ describe("a kind whose names are withheld", () => {
     for (const packed of packings(snapshot)) expect(packed).toContain("this server counted at least 3 of them");
   });
 });
+
+describe("a listing its provider capped", () => {
+  test("a sampled count over 1,000 listed objects is said as a floor in both packings, and the walk adds no bound of its own", async () => {
+    const floor = "the first 1,000 objects of the folder";
+    const { snapshot } = await captured({
+      kinds: [POD],
+      containers: [{ path: ["default"], name: "default", level: 0, isSessionDefault: true }],
+      counts: () => ({ pods: { count: 1000, sampledFrom: floor } }),
+      objects: (container, kind) =>
+        Array.from({ length: 1000 }, (_unused, index) => ({
+          path: [...container, `pod/web-${index}`],
+          name: `pod/web-${index}`,
+          kind,
+        })),
+    });
+
+    expect(snapshot.objects).toHaveLength(1000);
+    expect(snapshot.truncated).toBeUndefined();
+    expect(snapshot.kinds?.[0]?.sampledFrom).toBe(floor);
+    for (const packed of packings(snapshot)) {
+      expect(packed).toContain(
+        `The Pods below are at least what is shown and never a total: they were counted from ${floor}.`,
+      );
+    }
+  });
+});
