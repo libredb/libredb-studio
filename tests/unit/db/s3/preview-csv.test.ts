@@ -57,16 +57,24 @@ describe("splitCsv: RFC 4180 quoting", () => {
         ["a", "b"],
         ["1", "2"],
       ],
+      fieldCounts: [2, 2],
       quoteTrailers: 0,
       cutLast: true,
       unclosed: false,
     });
-    expect(split('a\n"x\ny', false)).toEqual({ records: [["a"]], quoteTrailers: 0, cutLast: true, unclosed: false });
+    expect(split('a\n"x\ny', false)).toEqual({
+      records: [["a"]],
+      fieldCounts: [1],
+      quoteTrailers: 0,
+      cutLast: true,
+      unclosed: false,
+    });
   });
 
   test("an unclosed quote in a whole object keeps the record as read", () => {
     expect(split('a\n"x\ny', true)).toEqual({
       records: [["a"], ["x\ny"]],
+      fieldCounts: [1, 1],
       quoteTrailers: 0,
       cutLast: false,
       unclosed: true,
@@ -85,12 +93,14 @@ describe("splitCsv: RFC 4180 quoting", () => {
   test("trailing characters count only in kept records: not in a cut last record, not past keptRecords", () => {
     expect(split('h\n1\n"x"y', false)).toEqual({
       records: [["h"], ["1"]],
+      fieldCounts: [1, 1],
       quoteTrailers: 0,
       cutLast: true,
       unclosed: false,
     });
     expect(splitCsv('"a"b\n"c"d\n"e"f\n', ",", true, 3, 2)).toEqual({
       records: [["ab"], ["cd"], ["ef"]],
+      fieldCounts: [1, 1, 1],
       quoteTrailers: 2,
       cutLast: false,
       unclosed: false,
@@ -101,6 +111,27 @@ describe("splitCsv: RFC 4180 quoting", () => {
     expect(split("a,b\n").records).toEqual([["a", "b"]]);
     expect(split("a,").records).toEqual([["a", ""]]);
     expect(splitCsv("a\nb\nc\n", ",", true, 2).records).toEqual([["a"], ["b"]]);
+  });
+});
+
+describe("splitCsv: the field bound", () => {
+  test("fields past maxFields are counted but not stored, and their trailing characters are not counted", () => {
+    expect(splitCsv('a,b,c,"d"x\n1,2\n', ",", true, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, 2)).toEqual({
+      records: [
+        ["a", "b"],
+        ["1", "2"],
+      ],
+      fieldCounts: [4, 2],
+      quoteTrailers: 0,
+      cutLast: false,
+      unclosed: false,
+    });
+  });
+
+  test("a whole object's last record without a record end is bounded the same way", () => {
+    const result = splitCsv("a,b,c", ",", true, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, 1);
+    expect(result.records).toEqual([["a"]]);
+    expect(result.fieldCounts).toEqual([3]);
   });
 });
 
@@ -120,6 +151,10 @@ describe("sniffDelimiter", () => {
   test("no complete record, or no candidate above one field, gives ,", () => {
     expect(sniffDelimiter("a;b;c", false, 20)).toBe(",");
     expect(sniffDelimiter("a\nb\n", true, 20)).toBe(",");
+  });
+
+  test("the sniff compares true field counts, not the kept fields", () => {
+    expect(sniffDelimiter("a,b;c\n1,2;3,4\n", true, 20, 2)).toBe(";");
   });
 
   test("a single complete record scores a candidate that splits it", () => {
@@ -180,6 +215,36 @@ describe("csvRows", () => {
     const result = rows(`${header}\n`, { limits: { ...S3_PREVIEW_LIMITS, maxColumns: 10 } });
     expect(result.kind === "rows" && result.rows.columns).toHaveLength(10);
     expect(result.notices).toEqual(["Showing the first 10 of 2,000 columns."]);
+  });
+
+  test("a header of 10,000 fields keeps 8,192 fields per record and N-COLUMNS reports the true count", () => {
+    const header = Array.from({ length: 10_000 }, (_, index) => `c${index}`).join(",");
+    const result = rows(`${header}\n`);
+    expect(result.kind === "rows" && result.rows.columns).toHaveLength(1_024);
+    expect(result.notices).toEqual(["Showing the first 1,024 of 10,000 columns."]);
+  });
+
+  test("a column past the 8,192 kept fields is refused by name; one inside them is shown", () => {
+    const header = Array.from({ length: 9_000 }, (_, index) => `c${index}`).join(",");
+    const record = Array.from({ length: 9_000 }, (_, index) => `${index}`).join(",");
+    expect(rows(`${header}\n${record}\n`, { request: { columns: ["c8191"] } })).toMatchObject({
+      kind: "rows",
+      rows: { columns: [{ name: "c8191" }], rows: [["8191"]] },
+      notices: [],
+    });
+    expect(() => rows(`${header}\n${record}\n`, { request: { columns: ["c8192"] } })).toThrow(
+      new QueryError("The preview has no column c8192.", "s3"),
+    );
+  });
+
+  test("a record wider than the kept fields is ragged by its true count, and extra columns stop at the bound", () => {
+    const record = Array.from({ length: 9_000 }, () => "x").join(",");
+    const result = rows(`a,b\n${record}\n`);
+    expect(result.kind === "rows" && result.rows.columns).toHaveLength(1_024);
+    expect(result.notices).toEqual([
+      "1 record(s) have a different number of fields from the header: missing fields are empty and extra fields are shown in columns named by position.",
+      "Showing the first 1,024 of 9,000 columns.",
+    ]);
   });
 
   test("--columns reorders, addresses a renamed column, and refuses an unknown name", () => {

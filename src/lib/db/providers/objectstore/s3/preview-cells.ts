@@ -188,12 +188,14 @@ export function renderCell(
 /**
  * The columns a result keeps: an explicit list keeps exactly its names in its order, each matched
  * against the final names (so `value (2)` and `(No column name)` are addressable), or is refused naming the first
- * unknown one; without a list, columns past `maxColumns` are dropped with N-COLUMNS.
+ * unknown one; without a list, columns past `maxColumns` are dropped with N-COLUMNS, which reports `total`: the
+ * columns the source holds, more than it names when its producer bounded the fields it keeps.
  */
 export function selectColumns(
   names: readonly string[],
   requested: readonly string[] | undefined,
   maxColumns: number,
+  total: number = names.length,
 ): { readonly indexes: readonly number[]; readonly notices: readonly string[] } {
   if (requested !== undefined) {
     const position = new Map(names.map((name, index) => [name, index] as const));
@@ -207,7 +209,7 @@ export function selectColumns(
   const kept = Math.min(names.length, maxColumns);
   return {
     indexes: Array.from({ length: kept }, (_, index) => index),
-    notices: names.length > maxColumns ? [previewSentence("N-COLUMNS", { cap: maxColumns, n: names.length })] : [],
+    notices: total > maxColumns ? [previewSentence("N-COLUMNS", { cap: maxColumns, n: total })] : [],
   };
 }
 
@@ -220,6 +222,8 @@ export interface RowSource {
   readonly valueAt: (row: number, column: number) => unknown;
   /** Rows the object holds in all, when that is known to be more than `rowCount` (Parquet). */
   readonly available?: number;
+  /** Columns the source holds in all, when its producer named only the first of them (the CSV field bound). */
+  readonly columnCount?: number;
 }
 
 function jsonKind(value: unknown): string {
@@ -244,7 +248,7 @@ export function buildRows(
   maxRows: number,
   limits: S3PreviewLimits,
 ): { readonly rows: S3PreviewRows; readonly notices: readonly string[] } {
-  const selection = selectColumns(source.names, columns, limits.maxColumns);
+  const selection = selectColumns(source.names, columns, limits.maxColumns, source.columnCount ?? source.names.length);
   const kinds = selection.indexes.map(() => new Set<string>());
   const rows: S3PreviewCell[][] = [];
   let characters = 0;

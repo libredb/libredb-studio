@@ -156,6 +156,25 @@ describe("selectColumns", () => {
       notices: ["Showing the first 2 of 3 columns."],
     });
   });
+
+  test("a source holding more columns than it names reports its true count in N-COLUMNS", () => {
+    expect(selectColumns(["a", "b", "c"], undefined, 2, 9_000)).toEqual({
+      indexes: [0, 1],
+      notices: ["Showing the first 2 of 9,000 columns."],
+    });
+    expect(selectColumns(["a", "b"], undefined, 2, 9_000)).toEqual({
+      indexes: [0, 1],
+      notices: ["Showing the first 2 of 9,000 columns."],
+    });
+    expect(
+      buildRows(
+        { names: ["a"], typing: "text", rowCount: 0, valueAt: () => null, columnCount: 3 },
+        undefined,
+        10,
+        limits({ maxColumns: 1 }),
+      ).notices,
+    ).toEqual(["Showing the first 1 of 3 columns."]);
+  });
 });
 
 describe("buildRows", () => {
