@@ -237,4 +237,29 @@ describe("Source tab and preview over captures", () => {
       expect(tagged?.ok?.headers?.["user_metadata.project"]).toBe("libredb");
     }
   });
+
+  test("four Source tabs are the metadata part then the preview parts, and the Parquet grid carries types and notices", async () => {
+    const files = CAPTURES.filter((name) => path.basename(name) === "preview-source.json");
+    expect(files).toHaveLength(5);
+    for (const file of files) {
+      const { summaries } = await replay(file);
+      expect(summaries.map((summary) => [summary.step, summary.ok?.names])).toEqual([
+        ["source-table-csv", ["metadata", "preview", "preview-notes"]],
+        ["source-rows-ndjson", ["metadata", "preview", "preview-notes"]],
+        ["source-fx-zstd", ["metadata", "schema", "rows", "preview-notes"]],
+        ["source-one-mib", ["metadata", "preview", "preview-notes"]],
+        ["console-parquet", ["id", "name", "amount", "d", "ts", "flag", "dec", "blob", "big", "s", "l", "maybe"]],
+      ]);
+      const grid = summaries[4].ok;
+      expect(grid?.rows).toBe(100);
+      expect(grid?.headers).toMatchObject({
+        id: "INT64 INT_64",
+        d: "INT32 DATE",
+        ts: "INT64 TIMESTAMP(MICROS, local)",
+      });
+      expect(grid?.notices).toContain(
+        "Column dec is DECIMAL(18,2): values with more than 15 significant digits are shown rounded.",
+      );
+    }
+  });
 });

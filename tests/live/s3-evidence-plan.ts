@@ -20,6 +20,7 @@ import {
   type S3StepRun,
 } from "./s3-live-support";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
+import { joinVirtualKey } from "@/lib/db/providers/objectstore/s3/names";
 
 export interface S3ScenarioExtras {
   /** assertObjectSurface with S3_CONFORMANCE, passed in by a Bun caller, so this module loads under Node. */
@@ -142,6 +143,64 @@ async function consoleRunner(context: S3RunContext, name: ConsoleScenarioName): 
   return runs;
 }
 
+/** The objects the replay case opens in the Source tab, each step named after one. */
+const PREVIEW_SOURCE_OBJECTS: readonly (readonly [string, string])[] = [
+  ["source-table-csv", "data/table.csv"],
+  ["source-rows-ndjson", "data/rows.ndjson"],
+  ["source-fx-zstd", "parquet/fx-zstd.parquet"],
+  ["source-one-mib", "data/one-mib.bin"],
+];
+const PREVIEW_PARQUET_COMMAND = "preview s3://studio-demo/parquet/fx-zstd.parquet";
+
+/** The scenario: the Source tab of four objects as root, then the console's preview of the Parquet object. */
+async function runPreviewSource(run: S3RunContext): Promise<readonly S3StepRun[]> {
+  const connection = s3LiveConnection(run.target, run.principals, { role: "root" }, run.ca);
+  const provider = new S3Provider(
+    connection,
+    {},
+    {},
+    {
+      createTransport: run.createTransport,
+      clock: run.clockFor(0),
+      signerWrapper: run.signerWrapper,
+    },
+  );
+  const runs: S3StepRun[] = [];
+  const measured = async (step: string, command: string | undefined, act: () => Promise<S3Observed>): Promise<void> => {
+    run.setStep(step);
+    const before = run.recorded().length;
+    const sockets = run.sockets();
+    const ok = await act();
+    runs.push({
+      summary: { step, ok, exchanges: run.recorded().length - before },
+      context: { connection, ...(command === undefined ? {} : { command }) },
+      sockets: run.sockets() - sockets,
+    });
+  };
+  run.setStep("connect");
+  await provider.connect();
+  try {
+    for (const [step, key] of PREVIEW_SOURCE_OBJECTS) {
+      await measured(step, undefined, async () => {
+        const document = await provider.readObjectSource!([joinVirtualKey("studio-demo", key)], "object");
+        return { names: document.parts.map((part) => part.id) };
+      });
+    }
+    await measured("console-parquet", PREVIEW_PARQUET_COMMAND, async () => {
+      const result = await provider.query(PREVIEW_PARQUET_COMMAND, [], "preview-source-parquet");
+      return {
+        rows: result.rowCount,
+        names: result.fields,
+        headers: { ...(result.columnTypes ?? {}) },
+        notices: (result.warnings ?? []).map((warning) => warning.message),
+      };
+    });
+  } finally {
+    await provider.disconnect();
+  }
+  return runs;
+}
+
 export const S3_SCENARIOS: readonly S3Scenario[] = [
   {
     name: "surface",
@@ -195,6 +254,13 @@ export const S3_SCENARIOS: readonly S3Scenario[] = [
     steps: ["preview"],
     clockOffsetMs: 0,
     shows: "preview s3://studio-demo/data/table.csv --max-rows 20 from the console",
+  },
+  {
+    name: "preview-source",
+    runner: (run) => runPreviewSource(run),
+    clockOffsetMs: 0,
+    shows:
+      "The Source tab of data/table.csv, data/rows.ndjson, parquet/fx-zstd.parquet and data/one-mib.bin, then the console's preview of the Parquet object",
   },
 ];
 
