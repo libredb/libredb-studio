@@ -1,5 +1,5 @@
 /**
- * The S3 object preview: the types every preview module shares and, from Task 18 on, `previewObject`,
+ * The S3 object preview: the types every preview module shares and `previewObject`,
  * the one entry point the Source tab and the console's `preview` command call through the provider's preview-adapter.ts.
  * The preview reads only through `S3RangeReader`: it builds no request, signs nothing and parses no header.
  */

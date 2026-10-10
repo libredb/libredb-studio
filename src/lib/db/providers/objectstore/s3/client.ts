@@ -1,5 +1,6 @@
 /**
- * The S3 operation client: one function per read operation over PR 1's byte transport, every
+ * The S3 operation client: one function per read operation over the byte transport
+ * (src/lib/db/http/node-transport.ts), every
  * one a GET or HEAD, and the limited client that takes one limiter permit per operation.
  *
  * This file holds the value types the console and the preview call with; the functions
@@ -113,7 +114,8 @@ export interface ObjectBytes {
 
 export interface BucketListing {
   readonly buckets: readonly {
-    readonly name: string /** ISO 8601 when CreationDate parses. */;
+    readonly name: string;
+    /** ISO 8601 when CreationDate parses. */
     readonly created?: string;
   }[];
   /** Names holding "/", in the server's order: counted by the caller, never listed. */
@@ -449,7 +451,7 @@ function rangeHeader(range: NonNullable<GetRangeRequest["range"]>): string {
   return range.last === undefined ? `bytes=${range.first}-` : `bytes=${range.first}-${range.last}`;
 }
 
-/** One function per read operation over PR 1's byte transport; every request is a GET or HEAD. */
+/** One function per read operation over the byte transport; every request is a GET or HEAD. */
 export function createS3Client(transport: NodeByteTransport): S3Client {
   return {
     async listBuckets(call) {

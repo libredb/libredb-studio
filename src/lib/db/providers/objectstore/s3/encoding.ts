@@ -1,10 +1,10 @@
 /**
- * Request targets for each S3 operation. Path style only: every object request
- * targets `/<bucket>/<key>`. The path is PR 1's `rfc3986Path` of the bucket and the key's "/"-separated segments,
- * which is also SigV4's canonical URI unchanged; "." and ".." key segments that stay inside the bucket are sent as
- * given, because Garage stores and serves them, while the bucket segment never is: `objectPath` refuses a bucket
- * failing `S3_BUCKET_PATTERN`, and a key whose dot segments leave its bucket, whoever the caller. The query is sorted by encoded name
- * then encoded value, the same order the signer sorts `SigningInput.query` into.
+ * Request targets for each S3 operation. Path style only: every object request targets `/<bucket>/<key>`. The path
+ * is the shared `rfc3986Path` (src/lib/db/http/endpoint.ts) of the bucket and the key's "/"-separated segments, which
+ * is also SigV4's canonical URI unchanged; "." and ".." key segments that stay inside the bucket are sent as given,
+ * because Garage stores and serves them, while the bucket segment never is: `objectPath` refuses a bucket failing
+ * `S3_BUCKET_PATTERN`, and a key whose dot segments leave its bucket, whoever the caller. The query is sorted by
+ * encoded name then encoded value, the same order the signer sorts `SigningInput.query` into.
  *
  * Not browser-safe: it imports endpoint.ts, which imports `node:net`.
  */

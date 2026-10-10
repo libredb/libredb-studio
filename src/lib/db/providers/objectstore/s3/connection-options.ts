@@ -1,8 +1,8 @@
 /**
  * Maps a connection to the options the S3 provider opens its transport with. No socket opens
- * here: every refusal is a DatabaseConfigError tagged "s3", raised before any transport exists, in the order of the
- * section's table, and none repeats the value it refuses. `connect()` is the authority, since a seed or an API call
- * never passes the dialog's checks.
+ * here: every refusal is a DatabaseConfigError tagged "s3", raised before any transport exists, in a fixed order,
+ * earliest check first, and none repeats the value it refuses. `connect()` is the authority, since a seed or an API
+ * call never passes the dialog's checks.
  *
  * `user` is the access key ID, `password` the secret access key, `region` the signing region and `database` the
  * pinned bucket. A null or an empty string reads as absent; any other string is read as typed, so a
@@ -12,7 +12,7 @@
  *
  * Through an SSH tunnel the origin dialled is the local forward, while the endpoint a sentence names, the identity a
  * certificate is checked against and the host the plaintext rule judges are the tunnel's far end; the far end's
- * literal is refused here when it is link-local, because PR 1's transport sees only the local forward.
+ * literal is refused here when it is link-local, because the byte transport sees only the local forward.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
  * provider reads by the `config.<field>` pattern.
@@ -106,7 +106,7 @@ export function buildS3ConnectionOptions(
   config: DatabaseConnection & WithTunnelFarEnd,
   context: { readonly executionReadOnly: boolean; readonly queryTimeout: number },
 ): S3ConnectionOptions {
-  // Row 1: every field this provider reads, by type, before anything else.
+  // Every field this provider reads, by type, before anything else.
   const user = optionalText(config.user, "user");
   const password = optionalText(config.password, "password");
   const pinnedBucket = optionalText(config.database, "database");
@@ -115,16 +115,17 @@ export function buildS3ConnectionOptions(
   const seedId = optionalText(config.seedId, "seedId");
   const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel");
   const tunnelEnabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled") === true;
-  // Row 2.
+  // A tunnel that is on but did not open.
   const farEnd: TunnelFarEnd | undefined = config[TUNNEL_FAR_END];
   if (tunnelEnabled && farEnd === undefined) throw refuse(S3_CONNECTION_SENTENCES.tunnelNotOpened);
-  // Row 3: the dialled host and port, then the far end's.
+  // The dialled host and port, then the far end's.
   const dialled = shared(() => httpOrigin("http", config.host, config.port ?? S3_DEFAULT_PORT));
   const host = farEnd === undefined ? dialled.host : shared(() => validateHost(farEnd.host));
   const port = farEnd === undefined ? dialled.port : shared(() => validatePort(farEnd.port));
-  // Row 4: PR 1 refuses the dialled origin when the transport is built; the far end is this module's.
+  // A link-local far end: the byte transport refuses a link-local dialled origin when it is built, and sees only the
+  // local forward under a tunnel.
   if (farEnd !== undefined) shared(() => assertNotLinkLocalLiteral(host));
-  // Rows 5 to 9.
+  // The key pair, the access key ID's characters and length, the secret's text, the bucket and the region.
   if ((user === undefined) !== (password === undefined)) throw refuse(S3_CONNECTION_SENTENCES.keyPair);
   if (user !== undefined && !S3_ACCESS_KEY_ID_PATTERN.test(user))
     throw refuse(S3_CONNECTION_SENTENCES.accessKeyIdCharacters);
@@ -134,12 +135,12 @@ export function buildS3ConnectionOptions(
   if (pinnedBucket !== undefined && !S3_BUCKET_PATTERN.test(pinnedBucket)) throw refuse(S3_CONNECTION_SENTENCES.bucket);
   const region = regionField ?? S3_DEFAULT_REGION;
   if (!S3_REGION_PATTERN.test(region)) throw refuse(S3_CONNECTION_SENTENCES.region);
-  // Row 10: identity is the far end under a tunnel, never the local forward.
+  // The TLS panel; identity is the far end under a tunnel, never the local forward.
   const tls = shared(() => nodeTlsMaterial(config.ssl, host));
-  // Row 11: no TLS, not loopback, not tunnelled, no consent: refused, signed or unsigned alike.
+  // Plain HTTP: no TLS, not loopback, not tunnelled, no consent: refused, signed or unsigned alike.
   if (tls === null && farEnd === undefined && !isLoopbackHost(host) && !allowInsecureAuth)
     throw refuse(S3_CONNECTION_SENTENCES.plaintext);
-  // Rows 12 and 13.
+  // The read-only source, and a read-only seed with a credential that would break its promise.
   const readOnly = readOnlySource(config.readOnly, seedId, context.executionReadOnly);
   if (readOnly === "seed") {
     const refusal = readOnlySeedRefusal(S3_TYPE, {
@@ -148,7 +149,7 @@ export function buildS3ConnectionOptions(
     });
     if (refusal !== undefined) throw refuse(S3_CONNECTION_SENTENCES.seedRefused(refusal));
   }
-  // Row 14.
+  // The query timeout.
   const callTimeoutMs = callTimeout(context.queryTimeout);
   const scheme = tls === null ? "http" : "https";
   const credentials =

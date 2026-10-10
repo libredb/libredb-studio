@@ -187,7 +187,7 @@ const metaOf = (chunk: ColumnChunk): ColumnMetaData => chunk.meta_data as Column
 
 const ZERO = BigInt(0);
 
-/** An i64 as hyparquet parses one (a bigint) between 0 and 2^53 - 1, checked before any Number() coercion. */
+/** An i64 as hyparquet parses one: a bigint between 0 and 2^53 - 1. Callers coerce with Number() only after it. */
 const isCount = (value: unknown): boolean =>
   typeof value === "bigint" && value >= ZERO && Number.isSafeInteger(Number(value));
 

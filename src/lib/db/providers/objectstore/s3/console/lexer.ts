@@ -1,7 +1,7 @@
 /**
  * The S3 editor text, read as words: one AWS CLI read command, or Studio's own preview.
  *
- * Pure, and shipped to the browser. The words are the shared shell-word reader's
+ * Pure apart from a one-text line cache, and shipped to the browser. The words are the shared shell-word reader's
  * (`src/lib/db/console/shell-words.ts`): its quoting, its refusals and its one-command rule. This module adds what
  * is S3's: a scan for the Windows `^` continuation before the reader runs, the prompt and the optional `aws` a
  * pasted line carries, the refusal of a leading environment assignment, the option-word rule, where the service and

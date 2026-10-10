@@ -1,5 +1,6 @@
 /**
- * The response headers the S3 provider asks PR 1's byte transport for, and the reader of an object HEAD.
+ * The response headers the S3 provider asks the byte transport (src/lib/db/http/node-transport.ts) for, and the
+ * reader of an object HEAD.
  *
  * `content-type` and `content-encoding` are not in the selection: `NodeByteResponse` carries them as fields.
  * `x-amz-request-id` and `x-request-id` are read only to print in an unclassified failure. The transport hands values

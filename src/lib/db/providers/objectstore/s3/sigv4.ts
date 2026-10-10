@@ -1,6 +1,7 @@
 /**
  * SigV4 for S3: the signer measured against the AWS suite, in TypeScript, without its non-S3 path normalisation,
- * and the `RequestSigner` PR 1's byte transport calls once per request, at send time.
+ * and the `RequestSigner` the byte transport (src/lib/db/http/node-transport.ts) calls once per request, at send
+ * time.
  *
  * The canonical request is the method, the canonical URI, the canonical query, `name:value\n` per sorted header, the
  * signed header list and the payload hash, joined by "\n"; the string to sign is `AWS4-HMAC-SHA256`, the date, the
@@ -87,7 +88,7 @@ export function amzDateOf(date: Date): string {
 /**
  * `SigningInput.query` is in the caller's order and is not a canonical query: its pairs, split at
  * their first "=", sorted by encoded name then encoded value, joined by "&"; "" stays "". A pair with no "=" throws an
- * Error naming the defect, which PR 1 routes to the request unchanged.
+ * Error naming the defect, which the byte transport routes to the request unchanged.
  */
 export function canonicalQueryOf(query: string): string {
   if (query === "") return "";
@@ -103,7 +104,10 @@ export function canonicalQueryOf(query: string): string {
     .join("&");
 }
 
-/** PR 1's RequestSigner for one session: service "s3", the empty payload hash, the clock read at send time. */
+/**
+ * The byte transport's RequestSigner for one session: service "s3", the empty payload hash, the clock read at send
+ * time.
+ */
 export function s3Signer(credentials: S3Credentials, region: string, clock: () => Date): RequestSigner {
   return {
     headerNames: ["authorization", "x-amz-date", "x-amz-content-sha256"],
@@ -119,7 +123,8 @@ export function s3Signer(credentials: S3Credentials, region: string, clock: () =
       const authorization = signatureV4(
         {
           method: input.method,
-          // PR 1's path grammar is SigV4's UriEncode alphabet, so the wire path is the canonical URI unchanged.
+          // The byte transport's path grammar is SigV4's UriEncode alphabet, so the wire path is the canonical URI
+          // unchanged.
           canonicalUri: input.path,
           canonicalQuery: canonicalQueryOf(input.query),
           headers: signed,

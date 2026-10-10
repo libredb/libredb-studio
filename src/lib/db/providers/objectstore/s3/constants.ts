@@ -48,7 +48,10 @@ export const S3_CURSOR_PAYLOAD_MAX_BYTES = 12_288;
 export const S3_CURSOR_TEXT_MAX_CHARS = 16_390;
 /** MinIO's minimum; the keys of all four verified servers are longer. */
 export const S3_ACCESS_KEY_ID_MIN_CHARS = 3;
-/** The ID, a region of up to 64 characters and about 150 fixed characters fit PR 1's 1,024-byte header rule. */
+/**
+ * The ID, a region of up to 64 characters and about 150 fixed characters fit the byte transport's 1,024-byte header
+ * rule.
+ */
 export const S3_ACCESS_KEY_ID_MAX_CHARS = 512;
 /** AWS's key limit; the one name of the key byte bound the console re-exports. */
 export const S3_KEY_MAX_BYTES = 1_024;
