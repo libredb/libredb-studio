@@ -13,11 +13,13 @@ import {
   runS3Row,
   runS3Surface,
   S3_ACCEPTANCE,
+  s3LiveConnection,
   type S3AcceptanceRow,
+  type S3Observed,
   type S3RunContext,
   type S3StepRun,
 } from "./s3-live-support";
-import type { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
+import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 
 export interface S3ScenarioExtras {
   /** assertObjectSurface with S3_CONFORMANCE, passed in by a Bun caller, so this module loads under Node. */
@@ -61,6 +63,84 @@ const RECORDED_STEPS: Readonly<Record<string, readonly string[]>> = {
   A52: ["readonly-off"],
 };
 
+/** The console scenarios over the seeded bucket studio-demo: each step's name and its console text. */
+const CONSOLE_SCENARIO_STEPS = {
+  "console-ls": [["ls", "aws s3 ls s3://studio-demo/data/"]],
+  "console-list-objects-v2-token": [
+    ["first-page", "aws s3api list-objects-v2 --bucket studio-demo --prefix folders/ --max-items 3 --page-size 2"],
+    [
+      "starting-token",
+      "aws s3api list-objects-v2 --bucket studio-demo --prefix folders/ --max-items 3 --page-size 2 --starting-token ",
+    ],
+  ],
+  "console-head-object": [["head-object", "aws s3api head-object --bucket studio-demo --key data/table.csv"]],
+  "console-preview": [["preview", "preview s3://studio-demo/data/table.csv --max-rows 20"]],
+} as const satisfies Readonly<Record<string, readonly (readonly [string, string])[]>>;
+
+type ConsoleScenarioName = keyof typeof CONSOLE_SCENARIO_STEPS;
+
+/** The step that runs the previous step's command again with the token its read-on notice names, appended to its text. */
+const CONSOLE_TOKEN_STEP = "starting-token";
+
+/** The read-on notice for list-objects-v2 ends "to read on, run the command again with --starting-token <token>."; a token is base64. */
+const READ_ON_TOKEN = /to read on, run the command again with --starting-token ([A-Za-z0-9+/=]+)\.$/;
+
+/** The token of the one read-on notice among a step's notices; a step without exactly one is a failed scenario. */
+function readOnToken(step: string, notices: readonly string[] | undefined): string {
+  const tokens = (notices ?? []).flatMap((notice) => {
+    const match = READ_ON_TOKEN.exec(notice);
+    return match === null ? [] : [match[1]];
+  });
+  if (tokens.length !== 1)
+    throw new Error(`${step} gave ${tokens.length} read-on tokens, not one: ${JSON.stringify(notices ?? [])}`);
+  return tokens[0];
+}
+
+/** One console scenario's commands, in order, as the browse principal (the console's reader role). */
+async function consoleRunner(context: S3RunContext, name: ConsoleScenarioName): Promise<readonly S3StepRun[]> {
+  const connection = s3LiveConnection(context.target, context.principals, { role: "browse" }, context.ca);
+  const provider = new S3Provider(
+    connection,
+    {},
+    {},
+    {
+      createTransport: context.createTransport,
+      clock: context.clockFor(0),
+      signerWrapper: context.signerWrapper,
+    },
+  );
+  const runs: S3StepRun[] = [];
+  let token: string | undefined;
+  context.setStep("connect");
+  await provider.connect();
+  try {
+    for (const [step, written] of CONSOLE_SCENARIO_STEPS[name]) {
+      if (step === CONSOLE_TOKEN_STEP && token === undefined)
+        throw new Error(`${name} ${step} runs after a step whose notice names a token`);
+      const text = step === CONSOLE_TOKEN_STEP ? `${written}${token}` : written;
+      context.setStep(step);
+      const before = context.recorded().length;
+      const result = await provider.query(text, [], `${name}-${step}`);
+      const notices = (result.warnings ?? []).map((warning) => warning.message);
+      const ok: S3Observed = {
+        rows: result.rowCount,
+        names: result.fields,
+        ...(result.columnTypes === undefined ? {} : { headers: { ...result.columnTypes } }),
+        notices,
+      };
+      if (step === "first-page") token = readOnToken(`${name} ${step}`, notices);
+      runs.push({
+        summary: { step, ok, exchanges: context.recorded().length - before },
+        context: { connection, command: text },
+        sockets: context.sockets(),
+      });
+    }
+  } finally {
+    await provider.disconnect();
+  }
+  return runs;
+}
+
 export const S3_SCENARIOS: readonly S3Scenario[] = [
   {
     name: "surface",
@@ -85,6 +165,35 @@ export const S3_SCENARIOS: readonly S3Scenario[] = [
     clockOffsetMs: -90_000_000,
     targets: ["garage"],
     shows: "The clock 25 hours behind, which only Garage bounds",
+  },
+  {
+    name: "console-ls",
+    runner: (run) => consoleRunner(run, "console-ls"),
+    steps: ["ls"],
+    clockOffsetMs: 0,
+    shows: "The console's aws s3 ls s3://studio-demo/data/ as the browse principal",
+  },
+  {
+    name: "console-list-objects-v2-token",
+    runner: (run) => consoleRunner(run, "console-list-objects-v2-token"),
+    steps: ["first-page", "starting-token"],
+    clockOffsetMs: 0,
+    shows:
+      "aws s3api list-objects-v2 --bucket studio-demo --prefix folders/ --max-items 3 --page-size 2, then the same command with the --starting-token its read-on notice names",
+  },
+  {
+    name: "console-head-object",
+    runner: (run) => consoleRunner(run, "console-head-object"),
+    steps: ["head-object"],
+    clockOffsetMs: 0,
+    shows: "aws s3api head-object --bucket studio-demo --key data/table.csv",
+  },
+  {
+    name: "console-preview",
+    runner: (run) => consoleRunner(run, "console-preview"),
+    steps: ["preview"],
+    clockOffsetMs: 0,
+    shows: "preview s3://studio-demo/data/table.csv --max-rows 20 from the console",
   },
 ];
 

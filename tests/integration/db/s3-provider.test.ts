@@ -12,7 +12,7 @@
  * RELEASE.2026-09-16T00-00-00Z, Garage v2.4.1 and RustFS 1.0.1, each pinned in database-compose.yml.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
@@ -24,7 +24,12 @@ import {
   readDigestTable,
   S3_CAPTURES_ROOT,
 } from "../../helpers/s3-fixtures";
-import { recordedS3Transport, type S3Capture, type S3RecordedTransport } from "../../helpers/s3-wire";
+import {
+  recordedS3Transport,
+  type S3Capture,
+  type S3RecordedTransport,
+  scriptedS3Transport,
+} from "../../helpers/s3-wire";
 import { runS3Scenario, S3_SCENARIOS, scenariosFor } from "../../live/s3-evidence-plan";
 import {
   replayPrincipals,
@@ -33,6 +38,8 @@ import {
   type S3StepSummary,
   wireViolations,
 } from "../../live/s3-live-support";
+import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
+import type { DatabaseConnection } from "@/lib/types";
 
 /** Every file the README's digest table names: `| <set>/<file>.json | <sha256> |`. */
 const TABLE = readDigestTable(readFileSync(path.join(S3_CAPTURES_ROOT, "README.md"), "utf8"));
@@ -135,6 +142,88 @@ describe("console over captures", () => {
       expect(summaries.every((summary) => summary.refused !== undefined && summary.exchanges === 0)).toBe(true);
       // Only the session's own connect probes were sent, never anything the refused commands asked for.
       expect(recorded.sent.every((request) => request.method === "GET" && request.path === "/")).toBe(true);
+    }
+  });
+
+  const LIST_ALL_MY_BUCKETS =
+    '<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>o</ID></Owner><Buckets><Bucket><Name>studio-demo</Name><CreationDate>2026-10-01T00:00:00.000Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>';
+
+  /** An unsigned, unpinned provider connected over one scripted probe answer; nothing else is scripted. */
+  async function connected(): Promise<{ readonly provider: S3Provider; readonly transport: S3RecordedTransport }> {
+    const transport = scriptedS3Transport([
+      {
+        expect: { method: "GET", path: "/", query: "max-buckets=10000" },
+        answer: {
+          status: 200,
+          headers: [],
+          headersTruncated: false,
+          contentType: "application/xml",
+          contentEncoding: null,
+          retryAfter: null,
+          truncated: false,
+          body: { text: LIST_ALL_MY_BUCKETS },
+        },
+        synthetic: true,
+        source: "the ListAllMyBucketsResult shape of the S3 API reference",
+      },
+    ]);
+    const config = {
+      id: "s3-console",
+      name: "s3 console",
+      type: "s3",
+      host: "127.0.0.1",
+      port: 9000,
+      user: "",
+      password: "",
+    } as DatabaseConnection;
+    const provider = new S3Provider(config, {}, {}, { createTransport: transport.createTransport });
+    await provider.connect();
+    return { provider, transport };
+  }
+
+  test("query() refuses parameters before any request", async () => {
+    const { provider, transport } = await connected();
+    await expect(provider.query("aws s3 ls", ["x"])).rejects.toThrow(
+      "S3 commands take no parameters: write the values in the command.",
+    );
+    expect(transport.sent.length).toBe(1);
+  });
+
+  test.each([
+    [
+      "aws s3 cp s3://studio-demo/a .",
+      "cp writes, and Studio's S3 support reads only in this version: run it with the AWS CLI or your server's own tools. To read an object here, run preview s3://bucket/key.",
+    ],
+    [
+      "aws s3api get-object-attributes --bucket studio-demo --key data/table.csv",
+      "get-object-attributes is not read in this version: one of the servers Studio is verified on answers it with the whole object. Run aws s3api head-object for the size, ETag and storage class.",
+    ],
+    [
+      "aws s3 ls --region eu-west-1",
+      "--region names a region other than this connection's us-east-1: the Region field on the connection decides the region every request is signed for.",
+    ],
+    [
+      "aws s3 ls --endpoint-url http://127.0.0.1:9001",
+      "--endpoint-url names an address other than this connection's http://127.0.0.1:9000: Host and Port on the connection decide where Studio connects.",
+    ],
+    [
+      "aws s3api list-objects-v2 --bucket studio-demo --start-after data/",
+      "--start-after is refused: with a delimiter some servers skip a whole folder after it, and others return an empty page. Use --starting-token to read on.",
+    ],
+  ])("the server refuses %s and sends nothing (sent.length === 0 past the probe)", async (text, sentence) => {
+    const { provider, transport } = await connected();
+    await expect(provider.query(text)).rejects.toThrow(sentence);
+    expect(transport.sent.length).toBe(1);
+    transport.assertConsumed();
+  });
+
+  test("no recorded request carries ?attributes, start-after, fetch-owner, key-marker or version-id-marker", () => {
+    const root = path.join(import.meta.dir, "..", "..", "fixtures", "s3", "captures");
+    const files = readdirSync(root, { recursive: true, encoding: "utf8" }).filter((file) => file.endsWith(".json"));
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const text = readFileSync(path.join(root, file), "utf8");
+      expect(text, file).not.toMatch(/(^|[?&"])(attributes|start-after|fetch-owner|key-marker|version-id-marker)=/m);
     }
   });
 });
