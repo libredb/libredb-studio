@@ -224,3 +224,54 @@ describe("a listing its provider capped", () => {
     }
   });
 });
+
+describe("a scoped walk", () => {
+  const containers: readonly Container[] = [
+    { path: ["Cluster"], name: "Cluster", level: 0 },
+    { path: ["default"], name: "default", level: 0, isSessionDefault: true },
+    { path: ["shop"], name: "shop", level: 0 },
+    { path: ["billing"], name: "billing", level: 0 },
+  ];
+
+  test("reads the session-default container and the ones the provider names, and says how many it did not", async () => {
+    const { snapshot, harness } = await captured({
+      kinds: [POD],
+      containers,
+      extra: { agentWalkScope: { mode: "session-default", alsoWalk: [["Cluster"]] } },
+    });
+
+    expect(harness.countObjects.mock.calls.map((call) => call[0])).toEqual([["Cluster"], ["default"]]);
+    expect(snapshot.unreadContainers).toEqual({ count: 2, label: "Namespace", labelPlural: "Namespaces" });
+    for (const packed of packings(snapshot)) {
+      expect(packed).toContain("Not read: 2 other Namespaces.");
+    }
+  });
+
+  test("one container left out is named in the singular", async () => {
+    const { snapshot } = await captured({
+      kinds: [POD],
+      containers: containers.slice(0, 3),
+      extra: { agentWalkScope: { mode: "session-default", alsoWalk: [["Cluster"]] } },
+    });
+
+    for (const packed of packings(snapshot)) expect(packed).toContain("Not read: 1 other Namespace.");
+  });
+
+  test("no scope reads every container and carries no note", async () => {
+    const { snapshot, harness } = await captured({ kinds: [POD], containers });
+
+    expect(harness.countObjects).toHaveBeenCalledTimes(4);
+    expect(snapshot.unreadContainers).toBeUndefined();
+    for (const packed of packings(snapshot)) expect(packed).not.toContain("Not read:");
+  });
+
+  test("a scope that keeps every container carries no note", async () => {
+    const { snapshot } = await captured({
+      kinds: [POD],
+      containers: containers.slice(0, 2),
+      extra: { agentWalkScope: { mode: "session-default", alsoWalk: [["Cluster"]] } },
+    });
+
+    expect(snapshot.unreadContainers).toBeUndefined();
+  });
+});

@@ -85,7 +85,7 @@ import type {
   ReadOnlyStatementMode,
 } from "@/lib/db/types";
 import type { ContainerEnumeration } from "@/lib/db/container-walk";
-import { enumerationOf, kindsByContainer } from "@/lib/db/container-walk";
+import { enumerationOf, kindsByContainer, scopeGroundingContainers } from "@/lib/db/container-walk";
 import {
   applicableKinds,
   containerDepth,
@@ -3053,7 +3053,13 @@ async function walkObjectInventory(
   const listObjects = provider.listObjects.bind(provider);
   const describeObjects = provider.describeObjects.bind(provider);
 
-  const enumeration = await enumerateGroundingContainers(provider, capabilities);
+  // A provider that declares a walk scope is read in its session-default container and the ones it names; the
+  // rest are counted, so the inventory can say what it did not read.
+  const scoped = scopeGroundingContainers(
+    await enumerateGroundingContainers(provider, capabilities),
+    capabilities.agentWalkScope,
+  );
+  const enumeration = scoped.enumeration;
   const { containers, defaultContainer } = enumeration;
   // A container that names its kinds is walked for those alone: asking it for another would meet the
   // provider's refusal and end the whole capture.
@@ -3166,7 +3172,16 @@ async function walkObjectInventory(
     ...(capabilities.tablesAreDerivedGroupings === true && spec.role === "relation" ? { derivedGroupings: true } : {}),
   }));
 
-  const inventory: AgentInventory = truncated === undefined ? { objects, kinds } : { objects, kinds, truncated };
+  // The deepest level's words, because the scope keeps or skips containers at that level.
+  const level = capabilities.containerLevels?.[containerDepth(capabilities) - 1];
+  const inventory: AgentInventory = {
+    objects,
+    kinds,
+    ...(truncated === undefined ? {} : { truncated }),
+    ...(scoped.unread > 0 && level !== undefined
+      ? { unreadContainers: { count: scoped.unread, label: level.label, labelPlural: level.labelPlural } }
+      : {}),
+  };
   return defaultContainer === undefined ? { inventory } : { inventory, defaultContainer };
 }
 

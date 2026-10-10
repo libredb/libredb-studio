@@ -16,7 +16,8 @@
  * now, so there is no absence to report and no reason for this to know what an HTTP status is.
  */
 import { containerDepth } from "@/lib/db/object-kinds";
-import type { Container, DatabaseProvider } from "@/lib/db/types";
+import { pathKey } from "@/lib/db/object-path";
+import type { Container, DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 
 /**
  * What one walk of the container tree answered.
@@ -202,4 +203,35 @@ export async function describeNamedContainers(
 export function sessionDefaultContainer(level: readonly Container[]): readonly string[] | undefined {
   const defaults = level.filter((container) => container.isSessionDefault === true);
   return defaults.length === 1 ? defaults[0].path : undefined;
+}
+
+/**
+ * The containers an agent walk reads under a provider's `agentWalkScope`, and how many it leaves out.
+ *
+ * No scope keeps the enumeration whole. A scope keeps the session-default container and every container
+ * `alsoWalk` names, in the enumeration's own order, with each kept container's kinds beside it; a path `alsoWalk`
+ * names that the enumeration does not hold is not invented. The default is carried unchanged, since it is a fact
+ * about the session and not about what was read.
+ */
+export function scopeGroundingContainers(
+  enumeration: ContainerEnumeration,
+  scope: ProviderCapabilities["agentWalkScope"],
+): { readonly enumeration: ContainerEnumeration; readonly unread: number } {
+  if (scope === undefined) return { enumeration, unread: 0 };
+  const wanted = new Set(
+    [
+      ...(enumeration.defaultContainer === undefined ? [] : [enumeration.defaultContainer]),
+      ...(scope.alsoWalk ?? []),
+    ].map(pathKey),
+  );
+  const kept = enumeration.containers.flatMap((path, index) => (wanted.has(pathKey(path)) ? [index] : []));
+  const { containerKinds, ...rest } = enumeration;
+  return {
+    enumeration: {
+      ...rest,
+      containers: kept.map((index) => enumeration.containers[index]),
+      ...(containerKinds === undefined ? {} : { containerKinds: kept.map((index) => containerKinds[index]) }),
+    },
+    unread: enumeration.containers.length - kept.length,
+  };
 }

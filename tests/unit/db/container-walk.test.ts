@@ -1,10 +1,12 @@
 import { describe, test, expect } from "bun:test";
 import {
+  type ContainerEnumeration,
   describeNamedContainers,
   enumerateContainers,
   namedContainerListings,
   enumerationOf,
   kindsByContainer,
+  scopeGroundingContainers,
   sessionDefaultContainer,
 } from "@/lib/db/container-walk";
 import type { Container, ContainerLevels, DatabaseProvider } from "@/lib/db/types";
@@ -203,5 +205,55 @@ describe("the kinds a container walk carries", () => {
     });
     expect(await describeNamedContainers(provider, [[]])).toEqual({ enumeration: { containers: [[]] }, unlisted: [] });
     expect(asked).toEqual([]);
+  });
+});
+
+describe("scopeGroundingContainers", () => {
+  const enumeration: ContainerEnumeration = {
+    containers: [["Cluster"], ["default"], ["shop"], ["billing"]],
+    containerKinds: [["nodes"], ["pods"], ["pods"], ["pods"]],
+    defaultContainer: ["default"],
+  };
+
+  test("no scope keeps the whole enumeration and leaves nothing unread", () => {
+    expect(scopeGroundingContainers(enumeration, undefined)).toEqual({ enumeration, unread: 0 });
+  });
+
+  test("a scope keeps the default and the named containers in walk order, each with its own kinds", () => {
+    expect(scopeGroundingContainers(enumeration, { mode: "session-default", alsoWalk: [["Cluster"]] })).toEqual({
+      enumeration: {
+        containers: [["Cluster"], ["default"]],
+        containerKinds: [["nodes"], ["pods"]],
+        defaultContainer: ["default"],
+      },
+      unread: 2,
+    });
+  });
+
+  test("a named container the enumeration does not hold is not invented", () => {
+    const scoped = scopeGroundingContainers(enumeration, { mode: "session-default", alsoWalk: [["kube-system"]] });
+    expect(scoped.enumeration.containers).toEqual([["default"]]);
+    expect(scoped.unread).toBe(3);
+  });
+
+  test("with no session default, only the named containers are read", () => {
+    const noDefault: ContainerEnumeration = {
+      containers: enumeration.containers,
+      containerKinds: enumeration.containerKinds,
+    };
+    const scoped = scopeGroundingContainers(noDefault, { mode: "session-default", alsoWalk: [["Cluster"]] });
+    expect(scoped.enumeration).toEqual({ containers: [["Cluster"]], containerKinds: [["nodes"]] });
+    expect(scoped.unread).toBe(3);
+  });
+
+  test("an enumeration that carries no kinds stays without them", () => {
+    const noKinds: ContainerEnumeration = {
+      containers: enumeration.containers,
+      defaultContainer: enumeration.defaultContainer,
+    };
+    expect(scopeGroundingContainers(noKinds, { mode: "session-default" }).enumeration).toEqual({
+      containers: [["default"]],
+      defaultContainer: ["default"],
+    });
   });
 });

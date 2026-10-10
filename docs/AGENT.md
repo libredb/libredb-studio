@@ -514,6 +514,8 @@ An object whose listing carried `readRanges`, an etcd group the user's grants re
 A kind a provider declares with `machineNames: "withheld"` is counted and never listed, so no object name of that kind enters the capture: the run is told how many the walk counted (`withheldCount`) and that their names are withheld, or the provider's sentence where the count was refused, or, where a container read gave no count for it (`withheldUncounted`), that its names are withheld and were not counted.
 The object tree and the editor still list those names to the user; only the agent's walk loses them.
 MCP's `inspect_schema` and the app's schema read take relation kinds only and are not changed by this declaration, which is why only a kind whose role is not `relation` declares it.
+A provider that declares `agentWalkScope` is walked in its session-default container and the containers it names, rather than in every container, and the inventory carries `unreadContainers`, which the packing says as "Not read: N other" followed by the provider's own word for its containers.
+It exists for an engine whose containers are too many to walk within one statement's deadline; with no session default, only the named containers are read.
 An absence the model was not told about is read as an absence in the database, which is #414 in one sentence.
 
 **What the provider path costs, and what it cannot promise.** One statement of the run's budget, where

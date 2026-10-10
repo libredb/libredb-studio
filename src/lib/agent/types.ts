@@ -623,6 +623,11 @@ export interface AgentInventory {
   /** Present only where a bound actually bit. Absent is a claim of completeness. */
   readonly truncated?: { readonly limit: number; readonly reason: string };
   /**
+   * The containers a scoped walk did not read (`ProviderCapabilities.agentWalkScope`), counted and named by the
+   * deepest container level's own words. Absent means every container was read.
+   */
+  readonly unreadContainers?: { readonly count: number; readonly label: string; readonly labelPlural: string };
+  /**
    * The container the session is IN, where the reading that produced this knew it (#789).
    *
    * It is the tie-breaker for every consumer of the address rule, and it is carried on the

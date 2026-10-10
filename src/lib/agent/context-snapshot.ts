@@ -1296,7 +1296,7 @@ function renderColumn(table: AgentInventoryObject, column: ColumnSchema): string
 /**
  * What the run is told ABOUT the inventory, as opposed to what is in it.
  *
- * Six sentences, none of them decoration, each closing one way a model reads a true
+ * Seven sentences, none of them decoration, each closing one way a model reads a true
  * list as a true statement about the database:
  *
  *  - **Incompleteness.** The bulk read bounds both the listings it issues and the objects
@@ -1335,6 +1335,8 @@ function renderColumn(table: AgentInventoryObject, column: ColumnSchema): string
  *    every machine surface, so the walk counted it and listed none of it. The note says how many were
  *    counted, or that none was, and that none is below, and it is not gated on what was rendered, for the
  *    reason above.
+ *  - **Containers a scoped walk did not read.** `ProviderCapabilities.agentWalkScope` reads the
+ *    session-default container and the ones the provider names, and the note says how many others exist.
  *
  * Inside the fence with the inventory rather than in the preface, the same as the omission
  * notice already is: each one is about the lines beside it, and the bound belongs to the
@@ -1342,10 +1344,16 @@ function renderColumn(table: AgentInventoryObject, column: ColumnSchema): string
  */
 function inventoryNotes(inventory: AgentInventory, shown: readonly AgentInventoryObject[]): readonly string[] {
   const notes: string[] = [];
-  const { truncated } = inventory;
+  const { truncated, unreadContainers } = inventory;
   if (truncated !== undefined) {
     notes.push(
       `This inventory is incomplete: the reading stopped at a count of ${truncated.limit} (${truncated.reason}), so an object that is not listed below may still exist. Do not read an absence from this list as an absence in the database.`,
+    );
+  }
+  if (unreadContainers !== undefined) {
+    const word = unreadContainers.count === 1 ? unreadContainers.label : unreadContainers.labelPlural;
+    notes.push(
+      `Not read: ${unreadContainers.count} other ${word}. This inventory covers only the ${unreadContainers.labelPlural} its entries are named under, so an object in any other one is not listed below. Do not read its absence as an absence in the database.`,
     );
   }
   // Each kind note says "the X BELOW are", so it is gated on the kind being in what was

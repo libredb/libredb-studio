@@ -1468,6 +1468,21 @@ export interface ProviderCapabilities {
    */
   keyScan?: KeyScanCapability;
   /**
+   * Which containers the agent's grounding walk reads.
+   *
+   * Absent: every container, as before. `{ mode: "session-default" }`: the one container `listContainers` marks
+   * `isSessionDefault` at the deepest level, plus each container `alsoWalk` names by its full path. The walk counts
+   * the containers it left out and the inventory says so as `AgentInventory.unreadContainers`, so a model is never
+   * handed one container as the whole database. It is for an engine whose container count makes a whole walk cost
+   * hundreds of reads.
+   *
+   * Optional for the same published-interface reason as `containerLevels`.
+   */
+  agentWalkScope?: {
+    readonly mode: "session-default";
+    readonly alsoWalk?: readonly (readonly string[])[];
+  };
+  /**
    * The row actions this engine offers on objects of named kinds, in menu order. See `KindRowAction`.
    *
    * Absent: no row offers one, which is every engine declared before this field existed. Read through
