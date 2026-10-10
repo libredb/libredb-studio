@@ -87,13 +87,15 @@ describe("QUERY_DIALECTS", () => {
         offersCountQuery: false,
         offersSqlExport: false,
       },
-      // Kubernetes: the API server's own columns, so no profile, model or count statement, and no SQL export.
+      // Kubernetes: the API server's own columns, so no profile, model or count statement, and no SQL export; history
+      // masks the four credential flags the console refuses.
       kubectl: {
         tabType: "kubectl",
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,
         offersSqlExport: false,
+        historyMask: { credentialFlags: ["--token", "--password", "--client-key", "--client-certificate"] },
       },
     });
   });

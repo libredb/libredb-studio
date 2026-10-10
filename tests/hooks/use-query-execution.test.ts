@@ -5864,3 +5864,107 @@ describe("the real influxdb row and the influxdb3 split", () => {
     expect(paths).toEqual(["/api/db/query"]);
   });
 });
+
+// The kubectl dialect's history mask at the hook's own history sites, with the connection's metadata loaded and
+// before it loads. The console refuses a credential flag on its command line, so the only way a typed credential
+// reaches a history site is a comment line, which the console drops and sends as typed.
+describe("useQueryExecution: the kubectl history mask", () => {
+  const MARKER = "kubectl-history-marker-3c9d";
+  const kubernetesConnection: DatabaseConnection = {
+    id: "qe-k8s-1",
+    name: "Test Kubernetes",
+    type: "kubernetes",
+    host: "api.example",
+    port: 6443,
+    password: "token-not-the-marker",
+    database: "shop",
+    createdAt: new Date("2025-01-01T00:00:00Z"),
+    environment: "development",
+  };
+  const kubectlMetadata: ProviderMetadata = {
+    capabilities: {
+      queryLanguage: "json" as const,
+      queryDialect: "kubectl" as const,
+      supportsExplain: false,
+      supportsExternalQueryLimiting: true,
+      supportsCreateTable: false,
+      supportsInlineRowEdit: false,
+      supportsMaintenance: false,
+      maintenanceOperations: [],
+      supportsConnectionString: false,
+      defaultPort: 6443,
+      schemaRefreshPattern: "(?!)",
+    },
+    labels: mockMetadata.labels,
+  };
+  const kubectlResult = {
+    rows: [{ NAME: "web-1" }],
+    fields: ["NAME"],
+    rowCount: 1,
+    executionTime: 3,
+    pagination: { limit: 500, offset: 0, hasMore: false, totalReturned: 1, wasLimited: false },
+  };
+
+  let historySpy: ReturnType<typeof spyOn>;
+  beforeEach(() => {
+    historySpy = spyOn(storage, "addToHistory").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    historySpy.mockRestore();
+    restoreGlobalFetch();
+  });
+
+  function mountKubectl(metadata: ProviderMetadata | null) {
+    const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: kubectlResult } });
+    const params = createDefaultParams({
+      activeConnection: kubernetesConnection,
+      metadata,
+      currentTab: createTab({ type: "kubectl", query: "kubectl get pods -n shop" }),
+    });
+    const { result } = renderHook(() => useQueryExecution(params));
+    return { result, fetchMock };
+  }
+
+  function routeBodies(fetchMock: ReturnType<typeof mockGlobalFetch>): string[] {
+    return fetchMock.mock.calls
+      .filter(([input]) => new URL(String(input), "http://localhost:3000").pathname === "/api/db/query")
+      .map(([, init]) => String(init?.body));
+  }
+
+  test.each([
+    ["loaded", kubectlMetadata],
+    ["still null", null],
+  ] as const)(
+    "with the metadata %s, history stores no credential while the route gets the text as typed",
+    async (_label, metadata) => {
+      const { result, fetchMock } = mountKubectl(metadata);
+      const typed = `# kubectl get pods --token=${MARKER}\nkubectl get pods -n shop`;
+      await act(async () => {
+        await result.current.executeQuery(typed);
+      });
+      const bodies = routeBodies(fetchMock);
+      expect(bodies).toHaveLength(1);
+      expect(JSON.parse(bodies[0]!).sql).toBe(typed);
+      expect(historySpy).toHaveBeenCalledTimes(1);
+      const stored = (historySpy.mock.calls[0]![0] as { query: string }).query;
+      expect(stored).not.toContain(MARKER);
+      expect(stored).toContain("--token");
+      expect(stored).toContain("kubectl get pods -n shop");
+    },
+  );
+
+  test.each([
+    ["loaded", kubectlMetadata],
+    ["still null", null],
+  ] as const)(
+    "with the metadata %s, a credential flag on the command line is refused, sent nowhere and never stored",
+    async (_label, metadata) => {
+      const { result, fetchMock } = mountKubectl(metadata);
+      await act(async () => {
+        await result.current.executeQuery(`kubectl get pods --token=${MARKER}`);
+      });
+      expect(routeBodies(fetchMock)).toEqual([]);
+      expect(historySpy).not.toHaveBeenCalled();
+    },
+  );
+});
