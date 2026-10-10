@@ -291,7 +291,8 @@ export type S3Check =
   | { readonly names: readonly string[] }
   | { readonly pages: readonly number[]; readonly noRepeat: true }
   | { readonly headers: Readonly<Record<string, string>> }
-  | { readonly notice: string; readonly rows?: number }
+  /** `names`, when given, must equal the observed names exactly and in order: the columns a preview kept. */
+  | { readonly notice: string; readonly rows?: number; readonly names?: readonly string[] }
   | { readonly exchanges: 0 };
 
 export type S3Expectation =
@@ -1131,24 +1132,30 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
       minio: steps(
         [
           "narrow",
-          ok("rows for the leading 4 of 5 columns, with notice N-PQ-SOME-COLUMNS: the fifth passes the value cap", {
-            notice: "notice:N-PQ-SOME-COLUMNS",
-            rows: S3_PREVIEW_DEFAULT_ROWS,
-          }),
+          ok(
+            "rows for the leading 4 of 5 columns (id, name, amount, d), with notice N-PQ-SOME-COLUMNS naming k = 4 of 5: the fifth passes the value cap",
+            { notice: "notice:N-PQ-SOME-COLUMNS", rows: S3_PREVIEW_DEFAULT_ROWS, names: ["id", "name", "amount", "d"] },
+          ),
         ],
         [
           "wide",
-          ok("rows for the leading columns that fit, with notice N-PQ-SOME-COLUMNS naming k = 4 of 60", {
-            notice: "notice:N-PQ-SOME-COLUMNS",
-            rows: S3_PREVIEW_DEFAULT_ROWS,
-          }),
+          ok(
+            "rows for the leading 4 of 60 columns (c0_int, c1_str, c2_dbl, c3_date), with notice N-PQ-SOME-COLUMNS naming k = 4 of 60",
+            {
+              notice: "notice:N-PQ-SOME-COLUMNS",
+              rows: S3_PREVIEW_DEFAULT_ROWS,
+              names: ["c0_int", "c1_str", "c2_dbl", "c3_date"],
+            },
+          ),
         ],
       ),
     }),
     evidence: [
       "pyarrow and Polars default files, measured on Node and Bun",
       "docs/providers/s3.md",
-      "first live run, 2026-10-10: k = 4 on both files, as the offline plan gives over the same generated files",
+      "tests/unit/db/s3/preview-parquet.test.ts: k = 4 of 5 and 4 of 60, and the kept names, over the files the raw seed writes, at the shipped limits",
+      "the narrow file's fifth column passes the value cap, as a row group larger than the value caps does (docs/providers/s3.md, D274)",
+      "first live run, 2026-10-10",
     ],
   },
   {
@@ -1712,6 +1719,8 @@ function checkFailure(check: S3Check, seen: S3Observed, context: S3SentenceConte
     if (!(seen.notices ?? []).some((notice) => sentenceMatches(notice, resolved)))
       return `no notice matching ${check.notice} among ${JSON.stringify(seen.notices ?? [])}`;
     if (check.rows !== undefined && seen.rows !== check.rows) return `${seen.rows} rows, expected ${check.rows}`;
+    if (check.names !== undefined && JSON.stringify(seen.names ?? []) !== JSON.stringify(check.names))
+      return `names ${JSON.stringify(seen.names ?? [])}, expected exactly ${JSON.stringify(check.names)}`;
     return undefined;
   }
   if ("names" in check)

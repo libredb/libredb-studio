@@ -3,7 +3,8 @@
  * large to commit and the 10,050 one-byte held/ keys that reach the Keys panel's held limit.
  *
  * It never sends a request itself: it writes the Parquet files into a fresh temporary directory with the
- * repository's DuckDB, then runs the target's own seed one-shot with that directory mounted read-only, so the one
+ * repository's DuckDB (tests/helpers/s3-large-parquet.ts, the writer the preview's unit case reads too), then runs
+ * the target's own seed one-shot with that directory mounted read-only, so the one
  * signer every fixture object goes through, curl --aws-sigv4 in docker/s3/seed.sh, writes these objects too. No
  * provider module gains a write path for a fixture. tests/unit/db/s3/live-environment.test.ts holds both rules.
  *
@@ -13,9 +14,10 @@
  * not accept exits 2 before anything runs; silo-tls is refused, because no row it runs needs a run-time object.
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { writeLargeParquet } from "../helpers/s3-large-parquet";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
@@ -48,37 +50,6 @@ const TARGETS: Readonly<Record<string, SeedTarget>> = {
   rustfs: { service: "rustfs-seed", endpoint: "http://rustfs:9000", region: "us-east-1", server: "rustfs" },
 };
 
-// The narrow and wide Parquet datasets the preview's fetch budget was measured on, written with DuckDB's default row groups and zstd.
-const NARROW = `SELECT i::INTEGER AS id,
-  'customer_' || (i % 50000)::VARCHAR || '_' || substr(md5(i::VARCHAR), 1, 8) AS name,
-  ((hash(i) % 1000000) / 100.0)::DOUBLE AS amount,
-  (DATE '2020-01-01' + (i % 2000)::INTEGER) AS d,
-  (i % 3 = 0) AS flag
-FROM range(1000000) t(i)`;
-
-function wideSql(): string {
-  const columns: string[] = [];
-  for (let k = 0; k < 60; k++) {
-    switch (k % 5) {
-      case 0:
-        columns.push(`((i * ${k + 1}) % 1000003)::INTEGER AS c${k}_int`);
-        break;
-      case 1:
-        columns.push(`substr(md5((i * 61 + ${k})::VARCHAR), 1, ${8 + (k % 17)}) AS c${k}_str`);
-        break;
-      case 2:
-        columns.push(`((hash(i + ${k}) % 10000000) / 1000.0)::DOUBLE AS c${k}_dbl`);
-        break;
-      case 3:
-        columns.push(`(DATE '2015-01-01' + ((i + ${k}) % 4000)::INTEGER) AS c${k}_date`);
-        break;
-      default:
-        columns.push(`((i + ${k}) % 7 = 0) AS c${k}_bool`);
-    }
-  }
-  return `SELECT ${columns.join(",\n  ")} FROM range(200000) t(i)`;
-}
-
 const args = process.argv.slice(2);
 const target = args[0] === "--target" && args.length === 2 ? TARGETS[args[1]] : undefined;
 if (target === undefined) {
@@ -89,17 +60,7 @@ if (target === undefined) {
 const dir = mkdtempSync(path.join(tmpdir(), "s3-seed-raw-"));
 let exit = 1;
 try {
-  const large = path.join(dir, "parquet/large");
-  mkdirSync(large, { recursive: true });
-  const { DuckDBInstance } = await import("@duckdb/node-api");
-  const connection = await (await DuckDBInstance.create(":memory:")).connect();
-  await connection.run(
-    `COPY (${NARROW}) TO '${path.join(large, "narrow-zstd.parquet")}' (FORMAT parquet, COMPRESSION zstd)`,
-  );
-  await connection.run(
-    `COPY (${wideSql()}) TO '${path.join(large, "wide-zstd.parquet")}' (FORMAT parquet, COMPRESSION zstd)`,
-  );
-  connection.closeSync();
+  await writeLargeParquet(dir);
   const compose = ["compose", "-p", "libredb-studio", "-f", path.join(ROOT, "database-compose.yml")];
   if (target.profile !== undefined) compose.push("--profile", target.profile);
   const run = spawnSync(

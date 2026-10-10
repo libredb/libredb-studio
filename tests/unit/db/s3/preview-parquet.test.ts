@@ -2,8 +2,9 @@
  * The S3 Parquet preview: what the preview decides before it reads any column data (footer, guards,
  * parsers, plan and summary), then the reads, the page pre-scan, the guarded decode and the process-wide decode slot.
  */
-import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   brotliCompressSync,
@@ -49,6 +50,7 @@ import {
   syntheticParquet,
   withTail,
 } from "../../../helpers/parquet-synthetic";
+import { writeLargeParquet } from "../../../helpers/s3-large-parquet";
 import { fakeReader, fixture, headOf } from "../../../helpers/s3-preview-reader";
 import { THRIFT, type ThriftValue, thriftStruct, varint } from "../../../helpers/thrift-compact";
 
@@ -1408,6 +1410,32 @@ describe("leading mode drops the columns past the pre-scan's value total", () =>
     ).not.toThrow();
     expect(totals.values).toBe(33);
   });
+});
+
+describe("the two large DuckDB files the raw seed writes (row A39)", () => {
+  let dir = "";
+  beforeAll(async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "s3-large-parquet-"));
+    await writeLargeParquet(dir);
+  }, 120_000);
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  const someColumns = (k: number, n: number) =>
+    `Showing ${k} of ${n} columns: the next column would take the first row group's read past 8.00 MiB, its decoded size past 32.00 MiB, its leaf columns past ${leafCapText} or its values past ${valueCapText}, the most a preview reads.`;
+
+  for (const [file, n, kept] of [
+    ["narrow-zstd.parquet", 5, ["id", "name", "amount", "d"]],
+    ["wide-zstd.parquet", 60, ["c0_int", "c1_str", "c2_dbl", "c3_date"]],
+  ] as const) {
+    test(`${file}: at the shipped limits the preview keeps ${kept.length} of ${n} columns with N-PQ-SOME-COLUMNS`, async () => {
+      const object = new Uint8Array(readFileSync(path.join(dir, "parquet/large", file)));
+      const outcome = await previewParquet(inputFor(object, `parquet/large/${file}`).input);
+      if (outcome.kind !== "parquet") throw new Error(`expected parquet, got ${JSON.stringify(outcome)}`);
+      expect(outcome.rows?.columns.map((column) => column.name)).toEqual([...kept]);
+      expect(outcome.rows?.rows).toHaveLength(S3_PREVIEW_LIMITS.defaultRows);
+      expect(outcome.notices.filter((notice) => notice.startsWith("Showing "))).toEqual([someColumns(kept.length, n)]);
+    }, 60_000);
+  }
 });
 
 /** The bytes of one page header: a valid data page's facts and a 4-byte body, then `extra` before the stop byte. */

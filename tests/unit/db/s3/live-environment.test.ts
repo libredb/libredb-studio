@@ -1533,6 +1533,30 @@ describe("the acceptance matrix S3_ACCEPTANCE", () => {
     );
   });
 
+  test("the evaluator: a notice check with names holds the kept columns exactly, in order", () => {
+    const connection = s3LiveConnection("silo", readS3Principals("silo"), { role: "root" });
+    const notice =
+      "Showing 4 of 5 columns: the next column would take the first row group's read past 8.00 MiB, its decoded size past 32.00 MiB, its leaf columns past 1,024 or its values past 524,288, the most a preview reads.";
+    const check = {
+      kind: "ok",
+      detail: "",
+      check: { notice: "notice:N-PQ-SOME-COLUMNS", rows: 100, names: ["id", "name", "amount", "d"] },
+    } as const;
+    const at = (names: readonly string[]) =>
+      checkS3Step(
+        check,
+        { step: "narrow", ok: { rows: 100, names, notices: [notice] }, exchanges: 2 },
+        { connection },
+        1,
+      );
+    expect(at(["id", "name", "amount", "d"])).toBeUndefined();
+    expect(at(["id", "name", "amount", "d", "flag"])).toBe(
+      'names ["id","name","amount","d","flag"], expected exactly ["id","name","amount","d"]',
+    );
+    expect(at(["id", "amount", "d"])).toContain("expected exactly");
+    expect(at(["name", "id", "amount", "d"])).toContain("expected exactly");
+  });
+
   test("the evaluator: rows, names in order, pages with no repeat, headers", () => {
     const connection = s3LiveConnection("silo", readS3Principals("silo"), { role: "root" });
     const at = (check: Parameters<typeof checkS3Step>[0], ok: object) =>
