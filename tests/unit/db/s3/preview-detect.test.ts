@@ -11,7 +11,7 @@ import {
   sniffMagic,
 } from "@/lib/db/providers/objectstore/s3/preview-detect";
 
-describe("encodingLayer (step 2)", () => {
+describe("encodingLayer", () => {
   test("absent, empty and identity are no layer", () => {
     expect(encodingLayer(undefined)).toEqual({ kind: "none" });
     expect(encodingLayer("")).toEqual({ kind: "none" });
@@ -32,7 +32,7 @@ describe("encodingLayer (step 2)", () => {
   });
 });
 
-describe("extensionOf (step 3)", () => {
+describe("extensionOf", () => {
   test("the extension table, case-insensitive, read from the last segment", () => {
     expect(extensionOf("a/b.parquet")).toEqual({ gzip: false, format: "parquet" });
     expect(extensionOf("b.PARQ")).toEqual({ gzip: false, format: "parquet" });
@@ -60,7 +60,7 @@ describe("extensionOf (step 3)", () => {
   });
 });
 
-describe("sniffMagic (step 4) and contentTypeHint (step 5)", () => {
+describe("sniffMagic and contentTypeHint", () => {
   test("1f 8b is gzip, PAR1 at offset 0 is Parquet, anything else nothing", () => {
     expect(sniffMagic(Uint8Array.of(0x1f, 0x8b, 0x08))).toBe("gzip");
     expect(sniffMagic(new TextEncoder().encode("PAR1xyz"))).toBe("parquet");
