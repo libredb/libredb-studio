@@ -42,7 +42,7 @@
       "variableDescriptions": {
         "JWT_SECRET": "Secret key used to sign login session tokens. Auto-generated — keep it.",
         "ADMIN_EMAIL": "Login email for the ADMIN account (full access incl. maintenance tools).",
-        "ADMIN_PASSWORD": "Password for the admin account. Auto-generated; find it in Variables after deploy. It seeds the account once, while the server store is still empty; changing it later needs ADMIN_PASSWORD_RESET=true in the same redeploy.",
+        "ADMIN_PASSWORD": "Password for the admin account. Auto-generated; find it in Variables after deploy. It seeds the account once, while the server store is still empty; changing it later takes effect only once ADMIN_PASSWORD_RESET=true is set with the new value already in place, see the README.",
         "USER_EMAIL": "Login email for the standard, query-only account.",
         "USER_PASSWORD": "Password for the standard user. Auto-generated; find it in Variables after deploy. Seeds the account once, with no reset flag and no warning: change it under Admin → Accounts in Studio.",
         "NEXT_PUBLIC_AUTH_PROVIDER": "Auth mode: 'local' (email/password). Set 'oidc' for SSO (needs the OIDC_* optional vars).",
@@ -62,7 +62,8 @@
         "OIDC_ROLE_CLAIM": { "example": "realm_access.roles", "description": "Claim path holding user roles, used for admin mapping." },
         "OIDC_ADMIN_ROLES": { "example": "admin", "description": "Comma-separated role values mapped to admin. Defaults to 'admin'." },
         "STORAGE_POSTGRES_URL": { "example": "postgresql://user:pass@host:5432/db", "description": "PostgreSQL URL for multi-node storage. Also set STORAGE_PROVIDER=postgres." },
-        "ADMIN_PASSWORD_RESET": { "example": "true", "description": "Set it to true for one redeploy, together with a new ADMIN_PASSWORD, to replace the stored admin password, then remove it. It also clears that account's passkeys and sets its second factor from ADMIN_TOTP_SECRET, or clears the factor when that variable is not set." }
+        "ADMIN_TOTP_SECRET": { "example": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", "description": "Optional second factor for the admin account, as a base32 shared secret. It must be at least 128 bits or the app refuses every login with 503; generate one with: openssl rand 20 | base32. Leave it unset for password-only sign-in." },
+        "ADMIN_PASSWORD_RESET": { "example": "true", "description": "Set it to true for one redeploy to make the stored admin password match ADMIN_PASSWORD, then remove it. Set the new password first, in this or an earlier redeploy. It also clears that account's passkeys, ends its other sessions, and sets its second factor from ADMIN_TOTP_SECRET, or clears the factor when that variable is unset." }
       },
       "$note": "variables = pre-configured (entered with defaults). optionalVariables = mark each as OPTIONAL in the editor so deployers can fill them only if needed (empty non-optional vars become REQUIRED in Railway). Volumes are attached via right-click on the canvas, not the Settings panel."
     }

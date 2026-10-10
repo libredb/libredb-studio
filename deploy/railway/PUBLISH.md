@@ -28,7 +28,7 @@ The `${{ secret(...) }}` values are generated once, when the template is deploye
 |----------|-------|-------------|
 | `JWT_SECRET` | `${{ secret(48) }}` | Secret key used to sign login session tokens. Auto-generated — keep it. |
 | `ADMIN_EMAIL` | `admin@libredb.org` | Login email for the ADMIN account (full access incl. maintenance tools). |
-| `ADMIN_PASSWORD` | `${{ secret(16) }}` | Password for the admin account. Auto-generated; find it in Variables after deploy. It seeds the account once, while the server store is still empty; changing it later needs `ADMIN_PASSWORD_RESET=true` in the same redeploy, see the README. |
+| `ADMIN_PASSWORD` | `${{ secret(16) }}` | Password for the admin account. Auto-generated; find it in Variables after deploy. It seeds the account once, while the server store is still empty; changing it later takes effect only once `ADMIN_PASSWORD_RESET=true` is set with the new value already in place, see the README. |
 | `USER_EMAIL` | `user@libredb.org` | Login email for the standard, query-only account. |
 | `USER_PASSWORD` | `${{ secret(16) }}` | Password for the standard user. Auto-generated; find it in Variables after deploy. Seeds the account once, with no reset flag and no warning: change it under **Admin → Accounts** in Studio. |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `local` | Auth mode: 'local' (email/password). Set 'oidc' for SSO (needs the OIDC_* optional vars). |

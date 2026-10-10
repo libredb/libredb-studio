@@ -97,10 +97,13 @@ To replace the admin password:
    redeploy does that, and so does a second redeploy after the first, which
    simply leaves the password alone.
 3. Sign in with the new password to confirm it took.
-4. Remove `ADMIN_PASSWORD_RESET`, because every start applies it again while it
-   is set. It also clears that account's passkeys, ends its other sessions, and
-   sets its second factor from `ADMIN_TOTP_SECRET`, or clears the factor when
-   that variable is not set.
+4. Remove `ADMIN_PASSWORD_RESET`, because it applies again on every container
+   lifetime while it is set, at that same first account-store read. It also
+   clears that account's passkeys, ends its other sessions, and sets its second
+   factor from `ADMIN_TOTP_SECRET`, or clears the factor when that variable is
+   unset. If you do want a second factor, `ADMIN_TOTP_SECRET` is in the optional
+   variables, and it has to be at least 128 bits (`openssl rand 20 | base32`):
+   a shorter one does not degrade, it refuses every login with a 503.
 
 `USER_PASSWORD` has no equivalent flag. Change that account under
 **Admin → Accounts** in Studio. See [STORAGE.md](../../docs/STORAGE.md#accounts).
