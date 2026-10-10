@@ -32,7 +32,7 @@ const FINGERPRINT = /^[0-9a-f]{40}:[^:\s]+:[a-z0-9-]+:[0-9]+$/;
 const contentLines = lines.map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
 
 describe(".gitleaksignore", () => {
-  test("has fingerprint entries - 24 from the sweep, plus #708's ApiKey fixture, plus 2 added since, plus the S3 branch's 34", () => {
+  test("has fingerprint entries - 24 from the sweep, plus #708's ApiKey fixture, plus 2 added since, plus the S3 squash commit's 16", () => {
     // 24 came out of the 2026-08-09 full-history sweep. The 3 added since are
     // #708's fabricated ApiKey-header test pair, plus one placeholder JWT
     // secret written twice into the release runbook's smoke phase in 2ff08e3a,
@@ -42,16 +42,15 @@ describe(".gitleaksignore", () => {
     // ref reaches that commit any more: the server-text test's four went with
     // #1247.
     //
-    // The S3 provider branch adds 34: list cursors the scanner decodes from
-    // base64 (the capture sets recorded twice and re-recorded once, plus the
-    // console tests' tokens), one published SigV4 test vector and one line of
-    // backlog prose, each named by a branch commit. They go the same way once the branch is
-    // squash-merged.
+    // The S3 provider's squash commit 11717b7e (#1654) adds 16: list cursors
+    // the scanner decodes from base64 (the MinIO, RustFS and Silo capture sets
+    // plus the console tests' tokens) and one published SigV4 test vector. The
+    // branch's own 34 went when that squash landed, the same way.
     //
     // This number is the point of the test: a suppression is a decision someone
     // has to make on purpose, so both a line silently dropped and a line
     // silently added land here as a failing diff rather than as nothing.
-    expect(contentLines).toHaveLength(61);
+    expect(contentLines).toHaveLength(43);
   });
 
   test("every non-comment, non-blank line is a well-formed fingerprint", () => {
