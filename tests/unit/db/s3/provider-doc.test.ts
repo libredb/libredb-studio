@@ -1669,6 +1669,9 @@ describe("the architecture, provider, editor and guide docs", () => {
     expect(optimization).toContain("Fourteen providers cannot serve page two.");
     expect(optimization).toContain("Qdrant, Oxia and S3-compatible object storage answer it with page one.");
     expect(optimization).toContain("The S3 row names no operation and, like the Oxia row, is the gate's whole answer:");
+    expect(optimization).toContain(
+      "a Qdrant request, an `oxia client` read command or an AWS CLI read command is not judged by a SQL reader",
+    );
     expect(flat(read("docs/SCHEMA_DIFF.md"))).toContain(
       "Qdrant, Oxia and S3-compatible object storage receive an explanatory",
     );
@@ -1681,6 +1684,12 @@ describe("the architecture, provider, editor and guide docs", () => {
     );
     expect(guide).toContain(
       "      `s3` needs no driver but adds the Parquet decoders `hyparquet` and `hyparquet-compressors`, with their `//dependencies` note.",
+    );
+    expect(guide).toContain(
+      "      each add nothing here (`milvus` and `oxia` only extend the `//dependencies` note).\n      `s3` needs no driver",
+    );
+    expect(guide).toContain(
+      "is a library, and that is usually where the no-dependency promise ends. S3 shows it need not",
     );
   });
 });
