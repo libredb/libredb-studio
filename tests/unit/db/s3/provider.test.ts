@@ -568,6 +568,102 @@ describe("the console query", () => {
   });
 });
 
+describe("the console query parses with the connection's own context", () => {
+  const PINNED_REFUSAL =
+    "The command names a bucket other than this connection's sales: the Bucket field on the connection decides which bucket Studio reads.";
+
+  test.each(["aws s3 ls s3://other/", "aws s3api list-objects-v2 --bucket other"])(
+    "on a connection pinned to sales, %s is refused before any request",
+    async (text) => {
+      const { s3, fake } = provider(() => xmlAnswer(objectsXml({})), { database: "sales" });
+      await s3.connect();
+      const sent = fake.exchanges.length;
+      const error = await s3.query(text).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(QueryError);
+      expect((error as Error).message).toBe(PINNED_REFUSAL);
+      expect(fake.exchanges).toHaveLength(sent);
+    },
+  );
+
+  test("an --endpoint-url other than the connection's is refused before any request", async () => {
+    const { s3, fake } = provider(BUCKETS);
+    await s3.connect();
+    const error = await s3.query("aws s3 ls --endpoint-url http://elsewhere:9000").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(
+      "--endpoint-url names an address other than this connection's http://localhost:9000: Host and Port on the connection decide where Studio connects.",
+    );
+    expect(fake.exchanges).toHaveLength(1);
+  });
+
+  test("a --region other than the connection's is refused before any request", async () => {
+    const { s3, fake } = provider(BUCKETS);
+    await s3.connect();
+    const error = await s3.query("aws s3 ls --region eu-west-1").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(
+      "--region names a region other than this connection's us-east-1: the Region field on the connection decides the region every request is signed for.",
+    );
+    expect(fake.exchanges).toHaveLength(1);
+  });
+
+  test("on a read-only connection, a write command's refusal names the read-only mode", async () => {
+    const { s3, fake } = provider(BUCKETS, { readOnly: true });
+    await s3.connect();
+    const error = await s3.query("aws s3 rm s3://sales/a.csv").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(
+      "rm writes, and this connection is read-only. Studio's S3 support also reads only in this version, so turning the mode off would not run it: run it with the AWS CLI or your server's own tools.",
+    );
+    expect(fake.exchanges).toHaveLength(1);
+  });
+});
+
+describe("server text that holds a credential is withheld on the session's failure path", () => {
+  const WITHHELD = "(the server's text was withheld because it contained the configured credential)";
+  const SECRETS: string[] = ["test-secret-key", "AKIDTESTKEY"];
+  const failing = (secret: string): FakeS3Answer =>
+    xmlAnswer(errorXml("Weird", `the server echoed ${secret} back`), 400);
+
+  /** A provider whose requests answer the bucket list until `fail` is called, then the error naming `secret`. */
+  function failingAfter(secret: string) {
+    let failed = false;
+    const made = provider((request) => (failed ? failing(secret) : BUCKETS(request)));
+    return {
+      ...made,
+      fail: (): void => {
+        failed = true;
+      },
+    };
+  }
+
+  const expectWithheld = (error: unknown): void => {
+    expect(error).toBeInstanceOf(Error);
+    const { message } = error as Error;
+    expect(message).toContain(WITHHELD);
+    for (const secret of SECRETS) expect(message).not.toContain(secret);
+  };
+
+  test.each(SECRETS)("connect's probe withholds a message holding %s", async (secret) => {
+    const { s3 } = provider(() => failing(secret));
+    expectWithheld(await s3.connect().catch((caught: unknown) => caught));
+  });
+
+  test.each(SECRETS)("a surface read withholds a message holding %s", async (secret) => {
+    const { s3, fail } = failingAfter(secret);
+    await s3.connect();
+    fail();
+    expectWithheld(await s3.listObjects([], "bucket").catch((caught: unknown) => caught));
+  });
+
+  test.each(SECRETS)("a console run withholds a message holding %s", async (secret) => {
+    const { s3, fail } = failingAfter(secret);
+    await s3.connect();
+    fail();
+    expectWithheld(await s3.query("aws s3api list-buckets").catch((caught: unknown) => caught));
+  });
+});
+
 describe("the limiter", () => {
   test("at most 4 calls in flight per provider", async () => {
     const { s3, fake, waiting, hold } = held();
