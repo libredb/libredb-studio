@@ -49,7 +49,7 @@ export const S3_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
 
 export const S3_OBJECTS_LISTED_ELSEWHERE = "Objects are listed in the Keys panel and with aws s3 ls in the console.";
 
-export const S3_BUCKETS_SAMPLED_FROM = "the first 10,000 buckets this key may list";
+const S3_BUCKETS_SAMPLED_FROM = "the first 10,000 buckets this key may list";
 
 /** The preview parts of one object, after its HEAD: the provider wires the object preview here. */
 export type S3PreviewParts = (input: {

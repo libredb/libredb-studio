@@ -112,7 +112,7 @@ const DEFAULT_DEPS: S3ProviderDeps = {
 };
 
 /** A command has no binding, and dropping the values would run another command than the one written. */
-export const S3_PARAMETERS_REFUSAL = "S3 commands take no parameters: write the values in the command.";
+const S3_PARAMETERS_REFUSAL = "S3 commands take no parameters: write the values in the command.";
 
 /** One connected session: its transport, what the connection resolved to, and what every call of it shares. */
 interface S3Session {
