@@ -233,7 +233,18 @@ describe("buildRows", () => {
       limits({ outputChars: 7 }),
     );
     expect(built.rows.rows).toEqual([["abc", "de"]]);
-    expect(built.notices).toEqual(["The preview stopped after 1 rows, at 7 characters of cell text."]);
+    expect(built.notices).toEqual(["The preview stopped after 1 row, at 7 characters of cell text."]);
+    const two = buildRows(
+      grid([
+        ["abc", "de"],
+        ["fg", "h"],
+        ["k", "l"],
+      ]),
+      undefined,
+      10,
+      limits({ outputChars: 9 }),
+    );
+    expect(two.notices).toEqual(["The preview stopped after 2 rows, at 9 characters of cell text."]);
   });
 
   test("cut cells are counted with the cap in force", () => {

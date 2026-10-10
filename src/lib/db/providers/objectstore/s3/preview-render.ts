@@ -27,7 +27,7 @@ export const S3_PREVIEW_SENTENCES = Object.freeze({
   "N-CSV-RAGGED":
     "{k} record(s) have a different number of fields from the header: missing fields are empty and extra fields are shown in columns named by position.",
   "N-ROWS": "The preview stops at {cap} rows.",
-  "N-OUTPUT": "The preview stopped after {r} rows, at {cap} characters of cell text.",
+  "N-OUTPUT": "The preview stopped after {shown}, at {cap} characters of cell text.",
   "N-CELLS": "{k} cell(s) were cut at {cap} characters.",
   "N-COLUMNS": "Showing the first {cap} of {n} columns.",
   "N-GZIP-EMPTY": "The object is gzip-compressed and its decoded content is empty.",
@@ -79,7 +79,8 @@ export const S3_PREVIEW_SENTENCES = Object.freeze({
   "R-PQ-COLUMNS-BIG":
     "The columns asked for store {fetch} MiB ({decode} MiB decoded) in {leaves} leaf columns and {values} values in the first row group, over the preview's {fetchBudget} MiB read, {decodeBudget} MiB decode, {leafCap} leaf columns or {valueCap} values; ask for fewer columns.",
   "R-COLUMN": "The preview has no column {c}.",
-  "R-COLUMNS-LIST": "The column list names {c} twice or holds more than {cap} names.",
+  "R-COLUMNS-REPEATED": "The column list names {c} twice.",
+  "R-COLUMNS-MANY": "The column list holds more than {most}.",
   "R-SCHEMA": "--schema applies only to a Parquet object.",
   "R-MAX-ROWS": "--max-rows takes a whole number from 1 to {cap}, the most rows a Studio result holds.",
   "R-ROWS": "The object's rows could not be built, so it is shown as text.",
@@ -114,6 +115,11 @@ export function previewSentence(id: PreviewSentenceId, values: Readonly<Record<s
  */
 export function previewMaxRowsSentence(cap: number): string {
   return previewSentence("R-MAX-ROWS", { cap });
+}
+
+/** A count and its noun as a sentence writes them, in en-US grouping: the singular for exactly 1, else the plural. */
+export function counted(count: number, singular: string, plural: string): string {
+  return `${count.toLocaleString("en-US")} ${count === 1 ? singular : plural}`;
 }
 
 /** A byte count in MiB with two decimals, as the preview's sentences write budgets and sizes. */
@@ -274,7 +280,9 @@ function parquetParts(
   }
   const rows = boundedArray(keyedRows(preview.rows), "", SOURCE_CHARACTER_LIMIT);
   if (rows.kept < preview.rows.rows.length)
-    notices.push(previewSentence("N-OUTPUT", { r: rows.kept, cap: SOURCE_CHARACTER_LIMIT }));
+    notices.push(
+      previewSentence("N-OUTPUT", { shown: counted(rows.kept, "row", "rows"), cap: SOURCE_CHARACTER_LIMIT }),
+    );
   return withNotes(
     schemaPart,
     textPart("rows", "First rows", rows.text, "json", "rendered", place.limit),

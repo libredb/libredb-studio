@@ -43,7 +43,7 @@ describe("the preview's sentences, verbatim", () => {
       "N-CSV-RAGGED":
         "{k} record(s) have a different number of fields from the header: missing fields are empty and extra fields are shown in columns named by position.",
       "N-ROWS": "The preview stops at {cap} rows.",
-      "N-OUTPUT": "The preview stopped after {r} rows, at {cap} characters of cell text.",
+      "N-OUTPUT": "The preview stopped after {shown}, at {cap} characters of cell text.",
       "N-CELLS": "{k} cell(s) were cut at {cap} characters.",
       "N-COLUMNS": "Showing the first {cap} of {n} columns.",
       "N-GZIP-EMPTY": "The object is gzip-compressed and its decoded content is empty.",
@@ -98,7 +98,8 @@ describe("the preview's sentences, verbatim", () => {
       "R-PQ-COLUMNS-BIG":
         "The columns asked for store {fetch} MiB ({decode} MiB decoded) in {leaves} leaf columns and {values} values in the first row group, over the preview's {fetchBudget} MiB read, {decodeBudget} MiB decode, {leafCap} leaf columns or {valueCap} values; ask for fewer columns.",
       "R-COLUMN": "The preview has no column {c}.",
-      "R-COLUMNS-LIST": "The column list names {c} twice or holds more than {cap} names.",
+      "R-COLUMNS-REPEATED": "The column list names {c} twice.",
+      "R-COLUMNS-MANY": "The column list holds more than {most}.",
       "R-SCHEMA": "--schema applies only to a Parquet object.",
       "R-MAX-ROWS": "--max-rows takes a whole number from 1 to {cap}, the most rows a Studio result holds.",
       "R-ROWS": "The object's rows could not be built, so it is shown as text.",

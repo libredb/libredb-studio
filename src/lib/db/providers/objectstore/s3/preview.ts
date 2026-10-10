@@ -13,7 +13,7 @@ import { contentTypeHint, encodingLayer, extensionOf, parsesAsJson, sniffMagic }
 import { gunzipPrefix } from "./preview-gzip";
 import { jsonDocumentRows, ndjsonRows } from "./preview-json";
 import { PARQUET_DEPS, type ParquetDeps, previewParquet } from "./preview-parquet";
-import { previewMaxRowsSentence, previewSentence, spellName } from "./preview-render";
+import { counted, previewMaxRowsSentence, previewSentence, spellName } from "./preview-render";
 import { decodeText, hexRows, isPrintableText, reindentJson, textLines, utf8BackOff } from "./preview-text";
 
 /** What the HEAD that the Source tab or the console already ran said about the object. */
@@ -216,9 +216,9 @@ function checkRequest(request: S3PreviewRequest, limits: S3PreviewLimits): void 
     seen.add(name);
     return false;
   });
-  if (repeated !== undefined || columns.length > limits.maxColumns) {
-    throw refusal(previewSentence("R-COLUMNS-LIST", { c: spellName(repeated ?? columns[0]), cap: limits.maxColumns }));
-  }
+  if (repeated !== undefined) throw refusal(previewSentence("R-COLUMNS-REPEATED", { c: spellName(repeated) }));
+  if (columns.length > limits.maxColumns)
+    throw refusal(previewSentence("R-COLUMNS-MANY", { most: counted(limits.maxColumns, "name", "names") }));
 }
 
 async function hex(

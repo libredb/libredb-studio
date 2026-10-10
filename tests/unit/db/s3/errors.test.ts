@@ -119,6 +119,24 @@ describe("E1 to E7: transport failures", () => {
     );
   });
 
+  test("E1: one second is written in the singular, two in the plural", () => {
+    const timedOut = (timeoutMs: number) =>
+      mapped(
+        named(new TransportError("timeout", "The request did not finish within its time limit")),
+        "ListObjectsV2",
+        SIGNED,
+        {
+          timeoutMs,
+        },
+      ).message;
+    expect(timedOut(1_000)).toBe(
+      `The S3 server at http://localhost:9000 did not answer ${LIST} within 1 second; nothing was retried.`,
+    );
+    expect(timedOut(2_000)).toBe(
+      `The S3 server at http://localhost:9000 did not answer ${LIST} within 2 seconds; nothing was retried.`,
+    );
+  });
+
   test("E2: an abort after a cancel is the registry's QueryCancelledError, unchanged", () => {
     const run = new AbortController();
     const cancelled = new QueryCancelledError("The query was cancelled.");

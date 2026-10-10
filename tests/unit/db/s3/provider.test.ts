@@ -165,7 +165,7 @@ describe("deadlines and disconnect", () => {
     const error = await s3.getOverview().catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(TimeoutError);
     expect((error as Error).message).toBe(
-      "The S3 server at http://localhost:9000 did not answer list buckets within 1 seconds; nothing was retried.",
+      "The S3 server at http://localhost:9000 did not answer list buckets within 1 second; nothing was retried.",
     );
   });
 
@@ -535,7 +535,7 @@ describe("the console query", () => {
     hold();
     const error = await s3.query("aws s3api list-buckets").catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(TimeoutError);
-    expect((error as Error).message).toContain("within 1 seconds; nothing was retried.");
+    expect((error as Error).message).toContain("within 1 second; nothing was retried.");
   });
 
   test("cancel of a running run, and of an id that names none", async () => {

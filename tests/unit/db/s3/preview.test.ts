@@ -419,13 +419,19 @@ describe("previewObject: the request is checked before any GET", () => {
     }
   });
 
-  test("a repeated column name and more than maxColumns names are refused with R-COLUMNS-LIST", async () => {
+  test("a repeated column name and more than maxColumns names are refused, each with its own sentence", async () => {
     await expect(run(fixture("rows.csv"), "rows.csv", { request: { columns: ["id", "name", "id"] } })).rejects.toThrow(
-      "The column list names id twice or holds more than 1,024 names.",
+      "The column list names id twice.",
     );
     await expect(
       run(fixture("rows.csv"), "rows.csv", { request: { columns: ["a", "b"] }, limits: shrink({ maxColumns: 1 }) }),
-    ).rejects.toThrow("The column list names a twice or holds more than 1 names.");
+    ).rejects.toThrow("The column list holds more than 1 name.");
+    await expect(
+      run(fixture("rows.csv"), "rows.csv", {
+        request: { columns: ["a", "b", "c"] },
+        limits: shrink({ maxColumns: 2 }),
+      }),
+    ).rejects.toThrow("The column list holds more than 2 names.");
   });
 
   test("--schema on CSV is refused with R-SCHEMA before any GET, and on bytes that turn out not to be Parquet after", async () => {

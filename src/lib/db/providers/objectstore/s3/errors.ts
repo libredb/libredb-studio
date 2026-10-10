@@ -199,8 +199,8 @@ export const S3_VERBS: Readonly<Record<S3Operation, Verb>> = Object.freeze({
 
 /** Every sentence this mapping writes, frozen, so the provider doc's test reads them back. */
 export const S3_ERROR_SENTENCES = Object.freeze({
-  timeout: (endpoint: string, op: string, seconds: string): string =>
-    `The S3 server at ${endpoint} did not answer ${op} within ${seconds} seconds; nothing was retried.`,
+  timeout: (endpoint: string, op: string, duration: string): string =>
+    `The S3 server at ${endpoint} did not answer ${op} within ${duration}; nothing was retried.`,
   cancelled: "The query was cancelled.",
   closed: "The connection was closed while a request to the S3 server was in flight.",
   tooLarge: (op: string, cap: string): string =>
@@ -276,8 +276,10 @@ const ENCODING = /^[A-Za-z0-9._-]{1,64}$/;
 const ANONYMOUS = /anonymous access/i;
 const XML_ELEMENTS_CAP = `${S3_XML_MAX_ELEMENTS.toLocaleString("en-US")} XML elements`;
 
+/** A deadline in seconds with at most one decimal, "1 second" in the singular and any other count in the plural. */
 function seconds(ms: number): string {
-  return String(Number((ms / 1000).toFixed(1)));
+  const count = Number((ms / 1000).toFixed(1));
+  return count === 1 ? "1 second" : `${count} seconds`;
 }
 
 function capWords(bytes: number): string {

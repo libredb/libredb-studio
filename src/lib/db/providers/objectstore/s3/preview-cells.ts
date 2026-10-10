@@ -6,7 +6,7 @@
 import { QueryError } from "@/lib/db/errors";
 import { S3_PREVIEW_LIMITS, S3_TYPE, type S3PreviewLimits } from "./constants";
 import type { S3PreviewCell, S3PreviewColumn, S3PreviewRows } from "./preview";
-import { previewSentence, spellName } from "./preview-render";
+import { counted, previewSentence, spellName } from "./preview-render";
 
 const count = (value: number): string => value.toLocaleString("en-US");
 const hex2 = (byte: number): string => byte.toString(16).padStart(2, "0");
@@ -293,7 +293,8 @@ export function buildRows(
     type: typeOf(column, position),
   }));
   const notices = [...selection.notices];
-  if (stoppedByOutput) notices.push(previewSentence("N-OUTPUT", { r: rows.length, cap: limits.outputChars }));
+  if (stoppedByOutput)
+    notices.push(previewSentence("N-OUTPUT", { shown: counted(rows.length, "row", "rows"), cap: limits.outputChars }));
   else if ((source.available ?? source.rowCount) > rows.length)
     notices.push(previewSentence("N-ROWS", { cap: maxRows }));
   if (cutCells > 0) notices.push(previewSentence("N-CELLS", { k: cutCells, cap: limits.cellChars }));
