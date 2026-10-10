@@ -23,7 +23,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { appFetch } from "@/lib/config/base-path";
-import { containerDepth, enumerableKinds, isCountSampled, isCountUnavailable } from "@/lib/db/object-kinds";
+import {
+  applicableKinds,
+  containerDepth,
+  enumerableKinds,
+  isCountSampled,
+  isCountUnavailable,
+} from "@/lib/db/object-kinds";
 import type {
   Container,
   DatabaseObject,
@@ -298,7 +304,8 @@ const NO_IDS: ReadonlySet<string> = new Set();
  * A folder whose count is an exact `0` holds nothing to find, and one the engine refused to count
  * cannot be listed either, so neither is counted. A bounded count is a floor, `0+` included, so it
  * is. Failed reads are counted apart and left out of `reads`, so the press does not hammer a slot
- * that just answered 429.
+ * that just answered 429. A container that names its kinds (`Container.kinds`) has folders for those
+ * alone, so only those are read: any other pair would meet the provider's refusal.
  */
 function unreadReads(
   cache: TreeCache,
@@ -315,16 +322,14 @@ function unreadReads(
   for (const container of cache.containers) {
     if (container.path.length < depth) consider(childContainersRead(container.path));
   }
-  const leaves =
-    depth === 0
-      ? [[]]
-      : cache.containers.filter((container) => container.path.length === depth).map((container) => container.path);
-  for (const path of leaves) {
-    const counts = cache.counts[pathKey(path)];
-    for (const spec of kinds) {
+  const leaves: readonly Pick<Container, "path" | "kinds">[] =
+    depth === 0 ? [{ path: [] }] : cache.containers.filter((container) => container.path.length === depth);
+  for (const leaf of leaves) {
+    const counts = cache.counts[pathKey(leaf.path)];
+    for (const spec of applicableKinds(kinds, leaf.kinds)) {
       const count = counts?.[spec.id];
       if (count !== undefined && (isCountUnavailable(count) || (!isCountSampled(count) && count.count === 0))) continue;
-      consider(listRead(path, spec.id));
+      consider(listRead(leaf.path, spec.id));
     }
   }
   return { reads, failed };
@@ -484,6 +489,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 function isRenderableShape(read: TreeRead, data: unknown): boolean {
   if (read.slot.kind === "counts") return isRecord(data) && Object.values(data).every(isRecord);
+  // A container's `kinds` is read with `includes` inside the walk, so a host answering anything but a
+  // list of strings there would throw INSIDE the render; absent is the ordinary answer.
+  if (read.slot.kind === "containers") {
+    return (
+      Array.isArray(data) &&
+      data.every(
+        (entry) =>
+          isRecord(entry) &&
+          Array.isArray(entry.path) &&
+          (entry.kinds === undefined ||
+            (Array.isArray(entry.kinds) && entry.kinds.every((id) => typeof id === "string"))),
+      )
+    );
+  }
   // What the walk DEREFERENCES, and both fields are dereferenced rather than merely read.
   // `column.name` goes through `pathKey`, which calls `replaceAll` on it, so a non-string throws
   // INSIDE the walk; `column.type` has `.split("(")` called on it in the row. Neither `isPrimary`

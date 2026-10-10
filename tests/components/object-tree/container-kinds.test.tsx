@@ -92,6 +92,36 @@ describe("a tree over containers that name their kinds", () => {
     ]);
   });
 
+  test("the filter's read action lists only the pairs each container holds", async () => {
+    const { source, asked } = clusterSource();
+    const hook = mount(source);
+    await waitFor(() => expect(hook.result.current.rows.some((row) => row.kind === "group")).toBe(true));
+    act(() => hook.result.current.toggle("Cluster"));
+    await waitFor(() =>
+      expect(asked.some((request) => request.route === "counts" && request.container[0] === "Cluster")).toBe(true),
+    );
+    hook.rerender({ query: "web" });
+
+    act(() => hook.result.current.search?.readUnread());
+
+    await waitFor(() => expect(hook.result.current.search).toMatchObject({ unread: 0, reading: 0, failed: 0 }));
+    const lists = asked
+      .filter((request) => request.route === "list")
+      .map((request) => (request.route === "list" ? `${request.container[0]}/${request.kind}` : ""));
+    expect(lists.sort()).toEqual(["Cluster/nodes", "shop/deployments", "shop/pods"]);
+  });
+
+  test("a host answering kinds that are not a list of strings is reported, not rendered", async () => {
+    const { source } = clusterSource([{ path: ["shop"], name: "shop", level: 0, kinds: 5 }]);
+    const hook = mount(source);
+    await waitFor(() =>
+      expect(hook.result.current.rootFailure?.message).toBe(
+        "The containers reading answered with a body this tree cannot render",
+      ),
+    );
+    expect(hook.result.current.rows).toEqual([]);
+  });
+
   test("a group row asks for no read and offers no busy state", async () => {
     const { source, asked } = clusterSource();
     const hook = mount(source);
