@@ -11,7 +11,7 @@
  * The doc test never reaches a server: every provider it builds has a transport factory that throws or a fake one.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
@@ -44,6 +44,7 @@ import {
   S3_LIST_RESPONSE_BYTES,
   S3_MAX_BUCKETS_READ,
   S3_PREVIEW_DEFAULT_ROWS,
+  S3_PREVIEW_LIMITS,
   S3_RESULT_MAX_ROWS,
   S3_SERVER_TEXT_CHARS,
   S3_SHOWN_NAME_CHARS,
@@ -52,6 +53,8 @@ import {
   S3_XML_MAX_DEPTH,
   S3_XML_MAX_ELEMENTS,
 } from "@/lib/db/providers/objectstore/s3/constants";
+import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
+import { S3_OBJECTS_LISTED_ELSEWHERE } from "@/lib/db/providers/objectstore/s3/objects";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
 import { SeedConfigSchema } from "@/lib/seed/types";
 import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
@@ -520,5 +523,102 @@ describe("docs/providers/s3.md: the console's notices, as its modules state them
 
   test("section 5.7 quotes the repeated-token failure", () => {
     expect(flat(sectionOf(DOC, "### 5.7 Pagination and the starting token"))).toContain(S3_REPEATED_TOKEN_SENTENCE);
+  });
+});
+
+/** The provider every declaration case reads; it has no transport, so a call that would send fails loudly. */
+const provider = new S3Provider(
+  CONNECTION,
+  {},
+  {},
+  {
+    createTransport: () => {
+      throw new Error("the doc test never connects");
+    },
+  },
+);
+
+/** The client, console and preview modules a browser bundle may import. */
+const BROWSER_SET: ReadonlySet<string> = new Set([
+  "constants.ts",
+  "names.ts",
+  "xml.ts",
+  "shapes.ts",
+  "headers.ts",
+  "labels.ts",
+  "console/constants.ts",
+  "console/lexer.ts",
+  "console/paths.ts",
+  "console/token.ts",
+  "console/commands.ts",
+  "console/guard.ts",
+  "console/format.ts",
+  "console/generators.ts",
+  "console/statement-language.ts",
+  "preview-detect.ts",
+  "preview-text.ts",
+  "preview-csv.ts",
+  "preview-json.ts",
+  "parquet-schema.ts",
+  "parquet-thrift-guard.ts",
+  "preview-cells.ts",
+  "preview-render.ts",
+]);
+
+/** Every `.ts` file under `directory`, as a path relative to it. */
+function typescriptFiles(directory: string, prefix = ""): string[] {
+  return readdirSync(path.join(ROOT, directory), { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isDirectory()) return typescriptFiles(path.join(directory, entry.name), `${prefix}${entry.name}/`);
+    return entry.name.endsWith(".ts") ? [`${prefix}${entry.name}`] : [];
+  });
+}
+
+describe("docs/providers/s3.md: the provider's shape, as the built provider declares it", () => {
+  test("20. the module table names every module of the provider directory, and where it runs", () => {
+    const modules = sectionOf(DOC, "### 2.2 Modules");
+    const files = typescriptFiles(PROVIDER_DIRECTORY);
+    for (const file of files) {
+      const row = rowOf(modules, `\`${file}\``);
+      expect(row, file).toBeDefined();
+      const where = BROWSER_SET.has(file) ? "browser" : "server";
+      expect(row?.endsWith(`| ${where} |`), `${file} runs on the ${where}`).toBe(true);
+    }
+    const documented = modules.split("\n").filter((line) => /^\| `[a-z0-9/-]+\.ts` \|/.test(line));
+    expect(documented).toHaveLength(files.length);
+  });
+
+  test("21. the Keys panel declarations are getCapabilities()'s, and the doc says each", () => {
+    const capabilities = provider.getCapabilities();
+    expect(capabilities.supportsResultPagination).toBe(false);
+    expect(capabilities.containerLevels).toEqual([]);
+    const keyScan = capabilities.keyScan;
+    expect(keyScan?.levels?.rootKind).toBe("bucket");
+    const keys = flat(sectionOf(DOC, "### 6.4 The Keys panel"));
+    expect(keys).toContain(`separator \`${keyScan?.separator}\``);
+    expect(keys).toContain(`cursor \`${keyScan?.cursor}\``);
+    expect(keys).toContain(`pattern \`${keyScan?.pattern}\``);
+    expect(keys).toContain(`totalScope \`${keyScan?.totalScope}\``);
+    expect(keys).toContain(`levels.rootKind \`${keyScan?.levels?.rootKind}\``);
+    expect(keys).toContain(`defaultCount ${n(keyScan?.defaultCount ?? 0)}`);
+    expect(keys).toContain(`maxCount ${n(keyScan?.maxCount ?? 0)}`);
+    expect(keys).toContain("`containerLevels` is empty");
+    expect(keys).toContain("valid in every process that serves the connection");
+    expect(flat(sectionOf(DOC, "### 6.1 The object surface"))).toContain(S3_OBJECTS_LISTED_ELSEWHERE);
+  });
+
+  test("22. the cursor section states the cursor envelope", () => {
+    const cursor = flat(sectionOf(DOC, "### 3.7 The Keys panel cursor"));
+    expect(cursor).toContain("a stateless, scope-bound envelope with no MAC");
+    expect(cursor).toContain("valid in every process that serves the connection");
+    expect(cursor).toContain("a hand-written cursor of the right shape and scope can reach the server");
+  });
+
+  test("23. the object preview's limits table holds every limit, with its value", () => {
+    const preview = sectionOf(DOC, "#### Object preview");
+    for (const [name, value] of Object.entries(S3_PREVIEW_LIMITS)) {
+      const row = rowOf(preview, `\`${name}\``);
+      expect(row, name).toBeDefined();
+      expect(row, name).toContain(`| ${n(value as number)} |`);
+    }
   });
 });
