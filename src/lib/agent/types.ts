@@ -624,9 +624,15 @@ export interface AgentInventory {
   readonly truncated?: { readonly limit: number; readonly reason: string };
   /**
    * The containers a scoped walk did not read (`ProviderCapabilities.agentWalkScope`), counted and named by the
-   * deepest container level's own words. Absent means every container was read.
+   * deepest container level's own words, beside the dotted paths of the ones it did read: a read that lists no
+   * object names no container through its entries. Absent means every container was read.
    */
-  readonly unreadContainers?: { readonly count: number; readonly label: string; readonly labelPlural: string };
+  readonly unreadContainers?: {
+    readonly count: number;
+    readonly label: string;
+    readonly labelPlural: string;
+    readonly read: readonly string[];
+  };
   /**
    * The container the session is IN, where the reading that produced this knew it (#789).
    *
