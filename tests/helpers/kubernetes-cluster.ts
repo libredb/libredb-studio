@@ -21,6 +21,8 @@ import {
 
 export interface FakeRow {
   readonly name: string;
+  /** The Name cell when the printer writes more than the name, as StorageClass's ` (default)`; the name otherwise. */
+  readonly cell?: string;
   readonly ready?: string;
   readonly status?: string;
 }
@@ -32,6 +34,8 @@ export interface FakeClusterOptions {
   readonly lists?: Readonly<Record<string, readonly FakeRow[]>>;
   /** Object path to its JSON body. */
   readonly objects?: Readonly<Record<string, unknown>>;
+  /** Collection paths whose empty page answers `rows: null`, as the default Table convertor does. */
+  readonly rowsNull?: readonly string[];
   /** Paths (no query) that answer 403. */
   readonly forbidden?: readonly string[];
   /** The `status.allowed` a SelfSubjectAccessReview body answers. */
@@ -48,17 +52,33 @@ const COLUMNS = [
   { name: "Age", type: "string", format: "", priority: 0 },
 ];
 
-function page(rows: readonly FakeRow[], search: URLSearchParams): NodeResponse {
+function page(rows: readonly FakeRow[], search: URLSearchParams, rowsNull: boolean): NodeResponse {
   const start = Number(search.get("continue") ?? "0");
   const limit = Number(search.get("limit") ?? String(rows.length));
   const slice = rows.slice(start, start + limit);
   const end = start + slice.length;
+  // With includeObject=Metadata each row carries its object's metadata, as a PartialObjectMetadata.
+  const metadata = search.get("includeObject") === "Metadata";
   return jsonAnswer({
     kind: "Table",
     apiVersion: "meta.k8s.io/v1",
     metadata: { resourceVersion: "100", ...(end < rows.length ? { continue: String(end) } : {}) },
     columnDefinitions: COLUMNS,
-    rows: slice.map((row) => ({ cells: [row.name, row.ready ?? "", row.status ?? "", "5m"] })),
+    rows:
+      rowsNull && slice.length === 0
+        ? null
+        : slice.map((row) => ({
+            cells: [row.cell ?? row.name, row.ready ?? "", row.status ?? "", "5m"],
+            ...(metadata
+              ? {
+                  object: {
+                    kind: "PartialObjectMetadata",
+                    apiVersion: "meta.k8s.io/v1",
+                    metadata: { name: row.name },
+                  },
+                }
+              : {}),
+          })),
   });
 }
 
@@ -81,7 +101,7 @@ export function fakeCluster(options: FakeClusterOptions = {}): KubernetesAnswerF
       return jsonAnswer({ ...body, status: { allowed: options.allows?.(attributes) ?? false } }, 201);
     }
     const rows = options.lists?.[path];
-    if (rows !== undefined) return page(rows, url.searchParams);
+    if (rows !== undefined) return page(rows, url.searchParams, options.rowsNull?.includes(path) === true);
     const object = options.objects?.[path];
     if (object !== undefined) return jsonAnswer(object);
     return statusAnswer(404, "NotFound");
@@ -94,10 +114,17 @@ export function manyRows(prefix: string, count: number): FakeRow[] {
 }
 
 /** A tree surface over a recording transport answered by `answer`, for a connection with `overrides`. */
-export function testSurface(answer: KubernetesAnswerFn, overrides?: Partial<DatabaseConnection>) {
+export function testSurface(
+  answer: KubernetesAnswerFn,
+  overrides?: Partial<DatabaseConnection>,
+  options: { readonly queryTimeout?: number } = {},
+) {
   const transport = recordingKubernetesTransport(answer);
   const seams = testSeams(transport);
-  const endpoint = readClusterEndpoint(kubernetesConnection(overrides), { queryTimeout: 30_000, appVersion: null });
+  const endpoint = readClusterEndpoint(kubernetesConnection(overrides), {
+    queryTimeout: options.queryTimeout ?? 30_000,
+    appVersion: null,
+  });
   const client = createKubernetesClient(endpoint, seams);
   const call = (): KubernetesCall => ({ signal: new AbortController().signal, timeoutMs: endpoint.callTimeoutMs });
   const discovery = new DiscoveryCache(() => readDiscovery(client, call()), seams.now);

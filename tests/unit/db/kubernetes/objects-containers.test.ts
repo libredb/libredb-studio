@@ -89,6 +89,17 @@ describe("listKubernetesContainers", () => {
     expect(await listNamespaces(surface)).toEqual({ names: ["team-a", "team-b"], forbidden: false });
   });
 
+  test("a listed namespace name that is not a DNS-1123 label fails the namespace list with a sentence", async () => {
+    for (const odd of ["Cluster", "a/b"]) {
+      const { surface } = testSurface(
+        fakeCluster({ lists: { "/api/v1/namespaces": [{ name: "shop" }, { name: odd }] } }),
+      );
+      await expect(listKubernetesContainers(surface)).rejects.toThrow(
+        "The API server listed a namespace whose name is not a DNS-1123 label, which no namespace can have, so Studio does not list the namespaces; list the ones to show in the connection's Namespaces field.",
+      );
+    }
+  });
+
   test("an error other than 403 is raised, not hidden", async () => {
     const { surface } = testSurface(() => {
       throw new QueryError("down");

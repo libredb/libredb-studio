@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { QueryError } from "@/lib/db/errors";
+import { AuthenticationError, QueryError } from "@/lib/db/errors";
+import { type NodeRequest, type NodeResponse, TransportError } from "@/lib/db/http/node-transport";
 import { kindsForContainerName } from "@/lib/db/providers/platform/kubernetes/kinds";
 import {
   countKubernetesObjects,
@@ -12,9 +13,49 @@ import {
 } from "@/lib/db/providers/platform/kubernetes/objects";
 import { expectCalls } from "../../../helpers/call-log";
 import { fakeCluster, manyRows, testSurface } from "../../../helpers/kubernetes-cluster";
+import { jsonAnswer } from "../../../helpers/kubernetes-transport";
 import { discoveryList, resource } from "../../../helpers/kubernetes-discovery";
 
 const PODS = "/api/v1/namespaces/shop/pods";
+const ROLES = "/apis/rbac.authorization.k8s.io/v1/namespaces/shop/roles";
+const LIMIT_RANGES = "/api/v1/namespaces/shop/limitranges";
+const STORAGE_CLASSES = "/apis/storage.k8s.io/v1/storageclasses";
+
+/** Answers after `ms`, or fails as the shared transport does when the request's signal aborts first. */
+function slowAnswer(request: NodeRequest, ms: number, answer: () => NodeResponse): Promise<NodeResponse> {
+  return new Promise((resolve, reject) => {
+    const fail = (): void => {
+      clearTimeout(timer);
+      const reason = request.signal.reason;
+      reject(
+        reason instanceof DOMException && reason.name === "TimeoutError"
+          ? new TransportError("timeout", "The request did not finish within its time limit")
+          : new TransportError("aborted", "The request was cancelled"),
+      );
+    };
+    const timer = setTimeout(() => {
+      request.signal.removeEventListener("abort", fail);
+      resolve(answer());
+    }, ms);
+    if (request.signal.aborted) fail();
+    else request.signal.addEventListener("abort", fail, { once: true });
+  });
+}
+
+/** One row per page and a continue token until `total` rows, each page answered after `ms`. */
+function slowPagedList(total: number, ms: number) {
+  return (request: NodeRequest): Promise<NodeResponse> => {
+    const start = Number(new URL(request.url).searchParams.get("continue") ?? "0");
+    return slowAnswer(request, ms, () =>
+      jsonAnswer({
+        kind: "Table",
+        metadata: start + 1 < total ? { continue: String(start + 1) } : {},
+        columnDefinitions: [{ name: "Name", type: "string", format: "name", priority: 0 }],
+        rows: [{ cells: [`web-${start}`] }],
+      }),
+    );
+  };
+}
 
 describe("listKubernetesObjects", () => {
   test("a listed name the request policy refuses fails the folder with a sentence, so no statement splits on it", async () => {
@@ -53,7 +94,7 @@ describe("listKubernetesObjects", () => {
     expect(await listKubernetesObjects(surface, ["Cluster"], "nodes")).toEqual([
       { path: ["Cluster", "node/k3d-0"], name: "k3d-0", kind: "nodes" },
     ]);
-    expect(transport.calls.at(-1)?.method).toBe("GET /api/v1/nodes?limit=500&includeObject=None");
+    expect(transport.calls.at(-1)?.method).toBe("GET /api/v1/nodes?limit=500&includeObject=Metadata");
   });
 
   test("lists the first 1,000 objects in pages of 500, following continue", async () => {
@@ -64,8 +105,8 @@ describe("listKubernetesObjects", () => {
     expectCalls(transport, [
       "GET /api",
       "GET /apis",
-      `GET ${PODS}?limit=500&includeObject=None`,
-      `GET ${PODS}?limit=500&continue=500&includeObject=None`,
+      `GET ${PODS}?limit=500&includeObject=Metadata`,
+      `GET ${PODS}?limit=500&continue=500&includeObject=Metadata`,
     ]);
   });
 
@@ -99,6 +140,65 @@ describe("listKubernetesObjects", () => {
     const { surface } = testSurface(fakeCluster({ groups: discoveryList([]) }));
     await expect(listKubernetesObjects(surface, ["shop"], "deployments")).rejects.toThrow(
       "This server does not serve Deployments: discovery lists no deployments.apps.",
+    );
+  });
+
+  test("an empty folder whose Table answers rows: null lists nothing", async () => {
+    const { surface } = testSurface(
+      fakeCluster({ lists: { [ROLES]: [], [LIMIT_RANGES]: [] }, rowsNull: [ROLES, LIMIT_RANGES] }),
+    );
+    expect(await listKubernetesObjects(surface, ["shop"], "roles")).toEqual([]);
+    expect(await listKubernetesObjects(surface, ["shop"], "limitranges")).toEqual([]);
+  });
+
+  test("the name is read from the row's metadata, not the Name cell the printer decorates", async () => {
+    const { surface, transport } = testSurface(
+      fakeCluster({
+        lists: { [STORAGE_CLASSES]: [{ name: "local-path", cell: "local-path (default)" }, { name: "fast" }] },
+      }),
+    );
+    expect(await listKubernetesObjects(surface, ["Cluster"], "storageclasses")).toEqual([
+      { path: ["Cluster", "storageclass/local-path"], name: "local-path", kind: "storageclasses" },
+      { path: ["Cluster", "storageclass/fast"], name: "fast", kind: "storageclasses" },
+    ]);
+    expect(transport.calls.at(-1)?.method).toBe(`GET ${STORAGE_CLASSES}?limit=500&includeObject=Metadata`);
+  });
+
+  test("a row the server sent without its object falls back to the Name cell", async () => {
+    const { surface } = testSurface((request, line) =>
+      line.startsWith(`GET ${PODS}`)
+        ? jsonAnswer({
+            kind: "Table",
+            metadata: {},
+            columnDefinitions: [{ name: "Name", type: "string", format: "name", priority: 0 }],
+            rows: [{ cells: ["web-1"] }, { cells: ["web-2"], object: { metadata: {} } }],
+          })
+        : fakeCluster()(request, line),
+    );
+    expect((await listKubernetesObjects(surface, ["shop"], "pods")).map((entry) => entry.name)).toEqual([
+      "web-1",
+      "web-2",
+    ]);
+  });
+
+  test("a page of metadata past the byte cap is read again at half the page size", async () => {
+    const { surface, transport } = testSurface((request, line) => {
+      if (line.startsWith(`GET ${PODS}?limit=500`)) throw new TransportError("too-large", "too large");
+      return fakeCluster({ lists: { [PODS]: manyRows("web", 3) } })(request, line);
+    });
+    expect(await listKubernetesObjects(surface, ["shop"], "pods")).toHaveLength(3);
+    expect(transport.calls.at(-1)?.method).toBe(`GET ${PODS}?limit=250&includeObject=Metadata`);
+  });
+
+  test("one deadline bounds the whole walk, not each page: a slow list ends with the timeout sentence", async () => {
+    const { surface } = testSurface(
+      (request, line) =>
+        line.startsWith(`GET ${PODS}`) ? slowPagedList(10, 60)(request) : fakeCluster()(request, line),
+      undefined,
+      { queryTimeout: 150 },
+    );
+    await expect(listKubernetesObjects(surface, ["shop"], "pods")).rejects.toThrow(
+      "The API server did not answer the request to list pods in the namespace shop within 0.15 s.",
     );
   });
 
@@ -181,22 +281,70 @@ describe("countKubernetesObjects", () => {
     expect(transport.calls.some((entry) => entry.method.includes("clusterroles"))).toBe(false);
   });
 
-  test("a transport failure is raised, not turned into a lock", async () => {
+  test("an empty kind whose Table answers rows: null counts zero, and every other kind is still counted", async () => {
+    const { surface } = testSurface(
+      fakeCluster({ lists: { [LIMIT_RANGES]: [], [PODS]: manyRows("web", 2) }, rowsNull: [LIMIT_RANGES] }),
+    );
+    const counts = await countKubernetesObjects(surface, ["shop"]);
+    expect(counts.limitranges).toEqual({ count: 0 });
+    expect(counts.pods).toEqual({ count: 2 });
+  });
+
+  test("a kind that times out, answers too much or answers no list locks that kind alone", async () => {
+    const { surface } = testSurface((request, line) => {
+      if (line.startsWith("GET /api/v1/namespaces/shop/configmaps"))
+        throw new TransportError("timeout", "The request did not finish within its time limit");
+      if (line.startsWith("GET /api/v1/namespaces/shop/secrets")) throw new TransportError("too-large", "too large");
+      if (line.startsWith("GET /api/v1/namespaces/shop/services")) return jsonAnswer({ kind: "Status" });
+      return fakeCluster({ lists: { [PODS]: manyRows("web", 2) } })(request, line);
+    });
+    const counts = await countKubernetesObjects(surface, ["shop"]);
+    expect(counts.configmaps).toEqual({
+      unavailable: "The API server did not answer the request to list configmaps in the namespace shop within 30 s.",
+    });
+    expect(counts.secrets).toEqual({
+      unavailable: expect.stringContaining("larger than 16 MiB") as unknown as string,
+    });
+    expect(counts.services).toEqual({
+      unavailable: "The API server answered with neither a Table nor a list, so there is nothing to show.",
+    });
+    expect(counts.pods).toEqual({ count: 2 });
+  });
+
+  test("a network failure or a rejected credential is raised, not turned into a lock", async () => {
     let discovery = 0;
     const { surface } = testSurface((request, line) => {
       if (line === "GET /api" || line === "GET /apis") {
         discovery += 1;
         return fakeCluster()(request, line);
       }
-      throw new QueryError("connection reset");
+      throw new TransportError("network", "connection reset");
     });
     await expect(countKubernetesObjects(surface, ["shop"])).rejects.toThrow("connection reset");
     expect(discovery).toBe(2);
+    const rejected = testSurface((request, line) =>
+      line === "GET /api" || line === "GET /apis"
+        ? fakeCluster()(request, line)
+        : { status: 401, contentType: "application/json", retryAfter: null, text: "{}" },
+    );
+    await expect(countKubernetesObjects(rejected.surface, ["shop"])).rejects.toBeInstanceOf(AuthenticationError);
   });
 });
 
 describe("notableStatus", () => {
   const columns = [{ name: "Ready", type: "string", format: "", priority: 0 }];
+  test("a finished Job (the Job printer's Complete, or SuccessCriteriaMet while it completes) is ordinary", () => {
+    const jobColumns = [
+      { name: "Name", type: "string", format: "name", priority: 0 },
+      { name: "Status", type: "string", format: "", priority: 0 },
+      { name: "Completions", type: "string", format: "", priority: 0 },
+    ];
+    expect(notableStatus({ columns: jobColumns }, { cells: ["migrate", "Complete", "1/1"] })).toBeUndefined();
+    expect(notableStatus({ columns: jobColumns }, { cells: ["migrate", "SuccessCriteriaMet", "1/1"] })).toBeUndefined();
+    expect(notableStatus({ columns: jobColumns }, { cells: ["migrate", "Failed", "0/1"] })).toBe("Failed");
+    expect(notableStatus({ columns: jobColumns }, { cells: ["migrate", "Suspended", "0/1"] })).toBe("Suspended");
+  });
+
   test("a Ready count short of its total without a Status, and nothing when it is whole or absent", () => {
     expect(notableStatus({ columns }, { cells: ["2/3"] })).toBe("2/3 ready");
     expect(notableStatus({ columns }, { cells: ["3/3"] })).toBeUndefined();
@@ -245,10 +393,10 @@ describe("a type the server stopped serving", () => {
     expect(transport.calls.map((entry) => entry.method)).toEqual([
       "GET /api",
       "GET /apis",
-      `GET ${PODS}?limit=500&includeObject=None`,
+      `GET ${PODS}?limit=500&includeObject=Metadata`,
       "GET /api",
       "GET /apis",
-      `GET ${PODS}?limit=500&includeObject=None`,
+      `GET ${PODS}?limit=500&includeObject=Metadata`,
     ]);
   });
 });

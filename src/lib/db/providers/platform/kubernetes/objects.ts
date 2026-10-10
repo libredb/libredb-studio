@@ -2,15 +2,21 @@
  * The tree surface: the containers (`Cluster`, then the namespaces) with the kinds each holds, the capped listings,
  * and the counts read from the same capped walk.
  *
- * A listing reads the Table with `includeObject=None` in pages of 500, following `continue`, up to 1,000 objects per
- * kind and container; a count walks the same way one row further, so up to 1,000 it is exact and past it the count is
- * the 1,000 the tree lists, marked as a floor. `remainingItemCount` is never a count: the API omits it with selectors
+ * A listing reads the Table with `includeObject=Metadata` in pages of 500, following `continue`, up to 1,000 objects
+ * per kind and container, and takes each name from the row's metadata: the Name cell is display text, which a printer
+ * may decorate (StorageClass writes `local-path (default)`). A count reads `includeObject=None` the same way one row
+ * further, so up to 1,000 it is exact and past it the count is the 1,000 the tree lists, marked as a floor. `remainingItemCount` is never a count: the API omits it with selectors
  * and on the last page, and says not to rely on it.
  *
  * A kind the identity may not list keeps its folder: its count answers `{ unavailable }` with Studio's sentence, so
- * one forbidden kind loses nothing else. A built-in kind this server does not serve answers the same way.
+ * one forbidden kind loses nothing else. A built-in kind this server does not serve answers the same way, and so does a
+ * kind whose list times out, is too large or cannot be read: only a rejected credential or a closed session fails the
+ * whole container.
+ *
+ * Every walk has one deadline, the query timeout, shared by its pages and its restarts, so a server that keeps
+ * answering pages cannot hold a walk past it.
  */
-import { QueryError } from "@/lib/db/errors";
+import { QueryError, TimeoutError } from "@/lib/db/errors";
 import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
 import type {
   Container,
@@ -58,10 +64,15 @@ export interface KubernetesSurface {
 /** What a count past the cap was counted from, completing "counted from". */
 export const KUBERNETES_SAMPLED_FROM = "the first 1,000 objects the tree lists; the console reads the rest";
 
-/** The words that mean an object needs nothing done, which the tree draws no status for. */
+/**
+ * The words that mean an object needs nothing done, which the tree draws no status for. The Job printer writes
+ * `Complete` for a finished Job and `SuccessCriteriaMet` while a successful one completes.
+ */
 const ORDINARY_STATUS: ReadonlySet<string> = new Set([
   "Running",
   "Completed",
+  "Complete",
+  "SuccessCriteriaMet",
   "Succeeded",
   "Ready",
   "Active",
@@ -121,8 +132,18 @@ function servedResource(index: ResourceIndex, entry: BuiltInKind): IndexedResour
   return served;
 }
 
-/** One page reader of a Table list: requested with `includeObject=None`, redacted, parsed. */
-function tableReader(surface: KubernetesSurface, target: IndexedResource, namespace: string | undefined) {
+/**
+ * The page reader of one Table walk: requested with `includeObject`, redacted, parsed. Made once per walk, so its
+ * deadline, the query timeout taken when the walk starts, is shared by every page and by the walk's restarts.
+ */
+function tableReader(
+  surface: KubernetesSurface,
+  target: IndexedResource,
+  namespace: string | undefined,
+  includeObject: "None" | "Metadata",
+) {
+  const walk = surface.call();
+  const deadline = AbortSignal.any([walk.signal, AbortSignal.timeout(walk.timeoutMs)]);
   return async (page: { readonly continueToken?: string; readonly limit: number }): Promise<KubeTable> => {
     const body = await surface.client.json(
       {
@@ -131,27 +152,32 @@ function tableReader(surface: KubernetesSurface, target: IndexedResource, namesp
         ...(namespace === undefined ? {} : { namespace }),
         query: {
           limit: page.limit,
-          includeObject: "None",
+          includeObject,
           ...(page.continueToken === undefined ? {} : { continue: page.continueToken }),
         },
       },
-      { ...surface.call(), accept: ACCEPT_TABLE },
+      { ...walk, signal: deadline, accept: ACCEPT_TABLE },
     );
     return parseTable(redactResponse(target, body));
   };
 }
 
-/** The rows of a capped walk: `rows` up to the cap, `capped` when the list held more. */
+/**
+ * The rows of a capped walk, up to the cap plus `extra`. A listing reads each row's metadata, and a page of it past the
+ * byte cap is read again at half the page size; a count reads the cells alone.
+ */
 async function cappedWalk(
   surface: KubernetesSurface,
   target: IndexedResource,
   namespace: string | undefined,
   extra: number,
+  includeObject: "None" | "Metadata",
 ): Promise<{ readonly table: Pick<KubeTable, "columns">; readonly rows: readonly TableRow[] }> {
-  const scan = await scanTable(tableReader(surface, target, namespace), {
+  const scan = await scanTable(tableReader(surface, target, namespace, includeObject), {
     offset: 0,
     limit: KUBERNETES_TREE_OBJECT_CAP + extra,
     pageSize: KUBERNETES_PAGE_SIZE,
+    halveOnTooLarge: includeObject === "Metadata",
   });
   return { table: scan, rows: scan.rows };
 }
@@ -162,14 +188,18 @@ export async function cappedCount(
   target: IndexedResource,
   namespace: string | undefined,
 ): Promise<{ readonly count: number } | { readonly count: number; readonly sampledFrom: string }> {
-  const { rows } = await cappedWalk(surface, target, namespace, 1);
+  const { rows } = await cappedWalk(surface, target, namespace, 1, "None");
   return rows.length > KUBERNETES_TREE_OBJECT_CAP
     ? { count: KUBERNETES_TREE_OBJECT_CAP, sampledFrom: KUBERNETES_SAMPLED_FROM }
     : { count: rows.length };
 }
 
+/** The row's name: its object's `metadata.name` when the row carries one, the Name cell otherwise. */
 function rowName(table: Pick<KubeTable, "columns">, row: TableRow, labelPlural: string): string {
-  const name = cellOf(table, row, "Name");
+  const metadata = row.object?.metadata;
+  const fromObject =
+    typeof metadata === "object" && metadata !== null ? (metadata as { readonly name?: unknown }).name : undefined;
+  const name = fromObject ?? cellOf(table, row, "Name");
   if (typeof name !== "string" || name === "")
     refuse(`The API server listed one of the ${labelPlural} without a name.`);
   return name;
@@ -195,6 +225,9 @@ export interface NamespaceList {
   readonly capped?: true;
 }
 
+export const NAMESPACE_NAME_SENTENCE =
+  "The API server listed a namespace whose name is not a DNS-1123 label, which no namespace can have, so Studio does not list the namespaces; list the ones to show in the connection's Namespaces field.";
+
 /** The namespaces from the API, the first 1,000 read one past the cap, or `forbidden` when the list is refused. */
 async function namespacesFromApi(surface: KubernetesSurface, index: ResourceIndex): Promise<NamespaceList> {
   const sources: readonly (readonly [group: string, resource: string])[] = [
@@ -206,13 +239,15 @@ async function namespacesFromApi(surface: KubernetesSurface, index: ResourceInde
     const target = findResource(index, group, resource);
     if (target === undefined || !target.verbs.includes("list")) continue;
     try {
-      const scan = await scanTable(tableReader(surface, target, undefined), {
+      const scan = await scanTable(tableReader(surface, target, undefined, "None"), {
         offset: 0,
         // One row past the cap, as a count reads, so a cluster with more namespaces than the tree lists is told so.
         limit: KUBERNETES_TREE_OBJECT_CAP + 1,
         pageSize: KUBERNETES_PAGE_SIZE,
       });
       const names = scan.rows.map((row) => rowName(scan, row, "namespaces"));
+      // Every name becomes a container path, so one no namespace can have (Cluster, a/b) is refused, not drawn.
+      if (names.some((name) => !DNS1123_LABEL.test(name))) refuse(NAMESPACE_NAME_SENTENCE);
       if (names.length > KUBERNETES_TREE_OBJECT_CAP)
         return { names: names.slice(0, KUBERNETES_TREE_OBJECT_CAP), forbidden: false, capped: true };
       return { names, forbidden: false };
@@ -271,7 +306,9 @@ async function countKind(
   try {
     return await cappedCount(surface, served, container === CLUSTER_CONTAINER ? undefined : container);
   } catch (error) {
-    if (error instanceof KubernetesRequestError) return { unavailable: error.message };
+    // Refused, not served, timed out, too large or unreadable: that kind alone. A rejected credential (an
+    // AuthenticationError) and a closed or failing connection (a ConnectionError) fail every kind alike, so they rise.
+    if (error instanceof QueryError || error instanceof TimeoutError) return { unavailable: error.message };
     throw error;
   }
 }
@@ -328,7 +365,13 @@ export async function listKubernetesObjects(
     const entry = builtInKind(kind) as BuiltInKind;
     const served = servedResource(index, entry);
     if (typeof served === "string") refuse(served);
-    const { table, rows } = await cappedWalk(surface, served, name === CLUSTER_CONTAINER ? undefined : name, 0);
+    const { table, rows } = await cappedWalk(
+      surface,
+      served,
+      name === CLUSTER_CONTAINER ? undefined : name,
+      0,
+      "Metadata",
+    );
     const pod = entry.group === "" && entry.id === "pods";
     return rows.map((row) => {
       const objectName = rowName(table, row, entry.labelPlural);
