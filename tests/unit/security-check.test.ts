@@ -68,9 +68,9 @@ describe("parseTables and findControlTable", () => {
     expect(table?.rows).toHaveLength(PROGRAMME_CONTROL_IDS.length);
   });
 
-  test("the programme ends with the DuckDB open control then the DuckDB non-admin file-access control", () => {
-    expect(PROGRAMME_CONTROL_IDS.slice(-6)).toEqual(["3.12", "3.13", "3.14", "3.15", "3.16", "3.17"]);
-    expect(PROGRAMME_CONTROL_IDS).toHaveLength(36);
+  test("the programme ends with the S3 console control then the S3 signing and egress control", () => {
+    expect(PROGRAMME_CONTROL_IDS.slice(-6)).toEqual(["3.14", "3.15", "3.16", "3.17", "3.18", "3.19"]);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(38);
   });
 
   test("ignores a table that is not the control table", () => {

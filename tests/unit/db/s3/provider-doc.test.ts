@@ -1090,3 +1090,126 @@ describe("the backlog record of the S3 provider", () => {
     );
   });
 });
+
+const SECURITY = read("docs/SECURITY.md");
+
+/** One row of the SECURITY control table, split into its five cells. */
+interface ControlRow {
+  readonly control: string;
+  readonly status: string;
+  readonly enforcedIn: readonly string[];
+  readonly verifiedBy: readonly string[];
+}
+
+/** The repository paths a cell links, read from its `](../path)` targets. */
+const linkedPaths = (cell: string): string[] => [...cell.matchAll(/\]\(\.\.\/([^)]+)\)/g)].map((match) => match[1]);
+
+/** The control table row of `id`. */
+function controlRow(id: string): ControlRow {
+  const line = rowOf(SECURITY, id);
+  if (line === undefined) throw new Error(`docs/SECURITY.md has no row ${id}`);
+  const cells = line.slice(2, -2).split(" | ");
+  expect(cells, id).toHaveLength(5);
+  return { control: cells[1], status: cells[2], enforcedIn: linkedPaths(cells[3]), verifiedBy: linkedPaths(cells[4]) };
+}
+
+/** The Known limits bullet that begins with `lead`, up to the next bullet, as one line. */
+function knownLimit(lead: string): string {
+  const limits = sectionOf(SECURITY, "## Known limits");
+  const start = limits.indexOf(`- ${lead}`);
+  if (start < 0) throw new Error(`no Known limits bullet ${lead}`);
+  const end = limits.indexOf("\n- ", start + 1);
+  return flat(limits.slice(start, end < 0 ? limits.length : end));
+}
+
+/** Row 3.18's Control text, exactly. */
+const CONTROL_3_18 =
+  "On an S3-compatible object storage connection, a console command runs only when it is one of the nine closed AWS CLI read commands (`aws s3 ls`, `aws s3api list-buckets`, `aws s3api list-objects-v2`, `aws s3api list-object-versions`, `aws s3api head-bucket`, `aws s3api head-object`, `aws s3api get-object-tagging`, `aws s3api get-bucket-location`, `aws s3api get-bucket-versioning`) or Studio's own `preview`, with only the flags its row declares, and it fits the console's text bound; the client sends only GET and HEAD requests, to ListBuckets, HeadBucket, GetBucketLocation, GetBucketVersioning, ListObjectsV2, ListObjectVersions, HeadObject, a ranged GetObject and GetObjectTagging; a command the editor refuses is never sent and never written to history; a command refused only on the server, because it names an endpoint, a region or a bucket other than the connection's, is not sent either, and history keeps its text whole with the refusal sentence as its error, as it does for every statement the editor accepts; and a key whose `.` and `..` segments, resolved with empty segments skipped, leave its bucket or name the bucket itself is refused before any request wherever an object path is built, so the bucket pin holds under a server or proxy that resolves dot segments or merges slashes";
+/** Row 3.19's Control text, exactly. */
+const CONTROL_3_19 =
+  "On an S3-compatible object storage connection, a request is signed only with the access key pair typed into the connection, and an empty pair sends it unsigned: no environment variable, shared credential or config file, container credential endpoint or instance metadata is ever read; an endpoint that is or resolves to an address in 169.254.0.0/16 (also in its IPv4-mapped and NAT64 forms) or fe80::/10, or to fd00:ec2::254, is refused before any connection by the byte transport (row 0.6), whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says, and through an SSH tunnel the far end's address literal is checked the same way; a request is not sent over plain HTTP to a host that is neither loopback nor tunnelled unless the connection consents, whether or not it is signed; no object is read on a connection whose connect probe did not parse as S3 XML (ListObjectsV2 on the pinned bucket as `ListBucketResult`, else ListBuckets as `ListAllMyBucketsResult`); every XML answer is read by a reader that refuses a document type declaration and every entity; and the object preview hands a Parquet footer or page header to its decoder only when its Thrift encoding reads to the same values in the decoder as in Studio's check, refuses a footer whose sizes, counts or offsets are not non-negative safe integers or whose fields pass a fixed bound, parses each footer inside the two decode slots the decodes share, and bounds every decode and every rendered cell before the work, not after";
+
+describe("docs/SECURITY.md: the S3 rows and limits", () => {
+  test("38. rows 3.18 and 3.19 carry the S3 controls, with files that exist", () => {
+    for (const [id, control] of [
+      ["3.18", CONTROL_3_18],
+      ["3.19", CONTROL_3_19],
+    ] as const) {
+      const row = controlRow(id);
+      expect(row.control).toBe(control);
+      expect(row.status).toBe("Implemented");
+      expect(row.enforcedIn.length).toBeGreaterThan(0);
+      expect(row.verifiedBy.length).toBeGreaterThan(0);
+      for (const file of [...row.enforcedIn, ...row.verifiedBy])
+        expect(existsSync(path.join(ROOT, file)), file).toBe(true);
+    }
+    expect(controlRow("3.18").verifiedBy).toContain("tests/unit/db/s3/read-only-end-to-end.test.ts");
+    expect(controlRow("3.18").control).toContain("never written to history");
+    expect(controlRow("3.18").control).not.toContain("is what history records");
+  });
+
+  test("38a. the key and Parquet clauses name the modules that enforce them and the tests that verify them", () => {
+    for (const file of ["names.ts", "encoding.ts"])
+      expect(controlRow("3.18").enforcedIn).toContain(`${PROVIDER_DIRECTORY}/${file}`);
+    for (const file of ["names", "encoding", "objects"])
+      expect(controlRow("3.18").verifiedBy).toContain(`tests/unit/db/s3/${file}.test.ts`);
+    for (const file of ["parquet-thrift-guard.ts", "preview-parquet.ts", "preview-cells.ts"])
+      expect(controlRow("3.19").enforcedIn).toContain(`${PROVIDER_DIRECTORY}/${file}`);
+    for (const file of ["parquet-thrift-guard", "preview-parquet", "preview-cells"])
+      expect(controlRow("3.19").verifiedBy).toContain(`tests/unit/db/s3/${file}.test.ts`);
+  });
+
+  test("39. row 3.19 and row 0.6 name the networks of LINK_LOCAL_NETWORKS", () => {
+    for (const words of networkWords()) {
+      expect(controlRow("3.19").control, words).toContain(words);
+      expect(controlRow("0.6").control, words).toContain(words);
+    }
+  });
+
+  test("40. row 3.8 and its note name S3", () => {
+    expect(controlRow("3.8").verifiedBy).toContain("tests/unit/db/s3/read-only-end-to-end.test.ts");
+    const start = SECURITY.indexOf("**3.8.**");
+    const note = flat(SECURITY.slice(start, SECURITY.indexOf("\n\n", start)));
+    expect(note).toContain(
+      "S3's runs reads only, so the mode changes nothing a request can do ([`docs/providers/s3.md`](./providers/s3.md) section 3.5).",
+    );
+  });
+
+  test("41. the notes 3.18 and 3.19 are word for word", () => {
+    expect(SECURITY).toContain(
+      "**3.18.** The S3 client is built over a method set of GET and HEAD alone, so no code path in Studio can send a write to an S3 server, whatever the parser or the mode decide.\nThe console's commands are a closed table, and a command or flag outside it is refused before any request with the sentence its row names.",
+    );
+    expect(SECURITY).toContain(
+      "A key's `.` and `..` segments are resolved with empty segments skipped, the reading with the fewest levels, so a key that stays inside its bucket on a server that keeps empty segments cannot leave it through a proxy that merges slashes; `objectPath` applies the same check to every caller, so a caller that skips the Source tab's check still cannot build such a path.",
+    );
+    expect(SECURITY).toContain(
+      "**3.19.** An S3 provider that fell back to the server's own credentials would hand every Studio user the server's cloud identity, so Studio has no such fallback: an empty key pair is an unsigned request, never an ambient one.",
+    );
+    expect(SECURITY).toContain(
+      "A metadata service a cloud serves outside those networks is not refused; none is claimed.",
+    );
+    expect(SECURITY).toContain(
+      "A Parquet footer and its page headers are data the object supplies, so the preview checks them before its decoder reads them: a varint longer than its type allows or a long-form field id outside 1 to 32,767 is refused, so the check and the decoder read the same values, and a size, count or offset that is negative or past 2^53 is refused, so no value can lower a sum below its cap.",
+    );
+    expect(SECURITY).toContain(
+      "A rendered cell is cut while its string is escaped, never escaped whole and cut afterwards, so a decoded string far past the cell bound costs no more memory than the cell.",
+    );
+  });
+
+  test("42. the Known limits name S3 where they list the engines, and state S3's own limits", () => {
+    expect(knownLimit("**The HTTP destination guard is opt-in and address-based.**")).toContain(
+      "Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL) and S3-compatible object storage HTTP requests",
+    );
+    expect(knownLimit("**A statement the editor refuses is never sent and never written to history.**")).toContain(
+      "The Milvus, Qdrant, InfluxDB (InfluxQL), Oxia and S3 rows declare both (rows 3.11, 3.12, 3.15 and 3.18); no other shipped engine declares either.",
+    );
+    const s3 = knownLimit("**S3-compatible object storage is reached over a REST client of Studio's own.**");
+    expect(s3).toContain("14 minutes of skew were accepted and 20 refused on MinIO, Silo and RustFS");
+    expect(s3).toContain("a policy that differs by role is a backlog entry (D270)");
+    expect(s3).toContain("it is a scope, not an access boundary");
+    expect(s3).toContain(
+      "A key whose `.` and `..` segments, resolved with empty segments skipped, climb out of its bucket or name the bucket itself is refused wherever an object path is built, on every connection and before any request, so the scope holds under a server or proxy that resolves dot segments or merges slashes; such a key is listed but not opened.",
+    );
+    expect(s3).toContain("[`docs/providers/s3.md`](./providers/s3.md) section 13 lists the same limits.");
+  });
+});
