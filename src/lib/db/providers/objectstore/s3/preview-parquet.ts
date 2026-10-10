@@ -1079,10 +1079,10 @@ export function prescanChunk(
   }
   if (offset !== bytes.length) throw new PreviewRefusal(previewSentence("R-PQ-PAGES", { c }));
   if (dataValues > footerValues || dataValues > limits.parquetMaxChunkValues) {
-    throw new PreviewRefusal(previewSentence("R-PQ-PAGE-VALUES", { c, v: dataValues }));
+    throw new PreviewRefusal(previewSentence("R-PQ-CHUNK-VALUES", { c, v: dataValues }));
   }
   if (totals.values > valueCap) {
-    throw new PreviewRefusal(previewSentence("R-PQ-PAGE-VALUES", { c, v: totals.values }));
+    throw new PreviewRefusal(previewSentence("R-PQ-TOTAL-VALUES", { v: totals.values }));
   }
 }
 
@@ -1191,7 +1191,7 @@ type PlannedRead =
  * Ranges, merge, prefetch, pre-scan, the slot, the guarded decode, the rows. In leading mode the pre-scan sums
  * one top-level column at a time: the first column whose page values would take the total past
  * parquetMaxTotalValues is dropped with every column after it (N-PQ-SOME-COLUMNS), and when that is the first
- * column the answer is the summary (N-PQ-NONE-FIT). Explicit mode refuses instead (R-PQ-PAGE-VALUES).
+ * column the answer is the summary (N-PQ-NONE-FIT). Explicit mode refuses instead (R-PQ-TOTAL-VALUES).
  */
 async function readPlannedRows(
   input: ParquetPreviewInput,

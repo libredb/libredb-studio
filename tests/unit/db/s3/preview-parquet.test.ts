@@ -256,6 +256,48 @@ describe("readParquetFooter", () => {
       sentence: "The Parquet footer could not be read.",
     });
   });
+
+  test("a chunk path one level deeper than its leaf, and a chunk with no metadata, are refused", async () => {
+    const schema = [
+      { name: "schema", children: 1 },
+      { name: "a", type: PHYSICAL.INT32 },
+    ];
+    const deeper = syntheticParquet({
+      schema,
+      rowGroups: [{ numRows: 1, chunks: [int32Chunk("a", [1], { path: ["a", "x"] })] }],
+    });
+    expect(await footerOutcome(deeper)).toEqual({ kind: "refused", sentence: "The Parquet footer could not be read." });
+    const real = await loadParquetModules();
+    const withoutMeta: ParquetModules = {
+      ...real,
+      parquetMetadata: (...args: Parameters<ParquetModules["parquetMetadata"]>) => {
+        const metadata = real.parquetMetadata(...args);
+        const [chunk] = metadata.row_groups[0].columns;
+        delete (chunk as { meta_data?: unknown }).meta_data;
+        return metadata;
+      },
+    };
+    const whole = syntheticParquet({ schema, rowGroups: [{ numRows: 1, chunks: [int32Chunk("a", [1])] }] });
+    expect(await readParquetFooter(inputFor(whole, "f.parquet").input, withoutMeta, freeSlots())).toEqual({
+      kind: "refused",
+      sentence: "The Parquet footer could not be read.",
+    });
+  });
+
+  test("two top-level columns of one name are refused before any plan", async () => {
+    const object = syntheticParquet({
+      schema: [
+        { name: "schema", children: 2 },
+        { name: "a", type: PHYSICAL.INT32 },
+        { name: "a", type: PHYSICAL.INT32 },
+      ],
+      rowGroups: [{ numRows: 1, chunks: [int32Chunk("a", [1]), int32Chunk("a", [2])] }],
+    });
+    expect(await footerOutcome(object)).toEqual({
+      kind: "refused",
+      sentence: "The Parquet schema gives two columns of one group the same name, so the file is not previewed.",
+    });
+  });
 });
 
 describe("PREVIEW_PARSERS", () => {
@@ -737,7 +779,7 @@ describe("previewParquet: what never reaches hyparquet", () => {
     calls.read.length = 0;
     expect(await previewParquet(inputFor(threeBooleans(1), "b.parquet").input, depsOf(modules))).toEqual({
       kind: "refused",
-      sentence: `A page of column b0 declares ${booleanValues.toLocaleString("en-US")} values, more than its column chunk holds or the preview allows, so the file is not previewed.`,
+      sentence: `The data pages of column b0 declare ${booleanValues.toLocaleString("en-US")} values, more than its column chunk holds or the preview allows, so the file is not previewed.`,
       notices: [],
     });
     expect(calls.read).toEqual([]);
@@ -859,7 +901,15 @@ describe("prescanChunk", () => {
     expect(() =>
       prescanChunk(chunk, 10, "id", limits({ parquetMaxTotalValues: 12 }), { values: 0, decoded: 0 }),
     ).toThrow(
-      "A page of column id declares 13 values, more than its column chunk holds or the preview allows, so the file is not previewed.",
+      "The pages of the columns to show declare 13 values, more than a preview allows, so the file is not previewed.",
+    );
+  });
+
+  test("data pages that sum past the footer's count are refused with the chunk's sentence", () => {
+    expect(() => prescanChunk(dataChunk([6, 6]), 10, "id", S3_PREVIEW_LIMITS, { values: 0, decoded: 0 })).toThrow(
+      new PreviewRefusal(
+        "The data pages of column id declare 12 values, more than its column chunk holds or the preview allows, so the file is not previewed.",
+      ),
     );
   });
 });
@@ -895,13 +945,27 @@ describe("prescanChunk: negative page counts", () => {
     );
   });
 
-  test("a negative page in one chunk cannot make room under the total cap for another", () => {
+  test("a negative page count in the first chunk is refused before a later chunk is scanned", () => {
     const capped = limits({ parquetMaxTotalValues: 12 });
     const totals = { values: 0, decoded: 0 };
     expect(() => {
       prescanChunk(dataChunk([10, -8]), 2, "a", capped, totals);
       prescanChunk(dataChunk([10]), 10, "b", capped, totals);
     }).toThrow(new PreviewRefusal("The pages of column a do not fill its column chunk, so the file is not previewed."));
+  });
+});
+
+describe("prescanChunk: the total across chunks", () => {
+  test("two chunks of 8 values each pass alone and are refused together under a total cap of 12", () => {
+    const capped = limits({ parquetMaxTotalValues: 12 });
+    const totals = { values: 0, decoded: 0 };
+    prescanChunk(dataChunk([8]), 10, "a", capped, totals);
+    expect(totals.values).toBe(8);
+    expect(() => prescanChunk(dataChunk([8]), 10, "b", capped, totals)).toThrow(
+      new PreviewRefusal(
+        "The pages of the columns to show declare 16 values, more than a preview allows, so the file is not previewed.",
+      ),
+    );
   });
 });
 
@@ -1416,7 +1480,7 @@ describe("leading mode drops the columns past the pre-scan's value total", () =>
     });
   });
 
-  test("explicit mode naming the same three columns is still refused with R-PQ-PAGE-VALUES", async () => {
+  test("explicit mode naming the same three columns is still refused, with the total's sentence", async () => {
     const capped = limits({ parquetMaxTotalValues: 30 });
     const { modules, calls } = await spiedModules();
     const outcome = await previewParquet(
@@ -1426,7 +1490,7 @@ describe("leading mode drops the columns past the pre-scan's value total", () =>
     expect(outcome).toEqual({
       kind: "refused",
       sentence:
-        "A page of column c declares 39 values, more than its column chunk holds or the preview allows, so the file is not previewed.",
+        "The pages of the columns to show declare 39 values, more than a preview allows, so the file is not previewed.",
       notices: [],
     });
     expect(calls.read).toEqual([]);

@@ -64,6 +64,10 @@ export const S3_PREVIEW_SENTENCES = Object.freeze({
   "R-PQ-PAGES": "The pages of column {c} do not fill its column chunk, so the file is not previewed.",
   "R-PQ-PAGE-VALUES":
     "A page of column {c} declares {v} values, more than its column chunk holds or the preview allows, so the file is not previewed.",
+  "R-PQ-CHUNK-VALUES":
+    "The data pages of column {c} declare {v} values, more than its column chunk holds or the preview allows, so the file is not previewed.",
+  "R-PQ-TOTAL-VALUES":
+    "The pages of the columns to show declare {v} values, more than a preview allows, so the file is not previewed.",
   "R-PQ-PAGE-DECODE":
     "The pages of the columns to show declare {d} MiB decoded, over the {decodeBudget} MiB a preview decodes, so the file is not previewed.",
   "R-PQ-DECODE": "The Parquet data could not be decoded.",
