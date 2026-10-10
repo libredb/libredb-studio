@@ -26,11 +26,18 @@ import {
 } from "@/lib/db/http/node-transport";
 import type {
   ActiveSessionDetails,
+  Container,
   DatabaseConnection,
+  DatabaseObject,
   DatabaseOverview,
   HealthInfo,
   IndexStats,
+  KeyScanOptions,
+  KeyScanPage,
+  KindCount,
   MaintenanceResult,
+  ObjectDetail,
+  ObjectDetailBatch,
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
@@ -45,6 +52,7 @@ import { engineLimiter, type ProviderLimiter } from "@/lib/db/utils/bounded-limi
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { QueryWarning } from "@/lib/types";
 import {
+  type BucketListing,
   createS3Client,
   limitedS3Client,
   type S3CallOptions,
@@ -57,10 +65,17 @@ import { buildS3ConnectionOptions, type S3ConnectionOptions, s3EndpointText } fr
 import { S3_DEFAULT_PORT, S3_HEALTH_DEADLINE_MS, S3_LIMITER_OPTIONS, S3_MAX_SOCKETS, S3_TYPE } from "./constants";
 import { toProviderError } from "./errors";
 import { S3_RESPONSE_HEADERS } from "./headers";
-import { S3_KEY_SCAN } from "./key-scan";
+import { S3_KEY_SCAN, scanS3KeysPage } from "./key-scan";
 import { S3_LABELS } from "./labels";
 import { probeOperation, probeS3, S3_NO_BUCKETS_WARNING, s3Health, s3Overview } from "./monitoring-reads";
-import { S3_OBJECT_KINDS } from "./objects";
+import {
+  countS3Objects,
+  describeS3Object,
+  describeS3Objects,
+  listS3Objects,
+  requireS3Root,
+  S3_OBJECT_KINDS,
+} from "./objects";
 import { s3Signer } from "./sigv4";
 
 export type { S3Surface } from "./client";
@@ -91,6 +106,11 @@ interface S3Session {
   readonly lifetime: AbortController;
   /** Bucket creation dates the tree read, for the bucket Source part. */
   readonly created: Map<string, string>;
+  /**
+   * The bucket list the last count read, which the next bucket listing takes once if it comes within the surface
+   * deadline: plan grounding counts and then lists the bucket kind, and both are one ListBuckets.
+   */
+  bucketHandoff: { readonly listing: BucketListing; readonly readAtMs: number } | null;
   warnings: readonly QueryWarning[];
 }
 
@@ -157,6 +177,79 @@ export class S3Provider extends BaseDatabaseProvider {
   }
 
   // ==========================================================================
+  // Object surface, answered by objects.ts
+  // ==========================================================================
+
+  public async listContainers(): Promise<Container[]> {
+    return [];
+  }
+
+  /** The bucket list this count reads is kept for the next bucket listing (`bucketHandoff`). */
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    requireS3Root(container);
+    const session = this.requireSession();
+    session.bucketHandoff = null;
+    return this.read(
+      (surface, call) =>
+        countS3Objects(
+          {
+            ...surface,
+            client: {
+              ...surface.client,
+              listBuckets: async (options) => {
+                const listing = await surface.client.listBuckets(options);
+                session.bucketHandoff = { listing, readAtMs: this.deps.clock().getTime() };
+                return listing;
+              },
+            },
+          },
+          call,
+        ),
+      "ListBuckets",
+    );
+  }
+
+  /** Takes the count's bucket list once when it is younger than the surface deadline; otherwise reads its own. */
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    requireS3Root(container);
+    const session = this.requireSession();
+    const handoff = session.bucketHandoff;
+    session.bucketHandoff = null;
+    const kept: BucketListing | undefined =
+      handoff !== null && this.deps.clock().getTime() - handoff.readAtMs <= session.options.surfaceTimeoutMs
+        ? handoff.listing
+        : undefined;
+    return this.read(
+      (surface, call) =>
+        listS3Objects(
+          kept === undefined ? surface : { ...surface, client: { ...surface.client, listBuckets: async () => kept } },
+          kind,
+          call,
+          session.created,
+        ),
+      "ListBuckets",
+    );
+  }
+
+  public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    return describeS3Object(path, kind);
+  }
+
+  public async describeObjects(container: readonly string[], kind: string): Promise<ObjectDetailBatch> {
+    requireS3Root(container);
+    return describeS3Objects(kind);
+  }
+
+  // ==========================================================================
+  // Keys panel, answered by key-scan.ts
+  // ==========================================================================
+
+  /** Options and cursor are refused by key-scan.ts before any request; a page is one server call at most. */
+  public async scanKeysPage(options: KeyScanOptions): Promise<KeyScanPage> {
+    return this.read((surface, call) => scanS3KeysPage(surface, options, call), "ListObjectsV2");
+  }
+
+  // ==========================================================================
   // Lifecycle
   // ==========================================================================
 
@@ -216,6 +309,7 @@ export class S3Provider extends BaseDatabaseProvider {
       client: limitedS3Client(createS3Client(transport), this.limiter),
       lifetime: new AbortController(),
       created: new Map(),
+      bucketHandoff: null,
       warnings: [],
     };
   }

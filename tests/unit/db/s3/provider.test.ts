@@ -6,13 +6,21 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import type { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { ConnectionError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import type { RequestSigner } from "@/lib/db/http/node-transport";
+import { S3_SURFACE_DEADLINE_MS } from "@/lib/db/providers/objectstore/s3/constants";
+import { encodeS3Cursor } from "@/lib/db/providers/objectstore/s3/cursor";
 import { S3_RESPONSE_HEADERS } from "@/lib/db/providers/objectstore/s3/headers";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import type { DatabaseConnection } from "@/lib/types";
 import { s3Connection } from "../../../helpers/s3-connection";
-import { bucketsXml, type FakeS3Handler, fakeS3Transport, xmlAnswer } from "../../../helpers/s3-fake-transport";
+import {
+  bucketsXml,
+  type FakeS3Handler,
+  fakeS3Transport,
+  objectsXml,
+  xmlAnswer,
+} from "../../../helpers/s3-fake-transport";
 
 const BUCKETS: FakeS3Handler = () => xmlAnswer(bucketsXml(["sales"]));
 const FIXED = new Date("2026-10-09T13:14:43.000Z");
@@ -190,5 +198,89 @@ describe("PR 3 review focus: an empty Region", () => {
     expect(fake.exchanges[0].signing?.headers.authorization).toContain(
       "Credential=AKIDTESTKEY/20261009/garage/s3/aws4_request,",
     );
+  });
+});
+
+describe("the object surface", () => {
+  test("no container level, bucket rows from one ListBuckets, describe with no request", async () => {
+    const { s3, fake } = provider(() => xmlAnswer(bucketsXml(["sales", "archive"])));
+    await s3.connect();
+    expect(await s3.listContainers()).toEqual([]);
+    await expect(s3.countObjects(["x"])).rejects.toThrow('An S3 connection has no container level; received ["x"]');
+    expect(await s3.countObjects([])).toEqual({ bucket: { count: 2 } });
+    expect((await s3.listObjects([], "bucket")).map((row) => row.name)).toEqual(["archive", "sales"]);
+    await s3.listObjects([], "bucket");
+    expect(await s3.describeObject(["sales"], "bucket")).toEqual({
+      path: ["sales"],
+      columns: [],
+      indexes: [],
+      foreignKeys: [],
+    });
+    expect(await s3.describeObjects([], "bucket")).toEqual({ details: [] });
+    // The connect probe, then one ListBuckets for the count that the first listing reuses, then the second listing's own.
+    expect(fake.lines()).toEqual(Array(3).fill("GET /?max-buckets=10000"));
+  });
+
+  test("a count hands its bucket list to the next bucket listing once, and never after the surface deadline", async () => {
+    let now = Date.parse("2026-10-09T10:00:00Z");
+    const fake = fakeS3Transport(() => xmlAnswer(bucketsXml(["sales"])));
+    const s3 = new S3Provider(
+      s3Connection(),
+      {},
+      {},
+      { createTransport: fake.createTransport, clock: () => new Date(now) },
+    );
+    await s3.connect();
+    const before = fake.exchanges.length;
+    await s3.countObjects([]);
+    await s3.listObjects([], "bucket");
+    expect(fake.exchanges.length - before).toBe(1);
+    await s3.listObjects([], "bucket");
+    expect(fake.exchanges.length - before).toBe(2);
+    await s3.countObjects([]);
+    now += S3_SURFACE_DEADLINE_MS + 1;
+    await s3.listObjects([], "bucket");
+    expect(fake.exchanges.length - before).toBe(4);
+    await s3.countObjects([]);
+    await s3.disconnect();
+    await s3.connect();
+    const reconnected = fake.exchanges.length;
+    await s3.listObjects([], "bucket");
+    expect(fake.exchanges.length - reconnected).toBe(1);
+  });
+
+  test("a pinned connection reads its bucket with no request after connect", async () => {
+    const { s3, fake } = provider(() => xmlAnswer(objectsXml({})), { database: "sales" });
+    await s3.connect();
+    expect(await s3.countObjects([])).toEqual({ bucket: { count: 1 } });
+    expect(await s3.listObjects([], "bucket")).toEqual([{ path: ["sales"], name: "sales", kind: "bucket" }]);
+    expect(fake.exchanges).toHaveLength(1);
+  });
+});
+
+describe("the Keys panel through the provider", () => {
+  test("an option refusal sends nothing", async () => {
+    const { s3, fake } = provider(BUCKETS);
+    await s3.connect();
+    const error = await s3.scanKeysPage({ cursor: "0", count: 0, level: true }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(fake.exchanges).toHaveLength(1);
+  });
+
+  test("a cursor written by one provider instance is accepted by another for the same connection", async () => {
+    const page = () => xmlAnswer(objectsXml({ keys: ["a.csv"], truncated: true, token: "server-token" }));
+    const first = provider(page, { database: "sales" });
+    await first.s3.connect();
+    const written = await first.s3.scanKeysPage({ cursor: "0", count: 1, pattern: "sales/", level: true });
+    expect(written.cursor).toBe(encodeS3Cursor({ bucket: "sales", prefix: "", level: true, token: "server-token" }));
+    // Another replica, a restart or an idle eviction: a new instance with no state of the first.
+    const second = provider(page, { database: "sales" });
+    await second.s3.connect();
+    await second.s3.scanKeysPage({ cursor: written.cursor, count: 1, pattern: "sales/", level: true });
+    expect(second.fake.lines()[1]).toContain("continuation-token=server-token");
+    await first.s3.disconnect();
+    await first.s3.connect();
+    await first.s3.scanKeysPage({ cursor: written.cursor, count: 1, pattern: "sales/", level: true });
+    expect(first.fake.lines().at(-1)).toContain("continuation-token=server-token");
   });
 });
