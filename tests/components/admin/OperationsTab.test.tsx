@@ -2072,22 +2072,30 @@ describe("OperationsTab", () => {
     },
   };
 
-  test("names the deep-linked table the page has no row for", async () => {
+  test("offers a runnable row for a deep-linked table the statistics list does not contain", async () => {
+    // MySQL declares each of these per object, so the address the link already carried
+    // is a target the page can run, rather than a name in the refusal (#1412).
     mockMetadata = perTableSpecs;
     monitoringOverride = { data: { activeSessions: defaultSessions, tables: multiTables } };
     setMockSearchParams(new URLSearchParams("path=public&path=archived_events"));
 
-    const { getByTestId } = await render_();
+    const { queryByTestId, container } = await render_();
 
-    const note = getByTestId("operations-maintenance-unreachable").textContent ?? "";
-    // The engine's own wording, the same strings the per-row buttons would carry.
-    expect(note).toContain("Analyze Table");
-    expect(note).toContain("Optimize Table");
-    expect(note).toContain("Check Table");
+    const selected = container.querySelector('[data-selected="true"]');
+    expect(selected?.textContent).toContain("public");
+    expect(selected?.textContent).toContain("archived_events");
+    expect(queryByTestId("operations-maintenance-unreachable")).toBeNull();
+    const titles = titlesIn(container);
+    expect(titles).toContain("Analyze Table");
+    expect(titles).toContain("Optimize Table");
+    expect(titles).toContain("Check Table");
     // A connection id comes from the Sessions panel, so it was never on offer per table.
-    expect(note).not.toContain("Kill Connection");
-    // The name is a measurement here: it is the search param that seeded the filter.
-    expect(note).toContain("archived_events");
+    expect(titles).not.toContain("Kill Connection");
+
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[title="Analyze Table"]')!);
+    });
+    expect(mockRunMaintenance).toHaveBeenCalledWith("analyze", "archived_events", "public");
   });
 
   test("names the operations and the table when the engine refused the read", async () => {
@@ -2164,6 +2172,100 @@ describe("OperationsTab", () => {
 
     // The rows and their controls are there; the operator's own filter hid them.
     expect(queryByTestId("operations-maintenance-unreachable")).toBeNull();
+  });
+
+  // =========================================================================
+  // #1412. A collection menu deep-links here with the collection's path, and
+  // Couchbase's statistics list is one bucket row, so the path never matches
+  // and the action could not run. A provider that declares the operation per
+  // object (`perEntity`, the flag the tree menu asks) is offered a row for
+  // that path. One that does not keeps the refusal.
+  // =========================================================================
+
+  /** Couchbase's declaration: both collection operations are per object, and neither is global. */
+  const perObjectSpecs = {
+    capabilities: {
+      supportsMaintenance: true,
+      maintenanceOperations: ["analyze", "reindex", "kill"],
+      maintenanceOperationSpecs: {
+        analyze: { label: "Update Statistics", perEntity: true, global: false },
+        reindex: { label: "Build Deferred Indexes", perEntity: true, global: false },
+        kill: { label: "Cancel Request", perEntity: false, global: false },
+      },
+    },
+  };
+
+  /** The one row `getTableStats()` returns for a Couchbase bucket. */
+  const bucketStatsRow = {
+    tableName: "travel",
+    schemaName: "travel",
+    rowCount: 128,
+    tableSize: "16 MB",
+    totalSize: "16 MB",
+    totalSizeBytes: 16_777_216,
+  };
+
+  test("a deep link to a collection the bucket row does not name offers a runnable row", async () => {
+    mockMetadata = perObjectSpecs;
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: [bucketStatsRow] } };
+    setMockSearchParams(new URLSearchParams("path=travel&path=inventory&path=hotel"));
+
+    const { getByTestId, queryByTestId, container } = await render_();
+
+    // The path's scope is the container a click sends, and the collection is the target.
+    const selected = container.querySelector('[data-selected="true"]');
+    expect(selected?.textContent).toContain("inventory");
+    expect(selected?.textContent).toContain("hotel");
+    // The page did not count the collection, so the row must not claim the bucket's 128.
+    expect(getByTestId("operations-addressed-unmeasured").textContent).toBe("Not measured");
+    expect(selected?.textContent).not.toContain("128 rows");
+    expect(queryByTestId("operations-maintenance-unreachable")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[title="Update Statistics"]')!);
+    });
+    expect(mockRunMaintenance).toHaveBeenCalledWith("analyze", "hotel", "inventory");
+
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[title="Build Deferred Indexes"]')!);
+    });
+    expect(mockRunMaintenance).toHaveBeenCalledWith("reindex", "hotel", "inventory");
+  });
+
+  test("a provider that does not declare per-object maintenance still refuses the deep link", async () => {
+    // No specs: the legacy per-row buttons still render on a measured row, which is
+    // not a declaration that an address outside the list can be run. `perEntity: false`
+    // is the same refusal, and it draws no per-row control at all (covered above).
+    mockMetadata = {
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum", "reindex"] },
+    };
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: [bucketStatsRow] } };
+    setMockSearchParams(new URLSearchParams("path=travel&path=inventory&path=hotel"));
+
+    const { getByTestId, queryByTestId } = await render_();
+
+    const note = getByTestId("operations-maintenance-unreachable").textContent ?? "";
+    expect(note).toContain("hotel");
+    expect(note).toContain("Analyze");
+    expect(queryByTestId("operations-addressed-unmeasured")).toBeNull();
+  });
+
+  test("the bucket row still runs maintenance for the default collection", async () => {
+    // `getTableStats()` names the bucket in both fields. The provider reads that pair as
+    // `_default`.`_default` (`maintenanceKeyspace`); this page's job is to keep sending it.
+    mockMetadata = perObjectSpecs;
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: [bucketStatsRow] } };
+
+    const { getByText, queryByTestId, container } = await render_();
+
+    expect(getByText("128 rows")).not.toBeNull();
+    expect(queryByTestId("operations-addressed-unmeasured")).toBeNull();
+    expect(queryByTestId("operations-maintenance-unreachable")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[title="Update Statistics"]')!);
+    });
+    expect(mockRunMaintenance).toHaveBeenCalledWith("analyze", "travel", "travel");
   });
 
   // =========================================================================

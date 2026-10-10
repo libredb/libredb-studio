@@ -1175,11 +1175,18 @@ than a `0`.
 **require** a target.
 
 A `container` is the row's `schemaName` (#772), and the keyspace it addresses is decided from it:
-the bucket's own name (the only Tables row this provider has, `getTableStats()`) means the
-bucket's default collection, so the row's Analyze button addresses `` `bucket`.`_default`.`_default` ``
+the bucket's own name (the only statistics row `getTableStats()` returns) means the
+bucket's default collection, so that row's Analyze button addresses `` `bucket`.`_default`.`_default` ``
 rather than a scope that does not exist; any other container is the SCOPE the collection sits in,
 used as one instead of being parsed back out of the display name. Without a container the
 display-name rule stands: `scope.collection`, or the default scope for a bare name.
+
+The collection menu does not click that bucket row. It opens the admin Operations page on the
+collection's own path (`?path=<bucket>&path=<scope>&path=<collection>`). The page's list is still
+`getTableStats()`, which does not name the collection, so where the provider declares the
+operation per object the page offers a row for the path itself (#1412). That row's schema is the
+scope segment and its button sends `(collection, scope)`, the "any other container" arm above.
+The row is not a measurement: item counts stay on the bucket row.
 
 | Type | Couchbase action | Notes |
 |------|------------------|-------|
@@ -1216,7 +1223,7 @@ placement unavailable while the other one is available - a targetless `{type:"an
 Both global cards are withheld rather than synthesised from a keyspace list this provider
 does not enumerate for maintenance. Before #U9 the global Reindex card rendered for every
 provider that declared `reindex`, so on Couchbase every click answered *"The reindex
-operation requires a target"*; the per-collection control carries the keyspace and runs.
+operation requires a target"*; the per-collection control carries the keyspace and runs, on the row the Operations page offers for that path.
 `vacuumAction` (*"Compact"*) names nothing this provider can run - its own description says
 the server compacts automatically - so `vacuum` stays undeclared, `vacuumActionOperation`
 stays absent, and that card never renders either.
