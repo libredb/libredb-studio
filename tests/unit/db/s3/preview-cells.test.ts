@@ -185,6 +185,17 @@ describe("buildRows", () => {
     valueAt: (row: number, column: number) => rows[row][column],
   });
 
+  test("a type list of another length than the names is a defect and throws", () => {
+    expect(() =>
+      buildRows(
+        { names: ["a", "b"], typing: ["text"], rowCount: 0, valueAt: () => null },
+        undefined,
+        2,
+        S3_PREVIEW_LIMITS,
+      ),
+    ).toThrow("A row source gives 1 column type(s) for 2 column name(s)");
+  });
+
   test("rows stop at maxRows with N-ROWS only when more were available", () => {
     const built = buildRows(
       grid([

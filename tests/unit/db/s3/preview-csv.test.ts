@@ -41,10 +41,10 @@ describe("splitCsv: RFC 4180 quoting", () => {
     expect(split('"a""b,c",d').records).toEqual([['a"b,c', "d"]]);
   });
 
-  test("characters after a closing quote are appended to the field and counted once per field", () => {
+  test("characters after a closing quote are appended to the field and counted once per field, by its position", () => {
     const result = split('"ab"cd,"x"y,z\n');
     expect(result.records).toEqual([["abcd", "xy", "z"]]);
-    expect(result.quoteTrailers).toBe(2);
+    expect(result.quoteTrailerFields).toEqual([0, 1]);
   });
 
   test("a quote inside an unquoted field is data", () => {
@@ -58,14 +58,14 @@ describe("splitCsv: RFC 4180 quoting", () => {
         ["1", "2"],
       ],
       fieldCounts: [2, 2],
-      quoteTrailers: 0,
+      quoteTrailerFields: [],
       cutLast: true,
       unclosed: false,
     });
     expect(split('a\n"x\ny', false)).toEqual({
       records: [["a"]],
       fieldCounts: [1],
-      quoteTrailers: 0,
+      quoteTrailerFields: [],
       cutLast: true,
       unclosed: false,
     });
@@ -75,7 +75,7 @@ describe("splitCsv: RFC 4180 quoting", () => {
     expect(split('a\n"x\ny', true)).toEqual({
       records: [["a"], ["x\ny"]],
       fieldCounts: [1, 1],
-      quoteTrailers: 0,
+      quoteTrailerFields: [],
       cutLast: false,
       unclosed: true,
     });
@@ -94,14 +94,14 @@ describe("splitCsv: RFC 4180 quoting", () => {
     expect(split('h\n1\n"x"y', false)).toEqual({
       records: [["h"], ["1"]],
       fieldCounts: [1, 1],
-      quoteTrailers: 0,
+      quoteTrailerFields: [],
       cutLast: true,
       unclosed: false,
     });
     expect(splitCsv('"a"b\n"c"d\n"e"f\n', ",", true, 3, 2)).toEqual({
       records: [["ab"], ["cd"], ["ef"]],
       fieldCounts: [1, 1, 1],
-      quoteTrailers: 2,
+      quoteTrailerFields: [0, 0],
       cutLast: false,
       unclosed: false,
     });
@@ -122,7 +122,7 @@ describe("splitCsv: the field bound", () => {
         ["1", "2"],
       ],
       fieldCounts: [4, 2],
-      quoteTrailers: 0,
+      quoteTrailerFields: [],
       cutLast: false,
       unclosed: false,
     });
@@ -308,6 +308,19 @@ describe("csvRows", () => {
     ]);
     expect(rows('a\n"x', { ended: true }).notices).toEqual([
       "The last record has a quote that is never closed; it is shown up to the end of the object.",
+    ]);
+  });
+
+  test("trailing characters count only in shown columns: not past the column bound, not outside a column list", () => {
+    const width = S3_PREVIEW_LIMITS.maxColumns + 1;
+    const header = Array.from({ length: width }, (_, index) => `h${index}`).join(",");
+    const record = [...Array.from({ length: width - 1 }, () => "1"), '"x"y'].join(",");
+    expect(rows(`${header}\n${record}\n`).notices).toEqual([
+      `Showing the first ${S3_PREVIEW_LIMITS.maxColumns.toLocaleString("en-US")} of ${width.toLocaleString("en-US")} columns.`,
+    ]);
+    expect(rows('a,b\n1,"x"y\n', { request: { columns: ["a"] } }).notices).toEqual([]);
+    expect(rows('a,b\n1,"x"y\n', { request: { columns: ["b"] } }).notices).toEqual([
+      "1 field(s) have characters after their closing quote; they are shown as read.",
     ]);
   });
 

@@ -7,7 +7,7 @@
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { S3_PREVIEW_ELEMENTS_PER_COLUMN, type S3PreviewLimits } from "./constants";
 import type { S3PreviewRequest, S3PreviewRows } from "./preview";
-import { buildRows } from "./preview-cells";
+import { buildRows, selectColumns } from "./preview-cells";
 import { previewSentence } from "./preview-render";
 
 export interface CsvSplit {
@@ -15,8 +15,8 @@ export interface CsvSplit {
   readonly records: readonly (readonly string[])[];
   /** Each record's true field count, the fields past `maxFields` included. */
   readonly fieldCounts: readonly number[];
-  /** Fields with characters after their closing quote, in kept records only (N-CSV-QUOTE). */
-  readonly quoteTrailers: number;
+  /** The position of each field with characters after its closing quote, in kept records only (N-CSV-QUOTE). */
+  readonly quoteTrailerFields: readonly number[];
   /** The read ended inside the last record, which was dropped (N-RECORD-CUT). */
   readonly cutLast: boolean;
   /** The whole object ended inside a quoted field, kept as read (N-CSV-UNCLOSED). */
@@ -28,7 +28,8 @@ export interface CsvSplit {
  * begins with `"` is quoted, `""` inside it is one quote and it ends at the next lone quote; characters after the
  * closing quote are appended and counted; a quote inside an unquoted field is data. When `ended` is false the last
  * record is dropped if the read ended inside it. Stops after `maxRecords` complete records. Trailing characters are
- * counted per record and added to `quoteTrailers` only for the first `keptRecords` records kept, so a dropped cut
+ * counted per record, by field position, and added to `quoteTrailerFields` only for the first `keptRecords` records
+ * kept, so a dropped cut
  * record, or a record read only to learn that more rows exist, adds nothing. A field past the first `maxFields` of
  * its record is counted in `fieldCounts` but its characters are never collected, and its trailing characters are not
  * counted, since it is never shown.
@@ -50,8 +51,8 @@ export function splitCsv(
   let wasQuoted = false;
   let trailerCounted = false;
   let atFieldStart = true;
-  let quoteTrailers = 0;
-  let recordTrailers = 0;
+  const quoteTrailerFields: number[] = [];
+  let recordTrailers: number[] = [];
   const skipping = (): boolean => fields.length >= maxFields;
   const endField = (): void => {
     if (skipping()) skipped += 1;
@@ -62,8 +63,8 @@ export function splitCsv(
     endField();
     records.push(fields);
     fieldCounts.push(fields.length + skipped);
-    if (records.length <= keptRecords) quoteTrailers += recordTrailers;
-    recordTrailers = 0;
+    if (records.length <= keptRecords) quoteTrailerFields.push(...recordTrailers);
+    recordTrailers = [];
     fields = [];
     skipped = 0;
   };
@@ -104,11 +105,12 @@ export function splitCsv(
       wasQuoted = false;
       trailerCounted = false;
       index += char === "\n" ? 1 : 2;
-      if (records.length >= maxRecords) return { records, fieldCounts, quoteTrailers, cutLast: false, unclosed: false };
+      if (records.length >= maxRecords)
+        return { records, fieldCounts, quoteTrailerFields, cutLast: false, unclosed: false };
       continue;
     }
     if (wasQuoted && !trailerCounted && !skipping()) {
-      recordTrailers += 1;
+      recordTrailers.push(fields.length);
       trailerCounted = true;
     }
     if (!skipping()) field += char;
@@ -116,10 +118,10 @@ export function splitCsv(
     index += 1;
   }
   const pending = quoted || !atFieldStart || fields.length > 0 || skipped > 0 || field !== "";
-  if (!pending) return { records, fieldCounts, quoteTrailers, cutLast: false, unclosed: false };
-  if (!ended) return { records, fieldCounts, quoteTrailers, cutLast: true, unclosed: false };
+  if (!pending) return { records, fieldCounts, quoteTrailerFields, cutLast: false, unclosed: false };
+  if (!ended) return { records, fieldCounts, quoteTrailerFields, cutLast: true, unclosed: false };
   keepRecord();
-  return { records, fieldCounts, quoteTrailers, cutLast: false, unclosed: quoted };
+  return { records, fieldCounts, quoteTrailerFields, cutLast: false, unclosed: quoted };
 }
 
 const SNIFF_CANDIDATES: readonly string[] = [",", ";", "\t", "|"];
@@ -165,7 +167,8 @@ export interface RowsInput {
 
 /**
  * CSV or TSV rows; a read with no complete first record has no header and answers text rows instead, with
- * N-RECORD-CUT only when the read did not end. Trailing characters are counted over the header and the shown rows.
+ * N-RECORD-CUT only when the read did not end. Trailing characters are counted over the header and the shown rows,
+ * in the shown columns only.
  * Each record keeps at most `maxColumns` times S3_PREVIEW_ELEMENTS_PER_COLUMN fields: only those are named (so a
  * column past them cannot be selected by name and is refused like any unknown one), while N-COLUMNS and the ragged
  * count use the true counts.
@@ -188,6 +191,8 @@ export function csvRows(input: RowsInput & { readonly format: "csv" | "tsv" }): 
   const headerCount = split.fieldCounts[0];
   const columnCount = shownCounts.reduce((width, fieldCount) => Math.max(width, fieldCount), headerCount);
   const ragged = shownCounts.filter((fieldCount) => fieldCount !== headerCount).length;
+  const shownColumns = new Set(selectColumns(names, input.request.columns, input.limits.maxColumns).indexes);
+  const quoteTrailers = split.quoteTrailerFields.filter((field) => shownColumns.has(field)).length;
   const built = buildRows(
     {
       names,
@@ -201,7 +206,7 @@ export function csvRows(input: RowsInput & { readonly format: "csv" | "tsv" }): 
     input.limits,
   );
   const notices: string[] = [];
-  if (split.quoteTrailers > 0) notices.push(previewSentence("N-CSV-QUOTE", { k: split.quoteTrailers }));
+  if (quoteTrailers > 0) notices.push(previewSentence("N-CSV-QUOTE", { k: quoteTrailers }));
   if (split.unclosed) notices.push(previewSentence("N-CSV-UNCLOSED"));
   if (split.cutLast) notices.push(cutNotice);
   if (ragged > 0) notices.push(previewSentence("N-CSV-RAGGED", { k: ragged }));

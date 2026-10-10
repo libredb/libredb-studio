@@ -240,7 +240,7 @@ const cellLength = (cell: S3PreviewCell): number =>
 /**
  * The shown rows of a source: the column bound first, then at most `maxRows` rows, stopping before the row whose
  * cells would take the summed cell characters past `outputChars` (N-OUTPUT); N-ROWS when more rows were available;
- * N-CELLS counting cut cells.
+ * N-CELLS counting cut cells. A type list whose length is not the names' is a caller's defect and throws.
  */
 export function buildRows(
   source: RowSource,
@@ -248,6 +248,10 @@ export function buildRows(
   maxRows: number,
   limits: S3PreviewLimits,
 ): { readonly rows: S3PreviewRows; readonly notices: readonly string[] } {
+  if (typeof source.typing !== "string" && source.typing.length !== source.names.length)
+    throw new Error(
+      `A row source gives ${source.typing.length} column type(s) for ${source.names.length} column name(s)`,
+    );
   const selection = selectColumns(source.names, columns, limits.maxColumns, source.columnCount ?? source.names.length);
   const kinds = selection.indexes.map(() => new Set<string>());
   const rows: S3PreviewCell[][] = [];
