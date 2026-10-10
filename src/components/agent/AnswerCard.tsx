@@ -125,6 +125,7 @@ type StatementLanguage =
   | "influxql"
   | "oxia"
   | "s3"
+  | "kubectl"
   | "unknown";
 
 /**
@@ -165,6 +166,11 @@ type StatementLanguage =
  * checked" chip, which rules out yellow and orange; red is ruled out as a failure hue. Of the remaining declared
  * `-alt` steps, indigo's stands furthest from every status hue and every other language here in both palettes (0.073
  * in OKLab from PromQL's indigo, its nearest), measured.
+ *
+ * kubectl takes teal's `-alt` step: no guard here reads a kubectl statement, so its draft stands beside the amber "not
+ * checked" chip, which rules out amber itself, yellow and orange, and red is ruled out as a failure hue. Of the declared
+ * `-alt` steps left, teal's stands furthest from every status hue and every other language here in both palettes (0.071
+ * in OKLab from Milvus's teal, its nearest), measured.
  */
 const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.freeze({
   sql: "border-hue-blue/40",
@@ -179,6 +185,7 @@ const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.fre
   influxql: "border-hue-green/40",
   oxia: "border-hue-purple-alt/40",
   s3: "border-hue-indigo-alt/40",
+  kubectl: "border-hue-teal-alt/40",
   unknown: "border-hairline-strong",
 });
 

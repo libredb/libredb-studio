@@ -16,7 +16,8 @@ export type EditorLanguage =
   | "qdrant"
   | "influxql"
   | "oxia"
-  | "s3";
+  | "s3"
+  | "kubectl";
 
 /**
  * The tab type a connection's tabs take.

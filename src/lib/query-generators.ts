@@ -4,6 +4,7 @@ import { declaredLevels } from "@/lib/db/object-kinds";
 import { type QueryDialect, registeredDialect } from "@/lib/db/query-dialects";
 import { encodeKey } from "@/lib/db/providers/keyvalue/etcd/keys";
 import { oxiaSelectQuery, oxiaTableQuery } from "@/lib/db/providers/keyvalue/oxia/generators";
+import { kubectlGetQuery, kubectlRowActionQuery } from "@/lib/db/providers/platform/kubernetes/generators";
 import { s3SelectQuery, s3TableQuery } from "@/lib/db/providers/objectstore/s3/console/generators";
 import { quoteGoString, quoteTxnWord, quoteWord } from "@/lib/db/providers/keyvalue/etcd/lexer";
 import { influxqlSelectQuery, influxqlTableQuery } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
@@ -771,6 +772,15 @@ const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Ob
   s3: {
     table: (path) => s3TableQuery(path),
     select: (path) => s3SelectQuery(path),
+  },
+  // Kubernetes reads an object through a kubectl statement, written by the provider's browser-safe generators.ts: the
+  // click and Generate Command are one get of the object (a built-in row opens its YAML instead, so the click reaches
+  // this only from a custom resource type's row), and a declared row action writes Describe, Logs or List. None reads
+  // the columns or the scope.
+  kubectl: {
+    table: (path) => kubectlGetQuery(path),
+    select: (path) => kubectlGetQuery(path),
+    rowAction: (path, actionId) => kubectlRowActionQuery(path, actionId),
   },
 });
 

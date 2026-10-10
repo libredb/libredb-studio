@@ -95,6 +95,9 @@ export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> 
   // An S3 command line renders in the language `s3-language.ts` registers over the console's own lexer, and has no
   // formatter: the SQL formatter rewrites a command line, Oxia's reason.
   s3: Object.freeze({ monacoId: "s3" }),
+  // A kubectl statement renders in the `kubectl` language the console's lexer registers, and has no formatter: the
+  // SQL formatter rewrites a command line, and the console formatter is the HTTP grammar's.
+  kubectl: Object.freeze({ monacoId: "kubectl" }),
 });
 
 /**

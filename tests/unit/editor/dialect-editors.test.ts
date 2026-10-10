@@ -21,6 +21,7 @@ const EDITOR_LANGUAGES: readonly EditorLanguage[] = [
   "influxql",
   "oxia",
   "s3",
+  "kubectl",
 ];
 
 describe("DIALECT_EDITORS", () => {
@@ -30,6 +31,7 @@ describe("DIALECT_EDITORS", () => {
       "etcd",
       "influxql",
       "kafka",
+      "kubectl",
       "libredb",
       "milvus",
       "mongodb",
@@ -60,6 +62,7 @@ describe("DIALECT_EDITORS", () => {
       influxql: "influxql",
       oxia: "oxia",
       s3: "s3",
+      kubectl: "kubectl",
     });
   });
 

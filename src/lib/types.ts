@@ -798,7 +798,8 @@ export interface QueryTab {
     | "qdrant"
     | "influxql"
     | "oxia"
-    | "s3";
+    | "s3"
+    | "kubectl";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

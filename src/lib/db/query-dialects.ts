@@ -110,6 +110,15 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersCountQuery: false,
     offersSqlExport: false,
   }),
+  // Kubernetes: one statement of a read-only kubectl subset. Its grids are the API server's own columns, so no
+  // profile, model or count statement of its grammar applies, and neither SQL export format applies.
+  kubectl: Object.freeze({
+    tabType: "kubectl",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+    offersSqlExport: false,
+  }),
 });
 
 /**
