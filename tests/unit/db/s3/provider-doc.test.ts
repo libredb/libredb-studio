@@ -621,4 +621,24 @@ describe("docs/providers/s3.md: the provider's shape, as the built provider decl
       expect(row, name).toContain(`| ${n(value as number)} |`);
     }
   });
+
+  test("23b. the Parquet limits claim measurement only where the decode runs varied them", () => {
+    const summary = flat(DOC)
+      .split(/(?<=\.) /)
+      .find((sentence) => sentence.startsWith("A Parquet file whose first row group does not fit"));
+    expect(summary).toBeDefined();
+    for (const limit of ["read", "decode", "leaf-column", "value"]) expect(summary).toContain(limit);
+    expect(summary).not.toContain("fetch budget");
+    const preview = sectionOf(DOC, "#### Object preview");
+    const lead = preview.split("\n").find((line) => line.startsWith("The Parquet value"));
+    expect(lead).toBeDefined();
+    const measured = lead?.split(" were measured")[0];
+    expect(measured).toBeDefined();
+    expect(measured).not.toMatch(/fetch|decode/);
+    for (const name of ["parquetFetchBudget", "parquetDecodeBudget"]) {
+      const basis = rowOf(preview, `\`${name}\``)?.split("|")[3]?.trim();
+      expect(basis, name).toBeDefined();
+      expect(basis?.startsWith("Measured"), name).toBe(false);
+    }
+  });
 });
