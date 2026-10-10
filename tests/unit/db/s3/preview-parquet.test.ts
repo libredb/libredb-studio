@@ -724,7 +724,7 @@ describe("previewParquet: what never reaches hyparquet", () => {
       await previewParquet(inputFor(object, "v.parquet", { request: { columns: ["v"] } }).input, depsOf(modules)),
     ).toMatchObject({
       kind: "refused",
-      sentence: "The Parquet schema is nested deeper or wider than the preview reads, so the file is not previewed.",
+      sentence: "The Parquet schema gives two columns of one group the same name, so the file is not previewed.",
     });
     expect(calls.read).toEqual([]);
   });

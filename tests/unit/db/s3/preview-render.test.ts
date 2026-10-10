@@ -74,6 +74,8 @@ describe("the preview's sentences, verbatim", () => {
       "R-PQ-FOOTER-BIG": "The Parquet footer is {n} bytes, over the {footerMax} bytes a preview reads.",
       "R-PQ-SCHEMA":
         "The Parquet schema is nested deeper or wider than the preview reads, so the file is not previewed.",
+      "R-PQ-SCHEMA-NAMES":
+        "The Parquet schema gives two columns of one group the same name, so the file is not previewed.",
       "R-PQ-FOOTER-LONG": "The Parquet footer declares {n} bytes, more than the object holds.",
       "R-PQ-FOOTER-BAD": "The Parquet footer could not be read: {reason}.",
       "R-PQ-CHUNK-RANGE": "The Parquet footer places column {c} outside the file's data, so the file is not previewed.",

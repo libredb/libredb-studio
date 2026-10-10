@@ -5,7 +5,7 @@
  * child counts, and refuses an empty list, a list over 8 elements per allowed leaf column, a depth past the limit, a
  * child count larger than the elements left, elements after the root's subtree ends, and two children of one group
  * with the same name, since a column is chosen and its chunks matched by name, so a second one of a name would be
- * read through the first one's chunks.
+ * read through the first one's chunks; that last refusal carries `duplicateName` so the preview names it.
  */
 import type { S3PreviewLimits } from "./constants";
 
@@ -50,6 +50,8 @@ export interface ParquetSchemaShape {
 }
 
 const REFUSED = { ok: false } as const;
+/** Two children of one group share a name; the preview refuses it with a sentence of its own. */
+const DUPLICATE_NAME = { ok: false, duplicateName: true } as const;
 
 /** The type string of one element with `children` children. */
 export function parquetTypeString(element: SchemaElementLike, children: number): string {
@@ -94,7 +96,7 @@ interface Frame {
 export function walkParquetSchema(
   schema: readonly SchemaElementLike[],
   limits: Pick<S3PreviewLimits, "parquetMaxSchemaDepth" | "parquetMaxLeafColumns">,
-): ParquetSchemaShape | { readonly ok: false } {
+): ParquetSchemaShape | { readonly ok: false; readonly duplicateName?: true } {
   if (schema.length === 0 || schema.length > limits.parquetMaxLeafColumns * 8) return REFUSED;
   const columns: { name: string; type: string; leaves: number; variant: boolean }[] = [];
   const leaves: ParquetLeaf[] = [];
@@ -111,7 +113,8 @@ export function walkParquetSchema(
     const element = schema[next];
     next += 1;
     const children = element.num_children ?? 0;
-    if (children < 0 || frame.names.has(element.name)) return REFUSED;
+    if (children < 0) return REFUSED;
+    if (frame.names.has(element.name)) return DUPLICATE_NAME;
     frame.names.add(element.name);
     const isVariant = element.logical_type?.type === "VARIANT";
     const variant = frame.variant || isVariant;

@@ -56,11 +56,11 @@ describe("walkParquetSchema: the refusals", () => {
   });
 
   test("two children of one group with the same name are refused, at the root and below it", () => {
-    expect(walk([root(2), leaf("v"), leaf("v")])).toEqual({ ok: false });
+    expect(walk([root(2), leaf("v"), leaf("v")])).toEqual({ ok: false, duplicateName: true });
     expect(
       walk([root(2), group("v", 2, "VARIANT"), leaf("metadata"), leaf("value"), group("v", 1), leaf("value")]),
-    ).toEqual({ ok: false });
-    expect(walk([root(1), group("s", 2), leaf("a"), leaf("a")])).toEqual({ ok: false });
+    ).toEqual({ ok: false, duplicateName: true });
+    expect(walk([root(1), group("s", 2), leaf("a"), leaf("a")])).toEqual({ ok: false, duplicateName: true });
   });
 
   test("the same name under two different groups, or at two levels, passes", () => {

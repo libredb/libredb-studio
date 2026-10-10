@@ -274,7 +274,7 @@ export async function readParquetFooter(
   const metadata = await parseFooter(input, footerBytes, modules, slots);
   if (metadata === undefined) return refused(FOOTER_BAD_BARE);
   const shape = walkParquetSchema(metadata.schema, limits);
-  if (!shape.ok) return refused(previewSentence("R-PQ-SCHEMA"));
+  if (!shape.ok) return refused(previewSentence(shape.duplicateName ? "R-PQ-SCHEMA-NAMES" : "R-PQ-SCHEMA"));
   const first = metadata.row_groups[0];
   if (first !== undefined && !chunksMatchLeaves(first.columns, shape)) return refused(FOOTER_BAD_BARE);
   if (!footerValuesHold(metadata)) return refused(FOOTER_BAD_BARE);
