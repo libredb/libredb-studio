@@ -86,7 +86,7 @@ export function readObjectHead(
   return {
     size: headerCount(header("content-length")),
     etag: etag === undefined ? null : unquotedEtag(etag),
-    partsFromEtag: parts === null ? null : Number(parts[1]),
+    partsFromEtag: parts === null ? null : headerCount(parts[1]),
     lastModified:
       lastModified === undefined
         ? null

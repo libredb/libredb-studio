@@ -117,6 +117,14 @@ describe("readObjectHead", () => {
     expect(answer).toMatchObject({ size: 6291456, etag: "834b9f7f9dd291dbc6083185d4ca07b0-2", partsFromEtag: 2 });
   });
 
+  test("a multipart ETag whose part count is not a safe integer gives no part count", () => {
+    const answer = head([["etag", '"834b9f7f9dd291dbc6083185d4ca07b0-99999999999999999999"']]);
+    expect(answer).toMatchObject({
+      etag: "834b9f7f9dd291dbc6083185d4ca07b0-99999999999999999999",
+      partsFromEtag: null,
+    });
+  });
+
   test("the first value of each name is read; a repeated x-amz-meta-* keeps every value", () => {
     const answer = head([
       ["content-length", "1"],
