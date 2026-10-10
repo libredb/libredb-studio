@@ -107,6 +107,7 @@ async function listObjects(surface: S3Surface, run: ObjectRun, context: S3RunCon
       maxKeys,
       ...(token === undefined ? {} : { continuationToken: token }),
     };
+    // oxlint-disable-next-line no-await-in-loop -- each page starts after the continuation token of the page before it.
     const page = await send(surface, "ListObjectsV2", context.call, () =>
       surface.client.listObjectsV2(request, context.call),
     );

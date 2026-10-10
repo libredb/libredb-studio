@@ -143,13 +143,16 @@ export async function listS3Objects(
   if (pin !== undefined) return [{ path: [pin], name: pin, kind: "bucket" }];
   const listing = await bucketList(surface, call);
   return listing.buckets.map((bucket) => {
-    if (bucket.created !== undefined) created.set(bucket.name, bucket.created);
-    return {
+    const object: { path: string[]; name: string; kind: string; status?: string } = {
       path: [bucket.name],
       name: bucket.name,
       kind: "bucket",
-      ...(bucket.created === undefined ? {} : { status: `created ${bucket.created.slice(0, 10)}` }),
     };
+    if (bucket.created !== undefined) {
+      created.set(bucket.name, bucket.created);
+      object.status = `created ${bucket.created.slice(0, 10)}`;
+    }
+    return object;
   });
 }
 
