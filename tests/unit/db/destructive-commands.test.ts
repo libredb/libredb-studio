@@ -20,6 +20,8 @@ import {
 } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import { OXIA_MAX_TEXT_BYTES } from "@/lib/db/providers/keyvalue/oxia/constants";
 import { oxiaRefusal, OXIA_DESTRUCTIVE_OPERATIONS, readOxiaOperations } from "@/lib/db/providers/keyvalue/oxia/guard";
+import { KUBECTL_MAX_TEXT_BYTES } from "@/lib/db/providers/platform/kubernetes/console/commands";
+import { kubectlRefusal } from "@/lib/db/providers/platform/kubernetes/console/guard";
 import { milvusRefusal } from "@/lib/db/providers/vector/milvus/guard";
 import { MILVUS_CONSOLE } from "@/lib/db/providers/vector/milvus/routes";
 import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
@@ -601,8 +603,8 @@ describe("statementRefusal and the console text bound", () => {
     remove = () => {};
   });
 
-  test("only milvus's, qdrant's, influxdb's, oxia's and s3's rows declare a refusal and a bound, and redis's a refusal alone", () => {
-    const declaring: readonly string[] = ["milvus", "qdrant", "influxdb", "oxia", "s3"];
+  test("only milvus's, qdrant's, influxdb's, oxia's, s3's and kubernetes's rows declare a refusal and a bound, and redis's a refusal alone", () => {
+    const declaring: readonly string[] = ["milvus", "qdrant", "influxdb", "oxia", "s3", "kubernetes"];
     for (const [type, row] of Object.entries(NON_SQL_DESTRUCTIVE_VOCABULARY)) {
       if (declaring.includes(type)) continue;
       expect(row?.maxTextBytes).toBeUndefined();
@@ -864,5 +866,42 @@ describe("the influxdb row", () => {
     expect(NON_SQL_DESTRUCTIVE_VOCABULARY.influxdb3).toBeUndefined();
     expect(readsSqlText("influxdb3")).toBe(true);
     expect(statementRefusal("DROP TABLE home", "influxdb3")).toBeUndefined();
+  });
+});
+
+/**
+ * Kubernetes's row: the console's own parser reads the text, so what the editor refuses and what the provider
+ * refuses are one parse; v1 only reads, so nothing asks; no statement is posted for an AI analysis.
+ */
+describe("the kubernetes row", () => {
+  const READ = "kubectl get pods -n shop";
+  const WRITE = "kubectl delete pod web -n shop";
+
+  test("decides alone, names no destructive operation and asks about no read", () => {
+    const row = NON_SQL_DESTRUCTIVE_VOCABULARY.kubernetes;
+    expect(row?.decidesAlone).toBe(true);
+    expect(row?.operations.size).toBe(0);
+    expect(row?.read(READ)).toEqual([]);
+    expect(isDestructiveNonSqlQuery(WRITE, "kubernetes")).toBe(false);
+    expect(isDangerousQuery("kubectl get configmap drop-table -n delete", "kubernetes")).toBe(false);
+    expect(vocabularySendsToModel("kubernetes")).toBe(false);
+  });
+
+  test("refuses with the console parser's sentence, by reference, and declares the dialect's byte bound", () => {
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.kubernetes?.refuse).toBe(kubectlRefusal);
+    expect(consoleTextByteLimit("kubernetes")).toBe(KUBECTL_MAX_TEXT_BYTES);
+    expect(statementRefusal(WRITE, "kubernetes")).toBe(kubectlRefusal(WRITE));
+    expect(statementRefusal(WRITE, "kubernetes")).toContain("it is not read-only");
+    expect(statementRefusal("kubectl get pods --token=abc", "kubernetes")).toBe(
+      "The flag --token is refused: the connection decides this. Nothing was sent.",
+    );
+    expect(statementRefusal(READ, "kubernetes")).toBeUndefined();
+  });
+
+  test("refuses a text one byte past the bound before the parser reads it", () => {
+    const over = `${READ} # ${"x".repeat(KUBECTL_MAX_TEXT_BYTES)}`.slice(0, KUBECTL_MAX_TEXT_BYTES + 1);
+    expect(statementRefusal(over, "kubernetes")).toBe(
+      "The statement is 65537 bytes in UTF-8, over the 65536-byte limit for this connection type. Shorten it to run it.",
+    );
   });
 });

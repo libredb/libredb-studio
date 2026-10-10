@@ -8,6 +8,8 @@ import {
 import { OXIA_MAX_TEXT_BYTES } from "@/lib/db/providers/keyvalue/oxia/constants";
 import { OXIA_DESTRUCTIVE_OPERATIONS, oxiaRefusal, readOxiaOperations } from "@/lib/db/providers/keyvalue/oxia/guard";
 import { readRedisCommandText, redisRefusal } from "@/lib/db/providers/keyvalue/redis-command-text";
+import { KUBECTL_MAX_TEXT_BYTES } from "@/lib/db/providers/platform/kubernetes/console/commands";
+import { kubectlRefusal } from "@/lib/db/providers/platform/kubernetes/console/guard";
 import { S3_MAX_TEXT_BYTES } from "@/lib/db/providers/objectstore/s3/console/constants";
 import {
   readS3Operations,
@@ -505,12 +507,16 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
   },
   kafka: { operations: KAFKA_DESTRUCTIVE_OPERATIONS, read: readKafkaOperations, decidesAlone: true },
   // Kubernetes: the provider refuses every mutating command before any request, so nothing asks. A statement names
-  // namespaces and objects, so none is posted for an AI analysis.
+  // namespaces and objects, so none is posted for an AI analysis. What the console's parser refuses (a write, exec or
+  // a tunnel, a connection flag, a flag outside v1) the editor refuses before anything is sent, past the dialect's
+  // own byte bound.
   kubernetes: {
     operations: KUBERNETES_DESTRUCTIVE_OPERATIONS,
     read: readKubernetesOperations,
     decidesAlone: true,
     safetyAnalysis: false,
+    refuse: kubectlRefusal,
+    maxTextBytes: KUBECTL_MAX_TEXT_BYTES,
   },
   // Milvus (vector-family spec 5.7, E10): the provider's own guard.ts reads the text with the parser the provider
   // runs, so what asks and what runs are one parse. A v1 request only reads, so nothing asks; what guard.ts refuses
