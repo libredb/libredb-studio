@@ -2014,6 +2014,14 @@ describe("QueryEditor", () => {
     expect(capturedLanguageRegistrations).toContain("oxia");
   });
 
+  test("registers the s3 language before the editor mounts, beside oxia", () => {
+    render(React.createElement(QueryEditor, createDefaultProps({ language: "s3", value: "aws s3 ls s3://sales/" })));
+
+    // Oxia's registration is the control: it reaches the same capture, so a missing "s3" is the component.
+    expect(capturedLanguageRegistrations).toContain("oxia");
+    expect(capturedLanguageRegistrations).toContain("s3");
+  });
+
   test("registers the etcd language before the editor mounts, beside LibreDB, Redis and PromQL (#1089)", () => {
     render(React.createElement(QueryEditor, createDefaultProps({ language: "etcd", value: "get /app/ --prefix" })));
 
@@ -2049,6 +2057,7 @@ describe("QueryEditor", () => {
       "promql",
       "etcd",
       "oxia",
+      "s3",
       "graph-cypher",
       "influxql",
       "milvus",
@@ -2121,6 +2130,63 @@ describe("QueryEditor", () => {
       cypherRegistrations = [];
       render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", databaseType: "neo4j" })));
       expect(cypherRegistrations).toEqual([]);
+    });
+  });
+
+  describe("the S3 completion provider registers for an s3 editor only", () => {
+    type Provider = {
+      triggerCharacters?: string[];
+      provideCompletionItems: (model: unknown, position: unknown) => { suggestions: Array<{ label: string }> };
+    };
+    let s3Registrations: Array<{ languageId: string; provider: Provider; dispose: Mock<() => void> }> = [];
+    const bucketSchema = JSON.stringify([
+      { name: "sales", kind: "bucket", path: ["sales"], columns: [] },
+      { name: "logs", kind: "bucket", path: ["logs"], columns: [] },
+    ]);
+    const modelOf = (text: string) => ({
+      getValue: () => text,
+      getOffsetAt: () => text.length,
+      getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
+    });
+
+    beforeEach(() => {
+      s3Registrations = [];
+      mockRegisterSQLCompletionProvider.mockClear();
+      mockRegisterMongoDBCompletionProvider.mockClear();
+      mockUseMonacoReturn = {
+        Range: class {},
+        languages: {
+          CompletionItemKind: { Keyword: 17, Property: 9, EnumMember: 16, Folder: 23 },
+          registerCompletionItemProvider: (languageId: string, provider: Provider) => {
+            const dispose = mock(() => {});
+            s3Registrations.push({ languageId, provider, dispose });
+            return { dispose };
+          },
+        },
+      };
+    });
+
+    test("an s3 editor completes bucket names from the schema it holds, and disposes the provider on unmount", () => {
+      const { unmount } = render(
+        React.createElement(QueryEditor, createDefaultProps({ language: "s3", schemaContext: bucketSchema })),
+      );
+      expect(s3Registrations.map((entry) => entry.languageId)).toEqual(["s3"]);
+      expect(mockRegisterSQLCompletionProvider).not.toHaveBeenCalled();
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+      const provider = s3Registrations[0]!.provider;
+      const at = (text: string) =>
+        provider
+          .provideCompletionItems(modelOf(text), { lineNumber: 1, column: text.length + 1 })
+          .suggestions.map((item) => item.label);
+      expect(at("aws s3 ls s3://")).toEqual(["s3://sales/", "s3://logs/"]);
+      expect(at("aws s3api head-bucket --bucket ")).toEqual(["sales", "logs"]);
+      unmount();
+      expect(s3Registrations[0]!.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    test("a sql editor registers no S3 completion", () => {
+      render(React.createElement(QueryEditor, createDefaultProps({ language: "sql" })));
+      expect(s3Registrations).toEqual([]);
     });
   });
 
@@ -2410,6 +2476,7 @@ describe("QueryEditor", () => {
       ["libredb", false],
       ["etcd", false],
       ["oxia", false],
+      ["s3", false],
       ["graph-cypher", false],
       ["influxql", false],
       ["sql", true],
