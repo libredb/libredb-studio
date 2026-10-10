@@ -187,3 +187,94 @@ describe("the browser-shipped S3 modules", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// The console's browser-safe modules (the confirmation gate, the editor's language, completion,
+// the generators and the labels ship them to the browser) and the two editor modules.
+// ---------------------------------------------------------------------------------------------------------------
+
+const CONSOLE_DIR = "src/lib/db/providers/objectstore/s3/console";
+const CONSOLE_MODULES = [
+  "constants",
+  "lexer",
+  "paths",
+  "token",
+  "commands",
+  "guard",
+  "format",
+  "generators",
+  "statement-language",
+] as const;
+const CONSOLE_SET = CONSOLE_MODULES.join("|");
+
+/** What a console module may import by value: its browser-safe siblings, three root modules and the shared set. */
+const CONSOLE_ALLOWED: readonly RegExp[] = [
+  new RegExp(`^\\./(${CONSOLE_SET})$`),
+  /^\.\.\/(constants|names|preview-render)$/,
+  /^@\/lib\/db\/console\/[a-z-]+$/,
+  /^@\/lib\/db\/(object-kinds|errors)$/,
+  /^@\/lib\/db\/utils\/(json-integers|result-fields)$/,
+];
+
+const EDITOR_MODULES = ["src/lib/editor/s3-language.ts", "src/lib/editor/s3-completions.ts"] as const;
+
+/** What an editor module may import by value: the console's browser-safe modules, the shared set, its sibling. */
+const EDITOR_ALLOWED: readonly RegExp[] = [
+  new RegExp(`^@/lib/db/providers/objectstore/s3/console/(${CONSOLE_SET})$`),
+  /^@\/lib\/db\/console\/[a-z-]+$/,
+  /^\.\/s3-language$/,
+];
+
+function browserFindings(file: string, source: string, allowed: readonly RegExp[]): string[] {
+  const imports = valueImports(source)
+    .filter((specifier) => !allowed.some((pattern) => pattern.test(specifier)))
+    .map((specifier) => `${file} imports ${specifier}, which is not browser-safe`);
+  const buffer = namesBuffer(source) ? [`${file} names Buffer, which the browser does not have`] : [];
+  return [...imports, ...buffer];
+}
+
+describe("the S3 console's and editor's browser-shipped modules", () => {
+  test.each(CONSOLE_MODULES.map((module) => [module]))("console/%s.ts imports only the browser-safe set", (module) => {
+    const source = readFileSync(join(ROOT, CONSOLE_DIR, `${module}.ts`), "utf8");
+    expect(browserFindings(`console/${module}.ts`, source, CONSOLE_ALLOWED)).toEqual([]);
+  });
+
+  test.each(EDITOR_MODULES.map((file) => [file]))("%s imports only the browser-safe set", (file) => {
+    expect(browserFindings(file, readFileSync(join(ROOT, file), "utf8"), EDITOR_ALLOWED)).toEqual([]);
+  });
+
+  test.each([
+    ['import { executeS3Command } from "./execute";\n', "./execute"],
+    ['import { s3Result } from "./results";\n', "./results"],
+    ['import { createS3Client } from "../client";\n', "../client"],
+    ['import { previewObject } from "../preview";\n', "../preview"],
+    ['import { readFileSync } from "node:fs";\n', "node:fs"],
+    ['import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";\n', "@/lib/db/utils/query-limiter"],
+    ['export { oxiaWords } from "@/lib/db/providers/keyvalue/oxia/lexer";\n', "@/lib/db/providers/keyvalue/oxia/lexer"],
+  ])("a planted %s in console/commands.ts fails by name", (planted, specifier) => {
+    expect(browserFindings("console/commands.ts", planted, CONSOLE_ALLOWED)).toEqual([
+      `console/commands.ts imports ${specifier}, which is not browser-safe`,
+    ]);
+  });
+
+  test("a type-only import of the preview's types is allowed, as commands.ts makes it", () => {
+    expect(
+      browserFindings("console/commands.ts", 'import type { S3PreviewRequest } from "../preview";\n', CONSOLE_ALLOWED),
+    ).toEqual([]);
+  });
+
+  test("a planted server import or Buffer in an editor module fails by name", () => {
+    expect(
+      browserFindings(
+        "src/lib/editor/s3-completions.ts",
+        'import { runS3Command } from "@/lib/db/providers/objectstore/s3/console/execute";\n',
+        EDITOR_ALLOWED,
+      ),
+    ).toEqual([
+      "src/lib/editor/s3-completions.ts imports @/lib/db/providers/objectstore/s3/console/execute, which is not browser-safe",
+    ]);
+    expect(browserFindings("src/lib/editor/s3-language.ts", "const b = Buffer.from([]);\n", EDITOR_ALLOWED)).toEqual([
+      "src/lib/editor/s3-language.ts names Buffer, which the browser does not have",
+    ]);
+  });
+});
