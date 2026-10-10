@@ -2,7 +2,10 @@
  * The assertions every provider's object surface must satisfy, in one place.
  *
  * Eight invariants, each of which a provider has a real way to get wrong:
- *   1. every kind the object surface enumerates appears in countObjects, so a folder never silently vanishes;
+ *   1. countObjects answers every kind that applies to the container and no other, so a folder never
+ *      silently vanishes and none is drawn where it cannot be listed; a kind applies when the container
+ *      names it in `Container.kinds`, or always when the container names none, and a kind that does
+ *      not apply is refused by listObjects with a sentence rather than answered with an empty list;
  *   2. countObjects never answers for a kind the provider did not declare;
  *   3. every kind counted non-empty LISTS something, so no folder opens onto nothing;
  *   4. every object's path starts with its container's path, so the tree can address it;
@@ -93,6 +96,7 @@ import type {
   KindCount,
   ObjectDetail,
   ObjectDetailBatch,
+  ObjectKindSpec,
   ObjectSourceDocument,
   ObjectSourcePart,
 } from "@/lib/db/types";
@@ -102,6 +106,7 @@ import {
   enumerableKinds,
   findKind,
   isCountUnavailable,
+  kindsForContainer,
   isSourcePartUnavailable,
   keyBrowserKind,
   kindAcceptsSourceEdits,
@@ -304,11 +309,21 @@ export async function assertObjectSurface(
   for (const id of Object.keys(counts)) {
     if (!declared.includes(id)) throw new Error(`countObjects answered for undeclared kind "${id}"`);
   }
-  // The kinds a folder is drawn for, which is what countObjects must answer. A kind only the Keys
-  // panel enumerates is declared and never counted, so the provider leaves it out (#1089 3.4).
-  for (const kind of enumerableKinds(capabilities)) {
+  // The kinds a folder is drawn for in THIS container, which is what countObjects must answer, and
+  // all of it. A kind only the Keys panel enumerates is declared and never counted, so the provider
+  // leaves it out (#1089 3.4); a container that names its kinds holds those and no other.
+  const applicable = await applicableToContainer(provider, containers, container);
+  for (const kind of applicable) {
     if (!(kind.id in counts)) throw new Error(`declared kind "${kind.id}" is missing from countObjects`);
   }
+  for (const id of Object.keys(counts)) {
+    if (!applicable.some((kind) => kind.id === id)) {
+      throw new Error(
+        `countObjects answered for kind "${id}", which does not apply to the container ${JSON.stringify(container)}`,
+      );
+    }
+  }
+  await assertInapplicableRefused(provider, container, applicable);
   for (const [id, want] of Object.entries(expected.kinds)) {
     if (!(id in counts)) throw new Error(`countObjects returned nothing for expected kind "${id}"`);
     const got = counts[id];
@@ -397,7 +412,75 @@ export async function assertObjectSurface(
   // described at the object THIS EXPECTATION chose, which is the strongest object of that
   // kind to hold the declaration against, and a second read would probe a different one.
   await assertColumnDeclarations(provider, expected, listings, { object: sample, detail });
-  await assertSourceSurface(provider, expected, container, listings);
+  await assertSourceSurface(provider, expected, container, listings, applicable);
+}
+
+/**
+ * The kinds that apply to the container the contract runs in, read off the provider's own listing of
+ * it, so an expectation cannot narrow them.
+ *
+ * A container's record comes from the listing of its parent: the root listing for a one-segment path,
+ * and the parent's listing below that. The root container of an engine with no level is in no listing
+ * and names no kinds. A `Container.kinds` naming an id the provider does not enumerate is refused by
+ * name, because the readers that walk a container's kinds would drop it in silence, and so is one on a
+ * provider that does not declare `containersNameKinds`.
+ */
+async function applicableToContainer(
+  provider: DatabaseProvider,
+  root: readonly Container[],
+  container: readonly string[],
+): Promise<readonly ObjectKindSpec[]> {
+  const capabilities = provider.getCapabilities();
+  const siblings = container.length <= 1 ? root : await provider.listContainers!(container.slice(0, -1));
+  const kinds = siblings.find((candidate) => pathKey(candidate.path) === pathKey(container))?.kinds;
+  // The declaration is what the inventory route reads before it lists a named container, so a
+  // provider answering kinds without it would have its named containers read for every kind.
+  if (kinds !== undefined && capabilities.containersNameKinds !== true) {
+    throw new Error(
+      `listContainers answered kinds for the container ${JSON.stringify(container)}, and the provider does not ` +
+        "declare containersNameKinds",
+    );
+  }
+  const enumerable = enumerableKinds(capabilities).map((kind) => kind.id);
+  for (const id of kinds ?? []) {
+    if (!enumerable.includes(id)) {
+      throw new Error(
+        `listContainers answered the kind "${id}" for the container ${JSON.stringify(container)}, which the provider ` +
+          "does not enumerate",
+      );
+    }
+  }
+  return kindsForContainer(capabilities, kinds);
+}
+
+/**
+ * Every enumerable kind that does NOT apply to the container is refused by listObjects with a sentence.
+ *
+ * An empty list would read as "this container holds none of them" in every reader that asked, and the
+ * tree and the routes never ask for such a pair, so only this check can see a provider that answers one.
+ * Nothing runs for a container that names no kinds, because every enumerable kind applies to it.
+ */
+async function assertInapplicableRefused(
+  provider: DatabaseProvider,
+  container: readonly string[],
+  applicable: readonly ObjectKindSpec[],
+): Promise<void> {
+  for (const kind of enumerableKinds(provider.getCapabilities())) {
+    if (applicable.some((candidate) => candidate.id === kind.id)) continue;
+    const answer = await provider.listObjects!(container, kind.id).then(
+      (objects) => ({ objects }),
+      (error: unknown) => ({ error }),
+    );
+    if ("objects" in answer) {
+      throw new Error(
+        `listObjects answered ${answer.objects.length} object(s) of kind "${kind.id}", which does not apply to the ` +
+          `container ${JSON.stringify(container)}; such a pair is refused with a sentence`,
+      );
+    }
+    if (!(answer.error instanceof Error) || answer.error.message.trim() === "") {
+      throw new Error(`listObjects refused the inapplicable kind "${kind.id}" with no sentence a person can read`);
+    }
+  }
 }
 
 /**
@@ -846,6 +929,7 @@ async function assertSourceSurface(
   expected: ObjectSurfaceExpectation,
   container: readonly string[],
   listings: ReadonlyMap<string, DatabaseObject[]>,
+  applicable: readonly ObjectKindSpec[],
 ): Promise<void> {
   const capabilities = provider.getCapabilities();
   // Two populations, split by the declaration (#1089 3.4). The PAIRING below reads every declared
@@ -854,7 +938,9 @@ async function assertSourceSurface(
   // because an expectation can never name a kind no count or listing answers: that kind is driven
   // through `keyBrowserSample` instead.
   const declaredSourceKinds = declaredKinds(capabilities).filter((kind) => kind.hasSource === true);
-  const sourceKinds = enumerableKinds(capabilities).filter((kind) => kind.hasSource === true);
+  // The second population is narrowed to the kinds that apply to the container: a kind another
+  // container holds can be neither counted nor listed here, so no expectation for this one names it.
+  const sourceKinds = applicable.filter((kind) => kind.hasSource === true);
   const read = provider.readObjectSource;
 
   // The pairing, unconditional and outside every loop. A declaration with no method behind it
@@ -896,9 +982,7 @@ async function assertSourceSurface(
   // holds none of a READABLE kind, and this phase's whole safety argument is that every editable
   // kind has its build driven. Over the ENUMERABLE editable kinds only: a kind only the Keys panel
   // enumerates is never counted, and its build is driven through `keyBrowserSample` (#1089 3.4).
-  const countedEditableKinds = enumerableKinds(capabilities).filter((kind) =>
-    kindAcceptsSourceEdits(capabilities, kind.id),
-  );
+  const countedEditableKinds = applicable.filter((kind) => kindAcceptsSourceEdits(capabilities, kind.id));
   for (const kind of countedEditableKinds) {
     if (!((expected.kinds[kind.id] ?? 0) > 0)) {
       throw new Error(

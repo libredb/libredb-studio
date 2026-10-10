@@ -186,6 +186,7 @@ No `isMongoDB` / `=== 'mongodb'` checks outside provider classes. All behavior d
 
 `src/lib/db/object-kinds.ts` is the kernel through which every provider reads its own declaration, and it takes only facts that follow from the declaration and hold for every engine.
 How deep the container chain is (`containerDepth()`), which container paths are an address (`acceptedContainerShapes()`, over `containerPathShapes`) and which object kinds exist (`declaredKinds()`) are such facts.
+So is which kinds one container holds (`applicableKinds()`, over `Container.kinds`, and `kindsForContainer()`, its form over every enumerable kind): the tree, the tree filter, the inventory and search routes and the agent's grounding walk ask a container only for those.
 The HTTP object routes read them through the same functions, so a route refusal and a provider refusal cannot disagree about one declaration (#1147).
 A rule that only one engine's reads need stays in that engine's file, next to the reads it protects.
 PostgreSQL's `containerSchema()` is the example: it refuses a declaration that names no `schema` level, because the PostgreSQL reads look the schema up by id, so it lives beside those reads rather than in the kernel (#1092).

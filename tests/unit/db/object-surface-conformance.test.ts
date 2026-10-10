@@ -213,6 +213,115 @@ describe("assertObjectSurface", () => {
     ).rejects.toThrow(/declared kind "view" is missing from countObjects/);
   });
 
+  /**
+   * Invariant 1 per container. A container that names its kinds (`Container.kinds`) holds those and
+   * no other: countObjects answers exactly them, and listObjects refuses every other enumerable kind
+   * with a sentence, because an empty answer would read as a container holding none.
+   */
+  describe("kinds that apply to one container", () => {
+    /** `app` holds tables only; `view` is declared and belongs to other containers. */
+    function tablesOnly(overrides: Record<string, unknown> = {}) {
+      const capabilities = { ...fakeProvider().getCapabilities(), containersNameKinds: true };
+      return fakeProvider({
+        getCapabilities: () => capabilities,
+        listContainers: async () => [{ path: ["app"], name: "app", level: 0, kinds: ["table"] }],
+        countObjects: async () => ({ table: { count: 2 } }),
+        listObjects: async (_c: readonly string[], kind: string) => {
+          if (kind !== "table") throw new QueryError(`the container app holds no ${kind}`, "postgres");
+          return [
+            { path: ["app", "orders"], name: "orders", kind },
+            { path: ["app", "customers"], name: "customers", kind },
+          ];
+        },
+        ...overrides,
+      });
+    }
+    const expectation = {
+      containers: [["app"]],
+      kinds: { table: 2 },
+      sampleObject: { path: ["app", "orders"], kind: "table" },
+    } as const;
+
+    test("passes a container that counts its own kinds and refuses the others", async () => {
+      await assertObjectSurface(tablesOnly() as never, expectation);
+    });
+
+    test("rejects a count for a declared kind the container does not hold", async () => {
+      const provider = tablesOnly({ countObjects: async () => ({ table: { count: 2 }, view: { count: 0 } }) });
+      await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+        /countObjects answered for kind "view", which does not apply to the container \["app"\]/,
+      );
+    });
+
+    test("rejects an inapplicable pair answered with an empty list rather than refused", async () => {
+      const provider = tablesOnly({
+        listObjects: async (_c: readonly string[], kind: string) =>
+          kind === "table"
+            ? [
+                { path: ["app", "orders"], name: "orders", kind },
+                { path: ["app", "customers"], name: "customers", kind },
+              ]
+            : [],
+      });
+      await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+        /listObjects answered 0 object\(s\) of kind "view", which does not apply to the container \["app"\]/,
+      );
+    });
+
+    test("rejects an inapplicable pair refused with no sentence", async () => {
+      const provider = tablesOnly({
+        listObjects: async (_c: readonly string[], kind: string) => {
+          if (kind !== "table") throw new Error("  ");
+          return [
+            { path: ["app", "orders"], name: "orders", kind },
+            { path: ["app", "customers"], name: "customers", kind },
+          ];
+        },
+      });
+      await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+        /refused the inapplicable kind "view" with no sentence a person can read/,
+      );
+    });
+
+    test("rejects a container naming its kinds on a provider that does not declare containersNameKinds", async () => {
+      const provider = tablesOnly({ getCapabilities: () => fakeProvider().getCapabilities() });
+      await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+        /listContainers answered kinds for the container \["app"\], and the provider does not declare containersNameKinds/,
+      );
+    });
+
+    test("rejects a container naming a kind the provider does not enumerate", async () => {
+      const provider = tablesOnly({
+        listContainers: async () => [{ path: ["app"], name: "app", level: 0, kinds: ["table", "widget"] }],
+      });
+      await expect(assertObjectSurface(provider as never, expectation)).rejects.toThrow(
+        /listContainers answered the kind "widget" for the container \["app"\], which the provider does not enumerate/,
+      );
+    });
+
+    test("reads a deeper container's kinds off its parent's listing", async () => {
+      const provider = tablesOnly({
+        listContainers: async (parent?: readonly string[]) =>
+          parent === undefined
+            ? [{ path: ["main"], name: "main", level: 0 }]
+            : [{ path: [...parent, "app"], name: "app", level: 1, kinds: ["table"] }],
+        listObjects: async (_c: readonly string[], kind: string) => {
+          if (kind !== "table") throw new QueryError(`the container app holds no ${kind}`, "postgres");
+          return [
+            { path: ["main", "app", "orders"], name: "orders", kind },
+            { path: ["main", "app", "customers"], name: "customers", kind },
+          ];
+        },
+      });
+      await assertObjectSurface(provider as never, {
+        containers: [["main"]],
+        container: ["main", "app"],
+        kinds: { table: 2 },
+        sampleObject: { path: ["main", "app", "orders"], kind: "table" },
+      });
+    });
+  });
+
   // Not in the task brief. Five of the engines this helper is written for declare no
   // container level at all, so `expected.containers` is empty and every object is
   // addressed at the root container `[]`. That is the arm the `?? []` fallback exists
