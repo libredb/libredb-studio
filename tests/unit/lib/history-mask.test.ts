@@ -130,6 +130,182 @@ describe("maskStatementForHistory: a text the shell reader refuses", () => {
   });
 });
 
+// A paste from rich text can hide a flag from the word reader, which the console then sends as a name, a type or a
+// selector, so the line still reaches history.
+describe("maskStatementForHistory: a flag a paste from rich text hides", () => {
+  test.each([
+    ["a no-break space before the flag", `cli get pods\u00a0--token=${SECRET}`, "cli get pods\u00a0--token ***"],
+    [
+      "a no-break space before a flag and value",
+      `cli get pods\u00a0--token ${SECRET}`,
+      "cli get pods\u00a0--token ***",
+    ],
+    [
+      "every space a no-break space",
+      `cli\u00a0get\u00a0pods\u00a0--token\u00a0${SECRET}`,
+      "cli\u00a0get\u00a0pods\u00a0--token ***",
+    ],
+    ["an ideographic space before the flag", `cli get pods\u3000--token=${SECRET}`, "cli get pods\u3000--token ***"],
+    ["a form feed before the flag", `cli get pods\f--token ${SECRET}`, "cli get pods\f--token ***"],
+    ["a zero-width space before the flag", `cli get pods \u200b--token=${SECRET}`, "cli get pods \u200b--token ***"],
+    [
+      "a zero-width space between the word before and the flag",
+      `cli get pods\u200b--token=${SECRET}`,
+      "cli get pods\u200b--token ***",
+    ],
+    ["a byte order mark before the flag", `cli get pods \ufeff--token=${SECRET}`, "cli get pods \ufeff--token ***"],
+    ["a zero-width joiner inside the flag", `cli get pods --to\u200dken=${SECRET}`, "cli get pods --to\u200dken ***"],
+    ["a soft hyphen inside the flag", `cli get pods --pass\u00adword ${SECRET}`, "cli get pods --pass\u00adword ***"],
+    ["an em dash for the two hyphens", `cli get pods \u2014token=${SECRET}`, "cli get pods \u2014token ***"],
+    ["an en dash for the two hyphens", `cli get pods \u2013token ${SECRET}`, "cli get pods \u2013token ***"],
+    ["two minus signs", `cli get pods \u2212\u2212token=${SECRET}`, "cli get pods \u2212\u2212token ***"],
+    ["two fullwidth hyphens", `cli get pods \uff0d\uff0dtoken=${SECRET}`, "cli get pods \uff0d\uff0dtoken ***"],
+    ["a flag after a comma in one word", `cli get pods,--token=${SECRET}`, "cli get pods,--token ***"],
+    [
+      "a flag inside a quoted value",
+      `cli get pods -l "app=web --token ${SECRET}"`,
+      'cli get pods -l "app=web --token ***',
+    ],
+    [
+      "an error body that quotes the statement",
+      `{"error":"unknown flag: --token ${SECRET}"}`,
+      '{"error":"unknown flag: --token ***',
+    ],
+    [
+      "a continuation that glues a quoted flag to the word before it",
+      `cli get pods\\\n"--token" ${SECRET}`,
+      'cli get pods\\\n"--token" ***',
+    ],
+    [
+      "a continuation that glues an escaped flag to the word before it",
+      `cli get pods\\\n\\--token ${SECRET}`,
+      "cli get pods\\\n\\--token ***",
+    ],
+    ["an em dash in a refused text", `cli get pods | x \u2014token=${SECRET}`, "cli get pods | x \u2014token ***"],
+    [
+      "a zero-width space between the flag and its value in a refused text",
+      `cli get pods --token\u200b${SECRET} 'x`,
+      "cli get pods --token ***",
+    ],
+    [
+      "a zero-width space between the word before and the flag in a refused text",
+      `cli get pods\u200b--token=${SECRET} 'x`,
+      "cli get pods\u200b--token ***",
+    ],
+    [
+      "a zero-width space between the flag and its value in a comment",
+      `cli get pods # --token\u200b${SECRET}`,
+      "cli get pods # --token ***",
+    ],
+    [
+      "a zero-width space between the word before and the flag in a comment",
+      `cli get pods # x\u200b--token=${SECRET}`,
+      "cli get pods # x\u200b--token ***",
+    ],
+    [
+      "a zero-width space between a continued flag and its value",
+      `cli get pods\\\n--token\u200b${SECRET}`,
+      "cli get pods\\\n--token ***",
+    ],
+    [
+      "a quote between the flag and its value in a comment",
+      `cli get pods # --token"${SECRET}"`,
+      'cli get pods # --token" ***',
+    ],
+    [
+      "a backslash between the flag and its value in a comment",
+      `cli get pods # --token\\${SECRET}`,
+      "cli get pods # --token\\ ***",
+    ],
+    [
+      "an empty quoted string between a continued flag and its value",
+      `cli get pods\\\n--token""${SECRET}`,
+      'cli get pods\\\n--token"" ***',
+    ],
+    [
+      "an empty quoted string between the flag and its value in a refused text",
+      `cli get pods --token""${SECRET} 'x`,
+      'cli get pods --token"" ***',
+    ],
+    [
+      "a dash between hyphens glued to a word and the flag in a refused text",
+      `cli get pods_---\u2011--token=${SECRET} 'x`,
+      "cli get pods_---\u2011--token ***",
+    ],
+    [
+      "a dash between hyphens glued to a word and the flag in a comment",
+      `cli get pods # x-\u2014--token ${SECRET}`,
+      "cli get pods # x-\u2014--token ***",
+    ],
+    ["a dash between the flag and its value", `cli get pods --token\u2014${SECRET}`, "cli get pods --token ***"],
+    [
+      "a dash between the flag and its value after a comma",
+      `cli get pods,--token\u2014${SECRET}`,
+      "cli get pods,--token ***",
+    ],
+    [
+      "a dash between the flag and its value in a comment",
+      `cli get pods # --token\u2014${SECRET}`,
+      "cli get pods # --token ***",
+    ],
+    [
+      "a dash between the flag and its value in a refused text",
+      `cli get pods --password'\u2013 ${SECRET} -n x`,
+      "cli get pods --password' ***",
+    ],
+  ])("%s", (_name, text, masked) => {
+    expect(maskStatementForHistory(text, MASK)).toBe(masked);
+    expect(maskStatementForHistory(text, MASK)).not.toContain(SECRET);
+  });
+
+  test("a single hyphen is not the declared double-hyphen flag", () => {
+    expect(maskStatementForHistory("cli get pods -token x", MASK)).toBe("cli get pods -token x");
+  });
+
+  test("a cut inside a word another flag already masks keeps the words after it", () => {
+    expect(maskStatementForHistory(`cli --token pods\\\n--token=${SECRET} -n shop`, MASK)).toBe(
+      "cli --token *** -n shop",
+    );
+  });
+});
+
+describe("maskStatementForHistory: a flag with no value after it in its word", () => {
+  test.each([
+    ["an empty = value", `cli get pods --token= ${SECRET}`, "cli get pods --token= ***"],
+    ["an empty quoted = value", `cli get pods --token="" ${SECRET}`, 'cli get pods --token="" ***'],
+    ["an empty = value in capitals", `cli get pods --TOKEN= ${SECRET}`, "cli get pods --TOKEN= ***"],
+    ["a colon", `cli get pods --token: ${SECRET}`, "cli get pods --token: ***"],
+    ["a no-break space", `cli get pods --token\u00a0 ${SECRET}`, "cli get pods --token\u00a0 ***"],
+    [
+      "a zero-width space inside the quotes",
+      `cli get pods "--token\u200b" ${SECRET}`,
+      'cli get pods "--token\u200b" ***',
+    ],
+    [
+      "an empty = value on a flag after a no-break space",
+      `cli get pods\u00a0--token= ${SECRET}`,
+      "cli get pods\u00a0--token= ***",
+    ],
+    [
+      "an empty = value on a flag written with an em dash",
+      `cli get pods \u2014token= ${SECRET}`,
+      "cli get pods \u2014token= ***",
+    ],
+    [
+      "an empty = value with the value on the continued line",
+      `cli get pods --token= \\\n  ${SECRET}`,
+      "cli get pods --token= \\\n  ***",
+    ],
+  ])("%s takes the next word as the value", (_name, text, masked) => {
+    expect(maskStatementForHistory(text, MASK)).toBe(masked);
+    expect(maskStatementForHistory(text, MASK)).not.toContain(SECRET);
+  });
+
+  test("an empty = value with no word after it is kept as typed", () => {
+    expect(maskStatementForHistory("cli get pods --token=", MASK)).toBe("cli get pods --token=");
+  });
+});
+
 describe("maskStatementForHistory: no mask", () => {
   test("no mask, or one naming no flag, keeps the text as typed", () => {
     const text = `SELECT 1 --token ${SECRET}`;
