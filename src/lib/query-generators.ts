@@ -654,11 +654,14 @@ export interface GeneratorScope {
   readonly readRanges?: readonly ObjectReadRange[];
   /** The active connection's public `readOnly`: Generate Command then writes the read alone (#1089 E6). */
   readonly readOnly?: boolean;
+  /** The object's kind, `DatabaseObject.kind`, handed to `rowAction`, whose statement depends on what the row is. */
+  readonly kind?: string;
 }
 
 /**
  * What one query dialect writes for a tree click (`table`, run on the user's behalf) and for "Generate Query"
- * (`select`, written into a tab and not run), each from the object's path.
+ * (`select`, written into a tab and not run), each from the object's path, and, for a dialect whose provider
+ * declares `ProviderCapabilities.rowActions`, what each declared row action runs (`rowAction`).
  */
 export interface DialectGenerators {
   readonly table: (
@@ -671,14 +674,20 @@ export interface DialectGenerators {
     columns: readonly ColumnSchema[],
     scope: GeneratorScope | undefined,
   ) => string;
+  /**
+   * The statement one declared row action runs on one object, by the action's id, with the object's kind
+   * on `scope.kind`. Absent on every dialect whose provider declares no row action.
+   */
+  readonly rowAction?: (path: readonly string[], actionId: string, scope: GeneratorScope) => string;
 }
 
 /**
  * Every query dialect's generators, read by `generateTableQuery` and `generateSelectQuery` BEFORE their JSON arm:
  * each dialect declares `queryLanguage: "json"` too, and without its record a tree click auto-executes a MongoDB
  * `find` its provider refuses (#427, #1088, #1089). A `Record` over `QueryDialect`, so a dialect added to the
- * union does not compile until it has its generators. Module-internal: the two generators are its only readers,
- * and this module's export list is pinned (`tests/unit/lib/query-generators.test.ts`).
+ * union does not compile until it has its generators. Module-internal: the two generators and
+ * `generateRowActionQuery` are its only readers, and this module's export list is pinned
+ * (`tests/unit/lib/query-generators.test.ts`).
  */
 const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Object.freeze({
   // LibreDB speaks its own command grammar (get/put/delete/prefix/range), not SQL and not MongoDB JSON. "Scan"
@@ -1155,6 +1164,31 @@ export function generateSelectQuery(
   // A grammar with no constant predicate (CQL, #1410) gets no WHERE clause rather than one it refuses.
   const where = capabilities.supportsConstantPredicate === false ? "" : "\nWHERE 1=1";
   return `SELECT\n${cols}\nFROM ${table}${where}\nLIMIT 100${terminator(capabilities)}`;
+}
+
+/**
+ * The statement a declared row action runs on one object, from the dialect's `rowAction` generator.
+ *
+ * Raises when the declaration names no dialect or the dialect writes no row action: a provider that
+ * declares `rowActions` without a generator behind them has a broken declaration, and a menu item that
+ * opened an empty tab would hide it. `registry` is the dialect record this module holds; a test passes
+ * its own, because no dialect shipped beside this function writes a row action yet.
+ */
+export function generateRowActionQuery(
+  path: readonly string[],
+  actionId: string,
+  capabilities: ProviderCapabilities,
+  scope: GeneratorScope,
+  registry: Readonly<Partial<Record<QueryDialect, DialectGenerators>>> = DIALECT_GENERATORS,
+): string {
+  const dialect = registeredDialect(capabilities);
+  const rowAction = dialect === undefined ? undefined : registry[dialect]?.rowAction;
+  if (rowAction === undefined) {
+    throw new Error(
+      `the ${dialect ?? capabilities.queryLanguage} dialect writes no statement for the row action "${actionId}"`,
+    );
+  }
+  return rowAction(path, actionId, scope);
 }
 
 /** Prepare an editable count statement, without a row limit or any execution (#702). */
