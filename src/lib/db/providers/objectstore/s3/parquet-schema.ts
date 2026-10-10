@@ -8,7 +8,7 @@
  * matched by name, so a second one of a name would be read through the first one's chunks; that last refusal carries
  * `duplicateName` so the preview names it.
  */
-import type { S3PreviewLimits } from "./constants";
+import { S3_PREVIEW_ELEMENTS_PER_COLUMN, type S3PreviewLimits } from "./constants";
 
 /** The fields of hyparquet's SchemaElement the walk reads; hyparquet's own type is assignable to it. */
 export interface SchemaElementLike {
@@ -105,7 +105,8 @@ export function walkParquetSchema(
   schema: readonly SchemaElementLike[],
   limits: Pick<S3PreviewLimits, "parquetMaxSchemaDepth" | "parquetMaxLeafColumns">,
 ): ParquetSchemaShape | { readonly ok: false; readonly duplicateName?: true } {
-  if (schema.length === 0 || schema.length > limits.parquetMaxLeafColumns * 8) return REFUSED;
+  if (schema.length === 0 || schema.length > limits.parquetMaxLeafColumns * S3_PREVIEW_ELEMENTS_PER_COLUMN)
+    return REFUSED;
   const columns: { name: string; type: string; leaves: number; variant: boolean }[] = [];
   const leaves: ParquetLeaf[] = [];
   const stack: Frame[] = [{ remaining: schema[0].num_children ?? 0, path: [], variant: false, names: new Set() }];

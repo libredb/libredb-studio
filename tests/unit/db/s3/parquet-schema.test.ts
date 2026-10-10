@@ -5,7 +5,7 @@
  * each leaf's type string.
  */
 import { describe, expect, test } from "bun:test";
-import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
+import { S3_PREVIEW_ELEMENTS_PER_COLUMN, S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
 import {
   parquetTypeString,
   type SchemaElementLike,
@@ -38,7 +38,7 @@ describe("walkParquetSchema: the refusals", () => {
   });
 
   test("a list over parquetMaxLeafColumns times 8 elements is refused before any walk, and one of exactly that many passes", () => {
-    const bound = S3_PREVIEW_LIMITS.parquetMaxLeafColumns * 8;
+    const bound = S3_PREVIEW_LIMITS.parquetMaxLeafColumns * S3_PREVIEW_ELEMENTS_PER_COLUMN;
     const flat = (columns: number) => [
       root(columns),
       ...Array.from({ length: columns }, (_, index) => leaf(`c${index}`)),

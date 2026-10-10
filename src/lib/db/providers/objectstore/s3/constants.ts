@@ -75,6 +75,12 @@ export const S3_REGION_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 // Object preview bounds. The three numbers the console and the preview share are read from their
 // single definitions above; every other number of the preview is defined here once.
 
+/**
+ * Elements per allowed column, the one ratio behind two derived bounds: a Parquet schema of more than this many
+ * elements per allowed leaf column is refused, and a CSV record keeps this many fields per shown column.
+ */
+export const S3_PREVIEW_ELEMENTS_PER_COLUMN = 8;
+
 /** Every bound of one object preview; tests pass a smaller copy so fixtures stay small. */
 export interface S3PreviewLimits {
   readonly textFetchBytes: number;

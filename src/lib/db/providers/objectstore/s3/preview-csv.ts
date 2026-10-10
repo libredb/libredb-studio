@@ -5,7 +5,7 @@
  * work of 8,192 columns, not a million generated column names.
  */
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
-import type { S3PreviewLimits } from "./constants";
+import { S3_PREVIEW_ELEMENTS_PER_COLUMN, type S3PreviewLimits } from "./constants";
 import type { S3PreviewRequest, S3PreviewRows } from "./preview";
 import { buildRows } from "./preview-cells";
 import { previewSentence } from "./preview-render";
@@ -148,9 +148,6 @@ export function sniffDelimiter(
   return ",";
 }
 
-/** The fields a record keeps: eight per shown column, the ratio the Parquet schema walk bounds its elements by. */
-const FIELDS_PER_COLUMN = 8;
-
 export type RowsOutcome =
   | { readonly kind: "rows"; readonly rows: S3PreviewRows; readonly notices: readonly string[] }
   | { readonly kind: "text"; readonly notices: readonly string[] };
@@ -169,12 +166,13 @@ export interface RowsInput {
 /**
  * CSV or TSV rows; a read with no complete first record has no header and answers text rows instead, with
  * N-RECORD-CUT only when the read did not end. Trailing characters are counted over the header and the shown rows.
- * Each record keeps at most `maxColumns` times 8 fields: only those are named (so a column past them cannot be
- * selected by name and is refused like any unknown one), while N-COLUMNS and the ragged count use the true counts.
+ * Each record keeps at most `maxColumns` times S3_PREVIEW_ELEMENTS_PER_COLUMN fields: only those are named (so a
+ * column past them cannot be selected by name and is refused like any unknown one), while N-COLUMNS and the ragged
+ * count use the true counts.
  */
 export function csvRows(input: RowsInput & { readonly format: "csv" | "tsv" }): RowsOutcome {
   const text = input.text.charCodeAt(0) === 0xfeff ? input.text.slice(1) : input.text;
-  const maxFields = input.limits.maxColumns * FIELDS_PER_COLUMN;
+  const maxFields = input.limits.maxColumns * S3_PREVIEW_ELEMENTS_PER_COLUMN;
   const delimiter =
     input.format === "tsv" ? "\t" : sniffDelimiter(text, input.ended, input.limits.csvSniffRecords, maxFields);
   const split = splitCsv(text, delimiter, input.ended, input.maxRows + 2, input.maxRows + 1, maxFields);

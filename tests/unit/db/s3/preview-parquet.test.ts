@@ -59,6 +59,9 @@ const limits = (changes: Partial<typeof S3_PREVIEW_LIMITS> = {}) => ({ ...S3_PRE
 /** The leaf and value caps as the preview's sentences write them. */
 const leafCapText = S3_PREVIEW_LIMITS.parquetMaxLeafColumns.toLocaleString("en-US");
 const valueCapText = S3_PREVIEW_LIMITS.parquetMaxTotalValues.toLocaleString("en-US");
+/** The fetch and decode budgets as the preview's sentences write them. */
+const fetchCapText = inMiB(S3_PREVIEW_LIMITS.parquetFetchBudget);
+const decodeCapText = inMiB(S3_PREVIEW_LIMITS.parquetDecodeBudget);
 
 /** A Parquet input over a fake reader that reads under the input's own signal. */
 function inputFor(object: Uint8Array, key: string, changes: Partial<ParquetPreviewInput> = {}) {
@@ -373,7 +376,7 @@ describe("planParquet", () => {
     const plan = planParquet(footer, {}, "console", limits({ parquetFetchBudget: idFetch }));
     expect(plan.kind === "rows" && plan.columns.map((column) => column.name)).toEqual(["id"]);
     expect(plan.notices[0]).toBe(
-      `Showing 1 of 12 columns: the next column would take the first row group's read past ${inMiB(idFetch)} MiB, its decoded size past 32.00 MiB, its leaf columns past ${leafCapText} or its values past ${valueCapText}, the most a preview reads.`,
+      `Showing 1 of 12 columns: the next column would take the first row group's read past ${inMiB(idFetch)} MiB, its decoded size past ${decodeCapText} MiB, its leaf columns past ${leafCapText} or its values past ${valueCapText}, the most a preview reads.`,
     );
   });
 
@@ -390,7 +393,7 @@ describe("planParquet", () => {
     expect(plan).toEqual({
       kind: "summary",
       notices: [
-        `The first row group is too large to preview: its first column stores ${inMiB(Number(id?.total_compressed_size))} MiB (${inMiB(Number(id?.total_uncompressed_size))} MiB decoded), over the 0.00 MiB read and 32.00 MiB decode budgets, or holds more leaf columns or values than a preview reads. The schema, row count and first-row-group statistics are shown instead.`,
+        `The first row group is too large to preview: its first column stores ${inMiB(Number(id?.total_compressed_size))} MiB (${inMiB(Number(id?.total_uncompressed_size))} MiB decoded), over the 0.00 MiB read and ${decodeCapText} MiB decode budgets, or holds more leaf columns or values than a preview reads. The schema, row count and first-row-group statistics are shown instead.`,
       ],
     });
   });
@@ -850,8 +853,7 @@ describe("previewParquet: what never reaches hyparquet", () => {
     const overDecode = int32Chunk("id", [1], { totalUncompressedSize: 8 });
     const lying = { ...overDecode, pages: [{ ...overDecode.pages[0], uncompressedSize: 40_000_000 }] };
     expect(await outcome(one(lying))).toMatchObject({
-      sentence:
-        "The pages of the columns to show declare 38.15 MiB decoded, over the 32.00 MiB a preview decodes, so the file is not previewed.",
+      sentence: `The pages of the columns to show declare 38.15 MiB decoded, over the ${decodeCapText} MiB a preview decodes, so the file is not previewed.`,
     });
     expect(calls.read).toEqual([]);
   });
@@ -1473,7 +1475,7 @@ describe("leading mode drops the columns past the pre-scan's value total", () =>
       ],
     });
   const someColumns = (k: number, valueCap: number) =>
-    `Showing ${k} of 4 columns: the next column would take the first row group's read past 8.00 MiB, its decoded size past 32.00 MiB, its leaf columns past ${leafCapText} or its values past ${valueCap}, the most a preview reads.`;
+    `Showing ${k} of 4 columns: the next column would take the first row group's read past ${fetchCapText} MiB, its decoded size past ${decodeCapText} MiB, its leaf columns past ${leafCapText} or its values past ${valueCap}, the most a preview reads.`;
 
   test("the footer fits three columns, the pages of the third pass the value cap: two are shown and decoded", async () => {
     const capped = limits({ parquetMaxTotalValues: 30 });
@@ -1504,7 +1506,7 @@ describe("leading mode drops the columns past the pre-scan's value total", () =>
       summary: summarizeParquet(footer, capped).summary,
       summaryRows: S3_PREVIEW_LIMITS.defaultRows,
       notices: [
-        `The first row group is too large to preview: its first column stores ${inMiB(Number(a?.total_compressed_size))} MiB (${inMiB(Number(a?.total_uncompressed_size))} MiB decoded), over the 8.00 MiB read and 32.00 MiB decode budgets, or holds more leaf columns or values than a preview reads. The schema, row count and first-row-group statistics are shown instead.`,
+        `The first row group is too large to preview: its first column stores ${inMiB(Number(a?.total_compressed_size))} MiB (${inMiB(Number(a?.total_uncompressed_size))} MiB decoded), over the ${fetchCapText} MiB read and ${decodeCapText} MiB decode budgets, or holds more leaf columns or values than a preview reads. The schema, row count and first-row-group statistics are shown instead.`,
         ...summarizeParquet(footer, capped).notices,
       ],
     });
@@ -1548,7 +1550,7 @@ describe("the two large DuckDB files the raw seed writes (row A39)", () => {
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   const someColumns = (k: number, n: number) =>
-    `Showing ${k} of ${n} columns: the next column would take the first row group's read past 8.00 MiB, its decoded size past 32.00 MiB, its leaf columns past ${leafCapText} or its values past ${valueCapText}, the most a preview reads.`;
+    `Showing ${k} of ${n} columns: the next column would take the first row group's read past ${fetchCapText} MiB, its decoded size past ${decodeCapText} MiB, its leaf columns past ${leafCapText} or its values past ${valueCapText}, the most a preview reads.`;
 
   for (const [file, n, kept] of [
     ["narrow-zstd.parquet", 5, ["id", "name", "amount", "d"]],

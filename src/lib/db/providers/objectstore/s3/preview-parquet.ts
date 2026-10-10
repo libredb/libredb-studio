@@ -10,7 +10,13 @@ import type * as Hyparquet from "hyparquet";
 import type { AsyncBuffer, ColumnChunk, ColumnMetaData, Compressors, FileMetaData, ParquetParsers } from "hyparquet";
 import { QueryError } from "@/lib/db/errors";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
-import { S3_PARQUET_DECODE_QUEUE, S3_PARQUET_DECODE_SLOTS, S3_TYPE, type S3PreviewLimits } from "./constants";
+import {
+  S3_PARQUET_DECODE_QUEUE,
+  S3_PARQUET_DECODE_SLOTS,
+  S3_PREVIEW_ELEMENTS_PER_COLUMN,
+  S3_TYPE,
+  type S3PreviewLimits,
+} from "./constants";
 import { type ParquetSchemaShape, walkParquetSchema } from "./parquet-schema";
 import { guardThriftStruct, readPageHeader } from "./parquet-thrift-guard";
 import type {
@@ -260,7 +266,7 @@ export async function readParquetFooter(
   } else {
     footerBytes.set(tail.subarray(tailLength - footerLength - 8));
   }
-  const schemaBound = limits.parquetMaxLeafColumns * 8;
+  const schemaBound = limits.parquetMaxLeafColumns * S3_PREVIEW_ELEMENTS_PER_COLUMN;
   let schemaElements = 0;
   const guard = guardThriftStruct(footerBytes.subarray(0, footerLength), 0, limits.thriftMaxDepth, {
     maxListElements: schemaBound * FOOTER_LIST_ELEMENTS_PER_SCHEMA_ELEMENT,
