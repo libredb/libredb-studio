@@ -331,8 +331,8 @@
   "offersColumnProfiling": false,
   "offersCodeGeneration": false,
   "offersCountQuery": false,
-  "tableQuery": "preview 's3://c0/Order\"Items'",
-  "selectQuery": "preview 's3://c0/Order\"Items'\n# aws s3api head-object --bucket c0 --key 'Order\"Items'",
+  "tableQuery": "THROWS An S3 bucket or object path is [name], received [\"c0\",\"Order\\\"Items\"]",
+  "selectQuery": "THROWS An S3 bucket or object path is [name], received [\"c0\",\"Order\\\"Items\"]",
   "countQuery": null
  },
  "libredb": {
