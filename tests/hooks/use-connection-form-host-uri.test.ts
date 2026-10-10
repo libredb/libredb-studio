@@ -504,3 +504,65 @@ describe("useConnectionForm: the real InfluxDB rows (InfluxDB spec A.3)", () => 
     },
   );
 });
+
+describe("useConnectionForm: the real s3 row", () => {
+  const PATH_SENTENCE = "Host takes a scheme, a host and a port only: remove the path after the host.";
+  const SCHEME_SENTENCE = "Host takes http:// or https:// addresses for this connection type, or a host name alone.";
+
+  test("the real s3 row splits a pasted https endpoint in the Host box and raises SSL Mode to verify-system", () => {
+    const { result } = renderForm();
+    act(() => result.current.setType("s3"));
+    act(() => result.current.setHost("https://minio.example:9443", "insertFromPaste"));
+    expect([result.current.type, result.current.host, result.current.port, result.current.sslMode]).toEqual([
+      "s3",
+      "minio.example",
+      "9443",
+      "verify-system",
+    ]);
+  });
+
+  test("the real s3 row splits a pasted http endpoint and leaves SSL Mode as it was", () => {
+    const { result } = renderForm();
+    act(() => result.current.setType("s3"));
+    act(() => result.current.setHost("http://localhost:9000", "insertFromPaste"));
+    expect([result.current.host, result.current.port, result.current.sslMode]).toEqual([
+      "localhost",
+      "9000",
+      "disable",
+    ]);
+  });
+
+  // The bucket belongs under Bucket, never in the address; an s3:// URI names a bucket and a key, not an endpoint.
+  test.each([
+    ["an endpoint with the bucket in its path", "http://minio.example:9000/sales", PATH_SENTENCE],
+    ["an s3:// URI", "s3://sales/2026/orders.csv", SCHEME_SENTENCE],
+  ])(
+    "the real s3 row refuses %s, keeps the text, and Test Connection and Save send nothing",
+    async (_case, text, sentence) => {
+      const { result, onTestConnection, onConnect } = renderForm();
+      act(() => result.current.setType("s3"));
+      act(() => result.current.setHost(text, "insertFromPaste"));
+      expect(result.current.host).toBe(text);
+      expect(result.current.testResult).toEqual({ tone: "error", message: sentence });
+      await act(async () => {
+        await result.current.handleTestConnection();
+      });
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      expect(onTestConnection).not.toHaveBeenCalled();
+      expect(onConnect).not.toHaveBeenCalled();
+      expect(result.current.testResult).toEqual({ tone: "error", message: sentence });
+    },
+  );
+
+  test("the real s3 row warns for the MinIO default pair before Test Connection", () => {
+    const pair = CREDENTIAL_WARNINGS.s3?.find((entry) => entry.kind === "pair" && entry.user === "minioadmin");
+    if (pair?.kind !== "pair") throw new Error("the s3 record declares no minioadmin pair");
+    const { result } = renderForm();
+    act(() => result.current.setType("s3"));
+    act(() => result.current.setUser("minioadmin"));
+    act(() => result.current.setPassword("minioadmin"));
+    expect(result.current.credentialWarning).toBe(`Credential warning: ${pair.message}`);
+  });
+});
