@@ -218,6 +218,9 @@ const CONSOLE_ALLOWED: readonly RegExp[] = [
 
 const EDITOR_MODULES = ["src/lib/editor/s3-language.ts", "src/lib/editor/s3-completions.ts"] as const;
 
+/** A foreign provider's module, spliced into a planted import so no source line reads as a real one. */
+const OXIA_LEXER = "@/lib/db/providers/keyvalue/oxia/lexer";
+
 /**
  * What an editor module may import by value: the console's browser-safe modules, the provider's names module (a
  * row of BROWSER_MODULES), the shared set, its sibling.
@@ -254,7 +257,7 @@ describe("the S3 console's and editor's browser-shipped modules", () => {
     ['import { previewObject } from "../preview";\n', "../preview"],
     ['import { readFileSync } from "node:fs";\n', "node:fs"],
     ['import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";\n', "@/lib/db/utils/query-limiter"],
-    ['export { oxiaWords } from "@/lib/db/providers/keyvalue/oxia/lexer";\n', "@/lib/db/providers/keyvalue/oxia/lexer"],
+    [`export { oxiaWords } from "${OXIA_LEXER}";\n`, OXIA_LEXER],
   ])("a planted %s in console/commands.ts fails by name", (planted, specifier) => {
     expect(browserFindings("console/commands.ts", planted, CONSOLE_ALLOWED)).toEqual([
       `console/commands.ts imports ${specifier}, which is not browser-safe`,

@@ -18,6 +18,9 @@ const SPECIFIER = /\bfrom\s+["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*
 const LIBRARY = /^(?:@aws-sdk\/|aws-sdk$|aws4|minio$|fast-xml-parser$)/;
 const BYTE_FORMATTER = /\b(?:function\s+|const\s+|let\s+)(?:humanSize|formatBytes|formatSize)\b/;
 
+/** A foreign provider's module, spliced into a planted import so no source line reads as a real one. */
+const OXIA_CONSTANTS = "@/lib/db/providers/keyvalue/oxia/constants";
+
 /** Every .ts file under the directory, as a path relative to it ("index.ts", "console/execute.ts"). */
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -71,7 +74,7 @@ describe("the S3 provider directory's seams", () => {
 
   test.each([
     [
-      'import { OXIA_TYPE } from "@/lib/db/providers/keyvalue/oxia/constants";\n',
+      `import { OXIA_TYPE } from "${OXIA_CONSTANTS}";\n`,
       "names.ts",
       "names.ts imports @/lib/db/providers/keyvalue/oxia/constants, another provider's directory",
     ],
