@@ -344,6 +344,15 @@ describe("E7b to E34: server answers", () => {
       AuthenticationError,
       unmeasured,
     );
+    // Garage v2.4.1 prefixes the message, measured on the fixture with the clock 25 hours behind.
+    expectRow(
+      mapped(server({ status: 400, code: "InvalidRequest", message: "Bad request: Date is too old" })),
+      AuthenticationError,
+      unmeasured,
+    );
+    expect(
+      mapped(server({ status: 400, code: "InvalidRequest", message: "Bad request: Date is too old to read" })).message,
+    ).not.toBe(unmeasured);
     expectRow(
       mapped(
         server({ status: 403, method: "HEAD", operation: "HeadObject", key: "a.csv", serverDate: twentyMinutes }),

@@ -329,6 +329,9 @@ function requestIdWords(requestId: string | undefined, context: S3ClientContext)
     : undefined;
 }
 
+/** Garage's past-window refusal: "Date is too old", measured on v2.4.1 as "Bad request: Date is too old". */
+const GARAGE_TOO_OLD = /^(Bad request: )?Date is too old$/;
+
 function clockSkewMs(serverDate: string | undefined, clock: () => Date): number | undefined {
   if (serverDate === undefined) return undefined;
   const time = Date.parse(serverDate);
@@ -452,7 +455,7 @@ function serverFailure(error: S3ServerError, context: S3ClientContext): Error {
   const skewMs = clockSkewMs(error.serverDate, context.clock);
   if (
     code === "RequestTimeTooSkewed" ||
-    (code === "InvalidRequest" && message === "Date is too old") ||
+    (code === "InvalidRequest" && GARAGE_TOO_OLD.test(message)) ||
     (status === 403 && code === undefined && skewMs !== undefined && skewMs > S3_CLOCK_WINDOW_MS)
   )
     return new AuthenticationError(
