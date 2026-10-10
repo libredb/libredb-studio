@@ -700,3 +700,21 @@ export const DatabendIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <circle fill="#0175F2" cx="62.87" cy="46.71" r="2.28" />
   </svg>
 );
+
+/** A generic bucket drawn for Studio, never a vendor's logo. */
+export const S3Icon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <ellipse cx="12" cy="6" rx="8" ry="2.5" />
+    <path d="M4 6l1.8 12.2c.2 1.6 2.9 2.8 6.2 2.8s6-1.2 6.2-2.8L20 6" />
+    <path d="M5 11c1.6.9 4.1 1.5 7 1.5s5.4-.6 7-1.5" />
+  </svg>
+);
