@@ -60,7 +60,7 @@
  * direction. Exactly three engines are the former (druid, mongodb, libredb). The third guard's
  * mirror is `noColumnKinds`: a provider with no column-bearing kind can never answer the column
  * set invariant 7's guard asks for, so its expectation says so, and the bulk read then holds every
- * listed kind to an empty answer instead. Exactly one engine is that (oxia).
+ * listed kind to an empty answer instead. Exactly two engines are that (oxia, s3).
  *
  * Invariant 4 replaced an assertion that `name` equals the last path segment. That is no
  * longer true and must not be: `DatabaseObject.path` addresses, `DatabaseObject.name`
@@ -212,10 +212,11 @@ export interface ObjectSurfaceExpectation {
   /**
    * This provider declares `hasColumns` on NO kind, so invariant 7's vacuity guard, which wants a
    * listed kind answering a column set, can never be met. The mirror of `noAbstainingKinds`, stated
-   * rather than silent for the same reason. True of exactly one engine: oxia, whose only listed kind,
-   * `shard`, answers `{ details: [] }`. When set, the bulk read holds every listed kind to an empty
-   * answer with no truncation, unbounded and with limit 1, and the field is refused by name when any
-   * kind the provider declares carries `hasColumns`.
+   * rather than silent for the same reason. True of exactly two engines: oxia, whose only listed kind,
+   * `shard`, answers `{ details: [] }`, and s3, whose only listed kind, `bucket`, answers the same.
+   * When set, the bulk read holds every listed kind to an empty answer with no truncation, unbounded
+   * and with limit 1, and the field is refused by name when any kind the provider declares carries
+   * `hasColumns`.
    */
   readonly noColumnKinds?: true;
   /**

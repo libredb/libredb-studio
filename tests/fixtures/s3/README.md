@@ -19,3 +19,7 @@ The raw 0x01 inside `<Key>` makes the document ill-formed XML; the reader refuse
 Response bodies measured on 2026-10-09 against MinIO `RELEASE.2025-10-15T17-29-55Z` built from source (`minio-`), Garage `v2.4.1` (`garage-`) and RustFS `1.0.1` (`rustfs-`), each copied byte for byte from the body section of a raw response captured against that server:
 `list-objects-url` is `lov2-enc-url-sp`, `list-objects-delim` is `lov2-a-delim`, `location` is `getbucketlocation`, `versioning` is `getbucketversioning`, `tagging` is `get-tagging`, `versions` is `listversions-ver`, `error` is `err-nosuchkey`, and `buckets` is `lb-plain`.
 The documents carry bucket names, key names and server-generated ids of the probe data, and no credential.
+
+## captures/
+
+What each fixture server answered the `s3` provider, one scenario per file, written only by `tests/live/s3-evidence.ts`; its own `README.md` holds the sets, the scrub and the digest table.
