@@ -1,9 +1,9 @@
 /**
  * Request targets for each S3 operation. Path style only: every object request
  * targets `/<bucket>/<key>`. The path is PR 1's `rfc3986Path` of the bucket and the key's "/"-separated segments,
- * which is also SigV4's canonical URI unchanged; "." and ".." key segments are sent as given, because Garage stores
- * and serves them, while the bucket segment never is: `objectPath` refuses a bucket failing
- * `S3_BUCKET_PATTERN`, whoever the caller. The query is sorted by encoded name
+ * which is also SigV4's canonical URI unchanged; "." and ".." key segments that stay inside the bucket are sent as
+ * given, because Garage stores and serves them, while the bucket segment never is: `objectPath` refuses a bucket
+ * failing `S3_BUCKET_PATTERN`, and a key whose dot segments leave its bucket, whoever the caller. The query is sorted by encoded name
  * then encoded value, the same order the signer sorts `SigningInput.query` into.
  *
  * Not browser-safe: it imports endpoint.ts, which imports `node:net`.
@@ -11,7 +11,7 @@
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { rfc3986Encode, rfc3986Path } from "@/lib/db/http/endpoint";
 import { S3_TYPE } from "./constants";
-import { bucketAddressRefusal, sourceAddressSentence } from "./names";
+import { bucketAddressRefusal, dotSegmentsLeaveBucket, sourceAddressSentence } from "./names";
 
 /** Plain code-unit order on the encoded name, then the encoded value; the strings are ASCII, so this is byte order. */
 export function compareEncodedPairs(a: readonly [string, string], b: readonly [string, string]): number {
@@ -24,11 +24,15 @@ export function compareEncodedPairs(a: readonly [string, string], b: readonly [s
  * "/" + bucket, or "/" + bucket + "/" + the key's "/"-separated segments, each rfc3986Encode-d.
  * Throws DatabaseConfigError tagged "s3" with sourceAddressSentence("bucket-pattern", ...) when bucketAddressRefusal(bucket)
  * answers "bucket-pattern" (the bucket fails S3_BUCKET_PATTERN), before any request, so no caller can send a bucket segment such as "..";
- * E0a passes it through unchanged.
+ * E0a passes it through unchanged. Throws the same error with sourceAddressSentence("key-dot-segments", ...) when a
+ * key is given and dotSegmentsLeaveBucket answers true, so no caller can send a key that climbs out of its bucket or
+ * names the bucket itself (the empty key included).
  */
 export function objectPath(bucket: string, key?: string): string {
   if (bucketAddressRefusal(bucket) !== undefined)
     throw new DatabaseConfigError(sourceAddressSentence("bucket-pattern", { bucket, key: key ?? "" }), S3_TYPE);
+  if (key !== undefined && dotSegmentsLeaveBucket(key))
+    throw new DatabaseConfigError(sourceAddressSentence("key-dot-segments", { bucket, key }), S3_TYPE);
   return rfc3986Path(key === undefined ? [bucket] : [bucket, ...key.split("/")]);
 }
 

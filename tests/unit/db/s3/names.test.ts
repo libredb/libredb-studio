@@ -59,11 +59,17 @@ describe("the addressability verdicts", () => {
     expect(objectAddressRefusal("sales", "/root.txt")).toBe("key-leading-slash");
   });
 
-  test("a key whose dot segments climb out of its bucket or name the bucket itself is refused", () => {
+  test("a key whose dot segments, empty segments dropped, climb out of its bucket or name the bucket itself is refused", () => {
     expect(objectAddressRefusal("sales", "../x")).toBe("key-dot-segments");
     expect(objectAddressRefusal("sales", "x/../../y")).toBe("key-dot-segments");
     expect(objectAddressRefusal("sales", "a/..")).toBe("key-dot-segments");
     expect(objectAddressRefusal("sales", "../other/x")).toBe("key-dot-segments");
+    expect(objectAddressRefusal("sales", "./")).toBe("key-dot-segments");
+    expect(objectAddressRefusal("sales", "a/../")).toBe("key-dot-segments");
+    expect(objectAddressRefusal("sales", "a/b/../../")).toBe("key-dot-segments");
+    expect(objectAddressRefusal("sales", "a//..")).toBe("key-dot-segments");
+    expect(objectAddressRefusal("sales", "x//../../y")).toBe("key-dot-segments");
+    expect(objectAddressRefusal("sales", "x//../../other/secret")).toBe("key-dot-segments");
   });
 
   test("a key whose dot segments resolve inside its bucket opens", () => {
@@ -71,6 +77,7 @@ describe("the addressability verdicts", () => {
     expect(objectAddressRefusal("sales", "./x")).toBeUndefined();
     expect(objectAddressRefusal("sales", "sp/x/../dotdot.txt")).toBeUndefined();
     expect(objectAddressRefusal("sales", "sp/./dot.txt")).toBeUndefined();
+    expect(objectAddressRefusal("sales", "a//")).toBeUndefined();
   });
 
   test("a verdict is one of four fixed words and carries no character of the names passed", () => {

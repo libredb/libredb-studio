@@ -33,9 +33,9 @@ export function bucketAddressRefusal(bucket: string): "bucket-pattern" | undefin
 
 /**
  * undefined when Studio may open the object; else the first failing verdict: the bucket, then the key. A key is
- * refused when it is empty, when it begins with /, and when its dot segments, resolved under the bucket as RFC 3986
- * remove_dot_segments resolves them, climb out of the bucket or leave nothing: a server or proxy that resolves them
- * would read another bucket, or the bucket itself, which a pinned connection must never reach.
+ * refused when it is empty, when it begins with /, and when dotSegmentsLeaveBucket answers true: a server or proxy
+ * that resolves its dot segments would read another bucket, or the bucket itself, which a pinned connection must
+ * never reach.
  */
 export function objectAddressRefusal(bucket: string, key: string): S3AddressVerdict | undefined {
   const refusal = bucketAddressRefusal(bucket);
@@ -46,17 +46,25 @@ export function objectAddressRefusal(bucket: string, key: string): S3AddressVerd
   return dotSegmentsLeaveBucket(key) ? "key-dot-segments" : undefined;
 }
 
-/** "." is skipped, ".." pops a segment, every other segment (the empty one too) is pushed. */
-function dotSegmentsLeaveBucket(key: string): boolean {
-  let depth = 0;
+/**
+ * Resolves the key's "/"-separated segments under the bucket counting named segments only: "." and "" are skipped,
+ * ".." pops a named segment, and any other segment is pushed. True when a ".." finds no named segment to pop (the key
+ * climbs out of the bucket) or when no named segment is left (the key names the bucket itself). Empty segments are
+ * skipped, not pushed as RFC 3986 remove_dot_segments would, because a reverse proxy that merges slashes before
+ * resolving dot segments (nginx's default merge_slashes on) drops them: "x//../../other/secret" stays inside the
+ * bucket under the RFC reading and leaves it under the merged one, and the check must hold under both.
+ * objectPath applies it too, so a caller that skips objectAddressRefusal cannot send such a key.
+ */
+export function dotSegmentsLeaveBucket(key: string): boolean {
+  let named = 0;
   for (const segment of key.split("/")) {
-    if (segment === ".") continue;
+    if (segment === "." || segment === "") continue;
     if (segment === "..") {
-      if (depth === 0) return true;
-      depth -= 1;
-    } else depth += 1;
+      if (named === 0) return true;
+      named -= 1;
+    } else named += 1;
   }
-  return depth === 0;
+  return named === 0;
 }
 
 /** At most S3_SHOWN_NAME_CHARS characters, cut on a code point, then JSON.stringify. */

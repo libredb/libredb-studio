@@ -37,6 +37,27 @@ describe("objectPath", () => {
     expect((caught as DatabaseConfigError).provider as string).toBe("s3");
     expect((caught as Error).message).toBe(sourceAddressSentence("bucket-pattern", { bucket, key: "k" }));
   });
+
+  test("a key whose dot segments leave its bucket is refused before any request, whoever the caller", () => {
+    let caught: unknown;
+    try {
+      objectPath("sales", "../other/x");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(DatabaseConfigError);
+    expect((caught as DatabaseConfigError).provider as string).toBe("s3");
+    expect((caught as Error).message).toBe(
+      sourceAddressSentence("key-dot-segments", { bucket: "sales", key: "../other/x" }),
+    );
+    expect(() => objectPath("sales", "")).toThrow(
+      sourceAddressSentence("key-dot-segments", { bucket: "sales", key: "" }),
+    );
+  });
+
+  test("a key whose dot segments stay inside its bucket is sent as given", () => {
+    expect(objectPath("sp", "x/../dotdot.txt")).toBe("/sp/x/../dotdot.txt");
+  });
 });
 
 describe("s3Query", () => {
