@@ -929,6 +929,8 @@ describe("no typed value reaches a sentence", () => {
     `aws s3api head-object --bucket b --key k ${SECRET}`,
     `preview s3://other/${SECRET}`,
     `aws s3api head-object --profile=${SECRET}`,
+    `aws s3api head-object --bucket b --key ../${SECRET}`,
+    `preview s3://b/${SECRET}/../..`,
   ])("%s", (text) => {
     for (const context of [{}, SERVER, PINNED]) {
       const result = parseS3Command(text, context);
