@@ -16,7 +16,7 @@ import path from "node:path";
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 
-/** The engine count gate's sixteen files, read from its source, so the two lists cannot part. */
+/** The engine count gate's files, read from its source, so the two lists cannot part. */
 const COPY_FILES: readonly string[] = [
   ...read("tests/unit/lib/catalog-copy-engine-count.test.ts").matchAll(/\{ path: "([^"]+)"/g),
 ].map((match) => match[1]);
@@ -64,9 +64,9 @@ function claimProblems(text: string, label: string): string[] {
 }
 
 describe("English outward copy claims no S3 support it was not verified on", () => {
-  test("the file set is the gate's sixteen and six more", () => {
-    expect(COPY_FILES).toHaveLength(16);
-    expect(new Set(CLAIM_FILES).size).toBe(22);
+  test("the file set is the gate's seventeen and six more", () => {
+    expect(COPY_FILES).toHaveLength(17);
+    expect(new Set(CLAIM_FILES).size).toBe(23);
   });
 
   test.each(CLAIM_FILES.map((file) => [file] as const))("%s", (file) => {
