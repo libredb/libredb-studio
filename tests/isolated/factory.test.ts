@@ -791,8 +791,18 @@ describe("createDatabaseProvider", () => {
   test("the factory error lists milvus among the supported types, before qdrant and the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bneo4j, milvus, qdrant, s3, libredb$/,
+      /Supported types: .*\bneo4j, milvus, qdrant, s3, kubernetes, libredb$/,
     );
+  });
+
+  test("a kubernetes connection is built unconnected, with the kubectl dialect, and keeps readOnly", async () => {
+    const conn = { ...makeConnection("kubernetes", { port: 6443, database: undefined }), readOnly: true };
+    expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
+    const provider = await createDatabaseProvider(conn);
+    expect(provider.type).toBe("kubernetes");
+    expect(provider.getCapabilities().queryDialect).toBe("kubectl");
+    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(provider.isConnected()).toBe(false);
   });
 
   test("the factory error lists qdrant among the supported types, before the embedded store", async () => {
@@ -822,9 +832,9 @@ describe("createDatabaseProvider", () => {
     expect((await createDatabaseProvider(conn)).type).toBe("s3");
   });
 
-  test("the factory error lists s3 between qdrant and the embedded store", async () => {
+  test("the factory error lists s3 between qdrant and kubernetes, kubernetes before the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\bqdrant, s3, libredb$/);
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\bqdrant, s3, kubernetes, libredb$/);
   });
 
   test('creates provider for type "libredb"', async () => {
@@ -932,6 +942,8 @@ describe("createDatabaseProvider", () => {
       "druid",
       "elasticsearch",
       "kafka",
+      // No cancelQuery until the console lands with its run registry.
+      "kubernetes",
       "libredb",
       "libsql",
       "mongodb",

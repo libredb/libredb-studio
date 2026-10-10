@@ -360,7 +360,7 @@ describe("isDestructiveNonSqlQuery", () => {
 describe("vocabularyDecidesAlone", () => {
   // The rows the gate reads without its SQL keyword test in front. MongoDB and Redis keep that
   // test as a backstop; a type with no row is read by the SQL half entirely.
-  test("is true for prometheus, kafka, etcd, neo4j, milvus, qdrant, influxdb, oxia and s3 and for no other type", () => {
+  test("is true for prometheus, kafka, etcd, neo4j, milvus, qdrant, influxdb, oxia, s3 and kubernetes and for no other type", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual([
       "prometheus",
       "kafka",
@@ -371,6 +371,7 @@ describe("vocabularyDecidesAlone", () => {
       "influxdb",
       "oxia",
       "s3",
+      "kubernetes",
     ]);
   });
 
@@ -380,11 +381,12 @@ describe("vocabularyDecidesAlone", () => {
 });
 
 describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
-  test("carries a row for exactly the eleven types whose text is not SQL", () => {
+  test("carries a row for exactly the twelve types whose text is not SQL", () => {
     expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual([
       "etcd",
       "influxdb",
       "kafka",
+      "kubernetes",
       "milvus",
       "mongodb",
       "neo4j",
@@ -498,7 +500,7 @@ describe("vocabularySendsToModel", () => {
 
   // What the dialog did for every engine before the field existed, but for etcd, whose row keeps its statements,
   // values included, on this deployment (#1089 E10).
-  test("keeps etcd's, Milvus's, Qdrant's, InfluxDB's, Oxia's and S3's statements from the AI analysis, and no other shipped type's", () => {
+  test("keeps etcd's, Milvus's, Qdrant's, InfluxDB's, Oxia's, S3's and Kubernetes's statements from the AI analysis, and no other shipped type's", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => !vocabularySendsToModel(type))).toEqual([
       "etcd",
       "milvus",
@@ -506,6 +508,7 @@ describe("vocabularySendsToModel", () => {
       "influxdb",
       "oxia",
       "s3",
+      "kubernetes",
     ]);
   });
 

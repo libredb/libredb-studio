@@ -260,6 +260,14 @@ const KAFKA_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
 const NEO4J_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
 
 /**
+ * kubectl operations that destroy or change anything and reach the server: none, so the set is empty.
+ *
+ * Not an omission. A mutating kubectl command is refused before any request, and the Kubernetes provider's request
+ * policy admits GET and the three self reviews only, so a confirmation would ask about a statement that cannot run.
+ */
+const KUBERNETES_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
+
+/**
  * The names a query would run, or `undefined` when the text cannot be read as one.
  *
  * `undefined` is not "nothing to run": it means the reader could not tell WHAT would
@@ -456,6 +464,14 @@ const readKafkaOperations: OperationReader = () => [];
 const readNeo4jOperations: OperationReader = () => [];
 
 /**
+ * What a kubectl statement would run: never an operation this gate asks about.
+ *
+ * The provider either runs the statement as reads or refuses it before anything is sent, so a mutating command, and
+ * text it cannot lex, changes nothing and asks nothing.
+ */
+const readKubernetesOperations: OperationReader = () => [];
+
+/**
  * The single type-to-facts table. It has a row for exactly the types that
  * `readsSqlText` in `@/lib/sql/grammar` reports as not SQL, and a test holds the two
  * tables to that. A type with no row here is one whose statements the SQL half of the
@@ -488,6 +504,14 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
     maxTextBytes: INFLUXQL_MAX_TEXT_BYTES,
   },
   kafka: { operations: KAFKA_DESTRUCTIVE_OPERATIONS, read: readKafkaOperations, decidesAlone: true },
+  // Kubernetes: the provider refuses every mutating command before any request, so nothing asks. A statement names
+  // namespaces and objects, so none is posted for an AI analysis.
+  kubernetes: {
+    operations: KUBERNETES_DESTRUCTIVE_OPERATIONS,
+    read: readKubernetesOperations,
+    decidesAlone: true,
+    safetyAnalysis: false,
+  },
   // Milvus (vector-family spec 5.7, E10): the provider's own guard.ts reads the text with the parser the provider
   // runs, so what asks and what runs are one parse. A v1 request only reads, so nothing asks; what guard.ts refuses
   // (a write route, a server-side function, an endpoint-bearing key) the editor refuses before anything is sent.

@@ -82,6 +82,8 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   databend: true,
   // One AWS CLI subset command per run; the console pages with --starting-token, never with LIMIT and OFFSET.
   s3: false,
+  // Paged by the console's skip-scan once the console lands; until then no statement runs at all.
+  kubernetes: false,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];

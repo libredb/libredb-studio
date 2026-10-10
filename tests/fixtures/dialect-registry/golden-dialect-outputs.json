@@ -335,6 +335,18 @@
   "selectQuery": "THROWS An S3 bucket or object path is [name], received [\"c0\",\"Order\\\"Items\"]",
   "countQuery": null
  },
+ "kubernetes": {
+  "queryLanguage": "json",
+  "queryDialect": "kubectl",
+  "tabType": "kubectl",
+  "monacoLanguage": "kubectl",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "kubectl get Order\"Items -n c0",
+  "selectQuery": "kubectl get Order\"Items -n c0",
+  "countQuery": null
+ },
  "libredb": {
   "queryLanguage": "json",
   "queryDialect": "libredb",

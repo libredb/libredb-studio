@@ -1431,6 +1431,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "oxia",
     "databend",
     "s3",
+    "kubernetes",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

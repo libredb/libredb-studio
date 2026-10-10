@@ -150,7 +150,13 @@ export type DatabaseType =
   // command of an AWS CLI subset. Read-only in this version whatever `readOnly` says. The connection's User field is
   // the access key ID, Password the secret access key, Database an optional pinned bucket, and `region` below the
   // signing region; a blank key pair sends unsigned requests, never this server's own credentials.
-  | "s3";
+  | "s3"
+  // Kubernetes, one cluster read over the API server's REST API by a client of this repository's own on the shared
+  // node transport (`src/lib/db/providers/platform/kubernetes/`). Not a database: a Lens-like, read-only browser and a
+  // kubectl-subset console beside the databases. Read-only in this version whatever `readOnly` says. The connection's
+  // Password field is a bearer token, Database the default namespace, and `apiPath`, `namespaces` and `tlsServerName`
+  // are its own fields; a client certificate rides in the SSL panel.
+  | "kubernetes";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

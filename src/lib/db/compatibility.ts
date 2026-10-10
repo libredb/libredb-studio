@@ -103,6 +103,9 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   databend: true,
   // S3-compatible object storage: its own provider, doc and integration test, read over the S3 REST API.
   s3: true,
+  // Kubernetes: its own provider, doc and integration test, the first member of the `platform/` family: a cluster read
+  // over the API server's REST API, beside the databases rather than one of them.
+  kubernetes: true,
   libredb: true,
 });
 
@@ -173,6 +176,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   databend: true,
   // A server or service the user already runs, reached over the S3 REST API.
   s3: true,
+  // A cluster the user already runs, reached over the Kubernetes API server's REST API.
+  kubernetes: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
@@ -260,6 +265,9 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   // Read-only whatever the flag says: the console's closed command table reaches no write, and the provider sends only
   // GET and HEAD.
   s3: true,
+  // Read-only whatever the flag says: the request policy admits GET and the three self reviews only, before any
+  // socket, and the provider offers no object edit and no maintenance operation.
+  kubernetes: true,
   libredb: false,
 });
 
@@ -312,6 +320,7 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
   oxia: false,
   databend: false,
   s3: false,
+  kubernetes: false,
   libredb: false,
 });
 
@@ -323,7 +332,7 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
  *
  * The etcd provider (#1089) is the engine this record exists for: MCP is outside its first version, so
  * its entry answers false, and that entry lands with the provider's registration, which the compiler
- * forces. etcd, Oxia and S3 answer false; every other engine answers true. An exhaustive Record for the reason
+ * forces. etcd, Oxia, S3 and Kubernetes answer false; every other engine answers true. An exhaustive Record for the reason
  * `EXTERNAL` gives, so a new type-id cannot join without someone answering, and frozen like the records above it.
  */
 export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
@@ -346,7 +355,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   redis: true,
   prometheus: true,
   kafka: true,
-  // One of the engines MCP is not offered for (#1089 E12; Oxia and S3 are the others): the provider implements no
+  // One of the engines MCP is not offered for (#1089 E12; Oxia, S3 and Kubernetes are the others): the provider implements no
   // read-only query path, and a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
   etcd: false,
   // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4).
@@ -369,6 +378,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Outside this version, as etcd's and Oxia's: the provider implements no queryReadOnly, and no MCP surface
   // that lists buckets but never an object key is designed yet (BACKLOG B104).
   s3: false,
+  // Outside this version, as etcd's and Oxia's: the provider implements no read-only query path, and plan mode alone
+  // receives Kubernetes object names, Secret names withheld (no MCP surface is designed for them yet).
+  kubernetes: false,
   libredb: true,
 });
 
@@ -412,6 +424,7 @@ export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> =
   oxia: false,
   databend: false,
   s3: false,
+  kubernetes: false,
   libredb: false,
 });
 
@@ -461,6 +474,7 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
   oxia: false,
   databend: false,
   s3: false,
+  kubernetes: false,
   libredb: false,
 });
 

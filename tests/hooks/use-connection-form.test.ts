@@ -1967,6 +1967,7 @@ describe("useConnectionForm", () => {
     oxia: true,
     databend: true,
     s3: true,
+    kubernetes: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

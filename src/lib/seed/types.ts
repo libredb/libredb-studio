@@ -76,6 +76,7 @@ const SeedDatabaseType = z.enum([
   "oxia",
   "databend",
   "s3",
+  "kubernetes",
 ]);
 
 export const SeedDefaultsSchema = z.object({

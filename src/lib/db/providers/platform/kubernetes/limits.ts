@@ -6,8 +6,8 @@
  */
 import type { DatabaseType } from "@/lib/types";
 
-/** The provider's type id. The cast goes when the registration adds the id to DatabaseType (the same commit). */
-export const KUBERNETES_TYPE = "kubernetes" as string as DatabaseType;
+/** The provider's type id, the one every error of this provider is tagged with. */
+export const KUBERNETES_TYPE: DatabaseType = "kubernetes";
 /** kubeadm, k3s and kind serve the API on 6443; managed clusters usually on 443. */
 export const KUBERNETES_DEFAULT_PORT = 6443;
 /** The calls in flight for one connection, and so the sockets of its one Agent. */

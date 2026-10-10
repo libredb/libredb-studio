@@ -49,6 +49,7 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   databend: "exact",
   // No container level at all: buckets are object rows, so no path shape is declared.
   s3: "absent",
+  kubernetes: "exact",
   libredb: "exact",
   duckdb: "prefixes",
   mssql: "prefixes",
@@ -156,7 +157,7 @@ describe("the declaration follows the check (#1147)", () => {
     expect(unknownTypeIds(callerFiles)).toEqual([]);
     const callers = callerFiles.map(providerTypeId).sort();
     const declaring = TYPES.filter((type) => EXPECTED_CONTAINER_PATH_SHAPES[type] !== "absent").sort();
-    expect(callers).toHaveLength(19);
+    expect(callers).toHaveLength(20);
     expect(callers).toEqual(declaring);
   });
 });

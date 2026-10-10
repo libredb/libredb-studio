@@ -116,6 +116,9 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // A ```s3 block holds one AWS CLI subset read command the editor runs as it is. No alias: `aws` names every AWS
   // service, and `sh`, `bash` and `shell` name no engine.
   s3: true,
+  // A ```kubernetes block holds one statement of the kubectl subset the editor runs as it is. The `kubectl` alias below
+  // spells the command, and it still names this engine. No `yaml` or `sh` tag is registered: neither names an engine.
+  kubernetes: true,
 });
 
 /**
@@ -144,6 +147,7 @@ const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "promql",
   "cypher",
   "influxql",
+  "kubectl",
 ]);
 
 /**
@@ -182,6 +186,8 @@ const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.freeze({
   // The `promql` rule again: InfluxQL is a language, and `influxdb` is the only type-id that runs it
   // (`influxdb3` runs SQL). A second InfluxQL type-id is the moment to revisit this entry.
   influxql: "influxdb",
+  // The command the Kubernetes console speaks, and `kubernetes` is the only type-id that runs it.
+  kubectl: "kubernetes",
 });
 
 /**

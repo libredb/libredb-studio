@@ -1110,6 +1110,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     // Constraints are CHECK only in Databend's grammar, and nothing declares or reports a foreign key (design 2.4).
     databend: "engine-has-no-foreign-key",
     s3: "engine-has-no-foreign-key",
+    kubernetes: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1246,6 +1247,7 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   databend: { label: "Databend", reason: "Databend has ALTER TABLE ... MODIFY COLUMN" },
   // Not a table store: an object is bytes under a key, and the columns a listing shows are its fixed shape.
   s3: { label: "S3-compatible object storage", reason: "with no schema, so there is no column definition to change" },
+  kubernetes: { label: "Kubernetes", reason: "and Studio writes none, so there is no column definition to change" },
 };
 
 /**
@@ -1526,6 +1528,7 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "influxdb3",
           "oxia",
           "s3",
+          "kubernetes",
         ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
@@ -1594,6 +1597,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   oxia: false, // an `oxia client` read command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   databend: false, // a DDL statement commits the open transaction, so BEGIN; brackets nothing, the Oracle reason (module docstring)
   s3: false, // one AWS CLI subset command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  kubernetes: false, // one kubectl statement, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1630,6 +1634,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "influxdb3",
             "oxia",
             "s3",
+            "kubernetes",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);

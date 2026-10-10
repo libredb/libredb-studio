@@ -346,9 +346,10 @@ describe("the installed editor's language ids", () => {
     // 69 before etcd (#1089), whose five kinds with a source each declare `json` (object-source-declarations),
     // 74 before Db2 (#786), whose five kinds with a source each declare `sql`, 79 before Qdrant, whose
     // collection declares `json`, 80 before Milvus, whose collection declares `json` too, 81 before Oxia,
-    // whose shard and key each declare `json`, 83 before Databend, whose four kinds each declare `sql`, and 87 before
-    // S3, whose bucket and object each declare `json`.
-    expect(declared).toHaveLength(89);
+    // whose shard and key each declare `json`, 83 before Databend, whose four kinds each declare `sql`, 87 before
+    // S3, whose bucket and object each declare `json`, and 89 before Kubernetes, whose 37 built-in kinds each declare
+    // `yaml`.
+    expect(declared).toHaveLength(126);
 
     const unregistered = declared.filter((entry) => !registered.has(entry.language));
     // Named, so a failure says which kind on which engine declared what, rather than false. This
@@ -358,7 +359,7 @@ describe("the installed editor's language ids", () => {
     // guard that had not executed.
     expect(unregistered.map((entry) => `${entry.where}: ${entry.language}`)).toEqual([]);
 
-    // Non-vacuous in CONTENT and not only in count: these are the five distinct languages the
+    // Non-vacuous in CONTENT and not only in count: these are the six distinct languages the
     // fleet declares, so a population that reached only the SQL engines fails here rather than
     // passing a membership loop that never saw `json` or `lua`.
     expect([...new Set(declared.map((entry) => entry.language))].sort()).toEqual([
@@ -367,6 +368,7 @@ describe("the installed editor's language ids", () => {
       "mysql",
       "pgsql",
       "sql",
+      "yaml",
     ]);
   });
 });

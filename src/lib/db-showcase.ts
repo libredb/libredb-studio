@@ -88,15 +88,18 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   // databases, and the newest name on this page, so only libSQL and the embedded store move, as they did for Milvus,
   // Qdrant, Oxia and Databend.
   s3: 26,
+  // Behind S3 and ahead of libSQL: the platform a cloud-native team runs every database on, met beside the databases
+  // rather than as one of them, and the newest name on this page, so only libSQL and the embedded store move.
+  kubernetes: 27,
   // Behind etcd and ahead of the embedded store: libSQL is the name on this page an
   // evaluator is least likely to have met, but it is a product name (Turso's server)
   // rather than our own, so it goes ahead of `libredb`.
-  libsql: 27,
+  libsql: 28,
   // Last on purpose: the embedded store is the least recognisable name here. It is
   // still shown - it is a shipped provider with a doc (docs/providers/libredb.md), an
   // icon and a slot in the connection picker, so omitting it would make the login page
   // contradict the app (issue #425, step 2).
-  libredb: 28,
+  libredb: 29,
 };
 
 /**

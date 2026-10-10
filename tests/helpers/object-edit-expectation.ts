@@ -51,6 +51,9 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: Kafka has writes, and this product
   // declines them in v1 by decision (#1088 sections 2 and 4.6), which docs/providers/kafka.md names.
   "kafka",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this version reads a cluster and never writes to it,
+  // which docs/providers/kubernetes.md names.
+  "kubernetes",
   "libredb",
   "libsql",
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 writes no data (vector-family spec 5.7), which docs/providers/milvus.md names.

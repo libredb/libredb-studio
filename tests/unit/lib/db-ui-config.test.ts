@@ -14,6 +14,8 @@ import {
   getDBColor,
   hostUriSchemes,
   isFileBased,
+  KUBERNETES_FIELD_HINTS,
+  KUBERNETES_FIELD_RULES,
   offersSshTunnel,
   readOnlyHint,
   S3_FIELD_HINTS,
@@ -35,6 +37,11 @@ import {
   S3_CONNECTION_SENTENCES,
   S3_REGION_PATTERN,
 } from "@/lib/db/providers/objectstore/s3/connection-options";
+import {
+  DNS1123_LABEL,
+  KUBERNETES_CONNECTION_SENTENCES,
+  readClusterEndpoint,
+} from "@/lib/db/providers/platform/kubernetes/connection-options";
 import { S3_ACCESS_KEY_ID_MAX_CHARS, S3_ACCESS_KEY_ID_MIN_CHARS } from "@/lib/db/providers/objectstore/s3/constants";
 import { DatabendIcon, InfluxDBIcon, S3Icon } from "@/components/icons/db-icons";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
@@ -78,6 +85,7 @@ const ALL_TYPES: DatabaseType[] = [
   "oxia",
   "databend",
   "s3",
+  "kubernetes",
 ];
 
 describe("db-ui-config", () => {
@@ -448,10 +456,12 @@ describe("db-ui-config", () => {
      * spec 4.4), pinned in tests/unit/db/qdrant/credential-record.test.ts. InfluxDB 3 has no user name either: its
      * token is the password, and the connection layer it shares with the InfluxQL type refuses a user on it (InfluxDB
      * spec A.3). Oxia has no user name either, and its provider refuses a non-empty `config.user` with "Oxia has no
-     * user name: clear User. A bearer token goes under Token." (SB1-4.3) Listed by name, so the read stays visible.
+     * user name: clear User. A bearer token goes under Token." (SB1-4.3) Kubernetes has no user name either: basic
+     * authentication is refused, and its provider refuses a non-empty `config.user` naming the field. Listed by name,
+     * so the read stays visible.
      */
     const READ_ONLY_TO_REFUSE: Readonly<Record<"user" | "database", readonly DatabaseType[]>> = {
-      user: ["qdrant", "influxdb3", "oxia"],
+      user: ["qdrant", "influxdb3", "oxia", "kubernetes"],
       database: [],
     };
 
@@ -929,7 +939,7 @@ describe("declared connection-field copy (#1085)", () => {
     }
   });
 
-  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend and s3 declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, s3 and kubernetes declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
@@ -947,6 +957,7 @@ describe("declared connection-field copy (#1085)", () => {
       "oxia",
       "databend",
       "s3",
+      "kubernetes",
     ]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
@@ -1009,6 +1020,44 @@ describe("declared field rules (Databend design 6.3)", () => {
     expect(DATABEND_FIELD_RULES.warehouse?.format?.sentence).toStartWith("Warehouse ");
   });
 
+  test("Kubernetes' form rules are the provider's patterns and sentences, which the dialog cannot import", () => {
+    const rules = getDBConfig("kubernetes").fieldRules;
+    expect(rules).toBe(KUBERNETES_FIELD_RULES);
+    expect(getDBConfig("kubernetes").fieldHints).toBe(KUBERNETES_FIELD_HINTS);
+    expect(KUBERNETES_FIELD_RULES.database?.format?.sentence).toBe(KUBERNETES_CONNECTION_SENTENCES.defaultNamespace);
+    expect(KUBERNETES_FIELD_RULES.namespaces?.format?.sentence).toBe(KUBERNETES_CONNECTION_SENTENCES.namespacesShape);
+    expect(KUBERNETES_FIELD_RULES.database?.format?.pattern.source).toBe(DNS1123_LABEL.source);
+    const kubernetes = (fields: Partial<DatabaseConnection>): DatabaseConnection => ({
+      id: "k",
+      name: "k",
+      type: "kubernetes",
+      host: "api.example",
+      port: 6443,
+      ssl: { mode: "verify-system" },
+      createdAt: new Date(0),
+      ...fields,
+    });
+    const providerSentence = (fields: Partial<DatabaseConnection>): string | undefined => {
+      try {
+        readClusterEndpoint(kubernetes(fields), { queryTimeout: 30_000, appVersion: null });
+        return undefined;
+      } catch (error) {
+        return (error as Error).message;
+      }
+    };
+    // The control that the two copies agree on the values that matter, not only on their spelling.
+    for (const database of ["default", "shop-1", "Shop", "shop_1", "-a", "a".repeat(63), "a".repeat(64)]) {
+      expect(connectionFieldRefusal(getDBConfig("kubernetes"), kubernetes({ database }))).toBe(
+        providerSentence({ database }),
+      );
+    }
+    for (const namespaces of ["default", "default, shop", " default ,shop ", "default Shop", "default,shop_1"]) {
+      expect(connectionFieldRefusal(getDBConfig("kubernetes"), kubernetes({ namespaces }))).toBe(
+        providerSentence({ namespaces }),
+      );
+    }
+  });
+
   test("the form's warehouse pattern is the provider's, which the dialog cannot import because it is server code", () => {
     const source = readFileSync(path.join(ROOT, "src/lib/db/providers/sql/databend/connection-options.ts"), "utf8");
     const declared = /const WAREHOUSE_NAME = \/(.+)\/;/.exec(source);
@@ -1049,12 +1098,12 @@ describe("declared field rules (Databend design 6.3)", () => {
     );
   });
 
-  test("only databend and s3 declare field rules, so no other engine's Test Connection or Save is checked", () => {
+  test("only databend, s3 and kubernetes declare field rules, so no other engine's Test Connection or Save is checked", () => {
     const declaring = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldRules !== undefined)
       .map(([type]) => type);
-    expect(declaring).toEqual(["databend", "s3"]);
-    for (const type of ALL_TYPES.filter((candidate) => candidate !== "databend" && candidate !== "s3")) {
+    expect(declaring).toEqual(["databend", "s3", "kubernetes"]);
+    for (const type of ALL_TYPES.filter((candidate) => !declaring.includes(candidate))) {
       expect(
         connectionFieldRefusal(
           getDBConfig(type),
@@ -1308,6 +1357,9 @@ describe("db-showcase", () => {
         // databases, the newest name on this page, so only libSQL and the embedded store move (the Milvus, Qdrant, Oxia
         // and Databend precedent).
         "s3",
+        // Behind S3 and ahead of libSQL: the platform a cloud-native team runs its databases on, met beside the
+        // databases rather than as one of them, and the newest name on this page.
+        "kubernetes",
         "libsql",
         "libredb",
       ]);
@@ -1334,7 +1386,7 @@ describe("db-showcase", () => {
 });
 
 describe("Host box addresses and credential warnings", () => {
-  test("only milvus, qdrant, the two InfluxDB types, databend and s3 declare hostAcceptsUri, so every other Host box takes a host alone", () => {
+  test("only milvus, qdrant, the two InfluxDB types, databend, s3 and kubernetes declare hostAcceptsUri, so every other Host box takes a host alone", () => {
     expect(ALL_TYPES.filter((type) => hostUriSchemes(type).length > 0)).toEqual([
       "milvus",
       "qdrant",
@@ -1342,6 +1394,7 @@ describe("Host box addresses and credential warnings", () => {
       "influxdb3",
       "databend",
       "s3",
+      "kubernetes",
     ]);
   });
 

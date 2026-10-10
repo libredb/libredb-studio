@@ -346,6 +346,14 @@ export async function createDatabaseProvider(
       return new S3Provider(connection, options, execution);
     }
 
+    // Platforms - dynamically imported
+    case "kubernetes": {
+      // The explicit /index specifier keeps this dynamic import statically analysable. Read-only whatever the flag
+      // says, so no execution context rides along, as for Neo4j.
+      const { KubernetesProvider } = await import("./providers/platform/kubernetes/index");
+      return new KubernetesProvider(connection, options);
+    }
+
     // Embedded databases - dynamically imported
     case "libredb": {
       const { LibreDBProvider } = await import("./providers/embedded/libredb");
@@ -357,7 +365,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, s3, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, s3, kubernetes, libredb`,
         connection.type,
       );
   }

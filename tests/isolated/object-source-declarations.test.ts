@@ -161,6 +161,46 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
   // Both kinds have a source, JSON under the declared language: a bucket's parts and an object's metadata
   // and preview, serialised by the provider.
   s3: ["bucket/json", "object/json"],
+  // Every built-in Kubernetes kind has a YAML source; the Custom Resources kind, whose rows are types, has none.
+  kubernetes: [
+    "pods/yaml",
+    "deployments/yaml",
+    "replicasets/yaml",
+    "statefulsets/yaml",
+    "daemonsets/yaml",
+    "jobs/yaml",
+    "cronjobs/yaml",
+    "replicationcontrollers/yaml",
+    "configmaps/yaml",
+    "secrets/yaml",
+    "resourcequotas/yaml",
+    "limitranges/yaml",
+    "horizontalpodautoscalers/yaml",
+    "poddisruptionbudgets/yaml",
+    "leases/yaml",
+    "services/yaml",
+    "endpoints/yaml",
+    "endpointslices/yaml",
+    "ingresses/yaml",
+    "networkpolicies/yaml",
+    "persistentvolumeclaims/yaml",
+    "serviceaccounts/yaml",
+    "roles/yaml",
+    "rolebindings/yaml",
+    "events/yaml",
+    "priorityclasses/yaml",
+    "runtimeclasses/yaml",
+    "mutatingwebhookconfigurations/yaml",
+    "validatingwebhookconfigurations/yaml",
+    "ingressclasses/yaml",
+    "persistentvolumes/yaml",
+    "storageclasses/yaml",
+    "clusterroles/yaml",
+    "clusterrolebindings/yaml",
+    "nodes/yaml",
+    "namespaces/yaml",
+    "customresourcedefinitions/yaml",
+  ],
   libredb: [],
 });
 
@@ -250,9 +290,9 @@ describe("the fleet census of object source declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    // EXTERNAL_DATABASE_TYPES.length (28 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend and s3) plus
-    // the embedded store.
-    expect(CENSUS_TYPES).toHaveLength(29);
+    // EXTERNAL_DATABASE_TYPES.length (29 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend, s3 and
+    // kubernetes) plus the embedded store.
+    expect(CENSUS_TYPES).toHaveLength(30);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -270,13 +310,14 @@ describe("the fleet census of object source declarations", () => {
     // `hasSource` moves between the two halves, so both halves must be pinned or the total alone
     // would still be satisfied. Neither half may be edited to match a build: if this fails, the
     // DECLARATION is wrong or the design's table is, and the repair is one of those two.
-    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(87);
-    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(87);
+    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(124);
+    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(124);
     // neo4j added four kinds, none source-bearing, db2 five source-bearing kinds and four others, milvus and
     // qdrant one source-bearing kind each, influxdb and influxdb3 one kind each, neither source-bearing, oxia
-    // two source-bearing kinds, databend four source-bearing kinds, and s3 two source-bearing kinds.
-    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(33);
-    expect(rows).toHaveLength(120);
+    // two source-bearing kinds, databend four source-bearing kinds, s3 two source-bearing kinds, and kubernetes 37
+    // source-bearing kinds and its Custom Resources kind.
+    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(34);
+    expect(rows).toHaveLength(158);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -302,10 +343,10 @@ describe("the fleet census of object source declarations", () => {
       [],
     );
     expect(mariadbRows.filter((row) => row.kind.hasSource === true)).toHaveLength(8);
-    // 89 on a MariaDB connection against 87 unconnected: the design states both numbers because
+    // 126 on a MariaDB connection against 124 unconnected: the design states both numbers because
     // criterion 2's evidence method reads an unconnected provider and would otherwise
     // structurally exclude the two riskiest declarations in the phase.
-    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(89);
+    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(126);
   });
 
   /*
@@ -391,8 +432,8 @@ describe("the fleet census of object source declarations", () => {
         throw new Error(`the half-declaration guard never reached ${extra}, so it does not cover the MariaDB branch`);
       }
     }
-    // 120 unconnected kinds plus the MariaDB branch's eight.
-    expect(rows).toHaveLength(128);
+    // 158 unconnected kinds plus the MariaDB branch's eight.
+    expect(rows).toHaveLength(166);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)

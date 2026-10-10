@@ -718,3 +718,26 @@ export const S3Icon: React.FC<IconProps> = ({ className, ...props }) => (
     <path d="M5 11c1.6.9 4.1 1.5 7 1.5s5.4-.6 7-1.5" />
   </svg>
 );
+
+/**
+ * Kubernetes: a mark drawn for Studio, never the project's own logo: a hexagon holding three nodes joined at a
+ * centre, a cluster in the plainest terms. Stroked on the house 24-unit grid like the other drawn marks.
+ */
+export const KubernetesIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M12 2.5 L20.23 7.25 V16.75 L12 21.5 L3.77 16.75 V7.25 Z" />
+    <circle cx="12" cy="12" r="1.75" />
+    <path d="M12 10.25 V6.5" />
+    <path d="M13.52 12.88 L16.76 14.75" />
+    <path d="M10.48 12.88 L7.24 14.75" />
+  </svg>
+);

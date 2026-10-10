@@ -223,7 +223,7 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
 ];
 
 /**
- * The thirteen hues where two engines share a hue and are held apart only by step, so
+ * The fourteen hues where two engines share a hue and are held apart only by step, so
  * the `-alt` is a distinct IDENTITY and has to join the separation set. Pinned by
  * `tests/unit/lib/db-ui-config.test.ts`, which asserts every engine colour differs.
  * `fuchsia` joined with Neo4j: of the hues with no identity `-alt` yet, only
@@ -247,6 +247,8 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
  * `green` joined with S3-compatible object storage: `hue-green` is Kafka's, and of the hues with no identity `-alt`
  * (amber, pink, green, cyan), `green-alt` moved the light set's closest pair least (0.0337 to 0.0331, emerald-alt vs
  * green-alt) and left the dark one where it was.
+ * `amber` joined with Kubernetes: `hue-amber` is MySQL's, and of the hues with no identity `-alt` left (amber, pink,
+ * cyan), `amber-alt` cleared every test below.
  */
 const IDENTITY_ALTS = [
   "blue",
@@ -262,6 +264,7 @@ const IDENTITY_ALTS = [
   "orange",
   "red",
   "green",
+  "amber",
 ] as const;
 
 /**

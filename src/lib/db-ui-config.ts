@@ -28,6 +28,7 @@ import {
   OxiaIcon,
   DatabendIcon,
   S3Icon,
+  KubernetesIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
@@ -247,6 +248,43 @@ export const S3_FIELD_HINTS: Readonly<Partial<Record<ConnectionField, string>>> 
     "The region every request is signed for. Empty means us-east-1, which MinIO accepts unless it was started with a region of its own. Garage: its s3_region setting. AWS: the bucket's region.",
   allowInsecureAuth:
     "Ticked, Studio connects to this host over plain HTTP. The secret access key is never sent to this server, but bucket and object names, listings and previewed contents travel in the clear, readable by anyone on the path, and a captured request can be replayed for several minutes. Choose an SSL mode under SSL / TLS, or an SSH tunnel, wherever the server offers one.",
+});
+
+/**
+ * Kubernetes' form checks, in the provider's own sentences. The provider module is server code the dialog cannot
+ * import, so each pattern is a copy of its rule, and tests/unit/lib/db-ui-config.test.ts holds each copy and sentence
+ * to the provider's. The API path, the TLS server name and the token are checked by the provider at Test Connection.
+ */
+export const KUBERNETES_FIELD_RULES: Readonly<Partial<Record<ConnectionField, ConnectionFieldRule>>> = Object.freeze({
+  database: {
+    format: {
+      pattern: /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/,
+      sentence:
+        "Default namespace must be a DNS-1123 label: at most 63 lower-case letters, digits or hyphens, starting and ending with a letter or digit. Nothing was sent.",
+    },
+  },
+  namespaces: {
+    format: {
+      pattern: /^[\s,]*[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?([\s,]+[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*[\s,]*$/,
+      sentence:
+        "Namespaces must list DNS-1123 labels separated by commas or spaces: at most 63 lower-case letters, digits or hyphens each, starting and ending with a letter or digit. Nothing was sent.",
+    },
+  },
+});
+
+/** The sentences the connection dialog draws under Kubernetes' fields, exported so the docs can be held to them. */
+export const KUBERNETES_FIELD_HINTS: Readonly<Partial<Record<ConnectionField, string>>> = Object.freeze({
+  host: "The API server: a host name or address, or a pasted https:// address such as https://api.example:6443, which is split into Host and Port. A path, such as Rancher's /k8s/clusters/<id>, goes under API path. If Studio runs in a container, localhost is that container: use the cluster's Docker network or host.docker.internal. A typed address also needs SSL Mode under SSL / TLS: verify-full with the cluster's CA, or verify-system; the default, disable, is refused for any host but this machine.",
+  port: "kubeadm, k3s and kind serve on 6443; managed clusters (EKS, GKE, AKS, Rancher) usually on 443.",
+  password:
+    "A bearer token, without the word Bearer. A ServiceAccount token bound to view or studio-reader is the safest choice; kubectl create token lasts one hour unless --duration says otherwise. Leave empty when a client certificate under SSL / TLS signs in, or for kubectl proxy.",
+  database:
+    "Empty means default, as kubectl reads it: the namespace the tree opens on and the console reads when a statement names none.",
+  namespaces:
+    "Optional: the namespaces the tree lists, separated by commas or spaces. Set it when this identity may not list namespaces; Studio then reads no namespace list.",
+  apiPath: "Optional: a path every request goes under, such as /k8s/clusters/c-m-abc12 for a cluster behind Rancher.",
+  tlsServerName:
+    "Optional: the name the API server's certificate is checked against, when it differs from Host (kubeconfig tls-server-name).",
 });
 
 export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
@@ -796,6 +834,37 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     readOnlyHint:
       "S3-compatible connections are read-only in this version, whether or not this is ticked: Studio sends no write.",
     hostAcceptsUri: ["http", "https"],
+  },
+  kubernetes: {
+    // A mark drawn for Studio, never the project's own logo.
+    icon: KubernetesIcon,
+    // `hue-amber` is MySQL's; its `-alt` step joins IDENTITY_ALTS with this entry, measured in
+    // tests/unit/theme-accent-contrast.test.ts.
+    color: "text-hue-amber-alt",
+    label: "Kubernetes",
+    // kubeadm, k3s and kind; a pasted https:// address without a port sets 443.
+    defaultPort: "6443",
+    // No URI mode: a cluster address belongs in the Host box, which splits it, and a kubeconfig is not a URI.
+    showConnectionStringToggle: false,
+    // No User field: basic authentication is refused, and the provider refuses a user from a seed or the API naming
+    // the field. The SSL panel carries the CA and a client certificate; the SSH tunnel stays offered.
+    connectionFields: ["host", "port", "password", "database", "namespaces", "apiPath", "tlsServerName"],
+    fieldLabels: {
+      host: "API server",
+      password: "Token",
+      database: "Default namespace",
+      namespaces: "Namespaces",
+      apiPath: "API path",
+      tlsServerName: "TLS server name",
+    },
+    // What an empty Default namespace means.
+    fieldPlaceholders: { database: "default" },
+    fieldHints: KUBERNETES_FIELD_HINTS,
+    fieldRules: KUBERNETES_FIELD_RULES,
+    // The dialog's own sentence says the mode can be turned off, which is false here: Studio sends no write.
+    readOnlyHint:
+      "Kubernetes connections are read-only in this version, whether or not this is ticked: Studio sends the cluster no write.",
+    hostAcceptsUri: ["https", "http"],
   },
   libredb: {
     icon: LibreDBIcon,

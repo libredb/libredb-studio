@@ -130,6 +130,8 @@ const EXPECTED_COLUMN_KINDS: Readonly<Record<DatabaseType, readonly string[]>> =
   // Neither kind has columns: a bucket and an object are listed and their Source read, and neither declares
   // `hasColumns`.
   s3: [],
+  // Every Kubernetes kind is config with a YAML source and no columns: a click opens the YAML.
+  kubernetes: [],
   libredb: ["table", "collection", "keyspace"],
 });
 
@@ -213,15 +215,16 @@ describe("the fleet census of object column declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    // EXTERNAL_DATABASE_TYPES.length (28 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend and s3) plus
-    // the embedded store.
-    expect(CENSUS_TYPES).toHaveLength(29);
+    // EXTERNAL_DATABASE_TYPES.length (29 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend, s3 and
+    // kubernetes) plus the embedded store.
+    expect(CENSUS_TYPES).toHaveLength(30);
     expect(Object.keys(EXPECTED_COLUMN_KINDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // A row naming nothing would make its type-id's census pass on the empty set, so the design's
-    // table has two such rows, and they are named here: every engine but Oxia and S3 has at least one kind with
-    // columns, and Oxia's shard and key and S3's bucket and object declare none (consistency ruling 24).
+    // table has three such rows, and they are named here: every engine but Oxia, S3 and Kubernetes has at least one
+    // kind with columns; Oxia's shard and key and S3's bucket and object declare none (consistency ruling 24), and
+    // every Kubernetes kind opens its YAML instead.
     const empty = CENSUS_TYPES.filter((type) => EXPECTED_COLUMN_KINDS[type].length === 0);
-    expect(empty).toEqual(["oxia", "s3"]);
+    expect(empty).toEqual(["oxia", "s3", "kubernetes"]);
   });
 
   test("every kind id the expectation names is a kind its provider actually declares", async () => {
