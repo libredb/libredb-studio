@@ -545,9 +545,12 @@ function finalize(tables: TableIndex): AgentInventoryObject[] {
  * marker travels on the snapshot beside the fingerprint, where every reader of the
  * inventory sees it.
  *
- * `kinds` is not in it either, for the narrower reason that it is DERIVED: it is the
- * provider's declaration plus what the counts said, and nothing in it varies while the
- * objects stay the same.
+ * `kinds` is not in it either, for truncation's reason: it is the provider's declaration
+ * plus what the counts said, a property of the READING. Most of it follows the objects,
+ * but a withheld kind's count (`withheldCount`, `withheldUncounted`) does not, since no
+ * object of that kind is listed: a withheld object added or removed leaves the fingerprint
+ * as it was, and a snapshot reused under that fingerprint says the count as of its capture.
+ * The same holds for `unreadContainers`, which says what a scoped walk read.
  *
  * Nor is an object's `partlyReadable`, for truncation's reason: it says what this
  * connection's grants let it read (#1089 4.7), a property of the READING and not of the
