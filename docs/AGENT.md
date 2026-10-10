@@ -514,7 +514,9 @@ An object whose listing carried `readRanges`, an etcd group the user's grants re
 A kind a provider declares with `machineNames: "withheld"` is counted and never listed, so no object name of that kind enters the capture: the run is told how many the walk counted (`withheldCount`) and that their names are withheld, or the provider's sentence where the count was refused, or, where a container read gave no count for it (`withheldUncounted`), that its names are withheld and were not counted.
 The count is said as "at least" whenever some container sampled it, refused it or gave none, so a total never leaves a container out unsaid.
 The object tree and the editor still list those names to the user; only the agent's walk loses them.
-MCP's `inspect_schema` and the app's schema read take relation kinds only and are not changed by this declaration, which is why only a kind whose role is not `relation` declares it.
+The walk is the only machine surface this declaration reaches, so it holds only where no other one lists the kind.
+MCP's `inspect_schema` and the app's schema read take relation kinds, so only a kind whose role is not `relation` declares it, and `relationKindIds` refuses one that does.
+The engine is not offered to MCP (`MCP_EXPOSABLE`) and its provider has no `queryReadOnly`, the path the agent's read tool runs a statement through; the fleet declarations guard in `tests/isolated/object-source-declarations.test.ts` holds all three.
 A provider that declares `agentWalkScope` is walked in its session-default container and the containers it names, rather than in every container, and the inventory carries `unreadContainers`, which the packing says as "Not read: N other" followed by the provider's own word for its containers, and names the containers it did read, since a read that lists no object names none of them through its entries.
 It exists for an engine whose containers are too many to walk within one statement's deadline; with no session default, only the named containers are read.
 An absence the model was not told about is read as an absence in the database, which is #414 in one sentence.

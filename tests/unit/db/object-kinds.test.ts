@@ -235,6 +235,16 @@ describe("relationKindIds", () => {
   test("consumers filter by role, never by kind id", () => {
     expect(relationKindIds(withKinds)).toEqual(["table", "view"]);
   });
+
+  test("a relation kind that withholds its names is refused, since the schema surfaces would list them", () => {
+    const declaring = {
+      ...withKinds,
+      objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables", machineNames: "withheld" }],
+    } as ProviderCapabilities;
+    expect(() => relationKindIds(declaring)).toThrow(
+      'The relation kind "table" declares machineNames "withheld", and a relation\'s names are listed by the schema surfaces',
+    );
+  });
 });
 
 describe("isCountUnavailable", () => {
