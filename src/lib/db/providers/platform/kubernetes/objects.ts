@@ -235,7 +235,7 @@ export interface NamespaceList {
   readonly capped?: true;
 }
 
-export const NAMESPACE_NAME_SENTENCE =
+const NAMESPACE_NAME_SENTENCE =
   "The API server listed a namespace whose name is not a DNS-1123 label, which no namespace can have, so Studio does not list the namespaces; list the ones to show in the connection's Namespaces field.";
 
 /** The namespaces from the API, the first 1,000 read one past the cap, or `forbidden` when the list is refused. */

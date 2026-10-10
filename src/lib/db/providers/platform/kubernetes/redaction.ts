@@ -29,7 +29,7 @@ const DATA_KEY = /\b(?:string)?data\b/i;
  */
 export const MAX_RESPONSE_NESTING = 8;
 
-export const NESTED_TOO_DEEP_SENTENCE =
+const NESTED_TOO_DEEP_SENTENCE =
   "The API server answered with objects nested deeper than any Kubernetes response, so Studio shows nothing of it.";
 
 /** The resource a response answers. */

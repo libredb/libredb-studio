@@ -168,7 +168,7 @@ export interface TableScan {
 }
 
 /** A continue token sent back unchanged: a server that does so would be asked for the same page for ever. */
-export const REPEATED_CONTINUE_SENTENCE =
+const REPEATED_CONTINUE_SENTENCE =
   "The API server answered a list page with the continue token Studio had just sent, so the list does not advance; Studio stops rather than read the same page again.";
 
 /** Too many pages with no object and a continue token: a fresh token each time is no progress either. */
