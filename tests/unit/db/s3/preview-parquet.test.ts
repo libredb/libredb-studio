@@ -5,13 +5,15 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { gzipSync } from "node:zlib";
+import { brotliCompressSync, brotliDecompressSync, gunzipSync, gzipSync } from "node:zlib";
 import { QueryError } from "@/lib/db/errors";
 import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
 import type { S3PreviewCell } from "@/lib/db/providers/objectstore/s3/preview";
 import {
+  boundedZlib,
   createDecodeSlots,
   DECODE_OVER_BUDGET,
+  type DecodeSlots,
   type FooterOutcome,
   guardedCompressors,
   loadParquetModules,
@@ -25,7 +27,7 @@ import {
   readParquetFooter,
   summarizeParquet,
 } from "@/lib/db/providers/objectstore/s3/preview-parquet";
-import { inMiB } from "@/lib/db/providers/objectstore/s3/preview-render";
+import { inMiB, PreviewRefusal } from "@/lib/db/providers/objectstore/s3/preview-render";
 import {
   booleanRle,
   CODEC,
@@ -531,12 +533,27 @@ async function spiedModules(
 }
 
 const depsOf = (modules: ParquetModules, slots = createDecodeSlots(2, 4)) => ({ modules: async () => modules, slots });
+/** Waits a tick at a time until `until` holds; fails the test when it still does not after 2,000 ticks. */
 const settle = async (until: () => boolean): Promise<void> => {
-  for (let tick = 0; tick < 2_000 && !until(); tick += 1) {
+  for (let tick = 0; tick < 2_000; tick += 1) {
+    if (until()) return;
     // oxlint-disable-next-line no-await-in-loop -- each tick waits for the one before it.
     await Bun.sleep(1);
   }
+  throw new Error("The awaited condition did not hold within 2,000 ticks");
 };
+
+/** Decode slots that count the previews that asked for a slot; one past the free slots is a queued waiter. */
+function countingSlots(inner: DecodeSlots) {
+  const asked = { count: 0 };
+  const slots: DecodeSlots = {
+    acquire(signal) {
+      asked.count += 1;
+      return inner.acquire(signal);
+    },
+  };
+  return { slots, asked };
+}
 
 describe("previewParquet: reads and rows", () => {
   for (const codec of ["uncompressed", "snappy", "gzip", "zstd", "brotli", "lz4_raw"]) {
@@ -791,6 +808,47 @@ describe("prescanChunk", () => {
   });
 });
 
+/** The page bytes of a one-column INT32 file of the given data pages, as prescanChunk reads one chunk. */
+function dataChunk(values: readonly number[]): Uint8Array {
+  const pages = syntheticParquet({
+    schema: [
+      { name: "schema", children: 1 },
+      { name: "id", type: PHYSICAL.INT32 },
+    ],
+    rowGroups: [
+      {
+        numRows: 10,
+        chunks: [
+          {
+            path: ["id"],
+            type: PHYSICAL.INT32,
+            numValues: 10,
+            pages: values.map((numValues) => ({ kind: "data" as const, numValues, body: new Uint8Array(4) })),
+          },
+        ],
+      },
+    ],
+  });
+  return pages.subarray(4, pages.length - 8 - new DataView(pages.buffer).getUint32(pages.length - 8, true));
+}
+
+describe("prescanChunk: negative page counts", () => {
+  test("a page that declares a negative value count is refused", () => {
+    expect(() => prescanChunk(dataChunk([10, -5]), 5, "id", S3_PREVIEW_LIMITS, { values: 0, decoded: 0 })).toThrow(
+      new PreviewRefusal("The pages of column id do not fill its column chunk, so the file is not previewed."),
+    );
+  });
+
+  test("a negative page in one chunk cannot make room under the total cap for another", () => {
+    const capped = limits({ parquetMaxTotalValues: 12 });
+    const totals = { values: 0, decoded: 0 };
+    expect(() => {
+      prescanChunk(dataChunk([10, -8]), 2, "a", capped, totals);
+      prescanChunk(dataChunk([10]), 10, "b", capped, totals);
+    }).toThrow(new PreviewRefusal("The pages of column a do not fill its column chunk, so the file is not previewed."));
+  });
+});
+
 describe("guardedCompressors", () => {
   test("each of the six codecs refuses a declared length over the budget left, legacy LZ4 included", async () => {
     const modules = await loadParquetModules();
@@ -805,6 +863,54 @@ describe("guardedCompressors", () => {
     const stored = new Uint8Array(gzipSync(new TextEncoder().encode("hello")));
     expect(new TextDecoder().decode(compressors.GZIP?.(stored, 5))).toBe("hello");
     expect(() => compressors.GZIP?.(stored, 6)).toThrow(DECODE_OVER_BUDGET);
+  });
+});
+
+describe("boundedZlib", () => {
+  const zeros = new Uint8Array(1_000_000);
+  const codecs = [
+    { name: "gzip", decode: boundedZlib(gunzipSync), packed: new Uint8Array(gzipSync(zeros)) },
+    { name: "brotli", decode: boundedZlib(brotliDecompressSync), packed: new Uint8Array(brotliCompressSync(zeros)) },
+  ];
+
+  test("an output past the declared length stops at that length with DECODE_OVER_BUDGET", () => {
+    for (const { name, decode, packed } of codecs) {
+      expect(() => decode(packed, 1000), name).toThrow(DECODE_OVER_BUDGET);
+    }
+  });
+
+  test("an output of exactly the declared length decodes to a Uint8Array of that length", () => {
+    for (const { name, decode, packed } of codecs) {
+      const output = decode(packed, 1_000_000);
+      expect(output.length, name).toBe(1_000_000);
+      expect(output, name).toBeInstanceOf(Uint8Array);
+      expect(Buffer.isBuffer(output), name).toBe(false);
+    }
+  });
+
+  test("an output shorter than the declared length is refused with DECODE_OVER_BUDGET", () => {
+    for (const { name, decode, packed } of codecs) {
+      expect(() => decode(packed, 1_000_001), name).toThrow(DECODE_OVER_BUDGET);
+    }
+  });
+
+  test("a zero declared length decodes an empty stream and refuses a stream that holds bytes", () => {
+    expect(boundedZlib(gunzipSync)(new Uint8Array(gzipSync(new Uint8Array(0))), 0)).toHaveLength(0);
+    expect(boundedZlib(brotliDecompressSync)(new Uint8Array(brotliCompressSync(new Uint8Array(0))), 0)).toHaveLength(0);
+    expect(() => boundedZlib(gunzipSync)(new Uint8Array(gzipSync(new Uint8Array(1))), 0)).toThrow(DECODE_OVER_BUDGET);
+  });
+
+  test("a corrupt stream throws zlib's own error, not DECODE_OVER_BUDGET", () => {
+    for (const { name, decode } of codecs) {
+      let message = "";
+      try {
+        decode(new Uint8Array([1, 2, 3]), 10);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message, name).not.toBe("");
+      expect(message, name).not.toBe(DECODE_OVER_BUDGET);
+    }
   });
 });
 
@@ -833,11 +939,11 @@ describe("the process-wide decode slot", () => {
 
   test("of three concurrent previews, two decode at once and the third starts only after one returns", async () => {
     const { modules, started, open, state } = await gatedModules();
-    const deps = depsOf(modules, createDecodeSlots(2, 4));
+    const { slots, asked } = countingSlots(createDecodeSlots(2, 4));
+    const deps = depsOf(modules, slots);
     const object = fixture("fx-zstd.parquet");
     const runs = [0, 1, 2].map(() => previewParquet(inputFor(object, "f.parquet").input, deps));
-    await settle(() => started.length === 2);
-    await Bun.sleep(20);
+    await settle(() => started.length === 2 && asked.count === 3);
     expect(started).toEqual([0, 1]);
     open(0);
     await settle(() => started.length === 3);
@@ -850,11 +956,11 @@ describe("the process-wide decode slot", () => {
 
   test("with two decodes running and four waiting, the next preview gets R-PQ-BUSY and sends no GET after its pre-scan", async () => {
     const { modules, started, open, state } = await gatedModules();
-    const deps = depsOf(modules, createDecodeSlots(2, 4));
+    const { slots, asked } = countingSlots(createDecodeSlots(2, 4));
+    const deps = depsOf(modules, slots);
     const object = fixture("fx-zstd.parquet");
     const runs = Array.from({ length: 6 }, () => previewParquet(inputFor(object, "f.parquet").input, deps));
-    await settle(() => started.length === 2);
-    await Bun.sleep(20);
+    await settle(() => started.length === 2 && asked.count === 6);
     const busy = inputFor(object, "f.parquet");
     expect(await previewParquet(busy.input, deps)).toEqual({
       kind: "refused",

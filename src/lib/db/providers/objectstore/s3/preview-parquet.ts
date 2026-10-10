@@ -5,6 +5,7 @@
  * walks its schema before hyparquet builds any tree, plans the first row group's leading columns inside the fetch,
  * decode, leaf and value budgets, then prefetches, pre-scans the page headers and decodes from memory.
  */
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import type * as Hyparquet from "hyparquet";
 import type { AsyncBuffer, ColumnChunk, ColumnMetaData, Compressors, FileMetaData, ParquetParsers } from "hyparquet";
 import { QueryError } from "@/lib/db/errors";
@@ -48,8 +49,8 @@ async function importParquetModules(): Promise<ParquetModules> {
     parquetReadObjects: hyparquet.parquetReadObjects,
     snappyUncompress: hyparquet.snappyUncompress,
     codecs: {
-      gzip: compressors.decompressGzip,
-      brotli: compressors.decompressBrotli,
+      gzip: boundedZlib(gunzipSync),
+      brotli: boundedZlib(brotliDecompressSync),
       zstd: compressors.decompressZstd,
       lz4: compressors.decompressLz4,
       lz4Raw: compressors.decompressLz4Raw,
@@ -435,9 +436,33 @@ export const DECODE_OVER_BUDGET = "The pages declare more decoded bytes than the
 const OUTSIDE_PLAN = "The Parquet reader asked for bytes outside the planned ranges";
 
 /**
+ * A node:zlib decoder whose output may not pass the declared length: zlib stops at `maxOutputLength`, and an output
+ * longer or shorter than the declared length throws DECODE_OVER_BUDGET. Any other zlib error is rethrown unchanged.
+ * zlib refuses a limit of 0, so a declared length of 0 decodes with a limit of 1 and the length check refuses any byte.
+ */
+export function boundedZlib(
+  decode: (input: Uint8Array, options: { maxOutputLength: number }) => Uint8Array,
+): (input: Uint8Array, outputLength: number) => Uint8Array {
+  return (input, outputLength) => {
+    let output: Uint8Array;
+    try {
+      output = decode(input, { maxOutputLength: Math.max(1, outputLength) });
+    } catch (error) {
+      if ((error as { code?: unknown }).code === "ERR_BUFFER_TOO_LARGE")
+        throw new Error(DECODE_OVER_BUDGET, { cause: error });
+      throw error;
+    }
+    if (output.length !== outputLength) throw new Error(DECODE_OVER_BUDGET);
+    return new Uint8Array(output.buffer, output.byteOffset, output.length);
+  };
+}
+
+/**
  * The second line behind the pre-scan: each codec checks the declared output length against the budget
  * left before it runs, then spends it. Snappy is hyparquet's own pure-JavaScript decoder, so hysnappy's shared WASM
- * memory is never grown; zstd gets a buffer of the declared size, since fzstd otherwise sizes from the frame.
+ * memory is never grown; zstd gets a buffer of the declared size, since fzstd otherwise sizes from the frame. Gzip and
+ * brotli decode through node:zlib with the declared length as the output limit, because the package decoders size
+ * their output from the stream.
  */
 export function guardedCompressors(budget: number, modules: ParquetModules): Compressors {
   let left = budget;
@@ -473,6 +498,7 @@ export interface PrescanTotals {
  * chunk's end; a page may declare at most parquetMaxPageValues values; the data pages' values may not pass the
  * footer's count or parquetMaxChunkValues; the values of every page of every chosen chunk, dictionary pages included,
  * may not pass parquetMaxTotalValues; the declared decoded bytes may not pass the decode budget.
+ * A page may not declare a negative count.
  */
 export function prescanChunk(
   bytes: Uint8Array,
@@ -487,6 +513,7 @@ export function prescanChunk(
   while (offset < bytes.length) {
     const facts = readPageHeader(bytes, offset, limits.thriftMaxDepth);
     if (!("headerBytes" in facts)) throw new PreviewRefusal(previewSentence("R-PQ-PAGES", { c }));
+    if (facts.numValues < 0) throw new PreviewRefusal(previewSentence("R-PQ-PAGES", { c }));
     if (facts.numValues > limits.parquetMaxPageValues)
       throw new PreviewRefusal(previewSentence("R-PQ-PAGE-VALUES", { c, v: facts.numValues }));
     if (facts.type === 0 || facts.type === 3) dataValues += facts.numValues;
