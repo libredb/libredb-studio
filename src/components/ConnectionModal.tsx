@@ -199,6 +199,8 @@ export function ConnectionModal({
     setDataServers,
     warehouse,
     setWarehouse,
+    region,
+    setRegion,
     connectionString,
     setConnectionString,
     mongoConnectionMode,
@@ -866,6 +868,32 @@ export function ConnectionModal({
                     </div>
                   )}
 
+                  {/*
+                    The region S3 requests are signed for, drawn where the engine takes the field, the way the
+                    warehouse is. The provider checks the text and names the field when it refuses it.
+                  */}
+                  {takesConnectionField(type, "region") && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Globe strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="region" className="text-xs font-medium text-fg-muted">
+                          {connectionFieldLabel(uiConfig, "region", "Region")}
+                        </Label>
+                      </div>
+                      <Input
+                        id="region"
+                        value={region}
+                        onChange={(e) => setRegion(e.target.value)}
+                        placeholder={connectionFieldPlaceholder(uiConfig, "region", "us-east-1")}
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-describedby={describedByHint(uiConfig, "region")}
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
+                      />
+                      <DeclaredFieldHint config={uiConfig} field="region" />
+                    </div>
+                  )}
+
                   {takesConnectionField(type, "schema") && (
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 mb-1">
@@ -1194,7 +1222,9 @@ export function ConnectionModal({
                       aria-describedby={describedByHint(uiConfig, "allowInsecureAuth")}
                       className="rounded border-edge bg-panel"
                     />
-                    <span className="text-xs font-medium text-warning">Send the password without TLS</span>
+                    <span className="text-xs font-medium text-warning">
+                      {connectionFieldLabel(uiConfig, "allowInsecureAuth", "Send the password without TLS")}
+                    </span>
                   </label>
                   <DeclaredFieldHint config={uiConfig} field="allowInsecureAuth" />
                 </div>

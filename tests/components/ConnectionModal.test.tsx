@@ -138,6 +138,7 @@ const mockSetReadOnly = mock(() => {});
 const mockSetAllowInsecureAuth = mock(() => {});
 const mockSetDataServers = mock(() => {});
 const mockSetWarehouse = mock(() => {});
+const mockSetRegion = mock(() => {});
 const mockSetSaslMechanism = mock(() => {});
 
 let mockFormOverrides: Record<string, unknown> = {};
@@ -160,6 +161,8 @@ function getDefaultForm() {
     setDataServers: mockSetDataServers,
     warehouse: "",
     setWarehouse: mockSetWarehouse,
+    region: "",
+    setRegion: mockSetRegion,
     readOnlyOffered: false,
     credentialWarning: undefined as string | undefined,
     host: "localhost",
@@ -287,6 +290,7 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   influxdb3: ["host", "port", "password", "database", "allowInsecureAuth"],
   oxia: ["host", "port", "password", "database", "dataServers", "allowInsecureAuth"],
   databend: ["host", "port", "user", "password", "database", "warehouse", "allowInsecureAuth"],
+  s3: ["host", "port", "user", "password", "database", "region", "allowInsecureAuth"],
 };
 /**
  * A field list one test declares on top of the mirrored table, reset before every test. The dataServers cases
@@ -437,6 +441,32 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
       allowInsecureAuth:
         "Ticked, the password crosses the network in cleartext to this host. Databend Cloud never needs this: it serves HTTPS on port 443.",
     },
+  },
+  // Mirrored from the real entry; tests/unit/lib/db-ui-config.test.ts pins the real one.
+  s3: {
+    fieldLabels: {
+      host: "Endpoint host",
+      user: "Access key ID",
+      password: "Secret access key",
+      database: "Bucket",
+      region: "Region",
+      allowInsecureAuth: "Connect without TLS",
+    },
+    fieldPlaceholders: { database: "all buckets", region: "us-east-1" },
+    fieldHints: {
+      host: "A host name or address, or a pasted http:// or https:// endpoint such as http://localhost:9000, which is split into Host and Port. The endpoint only: a bucket goes under Bucket, never in the address. MinIO and RustFS serve on port 9000 unless configured otherwise, Garage on 3900. If Studio runs in a container, localhost is that container: use host.docker.internal.",
+      user: "The access key ID. It is stored and shown in the clear, like a user name. Leave both keys empty only for a bucket that allows anonymous reads: Studio then sends unsigned requests, never this server's own cloud credentials.",
+      password:
+        "The secret access key. Studio's server signs every request with it and never sends it to the S3 server. Fill in both keys, or neither.",
+      database:
+        "Optional. With a bucket here, Studio reads only that bucket and never lists the others, which a key limited to one bucket needs. Empty: every bucket this key can list.",
+      region:
+        "The region every request is signed for. Empty means us-east-1, which MinIO accepts unless it was started with a region of its own. Garage: its s3_region setting. AWS: the bucket's region.",
+      allowInsecureAuth:
+        "Ticked, Studio connects to this host over plain HTTP. The secret access key is never sent to this server, but bucket and object names, listings and previewed contents travel in the clear, readable by anyone on the path, and a captured request can be replayed for several minutes. Choose an SSL mode under SSL / TLS, or an SSH tunnel, wherever the server offers one.",
+    },
+    readOnlyHint:
+      "S3-compatible connections are read-only in this version, whether or not this is ticked: Studio sends no write.",
   },
 };
 
@@ -711,6 +741,32 @@ describe("ConnectionModal", () => {
       }
     },
   );
+
+  test("the consent box under s3 reads Connect without TLS, its declared label, and every other type keeps its own word", () => {
+    mockFormOverrides = { type: "s3", sslMode: "disable" };
+    const { getByLabelText, queryByLabelText, container, rerender } = render(
+      React.createElement(ConnectionModal, createDefaultProps()),
+    );
+    const box = getByLabelText("Connect without TLS") as HTMLInputElement;
+    expect(box.getAttribute("aria-describedby")).toBe("allowInsecureAuth-hint");
+    expect(container.querySelector("#allowInsecureAuth-hint")?.textContent).toBe(
+      MOCK_FIELD_COPY.s3.fieldHints?.allowInsecureAuth,
+    );
+    expect(queryByLabelText("Send the password without TLS")).toBeNull();
+    fireEvent.click(box);
+    expect(mockSetAllowInsecureAuth).toHaveBeenCalledWith(true);
+
+    // A type that declares no label draws the dialog's own words, exactly as before the declaration existed.
+    mockFormOverrides = { type: "databend", sslMode: "disable" };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(getByLabelText("Send the password without TLS")).toBeDefined();
+    expect(queryByLabelText("Connect without TLS")).toBeNull();
+
+    // Under a TLS mode there is nothing to consent to.
+    mockFormOverrides = { type: "s3", sslMode: "verify-full" };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(queryByLabelText("Connect without TLS")).toBeNull();
+  });
 
   test("oxia draws Host, Port, Token, Namespace and Data servers, and no User box", () => {
     mockFormOverrides = { type: "oxia", sslMode: "disable" };
@@ -1769,6 +1825,21 @@ describe("ConnectionModal", () => {
       // The Warehouse box under its declared label; every declared hint, the consent box's among them, because the
       // default form's SSL Mode is disable (Databend design 6.1).
       ["databend", "databend", {}, { ...NETWORKED, warehouse: "Warehouse" }, MOCK_FIELD_COPY.databend.fieldHints ?? {}],
+      // The Region box under its declared label, and every declared hint, the consent box's among them, because the
+      // default form's SSL Mode is disable.
+      [
+        "s3",
+        "s3",
+        {},
+        {
+          host: "Endpoint host",
+          user: "Access key ID",
+          password: "Secret access key",
+          database: "Bucket",
+          region: "Region",
+        },
+        MOCK_FIELD_COPY.s3.fieldHints ?? {},
+      ],
       ["sqlite", "sqlite", {}, FILE_PATH, {}],
       ["duckdb", "duckdb", {}, FILE_PATH, {}],
       ["libredb", "libredb", {}, FILE_PATH, {}],
@@ -1853,6 +1924,13 @@ describe("ConnectionModal", () => {
         ["host", "port", "user", "password", "saslMechanism"],
       ],
       ["etcd", "etcd", {}, labelsFor("host", "user", "password"), ["host", "port", "user", "password"]],
+      [
+        "s3",
+        "s3",
+        {},
+        labelsFor("host", "user", "password", "database", "region"),
+        ["host", "port", "user", "password", "database", "region", "allowInsecureAuth"],
+      ],
       ["sqlite", "sqlite", {}, labelsFor("database"), ["database"]],
     ];
 
@@ -1981,6 +2059,42 @@ describe("ConnectionModal", () => {
         mockFormOverrides = { type };
         rerender(React.createElement(ConnectionModal, createDefaultProps()));
         expect(container.querySelector("#warehouse")).toBeNull();
+      }
+    });
+
+    test("draws the Region box for s3 only, from its field list, labelled, hinted and with its placeholder from its declaration", () => {
+      mockFormOverrides = { type: "s3", region: "eu-central-1" };
+      const { container, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+      const box = container.querySelector("#region") as HTMLInputElement;
+      expect(box.value).toBe("eu-central-1");
+      expect(box.placeholder).toBe("us-east-1");
+      expect(box.getAttribute("autocomplete")).toBe("off");
+      expect(box.getAttribute("spellcheck")).toBe("false");
+      expect(box.getAttribute("aria-describedby")).toBe("region-hint");
+      expect(container.querySelector('label[for="region"]')?.textContent).toBe("Region");
+      expect(container.querySelector('[data-testid="region-hint"]')?.textContent).toBe(
+        MOCK_FIELD_COPY.s3.fieldHints?.region,
+      );
+      // The Bucket box shows what an empty one means.
+      expect((container.querySelector("#database") as HTMLInputElement).placeholder).toBe("all buckets");
+      fireEvent.change(box, { target: { value: "garage" } });
+      expect(mockSetRegion).toHaveBeenCalledWith("garage");
+
+      // With no declared label, hint or placeholder the dialog's own word and example apply.
+      mockDeclaredCopy = { fieldLabels: {}, fieldHints: {}, fieldPlaceholders: {} };
+      rerender(React.createElement(ConnectionModal, createDefaultProps()));
+      expect(container.querySelector('label[for="region"]')?.textContent).toBe("Region");
+      expect((container.querySelector("#region") as HTMLInputElement).placeholder).toBe("us-east-1");
+      expect(container.querySelector("#region")?.getAttribute("aria-describedby")).toBeNull();
+
+      // Every other engine, Databend with its warehouse included, draws no such box.
+      mockDeclaredCopy = {};
+      for (const type of Object.keys(MOCK_CONNECTION_FIELDS)
+        .filter((t) => t !== "s3")
+        .concat("postgres")) {
+        mockFormOverrides = { type };
+        rerender(React.createElement(ConnectionModal, createDefaultProps()));
+        expect(container.querySelector("#region")).toBeNull();
       }
     });
   });
