@@ -1916,10 +1916,14 @@ describe("the tunnel check tests/live/s3-tunnel-check.ts", () => {
     expect(/password:\s*"[^"$]/.test(text)).toBe(false);
   });
 
-  test("counts each step's sockets with a node:net connect spy, so the link-local refusal must come before any dial", () => {
+  // A text pin stands in for a run, because the script dials a real bastion as soon as it is imported.
+  test("counts every socket but the bastion's with a node:net connect spy, so the link-local refusal must come before any socket to the local forward", () => {
     const text = real.files[TUNNEL_CHECK] ?? "";
     expect(text).toMatch(/net\.Socket\.prototype\.connect = function/);
     expect(text).toContain("sockets: () => sockets,");
     expect(text).toContain("checkS3Step(outcome, stepRun.summary, stepRun.context, stepRun.sockets)");
+    expect(text).toContain('const BASTION = { host: "127.0.0.1", port: 12222 };');
+    expect(text).toMatch(/sshTunnel: \{\s*enabled: true,\s*host: BASTION\.host,\s*port: BASTION\.port,/);
+    expect(text).toContain("target.host === BASTION.host && target.port === BASTION.port");
   });
 });

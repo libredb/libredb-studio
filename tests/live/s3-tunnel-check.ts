@@ -2,7 +2,9 @@
  * Opt-in live check of row A63 for the s3 provider: through a real SSH tunnel to `silo`
  * (plain HTTP, no consent asked, because a tunnel is exempt), then to `silo-tls` with verify-full, the certificate
  * checked against the far end's name `silo-tls`, never the tunnel's local 127.0.0.1; then a far end 169.254.169.254,
- * refused before the tunnel opens with the link-local sentence.
+ * refused with the link-local sentence after the SSH dial to the bastion and before any socket to the tunnel's local
+ * forward. The factory opens the SSH session before the provider's connect() checks the far end. The bastion forwards
+ * only when a socket reaches the local forward, so it is never asked to reach 169.254.169.254.
  *
  * Apart from tests/live/s3-live-check.ts because it builds the provider through `getOrCreateProvider`, the only path
  * that opens a tunnel and sets TUNNEL_FAR_END, and the factory statically imports every engine's provider, which the
@@ -11,8 +13,9 @@
  * The signed and sent Host is the local forward: the server verifies the Host it receives, so the signature holds; a
  * server behind the tunnel that routes by Host name is not supported in v1, and this row is where that is measured.
  *
- * Every step counts the sockets it opens with the same node:net connect spy tests/live/s3-live-check.ts uses, so the
- * link-local step asserts zero exchanges and zero sockets: a refusal that came after the tunnel's SSH dial fails it.
+ * Every step counts the sockets it opens with the same node:net connect spy tests/live/s3-live-check.ts uses, except
+ * the dial to the bastion. So the link-local step asserts zero exchanges and zero sockets besides the bastion's. A
+ * refusal that came after a socket to the local forward fails it.
  *
  * The bastion is the kind tests/live/etcd-tunnel-check.ts uses: SSH on 127.0.0.1:12222, user `tunnel`, attached to
  * the compose network so it reaches `silo` and `silo-tls` by service name; docker/s3/README.md records the exact
@@ -40,11 +43,18 @@ if (args.length !== 2 || args[0] !== "--ca") usage("pass --ca <copy of the s3-ce
 const ca = readFileSync(args[1], "utf8");
 const principals = readS3Principals("silo");
 
-// Every socket a step opens, counted where node:net opens it.
+// The SSH bastion, named once for the tunnel config and for the spy that leaves its dial out.
+const BASTION = { host: "127.0.0.1", port: 12222 };
+
+// Every socket a step opens, counted where node:net opens it, except the dial to the bastion. ssh2 dials with an
+// options object, so only that exact shape is left out; any other argument shape is counted.
 let sockets = 0;
 const connect = net.Socket.prototype.connect;
 net.Socket.prototype.connect = function (this: net.Socket, ...rest: unknown[]) {
-  sockets++;
+  const target = rest[0] as { host?: unknown; port?: unknown } | null;
+  const bastion =
+    typeof target === "object" && target !== null && target.host === BASTION.host && target.port === BASTION.port;
+  if (!bastion) sockets++;
   return (connect as (...a: unknown[]) => net.Socket).apply(this, rest);
 } as typeof net.Socket.prototype.connect;
 
@@ -62,7 +72,14 @@ const run: S3RunContext = {
   sockets: () => sockets,
   recorded: () => [],
   tunnel: {
-    sshTunnel: { enabled: true, host: "127.0.0.1", port: 12222, username: "tunnel", authMethod: "password", password },
+    sshTunnel: {
+      enabled: true,
+      host: BASTION.host,
+      port: BASTION.port,
+      username: "tunnel",
+      authMethod: "password",
+      password,
+    },
     open: async (connection) => {
       opened.push(connection.id);
       return getOrCreateProvider(connection);
