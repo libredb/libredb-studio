@@ -97,6 +97,12 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "libredb-studio.serviceAccountName" . }}
+      {{- /* Set on the pod as well as on the ServiceAccount: with serviceAccount.create=false
+             the pod runs as an account this chart does not render, usually the namespace's
+             default one, whose own setting would mount its API token. Studio reads that token
+             only for Vault Kubernetes auth (VAULT_ROLE). Only an explicit true mounts it, so a
+             removed value renders false, never empty. */}}
+      automountServiceAccountToken: {{ if .Values.serviceAccount.automountServiceAccountToken }}true{{ else }}false{{ end }}
       securityContext:
         {{- include "libredb-studio.podSecurityContext" . | nindent 8 }}
       {{- /* The kubelet does not apply fsGroup to hostPath (and some local) volumes, so a

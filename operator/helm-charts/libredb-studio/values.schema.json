@@ -526,7 +526,7 @@
         },
         "automountServiceAccountToken": {
           "type": "boolean",
-          "description": "Automount API credentials"
+          "description": "Mount an API token into the pod, set on the pod spec and on the created ServiceAccount; Studio reads it only for Vault Kubernetes auth (VAULT_ROLE)"
         }
       }
     },

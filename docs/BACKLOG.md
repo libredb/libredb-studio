@@ -2747,13 +2747,14 @@ Found 2026-10-09 while designing the S3 provider.
 
 `createNodeTransport` in `src/lib/db/http/node-transport.ts` checks `request.maxResponseBytes` in `request()` and then reads it from the caller's object again for every body chunk, so a field that answers differently on a later read sets a cap that was never checked.
 Measured 2026-10-10 on Bun 1.4.2 against a raw local listener: a `maxResponseBytes` getter that answered 100 on its first read and 2 MiB afterwards was read five times, and a 1 MiB body was returned whole instead of failing as `too-large`.
-The same path never checks `method` at all, so a caller that passes `"DELETE"` past the type sends `DELETE` (measured on the same run).
+The same path did not check `method` either, so a caller that passed `"DELETE"` past the type sent `DELETE` (measured on the same run).
+That half is fixed: the text transport now reads `method` once and refuses any method other than GET and POST before any socket, pinned by `tests/unit/db/http/node-transport-method.test.ts`.
 It also refuses a closed transport and a cancelled signal before it reads the caller's headers, so a header getter that cancels the signal or closes the transport is sent anyway: measured 2026-10-10 on Bun 1.4.2 against a local `node:http` server, both requests resolved and the server received both.
 `createNodeByteTransport` reads each field once, checks the method, and admits a request again once every field has been read; no provider passes such an object today, so this is hardening.
 
 Found 2026-10-10 by the whole-branch review of the S3 byte transport; pre-existing in the text transport.
 
-**Done when:** the text transport reads `method`, `url`, `body`, `form`, `headers`, `signal` and `maxResponseBytes` once, refuses a method other than GET and POST before any socket, refuses a closed transport and a cancelled signal after those reads, and sends only what it checked, with a test per field whose getter answers differently on its second read and a test whose header getter cancels the signal and one whose getter closes the transport, each asserting that nothing is sent.
+**Done when:** the text transport reads `url`, `body`, `form`, `headers`, `signal` and `maxResponseBytes` once, refuses a closed transport and a cancelled signal after those reads, and sends only what it checked, with a test per field whose getter answers differently on its second read and a test whose header getter cancels the signal and one whose getter closes the transport, each asserting that nothing is sent.
 
 ### D256. A form the text transport cannot serialise leaks its socket slot
 

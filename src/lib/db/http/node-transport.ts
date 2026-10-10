@@ -371,6 +371,7 @@ const INVALID_HEADER_NAMES = "Invalid requestHeaderNames: expected lower-case he
 const UNLISTED_HEADER = "Invalid request headers: a header this transport does not list was given";
 const NOT_A_RECORD = "Invalid request headers: expected a plain record of header names and values";
 const INVALID_METHOD = "Invalid method: this transport sends GET and HEAD only";
+const INVALID_TEXT_METHOD = "Invalid method: this transport sends GET and POST only";
 const INVALID_TRUNCATE_AT = "Invalid truncateAt: expected a positive integer no greater than maxResponseBytes";
 const INVALID_TARGET = "Invalid request target: expected a path and a query";
 const INVALID_TARGET_PATH =
@@ -1242,6 +1243,7 @@ function redirectRefusal(answer: IncomingMessage, status: number, requestUrl: st
 
 /**
  * One connection's text transport: GET and POST to a URL on the connection's origin, the answer decoded as UTF-8.
+ * Any other method is refused before any socket.
  * The constructor opens nothing; the first request opens the first socket.
  */
 export function createNodeTransport(options: NodeTransportOptions): NodeTransport {
@@ -1261,6 +1263,7 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
 
   const exchange = (
     request: NodeRequest,
+    method: "GET" | "POST",
     target: URL,
     perRequest: Readonly<Record<string, string>>,
   ): Promise<NodeResponse> =>
@@ -1275,7 +1278,7 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
             hostname,
             port,
             path,
-            method: request.method,
+            method,
             headers: requestHeaders(connectionHeaders, perRequest, payload),
           },
           body: payload?.text,
@@ -1328,6 +1331,9 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
   return {
     async request(request) {
       admit(core, request.signal);
+      // The type allows GET and POST only; read once and sent as read, so neither a cast nor a getter carries another.
+      const { method } = request;
+      if (method !== "GET" && method !== "POST") throw new DatabaseConfigError(INVALID_TEXT_METHOD);
       if (!isPositiveInteger(request.maxResponseBytes)) throw new DatabaseConfigError(INVALID_MAX_RESPONSE_BYTES);
       // Neither is dropped silently: a request naming both is refused before any socket.
       if (request.body !== undefined && request.form !== undefined) throw new DatabaseConfigError(BODY_AND_FORM);
@@ -1337,7 +1343,7 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
       if (target === null || target.origin !== connectionOrigin || target.username !== "" || target.password !== "") {
         throw new DatabaseConfigError(FOREIGN_URL);
       }
-      return exchange(request, target, perRequest);
+      return exchange(request, method, target, perRequest);
     },
     close() {
       core.close();
