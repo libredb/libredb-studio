@@ -5,9 +5,9 @@
  * as a service, an operation or an option is the word the parser reads. What is offered: the commands before the
  * service; `ls` after `s3` and the eight reads after `s3api`; the operation's flags not yet given, then the accepted
  * global options, never a refused one; a closed value set after its flag; and bucket names after `--bucket` or as an
- * `s3://` path. Bucket names come from the schema context the editor already holds, the buckets the tree listed, so
- * completion never sends a request and offers no folder or key. Every inserted name is written by
- * `quoteShellWord`, so it reads back as that name.
+ * `s3://` path, taken from the schema context the editor holds, so completion never sends a request and offers no
+ * folder or key. An S3 connection's schema holds no bucket, because S3 declares no relation kind, so in the app no
+ * bucket name is offered. Every inserted name is written by `quoteShellWord`, so it reads back as that name.
  */
 import type * as Monaco from "monaco-editor";
 import { quoteShellWord } from "@/lib/db/console/shell-words";
@@ -170,7 +170,8 @@ function itemsOf(
  * Registers the S3 completion item provider with Monaco.
  *
  * @param monaco - The Monaco namespace
- * @param buckets - The bucket names of the editor's schema context, from `s3CompletionBucketsOf`
+ * @param buckets - The bucket names of the editor's schema context, from `s3CompletionBucketsOf`; empty for an S3
+ *   connection's own schema, which holds no bucket
  * @returns An `IDisposable` that should be called on cleanup.
  */
 export function registerS3CompletionProvider(monaco: typeof Monaco, buckets: readonly string[]): Monaco.IDisposable {

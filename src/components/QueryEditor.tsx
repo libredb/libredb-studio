@@ -646,8 +646,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       }
     }, [monaco, language, parsedSchema]);
 
-    // S3 completion provider. Its bucket names are read from the schema objects the tree
-    // listed, never by a request, and every insert is quoted by the shared shell quoter.
+    // S3 completion provider. It reads bucket names from the schema context only, never by a request, and an S3
+    // connection's schema holds no bucket, because S3 declares no relation kind, so it offers commands, flags and
+    // closed values only. Every insert is quoted by the shared shell quoter.
     useEffect(() => {
       if (monaco && language === S3_LANGUAGE_ID) {
         const disposable = registerS3CompletionProvider(monaco, s3CompletionBucketsOf(parsedSchema));

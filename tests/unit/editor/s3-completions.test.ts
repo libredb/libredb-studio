@@ -1,7 +1,7 @@
 /**
  * Completion for the `s3` editor language: where the cursor stands, read through the
  * console's own lexer, and what is offered there. Completion never sends a request and offers no folder or key; the
- * bucket names come from the schema context the editor already holds.
+ * bucket names come from the schema context the editor holds, which an S3 connection's own schema leaves empty.
  */
 import { describe, expect, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
