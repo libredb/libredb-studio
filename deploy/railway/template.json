@@ -62,7 +62,7 @@
         "OIDC_ROLE_CLAIM": { "example": "realm_access.roles", "description": "Claim path holding user roles, used for admin mapping." },
         "OIDC_ADMIN_ROLES": { "example": "admin", "description": "Comma-separated role values mapped to admin. Defaults to 'admin'." },
         "STORAGE_POSTGRES_URL": { "example": "postgresql://user:pass@host:5432/db", "description": "PostgreSQL URL for multi-node storage. Also set STORAGE_PROVIDER=postgres." },
-        "ADMIN_PASSWORD_RESET": { "example": "true", "description": "Set it to true for one redeploy, together with a new ADMIN_PASSWORD, to replace the stored admin password, then remove it. It also clears that account's passkeys and second factor." }
+        "ADMIN_PASSWORD_RESET": { "example": "true", "description": "Set it to true for one redeploy, together with a new ADMIN_PASSWORD, to replace the stored admin password, then remove it. It also clears that account's passkeys and sets its second factor from ADMIN_TOTP_SECRET, or clears the factor when that variable is not set." }
       },
       "$note": "variables = pre-configured (entered with defaults). optionalVariables = mark each as OPTIONAL in the editor so deployers can fill them only if needed (empty non-optional vars become REQUIRED in Railway). Volumes are attached via right-click on the canvas, not the Settings panel."
     }

@@ -64,14 +64,6 @@ Find the generated passwords in the Railway service's **Variables** tab. Those
 two variables seed the accounts once, so see **Changing the passwords later**
 below before you edit either of them.
 
-Those two variables seed the accounts on the **first** deploy only. Since 0.18.0 the
-accounts live in the server store on the volume, so regenerating either variable later
-does not change the stored password: the old one keeps working and the start log says
-the environment and the store disagree. To replace the admin password, set
-`ADMIN_PASSWORD` to the new value and `ADMIN_PASSWORD_RESET=true` together for one
-deploy, then remove the flag. There is no `USER_PASSWORD_RESET`; change that account
-from Studio's own **Admin, Accounts** screen.
-
 ## Add a database to query (optional)
 
 Studio is a client — connect it to any database. To spin one up right next to it
@@ -88,22 +80,27 @@ on Railway:
 
 `ADMIN_PASSWORD` and `USER_PASSWORD` seed the accounts once, while the server
 store is still empty. Since 0.18.0 the accounts live in that store, on the
-mounted volume, so regenerating either variable afterwards leaves the stored
-password in place and the old one keeps working. The log reports the mismatch at
-the next sign-in attempt rather than at start, so the deploy log right after the
-redeploy shows nothing, and it reports it for the admin account only: a rotated
-`USER_PASSWORD` produces no warning at all.
+mounted volume, so changing either variable afterwards leaves the stored
+password in place and the old one keeps working. Railway's `secret()` runs once,
+when the template is deployed, so this only comes up if you edit the variable by
+hand. The log reports the mismatch at the next sign-in attempt rather than at
+start, so the deploy log right after the redeploy shows nothing, and it reports
+it for the admin account only: a changed `USER_PASSWORD` produces no warning at
+all.
 
 To replace the admin password:
 
-1. On the running service, open **Variables**, set `ADMIN_PASSWORD` to the new
-   value and add `ADMIN_PASSWORD_RESET=true` with **+ New Variable**.
-2. Apply both staged changes in **one** redeploy. Editing them one at a time
-   gives two redeploys, and the first does nothing.
+1. On the running service, open **Variables** and set `ADMIN_PASSWORD` to the new
+   value.
+2. Add `ADMIN_PASSWORD_RESET=true` with **+ New Variable**. The flag has to be
+   set while `ADMIN_PASSWORD` already holds the new value; applying both in one
+   redeploy does that, and so does a second redeploy after the first, which
+   simply leaves the password alone.
 3. Sign in with the new password to confirm it took.
 4. Remove `ADMIN_PASSWORD_RESET`, because every start applies it again while it
-   is set. It also clears that account's passkeys and second factor and ends its
-   other sessions.
+   is set. It also clears that account's passkeys, ends its other sessions, and
+   sets its second factor from `ADMIN_TOTP_SECRET`, or clears the factor when
+   that variable is not set.
 
 `USER_PASSWORD` has no equivalent flag. Change that account under
 **Admin → Accounts** in Studio. See [STORAGE.md](../../docs/STORAGE.md#accounts).
@@ -112,11 +109,12 @@ To replace the admin password:
 
 0.18.1 fixed [GHSA-jwvh-6phv-j9jh](https://github.com/libredb/libredb-studio/security/advisories/GHSA-jwvh-6phv-j9jh),
 which covers 0.8.0 through 0.18.0 on a server store. This template runs
-`STORAGE_PROVIDER=sqlite` and seeds two accounts, so a deployment still pinned
-below 0.18.1 is inside its range: where the two logins go to different people
-who share a browser profile, the second to sign in received the first one's
-browser copy of the workspace, with its saved connection passwords and its query
-history.
+`STORAGE_PROVIDER=sqlite`, which is one of the two storage modes the advisory
+covers, so a deployment still pinned below 0.18.1 is inside its range. The defect
+needs two accounts using one browser profile one after the other: where the two
+logins this template seeds go to different people who share a browser, the second
+to sign in received the first one's browser copy of the workspace, with its saved
+connection passwords and its query history.
 
 ## Post-install options
 
