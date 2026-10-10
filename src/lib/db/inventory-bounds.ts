@@ -1,10 +1,12 @@
 /**
  * How much of a database ONE inventory read may take, wherever that read is issued from (#789).
  *
- * Two readers, one owner. `POST /api/db/objects/inventory` bounds the object browser's read
+ * Three readers, one owner. `POST /api/db/objects/inventory` bounds the object browser's read
  * with these, and `readObjectInventoryForGrounding()` in `src/lib/agent/tools.ts` bounds a
  * run's grounding walk with them; both report a bound with the same sentence, so a reader who
  * meets "inventory limit reached" in the agent rail and in the object browser meets one fact.
+ * `POST /api/db/objects/search` refuses, before any listing, a search whose container and kind
+ * pairs exceed `INVENTORY_PAIR_LIMIT`, rather than cutting the scan.
  * They were declared twice, once in each module, with a comment in the agent copy saying why:
  * `src/lib/api/object-route.ts` imports `next/server` at its top level, and pulling the request
  * layer into the agent tree to read two integers is a dependency nobody wants. This file is the

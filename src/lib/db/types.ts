@@ -852,6 +852,10 @@ export interface KeyScanPage {
  * The row menu offers it on every object of a kind named in `kinds`, and choosing it opens a new tab
  * that runs what the dialect's `rowAction` generator writes for that object (`src/lib/query-generators.ts`).
  * `id` is what the generator is asked for and stays stable; `label` is what the menu and the tab read.
+ *
+ * A row action reads and never writes: it runs on click, with no role asked and no editing step, so
+ * one that wrote would put a write behind an ungated menu item. Its statement honours
+ * `GeneratorScope.readOnly` like every other generated read.
  */
 export interface KindRowAction {
   readonly id: string;

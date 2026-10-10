@@ -677,6 +677,11 @@ export interface DialectGenerators {
   /**
    * The statement one declared row action runs on one object, by the action's id, with the object's kind
    * on `scope.kind`. Absent on every dialect whose provider declares no row action.
+   *
+   * The statement reads and never writes, and honours `scope.readOnly`: it runs on click with no role
+   * asked and no editing step. Every segment of `path` is an object name taken from a listing, which a
+   * user of the database can choose, so it is quoted by the dialect's own quoting rule and never
+   * concatenated.
    */
   readonly rowAction?: (path: readonly string[], actionId: string, scope: GeneratorScope) => string;
 }
