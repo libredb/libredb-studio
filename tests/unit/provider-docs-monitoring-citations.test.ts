@@ -535,6 +535,20 @@ const NAMED_CITATIONS = [
       "runMaintenance",
     ],
   },
+  // S3-compatible object storage: the objectstore provider over the shared byte transport.
+  {
+    doc: "docs/providers/s3.md",
+    source: "src/lib/db/providers/objectstore/s3/index.ts",
+    methods: [
+      "getCapabilities",
+      "getLabels",
+      "listObjects",
+      "readObjectSource",
+      "connect",
+      "disconnect",
+      "runMaintenance",
+    ],
+  },
 ] as const;
 
 const SEARCH_DOCS = ["docs/providers/elasticsearch.md", "docs/providers/opensearch.md"] as const;
