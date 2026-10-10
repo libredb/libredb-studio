@@ -18,6 +18,8 @@ import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
 import { graphObjectSegment } from "@/lib/db/graph/objects";
 import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
 import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { CypherNameError } from "@/lib/db/graph/cypher/quote";
+import type { generateRowActionQuery } from "@/lib/query-generators";
 
 // Helper to create a minimal connection
 function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
@@ -2685,5 +2687,139 @@ describe("useTabManager reuses an object's unedited data tab", () => {
 
     expect(result.current.tabs).toHaveLength(3);
     expect(executeFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * A declared row action (Describe, Logs) opens a NEW tab and runs, every time: never the path-keyed
+ * focus `handleTableClick` keeps, so Logs after Describe on one pod runs, and a second Describe reads
+ * again. The generator is injected, because no dialect shipped beside the hook writes a row action yet.
+ */
+describe("runRowAction", () => {
+  const rowActionMetadata: ProviderMetadata = {
+    ...defaultMetadata,
+    capabilities: {
+      ...defaultMetadata.capabilities,
+      queryLanguage: "json",
+      queryDialect: "kafka",
+      rowActions: [
+        { id: "describe", label: "Describe", kinds: ["pods"] },
+        { id: "logs", label: "Logs", kinds: ["pods"] },
+      ],
+    },
+  };
+  const webPod: DatabaseObject = { path: ["shop", "pod/web-1"], name: "pod/web-1", kind: "pods" };
+  const written: Parameters<typeof generateRowActionQuery>[] = [];
+  const writer: typeof generateRowActionQuery = (...args) => {
+    written.push(args);
+    return `${args[1]} ${args[0][args[0].length - 1]}`;
+  };
+
+  function mountWith(
+    generateRowAction: typeof generateRowActionQuery,
+    metadata: ProviderMetadata | null = rowActionMetadata,
+  ) {
+    return renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ readOnly: true }),
+        metadata,
+        schema: [],
+        generateRowAction,
+      }),
+    );
+  }
+
+  beforeEach(() => {
+    written.length = 0;
+  });
+
+  test("opens a tab named after the action and the object, and runs it with the preview bound", async () => {
+    const executeFn = mock(() => {});
+    const { result } = mountWith(writer);
+
+    act(() => result.current.runRowAction(webPod, "describe", executeFn));
+
+    const tab = result.current.tabs[1];
+    expect(tab).toMatchObject({ name: "Describe: pod/web-1", query: "describe pod/web-1", type: "kafka" });
+    expect(result.current.activeTabId).toBe(tab.id);
+    expect(written).toEqual([
+      [["shop", "pod/web-1"], "describe", rowActionMetadata.capabilities, { kind: "pods", readOnly: true }],
+    ]);
+    await waitFor(() =>
+      expect(executeFn).toHaveBeenCalledWith("describe pod/web-1", tab.id, false, { limit: PREVIEW_PAGE_SIZE }),
+    );
+  });
+
+  test("Logs after Describe on one object opens a second tab and runs it", async () => {
+    const executeFn = mock(() => {});
+    const { result } = mountWith(writer);
+
+    act(() => result.current.runRowAction(webPod, "describe", executeFn));
+    act(() => result.current.runRowAction(webPod, "logs", executeFn));
+
+    expect(result.current.tabs.map((tab) => tab.name)).toEqual(["Query 1", "Describe: pod/web-1", "Logs: pod/web-1"]);
+    await waitFor(() => expect(executeFn).toHaveBeenCalledTimes(2));
+  });
+
+  test("the same action twice opens two tabs and runs twice, so the second reads the object as it is now", async () => {
+    const executeFn = mock(() => {});
+    const { result } = mountWith(writer);
+
+    act(() => result.current.runRowAction(webPod, "describe", executeFn));
+    act(() => result.current.runRowAction(webPod, "describe", executeFn));
+
+    expect(result.current.tabs).toHaveLength(3);
+    expect(result.current.tabs[1].id).not.toBe(result.current.tabs[2].id);
+    await waitFor(() => expect(executeFn).toHaveBeenCalledTimes(2));
+  });
+
+  test("raises for an action the provider did not declare on the object's kind", () => {
+    const { result } = mountWith(writer);
+    expect(() =>
+      result.current.runRowAction(
+        webPod,
+        "exec",
+        mock(() => {}),
+      ),
+    ).toThrow('no row action "exec" is declared for the kind "pods"');
+    expect(() =>
+      result.current.runRowAction(
+        { ...webPod, kind: "nodes" },
+        "logs",
+        mock(() => {}),
+      ),
+    ).toThrow('no row action "logs" is declared for the kind "nodes"');
+    expect(result.current.tabs).toHaveLength(1);
+  });
+
+  test("a name the generator refuses is answered by a toast and opens nothing", () => {
+    mockToastError.mockClear();
+    const { result } = mountWith(() => {
+      throw new CypherNameError("a\\u0041", "it holds a unicode escape");
+    });
+
+    act(() =>
+      result.current.runRowAction(
+        webPod,
+        "describe",
+        mock(() => {}),
+      ),
+    );
+
+    expect(result.current.tabs).toHaveLength(1);
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+  });
+
+  test("does nothing before the provider's declaration has arrived", () => {
+    const { result } = mountWith(writer, null);
+    act(() =>
+      result.current.runRowAction(
+        webPod,
+        "describe",
+        mock(() => {}),
+      ),
+    );
+    expect(result.current.tabs).toHaveLength(1);
+    expect(written).toEqual([]);
   });
 });

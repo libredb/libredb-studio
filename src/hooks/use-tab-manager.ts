@@ -6,7 +6,14 @@ import type { ColumnSchema, DatabaseConnection, QueryTab } from "@/lib/types";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
-import { generateTableQuery, generateSelectQuery, generateCountQuery, objectSegment } from "@/lib/query-generators";
+import {
+  generateTableQuery,
+  generateSelectQuery,
+  generateCountQuery,
+  generateRowActionQuery,
+  objectSegment,
+} from "@/lib/query-generators";
+import { rowActionsForKind } from "@/lib/db/object-kinds";
 import { CypherNameError } from "@/lib/db/graph/cypher/quote";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import { resolveTabType } from "@/lib/editor/tab-language";
@@ -183,9 +190,20 @@ interface UseTabManagerParams {
   metadata: ProviderMetadata | null;
   schema: readonly DetailedObject[];
   persistWorkspace?: boolean;
+  /**
+   * What writes a declared row action's statement. Absent is `generateRowActionQuery`, which every shell
+   * uses; a test passes its own, because no dialect shipped beside this hook writes a row action yet.
+   */
+  generateRowAction?: typeof generateRowActionQuery;
 }
 
-export function useTabManager({ activeConnection, metadata, schema, persistWorkspace }: UseTabManagerParams) {
+export function useTabManager({
+  activeConnection,
+  metadata,
+  schema,
+  persistWorkspace,
+  generateRowAction = generateRowActionQuery,
+}: UseTabManagerParams) {
   const [tabs, setTabs] = useState<QueryTab[]>([DEFAULT_TAB]);
   const [activeTabId, setActiveTabId] = useState<string>("default");
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
@@ -578,6 +596,48 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
   );
 
   /**
+   * Run one row action the provider declared on this object's kind, in a NEW tab, every time.
+   *
+   * Never the focus-or-reuse rule `handleTableClick` keeps for a data tab: that rule keys on the path
+   * alone, so Logs after Describe on one pod would focus the Describe tab and never run, and a second
+   * Describe would show the first answer again rather than read the object as it is now. So every
+   * gesture is its own tab and its own run, and running the tab again re-reads.
+   *
+   * The action must be one the provider declared for the object's kind: the menu offers no other, so
+   * any other id is a caller defect and raises rather than opening a tab nobody asked for. The tab is
+   * named after the action and the object, and runs with the same preview bound a tree click uses.
+   */
+  const runRowAction = useCallback(
+    (object: DatabaseObject, actionId: string, executeQueryFn: RunTabStatement) => {
+      const capabilities = metadata?.capabilities;
+      if (capabilities === undefined) return;
+      const action = rowActionsForKind(capabilities, object.kind).find((declared) => declared.id === actionId);
+      if (action === undefined) {
+        throw new Error(`no row action "${actionId}" is declared for the kind "${object.kind}"`);
+      }
+      const scope = { kind: object.kind, readOnly: activeConnection?.readOnly === true };
+      const query = generatedOrRefused(() => generateRowAction(object.path, actionId, capabilities, scope));
+      if (query === undefined) return;
+      const id = newLocalId();
+      setTabs((prev) => [
+        ...prev,
+        {
+          id,
+          name: `${action.label}: ${object.name}`,
+          query,
+          result: null,
+          isExecuting: false,
+          type: resolveTabType(capabilities),
+        },
+      ]);
+      setActiveTabId(id);
+      // Deferred like a tree click's run, so the tab exists before the run writes into it.
+      setTimeout(() => executeQueryFn(query, id, false, { limit: PREVIEW_PAGE_SIZE }), 100);
+    },
+    [activeConnection, generateRowAction, metadata],
+  );
+
+  /**
    * Open one object's DEFINITION in a read-only Source tab, or focus the one already open
    * against that object (#789 Phase 2).
    *
@@ -704,6 +764,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
     handleTableClick,
     handleGenerateSelect,
     handleGenerateCount,
+    runRowAction,
     openSourceTab,
   };
 }
