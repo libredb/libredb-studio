@@ -20,6 +20,10 @@ const RESOLVABLE_FIELDS = [
   // S3's signing region, kept beside the endpoint in a deployment's environment, so a seeded `${S3_REGION}` is
   // resolved rather than signed for literally.
   "region",
+  // Kubernetes' API path and TLS server name: parts of the address a deployment keeps beside its host, so a seeded
+  // `${RANCHER_CLUSTER_PATH}` is resolved rather than sent as a literal path.
+  "apiPath",
+  "tlsServerName",
   // Elasticsearch API key pair (#708). A seeded `${ELASTIC_API_KEY_ID}` / `${vault:...}`
   // that is not on this list is sent literally and the cluster answers 401 on a key
   // that works. Both halves, not one: either left unresolved is a half-filled pair
@@ -57,6 +61,8 @@ interface VaultResolvableConnection {
   dataServers?: string;
   warehouse?: string;
   region?: string;
+  apiPath?: string;
+  tlsServerName?: string;
   apiKeyId?: string;
   apiKeySecret?: string;
   ssl?: ResolvableSsl;

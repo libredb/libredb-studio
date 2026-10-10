@@ -93,6 +93,10 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   warehouse: "edited",
   // S3's Region box owns it, so emptying it has to CLEAR it, as warehouse.
   region: "edited",
+  // Kubernetes' API path, Namespaces and TLS server name boxes own them, so emptying one has to CLEAR it, as warehouse.
+  apiPath: "edited",
+  namespaces: "edited",
+  tlsServerName: "edited",
   group: "preserved",
   managed: "preserved",
   seedId: "preserved",
@@ -204,6 +208,12 @@ export const CONNECTION_FORM_DEFAULTS = {
   warehouse: "",
   // A leftover region would sign the next S3 connection's requests for the previous server's region, which it refuses.
   region: "",
+  // A leftover API path would send the next Kubernetes connection's requests to another cluster behind the same proxy.
+  apiPath: "",
+  // A leftover list would draw the previous cluster's namespaces for the next connection.
+  namespaces: "",
+  // A leftover TLS server name would check the next connection's certificate against the previous cluster's name.
+  tlsServerName: "",
   // SSH tunnel. A leftover tunnel sends the next connection through the previous one's
   // bastion, with that bastion's password or private key.
   showSSH: false,
@@ -526,6 +536,13 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
    * because the field rule and the provider check it and name the field when they refuse it.
    */
   const [region, setRegion] = useState(D.region);
+  /**
+   * Kubernetes' API path, Namespaces and TLS server name, as typed. Drawn only for an engine that takes each field;
+   * stored as typed, because the provider checks each and names the field when it refuses it.
+   */
+  const [apiPath, setApiPath] = useState(D.apiPath);
+  const [namespaces, setNamespaces] = useState(D.namespaces);
+  const [tlsServerName, setTlsServerName] = useState(D.tlsServerName);
 
   // SSH Tunnel
   const [showSSH, setShowSSH] = useState(D.showSSH);
@@ -577,6 +594,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       dataServers: setDataServers,
       warehouse: setWarehouse,
       region: setRegion,
+      apiPath: setApiPath,
+      namespaces: setNamespaces,
+      tlsServerName: setTlsServerName,
       showSSH: setShowSSH,
       sshEnabled: setSSHEnabled,
       sshHost: setSSHHost,
@@ -625,6 +645,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       dataServers: setDataServers,
       warehouse: setWarehouse,
       region: setRegion,
+      apiPath: setApiPath,
+      namespaces: setNamespaces,
+      tlsServerName: setTlsServerName,
     }),
     [],
   );
@@ -731,6 +754,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // Overwritten for the same reason: a connection that names no region must show an empty box, or the last one
       // edited is saved onto it.
       setRegion(editConnection.region ?? "");
+      // Overwritten for the same reason: a connection that sets none of Kubernetes' three fields must show empty
+      // boxes, or the last one edited is saved onto it.
+      setApiPath(editConnection.apiPath ?? "");
+      setNamespaces(editConnection.namespaces ?? "");
+      setTlsServerName(editConnection.tlsServerName ?? "");
       // SSL
       if (editConnection.ssl) {
         setSSLMode(editConnection.ssl.mode);
@@ -958,6 +986,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // Only for an engine that takes it, and whenever the box is not empty: unlike warehouse, a box of spaces is
       // written so the format rule refuses it, rather than signing for us-east-1 with no word.
       ...(addressedFields.has("region") && region !== "" ? { region } : {}),
+      // The dataServers rule for Kubernetes' three fields: only for an engine that takes each, only when typed.
+      ...(addressedFields.has("apiPath") && apiPath.trim() !== "" ? { apiPath } : {}),
+      ...(addressedFields.has("namespaces") && namespaces.trim() !== "" ? { namespaces } : {}),
+      ...(addressedFields.has("tlsServerName") && tlsServerName.trim() !== "" ? { tlsServerName } : {}),
     };
   }, [
     sslMode,
@@ -998,6 +1030,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     dataServers,
     warehouse,
     region,
+    apiPath,
+    namespaces,
+    tlsServerName,
   ]);
 
   /**
@@ -1490,6 +1525,12 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setWarehouse,
     region,
     setRegion,
+    apiPath,
+    setApiPath,
+    namespaces,
+    setNamespaces,
+    tlsServerName,
+    setTlsServerName,
 
     // SSH Tunnel
     showSSH,

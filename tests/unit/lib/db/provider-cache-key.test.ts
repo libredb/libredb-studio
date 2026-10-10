@@ -226,6 +226,7 @@ describe("providerCacheKey frames every public field that decides who a connecti
     ["dataServers", { ...base, dataServers: "a.internal:6648" }, { ...base, dataServers: "b.internal:6648" }],
     ["warehouse", { ...base, warehouse: "analytics" }, { ...base, warehouse: "etl" }],
     ["region", { ...base, region: "eu-central-1" }, { ...base, region: "us-east-1" }],
+    ["namespaces", { ...base, namespaces: "shop" }, { ...base, namespaces: "web" }],
     [
       "sshTunnel.authMethod",
       { ...base, sshTunnel: { ...tunnel, authMethod: "privateKey" } },

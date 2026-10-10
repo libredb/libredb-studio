@@ -648,6 +648,9 @@ const FIELD_CHECKLIST: Record<ConnectionField, true> = {
   dataServers: true,
   warehouse: true,
   region: true,
+  apiPath: true,
+  namespaces: true,
+  tlsServerName: true,
 };
 const EVERY_FIELD = Object.keys(FIELD_CHECKLIST) as ConnectionField[];
 

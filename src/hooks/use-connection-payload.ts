@@ -142,6 +142,12 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // The region every S3 request is signed for: a copy naming another region signs for another scope and a server
   // with a region of its own refuses it, so it does not resolve to the seed's connection, the warehouse reasoning.
   region: "resolution",
+  // Kubernetes: the API path and the TLS server name pick which cluster answers behind one host and port, so a copy
+  // differing in either reaches another cluster. The namespace list changes only which namespaces the tree draws, so
+  // a run may still be started on the seed's id.
+  apiPath: "resolution",
+  tlsServerName: "resolution",
+  namespaces: "cosmetic",
   ssl: "nested",
   sshTunnel: "nested",
 };

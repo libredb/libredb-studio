@@ -161,6 +161,10 @@ export async function connectionFingerprint(connection: DatabaseConnection & Wit
     connection.serviceName ?? "",
     connection.instanceName ?? "",
     tunnelRoute(connection.sshTunnel),
+    // Kubernetes: one host and port can serve many clusters (a Rancher proxy by path, an ingress by TLS name), so
+    // both pick the server. Framed only when set and tagged, so every other connection's digest is unchanged.
+    ...(connection.apiPath ? [`apiPath=${connection.apiPath}`] : []),
+    ...(connection.tlsServerName ? [`tlsServerName=${connection.tlsServerName}`] : []),
   ]
     .map((value) => `${value.length}:${value}`)
     .join("");

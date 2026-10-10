@@ -105,6 +105,11 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
         // S3's signing region, copied for the reason skipObjectScan is: dropped here, a seeded connection to Garage or a
         // MinIO with a site region would be refused for the region the file did name.
         region: conn.region,
+        // Kubernetes' three fields, copied for the reason skipObjectScan is: dropped here, a seeded connection behind a
+        // Rancher proxy would reach the proxy's own API, and a namespace-bound seed would lose its namespace list.
+        apiPath: conn.apiPath,
+        namespaces: conn.namespaces,
+        tlsServerName: conn.tlsServerName,
         createdAt: new Date(),
         managed: conn.managed ?? true,
         roles: conn.roles,

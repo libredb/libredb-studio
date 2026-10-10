@@ -77,6 +77,11 @@ export interface DatabaseUIConfig {
     | "warehouse"
     // S3-compatible object storage only: the signing region, one text box.
     | "region"
+    // Kubernetes only: the server path prefix (Rancher's /k8s/clusters/<id>), the namespaces the tree lists, and the
+    // TLS server name, three text boxes.
+    | "apiPath"
+    | "namespaces"
+    | "tlsServerName"
   )[];
   /**
    * The connection dialog's label for a field, where this engine names the field differently from

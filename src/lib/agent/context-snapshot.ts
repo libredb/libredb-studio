@@ -1126,6 +1126,11 @@ export function connectionIdentity(connection: DatabaseConnection): string {
         // cache key frames it instead, because there it decides which servers a request reaches.
         // S3's `region` is deliberately absent: it is the scope a request is signed for, not the catalog; a wrong region
         // is refused rather than answered with other buckets.
+        // Kubernetes' API path and TLS server name pick which cluster answers behind one host and port, so either
+        // names another catalog. Its namespace list is deliberately absent: it changes what the tree draws, not which
+        // cluster this is.
+        connection.apiPath ?? "",
+        connection.tlsServerName ?? "",
         connection.agentUser ?? "",
         // The tunnel is part of the ROUTE and not part of the credentials: `host` and
         // `port` above are resolved at the FAR END of it, so the same `db:5432` reached

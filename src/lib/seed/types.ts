@@ -187,6 +187,12 @@ export const SeedConnectionSchema = z
     // undeclared key silently, and a seeded connection to a server with a region of its own would be refused for a
     // region the file did name.
     region: z.string().optional(),
+    // Kubernetes only: the API path, the namespaces the tree lists and the TLS server name. Declared for the reason
+    // skipObjectScan is: zod strips an undeclared key silently, and a seeded connection behind a Rancher proxy would
+    // reach the proxy's own API with no word.
+    apiPath: z.string().optional(),
+    namespaces: z.string().optional(),
+    tlsServerName: z.string().optional(),
   })
   .superRefine((conn, ctx) => {
     if (conn.type === "elasticsearch") return;

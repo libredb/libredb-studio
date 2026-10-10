@@ -149,6 +149,9 @@ export async function providerCacheKey(
  * - `region` decides the scope every S3 request is signed for, so a connection naming another region must not be
  *   handed a provider whose signer uses this one. The fingerprint does not frame it and `connectionIdentity` leaves it
  *   out: it names a signing scope, not a server or a catalog.
+ * - `namespaces` decides which namespaces a Kubernetes provider lists as containers, and a cached provider holds the
+ *   list it was opened with, so a connection whose list changed must not be handed one that draws the old list. It
+ *   changes no identity: the fingerprint and `connectionIdentity` leave it out.
  * - The tunnel's SECRETS and `hostKeyFingerprint`. Its ROUTE is deliberately absent: `tunnelRoute`
  *   frames the four route values inside the fingerprint already, and this is the half that file
  *   explicitly leaves out as "a credential, not a route".
@@ -173,6 +176,7 @@ async function credentialDigest(connection: DatabaseConnection): Promise<string>
     connection.dataServers ?? "",
     connection.warehouse ?? "",
     connection.region ?? "",
+    connection.namespaces ?? "",
     tunnel?.authMethod ?? "",
     tunnel?.password ?? "",
     tunnel?.privateKey ?? "",

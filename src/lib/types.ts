@@ -384,6 +384,26 @@ export interface DatabaseConnection {
    */
   region?: string;
   /**
+   * Kubernetes only: a server path prefix every API request is sent under, such as `/k8s/clusters/c-1` behind a
+   * Rancher proxy. It starts with `/`, names no `api`, `apis`, `proxy`, `namespaces`, `nodes`, `services`, `pods`,
+   * `openapi` or `version` segment, and carries no `//`, `.` or `..` segment, `%`, query or fragment; the provider
+   * refuses anything else before any request. It picks which cluster answers behind one host and port, so it is part
+   * of the connection's identity. Absent and empty are one value. Read by no other engine.
+   */
+  apiPath?: string;
+  /**
+   * Kubernetes only: the namespaces the object tree lists, DNS-1123 labels separated by commas or spaces. When set,
+   * the provider makes no namespace list call, which a namespace-bound identity may not make. It changes what is
+   * shown, not which cluster is asked or as whom. Absent and empty are one value. Read by no other engine.
+   */
+  namespaces?: string;
+  /**
+   * Kubernetes only: the host name the API server's certificate is checked against and sent as SNI, a kubeconfig's
+   * `tls-server-name`, where it differs from Host. Absent and empty mean Host, or the SSH tunnel's far end. Read by
+   * no other engine.
+   */
+  tlsServerName?: string;
+  /**
    * Read no catalog when this connection opens.
    *
    * For a connection whose owner holds tens of thousands of objects, even the two cheap
