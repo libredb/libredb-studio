@@ -194,6 +194,8 @@ export const CONNECTION_FORM_DEFAULTS = {
   dataServers: "",
   // A leftover warehouse would resume, and bill, the previous connection's compute for the next one.
   warehouse: "",
+  // A leftover region would sign the next S3 connection's requests for the previous server's region, which it refuses.
+  region: "",
   // SSH tunnel. A leftover tunnel sends the next connection through the previous one's
   // bastion, with that bastion's password or private key.
   showSSH: false,
@@ -393,6 +395,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
    * provider checks it and names the field when it refuses it.
    */
   const [warehouse, setWarehouse] = useState(D.warehouse);
+  /**
+   * S3's signing region, as typed. Drawn only for an engine that takes the field; stored as typed, spaces included,
+   * because the field rule and the provider check it and name the field when they refuse it.
+   */
+  const [region, setRegion] = useState(D.region);
 
   // SSH Tunnel
   const [showSSH, setShowSSH] = useState(D.showSSH);
@@ -443,6 +450,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       allowInsecureAuth: setAllowInsecureAuth,
       dataServers: setDataServers,
       warehouse: setWarehouse,
+      region: setRegion,
       showSSH: setShowSSH,
       sshEnabled: setSSHEnabled,
       sshHost: setSSHHost,
@@ -555,6 +563,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // Overwritten for the same reason: a connection that names no warehouse must show an empty box, or the last one
       // edited is saved onto it.
       setWarehouse(editConnection.warehouse ?? "");
+      // Overwritten for the same reason: a connection that names no region must show an empty box, or the last one
+      // edited is saved onto it.
+      setRegion(editConnection.region ?? "");
       // SSL
       if (editConnection.ssl) {
         setSSLMode(editConnection.ssl.mode);
@@ -779,6 +790,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       ...(addressedFields.has("dataServers") && dataServers.trim() !== "" ? { dataServers } : {}),
       // The dataServers rule: only for an engine that takes it, and only when something is typed.
       ...(addressedFields.has("warehouse") && warehouse.trim() !== "" ? { warehouse } : {}),
+      // Only for an engine that takes it, and whenever the box is not empty: unlike warehouse, a box of spaces is
+      // written so the format rule refuses it, rather than signing for us-east-1 with no word.
+      ...(addressedFields.has("region") && region !== "" ? { region } : {}),
     };
   }, [
     sslMode,
@@ -818,6 +832,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     allowInsecureAuth,
     dataServers,
     warehouse,
+    region,
   ]);
 
   /**
@@ -1255,6 +1270,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setDataServers,
     warehouse,
     setWarehouse,
+    region,
+    setRegion,
 
     // SSH Tunnel
     showSSH,

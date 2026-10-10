@@ -24,6 +24,7 @@ const DEFAULT_PORTS: Record<string, string> = {
   influxdb3: "8181",
   oxia: "6648",
   databend: "8000",
+  s3: "9000",
 };
 
 // The engines whose addressing fields diverge from the networked default. Spelled out
@@ -63,17 +64,22 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   oxia: ["host", "port", "password", "database", "dataServers", "allowInsecureAuth"],
   // The warehouse and the consent to a cleartext password are fields of Databend's own (design 6.1).
   databend: ["host", "port", "user", "password", "database", "warehouse", "allowInsecureAuth"],
+  // The signing region and the consent to plain HTTP are fields of S3's own.
+  s3: ["host", "port", "user", "password", "database", "region", "allowInsecureAuth"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
 
 // Databend's form checks (design 6.3), with sentences of this file's own: the real declaration and its sentences are
 // held to the provider's by tests/unit/lib/db-ui-config.test.ts, and this file tests that the dialog asks before it
-// sends. Every other type declares none, as in the real table.
+// sends. Every other type declares none but S3's Region format, as in the real table.
 const MOCK_USER_REQUIRED = "User is required (mock).";
 const MOCK_WAREHOUSE_FORMAT = "Warehouse must be a warehouse name (mock).";
+const MOCK_REGION_FORMAT = "Region must be a region name (mock).";
+const MOCK_FORMAT_SENTENCES: Record<string, string> = { warehouse: MOCK_WAREHOUSE_FORMAT, region: MOCK_REGION_FORMAT };
 const MOCK_FIELD_RULES: Record<string, Record<string, { required?: string; format?: RegExp }>> = {
   databend: { user: { required: MOCK_USER_REQUIRED }, warehouse: { format: /^[A-Za-z0-9_-]{1,63}$/ } },
+  s3: { region: { format: /^[A-Za-z0-9_-]{1,64}$/ } },
 };
 const mockFieldRefusal = (config: { label: string }, connection: Record<string, unknown>): string | undefined => {
   const rules = MOCK_FIELD_RULES[config.label.toLowerCase()] ?? {};
@@ -81,7 +87,7 @@ const mockFieldRefusal = (config: { label: string }, connection: Record<string, 
     const value = connection[field];
     if (value === undefined || value === "") {
       if (rule.required) return rule.required;
-    } else if (rule.format && !rule.format.test(String(value))) return MOCK_WAREHOUSE_FORMAT;
+    } else if (rule.format && !rule.format.test(String(value))) return MOCK_FORMAT_SENTENCES[field];
   }
   return undefined;
 };
@@ -3784,6 +3790,136 @@ describe("the form checks before Test Connection and Save (Databend design 6.3)"
   test("no other type is checked: an empty User and a leftover Warehouse still reach the probe and the save", async () => {
     const result = form("databend", "", "small xy");
     act(() => result.current.setType("postgres"));
+    const { tested } = await pressBoth(result);
+    expect(tested?.tone).toBe("success");
+    expect(props.onTestConnection).toHaveBeenCalledTimes(2);
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the region field", () => {
+  const props = {
+    isOpen: true,
+    onClose: mock(() => {}),
+    onConnect: mock<(connection: DatabaseConnection) => void>(() => {}),
+    onTestConnection: async () => ({ success: true }),
+    editConnection: null as DatabaseConnection | null,
+  };
+  beforeEach(() => {
+    props.onConnect.mockClear();
+  });
+
+  const saved = async (result: { current: ReturnType<typeof useConnectionForm> }) => {
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    return props.onConnect.mock.calls[0][0];
+  };
+
+  test("buildConnection carries the region for s3 whenever the box is not empty", async () => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType("s3"));
+    act(() => result.current.setRegion("eu-central-1"));
+    expect((await saved(result)).region).toBe("eu-central-1");
+  });
+
+  test("an empty box writes no key, and a type that does not take the field drops it", async () => {
+    const empty = renderHook(() => useConnectionForm(props));
+    act(() => empty.result.current.setType("s3"));
+    expect(await saved(empty.result)).not.toHaveProperty("region");
+
+    props.onConnect.mockClear();
+    const switched = renderHook(() => useConnectionForm(props));
+    act(() => switched.result.current.setType("s3"));
+    act(() => switched.result.current.setRegion("eu-central-1"));
+    act(() => switched.result.current.setType("postgres"));
+    expect(await saved(switched.result)).not.toHaveProperty("region");
+  });
+
+  test("editing loads the stored region, a connection without one shows an empty box, and emptying it removes it", async () => {
+    const named: DatabaseConnection = {
+      id: "c1",
+      name: "Objects",
+      type: "s3",
+      host: "garage.internal",
+      port: 3900,
+      region: "garage",
+      createdAt: new Date(),
+    };
+    const unnamed: DatabaseConnection = { ...named, id: "c2", region: undefined };
+    const { result, rerender } = renderHook((p) => useConnectionForm(p), {
+      initialProps: { ...props, editConnection: named },
+    });
+    expect(result.current.region).toBe("garage");
+    act(() => result.current.setRegion(""));
+    expect(await saved(result)).not.toHaveProperty("region");
+    rerender({ ...props, editConnection: unnamed });
+    expect(result.current.region).toBe("");
+  });
+
+  test("closing the dialog resets it", () => {
+    const { result, rerender } = renderHook((p) => useConnectionForm(p), {
+      initialProps: { ...props, isOpen: true },
+    });
+    act(() => result.current.setRegion("eu-central-1"));
+    rerender({ ...props, isOpen: false });
+    rerender({ ...props, isOpen: true, editConnection: null });
+    expect(result.current.region).toBe("");
+    expect(CONNECTION_FORM_DEFAULTS.region).toBe("");
+  });
+});
+
+describe("the Region check before Test Connection and Save", () => {
+  const props = {
+    isOpen: true,
+    onClose: mock(() => {}),
+    onConnect: mock<(connection: DatabaseConnection) => void>(() => {}),
+    onTestConnection: mock(async () => ({ success: true })),
+    editConnection: null as DatabaseConnection | null,
+  };
+  beforeEach(() => {
+    props.onConnect.mockClear();
+    props.onTestConnection.mockClear();
+  });
+
+  const form = (region: string) => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType("s3"));
+    act(() => result.current.setRegion(region));
+    return result;
+  };
+  const pressBoth = async (result: { current: ReturnType<typeof useConnectionForm> }) => {
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+    const tested = result.current.testResult;
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    return { tested, saved: result.current.testResult };
+  };
+
+  // A pasted Region keeps its stray whitespace, so the rule refuses it instead of the box being dropped
+  // and the connection signing for us-east-1 with no word.
+  test.each([
+    ["three spaces", "   "],
+    ["a leading space", " eu-central-1"],
+    ["a trailing newline from a paste", "eu-central-1\n"],
+  ])("a Region of %s is refused naming Region, and nothing is sent", async (_case, region) => {
+    const result = form(region);
+    const refusal = { tone: "error" as const, message: MOCK_REGION_FORMAT };
+    expect(await pressBoth(result)).toEqual({ tested: refusal, saved: refusal });
+    expect(props.onTestConnection).not.toHaveBeenCalled();
+    expect(props.onConnect).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["a region name", "eu-central-1"],
+    ["Garage's region", "garage"],
+    ["an empty Region, which writes no key", ""],
+  ])("%s passes to the probe and the save", async (_case, region) => {
+    const result = form(region);
     const { tested } = await pressBoth(result);
     expect(tested?.tone).toBe("success");
     expect(props.onTestConnection).toHaveBeenCalledTimes(2);
