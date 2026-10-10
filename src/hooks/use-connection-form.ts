@@ -1328,15 +1328,17 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         return false;
       }
       const entry = read.snapshot;
+      // What the reset below clears but the entry must not replace, captured before the reset.
+      const kept = { type, environment, name: name !== "" ? name : entry.name, readOnly, skipObjectScan, queryTimeout };
       resetConnectionFields();
       setShowPasteInput(false);
       setPasteInput("");
-      setType(type);
-      setEnvironment(environment);
-      setName(name !== "" ? name : entry.name);
-      setReadOnly(readOnly);
-      setSkipObjectScan(skipObjectScan);
-      setQueryTimeout(queryTimeout);
+      setType(kept.type);
+      setEnvironment(kept.environment);
+      setName(kept.name);
+      setReadOnly(kept.readOnly);
+      setSkipObjectScan(kept.skipObjectScan);
+      setQueryTimeout(kept.queryTimeout);
       setPort(getDBConfig(type).defaultPort);
       for (const [field, value] of entry.fields) {
         importSetters[field](value);
