@@ -1,6 +1,13 @@
 import { describe, test, expect } from "bun:test";
-import { sessionDefaultContainer } from "@/lib/db/container-walk";
-import type { Container } from "@/lib/db/types";
+import {
+  describeNamedContainers,
+  enumerateContainers,
+  enumerationOf,
+  kindsByContainer,
+  sessionDefaultContainer,
+} from "@/lib/db/container-walk";
+import type { Container, ContainerLevels, DatabaseProvider } from "@/lib/db/types";
+import { createMockProvider } from "../../helpers/mock-provider";
 
 const container = (name: string, isSessionDefault?: boolean): Container => ({
   path: [name],
@@ -40,5 +47,133 @@ describe("sessionDefaultContainer", () => {
   test("only a literal true flags a container", () => {
     const claimed = { path: ["app"], name: "app", level: 0, isSessionDefault: "yes" } as unknown as Container;
     expect(sessionDefaultContainer([claimed])).toBeUndefined();
+  });
+});
+
+const NAMESPACE_LEVEL = { id: "schema", label: "Namespace", labelPlural: "Namespaces" } as const;
+
+/**
+ * A provider whose containers answer as given, recording every parent it was asked about. It declares
+ * `containersNameKinds` unless told not to, which is the engine a named container is listed for.
+ */
+function walked(
+  levels: ContainerLevels,
+  answer: (parent?: readonly string[]) => Container[],
+  namesKinds = true,
+): { readonly provider: DatabaseProvider; readonly asked: (readonly string[] | undefined)[] } {
+  const asked: (readonly string[] | undefined)[] = [];
+  const provider = createMockProvider({
+    capabilities: { containerLevels: levels, ...(namesKinds ? { containersNameKinds: true as const } : {}) },
+  });
+  provider.listContainers = async (parent?: readonly string[]) => {
+    asked.push(parent);
+    return answer(parent);
+  };
+  return { provider, asked };
+}
+
+describe("the kinds a container walk carries", () => {
+  test("a level whose containers name no kinds enumerates exactly as it did before the field existed", () => {
+    expect(enumerationOf([container("app", true), container("sales")])).toEqual({
+      containers: [["app"], ["sales"]],
+      defaultContainer: ["app"],
+    });
+    expect("containerKinds" in enumerationOf([container("app")])).toBe(false);
+  });
+
+  test("a level where one container names kinds carries every container's answer, aligned by index", () => {
+    const cluster: Container = { path: ["Cluster"], name: "Cluster", level: 0, kinds: ["nodes"] };
+    expect(enumerationOf([cluster, container("shop")])).toEqual({
+      containers: [["Cluster"], ["shop"]],
+      containerKinds: [["nodes"], undefined],
+    });
+  });
+
+  test("enumerateContainers reads the kinds off the deepest level it walked", async () => {
+    const { provider } = walked([NAMESPACE_LEVEL], () => [
+      { path: ["Cluster"], name: "Cluster", level: 0, kinds: ["nodes"] },
+      { path: ["shop"], name: "shop", level: 0, kinds: ["pods"], isSessionDefault: true },
+    ]);
+    expect(await enumerateContainers(provider)).toEqual({
+      containers: [["Cluster"], ["shop"]],
+      containerKinds: [["nodes"], ["pods"]],
+      defaultContainer: ["shop"],
+    });
+  });
+
+  test("kindsByContainer keys each path once, the first answer winning, and leaves out a container that named none", () => {
+    const byPath = kindsByContainer({
+      containers: [["Cluster"], ["shop"], ["Cluster"]],
+      containerKinds: [["nodes"], undefined, ["pods"]],
+    });
+    expect([...byPath.entries()]).toEqual([['["Cluster"]', ["nodes"]]]);
+    expect(kindsByContainer({ containers: [["app"]] }).size).toBe(0);
+  });
+
+  test("named containers are described with one listing per distinct parent, and keep the provider's kinds", async () => {
+    const { provider, asked } = walked([NAMESPACE_LEVEL], () => [
+      { path: ["Cluster"], name: "Cluster", level: 0, kinds: ["nodes"] },
+      { path: ["shop"], name: "shop", level: 0, kinds: ["pods"] },
+    ]);
+    expect(await describeNamedContainers(provider, [["shop"], ["Cluster"], ["gone"]])).toEqual({
+      enumeration: {
+        containers: [["shop"], ["Cluster"], ["gone"]],
+        containerKinds: [["pods"], ["nodes"], undefined],
+      },
+      // Not in the listing, so the kinds it holds are unknown: the caller is told rather than guessing.
+      unlisted: [["gone"]],
+    });
+    // One call, with no argument, because every named path hangs under the root.
+    expect(asked).toEqual([undefined]);
+  });
+
+  test("an engine that does not declare containersNameKinds is never asked, and its named containers keep every kind", async () => {
+    const { provider, asked } = walked(
+      [NAMESPACE_LEVEL],
+      () => {
+        throw new Error("an engine that names no container kinds was asked for its containers");
+      },
+      false,
+    );
+    expect(await describeNamedContainers(provider, [["shop"], ["gone"]])).toEqual({
+      enumeration: { containers: [["shop"], ["gone"]] },
+      unlisted: [],
+    });
+    expect(asked).toEqual([]);
+  });
+
+  test("named containers two levels deep ask each distinct parent once", async () => {
+    const { provider, asked } = walked(
+      [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+      (parent) => (parent === undefined ? [] : [{ path: [...parent, "app"], name: "app", level: 1 }]),
+    );
+    expect(
+      await describeNamedContainers(provider, [
+        ["main", "app"],
+        ["main", "ops"],
+        ["other", "app"],
+      ]),
+    ).toEqual({
+      enumeration: {
+        containers: [
+          ["main", "app"],
+          ["main", "ops"],
+          ["other", "app"],
+        ],
+      },
+      unlisted: [["main", "ops"]],
+    });
+    expect(asked).toEqual([["main"], ["other"]]);
+  });
+
+  test("an engine with no container level is never asked to list containers", async () => {
+    const { provider, asked } = walked([], () => {
+      throw new Error("an engine with no container level was asked for its containers");
+    });
+    expect(await describeNamedContainers(provider, [[]])).toEqual({ enumeration: { containers: [[]] }, unlisted: [] });
+    expect(asked).toEqual([]);
   });
 });
