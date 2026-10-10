@@ -4,10 +4,10 @@
  * the two generators in v1: both kinds are config kinds, so a bucket or object row opens its Source tab.
  *
  * Pure, and shipped to the browser, in the shape of Oxia's generators. The path is the provider's own, one segment:
- * a bucket's `[bucket]`, an object's `[<bucket>/<key>]`, split at its first `/`. Every value is written by the value rule: `<flag>=` and the quoted value when it begins with `-`
- * (which the console reads only after `=`), else `<flag>` and the quoted value. Every command line written,
- * and every comment line without its `# `, is one the console's parser accepts; the two notes for a key no command
- * line spells are the only lines that are not commands.
+ * a bucket's `[bucket]`, an object's `[<bucket>/<key>]`, split at its first `/`. Every value is written by the value
+ * rule: `<flag>=` and the quoted value when it begins with `-` (which the console reads only after `=`), else `<flag>`
+ * and the quoted value. Every command line written, and every comment line without its `# `, is one the console's
+ * parser accepts; the two notes for a key no command line spells are the only lines that are not commands.
  */
 import { quoteShellWord } from "@/lib/db/console/shell-words";
 import { splitVirtualKey } from "../names";
