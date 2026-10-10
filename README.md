@@ -146,7 +146,7 @@ And nothing is held back. Single sign-on, ER diagrams, the AI features and the N
 
 <p align="center">
   <img src="public/screenshots/connection-modal.png" alt="Multi-Database Connection Manager" width="100%" />
-  <br/><em>Connect to PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Databend, Cassandra, Redis, SQLite, DuckDB, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL) or Oxia with SSL/TLS and SSH Tunnel support (Kafka takes TLS and no tunnel).</em>
+  <br/><em>Connect to PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Databend, Cassandra, Redis, SQLite, DuckDB, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia or S3-compatible object storage with SSL/TLS and SSH Tunnel support (Kafka takes TLS and no tunnel).</em>
 </p>
 
 ---
@@ -352,7 +352,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 | **Editor** | Monaco Editor (VS Code Engine) | Web |
 | **AI** | Multi-Model (Gemini, OpenAI, Ollama, Custom) | Web, Mobile |
 | **Auth** | JWT (`jose`) + OIDC (`openid-client`), PKCE, Role Mapping | Web, Mobile |
-| **Database** | PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, Apache Cassandra, Redis, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia | Web, Mobile |
+| **Database** | PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, Apache Cassandra, Redis, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage | Web, Mobile |
 | **Charts** | Recharts (Bar, Line, Pie, Area, Scatter, Histogram, Stacked) | Web, Mobile |
 | **ERD** | React Flow, ELK.js (auto-layout) | Web |
 | **State/Grid** | TanStack Table & Virtual | Web, Mobile |
@@ -445,7 +445,7 @@ journalctl -u libredb-studio
 
   ### Prerequisites
   - [Bun](https://bun.sh/) (Recommended) or Node.js 24+
-  - A target database to query (PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, Apache Cassandra, Redis, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), or Oxia)
+  - A target database to query (PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, Apache Cassandra, Redis, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, or S3-compatible object storage)
 
   ### Quick Start (Local)
   1. **Clone & Install**
@@ -961,7 +961,7 @@ extraEnvFrom:
 | `defaults` | No | Default values merged into all connections |
 | `connections[].id` | Yes | Unique slug (`[a-z0-9-]+`, max 64 chars) |
 | `connections[].name` | Yes | Display name in UI |
-| `connections[].type` | Yes | `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `oracle`, `db2`, `mssql`, `clickhouse`, `druid`, `trino`, `databend`, `cassandra`, `elasticsearch`, `opensearch`, `mongodb`, `couchbase`, `redis`, `prometheus`, `kafka`, `etcd`, `neo4j`, `milvus`, `qdrant`, `influxdb`, `influxdb3`, `oxia`, `libredb` |
+| `connections[].type` | Yes | `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `oracle`, `db2`, `mssql`, `clickhouse`, `druid`, `trino`, `databend`, `cassandra`, `elasticsearch`, `opensearch`, `mongodb`, `couchbase`, `redis`, `prometheus`, `kafka`, `etcd`, `neo4j`, `milvus`, `qdrant`, `influxdb`, `influxdb3`, `oxia`, `s3`, `libredb` |
 | `connections[].roles` | Yes | `["*"]` (everyone), `["admin"]`, `["user"]`, or `["admin", "user"]` |
 | `connections[].managed` | No | `true` = admin-controlled, not editable in the UI (default), `false` = editable copy for user |
 | `connections[].readOnly` | No | `true` refuses every write on an engine that enforces it (etcd); refused on an unmanaged connection |

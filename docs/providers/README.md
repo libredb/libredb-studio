@@ -273,8 +273,8 @@ InfluxDB (InfluxQL) has a row per server line it reads, because each line is a s
 The Oxia row was verified against the running container on 2026-10-04, by the capture `tests/fixtures/oxia/README.md` records.
 The Databend row was verified against the running `databend-http` container (v1.2.951-nightly) on 2026-10-08: the user and password below sign in, and `system.databases` lists the seeded `libredb_demo` and `studio_demo`.
 
-Start the thirty-four always-on services with a plain `docker compose -f database-compose.yml up -d`:
-twenty-five engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `etcd-seed`, `oxia-seed`, `milvus-seed`, `qdrant-seed`, `influxdb-seed` and `databend-http-seed` seed sidecars; the `Profile` column names
+Start the forty-four always-on services with a plain `docker compose -f database-compose.yml up -d`:
+twenty-eight engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `etcd-seed`, `oxia-seed`, `milvus-seed`, `qdrant-seed`, `influxdb-seed`, `databend-http-seed`, `silo-principals`, `silo-seed`, `garage-keys`, `garage-setup`, `garage-seed`, `rustfs-principals` and `rustfs-seed` seed sidecars; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider, so a plain `up -d` can reproduce that
 provider's integration pass.

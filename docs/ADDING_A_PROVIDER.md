@@ -19,7 +19,7 @@ Three decisions. The first is the consequential one, which is why it is first.
 
 1. **Does it need a driver at all?** Score the engine against the rubric below. A database with a
    first-class HTTP API can be supported with no dependency at all, and that is worth real effort to
-   establish before you start. Thirteen shipped type-ids need no driver: SQLite uses the built-in
+   establish before you start. Fourteen shipped type-ids need no driver: SQLite uses the built-in
    `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, and the rest reach the engine over HTTP with
    nothing but `fetch`/`node:https`. Couchbase goes over the documented REST endpoints
    ([couchbase.md](./providers/couchbase.md)), ClickHouse over its HTTP interface
@@ -31,7 +31,8 @@ Three decisions. The first is the consequential one, which is why it is first.
    HTTP API, `/api/v1/*` ([prometheus.md](./providers/prometheus.md)), Qdrant over its REST API
    ([qdrant.md](./providers/qdrant.md)), InfluxDB and InfluxDB 3 over the v1 `/query` API and
    `/api/v3/query_sql` ([influxdb.md](./providers/influxdb.md) · [influxdb3.md](./providers/influxdb3.md)),
-   and Databend over its own HTTP query API, `POST /v1/query` ([databend.md](./providers/databend.md)).
+   Databend over its own HTTP query API, `POST /v1/query` ([databend.md](./providers/databend.md)),
+   and S3-compatible object storage over the S3 REST API, signed by Studio's own SigV4 code ([s3.md](./providers/s3.md)).
    If it does need one, it will be something like `pg`, `mysql2`, `mongodb`, `ioredis`, `oracledb`,
    `mssql` or `db2-node`.
 
@@ -235,10 +236,10 @@ The Memgraph provider is filed as `docs/BACKLOG.md` D141.
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 'cockroachdb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3' | 'cockroachdb';
 ```
 
 A type-id may contain a digit: `db2` does.
@@ -880,7 +881,7 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · db2 · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · cassandra · prometheus · influxdb · influxdb3 · kafka · etcd · neo4j · milvus · qdrant · oxia · databend · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · db2 · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · cassandra · prometheus · influxdb · influxdb3 · kafka · etcd · neo4j · milvus · qdrant · oxia · databend · s3 · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), a

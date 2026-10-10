@@ -1293,6 +1293,7 @@ describe("packaging and listing copy no count gate reads", () => {
 interface ComposeService {
   readonly ports?: readonly string[];
   readonly profiles?: readonly string[];
+  readonly restart?: string;
 }
 const COMPOSE = parseYaml(read("database-compose.yml"), { merge: true }) as {
   readonly services: Readonly<Record<string, ComposeService>>;
@@ -1622,6 +1623,14 @@ describe("docs/providers/README.md", () => {
     const paragraph = flat(index.slice(index.indexOf("**S3-compatible object storage has six fixtures")));
     for (const fixture of S3_FIXTURES) expect(paragraph, fixture.service).toContain(`\`${fixture.service}\``);
     expect(paragraph).toContain("](../../docker/s3/README.md)");
+    // A plain `up` starts every service with no profile; the one-shots are the ones that never restart.
+    const alwaysOn = Object.entries(COMPOSE.services).filter(([, service]) => service.profiles === undefined);
+    const oneShots = alwaysOn.filter(([, service]) => service.restart === "no").map(([name]) => name);
+    const services = flat(index);
+    expect(services).toContain(`Start the ${word(alwaysOn.length)} always-on services with a plain`);
+    expect(services).toContain(`${word(alwaysOn.length - oneShots.length)} engine containers plus the one-shot`);
+    const sidecars = lines.find((line) => line.includes("engine containers plus the one-shot")) ?? "";
+    for (const name of oneShots) expect(sidecars, name).toContain(`\`${name}\``);
   });
 });
 
@@ -1693,6 +1702,11 @@ describe("the architecture, provider, editor and guide docs", () => {
     );
     expect(guide).toContain(
       "is a library, and that is usually where the no-dependency promise ends. S3 shows it need not",
+    );
+    // The thirteen HTTP-only and built-in ids the paragraph names, plus s3, which reaches its server over node:https.
+    expect(flat(guide)).toContain("Fourteen shipped type-ids need no driver:");
+    expect(flat(guide)).toContain(
+      "and S3-compatible object storage over the S3 REST API, signed by Studio's own SigV4 code ([s3.md](./providers/s3.md)).",
     );
   });
 });
@@ -1792,5 +1806,107 @@ describe("docs/providers/s3.md: the servers it was verified on", () => {
       expect(row, target).toContain(`\`${v[target]}\``);
     }
     expect(versions).toContain("Node 24.14.0 and Bun 1.4.2");
+  });
+});
+
+describe("the agent docs count the type-ids and name S3 where they list engines", () => {
+  const ids = SHIPPED_DATABASE_TYPES.length;
+  /** Ids an agent run cannot read through: every id outside AGENT_EXECUTION_ENGINES. */
+  const refused = ids - AGENT_EXECUTION_ENGINES.length;
+  /** Ids grounded through their own provider: every id but the two CATALOG_PLANS dialects, postgres and sqlite. */
+  const provided = ids - 2;
+  /** Ids with no statistics this run reads: every id but the three ESTIMATE_BUILDERS serves, postgres, sqlite and mssql. */
+  const noStatistics = ids - 3;
+
+  test("61. AGENT.md", () => {
+    const agent = read("docs/AGENT.md");
+    const prose = flat(agent);
+    expect(prose).toContain(`reach the ${word(refused)} the read-only profile refuses`);
+    expect(prose).toContain(`including the ${word(refused)} where an agent run cannot read anything at all`);
+    expect(prose).toContain(`on the other ${word(noStatistics)} \`readSchemaStatistics\` answers`);
+    expect(prose).toContain(`On the other ${word(provided)} it is **one**`);
+    expect(prose).toContain(`the other ${word(noStatistics)} hold no statistics this run`);
+    expect(prose).toContain(`so all ${word(ids)} ids pass it`);
+    expect(prose).toContain(`Collapsing the other ${word(provided)} onto the composed one`);
+    expect(agent).toContain(`four of the ${word(ids)}`);
+  });
+
+  test("62. AGENT_GUIDE and AGENT_DATA_FLOW", () => {
+    const guide = flat(read("docs/AGENT_GUIDE.md"));
+    expect(guide).toContain(`which is the other ${word(provided)} (MySQL,`);
+    expect(guide).toContain("Qdrant, Oxia, Databend, S3-compatible object storage and the bundled LibreDB store)");
+    expect(guide).toContain(`so it reaches all ${word(ids)} engines.`);
+    expect(guide).toContain(
+      "On S3-compatible object storage that is one AWS CLI read command, or Studio's own `preview`, in a block tagged `s3`, which the run never executes.",
+    );
+    expect(guide).toContain(`So on the other ${word(refused)} ids in the \`DatabaseType\` union`);
+    expect(guide).toContain("Qdrant, Oxia, Databend, S3-compatible object storage and LibreDB. That");
+    expect(guide).toContain(`no longer takes this path at all on the other ${word(provided)}:`);
+    expect(guide).toContain(`on the other ${word(noStatistics)} the plan is told that this engine holds none`);
+    const flow = flat(read("docs/AGENT_DATA_FLOW.md"));
+    expect(flow).toContain(`and the other ${word(provided)} by asking the connection's own provider`);
+    expect(flow).toContain(
+      "Never an etcd, Milvus, Qdrant, InfluxDB (InfluxQL), Oxia or S3-compatible object storage statement",
+    );
+    expect(flow).toContain("which those six do");
+    expect(flow).toContain("and an S3 command names buckets and object keys");
+    expect(flow).toContain(
+      `a server-side enum with ${word(ids)} members, so what it discloses is which of ${word(ids)} engines this`,
+    );
+    expect(flow).toContain(`And two of the ${word(provided)}, the embedded`);
+    expect(flow).toContain(`On the other ${word(provided)} it invokes \`db.schema.read\``);
+    expect(flow).toContain(
+      `**${Word(provided)} counts type-ids the factory can build, not engines a user would name**`,
+    );
+    expect(flow).toContain(`\`SHIPPED\` holds ${word(ids)}, \`CATALOG_PLANS\` serves two of them`);
+    expect(flow).toContain(`libSQL is one of the ${word(provided)} and not one of the two`);
+    expect(flow).toContain(
+      "- On S3-compatible object storage the grounding carries bucket names only, never an object key, a prefix, a size or any object content (objects are listed by the Keys panel, not by the object walk).",
+    );
+    expect(flow).toContain("On the twenty-one engines that declare no foreign keys at all");
+    expect(flow).toContain("Qdrant, Oxia, Databend and S3-compatible object storage) this block carries no relations");
+    expect(flow).toContain(`replaces them on the other ${word(provided)}.`);
+    expect(flow).toContain(
+      "nothing at all for an etcd, Milvus, Qdrant, InfluxDB (InfluxQL), Oxia or S3-compatible object storage statement",
+    );
+  });
+});
+
+describe("the complete engine lists outside the agent docs", () => {
+  test("63. every list that names Databend and claims to be complete names S3 too", () => {
+    const readme = read("README.md");
+    expect(readme).toContain(
+      "InfluxDB 3 (SQL), Oxia or S3-compatible object storage with SSL/TLS and SSH Tunnel support",
+    );
+    expect(readme).toContain("InfluxDB 3 (SQL), Oxia, S3-compatible object storage | Web, Mobile |");
+    expect(readme).toContain("InfluxDB 3 (SQL), Oxia, or S3-compatible object storage)");
+    const zh = read("README_zh.md");
+    expect(zh).toContain("InfluxDB 3 (SQL)、Oxia 或 S3-compatible object storage，支持 SSL/TLS 与 SSH 隧道");
+    expect(zh).toContain("InfluxDB 3 (SQL)、Oxia、S3-compatible object storage | Web、移动端 |");
+    expect(zh).toContain("InfluxDB 3 (SQL)、Oxia 或 S3-compatible object storage）");
+    expect(read("README_ko.md")).toContain("InfluxDB 3 (SQL), Oxia, S3-compatible object storage에 연결할 수 있으며");
+    // The seed table's type list is the union's members, so every README that carries it names s3.
+    for (const [file, separator] of [
+      ["README.md", ", "],
+      ["README_zh.md", "、"],
+    ] as const) {
+      const row = read(file)
+        .split("\n")
+        .find((line) => line.startsWith("| `connections[].type` |"));
+      const listed = (row?.match(/`[a-z0-9]+`/g) ?? []).map((cell) => cell.slice(1, -1)).sort();
+      expect(listed, file).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+      expect(row, file).toContain(`\`oxia\`${separator}\`s3\`${separator}\`libredb\``);
+    }
+    expect(read("docs/BRAND_MESSAGING.md")).toContain(
+      "Milvus, Qdrant, Oxia and S3-compatible object storage, with SSO and audit",
+    );
+    expect(read("docs/FEATURES.md")).toContain(
+      "Qdrant, Oxia, Databend, S3-compatible object storage and LibreDB show no editing control at all",
+    );
+    expect(provider.getCapabilities().supportsInlineRowEdit).toBe(false);
+    const guide = read("docs/ADDING_A_PROVIDER.md");
+    expect(guide).toContain("'oxia' | 'databend' | 's3';");
+    expect(guide).toContain("'oxia' | 'databend' | 's3' | 'cockroachdb';");
+    expect(guide).toContain("· oxia · databend · s3 · libredb");
   });
 });

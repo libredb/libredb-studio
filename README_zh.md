@@ -162,7 +162,7 @@ Oxia、InfluxDB (InfluxQL)、Milvus、Qdrant、Neo4j、etcd、Apache Kafka 和 P
 
 <p align="center">
   <img src="public/screenshots/connection-modal.png" alt="多数据库连接管理器" width="100%" />
-  <br/><em>连接 PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、MongoDB、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Databend、Cassandra、Redis、SQLite、DuckDB、libSQL、Prometheus、Apache Kafka、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL) 或 Oxia，支持 SSL/TLS 与 SSH 隧道（Kafka 支持 TLS，不支持隧道）。</em>
+  <br/><em>连接 PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、MongoDB、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Databend、Cassandra、Redis、SQLite、DuckDB、libSQL、Prometheus、Apache Kafka、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia 或 S3-compatible object storage，支持 SSL/TLS 与 SSH 隧道（Kafka 支持 TLS，不支持隧道）。</em>
 </p>
 
 [![Ask DeepWiki](.github/assets/deepwiki-badge.svg)](https://deepwiki.com/libredb/libredb-studio)
@@ -320,7 +320,7 @@ Studio 最主要的 AI 界面是编辑器旁边的 **Agent 侧栏**，下面列�
 | **编辑器** | Monaco Editor（VS Code 内核） | Web |
 | **AI** | 多模型（Gemini、OpenAI、Ollama、自定义） | Web、移动端 |
 | **认证** | JWT（`jose`）+ OIDC（`openid-client`）、PKCE、角色映射 | Web、移动端 |
-| **数据库** | PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Couchbase、ClickHouse、Apache Druid、Elasticsearch、OpenSearch、Trino、Databend、Apache Cassandra、Redis、Prometheus、Apache Kafka、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia | Web、移动端 |
+| **数据库** | PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Couchbase、ClickHouse、Apache Druid、Elasticsearch、OpenSearch、Trino、Databend、Apache Cassandra、Redis、Prometheus、Apache Kafka、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia、S3-compatible object storage | Web、移动端 |
 | **图表** | Recharts（柱状图、折线图、饼图、面积图、散点图、直方图、堆叠图） | Web、移动端 |
 | **ERD** | React Flow、ELK.js（自动布局） | Web |
 | **状态与表格** | TanStack Table 与 Virtual | Web、移动端 |
@@ -407,7 +407,7 @@ journalctl -u libredb-studio
 
 ### 前置条件
 - [Bun](https://bun.sh/)（推荐）或 Node.js 24+
-- 一个可查询的目标数据库（PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Couchbase、ClickHouse、Apache Druid、Elasticsearch、OpenSearch、Trino、Databend、Apache Cassandra、Redis、Prometheus、Apache Kafka、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL) 或 Oxia）
+- 一个可查询的目标数据库（PostgreSQL、MySQL、Oracle、Db2 LUW、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Couchbase、ClickHouse、Apache Druid、Elasticsearch、OpenSearch、Trino、Databend、Apache Cassandra、Redis、Prometheus、Apache Kafka、etcd、Neo4j、Milvus、Qdrant、InfluxDB (InfluxQL)、InfluxDB 3 (SQL)、Oxia 或 S3-compatible object storage）
 
 ### 快速开始（本地）
 1. **克隆并安装**
@@ -909,7 +909,7 @@ extraEnvFrom:
 | `defaults` | 否 | 合并进所有连接的默认值 |
 | `connections[].id` | 是 | 唯一 slug（`[a-z0-9-]+`，最多 64 字符） |
 | `connections[].name` | 是 | UI 中显示的名称 |
-| `connections[].type` | 是 | `postgres`、`mysql`、`sqlite`、`libsql`、`duckdb`、`oracle`、`db2`、`mssql`、`clickhouse`、`druid`、`trino`、`databend`、`cassandra`、`elasticsearch`、`opensearch`、`mongodb`、`couchbase`、`redis`、`prometheus`、`kafka`、`etcd`、`neo4j`、`milvus`、`qdrant`、`influxdb`、`influxdb3`、`oxia`、`libredb` |
+| `connections[].type` | 是 | `postgres`、`mysql`、`sqlite`、`libsql`、`duckdb`、`oracle`、`db2`、`mssql`、`clickhouse`、`druid`、`trino`、`databend`、`cassandra`、`elasticsearch`、`opensearch`、`mongodb`、`couchbase`、`redis`、`prometheus`、`kafka`、`etcd`、`neo4j`、`milvus`、`qdrant`、`influxdb`、`influxdb3`、`oxia`、`s3`、`libredb` |
 | `connections[].roles` | 是 | `["*"]`（所有人）、`["admin"]`、`["user"]` 或 `["admin", "user"]` |
 | `connections[].managed` | 否 | `true` = 由管理员控制，界面中不可编辑（默认），`false` = 给用户一份可编辑的副本 |
 | `connections[].readOnly` | 否 | `true` 时拒绝该连接上的所有写入（仅在执行该模式的引擎上，即 etcd）；在非托管连接上会被拒绝 |
