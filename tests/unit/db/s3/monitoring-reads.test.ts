@@ -197,7 +197,7 @@ describe("health and the overview", () => {
   });
 });
 
-describe("PR 3 review focus: bucket names other servers allow", () => {
+describe("bucket names other servers allow", () => {
   test.each(["my.bucket", "Logs_2026", "a"])("the pinned bucket %p is probed by its literal name", async (bucket) => {
     const { s3, fake } = provider(() => xmlAnswer(objectsXml({})), { database: bucket });
     await s3.connect();

@@ -188,7 +188,7 @@ test("maintenance is refused in the label's words, with no request", async () =>
   expect(fake.exchanges).toHaveLength(0);
 });
 
-describe("PR 3 review focus: an empty Region", () => {
+describe("an empty Region", () => {
   test.each([[undefined], [""]])("Region %p signs for us-east-1", async (region) => {
     const { s3, fake } = provider(BUCKETS, { region });
     await s3.connect();
@@ -396,6 +396,21 @@ describe("the Source tab", () => {
     });
   });
 
+  test("a preview read past the query timeout fails the whole document, not the Preview part", async () => {
+    const { s3 } = provider(
+      (request) => {
+        if (request.target.query.includes("list-type=2")) return xmlAnswer(objectsXml({}));
+        if (request.method === "HEAD") return rangedObject(request);
+        return new Promise<never>(() => {});
+      },
+      { database: "sales" },
+      1_000,
+    );
+    await s3.connect();
+    const error = await s3.readObjectSource(["sales/a.csv"], "object").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(TimeoutError);
+  });
+
   test("a bucket: its creation date from the tree's listing", async () => {
     const { s3 } = provider((request) => {
       if (request.target.path === "/") return xmlAnswer(bucketsXml(["sales"]));
@@ -413,7 +428,7 @@ describe("the Source tab", () => {
   });
 });
 
-describe("PR 3 review focus: object names through the Source tab", () => {
+describe("object names through the Source tab", () => {
   const PINNED = { database: "sales" };
 
   /** The pinned probe's listing, then a HEAD of `size` bytes, with an ETag only when one is given. */
