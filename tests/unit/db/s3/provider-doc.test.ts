@@ -363,4 +363,14 @@ describe("docs/providers/s3.md: the connection, as the dialog and the builder st
     expect(machine).toContain("No agent execution and no MCP");
     expect(machine).toContain("`MCP_EXPOSABLE.s3` is false");
   });
+
+  test("13. section 4.3 lists the shared SSL panel's modes in the dialog's order", () => {
+    const literal = read("src/components/ConnectionModal.tsx").match(/\[([^\]]*)\]\s*as SSLMode\[\]/);
+    if (!literal) throw new Error("the SSL panel's `as SSLMode[]` literal was not found in ConnectionModal.tsx");
+    const modes = [...(literal[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect(modes.length).toBeGreaterThan(0);
+    expect(flat(sectionOf(DOC, "### 4.3 TLS"))).toContain(
+      `The SSL panel is the shared one: ${modes.map((m) => `\`${m}\``).join(", ")}, with a custom CA and a client certificate.`,
+    );
+  });
 });
