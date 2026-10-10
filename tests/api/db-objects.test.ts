@@ -1394,7 +1394,7 @@ describe("POST /api/db/objects/inventory", () => {
       containerLevels: [
         { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
         { id: "schema", label: "Schema", labelPlural: "Schemas" },
-      ],
+      ] as ContainerLevels,
       containersNameKinds: true as const,
     };
     provider.getCapabilities = () => capabilities;
