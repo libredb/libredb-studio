@@ -129,7 +129,8 @@ async function rootPage(
     cursor: next,
     types: {},
     total: 0,
-    ...skipped(listing.invalidNames),
+    // The walk adds up skipped across its pages, so the names the filter keeps are counted on its first page only.
+    ...skipped(cursor === "start" ? listing.invalidNames.filter((name) => name.startsWith(read.prefix)).length : 0),
   };
 }
 

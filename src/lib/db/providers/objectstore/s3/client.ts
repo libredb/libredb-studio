@@ -116,8 +116,8 @@ export interface BucketListing {
     readonly name: string /** ISO 8601 when CreationDate parses. */;
     readonly created?: string;
   }[];
-  /** Names holding "/" or not UTF-8 text: counted, never listed. */
-  readonly invalidNames: number;
+  /** Names holding "/", in the server's order: counted by the caller, never listed. */
+  readonly invalidNames: readonly string[];
   /** A ContinuationToken was in the answer and was not followed. */
   readonly truncated: boolean;
 }
@@ -392,28 +392,45 @@ function checkMaxKeys(maxKeys: number): void {
     throw new Error(`maxKeys must be a whole number from 1 to ${S3_KEY_SCAN_MAX_COUNT}`);
 }
 
-/** The client's own page checks, before the Keys panel route sees the page; the defect in words, or undefined. */
-function pageDefect(listing: ObjectListing, maxKeys: number): string | undefined {
+/**
+ * The client's own page checks, before the Keys panel route sees the page; the defect in words, or undefined.
+ * A level page (a delimiter was sent) is also held to its level: each folder starts with the prefix and ends at
+ * the first "/" after it, each key starts with the prefix and holds no "/" after it, and nothing repeats.
+ */
+function pageDefect(listing: ObjectListing, request: ListObjectsRequest): string | undefined {
+  const { maxKeys, prefix } = request;
+  const level = request.delimiter !== undefined;
   const entries = listing.keys.length + listing.prefixes.length + listing.undecodable;
   if (entries > maxKeys)
     return `${entries.toLocaleString("en-US")} entries for a page of at most ${maxKeys.toLocaleString("en-US")}`;
   const seen = new Set<string>();
-  for (const prefix of listing.prefixes) {
-    if (seen.has(prefix)) return `the folder ${shownName(prefix)} twice`;
-    seen.add(prefix);
+  for (const folder of listing.prefixes) {
+    if (level && !(folder.startsWith(prefix) && folder.indexOf("/", prefix.length) === folder.length - 1))
+      return `the folder ${shownName(folder)} outside the level asked for`;
+    if (seen.has(folder)) return `the folder ${shownName(folder)} twice`;
+    seen.add(folder);
+  }
+  if (level) {
+    const keys = new Set<string>();
+    for (const { key } of listing.keys) {
+      if (!key.startsWith(prefix) || key.slice(prefix.length).includes("/"))
+        return `the key ${shownName(key)} outside the level asked for`;
+      if (keys.has(key)) return `the key ${shownName(key)} twice`;
+      keys.add(key);
+    }
   }
   if (listing.isTruncated && listing.nextToken === undefined) return "a truncated page and no continuation token";
   return undefined;
 }
 
-/** De-duplicated by exact name, sorted by UTF-8 byte order; a name holding "/" is counted, never listed. */
+/** De-duplicated by exact name, sorted by UTF-8 byte order; a name holding "/" is kept apart, never listed. */
 function bucketListing(raw: RawBucketList): BucketListing {
   const seen = new Set<string>();
   const buckets: { name: string; created?: string }[] = [];
-  let invalidNames = 0;
+  const invalidNames: string[] = [];
   for (const bucket of raw.buckets) {
     if (bucket.name.includes("/")) {
-      invalidNames += 1;
+      invalidNames.push(bucket.name);
       continue;
     }
     if (seen.has(bucket.name)) continue;
@@ -510,7 +527,7 @@ export function createS3Client(transport: NodeByteTransport): S3Client {
       const { root, response } = await xmlRoot(transport, sent, call);
       const listing = readObjectListing(root);
       if (listing === undefined) throw answerProblem(sent, response, { kind: "not-s3" });
-      const defect = pageDefect(listing, request.maxKeys);
+      const defect = pageDefect(listing, request);
       if (defect !== undefined) throw answerProblem(sent, response, { kind: "page", what: defect });
       if (listing.nextToken !== undefined && listing.nextToken.length > S3_CURSOR_TOKEN_MAX_CHARS)
         throw answerProblem(sent, response, { kind: "token" });

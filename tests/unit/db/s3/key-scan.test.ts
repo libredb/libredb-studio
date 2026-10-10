@@ -202,6 +202,26 @@ describe("the root level", () => {
         "Names that are not UTF-8 text, and bucket names holding a slash, cannot be shown or opened, so they are counted here and not listed.",
     });
   });
+  test("a slash name is counted once, on the first page of the walk, and only when the filter keeps it", async () => {
+    const answer = () => xmlAnswer(bucketsXml(["x/y", "a1", "a2", "a3"]));
+    const { surface } = fakeS3Surface(answer);
+    const first = await scanS3KeysPage(surface, { cursor: "0", count: 2, pattern: "", level: true }, CALL);
+    expect(first.prefixes).toEqual(["a1/", "a2/"]);
+    expect(first.skipped?.count).toBe(1);
+    const second = await scanS3KeysPage(surface, { cursor: first.cursor, count: 2, pattern: "", level: true }, CALL);
+    expect(second.prefixes).toEqual(["a3/"]);
+    expect(second.skipped).toBeUndefined();
+    const filtered = await scan(() => xmlAnswer(bucketsXml(["x/y", "q/z", "a1", "a2", "a3"])), {
+      pattern: "a",
+      count: 2,
+      level: true,
+    }).page;
+    expect(filtered.prefixes).toEqual(["a1/", "a2/"]);
+    expect(filtered.skipped).toBeUndefined();
+    const kept = await scan(() => xmlAnswer(bucketsXml(["x/y", "q/z", "a1"])), { pattern: "x", level: true }).page;
+    expect(kept).toMatchObject({ prefixes: [], skipped: { count: 1 } });
+  });
+
   test("a refused ListBuckets reads as the provider's sentence for that verb", async () => {
     const { page, fake } = scan(() => xmlAnswer(errorXml("AccessDenied", "Access Denied"), 403), { level: true });
     const error = await page.catch((caught: unknown) => caught);
@@ -246,9 +266,10 @@ describe("a level inside a bucket", () => {
   });
 
   test("a MinIO folder with a space: the url-encoded '+' is read back as a space and sent as %20", async () => {
-    const { surface, fake } = fakeS3Surface(() =>
-      xmlAnswer(objectsXml({ prefixes: ["sp/with+space/"], encoding: "url" })),
-    );
+    // The first page answers the folder; the folder's own page is empty, as a real level below it would be.
+    const answers = [objectsXml({ prefixes: ["sp/with+space/"], encoding: "url" }), objectsXml({ encoding: "url" })];
+    let call = 0;
+    const { surface, fake } = fakeS3Surface(() => xmlAnswer(answers[call++]));
     const page = await scanS3KeysPage(surface, { cursor: "0", count: 10, pattern: "sales/sp/", level: true }, CALL);
     expect(page.prefixes).toEqual(["sales/sp/with space/"]);
     await scanS3KeysPage(
@@ -272,6 +293,24 @@ describe("a level inside a bucket", () => {
       types: {},
       total: 0,
     });
+  });
+
+  test("a page holding a repeated key, a key below the level or a folder outside it is the page sentence", async () => {
+    const cases: [string, Parameters<typeof objectsXml>[0], string][] = [
+      ["sales/b/", { keys: ["b/a.txt", "b/a.txt"] }, 'the key "b/a.txt" twice'],
+      ["sales/b/", { keys: ["b/deep/x.txt"] }, 'the key "b/deep/x.txt" outside the level asked for'],
+      ["sales/b/a", { prefixes: ["q/r/"] }, 'the folder "q/r/" outside the level asked for'],
+      ["sales/b/a", { prefixes: ["zz/"] }, 'the folder "zz/" outside the level asked for'],
+    ];
+    for (const [pattern, answer, what] of cases) {
+      const { page } = scan(() => xmlAnswer(objectsXml(answer)), { pattern, count: 10, level: true });
+      // oxlint-disable-next-line no-await-in-loop -- each answer is checked on its own, one after another.
+      const error = await page.catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(QueryError);
+      expect((error as Error).message).toBe(
+        `The server answered list bucket "sales" with ${what}, which a page cannot hold, so the page was not shown.`,
+      );
+    }
   });
 
   test("undecodable names are counted in skipped", async () => {

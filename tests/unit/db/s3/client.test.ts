@@ -72,7 +72,9 @@ const ANY: FakeS3Handler = (request) => {
       ],
     };
   if (path === "/") return xmlAnswer(bucketsXml(["sales"]));
-  if (query.includes("list-type=2")) return xmlAnswer(objectsXml({ keys: ["a.csv"] }));
+  // One key under the prefix sent, so a level page stays inside its level.
+  if (query.includes("list-type=2"))
+    return xmlAnswer(objectsXml({ keys: [`${new URLSearchParams(query).get("prefix") ?? ""}a.csv`] }));
   if (query === "location=") return xmlAnswer("<LocationConstraint/>");
   if (query === "versioning=") return xmlAnswer("<VersioningConfiguration/>");
   if (query.includes("versions="))
@@ -159,12 +161,12 @@ describe("each operation's method, target and cap", () => {
 });
 
 describe("ListBuckets", () => {
-  test("de-duplicates, sorts by UTF-8 byte order, counts names holding a slash and notes an unfollowed token", async () => {
+  test("de-duplicates, sorts by UTF-8 byte order, keeps names holding a slash apart and notes an unfollowed token", async () => {
     const names = ["zeta", "alpha", "Alpha", "zeta", "a/b", "\u{1F600}", "\uFF5E"];
     const { client, fake } = clientOf(() => xmlAnswer(bucketsXml(names, { continuationToken: "next" })));
     const listing = await client.listBuckets(CALL);
     expect(listing.buckets.map((bucket) => bucket.name)).toEqual(["Alpha", "alpha", "zeta", "\uFF5E", "\u{1F600}"]);
-    expect(listing.invalidNames).toBe(1);
+    expect(listing.invalidNames).toEqual(["a/b"]);
     expect(listing.truncated).toBe(true);
     expect(listing.buckets[0].created).toBe("2026-10-09T13:13:17.442Z");
     expect(fake.exchanges).toHaveLength(1);
@@ -209,6 +211,41 @@ describe("ListObjectsV2's page checks", () => {
       kind: "page",
       what: 'the folder "c/" twice',
     });
+  });
+
+  const listUnder = (client: S3Client, prefix: string, delimiter?: "/") =>
+    client.listObjectsV2(
+      { bucket: "sales", prefix, maxKeys: 10, ...(delimiter === undefined ? {} : { delimiter }) },
+      CALL,
+    );
+
+  test("a level page holds no repeated key, no key below its level, and no folder outside it", async () => {
+    const cases: [string, Parameters<typeof objectsXml>[0], string][] = [
+      ["b/", { keys: ["b/a.txt", "b/a.txt"] }, 'the key "b/a.txt" twice'],
+      ["b/", { keys: ["b/deep/x.txt"] }, 'the key "b/deep/x.txt" outside the level asked for'],
+      ["b/", { keys: ["c/x.txt"] }, 'the key "c/x.txt" outside the level asked for'],
+      ["b/a", { prefixes: ["q/r/"] }, 'the folder "q/r/" outside the level asked for'],
+      ["b/a", { prefixes: ["b/ab/c/"] }, 'the folder "b/ab/c/" outside the level asked for'],
+      ["b/a", { prefixes: ["b/ab"] }, 'the folder "b/ab" outside the level asked for'],
+    ];
+    for (const [prefix, answer, what] of cases) {
+      const { client } = clientOf(() => xmlAnswer(objectsXml(answer)));
+      // oxlint-disable-next-line no-await-in-loop -- each answer is checked on its own, one after another.
+      expect(((await failure(listUnder(client, prefix, "/"))) as S3ServerError).problem).toEqual({
+        kind: "page",
+        what,
+      });
+    }
+  });
+
+  test("a level page keeps its folder marker and folders one level down", async () => {
+    const { client } = clientOf(() => xmlAnswer(objectsXml({ keys: ["b/", "b/a.txt"], prefixes: ["b/sub/"] })));
+    expect(await listUnder(client, "b/", "/")).toMatchObject({ prefixes: ["b/sub/"] });
+  });
+
+  test("a walk with no delimiter holds keys at any depth", async () => {
+    const { client } = clientOf(() => xmlAnswer(objectsXml({ keys: ["b/a.txt", "b/deep/x.txt"] })));
+    expect((await listUnder(client, "b/")).keys.map((entry) => entry.key)).toEqual(["b/a.txt", "b/deep/x.txt"]);
   });
 
   test("a truncated page with no token", async () => {

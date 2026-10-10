@@ -38,7 +38,9 @@ function answerFor(request: Received): string {
     `HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
   if (request.method === "HEAD") return 'HTTP/1.1 200 OK\r\nContent-Length: 3\r\nETag: "abc"\r\n\r\n';
   if (request.path === "/") return xml(bucketsXml(["sales"]));
-  if (request.query.includes("list-type=2")) return xml(objectsXml({ keys: ["a.csv"] }));
+  // One key under the prefix sent, so a level page stays inside its level.
+  if (request.query.includes("list-type=2"))
+    return xml(objectsXml({ keys: [`${new URLSearchParams(request.query).get("prefix") ?? ""}a.csv`] }));
   if (request.query === "location=") return xml("<LocationConstraint/>");
   if (request.query === "versioning=") return xml("<VersioningConfiguration/>");
   if (request.query.includes("versions="))
