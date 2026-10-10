@@ -163,6 +163,26 @@ describe("typedLiteral: mssql", () => {
     expect(typedLiteral(false, "bit", "mssql", scalar)).toBe("0");
     expect(typedLiteral(1, "bit", "mssql", scalar)).toBeUndefined();
   });
+
+  // `datetime` and `smalldatetime` read `yyyy-mm-dd hh:mi:ss` through the session's
+  // DATEFORMAT, so the provider's text (#1452) goes out in the ISO 8601 form with a `T`.
+  test("writes a datetime and a smalldatetime's own text as ISO 8601 with a T", () => {
+    expect(typedLiteral("2026-10-04 12:34:56.123", "datetime", "mssql", scalar)).toBe("N'2026-10-04T12:34:56.123'");
+    expect(typedLiteral("2026-10-04 12:35:00", "smalldatetime", "mssql", scalar)).toBe("N'2026-10-04T12:35:00'");
+    expect(typedLiteral("2026-10-04 12:35:00", " SmallDateTime ", "mssql", scalar)).toBe("N'2026-10-04T12:35:00'");
+  });
+
+  test("leaves every other datetime-shaped cell to the generic writer", () => {
+    // `datetime2` and `date` read `yyyy-mm-dd` the same under every DATEFORMAT already.
+    expect(typedLiteral("2026-10-04 12:34:56.123", "datetime2", "mssql", scalar)).toBeUndefined();
+    expect(typedLiteral("2026-10-04 12:34:56.123", undefined, "mssql", scalar)).toBeUndefined();
+    // Text the provider never reads a datetime as stays the text it is.
+    expect(typedLiteral("2026-10-04T12:34:56.123Z", "datetime", "mssql", scalar)).toBeUndefined();
+    expect(typedLiteral("2026-10-04 12:34:56.1234567", "datetime", "mssql", scalar)).toBeUndefined();
+    expect(typedLiteral("2026-10-04 12:34", "smalldatetime", "mssql", scalar)).toBeUndefined();
+    expect(typedLiteral("x 2026-10-04 12:34:56", "datetime", "mssql", scalar)).toBeUndefined();
+    expect(typedLiteral(new Date(0), "datetime", "mssql", scalar)).toBeUndefined();
+  });
 });
 
 describe("typedLiteral: clickhouse", () => {

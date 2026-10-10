@@ -2332,6 +2332,83 @@ describe("MSSQLProvider zoneless value types (#1132)", () => {
     expect(result.rows[0].at0).toBe("2026-09-01 10:30:00");
   });
 
+  // `datetime` and `smalldatetime` are as zoneless as `datetime2` (#1452), but the driver
+  // sends no `scale` for them (tedious `metadata-parser.js` reads one only for `time`,
+  // `datetime2` and `datetimeoffset`), so the fixtures carry none: the digits come from the
+  // type. tedious also sets no `nanosecondsDelta` on either, which is why these are plain
+  // `Date`s rather than `tediousDate`s.
+  test("datetime reads as the engine's wall-clock text with the three fraction digits the type fixes", async () => {
+    mockQueryFn = async () => ({
+      recordset: withColumns(
+        [
+          {
+            dt: new Date(Date.UTC(2026, 9, 4, 12, 34, 56, 123)),
+            // A whole second still prints its three zeros, and 1/300 s ticks print as the
+            // engine rounds them: tedious reads 299 ticks as 997 ms, which is what it prints.
+            whole: new Date(Date.UTC(2026, 9, 4, 12, 34, 56, 0)),
+            tick: new Date(Date.UTC(2026, 9, 4, 23, 59, 59, 997)),
+          },
+        ],
+        { dt: { declaration: "datetime" }, whole: { declaration: "datetime" }, tick: { declaration: "datetime" } },
+      ),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT dt, whole, tick FROM types");
+
+    expect(result.rows[0].dt).toBe("2026-10-04 12:34:56.123");
+    expect(result.rows[0].whole).toBe("2026-10-04 12:34:56.000");
+    expect(result.rows[0].tick).toBe("2026-10-04 23:59:59.997");
+  });
+
+  test("smalldatetime reads as the engine's wall-clock text to the minute, its seconds always :00", async () => {
+    mockQueryFn = async () => ({
+      recordset: withColumns([{ sdt: new Date(Date.UTC(2026, 9, 4, 12, 35)) }], {
+        sdt: { declaration: "smalldatetime" },
+      }),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT sdt FROM types");
+
+    expect(result.rows[0].sdt).toBe("2026-10-04 12:35:00");
+  });
+
+  test("datetime and smalldatetime convert beside datetime2 the same reading, which datetimeoffset still does not", async () => {
+    // The issue's own repro: one reading in a `DATETIME` and a `DATETIME2` column used to
+    // render as two different texts.
+    const instant = new Date(Date.UTC(2026, 9, 4, 12, 34, 56, 123));
+    mockQueryFn = async () => ({
+      recordset: withColumns(
+        [
+          {
+            dt: new Date(Date.UTC(2026, 9, 4, 12, 34, 56, 123)),
+            dt2: tediousDate(Date.UTC(2026, 9, 4, 12, 34, 56, 123), 0),
+            sdt: new Date(Date.UTC(2026, 9, 4, 12, 35)),
+            dto: instant,
+          },
+        ],
+        {
+          dt: { declaration: "datetime" },
+          dt2: { declaration: "datetime2", scale: 3 },
+          sdt: { declaration: "smalldatetime" },
+          dto: { declaration: "datetimeoffset", scale: 3 },
+        },
+      ),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT dt, dt2, sdt, dto FROM types");
+
+    expect(result.rows[0].dt).toBe(result.rows[0].dt2);
+    expect(result.rows[0].dt).toBe("2026-10-04 12:34:56.123");
+    expect(result.rows[0].sdt).toBe("2026-10-04 12:35:00");
+    expect(result.rows[0].dto).toBe(instant);
+  });
+
   test("datetimeoffset stays an instant, and neither a NULL nor any other declaration is touched", async () => {
     const instant = tediousDate(Date.UTC(2026, 8, 1, 10, 30, 0, 123), 0.0004567);
     mockQueryFn = async () => ({

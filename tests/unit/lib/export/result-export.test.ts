@@ -1460,6 +1460,19 @@ describe("buildResultExport: a cell whose literal depends on its declared type (
     expect(insert("mssql", { a: true, b: false }, { a: "bit", b: "bit" })).toContain("VALUES (1, 0);");
   });
 
+  // Measured on SQL Server 2022 CU27: under a dmy language (british, Deutsch, Français)
+  // `'2026-10-04 12:34:56.123'` replays into a DATETIME as April 10th, and the `T` form as
+  // October 4th under every language (#1452). DATETIME2 reads either form the same.
+  test("writes a SQL Server DATETIME and SMALLDATETIME in the form every DATEFORMAT reads the same", () => {
+    expect(
+      insert(
+        "mssql",
+        { dt: "2026-10-04 12:34:56.123", sdt: "2026-10-04 12:35:00", dt2: "2026-10-04 12:34:56.123" },
+        { dt: "datetime", sdt: "smalldatetime", dt2: "datetime2" },
+      ),
+    ).toContain("VALUES (N'2026-10-04T12:34:56.123', N'2026-10-04T12:35:00', N'2026-10-04 12:34:56.123');");
+  });
+
   test("still writes true and false where the dialect reads them", () => {
     expect(insert("postgres", { a: true }, { a: "boolean" })).toContain("VALUES (true);");
   });

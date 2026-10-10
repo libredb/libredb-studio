@@ -441,6 +441,27 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
   row, not a hardcoded spelling; rerun with
   [`tests/live/mssql-zoneless-values.ts`](../../tests/live/mssql-zoneless-values.ts)
   ([§13.4](#134-optional-verifying-against-a-live-sql-server)).
+- **`datetime` and `smalldatetime` read as the engine's own text too (#1452).** They are as
+  zoneless as `datetime2`, and were left out of #1132, so a `DATETIME` beside a `DATETIME2`
+  holding the same reading rendered as `2026-10-04T12:34:56.123Z` against
+  `2026-10-04 12:34:56.123`. Their fraction comes from the TYPE, not from the column: the
+  driver sends a `scale` only for `time`, `datetime2` and `datetimeoffset` (`tedious`
+  `metadata-parser.js`), so `datetime` is written with the three digits it always prints - its
+  1/300 s ticks rounded to .000/.003/.007, which is also the millisecond `tedious` builds the
+  `Date` from - and `smalldatetime`, stored to the minute, with `:00` seconds. The guard reads
+  their engine text with styles 121 and 120, the ODBC canonical forms `sqlcmd` prints, because
+  their default `CONVERT` style prints `Sep  1 2026 10:30AM`. Measured 2026-10-08 on SQL Server
+  2022 CU27 (16.0.4295.3) through `mssql` 12.7.2 / `tedious` 20.3.0, one row:
+
+  | declared | engine's own text | read BEFORE (the driver's `Date`) | read now |
+  |---|---|---|---|
+  | `DATETIME` `2026-09-01T10:30:00.123` | `2026-09-01 10:30:00.123` | `2026-09-01T10:30:00.123Z` | `2026-09-01 10:30:00.123` |
+  | `DATETIME` `2026-09-01T23:59:59.998` | `2026-09-01 23:59:59.997` | `2026-09-01T23:59:59.997Z` | `2026-09-01 23:59:59.997` |
+  | `SMALLDATETIME` `2026-09-01T10:30:29.999` | `2026-09-01 10:31:00` | `2026-09-01T10:31:00.000Z` | `2026-09-01 10:31:00` |
+
+  Unlike `datetime2` and `date`, these two types read `yyyy-mm-dd hh:mi:ss` through the
+  session's DATEFORMAT, which is why the SQL INSERT export writes their text with a `T`
+  ([§5.5](#55-what-the-sql-insert-export-writes-for-a-bit)).
 - **Binary** (`VARBINARY`/`IMAGE`/`rowversion`) comes back as a Node `Buffer` and is **not**
   stringified by the provider, so it reaches the client as the JSON shape a `Buffer` serializes to and
   is rendered as hex there (§7). Every provider answers this way since 2026-08-24, when MySQL and
@@ -492,6 +513,9 @@ round, a string exporting as text and a number as a float. All three execution p
 `mssql` returns a BIT as a JS boolean, and T-SQL has no boolean literal: an exported `true` is `Msg 207: Invalid column name 'true'`, and that fails the whole batch.
 The SQL INSERT export writes a boolean as `1` / `0` for this dialect (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)).
 Dates need nothing: the ISO text a `Date` becomes (`2024-12-31T23:59:59.997Z`) replays into `datetime`, `datetime2`, `smalldatetime`, `datetimeoffset` and `date`.
+The one exception is the engine text `datetime` and `smalldatetime` are read as since #1452 ([§5.3](#53-data-type--parameter-handling)): those two types read `yyyy-mm-dd hh:mi:ss` through the session's DATEFORMAT, so the export writes that text with its space as a `T` (`N'2026-10-04T12:34:56.123'`), the ISO 8601 form every DATEFORMAT reads the same.
+Measured 2026-10-08 on SQL Server 2022 CU27 (16.0.4295.3), the same two rows read through the provider, exported and replayed under `SET LANGUAGE us_english` and `british`: written with the space, `2026-10-04 12:34:56.123` came back as `2026-04-10` under `british` and `2026-10-25 23:59:59.997` was refused as out of range; written with the `T`, both came back equal under both languages, as they did under `Deutsch`, `Français` and `Japanese` in a direct `CAST`.
+A `datetime2` and a `date` text are written as they are, since those two read `yyyy-mm-dd` the same under every DATEFORMAT.
 
 Measured 2026-10-04 on SQL Server 2025 (17.0.5005.3): a table of `bit`, the five date and time types, `uniqueidentifier`, `decimal(38,10)`, `bigint`, `money`, `varbinary(max)`, `nvarchar(max)`, `float`, `real`, `tinyint` and `xml` exported and replayed with `sqlcmd` into both a `SELECT * INTO copy … WHERE 1 = 0` copy and the exported DDL's own table without an error.
 Two cells read back differently, both lost by the driver before the export sees them: a `datetimeoffset` keeps its instant but not its offset or its digits past the millisecond, and a `decimal` past 15 significant digits arrives as a rounded JS number.
@@ -1742,9 +1766,9 @@ docker run --rm -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD='Str0ng!Passw0rd' \
 `--cpus 4` is not decoration on a many-core host: SQL Server asserts on the processor topology in a
 container, which is the same reason `database-compose.yml` pins `2022-latest`.
 
-`tests/live/mssql-zoneless-values.ts` (#1132, [§5.3](#53-data-type--parameter-handling)) holds the
+`tests/live/mssql-zoneless-values.ts` (#1132, #1452, [§5.3](#53-data-type--parameter-handling)) holds the
 zoneless-value reading against the server itself: it creates a throwaway database, reads
-`time`/`date`/`datetime2`/`datetimeoffset` through the provider AND as the engine's own `CONVERT`
+`time`/`date`/`datetime2`/`datetime`/`smalldatetime`/`datetimeoffset` through the provider AND as the engine's own `CONVERT`
 text, and requires the two to agree - including that the raw driver value is still the invented
 `Date` the conversion compensates for. Its expectations are the server's own printed text, not
 hardcoded spellings. Supply the password configured on the container:

@@ -1,7 +1,7 @@
 /**
- * Opt-in live guard for #1132: do `time`, `date` and `datetime2` read as the ENGINE'S OWN
- * TEXT through the provider, and is the `Date` they arrive as still the thing that makes
- * the conversion necessary?
+ * Opt-in live guard for #1132 and #1452: do `time`, `date`, `datetime2`, `datetime` and
+ * `smalldatetime` read as the ENGINE'S OWN TEXT through the provider, and is the `Date` they
+ * arrive as still the thing that makes the conversion necessary?
  *
  * WHY THIS EXISTS, AND WHY IT CANNOT BE A UNIT TEST. `tedious` reads `time` as a
  * time-of-day on an invented 1970-01-01, `date` as UTC midnight, and `datetime2` as a
@@ -34,7 +34,7 @@ import { MSSQLProvider } from "../../src/lib/db/providers/sql/mssql";
 import type { DatabaseConnection } from "../../src/lib/types";
 
 /** The declarations and scales under guard, one column each, fraction digits spelled out. */
-const GUARDED_COLUMNS = ["t7", "t3", "t0", "d", "at7", "at0"] as const;
+const GUARDED_COLUMNS = ["t7", "t3", "t0", "d", "at7", "at0", "dt", "dtTick", "sdt"] as const;
 
 function required(name: string): string {
   const value = process.env[name];
@@ -82,6 +82,7 @@ async function probeServer(): Promise<string[]> {
          t7 TIME(7), t3 TIME(3), t0 TIME(0),
          d DATE,
          at7 DATETIME2(7), at0 DATETIME2(0),
+         dt DATETIME, dtTick DATETIME, sdt SMALLDATETIME,
          dto DATETIMEOFFSET(7)
        );
        INSERT INTO dbo.zoneless VALUES (
@@ -89,6 +90,7 @@ async function probeServer(): Promise<string[]> {
          '10:30:00.1234567', '10:30:00.123', '10:30:00',
          '2026-09-01',
          '2026-09-01 10:30:00.1234567', '2026-09-01 10:30:00',
+         '2026-09-01T10:30:00.123', '2026-09-01T23:59:59.998', '2026-09-01T10:30:29.999',
          '2026-09-01 10:30:00.1234567 +05:30'
        );`,
     );
@@ -96,16 +98,22 @@ async function probeServer(): Promise<string[]> {
     // The engine's own text, which is the only authority on what the provider must answer.
     // Nothing below hardcodes a spelling: the expected value of every guarded column IS the
     // server's own printed text, read through a conversion rather than through the driver.
+    // `datetime` and `smalldatetime` name their style, because their DEFAULT one (0) prints
+    // `Sep  1 2026 10:30AM`: 121 and 120 are the ODBC canonical texts, which are the ones
+    // sqlcmd prints for those columns (#1452). The values are written in ISO 8601 with a `T`,
+    // the one form those two types read the same under every SET DATEFORMAT.
     const engineTexts = (
       await db.request().query(
         `SELECT CONVERT(varchar(30), t7) AS t7, CONVERT(varchar(30), t3) AS t3, CONVERT(varchar(30), t0) AS t0,
-                CONVERT(varchar(10), d) AS d, CONVERT(varchar(30), at7) AS at7, CONVERT(varchar(30), at0) AS at0
+                CONVERT(varchar(10), d) AS d, CONVERT(varchar(30), at7) AS at7, CONVERT(varchar(30), at0) AS at0,
+                CONVERT(varchar(23), dt, 121) AS dt, CONVERT(varchar(23), dtTick, 121) AS dtTick,
+                CONVERT(varchar(19), sdt, 120) AS sdt
          FROM dbo.zoneless`,
       )
     ).recordset[0] as Record<string, string>;
 
     // The same read WITHOUT the provider, which is the premise: the raw driver value.
-    const rawRow = (await db.request().query(`SELECT t7, t3, t0, d, at7, at0, dto FROM dbo.zoneless`))
+    const rawRow = (await db.request().query(`SELECT t7, t3, t0, d, at7, at0, dt, dtTick, sdt, dto FROM dbo.zoneless`))
       .recordset[0] as Record<string, unknown>;
     console.log(
       `raw driver shapes: ${GUARDED_COLUMNS.map((column) => {
@@ -115,7 +123,7 @@ async function probeServer(): Promise<string[]> {
     );
 
     await provider.connect();
-    const read = await provider.query(`SELECT t7, t3, t0, d, at7, at0, dto FROM dbo.zoneless`);
+    const read = await provider.query(`SELECT t7, t3, t0, d, at7, at0, dt, dtTick, sdt, dto FROM dbo.zoneless`);
     const row = read.rows[0];
 
     for (const column of GUARDED_COLUMNS) {
@@ -125,7 +133,7 @@ async function probeServer(): Promise<string[]> {
       if (got !== expected) {
         failures.push(
           `${column}: the provider read ${JSON.stringify(got)} and the engine's own CONVERT prints ` +
-            `${JSON.stringify(expected)}. #1132 is exactly the gap between those two.`,
+            `${JSON.stringify(expected)}. #1132 and #1452 are exactly the gap between those two.`,
         );
       }
     }

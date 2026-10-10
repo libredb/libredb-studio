@@ -153,12 +153,33 @@ const postgresLiteral: TypedWriter = (value, declared) => {
 // SQL Server
 // ---------------------------------------------------------------------------------------
 
+/** The text the provider reads a `datetime` and a `smalldatetime` as (#1452): the engine's own. */
+const MSSQL_DATETIME_TEXT = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,3})?$/;
+
 /**
  * T-SQL has no boolean literal: `true` parses as a column name (`Msg 207: Invalid column
  * name 'true'`, measured on SQL Server 2025 17.0.5005.3) and fails the whole batch. A BIT
  * takes `1` and `0`, and `mssql` hands a BIT back as a JS boolean.
+ *
+ * A `datetime` or `smalldatetime` cell is the engine's own `yyyy-mm-dd hh:mi:ss[.mmm]` text
+ * (#1452), and unlike `datetime2` and `date`, those two types read that form through the
+ * session's DATEFORMAT. Measured on SQL Server 2022 CU27 (16.0.4295.3): under `british`,
+ * `Deutsch` and `Français` (dmy) `'2026-10-04 12:34:56.123'` is stored as April 10th and
+ * `'2026-10-25 …'` is refused, while `'2026-10-04T12:34:56.123'` is October 4th under those
+ * and under `us_english` and `Japanese`. So the text goes out with its space as a `T`.
  */
-const mssqlLiteral: TypedWriter = (value) => (typeof value === "boolean" ? (value ? "1" : "0") : undefined);
+const mssqlLiteral: TypedWriter = (value, declared) => {
+  if (typeof value === "boolean") return value ? "1" : "0";
+  const type = normalized(declared);
+  if (
+    (type === "datetime" || type === "smalldatetime") &&
+    typeof value === "string" &&
+    MSSQL_DATETIME_TEXT.test(value)
+  ) {
+    return quoteLiteral(value.replace(" ", "T"), "mssql");
+  }
+  return undefined;
+};
 
 // ---------------------------------------------------------------------------------------
 // ClickHouse
