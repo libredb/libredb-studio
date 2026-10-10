@@ -658,6 +658,12 @@ describe("a value the failed request must carry is a defect when it was never no
     expect(() => mapped(error)).toThrow(defect("ListObjectsV2", "response cap"));
   });
 
+  test("a timeout with no deadline noted", () => {
+    const error = new TransportError("timeout", "timed out");
+    noteRequestNames(error, { bucket: "sales" });
+    expect(() => mapped(error)).toThrow(defect("ListObjectsV2", "deadline"));
+  });
+
   test("a redirect that carries no status", () => {
     const error = new TransportError("redirect", "redirected");
     noteRequestNames(error, { bucket: "sales" });

@@ -30,7 +30,6 @@ import {
   S3_CURSOR_TOKEN_MAX_CHARS,
   S3_REGION_PATTERN,
   S3_SERVER_TEXT_CHARS,
-  S3_SURFACE_DEADLINE_MS,
   S3_TYPE,
   S3_XML_MAX_ELEMENTS,
 } from "./constants";
@@ -344,8 +343,13 @@ function hasDotSegment(name: string | undefined): boolean {
   return segments.some((segment) => segment === "" || segment === "." || segment === "..");
 }
 
-function timeoutError(op: string, context: S3ClientContext, details: S3FailureDetails): TimeoutError {
-  const ms = details.timeoutMs ?? S3_SURFACE_DEADLINE_MS;
+function timeoutError(
+  op: string,
+  operation: S3Operation,
+  context: S3ClientContext,
+  details: S3FailureDetails,
+): TimeoutError {
+  const ms = noted(details.timeoutMs, "deadline", operation);
   return new TimeoutError(S3_ERROR_SENTENCES.timeout(context.endpointText, op, seconds(ms)), S3_TYPE, ms);
 }
 
@@ -359,7 +363,7 @@ function transportFailure(
   const op = (): string => opWords(operation, names);
   switch (error.kind) {
     case "timeout":
-      return timeoutError(op(), context, details);
+      return timeoutError(op(), operation, context, details);
     case "aborted": {
       const reason: unknown = details.signal?.reason;
       if (reason instanceof QueryCancelledError) return reason;
@@ -526,7 +530,7 @@ export function toProviderError(
   if (error instanceof DatabaseError && !(error instanceof TransportError)) return error;
   const names = typeof error === "object" && error !== null ? (REQUEST_NAMES.get(error) ?? {}) : {};
   if (error instanceof DOMException && error.name === "TimeoutError")
-    return timeoutError(opWords(operation, names), context, details);
+    return timeoutError(opWords(operation, names), operation, context, details);
   if (error instanceof TransportError) return transportFailure(error, operation, names, context, details);
   if (error instanceof S3ServerError) return serverFailure(error, context);
   if (details.lifetime?.aborted === true) return new ConnectionError(S3_ERROR_SENTENCES.closed, S3_TYPE);
