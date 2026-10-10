@@ -2695,9 +2695,11 @@ export interface ObjectKindSpec {
    * sensitive, such as stored secrets, whose names often say what they hold.
    *
    * Read through `kindNamesWithheld()` in `src/lib/db/object-kinds.ts`. The walk knows such a kind's size only
-   * through its count, so a provider that declares it counts it in `countObjects`. Only a kind whose role is not
-   * `relation` declares it: MCP's `inspect_schema` and the app's schema read take relation kinds, and this
-   * declaration does not reach them.
+   * through its count, so a provider that declares it counts it in `countObjects`. The walk is the only machine
+   * surface the declaration reaches, so it holds only where no other one lists the kind: the kind's role is not
+   * `relation` (MCP's `inspect_schema` and the app's schema read list relations, and `relationKindIds` refuses a
+   * withheld one), the engine is not `MCP_EXPOSABLE`, and the provider has no `queryReadOnly`, the agent's read
+   * path. The fleet declarations guard in `tests/isolated/object-source-declarations.test.ts` holds all three.
    */
   readonly machineNames?: "withheld";
   /**

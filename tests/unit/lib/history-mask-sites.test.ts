@@ -1,6 +1,7 @@
 /**
- * Every place that writes a query history entry passes the statement through the history mask, with the mask
- * resolved from the connection's metadata as it stands, unknown included.
+ * Every place that writes a query history entry passes the statement, and the error text it stores, through the
+ * history mask, with the mask resolved from the connection's metadata as it stands, unknown included: an error
+ * can repeat the statement it refuses.
  *
  * The mask has no effect until a dialect declares credential flags, so no behaviour test of a history site can
  * tell a masked site from an unmasked one before then. This reads the source instead, through git's own file lists
@@ -23,6 +24,20 @@ const CALL = "addToHistory(";
  */
 const MASKED_QUERY =
   /\bquery:\s*maskStatementForHistory\(\s*\w+,\s*historyMaskOf\(\s*metadata\?\.capabilities\s*\)\s*,?\s*\)/;
+
+/**
+ * The one form a history write may store its error text in: through the same mask, a value that may be absent
+ * tested first. Each `errorMessage` property of a call, shorthand included, has to start this way.
+ */
+const MASKED_ERROR =
+  /^errorMessage:\s*(?:\w+\s*===\s*undefined\s*\?\s*undefined\s*:\s*)?maskStatementForHistory\(\s*\w+,\s*historyMaskOf\(\s*metadata\?\.capabilities\s*\)\s*,?\s*\)/;
+
+/** Each `errorMessage` property of a call's object: the name where a key stands, after `{` or `,` and any comments. */
+function errorProperties(call: string): readonly string[] {
+  return [...call.matchAll(/[{,](?:\s|\/\/[^\n]*\n|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)*(errorMessage\b)/g)].map((found) =>
+    call.slice((found.index ?? 0) + found[0].length - found[1].length),
+  );
+}
 
 /** The argument text of every `addToHistory(` call in one source, read to its matching parenthesis. */
 function historyCalls(source: string): readonly string[] {
@@ -66,6 +81,38 @@ describe("query history sites", () => {
     for (const site of sites) {
       expect({ path: site.path, masked: MASKED_QUERY.test(site.call) }).toEqual({ path: site.path, masked: true });
     }
+  });
+
+  test("each one stores its error text through the same mask, and three of them store one", () => {
+    const properties = sites.flatMap((site) => errorProperties(site.call).map((property) => ({ ...site, property })));
+    expect(properties).toHaveLength(3);
+    for (const site of properties) {
+      expect({ path: site.path, masked: MASKED_ERROR.test(site.property) }).toEqual({ path: site.path, masked: true });
+    }
+  });
+
+  test("an error text stored as it came, shorthand or not, does not pass", () => {
+    const masked = (call: string): boolean[] => errorProperties(call).map((property) => MASKED_ERROR.test(property));
+    expect(masked("addToHistory({ query: q, errorMessage })")).toEqual([false]);
+    expect(masked("addToHistory({ query: q, // the server's text\n errorMessage })")).toEqual([false]);
+    expect(masked("addToHistory({ query: q, errorMessage: error.message })")).toEqual([false]);
+    expect(
+      masked(
+        "addToHistory({ query: q, errorMessage: maskStatementForHistory(text, historyMaskOf(metadata?.capabilities)) })",
+      ),
+    ).toEqual([true]);
+    expect(
+      masked(
+        "addToHistory({ query: q, errorMessage: text === undefined ? undefined : maskStatementForHistory(text, historyMaskOf(metadata?.capabilities)) })",
+      ),
+    ).toEqual([true]);
+  });
+
+  test("a property after adjacent block comments is found, and a run of them is read in linear time", () => {
+    expect(errorProperties("addToHistory({ query: q, /* a *//** b **/ errorMessage })")).toEqual(["errorMessage })"]);
+    const started = performance.now();
+    expect(errorProperties(`,/*${"*//*".repeat(30)}*/x`)).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(250);
   });
 
   test("the form is the whole expression: a site that drops the mask or ignores the metadata does not pass", () => {

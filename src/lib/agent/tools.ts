@@ -3179,7 +3179,14 @@ async function walkObjectInventory(
     kinds,
     ...(truncated === undefined ? {} : { truncated }),
     ...(scoped.unread > 0 && level !== undefined
-      ? { unreadContainers: { count: scoped.unread, label: level.label, labelPlural: level.labelPlural } }
+      ? {
+          unreadContainers: {
+            count: scoped.unread,
+            label: level.label,
+            labelPlural: level.labelPlural,
+            read: containers.map((path) => path.join(".")),
+          },
+        }
       : {}),
   };
   return defaultContainer === undefined ? { inventory } : { inventory, defaultContainer };
