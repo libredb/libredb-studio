@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
  * nothing about whether a user can reach it. What makes a new type-id SELECTABLE lives outside the provider, and the
  * dialog's fields for S3 are declarations, which is why this runs in a browser.
  *
- * Both refusals are answered before any socket opens, so no S3 server is needed: a link-local endpoint, refused
+ * Both refusals come from Studio's own connection checks, so no S3 server is needed: a link-local endpoint, refused
  * whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says, and plain HTTP to a host that is not this machine without the consent
  * box. It runs on the second server because Test Connection spends the shared account's per-process rate-limit bucket.
  */
@@ -45,7 +45,7 @@ test.describe("S3 in the connection dialog", () => {
     await expect(dialog.getByText("Connection String", { exact: true })).toHaveCount(0);
   });
 
-  test("a link-local endpoint is refused on Test Connection before any socket opens", async ({ page }) => {
+  test("a link-local endpoint is refused on Test Connection", async ({ page }) => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "S3-compatible object storage", exact: true }).click();
     await dialog.locator("#host").fill("169.254.169.254");
@@ -61,8 +61,9 @@ test.describe("S3 in the connection dialog", () => {
   });
 
   test("plain HTTP to a host that is not this machine is refused without the consent box", async ({ page }) => {
-    // The control for the test above: the same dialog reaches a different refusal from a different host, so the
-    // link-local refusal there is what the address produced.
+    // The control for the test above: the same dialog without the consent box and with a routable private host
+    // reaches the plain HTTP refusal instead, so the sentence in the test above comes from the link-local address,
+    // not from the dialog.
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "S3-compatible object storage", exact: true }).click();
     await dialog.locator("#host").fill("10.0.0.5");

@@ -1,8 +1,9 @@
 /**
  * The AWS CLI's NextToken for ListObjectsV2: standard base64 with padding of the JSON object
  * {"ContinuationToken": <token>}, optionally with boto_truncate_amount. Studio writes the compact form and reads any
- * valid JSON, so a token resumes in either tool. The vectors are two recorded runs of
- * the CLI's own encoder.
+ * valid JSON, so a token resumes in either tool. The six vectors are the CLI's own encoder's output: a MinIO
+ * continuation token without and with boto_truncate_amount, then four short tokens holding a plain word, a DEL
+ * character, non-ASCII text with a surrogate pair, and a line feed with a control character.
  */
 import { describe, expect, test } from "bun:test";
 import { S3_CURSOR_TOKEN_MAX_CHARS } from "@/lib/db/providers/objectstore/s3/constants";

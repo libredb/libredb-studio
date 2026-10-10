@@ -979,7 +979,7 @@ describe("docs/providers/s3.md: the probe, the declarations and the errors, as t
 });
 
 /**
- * The backlog ids section 13 cites, each as a link to its entry (Task 9 holds the anchors), under the PR's id mapping;
+ * The backlog ids section 13 cites, each as a link to its entry, under the PR's id mapping;
  * D273 and D274 are the Parquet schema and row-group entries the measured caps left.
  */
 const LIMITATION_IDS: readonly string[] = [

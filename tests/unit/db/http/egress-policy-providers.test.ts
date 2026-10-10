@@ -38,8 +38,9 @@ const providers = [
   // the guard is reached; with neither, the guard's DatabaseConfigError passes through toInfluxError unchanged.
   ["InfluxDB", "influxdb", InfluxDBProvider],
   ["InfluxDB 3", "influxdb3", InfluxDB3Provider],
-  // No key pair (the user-less set): an unsigned connection, so neither the half-pair refusal nor the plain-HTTP
-  // refusal fires first, and `localhost` is loopback; the pinned bucket "test" makes the probe one ListObjectsV2.
+  // No key pair (the user-less set): an unsigned connection, so the half-pair refusal does not fire first, and
+  // `localhost` is loopback, so the plain-HTTP refusal does not either; the pinned bucket "test" makes the probe one
+  // ListObjectsV2.
   ["S3-compatible object storage", "s3", S3Provider],
 ] as const;
 

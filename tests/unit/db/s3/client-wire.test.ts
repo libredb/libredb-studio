@@ -243,7 +243,7 @@ test("x-amz-date is read when a queued request leaves the queue", async () => {
   for (const request of received) verify(request);
 });
 
-// -- the same requests from a Node child (on Node and Bun) ---------------------------------------------------------
+// -- the same requests from a Node child ---------------------------------------------------------------------------
 
 /** What the child is handed: the modules it bundles, because Node loads neither TypeScript with `@/` imports nor this file. */
 interface WireDeps {
@@ -297,7 +297,7 @@ async function runWire(deps: WireDeps, plan: WirePlan): Promise<{ readonly runti
   await Promise.all([queued.listBuckets(call()), queued.getBucketLocation("sales", call())]);
   client.close();
   queued.close();
-  return { runtime: typeof Bun === "undefined" ? `node ${process.version}` : `bun ${Bun.version}` };
+  return { runtime: `node ${process.version}` };
 }
 
 /** What the listener must receive from `runWire`, request by request, the same targets the Bun table pins. */

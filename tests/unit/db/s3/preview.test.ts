@@ -1,5 +1,5 @@
 /**
- * The S3 object preview: its limits, one name per shared number, and, from Task 18 on,
+ * The S3 object preview: its limits, one name per shared number,
  * previewObject's dispatch and the checks every ranged answer passes before its bytes are used.
  */
 import { describe, expect, test } from "bun:test";

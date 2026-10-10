@@ -1,6 +1,6 @@
 # S3 provider fixtures
 
-Every file here is test data for `tests/unit/db/s3/` and states where it came from.
+Every file here is test data for `tests/unit/db/s3/`, except `captures/`, which the replay in `tests/integration/db/s3-provider.test.ts` reads, and states where it came from.
 
 ## sigv4-suite.json
 

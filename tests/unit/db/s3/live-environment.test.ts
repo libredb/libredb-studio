@@ -2046,7 +2046,7 @@ describe("the S3 captures and their harness", () => {
 const LIVE_CHECK = "tests/live/s3-live-check.ts";
 
 describe("the live check tests/live/s3-live-check.ts", () => {
-  test("refuses an argument it does not accept before any socket opens", () => {
+  test("refuses an argument it does not accept with exit 2", () => {
     for (const args of [
       ["--target", "aws"],
       ["--target", "10.0.0.5:9000"],
@@ -2058,7 +2058,7 @@ describe("the live check tests/live/s3-live-check.ts", () => {
     }
   });
 
-  test("silo-tls needs --ca and garage needs --garage-keys, each refused before any socket opens", () => {
+  test("silo-tls needs --ca and garage needs --garage-keys, each refused with exit 2 naming the option", () => {
     for (const [args, message] of [
       [["--target", "silo-tls"], "--ca"],
       [["--target", "garage"], "--garage-keys"],

@@ -41,7 +41,7 @@ const SUPPORT_CLAIM = /\b(supports?|works with|compatible with|certified for)\s+
 /** Rule (c): a YAML list item of one keyword, such as `  - s3`, is not a sentence. */
 const KEYWORD_LINE = /^\s*-\s+[a-z0-9-]+\s*$/;
 
-/** The sentences of `text`: one per line, a line split again after a full stop, code spans and the API names out (rule (c)). */
+/** The sentences of `text`: one per line, keyword lines dropped (rule (c)), a line split again after a full stop, code spans and the API names out. */
 function sentences(text: string): string[] {
   return text
     .split("\n")
