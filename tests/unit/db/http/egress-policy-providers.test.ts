@@ -12,6 +12,7 @@ import { LibSQLHranaTransport } from "@/lib/db/providers/sql/libsql/hrana-transp
 import { CouchbaseProvider } from "@/lib/db/providers/document/couchbase";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus";
 import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
+import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import type { DatabaseConnection } from "@/lib/db/types";
 
 const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
@@ -37,10 +38,13 @@ const providers = [
   // the guard is reached; with neither, the guard's DatabaseConfigError passes through toInfluxError unchanged.
   ["InfluxDB", "influxdb", InfluxDBProvider],
   ["InfluxDB 3", "influxdb3", InfluxDB3Provider],
+  // No key pair (the user-less set): an unsigned connection, so neither the half-pair refusal nor the plain-HTTP
+  // refusal fires first, and `localhost` is loopback; the pinned bucket "test" makes the probe one ListObjectsV2.
+  ["S3-compatible object storage", "s3", S3Provider],
 ] as const;
 
-/** A user only where the provider takes one with no password: the two InfluxDB types refuse that before any guard. */
-const USERLESS: ReadonlySet<string> = new Set(["influxdb", "influxdb3"]);
+/** A user only where the provider takes one with no password: the two InfluxDB types and S3 refuse that before any guard. */
+const USERLESS: ReadonlySet<string> = new Set(["influxdb", "influxdb3", "s3"]);
 
 for (const [name, type, Provider] of providers) {
   for (const secure of [false, true]) {
