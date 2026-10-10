@@ -1145,7 +1145,7 @@ describe("declared field rules", () => {
     ["user", "a,b"],
     ["user", "a=b"],
     ["user", "ÅKIA1234"],
-    ["user", "AKIA​EXAMPLE"],
+    ["user", "AKIA\u200BEXAMPLE"],
     ["user", "AKIA1234\n"],
     ["database", "sales"],
     ["database", "Legacy_Bucket.Name"],

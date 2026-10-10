@@ -898,6 +898,18 @@ describe("Sidebar", () => {
     expect(getByTestId("object-tree").getAttribute("data-actions")).toBe("");
   });
 
+  test("control: the same declaration DOES offer it to the standalone shell", () => {
+    const props = createDefaultProps({
+      activeConnection: mockPostgresConnection,
+      metadata: walkMetadata(),
+    });
+    const { getByRole, getByTestId } = render(<Sidebar {...props} />);
+
+    // The control that makes the assertion above non-vacuous: same metadata, no `objectSource`.
+    expect(getByRole("tab", { name: "Keys" })).toBeDefined();
+    expect(getByTestId("object-tree").getAttribute("data-actions")).toBe("onBrowseKeys");
+  });
+
   test("offers no Keys tab to a shell that owns the reads when the declaration is S3's level walk", () => {
     // The embedded workspace's host answers the tree's reads itself and ships no /api/db/keys/scan, so S3's level walk
     // (a `levels` declaration with the bucket as its root) is withheld exactly as a flat walk is.
@@ -918,18 +930,6 @@ describe("Sidebar", () => {
     expect(queryByRole("tab", { name: "Keys" })).toBeNull();
     expect(queryByTestId("key-browser")).toBeNull();
     expect(getByTestId("object-tree").getAttribute("data-actions")).toBe("");
-  });
-
-  test("control: the same declaration DOES offer it to the standalone shell", () => {
-    const props = createDefaultProps({
-      activeConnection: mockPostgresConnection,
-      metadata: walkMetadata(),
-    });
-    const { getByRole, getByTestId } = render(<Sidebar {...props} />);
-
-    // The control that makes the assertion above non-vacuous: same metadata, no `objectSource`.
-    expect(getByRole("tab", { name: "Keys" })).toBeDefined();
-    expect(getByTestId("object-tree").getAttribute("data-actions")).toBe("onBrowseKeys");
   });
 
   test("adds the one action it owns to the handlers the shell handed down, and no others", () => {
