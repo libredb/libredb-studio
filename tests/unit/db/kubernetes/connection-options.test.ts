@@ -134,7 +134,7 @@ describe("credentials", () => {
 describe("the API path", () => {
   test.each([
     "k8s/clusters/c-1",
-    "/",
+    "//",
     "//k8s",
     "/k8s//c-1",
     "/k8s/./c-1",
@@ -161,6 +161,11 @@ describe("the API path", () => {
   test("Rancher's prefix is accepted", () => {
     expect(apiPathRefusal("/k8s/clusters/c-m-abc12")).toBeUndefined();
   });
+
+  test("a lone / is the empty prefix, its one trailing / removed", () => {
+    expect(apiPathRefusal("/")).toBeUndefined();
+    expect(readClusterEndpoint(kubernetesConnection({ apiPath: "/" }), CONTEXT).apiPath).toBe("");
+  });
 });
 
 describe("names", () => {
@@ -176,6 +181,18 @@ describe("names", () => {
     expect(parseNamespaceList("shop, Web")).toEqual({ refusal: S.namespacesShape });
     expect(parseNamespaceList("shop shop")).toEqual({ refusal: S.namespacesRepeat });
     expect(refusal(kubernetesConnection({ namespaces: "shop, Web" })).message).toBe(S.namespacesShape);
+  });
+
+  test("a Namespaces list of up to 1,000 entries is read; one more is refused with a sentence naming the cap", () => {
+    const names = (count: number) => Array.from({ length: count }, (_unused, index) => `ns-${index}`).join(",");
+    expect(parseNamespaceList(names(1_000))).toHaveLength(1_000);
+    expect(parseNamespaceList(names(1_001))).toEqual({ refusal: S.namespacesTooMany });
+    expect(S.namespacesTooMany).toBe(
+      "Namespaces lists more than 1,000 namespaces, the most the tree shows; list fewer. Nothing was sent.",
+    );
+    expect(refusal(kubernetesConnection({ database: "ns-0", namespaces: names(1_001) })).message).toBe(
+      S.namespacesTooMany,
+    );
   });
 
   test("a default namespace outside a set list is refused, the empty field reading default", () => {

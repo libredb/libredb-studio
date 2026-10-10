@@ -391,16 +391,18 @@ export interface DatabaseConnection {
   region?: string;
   /**
    * Kubernetes only: a server path prefix every API request is sent under, such as `/k8s/clusters/c-1` behind a
-   * Rancher proxy. It starts with `/`, names no `api`, `apis`, `proxy`, `namespaces`, `nodes`, `services`, `pods`,
-   * `openapi` or `version` segment, and carries no `//`, `.` or `..` segment, `%`, query or fragment; the provider
-   * refuses anything else before any request. It picks which cluster answers behind one host and port, so it is part
-   * of the connection's identity. Absent and empty are one value. Read by no other engine.
+   * Rancher proxy. It starts with `/` and names segments of letters, digits, dots, hyphens, underscores, tildes, colons
+   * or `@`, with no `api`, `apis`, `proxy`, `namespaces`, `nodes`, `services`, `pods`, `openapi` or `version` segment,
+   * no `//`, `.` or `..` segment, `%`, query or fragment; the provider refuses anything else before any request. One
+   * trailing `/` is removed, so `/` alone is no prefix. It picks which cluster answers behind one host and port, so it
+   * is part of the connection's identity. Absent and empty are one value. Read by no other engine.
    */
   apiPath?: string;
   /**
-   * Kubernetes only: the namespaces the object tree lists, DNS-1123 labels separated by commas or spaces. When set,
-   * the provider makes no namespace list call, which a namespace-bound identity may not make. It changes what is
-   * shown, not which cluster is asked or as whom. Absent and empty are one value. Read by no other engine.
+   * Kubernetes only: the namespaces the object tree lists, at most 1,000 DNS-1123 labels separated by commas or
+   * spaces. When set, the provider makes no namespace list call, which a namespace-bound identity may not make. It
+   * changes what is shown, not which cluster is asked or as whom. Absent and empty are one value. Read by no other
+   * engine.
    */
   namespaces?: string;
   /**

@@ -27,7 +27,12 @@ import {
   type TunnelFarEnd,
   type WithTunnelFarEnd,
 } from "@/lib/types";
-import { KUBERNETES_DEFAULT_PORT, KUBERNETES_MAX_IN_FLIGHT, KUBERNETES_TYPE } from "./limits";
+import {
+  KUBERNETES_DEFAULT_PORT,
+  KUBERNETES_MAX_IN_FLIGHT,
+  KUBERNETES_TREE_OBJECT_CAP,
+  KUBERNETES_TYPE,
+} from "./limits";
 
 /** Everything a request of this connection is built from, validated. */
 export interface ClusterEndpoint {
@@ -100,6 +105,8 @@ export const KUBERNETES_CONNECTION_SENTENCES = Object.freeze({
   namespacesShape:
     "Namespaces must list DNS-1123 labels separated by commas or spaces: at most 63 lower-case letters, digits or hyphens each, starting and ending with a letter or digit. Nothing was sent.",
   namespacesRepeat: "Namespaces lists one namespace twice; remove the repeat. Nothing was sent.",
+  namespacesTooMany:
+    "Namespaces lists more than 1,000 namespaces, the most the tree shows; list fewer. Nothing was sent.",
   defaultOutsideList:
     "The default namespace is not in the Namespaces list: add it to the list, or set Default namespace to a listed one (an empty Default namespace means default). Nothing was sent.",
   plaintextRemote:
@@ -117,11 +124,14 @@ export const KUBERNETES_CONNECTION_SENTENCES = Object.freeze({
 
 const S = KUBERNETES_CONNECTION_SENTENCES;
 
-/** The API path's refusal sentence, or undefined when it may be used; the dialog has no rule for this field. */
+/**
+ * The API path's refusal sentence, or undefined when it may be used; the dialog has no rule for this field. One
+ * trailing `/` is removed, so `/` alone is the empty prefix.
+ */
 export function apiPathRefusal(value: string): string | undefined {
   if (!value.startsWith("/") || /[%?#]/.test(value)) return S.apiPathShape;
-  const trimmed = value.length > 1 && value.endsWith("/") ? value.slice(0, -1) : value;
-  if (trimmed === "/") return S.apiPathShape;
+  if (value === "/") return undefined;
+  const trimmed = value.endsWith("/") ? value.slice(0, -1) : value;
   const segments = trimmed.slice(1).split("/");
   if (
     segments.some((segment) => segment === "" || segment === "." || segment === ".." || !API_PATH_SEGMENT.test(segment))
@@ -131,11 +141,15 @@ export function apiPathRefusal(value: string): string | undefined {
   return undefined;
 }
 
-/** The namespace list's entries, or the refusal sentence; the dialog's rule is a pinned copy of this pattern. */
+/**
+ * The namespace list's entries, or the refusal sentence; the dialog's rule is a pinned copy of this pattern. The
+ * count is checked here alone: the tree lists at most 1,000 namespaces, so a longer list is refused, never cut.
+ */
 export function parseNamespaceList(value: string): readonly string[] | { readonly refusal: string } {
   const entries = value.split(/[\s,]+/).filter((entry) => entry !== "");
   if (entries.some((entry) => !DNS1123_LABEL.test(entry))) return { refusal: S.namespacesShape };
   if (new Set(entries).size !== entries.length) return { refusal: S.namespacesRepeat };
+  if (entries.length > KUBERNETES_TREE_OBJECT_CAP) return { refusal: S.namespacesTooMany };
   return entries;
 }
 

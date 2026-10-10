@@ -253,7 +253,8 @@ export const S3_FIELD_HINTS: Readonly<Partial<Record<ConnectionField, string>>> 
 /**
  * Kubernetes' form checks, in the provider's own sentences. The provider module is server code the dialog cannot
  * import, so each pattern is a copy of its rule, and tests/unit/lib/db-ui-config.test.ts holds each copy and sentence
- * to the provider's. The API path, the TLS server name and the token are checked by the provider at Test Connection.
+ * to the provider's. The API path, the TLS server name and the token are checked by the provider at Test Connection,
+ * and so is the count of the Namespaces list (at most 1,000), which a pattern does not hold.
  */
 export const KUBERNETES_FIELD_RULES: Readonly<Partial<Record<ConnectionField, ConnectionFieldRule>>> = Object.freeze({
   database: {
