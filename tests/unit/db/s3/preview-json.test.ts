@@ -61,6 +61,14 @@ describe("ndjsonRows", () => {
     });
   });
 
+  test("a cut read of blank lines that ends on a line feed dropped no line, so it has no cut notice", () => {
+    expect(ndjsonRows(input("\n\n", { ended: false, readBytes: 2 }))).toEqual({ kind: "text", notices: [] });
+    expect(ndjsonRows(input("\n\n  ", { ended: false, readBytes: 4 }))).toEqual({
+      kind: "text",
+      notices: ["The last line was cut by the 4-byte read and is not shown."],
+    });
+  });
+
   test("CRLF lines, blank lines skipped and a leading byte order mark removed", () => {
     expect(ndjsonRows(input('﻿{"a":1}\r\n\r\n  \n{"a":2}\r\n'))).toEqual({
       kind: "rows",

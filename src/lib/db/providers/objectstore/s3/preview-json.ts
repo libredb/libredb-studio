@@ -105,7 +105,7 @@ export function ndjsonRows(input: RowsInput): RowsOutcome {
       if (values.length <= input.maxRows) bad += 1;
     }
   }
-  if (values.length === 0) return { kind: "text", notices: input.ended ? [] : [lineCut] };
+  if (values.length === 0) return { kind: "text", notices: cut ? [lineCut] : [] };
   const { built, valueName } = rowsOfValues(values, input);
   const notices: string[] = [];
   if (cut) notices.push(lineCut);
