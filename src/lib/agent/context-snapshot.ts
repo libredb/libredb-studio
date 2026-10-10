@@ -1296,7 +1296,7 @@ function renderColumn(table: AgentInventoryObject, column: ColumnSchema): string
 /**
  * What the run is told ABOUT the inventory, as opposed to what is in it.
  *
- * Five sentences, none of them decoration, each closing one way a model reads a true
+ * Seven sentences, none of them decoration, each closing one way a model reads a true
  * list as a true statement about the database:
  *
  *  - **Incompleteness.** The bulk read bounds both the listings it issues and the objects
@@ -1331,6 +1331,12 @@ function renderColumn(table: AgentInventoryObject, column: ColumnSchema): string
  *    read only part of (#1089 4.7), so a read of the whole of it is refused: an etcd group the
  *    user's grants do not cover. Each such line carries the mark and this note says what it
  *    means, and neither names what the grants read, which may be a key (E13).
+ *  - **A kind whose names are withheld.** `ObjectKindSpec.machineNames` keeps a kind's object names off
+ *    every machine surface, so the walk counted it and listed none of it. The note says how many were
+ *    counted, or that none was, and that none is below, and it is not gated on what was rendered, for the
+ *    reason above.
+ *  - **Containers a scoped walk did not read.** `ProviderCapabilities.agentWalkScope` reads the
+ *    session-default container and the ones the provider names, and the note says how many others exist.
  *
  * Inside the fence with the inventory rather than in the preface, the same as the omission
  * notice already is: each one is about the lines beside it, and the bound belongs to the
@@ -1338,10 +1344,16 @@ function renderColumn(table: AgentInventoryObject, column: ColumnSchema): string
  */
 function inventoryNotes(inventory: AgentInventory, shown: readonly AgentInventoryObject[]): readonly string[] {
   const notes: string[] = [];
-  const { truncated } = inventory;
+  const { truncated, unreadContainers } = inventory;
   if (truncated !== undefined) {
     notes.push(
       `This inventory is incomplete: the reading stopped at a count of ${truncated.limit} (${truncated.reason}), so an object that is not listed below may still exist. Do not read an absence from this list as an absence in the database.`,
+    );
+  }
+  if (unreadContainers !== undefined) {
+    const word = unreadContainers.count === 1 ? unreadContainers.label : unreadContainers.labelPlural;
+    notes.push(
+      `Not read: ${unreadContainers.count} other ${word}. This inventory covers only the ${unreadContainers.labelPlural} its entries are named under, so an object in any other one is not listed below. Do not read its absence as an absence in the database.`,
     );
   }
   // Each kind note says "the X BELOW are", so it is gated on the kind being in what was
@@ -1355,6 +1367,17 @@ function inventoryNotes(inventory: AgentInventory, shown: readonly AgentInventor
     if (kind.unavailable !== undefined) {
       notes.push(
         `The ${kind.labelPlural} could not be read: ${kind.unavailable}. Do not read their absence below as an absence in the database.`,
+      );
+    }
+    // Not gated on what was rendered either: a withheld kind has nothing below it by design.
+    if (kind.withheldCount !== undefined) {
+      const floor = kind.sampledFrom !== undefined || kind.withheldUncounted === true;
+      notes.push(
+        `The names of the ${kind.labelPlural} are withheld from this inventory: this server counted ${floor ? "at least " : ""}${kind.withheldCount} of them in what it read, and none is listed below. Do not read their absence below as an absence in the database.`,
+      );
+    } else if (kind.withheldUncounted === true) {
+      notes.push(
+        `The names of the ${kind.labelPlural} are withheld from this inventory and were not counted: none is listed below. Do not read their absence below as an absence in the database.`,
       );
     }
     if (!rendered.has(kind.id)) continue;

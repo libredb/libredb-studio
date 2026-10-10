@@ -587,6 +587,16 @@ export interface AgentInventoryKind {
   readonly derivedGroupings?: boolean;
   /** The provider's sentence for a kind that could not be read. Present means none of it is listed. */
   readonly unavailable?: string;
+  /**
+   * How many objects of a kind whose names are withheld from machine surfaces (`ObjectKindSpec.machineNames`) the
+   * walk counted. Present means none of the kind is listed, by design rather than by a refusal.
+   */
+  readonly withheldCount?: number;
+  /**
+   * A kind whose names are withheld that some container read gave no count for, so the walk skipped it there
+   * uncounted: `withheldCount`, where present, is then a floor, and where absent nothing of the kind was counted.
+   */
+  readonly withheldUncounted?: true;
 }
 
 /**
@@ -612,6 +622,11 @@ export interface AgentInventory {
   readonly kinds?: readonly AgentInventoryKind[];
   /** Present only where a bound actually bit. Absent is a claim of completeness. */
   readonly truncated?: { readonly limit: number; readonly reason: string };
+  /**
+   * The containers a scoped walk did not read (`ProviderCapabilities.agentWalkScope`), counted and named by the
+   * deepest container level's own words. Absent means every container was read.
+   */
+  readonly unreadContainers?: { readonly count: number; readonly label: string; readonly labelPlural: string };
   /**
    * The container the session is IN, where the reading that produced this knew it (#789).
    *

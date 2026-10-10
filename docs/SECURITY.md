@@ -630,7 +630,8 @@ These are real, current, and not oversights. Each is a decision with a reason.
   Such a statement is refused in the browser before the confirmation dialog, on every path the editor takes: Run, Proceed, Explain, Load More and playground mode, and the embedded workspace's four run paths.
   It reaches no route and no host callback, and it is not written to query history.
   `POST /api/db/query` answers 413 for a text over the bound and `POST /api/db/multi-query` refuses such a type with 400, so a caller outside the editor meets the same bound.
-  A statement the editor accepts is written to history whole, as on every engine, even when the server then refuses it.
+  A statement the editor accepts is written to history whole, as on every engine, even when the server then refuses it, except for the values of the credential flags its dialect declares as `historyMask` on its `QUERY_DIALECTS` record, which are replaced by `***` before the entry is stored, in comments too ([`src/lib/history-mask.ts`](../src/lib/history-mask.ts)); no shipped dialect declares one yet.
+  That mask reaches the standalone app's query history only: a tab keeps what the user typed, a saved query keeps what the user saved, and the embedded workspace writes no history of its own; a statement run before the connection's metadata has loaded is stored under every dialect's declared flags at once, so history may then hold less than was typed, never a credential.
   The Milvus, Qdrant, InfluxDB (InfluxQL), Oxia and S3 rows declare both (rows 3.11, 3.12, 3.15 and 3.18); no other shipped engine declares either.
 - **Milvus is reached over a gRPC client of Studio's own.**
   A Milvus password or token over no TLS is refused unless the host is a loopback address or `localhost`, or an SSH tunnel carries the connection.
