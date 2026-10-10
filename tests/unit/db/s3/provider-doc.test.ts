@@ -17,12 +17,38 @@ import { parse as parseYaml } from "yaml";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { connectionFieldHint, DB_UI_CONFIG, hostUriSchemes, offersSshTunnel, readOnlyHint } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import { buildS3ConnectionOptions } from "@/lib/db/providers/objectstore/s3/connection-options";
+import { S3_COMMAND_TABLE, type S3FlagSpec } from "@/lib/db/providers/objectstore/s3/console/commands";
+import {
+  S3_ECHO_WORD_CHARS,
+  S3_MAX_BUCKET_BYTES,
+  S3_MAX_PAGES_PER_RUN,
+  S3_MAX_TEXT_BYTES,
+  S3_MAX_TOKEN_CHARS,
+} from "@/lib/db/providers/objectstore/s3/console/constants";
+import { s3Refusal } from "@/lib/db/providers/objectstore/s3/console/guard";
 import {
   S3_ACCESS_KEY_ID_MAX_CHARS,
   S3_ACCESS_KEY_ID_MIN_CHARS,
+  S3_BUCKET_LIST_RESPONSE_BYTES,
+  S3_CELL_CHARS,
+  S3_CURSOR_TOKEN_MAX_CHARS,
   S3_DEFAULT_PORT,
   S3_DEFAULT_REGION,
+  S3_HEALTH_DEADLINE_MS,
+  S3_KEY_MAX_BYTES,
+  S3_KEY_SCAN_MAX_COUNT,
+  S3_LIST_RESPONSE_BYTES,
+  S3_MAX_BUCKETS_READ,
+  S3_PREVIEW_DEFAULT_ROWS,
+  S3_RESULT_MAX_ROWS,
+  S3_SERVER_TEXT_CHARS,
+  S3_SHOWN_NAME_CHARS,
+  S3_SMALL_RESPONSE_BYTES,
+  S3_SURFACE_DEADLINE_MS,
+  S3_XML_MAX_DEPTH,
+  S3_XML_MAX_ELEMENTS,
 } from "@/lib/db/providers/objectstore/s3/constants";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
 import { SeedConfigSchema } from "@/lib/seed/types";
@@ -372,5 +398,114 @@ describe("docs/providers/s3.md: the connection, as the dialog and the builder st
     expect(flat(sectionOf(DOC, "### 4.3 TLS"))).toContain(
       `The SSL panel is the shared one: ${modes.map((m) => `\`${m}\``).join(", ")}, with a custom CA and a client certificate.`,
     );
+  });
+});
+
+/** A flag as section 5.2 writes it: the name, then what it takes and whether it is required. */
+function flagCell(flag: S3FlagSpec): string {
+  const takes: string[] = [];
+  if (flag.takes === "boolean") takes.push("no value");
+  if (flag.values !== undefined) takes.push(flag.values.map((value) => `\`${value}\``).join(" or "));
+  if (flag.integer !== undefined) takes.push(`${n(flag.integer.min)} to ${n(flag.integer.max)}`);
+  if (flag.required === true) takes.push("required");
+  return takes.length === 0 ? `\`${flag.name}\`` : `\`${flag.name}\` (${takes.join(", ")})`;
+}
+
+/** One row of section 5.2, built from one entry of the exported command table. */
+function commandRow(entry: (typeof S3_COMMAND_TABLE)[number]): string {
+  const lead = entry.service === "studio" ? entry.operation : `aws ${entry.service} ${entry.operation}`;
+  const command = entry.arguments === "" ? lead : `${lead} ${entry.arguments}`;
+  const flags = entry.flags.length === 0 ? "none" : entry.flags.map(flagCell).join("; ");
+  return `| \`${command}\` | ${flags} |`;
+}
+
+/** The commands section 5.3 must cover: one per refusal family of the console (writes, unknown commands, flags). */
+const REQUIRED_REFUSALS: readonly string[] = [
+  "aws s3 rm s3://sales/2026/orders.csv",
+  "aws s3 cp s3://sales/2026/orders.csv .",
+  "aws s3 presign s3://sales/2026/orders.csv",
+  "aws s3api put-object --bucket sales --key a.txt",
+  "aws s3api get-object --bucket sales --key a.txt a.txt",
+  "aws s3api get-object-attributes --bucket sales --key a.txt",
+  "aws s3api select-object-content --bucket sales --key a.csv",
+  "aws s3api list-objects --bucket sales",
+  "aws s3api get-bucket-policy --bucket sales",
+  "aws ec2 describe-instances",
+  "aws preview s3://sales/2026/orders.csv",
+  "aws s3 ls --profile prod",
+  "aws s3 ls --no-sign-request",
+  "aws s3 ls --debug",
+  "aws s3api list-buckets --query Buckets",
+  "aws s3api list-objects-v2 --bucket sales --start-after 2026/",
+  "aws s3api list-object-versions --bucket sales --page-size 10",
+  "aws s3api head-object --bucket sales --key a.txt --version-id 1",
+  "aws s3api head-object --bucket sales --key a.txt --sse-customer-key k",
+];
+
+/** Every bound section 5.6 names, with the value its module exports. */
+const BOUNDS: Readonly<Record<string, number>> = {
+  S3_MAX_TEXT_BYTES,
+  S3_RESULT_MAX_ROWS,
+  S3_KEY_SCAN_MAX_COUNT,
+  S3_PREVIEW_DEFAULT_ROWS,
+  S3_KEY_MAX_BYTES,
+  S3_CELL_CHARS,
+  S3_MAX_PAGES_PER_RUN,
+  S3_MAX_TOKEN_CHARS,
+  S3_CURSOR_TOKEN_MAX_CHARS,
+  S3_MAX_BUCKET_BYTES,
+  S3_ECHO_WORD_CHARS,
+  S3_MAX_BUCKETS_READ,
+  S3_BUCKET_LIST_RESPONSE_BYTES,
+  S3_LIST_RESPONSE_BYTES,
+  S3_SMALL_RESPONSE_BYTES,
+  S3_XML_MAX_DEPTH,
+  S3_XML_MAX_ELEMENTS,
+  S3_SURFACE_DEADLINE_MS,
+  S3_HEALTH_DEADLINE_MS,
+  S3_SERVER_TEXT_CHARS,
+  S3_SHOWN_NAME_CHARS,
+};
+
+describe("docs/providers/s3.md: the query interface, as the console's modules state it", () => {
+  test("15. section 5.2 has exactly one row per command of the exported table", () => {
+    const commands = sectionOf(DOC, "### 5.2 Commands and flags");
+    const rows = commands.split("\n").filter((line) => /^\| `(aws |preview)/.test(line));
+    expect(rows).toEqual(S3_COMMAND_TABLE.map(commandRow));
+  });
+
+  test("16. every row of section 5.3 is the console's own refusal of its input, and every family is there", () => {
+    const refused = sectionOf(DOC, "### 5.3 Refused commands");
+    const rows = refused.split("\n").filter((line) => /^\| `[^`]+` \| /.test(line));
+    const inputs = rows.map((line) => /^\| `([^`]+)` \| /.exec(line)?.[1] ?? "");
+    for (const input of REQUIRED_REFUSALS) expect(inputs, input).toContain(input);
+    for (const [at, input] of inputs.entries()) {
+      const sentence = s3Refusal(input);
+      expect(sentence, input).toBeDefined();
+      expect(rows[at], input).toBe(`| \`${input}\` | ${sentence} |`);
+    }
+  });
+
+  test("17. every bound of section 5.6 is its constant, and the text bound is the editor's", () => {
+    const bounds = sectionOf(DOC, "### 5.6 Bounds");
+    for (const [name, value] of Object.entries(BOUNDS)) {
+      const row = rowOf(bounds, `\`${name}\``);
+      expect(row, name).toBeDefined();
+      expect(row, name).toContain(`| ${n(value)} |`);
+    }
+    expect(consoleTextByteLimit("s3")).toBe(S3_MAX_TEXT_BYTES);
+  });
+
+  test("18. section 5.5 states the three size spellings", () => {
+    expect(flat(sectionOf(DOC, "### 5.5 Result shape"))).toContain(
+      "`ls --human-readable` writes the AWS CLI's spelling (1,280 bytes is `1.2 KiB`), the Keys panel writes Studio's shared spelling (`1.25 KB`), and the Metadata part and the `s3api` grids write bytes.",
+    );
+  });
+
+  test("19. every example of section 5.4 is a command the console accepts", () => {
+    const examples = sectionOf(DOC, "### 5.4 Examples");
+    const blocks = [...examples.matchAll(/```s3\n([\s\S]*?)```/g)].map((match) => match[1].trimEnd());
+    expect(blocks.length).toBeGreaterThanOrEqual(9);
+    for (const block of blocks) expect(s3Refusal(block), block).toBeUndefined();
   });
 });
