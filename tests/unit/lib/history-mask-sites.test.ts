@@ -34,7 +34,7 @@ const MASKED_ERROR =
 
 /** Each `errorMessage` property of a call's object: the name where a key stands, after `{` or `,` and any comments. */
 function errorProperties(call: string): readonly string[] {
-  return [...call.matchAll(/[{,](?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*(errorMessage\b)/g)].map((found) =>
+  return [...call.matchAll(/[{,](?:\s|\/\/[^\n]*\n|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)*(errorMessage\b)/g)].map((found) =>
     call.slice((found.index ?? 0) + found[0].length - found[1].length),
   );
 }
@@ -106,6 +106,13 @@ describe("query history sites", () => {
         "addToHistory({ query: q, errorMessage: text === undefined ? undefined : maskStatementForHistory(text, historyMaskOf(metadata?.capabilities)) })",
       ),
     ).toEqual([true]);
+  });
+
+  test("a property after adjacent block comments is found, and a run of them is read in linear time", () => {
+    expect(errorProperties("addToHistory({ query: q, /* a *//** b **/ errorMessage })")).toEqual(["errorMessage })"]);
+    const started = performance.now();
+    expect(errorProperties(`,/*${"*//*".repeat(30)}*/x`)).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(250);
   });
 
   test("the form is the whole expression: a site that drops the mask or ignores the metadata does not pass", () => {
