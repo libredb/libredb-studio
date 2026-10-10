@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, Apache Cassandra, Prometheus, InfluxDB, Apache Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia** from your browser, with AI query assistance, RBAC and OIDC SSO.
+Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, Apache Cassandra, Prometheus, InfluxDB, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia and S3-compatible object storage** from your browser, with AI query assistance, RBAC and OIDC SSO.
 
 ---
 
@@ -109,8 +109,8 @@ Every one of those tags is published on three bases, and the suffix is appended 
 
 ## Supported databases
 
-Twenty-seven external engines share one interface.
-The twenty-eighth row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
+Twenty-eight external engines share one interface.
+The twenty-ninth row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -121,7 +121,7 @@ The twenty-eighth row is the embedded LibreDB store: it ships inside the image, 
 | **SQL Server** | `mssql` | `OFFSET FETCH`, `sys.dm_*` DMVs, `DBCC CHECKDB`, Azure SQL auto-detect |
 | **SQLite** | `bun:sqlite` / `node:sqlite` | File-based or in-memory databases; the driver follows the runtime, with a `LIBREDB_SQLITE_DRIVER` override |
 | **libSQL** | none — HTTP | Full SQL IDE over the Hrana protocol against a libSQL server or Turso Cloud; SQLite's dialect across a network, with real per-table bytes from `dbstat` and an auth token instead of a password |
-| **DuckDB** | `@duckdb/node-api` (a native N-API addon) | Full SQL IDE against a local DuckDB file or `:memory:` on the server this image runs on; `EXPLAIN (FORMAT JSON)` plan trees, `duckdb_*` catalog introspection, real per-table bytes, and cancellation through the driver's `interrupt()`. No slow-query or session panel, because DuckDB publishes neither. One operating-system process may hold the file |
+| **DuckDB** | `@duckdb/node-api` (a native N-API addon) | Full SQL IDE on a DuckDB file or `:memory:` on the server this image runs on: `EXPLAIN (FORMAT JSON)` plans, `duckdb_*` introspection, real per-table bytes, cancellation through `interrupt()`. No slow-query or session panel, because DuckDB publishes neither. One process may hold the file |
 | **MongoDB** | `mongodb` | JSON query editor, find/aggregate/insert/update/delete |
 | **Redis** | `ioredis` | Command editor, non-blocking `SCAN` key browser, `INFO` monitoring, per-type command generation |
 | **Couchbase** | none — HTTP | SQL++ query editor, bucket/scope/collection browser, cluster health |
@@ -131,7 +131,7 @@ The twenty-eighth row is the embedded LibreDB store: it ships inside the image, 
 | **OpenSearch** | none — HTTP | The same read-only IDE over `_plugins/_sql`, from the same provider module; `LIMIT … OFFSET` paging works here |
 | **Trino** | none — HTTP | Full SQL IDE over the client protocol, every configured catalog in one tree, `EXPLAIN (FORMAT JSON)` plans, `system.runtime` monitoring and query cancellation |
 | **Databend** | none, HTTP | SQL IDE over its own query API, self-hosted or a Databend Cloud warehouse; `system.*` monitoring and `KILL QUERY`. No keys, so no inline row edits |
-| **Apache Cassandra** | `cassandra-driver` (pure JS) | CQL editor over the native protocol, keyspace browser with partition and clustering keys marked, `system_views` monitoring. No row counts and no sizes: the only figures Cassandra publishes are partition estimates and whole mebibytes, so neither is shown rather than shown wrong |
+| **Apache Cassandra** | `cassandra-driver` (pure JS) | CQL editor over the native protocol, keyspace browser with partition and clustering keys marked, `system_views` monitoring. No row counts or sizes: Cassandra publishes only partition estimates and whole mebibytes, so neither is shown rather than shown wrong |
 | **Prometheus** | none, HTTP | PromQL editor, metric, rule and target browser |
 | **Apache Kafka** | `@platformatic/kafka` | Topic, group and broker browser, reads by offset or time |
 | **etcd** | `@grpc/grpc-js` | etcdctl command editor, key-prefix browser, guarded value edits |
@@ -141,14 +141,15 @@ The twenty-eighth row is the embedded LibreDB store: it ships inside the image, 
 | **InfluxDB (InfluxQL)** | none, HTTP | Read-only InfluxQL editor, 1.x to 3 |
 | **InfluxDB 3 (SQL)** | none, HTTP | Read-only SQL editor |
 | **Oxia** | `@grpc/grpc-js` | Read-only oxia client commands, shard map, key browser |
+| **S3-compatible object storage** | none, HTTP | Read-only AWS CLI commands, bucket and folder browser, object preview |
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
 **Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing when used.
-Prometheus, InfluxDB, Apache Kafka and Oxia are read-only too: Studio calls only read APIs.
+Prometheus, InfluxDB, Apache Kafka, Oxia and S3-compatible object storage are read-only too: Studio calls only read APIs.
 
 ### Engines with no provider of their own
 
-Twenty-seven further engines speak the wire protocol of one of the twenty-seven drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much worked is recorded per engine.
+Twenty-seven further engines speak the wire protocol of one of the twenty-eight drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
@@ -171,7 +172,7 @@ Twenty-seven further engines speak the wire protocol of one of the twenty-seven 
 | Apache Cloudberry (incubating) | `postgres` | Partial. Row counts and sizes are correct after `ANALYZE`, but the monitoring dashboard and the table and index statistics all fail on one MPP planner restriction, and a foreign key is read back as though enforced when it is not |
 | OceanBase | `mysql` | Partial - health fails outright because the tenant has no `performance_schema` database at all, every size reads 0 B, and row counts are correct only once `ANALYZE TABLE` has run |
 | SingleStore | `mysql` | Partial - every surface answers, including the five that once failed for reasons that were ours rather than SingleStore's. Row counts and sizes are missing rather than wrong, a 2000-row table reading 0 rows and 0 B, and foreign keys do not exist at all |
-| ScyllaDB | `cassandra` | Partial - the editor and the object browser work in full, and all 18 CQL types read back byte-identically to the Apache Cassandra 5.0.9 probed in the same pass. ScyllaDB has no `system_views` keyspace at all, so the overview, health, metrics, session and monitoring panels read empty rather than throw. No version is displayed, and creating a keyspace on the 2026.2 line needs `NetworkTopologyStrategy` |
+| ScyllaDB | `cassandra` | Partial - the editor and the object browser work in full. ScyllaDB has no `system_views` keyspace, so the overview, health, metrics, session and monitoring panels read empty rather than throw. No version is displayed, and a keyspace on the 2026.2 line needs `NetworkTopologyStrategy` |
 | VictoriaMetrics | `prometheus` | Partial |
 | Redpanda | `kafka` | Full |
 | Materialize · RisingWave | `postgres` | Partial |

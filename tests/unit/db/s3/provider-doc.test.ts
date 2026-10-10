@@ -21,6 +21,7 @@ import {
   EXTERNAL_DATABASE_TYPES,
   MCP_EXPOSABLE,
   READ_ONLY_ENFORCED,
+  SHIPPED_DATABASE_TYPES,
   WIRE_COMPATIBLE_ENGINES,
 } from "@/lib/db/compatibility";
 import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
@@ -1376,5 +1377,27 @@ describe("README.md and its translations", () => {
         .filter((line) => line.startsWith("| **S3-compatible object storage** |"));
       expect(rows, file).toHaveLength(1);
     }
+  });
+});
+
+describe("DOCKERHUB.md", () => {
+  test("49. the S3 row, the numerals and the read-only sentence", () => {
+    const hub = read("DOCKERHUB.md");
+    const lines = hub.split("\n");
+    const oxia = lines.findIndex((line) => line.startsWith("| **Oxia** |"));
+    expect(lines[oxia + 1]).toBe(
+      "| **S3-compatible object storage** | none, HTTP | Read-only AWS CLI commands, bucket and folder browser, object preview |",
+    );
+    expect(hub).toContain("Qdrant, Oxia and S3-compatible object storage** from your browser");
+    expect(hub).toContain(`${Word(EXTERNAL_DATABASE_TYPES.length)} external engines share one interface.`);
+    // The ordinal counts the table's rows: every external engine, then the embedded store.
+    expect(SHIPPED_DATABASE_TYPES).toHaveLength(EXTERNAL_DATABASE_TYPES.length + 1);
+    expect(hub).toContain(
+      `The ${word(SHIPPED_DATABASE_TYPES.length).replace(/-nine$/, "-ninth")} row is the embedded LibreDB store`,
+    );
+    expect(hub).toContain(
+      "Prometheus, InfluxDB, Apache Kafka, Oxia and S3-compatible object storage are read-only too",
+    );
+    expect(hub).toContain(`of one of the ${word(EXTERNAL_DATABASE_TYPES.length)} drivers above`);
   });
 });
