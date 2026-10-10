@@ -69,6 +69,7 @@ export const S3_CONSOLE_NOTICES = Object.freeze({
   noTags: "The object has no tags.",
   moreVersions: "The server holds more versions than this page shows: narrow --prefix to see the rest.",
   headersCut: "The server sent more headers than Studio reads, so some fields may be missing.",
+  tagsCut: "The object has {total} tags, and the result holds the first {shown}, the most a Studio result holds.",
 });
 
 const count = (n: number): string => n.toLocaleString("en-US");
@@ -433,7 +434,7 @@ export function s3Result(outcome: S3Outcome, parsed: ParsedS3Command, executionT
         [
           rows.length === 0 ? S3_CONSOLE_NOTICES.noTags : undefined,
           tags.length > rows.length
-            ? `The object has ${count(tags.length)} tags, and the result holds the first ${count(rows.length)}, the most a Studio result holds.`
+            ? S3_CONSOLE_NOTICES.tagsCut.replace("{total}", count(tags.length)).replace("{shown}", count(rows.length))
             : undefined,
           cells.notice(),
         ],

@@ -513,6 +513,7 @@ describe("preview, and the notices about the command", () => {
       noTags: "The object has no tags.",
       moreVersions: "The server holds more versions than this page shows: narrow --prefix to see the rest.",
       headersCut: "The server sent more headers than Studio reads, so some fields may be missing.",
+      tagsCut: "The object has {total} tags, and the result holds the first {shown}, the most a Studio result holds.",
     });
   });
 });

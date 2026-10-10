@@ -74,6 +74,7 @@ import { S3ServerError, toProviderError } from "@/lib/db/providers/objectstore/s
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import { S3_LABELS } from "@/lib/db/providers/objectstore/s3/labels";
 import { S3_OBJECTS_LISTED_ELSEWHERE } from "@/lib/db/providers/objectstore/s3/objects";
+import { S3_PREVIEW_ADAPTER_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-adapter";
 import { S3_PREVIEW_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-render";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
 import { resolveConnectionCredentials } from "@/lib/seed/credential-resolver";
@@ -581,6 +582,13 @@ describe("docs/providers/s3.md: the console's notices, as its modules state them
   test("section 5.5 quotes every fixed notice a console result carries", () => {
     const shape = flat(sectionOf(DOC, "### 5.5 Result shape"));
     for (const [name, notice] of Object.entries(S3_CONSOLE_NOTICES)) expect(shape, name).toContain(notice);
+    // The no-match notice is added by ls on a prefix alone, when the listing read to its end.
+    expect(shape).toContain(
+      `When \`ls\` on a prefix reads to the end and finds nothing: ${S3_CONSOLE_NOTICES.noMatch}`,
+    );
+    expect(shape).toContain(
+      `When \`get-object-tagging\` finds more tags than a result holds: ${S3_CONSOLE_NOTICES.tagsCut}`,
+    );
   });
 
   test("section 5.7 quotes the repeated-token failure", () => {
@@ -1004,12 +1012,29 @@ function networkWords(): string[] {
   );
 }
 
+describe("docs/providers/s3.md: the object source, as the preview adapter states it", () => {
+  test("section 6.2 says how many Source parts a preview becomes, and quotes the 416 sentence the error table points to", () => {
+    const source = flat(sectionOf(DOC, "### 6.2 Object source"));
+    expect(source).toContain("An object shows its Metadata part, then its preview:");
+    expect(source).toContain(
+      "The preview becomes one to three Source parts: `preview`, or `schema` and `rows` for a Parquet file, then `preview-notes`.",
+    );
+    expect(source).toContain(S3_PREVIEW_ADAPTER_SENTENCES.rangeNotSatisfiable);
+    expect(flat(sectionOf(DOC, "## 10. Error handling"))).toContain(
+      "A 416 from a ranged read is not an error of this table: the preview reports it with its own sentence (section 6.2).",
+    );
+  });
+});
+
 describe("docs/providers/s3.md: networks, tests, limits and references", () => {
   test("30. section 3.4 names exactly the networks the byte transport refuses", () => {
     const networks = sectionOf(DOC, "### 3.4 Link-local networks are always refused");
     expect(LINK_LOCAL_NETWORKS).toHaveLength(4);
     for (const [network, prefix] of LINK_LOCAL_NETWORKS) expect(networks).toContain(`\`${network}/${prefix}\``);
     expect(networks).not.toContain("cloud metadata addresses");
+    expect(flat(networks)).toContain(
+      "An IPv6 literal with a zone index, such as `fe80::1%eth0`, is refused whatever its address, because the runtimes disagree on matching one against a network.",
+    );
   });
 
   test("31. the slow-link bullet's numbers are the budget's and the deadline's", () => {
