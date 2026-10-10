@@ -426,6 +426,9 @@ describe("docs/providers/s3.md: the connection, as the dialog and the builder st
     const region = sectionOf(DOC, "### 4.4 One endpoint, path style and the region");
     expect(region).toContain("| Server | Region enforced | Region named in the error |");
     for (const server of ["MinIO", "Silo", "Garage", "RustFS"]) expect(rowOf(region, server), server).toBeDefined();
+    expect(rowOf(region, "Garage")).toContain("Yes, on a GET");
+    expect(rowOf(region, "Garage")).not.toContain("HEAD");
+    expect(rowOf(region, "RustFS")).not.toContain("RUSTFS_REGION");
   });
 
   test("11. the tunnel and the address paste are what the dialog offers", () => {
