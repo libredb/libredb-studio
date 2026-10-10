@@ -3,6 +3,7 @@
  * `prepareQuery`, and a construction that touches no transport.
  */
 import { describe, expect, test } from "bun:test";
+import { READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import { S3_KEY_SCAN } from "@/lib/db/providers/objectstore/s3/key-scan";
 import { S3_LABELS } from "@/lib/db/providers/objectstore/s3/labels";
@@ -78,4 +79,9 @@ describe("declarations", () => {
     expect(provider.connectWarnings()).toEqual([]);
     expect(asked()).toBe(0);
   });
+});
+
+test("READ_ONLY_ENFORCED.s3 equals the capability", () => {
+  expect(READ_ONLY_ENFORCED.s3).toBe(true);
+  expect(READ_ONLY_ENFORCED.s3).toBe(declaredOnly().provider.getCapabilities().enforcesReadOnly === true);
 });

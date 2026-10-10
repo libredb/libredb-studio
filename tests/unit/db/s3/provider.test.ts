@@ -7,12 +7,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { ConnectionError, DatabaseConfigError, QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
-import type { NodeByteRequest, RequestSigner } from "@/lib/db/http/node-transport";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import { createNodeByteTransport, type NodeByteRequest, type RequestSigner } from "@/lib/db/http/node-transport";
 import { parseS3Command } from "@/lib/db/providers/objectstore/s3/console/commands";
 import { S3_SURFACE_DEADLINE_MS } from "@/lib/db/providers/objectstore/s3/constants";
 import { encodeS3Cursor } from "@/lib/db/providers/objectstore/s3/cursor";
 import { S3_RESPONSE_HEADERS } from "@/lib/db/providers/objectstore/s3/headers";
-import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
+import { S3Provider, type S3ProviderDeps } from "@/lib/db/providers/objectstore/s3/index";
 import { joinVirtualKey } from "@/lib/db/providers/objectstore/s3/names";
 import { previewObject, type S3RangeReader } from "@/lib/db/providers/objectstore/s3/preview";
 import { S3_PREVIEW_ADAPTER_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-adapter";
@@ -697,4 +698,14 @@ describe("the limiter", () => {
     );
     expect(refused).toHaveLength(4);
   });
+});
+
+test("the factory passes no deps: the provider runs on its production defaults", async () => {
+  const built = await createDatabaseProvider(s3Connection());
+  expect(built).toBeInstanceOf(S3Provider);
+  const deps = (built as unknown as { readonly deps: S3ProviderDeps }).deps;
+  expect(deps.createTransport).toBe(createNodeByteTransport);
+  const signer: RequestSigner = { headerNames: ["authorization"], sign: () => ({}) };
+  expect(deps.signerWrapper(signer)).toBe(signer);
+  expect(Math.abs(deps.clock().getTime() - Date.now())).toBeLessThan(1_000);
 });
