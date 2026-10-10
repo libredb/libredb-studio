@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import {
   describeNamedContainers,
   enumerateContainers,
+  namedContainerListings,
   enumerationOf,
   kindsByContainer,
   sessionDefaultContainer,
@@ -167,6 +168,33 @@ describe("the kinds a container walk carries", () => {
       unlisted: [["main", "ops"]],
     });
     expect(asked).toEqual([["main"], ["other"]]);
+  });
+
+  test("a listing that repeats a path keeps its first answer, as kindsByContainer does", async () => {
+    const { provider } = walked([NAMESPACE_LEVEL], () => [
+      { path: ["shop"], name: "shop", level: 0, kinds: ["pods"] },
+      { path: ["shop"], name: "shop", level: 0, kinds: ["nodes"] },
+    ]);
+    expect((await describeNamedContainers(provider, [["shop"]])).enumeration.containerKinds).toEqual([["pods"]]);
+  });
+
+  test("namedContainerListings counts the listings describeNamedContainers would issue, before any of them", () => {
+    const twoLevels: ContainerLevels = [
+      { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+      { id: "schema", label: "Schema", labelPlural: "Schemas" },
+    ];
+    const refuse = () => {
+      throw new Error("counting the listings issued one");
+    };
+    const named = [
+      ["main", "app"],
+      ["main", "ops"],
+      ["other", "app"],
+    ];
+    expect(namedContainerListings(walked(twoLevels, refuse).provider, named)).toBe(2);
+    expect(namedContainerListings(walked([NAMESPACE_LEVEL], refuse).provider, [["shop"], ["Cluster"]])).toBe(1);
+    expect(namedContainerListings(walked(twoLevels, refuse, false).provider, named)).toBe(0);
+    expect(namedContainerListings(walked([], refuse).provider, [[]])).toBe(0);
   });
 
   test("an engine with no container level is never asked to list containers", async () => {

@@ -1193,10 +1193,13 @@ A container without the field holds every kind, which is every container of ever
 
 `POST /api/db/objects/inventory` and `POST /api/db/objects/search` list each container only for the kinds it holds, and a `kinds` filter in the body is narrowed the same way, container by container.
 For containers named in `containers`, an engine whose containers carry `kinds` is asked for them with one container listing per distinct parent, one call on an engine with one container level, and a named container that listing does not hold is refused before any listing; every other engine reads named containers for every kind with no container listing, as before.
+Repeated paths in `containers` are read once.
+A body whose named containers sit under more parents than the inventory's pair bound of 1,000 is refused before any listing, and the refusal of unlisted containers names the first five and counts the rest.
 
 | Condition | Status | Body |
 |-----------|--------|------|
 | a named container the listing does not hold, on an engine whose containers carry `kinds` | `400` | `{ "error": "\"containers\" names [[\"shop\"]], which the provider's container listing does not hold, so the kinds held there are unknown; name containers the containers route lists" }` |
+| named containers under more than 1,000 parents, on an engine whose containers carry `kinds` | `400` | `{ "error": "\"containers\" names containers under 1001 parents, and the kinds each holds take one container listing per parent, more than the 1000 one inventory may issue; name fewer containers" }` |
 
 A search is refused before its first listing when the container and kind pairs it would list exceed the inventory's pair bound of 1,000:
 

@@ -1377,6 +1377,88 @@ describe("POST /api/db/objects/inventory", () => {
     expect(listObjects).toHaveBeenCalledTimes(0);
   });
 
+  /**
+   * A two-level engine that declares `containersNameKinds`, so naming a container costs a listing of
+   * its parent. None ships today; the bound below is what keeps one from fanning out on a body's say.
+   */
+  function twoLevelNamingProvider() {
+    const provider = objectProvider({
+      objectKinds: [POD_KIND],
+      listContainers: mock(async (parent?: readonly string[]) =>
+        parent === undefined ? [] : [{ path: [...parent, "app"], name: "app", level: 1, kinds: ["pods"] }],
+      ),
+      listObjects: mock(async (container: readonly string[], kind: string) => [object([...container, "one"], kind)]),
+    });
+    const capabilities = {
+      ...provider.getCapabilities(),
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ],
+      containersNameKinds: true as const,
+    };
+    provider.getCapabilities = () => capabilities;
+    activeProvider = provider;
+    return provider;
+  }
+
+  test("named containers under more parents than the pair limit are refused before any container listing", async () => {
+    const provider = twoLevelNamingProvider();
+    const named = Array.from({ length: INVENTORY_PAIR_LIMIT + 1 }, (_unused, index) => [`c${index}`, "app"]);
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, containers: named },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      `"containers" names containers under ${INVENTORY_PAIR_LIMIT + 1} parents, and the kinds each holds take one ` +
+        `container listing per parent, more than the ${INVENTORY_PAIR_LIMIT} one inventory may issue; name fewer containers`,
+    );
+    expect(provider.listContainers).toHaveBeenCalledTimes(0);
+    expect(provider.listObjects).toHaveBeenCalledTimes(0);
+  });
+
+  test("a named container repeated in the body costs one container listing per distinct parent", async () => {
+    const provider = twoLevelNamingProvider();
+    const named = [["main", "app"], ...Array.from({ length: 50 }, () => ["main", "app"]), ["other", "app"]];
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, containers: named },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect((provider.listContainers as ReturnType<typeof mock>).mock.calls).toEqual([[["main"]], [["other"]]]);
+    expect((provider.listObjects as ReturnType<typeof mock>).mock.calls).toEqual([
+      [["main", "app"], "pods"],
+      [["other", "app"], "pods"],
+    ]);
+  });
+
+  test("the refusal of unlisted named containers echoes the first five and counts the rest, once each", async () => {
+    clusterProvider();
+    const gone = Array.from({ length: 7 }, (_unused, index) => [`gone${index}`]);
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, containers: [...gone, ...gone] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      `"containers" names ${JSON.stringify(gone.slice(0, 5))} and 2 more, which the provider's container listing ` +
+        "does not hold, so the kinds held there are unknown; name containers the containers route lists",
+    );
+  });
+
   test("a requested kind is listed only where it applies", async () => {
     const listObjects = clusterProvider();
 

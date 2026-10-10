@@ -122,6 +122,34 @@ export interface NamedContainers {
 }
 
 /**
+ * The distinct parents `describeNamedContainers` lists for a set of named paths, in first-seen order,
+ * or none on an engine it does not ask.
+ */
+function namedParents(
+  provider: DatabaseProvider,
+  named: readonly (readonly string[])[],
+): readonly (readonly string[])[] {
+  const capabilities = provider.getCapabilities();
+  if (capabilities.containersNameKinds !== true || containerDepth(capabilities) === 0) return [];
+  const parents = new Map<string, readonly string[]>();
+  for (const path of named) {
+    const parent = path.slice(0, -1);
+    const key = JSON.stringify(parent);
+    if (!parents.has(key)) parents.set(key, parent);
+  }
+  return [...parents.values()];
+}
+
+/**
+ * How many `listContainers` calls `describeNamedContainers` would issue for these named paths, counted
+ * without issuing any, so a caller can refuse a body before its first round trip. One on an engine with
+ * one container level, one per distinct parent below that, and none on an engine that is not asked.
+ */
+export function namedContainerListings(provider: DatabaseProvider, named: readonly (readonly string[])[]): number {
+  return namedParents(provider, named).length;
+}
+
+/**
  * The containers a caller NAMED, with the kinds the provider answers for each.
  *
  * Only on an engine that declares `ProviderCapabilities.containersNameKinds`: one `listContainers`
@@ -129,25 +157,20 @@ export interface NamedContainers {
  * level, because the kinds of a container are the provider's answer and never the caller's. Every
  * other engine is not asked, and its named containers are read for every enumerable kind exactly as
  * before the field existed; neither is an engine with no container level, which has nothing to list.
+ * The number of calls is not bounded here: a caller that takes the paths from a request counts them
+ * first with `namedContainerListings` and refuses a body that would issue too many.
  */
 export async function describeNamedContainers(
   provider: DatabaseProvider,
   named: readonly (readonly string[])[],
 ): Promise<NamedContainers> {
-  const capabilities = provider.getCapabilities();
-  if (capabilities.containersNameKinds !== true || containerDepth(capabilities) === 0) {
-    return { enumeration: { containers: named }, unlisted: [] };
-  }
+  const parents = namedParents(provider, named);
+  if (parents.length === 0) return { enumeration: { containers: named }, unlisted: [] };
   const answered = new Map<string, Container>();
-  const asked = new Set<string>();
   // Sequential on purpose, and the `no-await-in-loop` warning is accepted here, as in
   // `enumerateContainers`: one parent at a time, so a body naming many parents never opens as many
   // concurrent listings.
-  for (const path of named) {
-    const parent = path.slice(0, -1);
-    const key = JSON.stringify(parent);
-    if (asked.has(key)) continue;
-    asked.add(key);
+  for (const parent of parents) {
     const listed = await (parent.length === 0 ? provider.listContainers() : provider.listContainers(parent));
     for (const container of listed) {
       const listedKey = JSON.stringify(container.path);
