@@ -172,6 +172,9 @@ async function bucketSource(
 ): Promise<ObjectSourceDocument> {
   if (bucketAddressRefusal(bucket) !== undefined)
     throw new QueryError(sourceAddressSentence("bucket-pattern", { bucket, key: "" }), S3_TYPE);
+  const pin = surface.options.pinnedBucket;
+  if (pin !== undefined && bucket !== pin)
+    throw new QueryError(sourceAddressSentence("outside-pin", { bucket, key: "", pin }), S3_TYPE);
   const signing = surface.options.region;
   const bucketPart = renderedJson(
     "bucket",

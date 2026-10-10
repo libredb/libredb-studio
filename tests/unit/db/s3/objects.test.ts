@@ -336,6 +336,9 @@ describe("the object Source document", () => {
     expect(
       await refusal(readS3ObjectSource(pinned.surface, ["other/a.csv"], "object", undefined, CALL, memory())),
     ).toBe('This connection reads only bucket "sales"; bucket "other" is outside it.');
+    expect(await refusal(readS3ObjectSource(pinned.surface, ["other"], "bucket", undefined, CALL, memory()))).toBe(
+      'This connection reads only bucket "sales"; bucket "other" is outside it.',
+    );
     expect(await refusal(readS3ObjectSource(pinned.surface, ["a b"], "bucket", undefined, CALL, memory()))).toBe(
       'Studio does not open bucket "a b": a bucket it addresses is 1 to 255 letters, digits, dots, hyphens or underscores, starting and ending with a letter or digit.',
     );
