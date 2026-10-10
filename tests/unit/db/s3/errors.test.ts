@@ -131,11 +131,28 @@ describe("E1 to E7: transport failures", () => {
   });
 
   test("E3: an abort after disconnect", () => {
+    const lifetime = new AbortController();
+    lifetime.abort();
     expectRow(
-      mapped(named(new TransportError("aborted", "The request was cancelled"))),
+      mapped(named(new TransportError("aborted", "The request was cancelled")), "ListObjectsV2", SIGNED, {
+        lifetime: lifetime.signal,
+      }),
       ConnectionError,
       "The connection was closed while a request to the S3 server was in flight.",
     );
+  });
+
+  test("an abort with neither a cancel nor a closed session is a defect, passed on as the same value", () => {
+    const run = new AbortController();
+    run.abort(new Error("other"));
+    const aborted = named(new TransportError("aborted", "The request was cancelled"));
+    expect(
+      toProviderError(aborted, "ListObjectsV2", SIGNED, {
+        signal: run.signal,
+        lifetime: new AbortController().signal,
+      }),
+    ).toBe(aborted);
+    expect(toProviderError(aborted, "ListObjectsV2", SIGNED)).toBe(aborted);
   });
 
   test("E4: an answer over its cap, and the ListBuckets sentence", () => {

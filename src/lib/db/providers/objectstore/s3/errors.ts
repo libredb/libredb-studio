@@ -370,7 +370,9 @@ function transportFailure(
     case "aborted": {
       const reason: unknown = details.signal?.reason;
       if (reason instanceof QueryCancelledError) return reason;
-      return new ConnectionError(S3_ERROR_SENTENCES.closed, S3_TYPE);
+      if (details.lifetime?.aborted === true) return new ConnectionError(S3_ERROR_SENTENCES.closed, S3_TYPE);
+      // Neither a cancel nor a closed session aborted it: a defect, passed on unchanged.
+      return error;
     }
     case "too-large": {
       const cap = capWords(noted(names.capBytes, "response cap", operation));
