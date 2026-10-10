@@ -3852,10 +3852,12 @@ describe("the region field", () => {
       initialProps: { ...props, editConnection: named },
     });
     expect(result.current.region).toBe("garage");
-    act(() => result.current.setRegion(""));
-    expect(await saved(result)).not.toHaveProperty("region");
     rerender({ ...props, editConnection: unnamed });
     expect(result.current.region).toBe("");
+    rerender({ ...props, editConnection: named });
+    expect(result.current.region).toBe("garage");
+    act(() => result.current.setRegion(""));
+    expect(await saved(result)).not.toHaveProperty("region");
   });
 
   test("closing the dialog resets it", () => {
