@@ -1,6 +1,5 @@
 /**
- * CSV and TSV rows of the S3 preview: RFC 4180 quoting with the exact rules of the
- * spec, the delimiter sniff over complete records, the header always first, ragged records, and the bounds that keep
+ * CSV and TSV rows of the S3 preview: RFC 4180 quoting, the delimiter sniff over complete records, the header always first, ragged records, and the bounds that keep
  * a hostile 1,000,000-byte read linear.
  */
 import { describe, expect, test } from "bun:test";
@@ -20,38 +19,39 @@ const rows = (text: string, changes: Partial<Parameters<typeof csvRows>[0]> = {}
     limits: S3_PREVIEW_LIMITS,
     ...changes,
   });
+// A heap read without a full collection first counts garbage not yet collected, so every read collects.
 const heapUsed = (): number => {
   Bun.gc(true);
   return process.memoryUsage().heapUsed;
 };
 
-describe("splitCsv: the RFC 4180 rules", () => {
-  test("1. a record ends at LF or CRLF outside quotes; quoted LF and CRLF are data", () => {
+describe("splitCsv: RFC 4180 quoting", () => {
+  test("a record ends at LF or CRLF outside quotes; quoted LF and CRLF are data", () => {
     expect(split('a,"x\ny"\r\n"p\r\nq",z\n').records).toEqual([
       ["a", "x\ny"],
       ["p\r\nq", "z"],
     ]);
   });
 
-  test("1. a lone CR is data", () => {
+  test("a lone CR is data", () => {
     expect(split("a\rb,c\n").records).toEqual([["a\rb", "c"]]);
   });
 
-  test('2. "" inside a quoted field is one quote, and a delimiter inside quotes is data', () => {
+  test('"" inside a quoted field is one quote, and a delimiter inside quotes is data', () => {
     expect(split('"a""b,c",d').records).toEqual([['a"b,c', "d"]]);
   });
 
-  test("3. characters after a closing quote are appended to the field and counted once per field", () => {
+  test("characters after a closing quote are appended to the field and counted once per field", () => {
     const result = split('"ab"cd,"x"y,z\n');
     expect(result.records).toEqual([["abcd", "xy", "z"]]);
     expect(result.quoteTrailers).toBe(2);
   });
 
-  test("4. a quote inside an unquoted field is data", () => {
+  test("a quote inside an unquoted field is data", () => {
     expect(split('a"b,c').records).toEqual([['a"b', "c"]]);
   });
 
-  test("5. a cut last record is dropped; a read ending inside a quoted field drops that record", () => {
+  test("a cut last record is dropped; a read ending inside a quoted field drops that record", () => {
     expect(split("a,b\n1,2\n3,", false)).toEqual({
       records: [
         ["a", "b"],
@@ -64,7 +64,7 @@ describe("splitCsv: the RFC 4180 rules", () => {
     expect(split('a\n"x\ny', false)).toEqual({ records: [["a"]], quoteTrailers: 0, cutLast: true, unclosed: false });
   });
 
-  test("5. an unclosed quote in a whole object keeps the record as read", () => {
+  test("an unclosed quote in a whole object keeps the record as read", () => {
     expect(split('a\n"x\ny', true)).toEqual({
       records: [["a"], ["x\ny"]],
       quoteTrailers: 0,
@@ -80,6 +80,21 @@ describe("splitCsv: the RFC 4180 rules", () => {
       ["a", "b"],
       ["1", "2\r"],
     ]);
+  });
+
+  test("trailing characters count only in kept records: not in a cut last record, not past keptRecords", () => {
+    expect(split('h\n1\n"x"y', false)).toEqual({
+      records: [["h"], ["1"]],
+      quoteTrailers: 0,
+      cutLast: true,
+      unclosed: false,
+    });
+    expect(splitCsv('"a"b\n"c"d\n"e"f\n', ",", true, 3, 2)).toEqual({
+      records: [["ab"], ["cd"], ["ef"]],
+      quoteTrailers: 2,
+      cutLast: false,
+      unclosed: false,
+    });
   });
 
   test("a final record end adds no record; a trailing delimiter is an empty last field; maxRecords stops early", () => {
@@ -203,6 +218,17 @@ describe("csvRows", () => {
     });
   });
 
+  test("a field with trailing characters in a record that is not shown is not counted", () => {
+    expect(rows('h\n1\n"x"y', { ended: false, readBytes: 8 }).notices).toEqual([
+      "The last record was cut by the 8-byte read and is not shown.",
+    ]);
+    expect(rows('h\n1\n"x"y\n', { maxRows: 1 }).notices).toEqual(["The preview stops at 1 rows."]);
+  });
+
+  test("a whole object holding only a byte order mark is text with no cut notice", () => {
+    expect(rows("\uFEFF", { ended: true })).toEqual({ kind: "text", notices: [] });
+  });
+
   test("TSV never sniffs: a comma stays inside its field", () => {
     expect(rows("a,b\tc\n1,2\t3\n", { format: "tsv" })).toMatchObject({
       kind: "rows",
@@ -228,12 +254,13 @@ describe("csvRows", () => {
     });
   });
 
-  test('a 1,000,000-byte input of only , and one of only " each return within one second and under 64 MiB of heap', () => {
+  test('a 1,000,000-byte input of only , and one of only " each return within five seconds and under 64 MiB of heap', () => {
     for (const text of [",".repeat(1_000_000), '"'.repeat(1_000_000)]) {
       const before = heapUsed();
       const started = performance.now();
       rows(text);
-      expect(performance.now() - started).toBeLessThan(1_000);
+      // About 0.4 s on an idle machine; five seconds leaves room for a loaded CI runner.
+      expect(performance.now() - started).toBeLessThan(5_000);
       expect(heapUsed() - before).toBeLessThan(64 * 1_048_576);
     }
   });

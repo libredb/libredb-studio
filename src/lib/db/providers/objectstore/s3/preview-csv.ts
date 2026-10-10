@@ -1,6 +1,6 @@
 /**
- * CSV and TSV rows of the S3 preview. Browser-safe and pure. The splitter reads RFC 4180 with
- * the spec's eight rules in one linear pass; the first record is always the header (no --no-header in v1).
+ * CSV and TSV rows of the S3 preview. Browser-safe and pure. The splitter reads RFC 4180 in one
+ * linear pass; the first record is always the header.
  */
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import type { S3PreviewLimits } from "./constants";
@@ -10,7 +10,7 @@ import { previewSentence } from "./preview-render";
 
 export interface CsvSplit {
   readonly records: readonly (readonly string[])[];
-  /** Fields with characters after their closing quote (N-CSV-QUOTE). */
+  /** Fields with characters after their closing quote, in kept records only (N-CSV-QUOTE). */
   readonly quoteTrailers: number;
   /** The read ended inside the last record, which was dropped (N-RECORD-CUT). */
   readonly cutLast: boolean;
@@ -22,13 +22,16 @@ export interface CsvSplit {
  * Records of `text` split on `delimiter`: a record ends at LF or CRLF outside quotes (a lone CR is data); a field that
  * begins with `"` is quoted, `""` inside it is one quote and it ends at the next lone quote; characters after the
  * closing quote are appended and counted; a quote inside an unquoted field is data. When `ended` is false the last
- * record is dropped if the read ended inside it. Stops after `maxRecords` complete records.
+ * record is dropped if the read ended inside it. Stops after `maxRecords` complete records. Trailing characters are
+ * counted per record and added to `quoteTrailers` only for the first `keptRecords` records kept, so a dropped cut
+ * record, or a record read only to learn that more rows exist, adds nothing.
  */
 export function splitCsv(
   text: string,
   delimiter: string,
   ended: boolean,
   maxRecords = Number.POSITIVE_INFINITY,
+  keptRecords = maxRecords,
 ): CsvSplit {
   const records: string[][] = [];
   let fields: string[] = [];
@@ -38,6 +41,12 @@ export function splitCsv(
   let trailerCounted = false;
   let atFieldStart = true;
   let quoteTrailers = 0;
+  let recordTrailers = 0;
+  const keepRecord = (): void => {
+    records.push(fields);
+    if (records.length <= keptRecords) quoteTrailers += recordTrailers;
+    recordTrailers = 0;
+  };
   let index = 0;
   while (index < text.length) {
     const char = text[index];
@@ -72,7 +81,7 @@ export function splitCsv(
     }
     if (char === "\n" || (char === "\r" && text[index + 1] === "\n")) {
       fields.push(field);
-      records.push(fields);
+      keepRecord();
       fields = [];
       field = "";
       atFieldStart = true;
@@ -83,7 +92,7 @@ export function splitCsv(
       continue;
     }
     if (wasQuoted && !trailerCounted) {
-      quoteTrailers += 1;
+      recordTrailers += 1;
       trailerCounted = true;
     }
     field += char;
@@ -94,7 +103,7 @@ export function splitCsv(
   if (!pending) return { records, quoteTrailers, cutLast: false, unclosed: false };
   if (!ended) return { records, quoteTrailers, cutLast: true, unclosed: false };
   fields.push(field);
-  records.push(fields);
+  keepRecord();
   return { records, quoteTrailers, cutLast: false, unclosed: quoted };
 }
 
@@ -129,13 +138,16 @@ export interface RowsInput {
   readonly limits: S3PreviewLimits;
 }
 
-/** CSV or TSV rows; a read whose first record is cut has no header and answers text rows instead. */
+/**
+ * CSV or TSV rows; a read with no complete first record has no header and answers text rows instead, with
+ * N-RECORD-CUT only when the read did not end. Trailing characters are counted over the header and the shown rows.
+ */
 export function csvRows(input: RowsInput & { readonly format: "csv" | "tsv" }): RowsOutcome {
   const text = input.text.charCodeAt(0) === 0xfeff ? input.text.slice(1) : input.text;
   const delimiter = input.format === "tsv" ? "\t" : sniffDelimiter(text, input.ended, input.limits.csvSniffRecords);
-  const split = splitCsv(text, delimiter, input.ended, input.maxRows + 2);
+  const split = splitCsv(text, delimiter, input.ended, input.maxRows + 2, input.maxRows + 1);
   const cutNotice = previewSentence("N-RECORD-CUT", { n: input.readBytes });
-  if (split.records.length === 0) return { kind: "text", notices: [cutNotice] };
+  if (split.records.length === 0) return { kind: "text", notices: input.ended ? [] : [cutNotice] };
   const header = split.records[0];
   const data = split.records.slice(1);
   const shown = data.slice(0, input.maxRows);
