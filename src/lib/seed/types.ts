@@ -75,6 +75,7 @@ const SeedDatabaseType = z.enum([
   "influxdb3",
   "oxia",
   "databend",
+  "s3",
 ]);
 
 export const SeedDefaultsSchema = z.object({

@@ -40,6 +40,7 @@ describe("fenceTagEngine", () => {
       "influxdb3",
       "oxia",
       "databend",
+      "s3",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);
@@ -56,6 +57,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("db2")).toBe("db2");
     expect(fenceTagEngine("sqlpl")).toBeNull();
     expect(fenceTagEngine("ibmdb2")).toBeNull();
+  });
+
+  test("s3 has no alias: aws, sh, bash and shell name no engine", () => {
+    // `aws` names every AWS service, and the shell tags name no engine.
+    for (const tag of ["aws", "sh", "bash", "shell"]) expect(fenceTagEngine(tag)).toBeNull();
+    expect(fenceTagEngine("s3")).toBe("s3");
   });
 
   test("an alias names the engine it is an alias for", () => {

@@ -346,8 +346,9 @@ describe("the installed editor's language ids", () => {
     // 69 before etcd (#1089), whose five kinds with a source each declare `json` (object-source-declarations),
     // 74 before Db2 (#786), whose five kinds with a source each declare `sql`, 79 before Qdrant, whose
     // collection declares `json`, 80 before Milvus, whose collection declares `json` too, 81 before Oxia,
-    // whose shard and key each declare `json`, and 83 before Databend, whose four kinds each declare `sql`.
-    expect(declared).toHaveLength(87);
+    // whose shard and key each declare `json`, 83 before Databend, whose four kinds each declare `sql`, and 87 before
+    // S3, whose bucket and object each declare `json`.
+    expect(declared).toHaveLength(89);
 
     const unregistered = declared.filter((entry) => !registered.has(entry.language));
     // Named, so a failure says which kind on which engine declared what, rather than false. This

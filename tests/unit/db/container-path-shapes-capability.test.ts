@@ -47,6 +47,8 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   influxdb: "exact",
   // Two levels, the catalog and the database, each path exactly as deep (design 2.4).
   databend: "exact",
+  // No container level at all: buckets are object rows, so no path shape is declared.
+  s3: "absent",
   libredb: "exact",
   duckdb: "prefixes",
   mssql: "prefixes",

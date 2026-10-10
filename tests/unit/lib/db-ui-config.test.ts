@@ -16,6 +16,8 @@ import {
   isFileBased,
   offersSshTunnel,
   readOnlyHint,
+  S3_FIELD_HINTS,
+  S3_FIELD_RULES,
   takesConnectionField,
   type ConnectionField,
   type DatabaseUIConfig,
@@ -26,7 +28,15 @@ import {
   buildDatabendConnectionOptions,
   DATABEND_CONNECTION_SENTENCES,
 } from "@/lib/db/providers/sql/databend/connection-options";
-import { DatabendIcon, InfluxDBIcon } from "@/components/icons/db-icons";
+import {
+  buildS3ConnectionOptions,
+  S3_ACCESS_KEY_ID_PATTERN,
+  S3_BUCKET_PATTERN,
+  S3_CONNECTION_SENTENCES,
+  S3_REGION_PATTERN,
+} from "@/lib/db/providers/objectstore/s3/connection-options";
+import { S3_ACCESS_KEY_ID_MAX_CHARS, S3_ACCESS_KEY_ID_MIN_CHARS } from "@/lib/db/providers/objectstore/s3/constants";
+import { DatabendIcon, InfluxDBIcon, S3Icon } from "@/components/icons/db-icons";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { declareHostUri } from "../../helpers/synthetic-host-uri";
 import { providerDirectoryFiles } from "../../helpers/provider-directory-map";
@@ -67,6 +77,7 @@ const ALL_TYPES: DatabaseType[] = [
   "influxdb3",
   "oxia",
   "databend",
+  "s3",
 ];
 
 describe("db-ui-config", () => {
@@ -768,6 +779,56 @@ describe("declared connection-field copy (#1085)", () => {
     expect(databend.credentialWarnings).toBe(CREDENTIAL_WARNINGS.databend);
   });
 
+  test("s3 declares its label, port, fields, labels, placeholders, the exported hints, the rules, the read-only hint and the Host box addresses", () => {
+    const s3 = getDBConfig("s3");
+    expect(s3).toMatchObject({
+      label: "S3-compatible object storage",
+      color: "text-hue-green-alt",
+      // MinIO and RustFS serve on 9000 by default; Garage's 3900 and an https:// paste's 443 are in the Host hint.
+      defaultPort: "9000",
+      showConnectionStringToggle: false,
+      connectionFields: ["host", "port", "user", "password", "database", "region", "allowInsecureAuth"],
+    });
+    expect(s3.icon).toBe(S3Icon);
+    // The SSL panel and the SSH tunnel are both offered: path style addresses one origin, which one forward carries.
+    expect(s3.showSshTunnel).toBeUndefined();
+    expect(offersSshTunnel("s3")).toBe(true);
+    expect(takesConnectionField("s3", "region")).toBe(true);
+    expect(takesConnectionField("databend", "region")).toBe(false);
+    expect(s3.fieldLabels).toEqual({
+      host: "Endpoint host",
+      user: "Access key ID",
+      password: "Secret access key",
+      database: "Bucket",
+      region: "Region",
+      allowInsecureAuth: "Connect without TLS",
+    });
+    expect(s3.fieldPlaceholders).toEqual({ database: "all buckets", region: "us-east-1" });
+    expect(connectionFieldPlaceholder(s3, "region", "the dialog's own example")).toBe("us-east-1");
+    // The User box keeps the dialog's own placeholder.
+    expect(connectionFieldPlaceholder(s3, "user", "user")).toBe("user");
+    expect(s3.fieldHints).toBe(S3_FIELD_HINTS);
+    expect(S3_FIELD_HINTS).toEqual({
+      host: "A host name or address, or a pasted http:// or https:// endpoint such as http://localhost:9000, which is split into Host and Port. The endpoint only: a bucket goes under Bucket, never in the address. MinIO and RustFS serve on port 9000 unless configured otherwise, Garage on 3900. If Studio runs in a container, localhost is that container: use host.docker.internal.",
+      user: "The access key ID. It is stored and shown in the clear, like a user name. Leave both keys empty only for a bucket that allows anonymous reads: Studio then sends unsigned requests, never this server's own cloud credentials.",
+      password:
+        "The secret access key. Studio's server signs every request with it and never sends it to the S3 server. Fill in both keys, or neither.",
+      database:
+        "Optional. With a bucket here, Studio reads only that bucket and never lists the others, which a key limited to one bucket needs. Empty: every bucket this key can list.",
+      region:
+        "The region every request is signed for. Empty means us-east-1, which MinIO accepts unless it was started with a region of its own. Garage: its s3_region setting. AWS: the bucket's region.",
+      allowInsecureAuth:
+        "Ticked, Studio connects to this host over plain HTTP. The secret access key is never sent to this server, but bucket and object names, listings and previewed contents travel in the clear, readable by anyone on the path, and a captured request can be replayed for several minutes. Choose an SSL mode under SSL / TLS, or an SSH tunnel, wherever the server offers one.",
+    });
+    expect(s3.fieldRules).toBe(S3_FIELD_RULES);
+    expect(readOnlyHint(s3)).toBe(
+      "S3-compatible connections are read-only in this version, whether or not this is ticked: Studio sends no write.",
+    );
+    expect(s3.fieldOptions).toBeUndefined();
+    expect(hostUriSchemes("s3")).toEqual(["http", "https"]);
+    expect(s3.credentialWarnings).toBe(CREDENTIAL_WARNINGS.s3);
+  });
+
   test("milvus declares its port, the Database box, Password or token, the field hints and the Host box addresses (vector-family spec 5.2)", () => {
     const milvus = getDBConfig("milvus");
     expect(milvus).toMatchObject({
@@ -858,14 +919,14 @@ describe("declared connection-field copy (#1085)", () => {
     // The consent box draws the type's own sentence, with no fallback, so a type that takes the field and declares no
     // hint would draw an empty paragraph under the box (InfluxDB spec R4).
     const taking = ALL_TYPES.filter((type) => takesConnectionField(type, "allowInsecureAuth"));
-    expect(taking).toEqual(["db2", "influxdb", "influxdb3", "oxia", "databend"]);
+    expect(taking).toEqual(["db2", "influxdb", "influxdb3", "oxia", "databend", "s3"]);
     for (const type of taking) {
       const hint = connectionFieldHint(getDBConfig(type), "allowInsecureAuth");
       expect({ type, hint: typeof hint, empty: hint?.length === 0 }).toEqual({ type, hint: "string", empty: false });
     }
   });
 
-  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia and databend declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend and s3 declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
@@ -882,6 +943,7 @@ describe("declared connection-field copy (#1085)", () => {
       "influxdb3",
       "oxia",
       "databend",
+      "s3",
     ]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
@@ -984,16 +1046,140 @@ describe("declared field rules (Databend design 6.3)", () => {
     );
   });
 
-  test("only databend declares field rules, so no other engine's Test Connection or Save is checked", () => {
+  test("only databend and s3 declare field rules, so no other engine's Test Connection or Save is checked", () => {
     const declaring = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldRules !== undefined)
       .map(([type]) => type);
-    expect(declaring).toEqual(["databend"]);
-    for (const type of ALL_TYPES.filter((candidate) => candidate !== "databend")) {
-      expect(connectionFieldRefusal(getDBConfig(type), databend({ type, user: "", warehouse: "small xy" }))).toBe(
-        undefined,
-      );
+    expect(declaring).toEqual(["databend", "s3"]);
+    for (const type of ALL_TYPES.filter((candidate) => candidate !== "databend" && candidate !== "s3")) {
+      expect(
+        connectionFieldRefusal(
+          getDBConfig(type),
+          databend({ type, user: "", warehouse: "small xy", region: "us/east" }),
+        ),
+      ).toBe(undefined);
     }
+  });
+});
+
+describe("declared field rules", () => {
+  const s3 = (fields: Partial<DatabaseConnection>): DatabaseConnection => ({
+    id: "c1",
+    name: "Objects",
+    type: "s3",
+    host: "localhost",
+    port: 9000,
+    user: "minio-reader",
+    password: "reader-secret-key",
+    createdAt: new Date(),
+    ...fields,
+  });
+  const providerRefusal = (connection: DatabaseConnection): string | undefined => {
+    try {
+      buildS3ConnectionOptions(connection, { executionReadOnly: false, queryTimeout: 30_000 });
+      return undefined;
+    } catch (error) {
+      return (error as Error).message;
+    }
+  };
+  const FORMAT = S3_FIELD_RULES.user?.format?.sentence;
+  const RANGE = S3_FIELD_RULES.user?.charRange?.sentence;
+  const BUCKET = S3_FIELD_RULES.database?.format?.sentence;
+  const REGION = S3_FIELD_RULES.region?.format?.sentence;
+
+  test("the form's S3 patterns and sentences are the provider's, which the dialog cannot import because it is server code", () => {
+    expect(S3_FIELD_RULES.user?.format?.pattern.source).toBe(S3_ACCESS_KEY_ID_PATTERN.source);
+    expect(S3_FIELD_RULES.database?.format?.pattern.source).toBe(S3_BUCKET_PATTERN.source);
+    expect(S3_FIELD_RULES.region?.format?.pattern.source).toBe(S3_REGION_PATTERN.source);
+    for (const rule of [S3_FIELD_RULES.user, S3_FIELD_RULES.database, S3_FIELD_RULES.region]) {
+      expect(rule?.format?.pattern.flags).toBe("");
+      // Blank passes on every field: an empty key pair is unsigned, an empty Bucket pins nothing, an empty Region is
+      // us-east-1.
+      expect(rule?.required).toBeUndefined();
+    }
+    expect(S3_FIELD_RULES.user?.charRange?.min).toBe(S3_ACCESS_KEY_ID_MIN_CHARS);
+    expect(S3_FIELD_RULES.user?.charRange?.max).toBe(S3_ACCESS_KEY_ID_MAX_CHARS);
+    const providerSentences: readonly unknown[] = Object.values(S3_CONNECTION_SENTENCES);
+    for (const sentence of [FORMAT, RANGE, BUCKET, REGION]) expect(providerSentences).toContain(sentence);
+    // Each sentence names its field first and holds no value.
+    expect(FORMAT).toStartWith("Access key ID ");
+    expect(RANGE).toStartWith("Access key ID ");
+    expect(BUCKET).toStartWith("Bucket ");
+    expect(REGION).toStartWith("Region ");
+  });
+
+  test("connectionFieldRefusal checks the access key ID, the bucket and the region, naming the field and never the value", () => {
+    const config = getDBConfig("s3");
+    expect(connectionFieldRefusal(config, s3({ user: "", password: "", database: "", region: "" }))).toBeUndefined();
+    expect(connectionFieldRefusal(config, s3({ user: undefined, password: undefined }))).toBeUndefined();
+    for (const user of ["AKIA EXAMPLE", "a/b", "a,b", "a=b"]) {
+      const refusal = connectionFieldRefusal(config, s3({ user }));
+      expect(refusal).toBe(FORMAT);
+      expect(refusal).not.toContain(user);
+    }
+    expect(connectionFieldRefusal(config, s3({ user: "ab" }))).toBe(RANGE);
+    expect(connectionFieldRefusal(config, s3({ user: "abc" }))).toBeUndefined();
+    expect(connectionFieldRefusal(config, s3({ user: "a".repeat(512) }))).toBeUndefined();
+    expect(connectionFieldRefusal(config, s3({ user: "a".repeat(513) }))).toBe(RANGE);
+    for (const database of [".", "..", "-x", "a/b"]) {
+      expect(connectionFieldRefusal(config, s3({ database }))).toBe(BUCKET);
+    }
+    expect(connectionFieldRefusal(config, s3({ database: "Legacy_Bucket.Name" }))).toBeUndefined();
+    for (const region of [" us-east-1", "us/east"]) {
+      expect(connectionFieldRefusal(config, s3({ region }))).toBe(REGION);
+    }
+    for (const region of ["garage", "auto"]) {
+      expect(connectionFieldRefusal(config, s3({ region }))).toBeUndefined();
+    }
+  });
+
+  // The copies agree on the values a user types or pastes, not only on their spelling.
+  test.each([
+    ["user", "AKIAIOSFODNN7EXAMPLE"],
+    ["user", "abc"],
+    ["user", "a".repeat(512)],
+    ["user", "ab"],
+    ["user", "a".repeat(513)],
+    ["user", "AKIA EXAMPLE"],
+    ["user", "a/b"],
+    ["user", "a,b"],
+    ["user", "a=b"],
+    ["user", "ÅKIA1234"],
+    ["user", "AKIA​EXAMPLE"],
+    ["user", "AKIA1234\n"],
+    ["database", "sales"],
+    ["database", "Legacy_Bucket.Name"],
+    ["database", "b".repeat(255)],
+    ["database", "b".repeat(256)],
+    ["database", "."],
+    ["database", ".."],
+    ["database", "-x"],
+    ["database", "x-"],
+    ["database", "a/b"],
+    ["database", "   "],
+    ["region", "us-east-1"],
+    ["region", "garage"],
+    ["region", "auto"],
+    ["region", "r".repeat(64)],
+    ["region", "r".repeat(65)],
+    ["region", " us-east-1"],
+    ["region", "us/east"],
+    ["region", "us-east-1\n"],
+    ["region", "   "],
+  ] as const)("the form and the provider give one answer for %s %p", (field, value) => {
+    const connection = s3({ [field]: value });
+    expect({ field, value, form: connectionFieldRefusal(getDBConfig("s3"), connection) }).toEqual({
+      field,
+      value,
+      form: providerRefusal(connection),
+    });
+  });
+
+  // With two fields wrong, both name the access key ID first, the dialog's field order and the provider's row order.
+  test("two wrong fields name the access key ID first on both sides", () => {
+    const connection = s3({ user: "a/b", region: "us/east" });
+    expect(connectionFieldRefusal(getDBConfig("s3"), connection)).toBe(FORMAT);
+    expect(providerRefusal(connection)).toBe(FORMAT);
   });
 });
 
@@ -1115,6 +1301,10 @@ describe("db-showcase", () => {
         // Behind Oxia and ahead of libSQL (design 7.2): the cloud data warehouse a team runs beside its databases,
         // the newest name on this page, so only libSQL and the embedded store move (the Milvus, Qdrant, Oxia precedent).
         "databend",
+        // Behind Databend and ahead of libSQL: the object store a team keeps its files in beside its
+        // databases, the newest name on this page, so only libSQL and the embedded store move (the Milvus, Qdrant, Oxia
+        // and Databend precedent).
+        "s3",
         "libsql",
         "libredb",
       ]);
@@ -1141,13 +1331,14 @@ describe("db-showcase", () => {
 });
 
 describe("Host box addresses and credential warnings", () => {
-  test("only milvus, qdrant, the two InfluxDB types and databend declare hostAcceptsUri, so every other Host box takes a host alone", () => {
+  test("only milvus, qdrant, the two InfluxDB types, databend and s3 declare hostAcceptsUri, so every other Host box takes a host alone", () => {
     expect(ALL_TYPES.filter((type) => hostUriSchemes(type).length > 0)).toEqual([
       "milvus",
       "qdrant",
       "influxdb",
       "influxdb3",
       "databend",
+      "s3",
     ]);
   });
 

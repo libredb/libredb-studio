@@ -918,6 +918,8 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * (`src/lib/db/providers/timeseries/influxdb/influxql-lexer.ts`) and refuses every write before sending it.
  * `oxia` takes one `oxia client` read command, words split by POSIX shell rules, which is not SQL text: a SQL span
  * reader would report its quoting as unreadable and prompt on every run.
+ * `s3` takes one AWS CLI subset read command, or Studio's own `preview`, words split by POSIX shell rules, which is not
+ * SQL text: a SQL span reader would report its quoting as unreadable and prompt on every run.
  *
  * `trino` is deliberately absent for the same reason as the two search ids: the editor
  * text is the exact bytes `POST /v1/statement` receives, and the provider extends
@@ -957,6 +959,7 @@ const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "qdrant",
   "influxdb",
   "oxia",
+  "s3",
 ]);
 
 /**

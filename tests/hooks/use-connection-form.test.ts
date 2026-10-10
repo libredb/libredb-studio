@@ -1956,6 +1956,7 @@ describe("useConnectionForm", () => {
     influxdb3: true,
     oxia: true,
     databend: true,
+    s3: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

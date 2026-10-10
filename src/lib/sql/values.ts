@@ -90,6 +90,9 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // No generator calls `quoteLiteral` for Oxia: the command table's own quoting writes every word (O10); the row
   // is the inert answer etcd's is.
   oxia: "standard",
+  // No generator calls quoteLiteral for S3: the console's own quoting writes every word; the row is the inert answer
+  // Oxia's is.
+  s3: "standard",
   // Default `sql_mode`. A server running with NO_BACKSLASH_ESCAPES reads the
   // doubled backslash as two characters, which is why binding the value beats
   // quoting it wherever a bind form exists.

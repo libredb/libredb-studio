@@ -790,12 +790,41 @@ describe("createDatabaseProvider", () => {
 
   test("the factory error lists milvus among the supported types, before qdrant and the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\bneo4j, milvus, qdrant, libredb$/);
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(
+      /Supported types: .*\bneo4j, milvus, qdrant, s3, libredb$/,
+    );
   });
 
   test("the factory error lists qdrant among the supported types, before the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\bqdrant\b.*, libredb$/);
+  });
+
+  test('creates provider for type "s3"', async () => {
+    // A blank key pair is an unsigned connection, and an empty Bucket pins nothing. The constructor validates nothing
+    // and opens nothing, as Oxia's, so the provider is built, and declares its language, its dialect and its read-only
+    // enforcement, with no S3 server running.
+    const conn = makeConnection("s3", { port: 9000, user: undefined, password: undefined, database: undefined });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider.type).toBe("s3");
+    expect(provider.getCapabilities().queryLanguage).toBe("json");
+    expect(provider.getCapabilities().queryDialect).toBe("s3");
+    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("an s3 connection with readOnly: true is built, since its provider keeps the mode", async () => {
+    const conn = {
+      ...makeConnection("s3", { port: 9000, user: undefined, password: undefined, database: undefined }),
+      readOnly: true,
+    };
+    expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
+    expect((await createDatabaseProvider(conn)).type).toBe("s3");
+  });
+
+  test("the factory error lists s3 between qdrant and the embedded store", async () => {
+    const conn = makeConnection("not-an-engine");
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\bqdrant, s3, libredb$/);
   });
 
   test('creates provider for type "libredb"', async () => {

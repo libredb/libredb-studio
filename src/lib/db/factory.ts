@@ -338,6 +338,14 @@ export async function createDatabaseProvider(
       return new QdrantProvider(connection, options, execution);
     }
 
+    // Object storage - dynamically imported
+    case "s3": {
+      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context rides
+      // along, so an execution profile opens it read-only, as Qdrant's does.
+      const { S3Provider } = await import("./providers/objectstore/s3/index");
+      return new S3Provider(connection, options, execution);
+    }
+
     // Embedded databases - dynamically imported
     case "libredb": {
       const { LibreDBProvider } = await import("./providers/embedded/libredb");
@@ -349,7 +357,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, s3, libredb`,
         connection.type,
       );
   }

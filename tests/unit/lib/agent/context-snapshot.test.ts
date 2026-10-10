@@ -3570,10 +3570,11 @@ describe("the identity a held inventory is filed under", () => {
 
   test("an S3 region is the SAME identity, because it is a signing scope, not which store this is", () => {
     // A wrong region is refused rather than answered with other buckets, so a held inventory stays true across regions.
-    expect(connectionIdentity({ ...CONNECTION, region: "eu-central-1" })).toBe(
-      connectionIdentity({ ...CONNECTION, region: "us-east-1" }),
+    const s3: DatabaseConnection = { ...CONNECTION, type: "s3", port: 9000 };
+    expect(connectionIdentity({ ...s3, region: "eu-central-1" })).toBe(
+      connectionIdentity({ ...s3, region: "us-east-1" }),
     );
-    expect(connectionIdentity({ ...CONNECTION, region: "eu-central-1" })).toBe(connectionIdentity(CONNECTION));
+    expect(connectionIdentity({ ...s3, region: "eu-central-1" })).toBe(connectionIdentity(s3));
   });
 
   test("the identity carries no credential, because a process-lifetime key should not", () => {

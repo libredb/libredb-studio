@@ -246,6 +246,12 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     reason:
       "Oxia stores opaque values under string keys and has no schema, so there is no column definition to change.",
   },
+  // Not a table store either: an object is bytes under a key, and the columns a listing shows are its fixed
+  // shape. The sentence is the one `NO_TABLE_DDL` below prints when it declines the whole diff.
+  s3: {
+    label: "S3-compatible object storage",
+    reason: "S3 stores objects under keys with no schema, so there is no column definition to change.",
+  },
 };
 
 /**
@@ -304,7 +310,8 @@ const NO_DROP_IF_EXISTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["ora
  * `neo4j` too: its text is a Cypher statement, `milvus`: its text is a Milvus console request, and `qdrant`: its
  * text is a Qdrant console request. `influxdb` joined on the same fact: its text is an InfluxQL statement, and
  * `influxdb3` on `NO_TABLE_DDL`'s: its text is SQL, but the 3.x planner takes no DDL, so there is no table DDL
- * to wrap. `oxia` joined on the first fact: its text is one `oxia client` read command.
+ * to wrap. `oxia` joined on the first fact: its text is one `oxia client` read command. `s3` joined on the first
+ * fact: its text is one AWS CLI subset command.
  *
  * `databend` joined on the Oracle reason: Databend has `BEGIN`, `COMMIT` and `ROLLBACK`, but a DDL statement commits
  * the open transaction, so a `BEGIN;` around a migration made of DDL brackets nothing it could roll back.
@@ -334,6 +341,7 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "influxdb3",
   "oxia",
   "databend",
+  "s3",
 ]);
 
 // These engines cannot apply a relational table diff through SQL. In particular,
@@ -356,6 +364,7 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "influxdb",
   "influxdb3",
   "oxia",
+  "s3",
 ]);
 
 // IndexDiff carries column names/uniqueness, not ClickHouse's index expression,

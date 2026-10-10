@@ -1160,6 +1160,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "influxdb3",
     "oxia",
     "databend",
+    "s3",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

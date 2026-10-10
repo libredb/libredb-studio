@@ -80,6 +80,8 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   oxia: false,
   // `LIMIT n OFFSET m` is native, and it inherits `SQLBaseProvider.prepareQuery` (design 2.4).
   databend: true,
+  // One AWS CLI subset command per run; the console pages with --starting-token, never with LIMIT and OFFSET.
+  s3: false,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];

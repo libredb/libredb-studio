@@ -144,7 +144,13 @@ export type DatabaseType =
   // repository's own (`src/lib/db/providers/sql/databend/`), extending `SQLBaseProvider`. Self-hosted Databend and
   // Databend Cloud are the same id: a Cloud connection differs in host, TLS and the `warehouse` below. The
   // connection's Database field is the session database, inside the `default` catalog.
-  | "databend";
+  | "databend"
+  // S3-compatible object storage, read over the S3 REST API with path-style addressing and SigV4 signing by a client of
+  // this repository's own on the shared node transport (`src/lib/db/providers/objectstore/s3/`). Its editor text is one
+  // command of an AWS CLI subset. Read-only in this version whatever `readOnly` says. The connection's User field is
+  // the access key ID, Password the secret access key, Database an optional pinned bucket, and `region` below the
+  // signing region; a blank key pair sends unsigned requests, never this server's own credentials.
+  | "s3";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

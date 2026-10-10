@@ -376,16 +376,16 @@ const BARE_TYPE_FAMILY: Record<string, InferredKind> = {
  * it answers `Unknown type 'text'` to.
  *
  * The map is total, for the reason `BINARY_LITERAL` below is: a new provider must not
- * inherit a silently wrong answer. The seventeen dialects with NO row measured have an
+ * inherit a silently wrong answer. The eighteen dialects with NO row measured have an
  * empty one. Db2 is the one of them that parses both statements (#786); no bare name was
  * measured standing alone there, so each is re-spelled from its family. Druid takes no INSERT at all without the MSQ extension. The two search
  * endpoints and Couchbase parse no CREATE TABLE: a SQL++ collection is schemaless and
  * `CREATE COLLECTION` takes no columns, which is why the Couchbase provider declares
  * `supportsCreateTable: false`. InfluxDB 3 parses SQL, but its 3.12 planner refuses DDL and DML, so
  * a generated file is for another engine, the search pair's reason. MongoDB, Redis, Kafka, etcd,
- * Milvus, Qdrant, Oxia and the embedded store declare `queryLanguage: "json"`, `prometheus` declares
+ * Milvus, Qdrant, Oxia, S3 and the embedded store declare `queryLanguage: "json"`, `prometheus` declares
  * `"promql"`, `neo4j` declares `"cypher"` and `influxdb` declares `"influxql"`, so no SQL statement
- * is ever built for those eleven to read. A file for any of those sixteen
+ * is ever built for those twelve to read. A file for any of those seventeen
  * is by definition meant to run somewhere else, so every bare name in it is re-spelled
  * portably rather than kept as one engine's private word.
  */
@@ -575,6 +575,8 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
   influxdb3: NOTHING_STANDS_ALONE,
   // Oxia has no statement form for an export.
   oxia: NOTHING_STANDS_ALONE,
+  // S3 has no statement form for an export.
+  s3: NOTHING_STANDS_ALONE,
   // Measured by M08a and M08c on the pinned image: each was created and read back unbounded (`String`, `Timestamp`
   // with microseconds, `Binary`). Every other bare name is re-spelled from its family (design 7.2, X01).
   databend: ["varchar", "timestamp", "binary"],
@@ -771,6 +773,8 @@ const BINARY_LITERAL: Record<DatabaseType, BinaryLiteral> = {
   // Oxia has no statement language for a value, so no statement is built for it; the answer is the inert default,
   // as `etcd`'s and `neo4j`'s.
   oxia: "standard-hex",
+  // No statement language for a value, so no statement is built for it; the inert default, as Oxia's.
+  s3: "standard-hex",
   // Measured on SQL Server 2022: `SELECT CONVERT(varchar(64), 0x0102deadbeef, 2)`
   // answers `0102DEADBEEF`, `DATALENGTH(0x)` answers 0 — so the empty case is spelled
   // — and `SELECT X'0102'` is `Msg 207 … Invalid column name 'X'`.
