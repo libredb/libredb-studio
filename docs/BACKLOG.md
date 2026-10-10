@@ -6316,7 +6316,7 @@ Found 2026-10-07 while designing the Databend provider (design 5.7).
 
 Found 2026-10-09 while designing the S3 provider.
 
-**Done when:** an MCP metadata surface that lists buckets and never returns an object key is designed, `MCP_EXPOSABLE.s3` turns true for it, and `run_read_query` and agent execution serve a `queryReadOnly` that runs one console read command, with tests; cited in `docs/AGENT.md` beside B103.
+**Done when:** an MCP metadata surface that lists buckets and never returns an object key is designed; `MCP_EXPOSABLE.s3` turns true for it; and `run_read_query` and agent execution serve a `queryReadOnly` that runs one console read command, with tests; cited in `docs/AGENT.md` beside B103.
 
 ## Passkey deferrals (#785)
 
