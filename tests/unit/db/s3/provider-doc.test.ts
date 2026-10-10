@@ -14,7 +14,19 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { connectionFieldHint, DB_UI_CONFIG, hostUriSchemes, offersSshTunnel, readOnlyHint } from "@/lib/db-ui-config";
+import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { buildS3ConnectionOptions } from "@/lib/db/providers/objectstore/s3/connection-options";
+import {
+  S3_ACCESS_KEY_ID_MAX_CHARS,
+  S3_ACCESS_KEY_ID_MIN_CHARS,
+  S3_DEFAULT_PORT,
+  S3_DEFAULT_REGION,
+} from "@/lib/db/providers/objectstore/s3/constants";
+import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
 import { SeedConfigSchema } from "@/lib/seed/types";
+import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -51,6 +63,30 @@ function sectionOf(text: string, heading: string): string {
 /** The table row of `text` whose first cell is exactly `cell`. */
 const rowOf = (text: string, cell: string): string | undefined =>
   text.split("\n").find((line) => line.startsWith(`| ${cell} |`));
+
+/** An unsigned connection to a loopback endpoint: every builder check passes, so an override isolates one rule. */
+const CONNECTION = {
+  id: "s3-doc",
+  name: "S3 doc test",
+  type: "s3",
+  host: "localhost",
+  port: 9000,
+  user: "",
+  password: "",
+} as DatabaseConnection;
+
+/** The sentence `buildS3ConnectionOptions` refuses a connection with `overrides` with. */
+function builderRefusal(overrides: Record<string, unknown>): string {
+  try {
+    buildS3ConnectionOptions({ ...CONNECTION, ...overrides } as DatabaseConnection & WithTunnelFarEnd, {
+      executionReadOnly: false,
+      queryTimeout: DEFAULT_QUERY_TIMEOUT,
+    });
+  } catch (error) {
+    return (error as Error).message;
+  }
+  throw new Error(`expected the builder to refuse ${JSON.stringify(overrides)}`);
+}
 
 const OUTLINE: readonly string[] = [
   "# S3-compatible object storage Provider",
@@ -239,5 +275,92 @@ describe("docs/providers/s3.md: shape and fixed text", () => {
     });
     const withMcp = { ...file, connections: [{ ...file.connections[0], mcp: true }] };
     expect(SeedConfigSchema.safeParse(withMcp).success).toBe(false);
+  });
+});
+
+describe("docs/providers/s3.md: the connection, as the dialog and the builder state it", () => {
+  const fields = sectionOf(DOC, "### 4.1 Configuration fields");
+
+  test("5. the label is the outward name, and every dialog label has its row", () => {
+    const config = DB_UI_CONFIG.s3;
+    expect(config.label).toBe("S3-compatible object storage");
+    expect(config.fieldLabels).toEqual({
+      host: "Endpoint host",
+      user: "Access key ID",
+      password: "Secret access key",
+      database: "Bucket",
+      region: "Region",
+      allowInsecureAuth: "Connect without TLS",
+    });
+    for (const label of Object.values(config.fieldLabels ?? {})) expect(fields).toContain(`| ${label}`);
+    expect(config.defaultPort).toBe(String(S3_DEFAULT_PORT));
+    expect(rowOf(fields, "Endpoint host, Port")).toContain(`\`${config.defaultPort}\``);
+  });
+
+  test("6. every dialog hint is quoted in section 4.1", () => {
+    for (const field of ["host", "user", "password", "database", "region", "allowInsecureAuth"] as const) {
+      const hint = connectionFieldHint(DB_UI_CONFIG.s3, field);
+      expect(hint, field).toBeDefined();
+      expect(flat(fields), field).toContain(hint ?? "");
+    }
+  });
+
+  test("7. the access key ID bound and its one refusal are the builder's", () => {
+    const short = builderRefusal({ user: "a".repeat(S3_ACCESS_KEY_ID_MIN_CHARS - 1), password: "secret" });
+    const long = builderRefusal({ user: "a".repeat(S3_ACCESS_KEY_ID_MAX_CHARS + 1), password: "secret" });
+    expect(short).toBe(long);
+    expect(rowOf(fields, "Access key ID")).toContain(
+      `${S3_ACCESS_KEY_ID_MIN_CHARS} to ${S3_ACCESS_KEY_ID_MAX_CHARS} characters`,
+    );
+    expect(flat(fields)).toContain(short);
+    expect(flat(fields)).toContain(builderRefusal({ user: "has space", password: "secret" }));
+  });
+
+  test("8. the bucket and region refusals are the builder's, and the default region is the constant", () => {
+    expect(flat(fields)).toContain(builderRefusal({ database: "-not-a-bucket" }));
+    expect(flat(fields)).toContain(builderRefusal({ region: "us east 1" }));
+    expect(S3_DEFAULT_REGION).toBe("us-east-1");
+    expect(rowOf(fields, "Region")).toContain(`\`${S3_DEFAULT_REGION}\``);
+    expect(flat(sectionOf(DOC, "### 4.4 One endpoint, path style and the region"))).toContain(
+      `\`${S3_DEFAULT_REGION}\``,
+    );
+  });
+
+  test("9. the key-pair and plain-HTTP refusals are the builder's", () => {
+    expect(flat(sectionOf(DOC, "### 4.2 Authentication"))).toContain(
+      builderRefusal({ user: "studio-browse", password: "" }),
+    );
+    expect(flat(sectionOf(DOC, "### 4.6 Plain HTTP off this machine needs consent"))).toContain(
+      builderRefusal({ host: "s3.example.com" }),
+    );
+  });
+
+  test("10. the region table has one row per verified server", () => {
+    const region = sectionOf(DOC, "### 4.4 One endpoint, path style and the region");
+    expect(region).toContain("| Server | Region enforced | Region named in the error |");
+    for (const server of ["MinIO", "Silo", "Garage", "RustFS"]) expect(rowOf(region, server), server).toBeDefined();
+  });
+
+  test("11. the tunnel and the address paste are what the dialog offers", () => {
+    expect(offersSshTunnel("s3")).toBe(true);
+    expect(flat(sectionOf(DOC, "### 4.5 SSH tunnel"))).toContain(
+      "The dialog offers the SSH tunnel on every S3-compatible object storage connection.",
+    );
+    expect(hostUriSchemes("s3")).toEqual(["http", "https"]);
+    expect(flat(sectionOf(DOC, "### 4.7 Pasting an address"))).toContain(
+      "Endpoint host takes a pasted `http://` or `https://` address",
+    );
+  });
+
+  test("12. the read-only mode and machine access are what the records say", () => {
+    expect(READ_ONLY_ENFORCED.s3).toBe(true);
+    const mode = flat(sectionOf(DOC, "### 3.5 The read-only mode"));
+    expect(mode).toContain(readOnlyHint(DB_UI_CONFIG.s3));
+    expect(mode).toContain("`READ_ONLY_ENFORCED.s3` is true");
+    expect(MCP_EXPOSABLE.s3).toBe(false);
+    expect(AGENT_EXECUTION_ENGINES).not.toContain("s3");
+    const machine = flat(sectionOf(DOC, "### 3.6 Machine access"));
+    expect(machine).toContain("No agent execution and no MCP");
+    expect(machine).toContain("`MCP_EXPOSABLE.s3` is false");
   });
 });
