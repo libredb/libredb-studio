@@ -549,4 +549,22 @@ describe("cancellation", () => {
       expect(calls).toEqual([]);
     }
   });
+
+  test("a run cancelled while the first ListObjectsV2 page answers sends no second page and fails naming ListObjectsV2", async () => {
+    const controller = new AbortController();
+    const call = { signal: controller.signal, deadline: Date.now() + 60_000 };
+    const server = pagedServer(letters(5), 1);
+    const { surface, calls } = fakeSurface({
+      listObjectsV2: (request: ListObjectsRequest) => {
+        controller.abort();
+        return server(request);
+      },
+    });
+    const failure = await executeS3Command(surface, parsed("aws s3 ls s3://b/"), { call }).catch(
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(Failed);
+    expect((failure as Failed).operation).toBe("ListObjectsV2");
+    expect(calls.map((each) => each.method)).toEqual(["listObjectsV2"]);
+  });
 });

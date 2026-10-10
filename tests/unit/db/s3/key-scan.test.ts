@@ -97,6 +97,15 @@ describe("option refusals, before any request", () => {
     );
   });
 
+  test("a key part of exactly 1,024 UTF-8 bytes reaches the server", async () => {
+    const part = "ü".repeat(512);
+    expect(new TextEncoder().encode(part)).toHaveLength(1_024);
+    const { page, fake } = scan(() => xmlAnswer(objectsXml({})), { pattern: `sales/${part}`, level: true });
+    await page;
+    expect(fake.exchanges).toHaveLength(1);
+    expect(fake.lines()[0]).toContain(`prefix=${encodeURIComponent(part)}`);
+  });
+
   test.each([
     ["../", true, {}],
     ["a b/", true, {}],

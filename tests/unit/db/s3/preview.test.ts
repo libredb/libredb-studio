@@ -419,13 +419,21 @@ describe("previewObject: the request is checked before any GET", () => {
     }
   });
 
-  test("a repeated column name and more than maxColumns names are refused, each with its own sentence", async () => {
-    await expect(run(fixture("rows.csv"), "rows.csv", { request: { columns: ["id", "name", "id"] } })).rejects.toThrow(
-      "The column list names id twice.",
-    );
+  test("a repeated column name and more than maxColumns names are refused before any GET, each with its own sentence", async () => {
+    const repeated = fakeReader(fixture("rows.csv"));
     await expect(
-      run(fixture("rows.csv"), "rows.csv", { request: { columns: ["a", "b"] }, limits: shrink({ maxColumns: 1 }) }),
+      run(fixture("rows.csv"), "rows.csv", { reader: repeated, request: { columns: ["id", "name", "id"] } }),
+    ).rejects.toThrow("The column list names id twice.");
+    expect(repeated.calls).toEqual([]);
+    const many = fakeReader(fixture("rows.csv"));
+    await expect(
+      run(fixture("rows.csv"), "rows.csv", {
+        reader: many,
+        request: { columns: ["a", "b"] },
+        limits: shrink({ maxColumns: 1 }),
+      }),
     ).rejects.toThrow("The column list holds more than 1 name.");
+    expect(many.calls).toEqual([]);
     await expect(
       run(fixture("rows.csv"), "rows.csv", {
         request: { columns: ["a", "b", "c"] },

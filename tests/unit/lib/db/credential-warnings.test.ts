@@ -98,6 +98,7 @@ describe("the s3 rows", () => {
 
   test("a read-only seed with a default pair is refused, and an unsigned one is not", () => {
     expect(readOnlySeedRefusal("s3", { user: "minioadmin", password: "minioadmin" })).toBe(MINIO_SENTENCE);
+    expect(readOnlySeedRefusal("s3", { user: "rustfsadmin", password: "rustfsadmin" })).toBe(RUSTFS_SENTENCE);
     expect(readOnlySeedRefusal("s3", {})).toBeUndefined();
     expect(readOnlySeedRefusal("s3", { user: "", password: "" })).toBeUndefined();
   });

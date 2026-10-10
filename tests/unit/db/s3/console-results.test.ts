@@ -109,6 +109,16 @@ describe("bucket listings", () => {
     ]);
   });
 
+  test("a creation date longer than the cell bound is cut and counted, in ls and in list-buckets", () => {
+    const outcome: S3Outcome = { ...listing, buckets: [{ name: "a", created: "c".repeat(70_000) }] };
+    const ls = s3Result(outcome, parsed("aws s3 ls"), 1);
+    expect((ls.rows[0].creation_date as string).length).toBe(65_536);
+    expect(ls.warnings?.map((warning) => warning.message)).toEqual(["1 cell(s) were cut at 65,536 characters."]);
+    const api = s3Result(outcome, parsed("aws s3api list-buckets"), 1);
+    expect((api.rows[0].CreationDate as string).length).toBe(65_536);
+    expect(api.warnings?.map((warning) => warning.message)).toEqual(["1 cell(s) were cut at 65,536 characters."]);
+  });
+
   test("a pinned connection answers its bucket alone with the pinned-bucket notice", () => {
     const pinned: S3Outcome = {
       kind: "buckets",
@@ -237,6 +247,19 @@ describe("list-objects-v2", () => {
     const result = s3Result(objects([object(long)]), parsed("aws s3api list-objects-v2 --bucket b"), 1);
     expect((result.rows[0].Key as string).length).toBe(65_535);
     expect(result.warnings?.map((warning) => warning.message)).toEqual(["1 cell(s) were cut at 65,536 characters."]);
+  });
+
+  test("a StorageClass, an ETag and a date longer than the cell bound are each cut and counted", () => {
+    const long = "s".repeat(70_000);
+    const outcome = objects([
+      { kind: "object", object: { key: "a", size: 1, lastModified: long, etag: long, storageClass: long } },
+    ]);
+    const result = s3Result(outcome, parsed("aws s3api list-objects-v2 --bucket b"), 1);
+    const row = result.rows[0];
+    expect([row.LastModified, row.ETag, row.StorageClass].map((cell) => (cell as string).length)).toEqual([
+      65_536, 65_536, 65_536,
+    ]);
+    expect(result.warnings?.map((warning) => warning.message)).toEqual(["3 cell(s) were cut at 65,536 characters."]);
   });
 });
 

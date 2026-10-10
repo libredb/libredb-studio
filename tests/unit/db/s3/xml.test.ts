@@ -41,6 +41,13 @@ describe("refusals", () => {
     ["an ampersand with no semicolon", bytes("<a>&amp</a>"), "malformed"],
     ["nothing at all", bytes(""), "malformed"],
     ["a malformed numeric reference", bytes("<a>&#xZZ;</a>"), "malformed"],
+    ["an unterminated attribute quote", bytes('<a b="c/>'), "malformed"],
+    ["a < in an attribute value", bytes('<a b="<"/>'), "malformed"],
+    ["an unknown entity in an attribute value", bytes('<a b="&foo;"/>'), "entity"],
+    ["a close tag before any open", bytes("</a><a/>"), "malformed"],
+    ["a close tag with trailing junk", bytes("<a></a junk>"), "malformed"],
+    ["an attribute with no =", bytes("<a b/>"), "malformed"],
+    ["two attributes with no space between them", bytes('<a b="1"c="2"/>'), "malformed"],
   ])("%s is refused", (_case, input, reason) => {
     expect(readXml(input)).toEqual({ ok: false, reason });
   });

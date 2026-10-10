@@ -247,6 +247,20 @@ describe("buildRows", () => {
     expect(two.notices).toEqual(["The preview stopped after 2 rows, at 9 characters of cell text."]);
   });
 
+  test("a first row that alone crosses the output cap gives no rows and the cap's notice", () => {
+    const built = buildRows(
+      grid([
+        ["abc", "defg"],
+        ["h", "i"],
+      ]),
+      undefined,
+      10,
+      limits({ outputChars: 6 }),
+    );
+    expect(built.rows.rows).toEqual([]);
+    expect(built.notices).toEqual(["The preview stopped after 0 rows, at 6 characters of cell text."]);
+  });
+
   test("cut cells are counted with the cap in force", () => {
     const built = buildRows(
       grid([

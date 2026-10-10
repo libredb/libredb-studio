@@ -984,6 +984,47 @@ function dataChunk(values: readonly number[]): Uint8Array {
   return pages.subarray(4, pages.length - 8 - new DataView(pages.buffer).getUint32(pages.length - 8, true));
 }
 
+/** A data page v2 (page type 3) of `numValues` values and a 4-byte body, as its header and its bytes. */
+function dataPageV2(numValues: number): Uint8Array {
+  const header = thriftStruct([
+    [1, { i32: 3 }],
+    [2, { i32: 4 }],
+    [3, { i32: 4 }],
+    [
+      8,
+      {
+        struct: [
+          [1, { i32: numValues }],
+          [2, { i32: 0 }],
+          [3, { i32: numValues }],
+          [4, { i32: 0 }],
+          [5, { i32: 0 }],
+          [6, { i32: 0 }],
+        ],
+      },
+    ],
+  ]);
+  return new Uint8Array([...header, ...new Uint8Array(4)]);
+}
+
+describe("prescanChunk: data pages v2", () => {
+  test("a data page v2 counts toward the data values, so v1 and v2 pages summing to the footer's count pass", () => {
+    const totals = { values: 0, decoded: 0 };
+    const chunk = new Uint8Array([...dataChunk([4]), ...dataPageV2(6)]);
+    expect(() => prescanChunk(chunk, 10, "id", S3_PREVIEW_LIMITS, totals)).not.toThrow();
+    expect(totals.values).toBe(10);
+  });
+
+  test("a data page v2 that takes the data values past the footer's count is refused with the chunk's sentence", () => {
+    const chunk = new Uint8Array([...dataChunk([6]), ...dataPageV2(6)]);
+    expect(() => prescanChunk(chunk, 10, "id", S3_PREVIEW_LIMITS, { values: 0, decoded: 0 })).toThrow(
+      new PreviewRefusal(
+        "The data pages of column id declare 12 values, more than its column chunk holds or the preview allows, so the file is not previewed.",
+      ),
+    );
+  });
+});
+
 describe("prescanChunk: negative page counts", () => {
   test("a page that declares a negative value count is refused", () => {
     expect(() => prescanChunk(dataChunk([10, -5]), 5, "id", S3_PREVIEW_LIMITS, { values: 0, decoded: 0 })).toThrow(
