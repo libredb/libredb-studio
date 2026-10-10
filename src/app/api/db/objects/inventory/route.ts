@@ -14,8 +14,14 @@ import {
   resolveKinds,
   type ObjectInventory,
 } from "@/lib/api/object-route";
-import { enumerateContainers } from "@/lib/db/container-walk";
-import type { DatabaseObject, ObjectDetail } from "@/lib/db/types";
+import {
+  type ContainerEnumeration,
+  describeNamedContainers,
+  enumerateContainers,
+  kindsByContainer,
+} from "@/lib/db/container-walk";
+import { applicableKinds } from "@/lib/db/object-kinds";
+import type { DatabaseObject, DatabaseProvider, ObjectDetail } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
 
@@ -79,9 +85,14 @@ export async function POST(req: NextRequest) {
     //
     // The enumeration also answers which container the SESSION is in, off the same walk and at
     // no extra round trip. A body that NAMED its containers skips the walk, so there is no
-    // default to report and none is invented (#789).
-    const enumerated = named === undefined ? await enumerateContainers(provider) : { containers: named };
+    // default to report and none is invented (#789). On an engine whose containers name their
+    // kinds, the named ones are still asked of the provider, because which kinds a container
+    // holds is the provider's answer: a caller naming a cluster's cluster-scoped container must
+    // not have its namespaced kinds listed there. See `namedEnumeration`.
+    const enumerated =
+      named === undefined ? await enumerateContainers(provider) : await namedEnumeration(provider, named);
     const containers = dedupePaths(enumerated.containers);
+    const kindsOf = kindsByContainer(enumerated);
     const listObjects = provider.listObjects.bind(provider);
 
     // Flattened to one loop so each limit is checked in one place. Nested loops would need a label
@@ -90,7 +101,9 @@ export async function POST(req: NextRequest) {
     // The scan below is sequential, and the `no-await-in-loop` warning is accepted for it: a
     // `Promise.all` would take one pool client per pair, and it could not stop at either limit,
     // which is the whole point of the bounds.
-    const pairs = containers.flatMap((container) => kinds.map((kind) => ({ container, kind: kind.id })));
+    const pairs = containers.flatMap((container) =>
+      applicableKinds(kinds, kindsOf.get(JSON.stringify(container))).map((kind) => ({ container, kind: kind.id })),
+    );
     const scanned = pairs.slice(0, INVENTORY_PAIR_LIMIT);
 
     // Reported the same way an object overflow is, rather than as a 400, and the choice matters for
@@ -177,4 +190,28 @@ export async function POST(req: NextRequest) {
       ...(defaultContainer === undefined ? {} : { defaultContainer }),
     };
   });
+}
+
+/**
+ * The containers a body NAMED, with the kinds the provider answers for each, refusing one its listing
+ * does not hold.
+ *
+ * Only an engine that declares `containersNameKinds` is asked, and only it can have such a container:
+ * reading one for every kind would pair it with kinds it may not hold, the provider refuses an
+ * inapplicable pair with a sentence, and that refusal would end the whole inventory. So the caller is
+ * told before any listing, in a sentence naming what it sent.
+ */
+async function namedEnumeration(
+  provider: DatabaseProvider,
+  named: readonly (readonly string[])[],
+): Promise<ContainerEnumeration> {
+  const { enumeration, unlisted } = await describeNamedContainers(provider, named);
+  if (unlisted.length > 0) {
+    throw new ObjectRouteError(
+      `"containers" names ${JSON.stringify(unlisted)}, which the provider's container listing does not hold, ` +
+        "so the kinds held there are unknown; name containers the containers route lists",
+      400,
+    );
+  }
+  return enumeration;
 }

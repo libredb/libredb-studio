@@ -1197,6 +1197,111 @@ describe("POST /api/db/objects/inventory", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Kinds per container
+  // ---------------------------------------------------------------------------
+  //
+  // A container may answer `kinds`, the enumerable kinds it holds, on an engine that declares
+  // `containersNameKinds`. The route lists only those there, on the walk and for named containers
+  // alike, so a cluster-scoped container is never asked for a namespaced kind, which its provider
+  // would refuse with a sentence and end the whole read.
+
+  const NODE_KIND: ObjectKindSpec = { id: "nodes", role: "config", label: "Node", labelPlural: "Nodes" };
+  const POD_KIND: ObjectKindSpec = { id: "pods", role: "config", label: "Pod", labelPlural: "Pods" };
+  const clusterContainers = async (): Promise<Container[]> => [
+    { path: ["Cluster"], name: "Cluster", level: 0, kinds: ["nodes"] },
+    { path: ["shop"], name: "shop", level: 0, kinds: ["pods"] },
+  ];
+
+  /**
+   * A provider that declares `containersNameKinds`, refuses an inapplicable pair, as the contract asks,
+   * and lists one object otherwise.
+   */
+  function clusterProvider() {
+    const listObjects = mock(async (container: readonly string[], kind: string) => {
+      const holds = container[0] === "Cluster" ? kind === "nodes" : kind === "pods";
+      if (!holds) throw new QueryError(`the container ${container[0]} holds no ${kind}`, "postgres");
+      return [object([...container, `${kind}-one`], kind)];
+    });
+    const provider = objectProvider({
+      objectKinds: [POD_KIND, NODE_KIND],
+      listContainers: mock(clusterContainers),
+      listObjects,
+    });
+    const capabilities = { ...provider.getCapabilities(), containersNameKinds: true as const };
+    provider.getCapabilities = () => capabilities;
+    activeProvider = provider;
+    return listObjects;
+  }
+
+  test("the walk lists each container's own kinds and never an inapplicable pair", async () => {
+    const listObjects = clusterProvider();
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", { method: "POST", body: { connection } }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect(listObjects.mock.calls).toEqual([
+      [["Cluster"], "nodes"],
+      [["shop"], "pods"],
+    ]);
+    expect((await parseResponseJSON<{ objects: DatabaseObject[] }>(response)).objects.map((o) => o.path)).toEqual([
+      ["Cluster", "nodes-one"],
+      ["shop", "pods-one"],
+    ]);
+  });
+
+  test("named containers are listed for the kinds the provider says they hold, asked once", async () => {
+    const listObjects = clusterProvider();
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, containers: [["shop"], ["Cluster"]] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect(listObjects.mock.calls).toEqual([
+      [["shop"], "pods"],
+      [["Cluster"], "nodes"],
+    ]);
+    expect(activeProvider.listContainers).toHaveBeenCalledTimes(1);
+  });
+
+  test("a named container the provider's listing does not hold is refused before any listing", async () => {
+    const listObjects = clusterProvider();
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, containers: [["Cluster"], ["gone"]] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      '"containers" names [["gone"]], which the provider\'s container listing does not hold, so the kinds held ' +
+        "there are unknown; name containers the containers route lists",
+    );
+    expect(listObjects).toHaveBeenCalledTimes(0);
+  });
+
+  test("a requested kind is listed only where it applies", async () => {
+    const listObjects = clusterProvider();
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, kinds: ["pods"] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect(listObjects.mock.calls).toEqual([[["shop"], "pods"]]);
+  });
+
+  // ---------------------------------------------------------------------------
   // includeColumns (#789)
   // ---------------------------------------------------------------------------
   //
