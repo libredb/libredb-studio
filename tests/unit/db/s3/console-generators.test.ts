@@ -1,8 +1,8 @@
 /**
  * What the S3 generators write for a bucket or an object, given the provider's own path, the value rule every generated value
  * follows, and the read-on command the read-on notice names for `ls`. Every command line written, and
- * every generated comment line with its `# ` removed, is one the console's parser accepts, except the two notes for a
- * key no command line can spell.
+ * every generated comment line with its `# ` removed, is one the console's parser accepts, except the three notes for an
+ * object no command line reaches.
  */
 import { describe, expect, test } from "bun:test";
 import { parseS3Command } from "@/lib/db/providers/objectstore/s3/console/commands";
@@ -16,6 +16,7 @@ import { encodeS3StartingToken } from "@/lib/db/providers/objectstore/s3/console
 
 const CR_NOTE = "# This key holds a carriage return, which a command line cannot spell: open it from the Keys panel.";
 const NUL_NOTE = "# This key holds a NUL character, which a command line cannot pass: open it from the Keys panel.";
+const ADDRESS_NOTE = "# Studio does not open this key, so no command is written for it.";
 
 function expectParses(text: string): void {
   const parsed = parseS3Command(text, {});
@@ -24,7 +25,7 @@ function expectParses(text: string): void {
 
 /** The whole text parses, and so does each generated comment line once its `# ` is removed. */
 function expectEveryLineParses(text: string): void {
-  if (text === CR_NOTE || text === NUL_NOTE) return;
+  if (text === CR_NOTE || text === NUL_NOTE || text === ADDRESS_NOTE) return;
   expectParses(text);
   for (const line of text.split("\n").filter((candidate) => candidate.startsWith("# "))) expectParses(line.slice(2));
 }
@@ -54,6 +55,13 @@ describe("the tree click (run)", () => {
     expect(s3TableQuery(["sales/a b.csv"])).toBe("preview 's3://sales/a b.csv'");
     expect(s3TableQuery(["sales/it's.csv"])).toBe("preview 's3://sales/it'\\''s.csv'");
     expect(s3TableQuery(["sales/-x"])).toBe("preview s3://sales/-x");
+  });
+
+  test("a key Studio does not open gets its note, in both generators", () => {
+    for (const key of ["/x", "../x", "a/..", "a\\..\\.."]) {
+      expect(s3TableQuery([`sales/${key}`])).toBe(ADDRESS_NOTE);
+      expect(s3SelectQuery([`sales/${key}`])).toBe(ADDRESS_NOTE);
+    }
   });
 
   test("a key holding a carriage return or a NUL gets its note", () => {
@@ -115,6 +123,9 @@ describe("Generate Command (written, not run)", () => {
       "file://x",
       "\u00e9\ud83d\ude00",
       "a\tb",
+      "/x",
+      "../x",
+      "a/..",
     ];
     for (const key of keys) {
       expectEveryLineParses(s3TableQuery([`sales/${key}`]));

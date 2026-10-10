@@ -7,13 +7,14 @@
  * a bucket's `[bucket]`, an object's `[<bucket>/<key>]`, split at its first `/`. Every value is written by the value
  * rule: `<flag>=` and the quoted value when it begins with `-` (which the console reads only after `=`), else `<flag>`
  * and the quoted value. Every command line written, and every comment line without its `# `, is one the console's
- * parser accepts; the two notes for a key no command line spells are the only lines that are not commands.
+ * parser accepts; the three notes for an object no command line reaches are the only lines that are not commands.
  */
 import { quoteShellWord } from "@/lib/db/console/shell-words";
-import { splitVirtualKey } from "../names";
+import { objectAddressRefusal, splitVirtualKey } from "../names";
 
 const CR_NOTE = "# This key holds a carriage return, which a command line cannot spell: open it from the Keys panel.";
 const NUL_NOTE = "# This key holds a NUL character, which a command line cannot pass: open it from the Keys panel.";
+const ADDRESS_NOTE = "# Studio does not open this key, so no command is written for it.";
 
 /**
  * A word as `quoteShellWord` writes it, with a lone `^` quoted: `quoteShellWord` leaves `^` bare, and the console
@@ -35,8 +36,12 @@ function namesLocalFile(value: string): boolean {
   return lower.startsWith("file://") || lower.startsWith("fileb://");
 }
 
-/** The note for a key no command line spells, or undefined when it has a spelling. */
-function unspelledNote(key: string): string | undefined {
+/**
+ * The note for an object no command line reaches, or undefined when one does: an address the console refuses (a key
+ * that begins with / or whose dot segments leave its bucket), or a key no command line spells.
+ */
+function unspelledNote(bucket: string, key: string): string | undefined {
+  if (objectAddressRefusal(bucket, key) !== undefined) return ADDRESS_NOTE;
   if (key.includes("\r")) return CR_NOTE;
   if (key.includes("\u0000")) return NUL_NOTE;
   return undefined;
@@ -57,7 +62,7 @@ const previewCommand = (bucket: string, key: string): string => `preview ${shell
 export function s3TableQuery(path: readonly string[]): string {
   const { bucket, key } = namesOf(path);
   if (key === "") return listCommand(bucket);
-  return unspelledNote(key) ?? previewCommand(bucket, key);
+  return unspelledNote(bucket, key) ?? previewCommand(bucket, key);
 }
 
 /**
@@ -73,7 +78,7 @@ export function s3SelectQuery(path: readonly string[]): string {
       `# aws s3api list-objects-v2 ${s3FlagValue("--bucket", bucket)} --delimiter / --max-items 50`,
       `# aws s3api get-bucket-versioning ${s3FlagValue("--bucket", bucket)}`,
     ].join("\n");
-  const note = unspelledNote(key);
+  const note = unspelledNote(bucket, key);
   if (note !== undefined) return note;
   if (key.includes("\n") || namesLocalFile(key)) return previewCommand(bucket, key);
   return [
