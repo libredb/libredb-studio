@@ -66,6 +66,9 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   databend: ["host", "port", "user", "password", "database", "warehouse", "allowInsecureAuth"],
   // The signing region and the consent to plain HTTP are fields of S3's own.
   s3: ["host", "port", "user", "password", "database", "region", "allowInsecureAuth"],
+  // No User: basic authentication is refused; the token is the password, the default namespace the database, and the
+  // namespace list, the API path and the TLS server name are fields of Kubernetes' own.
+  kubernetes: ["host", "port", "password", "database", "namespaces", "apiPath", "tlsServerName"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -3726,6 +3729,96 @@ describe("the warehouse field (Databend design 6.1)", () => {
     rerender({ ...props, isOpen: true, editConnection: null });
     expect(result.current.warehouse).toBe("");
     expect(CONNECTION_FORM_DEFAULTS.warehouse).toBe("");
+  });
+});
+
+describe("Kubernetes' namespace list, API path and TLS server name", () => {
+  const props = {
+    isOpen: true,
+    onClose: mock(() => {}),
+    onConnect: mock<(connection: DatabaseConnection) => void>(() => {}),
+    onTestConnection: async () => ({ success: true }),
+    editConnection: null as DatabaseConnection | null,
+  };
+  beforeEach(() => {
+    props.onConnect.mockClear();
+  });
+
+  const saved = async (result: { current: ReturnType<typeof useConnectionForm> }) => {
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    return props.onConnect.mock.calls[0][0];
+  };
+
+  test("buildConnection carries the three fields, as typed, for a type that takes them", async () => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType("kubernetes"));
+    act(() => result.current.setNamespaces("shop, web"));
+    act(() => result.current.setApiPath("/k8s/clusters/c-1"));
+    act(() => result.current.setTlsServerName("api.internal"));
+    const connection = await saved(result);
+    expect([connection.namespaces, connection.apiPath, connection.tlsServerName]).toEqual([
+      "shop, web",
+      "/k8s/clusters/c-1",
+      "api.internal",
+    ]);
+    expect(connection).not.toHaveProperty("user");
+  });
+
+  test("empty boxes write no key, and a type that does not take the fields drops them", async () => {
+    const empty = renderHook(() => useConnectionForm(props));
+    act(() => empty.result.current.setType("kubernetes"));
+    const blank = await saved(empty.result);
+    for (const field of ["namespaces", "apiPath", "tlsServerName"]) expect(blank).not.toHaveProperty(field);
+
+    props.onConnect.mockClear();
+    const switched = renderHook(() => useConnectionForm(props));
+    act(() => switched.result.current.setType("kubernetes"));
+    act(() => switched.result.current.setApiPath("/k8s/clusters/c-1"));
+    act(() => switched.result.current.setType("postgres"));
+    expect(await saved(switched.result)).not.toHaveProperty("apiPath");
+  });
+
+  test("editing loads the stored fields, a connection without them shows empty boxes, and closing resets them", () => {
+    const stored: DatabaseConnection = {
+      id: "k1",
+      name: "Cluster",
+      type: "kubernetes",
+      host: "rancher.example",
+      port: 443,
+      namespaces: "shop",
+      apiPath: "/k8s/clusters/c-1",
+      tlsServerName: "api.internal",
+      createdAt: new Date(),
+    };
+    const bare: DatabaseConnection = {
+      ...stored,
+      id: "k2",
+      namespaces: undefined,
+      apiPath: undefined,
+      tlsServerName: undefined,
+    };
+    const { result, rerender } = renderHook((p) => useConnectionForm(p), {
+      initialProps: { ...props, editConnection: stored as DatabaseConnection | null },
+    });
+    expect([result.current.namespaces, result.current.apiPath, result.current.tlsServerName]).toEqual([
+      "shop",
+      "/k8s/clusters/c-1",
+      "api.internal",
+    ]);
+    rerender({ ...props, editConnection: bare });
+    expect([result.current.namespaces, result.current.apiPath, result.current.tlsServerName]).toEqual(["", "", ""]);
+    act(() => result.current.setApiPath("/x"));
+    rerender({ ...props, isOpen: false });
+    rerender({ ...props, isOpen: true, editConnection: null });
+    expect(result.current.apiPath).toBe("");
+    expect([
+      CONNECTION_FORM_DEFAULTS.namespaces,
+      CONNECTION_FORM_DEFAULTS.apiPath,
+      CONNECTION_FORM_DEFAULTS.tlsServerName,
+    ]).toEqual(["", "", ""]);
   });
 });
 

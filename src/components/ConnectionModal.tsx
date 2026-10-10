@@ -202,6 +202,12 @@ export function ConnectionModal({
     setWarehouse,
     region,
     setRegion,
+    apiPath,
+    setApiPath,
+    namespaces,
+    setNamespaces,
+    tlsServerName,
+    setTlsServerName,
     connectionString,
     setConnectionString,
     mongoConnectionMode,
@@ -901,6 +907,73 @@ export function ConnectionModal({
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
                       <DeclaredFieldHint config={uiConfig} field="region" />
+                    </div>
+                  )}
+
+                  {/*
+                    Kubernetes' namespace list, API path and TLS server name, each drawn where the engine takes the
+                    field, the way the warehouse is. The provider checks each and names the field when it refuses it.
+                  */}
+                  {takesConnectionField(type, "namespaces") && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="namespaces" className="text-xs font-medium text-fg-muted">
+                          {connectionFieldLabel(uiConfig, "namespaces", "Namespaces")}
+                        </Label>
+                      </div>
+                      <Input
+                        id="namespaces"
+                        value={namespaces}
+                        onChange={(e) => setNamespaces(e.target.value)}
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-describedby={describedByHint(uiConfig, "namespaces")}
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
+                      />
+                      <DeclaredFieldHint config={uiConfig} field="namespaces" />
+                    </div>
+                  )}
+
+                  {takesConnectionField(type, "apiPath") && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Server strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="apiPath" className="text-xs font-medium text-fg-muted">
+                          {connectionFieldLabel(uiConfig, "apiPath", "API path")}
+                        </Label>
+                      </div>
+                      <Input
+                        id="apiPath"
+                        value={apiPath}
+                        onChange={(e) => setApiPath(e.target.value)}
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-describedby={describedByHint(uiConfig, "apiPath")}
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
+                      />
+                      <DeclaredFieldHint config={uiConfig} field="apiPath" />
+                    </div>
+                  )}
+
+                  {takesConnectionField(type, "tlsServerName") && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Server strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="tlsServerName" className="text-xs font-medium text-fg-muted">
+                          {connectionFieldLabel(uiConfig, "tlsServerName", "TLS server name")}
+                        </Label>
+                      </div>
+                      <Input
+                        id="tlsServerName"
+                        value={tlsServerName}
+                        onChange={(e) => setTlsServerName(e.target.value)}
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-describedby={describedByHint(uiConfig, "tlsServerName")}
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
+                      />
+                      <DeclaredFieldHint config={uiConfig} field="tlsServerName" />
                     </div>
                   )}
 

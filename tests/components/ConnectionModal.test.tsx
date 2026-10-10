@@ -138,6 +138,9 @@ const mockSetReadOnly = mock(() => {});
 const mockSetAllowInsecureAuth = mock(() => {});
 const mockSetDataServers = mock(() => {});
 const mockSetWarehouse = mock(() => {});
+const mockSetApiPath = mock(() => {});
+const mockSetNamespaces = mock(() => {});
+const mockSetTlsServerName = mock(() => {});
 const mockSetRegion = mock(() => {});
 const mockSetSaslMechanism = mock(() => {});
 
@@ -161,6 +164,12 @@ function getDefaultForm() {
     setDataServers: mockSetDataServers,
     warehouse: "",
     setWarehouse: mockSetWarehouse,
+    apiPath: "",
+    setApiPath: mockSetApiPath,
+    namespaces: "",
+    setNamespaces: mockSetNamespaces,
+    tlsServerName: "",
+    setTlsServerName: mockSetTlsServerName,
     region: "",
     setRegion: mockSetRegion,
     readOnlyOffered: false,
@@ -291,6 +300,7 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   oxia: ["host", "port", "password", "database", "dataServers", "allowInsecureAuth"],
   databend: ["host", "port", "user", "password", "database", "warehouse", "allowInsecureAuth"],
   s3: ["host", "port", "user", "password", "database", "region", "allowInsecureAuth"],
+  kubernetes: ["host", "port", "password", "database", "namespaces", "apiPath", "tlsServerName"],
 };
 /**
  * A field list one test declares on top of the mirrored table, reset before every test. The dataServers cases
@@ -467,6 +477,34 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
     },
     readOnlyHint:
       "S3-compatible connections are read-only in this version, whether or not this is ticked: Studio sends no write.",
+  },
+  // Mirrored from the real entry; tests/unit/lib/db-ui-config.test.ts pins the real one.
+  kubernetes: {
+    fieldLabels: {
+      host: "API server",
+      password: "Token",
+      database: "Default namespace",
+      namespaces: "Namespaces",
+      apiPath: "API path",
+      tlsServerName: "TLS server name",
+    },
+    fieldPlaceholders: { database: "default" },
+    fieldHints: {
+      host: "The API server: a host name or address, or a pasted https:// address such as https://api.example:6443, which is split into Host and Port. A path, such as Rancher's /k8s/clusters/<id>, goes under API path. If Studio runs in a container, localhost is that container: use the cluster's Docker network or host.docker.internal. A typed address also needs SSL Mode under SSL / TLS: verify-full with the cluster's CA, or verify-system; the default, disable, is refused for any host but this machine.",
+      port: "kubeadm, k3s and kind serve on 6443; managed clusters (EKS, GKE, AKS, Rancher) usually on 443.",
+      password:
+        "A bearer token, without the word Bearer. A ServiceAccount token bound to view or studio-reader is the safest choice; kubectl create token lasts one hour unless --duration says otherwise. Leave empty when a client certificate under SSL / TLS signs in, or for kubectl proxy.",
+      database:
+        "Empty means default, as kubectl reads it: the namespace the tree opens on and the console reads when a statement names none.",
+      namespaces:
+        "Optional: the namespaces the tree lists, separated by commas or spaces. Set it when this identity may not list namespaces; Studio then reads no namespace list.",
+      apiPath:
+        "Optional: a path every request goes under, such as /k8s/clusters/c-m-abc12 for a cluster behind Rancher.",
+      tlsServerName:
+        "Optional: the name the API server's certificate is checked against, when it differs from Host (kubeconfig tls-server-name).",
+    },
+    readOnlyHint:
+      "Kubernetes connections are read-only in this version, whether or not this is ticked: Studio sends the cluster no write.",
   },
 };
 
@@ -1681,6 +1719,9 @@ describe("ConnectionModal", () => {
       "dataServers",
       "warehouse",
       "region",
+      "apiPath",
+      "namespaces",
+      "tlsServerName",
     ] as const;
 
     /** Each connection-field label a render draws, keyed by the input it names (`htmlFor`). */
@@ -1839,6 +1880,21 @@ describe("ConnectionModal", () => {
           region: "Region",
         },
         MOCK_FIELD_COPY.s3.fieldHints ?? {},
+      ],
+      // No User box: basic authentication is refused. The three Kubernetes boxes under their declared labels.
+      [
+        "kubernetes",
+        "kubernetes",
+        {},
+        {
+          host: "API server",
+          password: "Token",
+          database: "Default namespace",
+          namespaces: "Namespaces",
+          apiPath: "API path",
+          tlsServerName: "TLS server name",
+        },
+        MOCK_FIELD_COPY.kubernetes.fieldHints ?? {},
       ],
       ["sqlite", "sqlite", {}, FILE_PATH, {}],
       ["duckdb", "duckdb", {}, FILE_PATH, {}],
@@ -2103,6 +2159,44 @@ describe("ConnectionModal", () => {
       }
     });
   });
+});
+
+describe("ConnectionModal: Kubernetes' namespace list, API path and TLS server name", () => {
+  afterEach(() => {
+    cleanup();
+    mockFormOverrides = {};
+  });
+
+  test.each([
+    ["namespaces", "Namespaces", "shop, web", "shop", mockSetNamespaces],
+    ["apiPath", "API path", "/k8s/clusters/c-1", "/k8s/clusters/c-2", mockSetApiPath],
+    ["tlsServerName", "TLS server name", "api.internal", "kubernetes.default.svc", mockSetTlsServerName],
+  ] as const)(
+    "draws the %s box for kubernetes only, labelled and hinted from its declaration",
+    (field, label, value, typed, setter) => {
+      mockFormOverrides = { type: "kubernetes", [field]: value };
+      const { container, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+      const box = container.querySelector(`#${field}`) as HTMLInputElement;
+      expect(box.value).toBe(value);
+      expect(box.getAttribute("autocomplete")).toBe("off");
+      expect(box.getAttribute("spellcheck")).toBe("false");
+      expect(box.getAttribute("aria-describedby")).toBe(`${field}-hint`);
+      expect(container.querySelector(`label[for="${field}"]`)?.textContent).toBe(label);
+      expect(container.querySelector(`[data-testid="${field}-hint"]`)?.textContent).toBe(
+        MOCK_FIELD_COPY.kubernetes.fieldHints?.[field],
+      );
+      fireEvent.change(box, { target: { value: typed } });
+      expect(setter).toHaveBeenCalledWith(typed);
+
+      for (const type of Object.keys(MOCK_CONNECTION_FIELDS)
+        .filter((t) => t !== "kubernetes")
+        .concat("postgres")) {
+        mockFormOverrides = { type };
+        rerender(React.createElement(ConnectionModal, createDefaultProps()));
+        expect(container.querySelector(`#${field}`)).toBeNull();
+      }
+    },
+  );
 });
 
 describe("ConnectionModal: the Host box address and the credential warning", () => {

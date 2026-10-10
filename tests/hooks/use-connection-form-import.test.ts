@@ -228,6 +228,36 @@ describe("useConnectionForm: applyImported fills a new connection", () => {
     act(() => result.current.applyImported(entry({ fields: { serviceName: "ORCLPDB1" } })));
     expect(result.current.showAdvanced).toBe(true);
   });
+
+  test("kubernetes takes its API path, namespaces and TLS server name from an import", () => {
+    const { result } = renderForm();
+    act(() => result.current.setType("kubernetes"));
+    act(() =>
+      result.current.applyImported(
+        entry({
+          fields: {
+            host: "api.example",
+            apiPath: "/k8s/clusters/c-1",
+            namespaces: "shop,web",
+            tlsServerName: "api.internal",
+          },
+        }),
+      ),
+    );
+    expect({
+      host: result.current.host,
+      apiPath: result.current.apiPath,
+      namespaces: result.current.namespaces,
+      tlsServerName: result.current.tlsServerName,
+      testResult: result.current.testResult,
+    }).toEqual({
+      host: "api.example",
+      apiPath: "/k8s/clusters/c-1",
+      namespaces: "shop,web",
+      tlsServerName: "api.internal",
+      testResult: { tone: "success", message: "Filled from staging. Review the fields and connect." },
+    });
+  });
 });
 
 describe("useConnectionForm: applyImported refuses an entry and fills nothing", () => {
