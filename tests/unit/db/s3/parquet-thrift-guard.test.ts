@@ -782,7 +782,7 @@ describe("the guard and hyparquet agree wherever the guard accepts", () => {
       expect(facts.uncompressedPageSize, label).toBe(expected.uncompressedPageSize);
       expect(facts.compressedPageSize, label).toBe(expected.compressedPageSize);
       expect(facts.numValues as unknown, label).toBe(expected.numValues);
-      expect(facts.headerBytes, label).toBe(read.end);
+      expect(facts.headerBytes as unknown, label).toBe(read.end);
     }
     expect(accepted).toBeGreaterThan(500);
     expect(refused).toBeGreaterThan(500);
@@ -970,7 +970,7 @@ describe("readPageHeader: the level lengths of a data page v2", () => {
   });
 
   test("a data page v2 whose level lengths exceed its page size is refused", () => {
-    const outside = { ok: false, reason: "a data page v2 declares level lengths outside 0 to its page sizes" };
+    const outside = { ok: false, reason: "a data page v2 declares level lengths outside 0 to its page sizes" } as const;
     expect(
       readPageHeader(
         v2With([

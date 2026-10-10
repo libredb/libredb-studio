@@ -1411,7 +1411,7 @@ const oneColumn = (changes: Partial<SyntheticChunk> = {}, file: Partial<Syntheti
   });
 
 describe("the footer values the plan and the reads use", () => {
-  const bare = { kind: "refused", sentence: "The Parquet footer could not be read." };
+  const bare = { kind: "refused", sentence: "The Parquet footer could not be read." } as const;
 
   test("a footer with a negative total_uncompressed_size on one column is refused", async () => {
     expect(await footerOutcome(oneColumn({ totalUncompressedSize: -1 }))).toEqual(bare);
