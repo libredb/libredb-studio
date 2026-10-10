@@ -1233,6 +1233,17 @@ describe("Studio", () => {
     expect(queryByTestId("createtablemodal")?.getAttribute("data-container")).toBe('["app"]');
   });
 
+  test("a declared row action reaches the tab manager with the object, the action id and this shell's run", () => {
+    const mockRunRowAction = mock(() => {});
+    tabMgrOverride = { runRowAction: mockRunRowAction };
+    connMgrOverride = { activeConnection: pgConn };
+    render(<Studio />);
+
+    act(() => sidebarActions().onRowAction?.(usersObject, "describe"));
+
+    expect(mockRunRowAction).toHaveBeenCalledWith(usersObject, "describe", mockExecuteQuery);
+  });
+
   test("a non-admin is handed no maintenance action, because the page it opens is the admin one", () => {
     authOverride = { isAdmin: false };
     connMgrOverride = { activeConnection: pgConn };

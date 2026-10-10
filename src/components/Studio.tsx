@@ -1012,6 +1012,19 @@ export default function Studio() {
 
   // A Source tab opener with one identity, for the same reason: `openSourceTab` depends on the tabs.
   const openSourceTab = useStableCallback((object: DatabaseObject) => tabMgr.openSourceTab(object));
+
+  /**
+   * Run a row action the provider declared on the row's kind (Describe, Logs), in a tab of its own.
+   * It opens and activates a tab, so it is refused while an apply is in flight on the rule and with the
+   * words every other tab-opening gesture here uses (`openTabFor`).
+   */
+  const runRowAction = useStableCallback((object: DatabaseObject, actionId: string) => {
+    if (applyInFlight) {
+      refuseWhileApplying();
+      return;
+    }
+    tabMgr.runRowAction(object, actionId, queryExec.executeQuery);
+  });
   const { handleGenerateSelect, handleGenerateCount } = tabMgr;
 
   /** Open and run the statement for one object, addressed by its PATH (#789). See `openTabFor`. */
@@ -1128,8 +1141,9 @@ export default function Studio() {
       onOpenMaintenance: isAdmin ? (object) => openMaintenance("tables", object.path) : undefined,
       onCreateObject: openCreateTable,
       onViewSource: openSourceTab,
+      onRowAction: runRowAction,
     }),
-    [handleGenerateSelect, handleGenerateCount, openSourceTab, isAdmin, openMaintenance, openCreateTable],
+    [handleGenerateSelect, handleGenerateCount, openSourceTab, runRowAction, isAdmin, openMaintenance, openCreateTable],
   );
 
   const requestDeleteConnection = useCallback((id: string) => {

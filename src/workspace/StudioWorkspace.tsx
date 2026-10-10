@@ -817,6 +817,15 @@ export function StudioWorkspace({
             if (refuseWhileApplying()) return;
             tabMgr.openSourceTab(object);
           },
+    /*
+     * A row action the provider declared on the row's kind (Describe, Logs) runs in a tab of its own
+     * through the host's query callback, like a tree click. It moves the active tab, so it is refused
+     * while an apply is in flight, as the two gestures above are.
+     */
+    onRowAction: (object, actionId) => {
+      if (refuseWhileApplying()) return;
+      tabMgr.runRowAction(object, actionId, queryExec.executeQuery);
+    },
   };
 
   // === No-op callbacks for disabled features ===

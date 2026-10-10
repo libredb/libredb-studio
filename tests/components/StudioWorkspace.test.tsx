@@ -324,6 +324,7 @@ import type { SavedQueryInput, StudioWorkspaceProps } from "@/workspace/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { QueryTab } from "@/lib/types";
+import type { TreeRowActionHandlers } from "@/components/object-tree";
 import { generateTableQuery } from "@/lib/query-generators";
 import { DEFAULT_MASKING_CONFIG } from "@/lib/data-masking";
 
@@ -920,6 +921,17 @@ describe("StudioWorkspace", () => {
 
     act(() => sidebarActions().onGenerateTestData?.(usersObject));
     expect(queryByTestId("testdatagenerator")).not.toBeNull();
+  });
+
+  test("a declared row action reaches the tab manager with the object, the action id and the host's run", () => {
+    const mockRunRowAction = mock(() => {});
+    tabMgrOverride = { runRowAction: mockRunRowAction };
+    renderWorkspace();
+
+    const onRowAction = (capturedSidebarProps.objectActions as TreeRowActionHandlers).onRowAction;
+    act(() => onRowAction?.(usersObject, "describe"));
+
+    expect(mockRunRowAction).toHaveBeenCalledWith(usersObject, "describe", mockExecuteQuery);
   });
 
   test("the profiler keeps masking the built-in kinds, though this shell's grid masks nothing (#1421)", () => {

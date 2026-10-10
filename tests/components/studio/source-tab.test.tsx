@@ -1764,6 +1764,31 @@ describe("the new-tab shortcut cannot unmount an apply that is in flight", () =>
     expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
   });
 
+  test("a declared row action is refused in the same window, and the answer still reaches the reader", async () => {
+    /*
+     * The fourth door: a row action (Describe, Logs) opens and activates a tab of its own, so it would
+     * unmount the pane the dialog lives in exactly as the palette's table item would.
+     */
+    applyAnswer = { status: 200, body: CONFLICT };
+    await confirmAndHold();
+
+    act(() => sidebarActions().onRowAction?.({ path: ["app", "orders"], name: "orders", kind: "table" }, "describe"));
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(mockToast).toHaveBeenCalledWith({
+      title: "Waiting for the apply to answer",
+      description:
+        "Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.",
+    });
+
+    await act(async () => {
+      releaseApply?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+  });
+
   test("a key activated in the key browser is refused in the same window, and opens once the answer is on screen", async () => {
     /*
      * The third door into this window (spec 4.6). On an engine that declares a key kind, a key's

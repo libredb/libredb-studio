@@ -2156,6 +2156,46 @@ describe("the embedded shell refuses a tab-opening gesture while a host apply is
     );
   });
 
+  test("a declared row action is refused too, and nothing is generated or run", async () => {
+    /*
+     * THE SIXTH DOOR: a row action the host declared (Describe) opens and activates a tab of its own,
+     * so it would unmount the pane the dialog lives in exactly as the menu items above would. The
+     * declaration adds Describe to the routine kind, so the menu offers it on `tax_rate`. Without the
+     * guard nothing would show the refusal: no dialect writes a row action yet, so the generator raises.
+     */
+    const executed: string[] = [];
+    const declared = {
+      ...capabilities,
+      rowActions: [{ id: "describe", label: "Describe", kinds: ["function"] }],
+    } as unknown as ProviderCapabilities;
+    const holdingHost = {
+      build: async () => BUILT,
+      apply: () => new Promise<ObjectEditOutcome>((resolve) => (releaseApply = resolve)),
+    } as unknown as HostEditor;
+    render(workspace({ reader: editingReader(holdingHost), executed, declared }));
+    await openSourceTab();
+    await click("object-source-edit");
+    await waitFor(() => expect(screen.getByTestId("object-source-preview")).toBeTruthy());
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+    await click("object-source-apply-confirm");
+    await waitFor(() =>
+      expect(screen.getByTestId("object-source-apply-dialog").textContent).toContain("Applying this definition"),
+    );
+
+    clickRowMenuItemInDom("tax_rate", "Describe");
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(screen.getByTestId("workspace-apply-refusal").textContent).toContain(
+      "Opening a tab would close this dialog before the apply reports",
+    );
+    expect(executed).toEqual([]);
+
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+  });
+
   test("the refusal retires the moment the apply answers, rather than sitting on screen for ever", async () => {
     /*
      * The one thing that pins `if (!inFlight) setRefusedWhileApplying(false)` in the mirror.
