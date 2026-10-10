@@ -1224,3 +1224,96 @@ describe("the bounded LZ4 decoders", () => {
     expect(() => boundedLz4(overlong, 13)).toThrow("The LZ4 data is malformed");
   });
 });
+
+describe("leading mode drops the columns past the pre-scan's value total", () => {
+  const names = ["a", "b", "c", "d"];
+  /**
+   * Four INT32 columns of 10 rows. Each chunk is a 3-value dictionary page then one PLAIN data page of 10
+   * values, so the footer counts 10 values per column and the pages 13.
+   */
+  const dictionaryColumns = (): Uint8Array =>
+    syntheticParquet({
+      schema: [{ name: "schema", children: names.length }, ...names.map((name) => ({ name, type: PHYSICAL.INT32 }))],
+      rowGroups: [
+        {
+          numRows: 10,
+          chunks: names.map((name, column) => ({
+            path: [name],
+            type: PHYSICAL.INT32,
+            pages: [
+              { kind: "dictionary" as const, numValues: 3, body: int32Plain([1, 2, 3]) },
+              {
+                kind: "data" as const,
+                numValues: 10,
+                body: int32Plain(Array.from({ length: 10 }, (_, row) => column * 10 + row)),
+              },
+            ],
+          })),
+        },
+      ],
+    });
+  const someColumns = (k: number, valueCap: number) =>
+    `Showing ${k} of 4 columns: the next column would take the first row group's read past 8.00 MiB, its decoded size past 32.00 MiB, its leaf columns past ${leafCapText} or its values past ${valueCap}, the most a preview reads.`;
+
+  test("the footer fits three columns, the pages of the third pass the value cap: two are shown and decoded", async () => {
+    const capped = limits({ parquetMaxTotalValues: 30 });
+    const object = dictionaryColumns();
+    const plan = planParquet(await footerOf(object), {}, "console", capped);
+    expect(plan.kind === "rows" && plan.columns.map((column) => column.name)).toEqual(["a", "b", "c"]);
+    expect(plan.notices).toEqual([someColumns(3, 30)]);
+    const { modules, calls } = await spiedModules();
+    const outcome = await previewParquet(inputFor(object, "d.parquet", { limits: capped }).input, depsOf(modules));
+    expect(calls.read).toEqual([["a", "b"]]);
+    if (outcome.kind !== "parquet") throw new Error(`expected parquet, got ${JSON.stringify(outcome)}`);
+    expect(outcome.rows?.columns.map((column) => column.name)).toEqual(["a", "b"]);
+    expect(outcome.rows?.rows[0]).toEqual([0, 10]);
+    expect(outcome.notices[0]).toBe(someColumns(2, 30));
+    expect(outcome.notices.filter((notice) => notice.startsWith("Showing "))).toEqual([someColumns(2, 30)]);
+  });
+
+  test("the first column's dictionary and data pages pass the value cap: the summary with N-PQ-NONE-FIT", async () => {
+    const capped = limits({ parquetMaxTotalValues: 12 });
+    const object = dictionaryColumns();
+    const footer = await footerOf(object);
+    const a = footer.metadata.row_groups[0].columns[0].meta_data;
+    const { modules, calls } = await spiedModules();
+    const outcome = await previewParquet(inputFor(object, "d.parquet", { limits: capped }).input, depsOf(modules));
+    expect(calls.read).toEqual([]);
+    expect(outcome).toEqual({
+      kind: "parquet",
+      summary: summarizeParquet(footer, capped).summary,
+      notices: [
+        `The first row group is too large to preview: its first column stores ${inMiB(Number(a?.total_compressed_size))} MiB (${inMiB(Number(a?.total_uncompressed_size))} MiB decoded), over the 8.00 MiB read and 32.00 MiB decode budgets, or holds more leaf columns or values than a preview reads. The schema, row count and first-row-group statistics are shown instead.`,
+        ...summarizeParquet(footer, capped).notices,
+      ],
+    });
+  });
+
+  test("explicit mode naming the same three columns is still refused with R-PQ-PAGE-VALUES", async () => {
+    const capped = limits({ parquetMaxTotalValues: 30 });
+    const { modules, calls } = await spiedModules();
+    const outcome = await previewParquet(
+      inputFor(dictionaryColumns(), "d.parquet", { limits: capped, request: { columns: ["a", "b", "c"] } }).input,
+      depsOf(modules),
+    );
+    expect(outcome).toEqual({
+      kind: "refused",
+      sentence:
+        "A page of column c declares 39 values, more than its column chunk holds or the preview allows, so the file is not previewed.",
+      notices: [],
+    });
+    expect(calls.read).toEqual([]);
+  });
+
+  test("with no total cap of its own, a chunk's dictionary page still counts toward totals.values", async () => {
+    const object = dictionaryColumns();
+    const a = (await footerOf(object)).metadata.row_groups[0].columns[0].meta_data;
+    const start = Number(a?.dictionary_page_offset);
+    const chunk = object.subarray(start, start + Number(a?.total_compressed_size));
+    const totals = { values: 20, decoded: 0 };
+    expect(() =>
+      prescanChunk(chunk, 10, "a", limits({ parquetMaxTotalValues: 12 }), totals, Number.POSITIVE_INFINITY),
+    ).not.toThrow();
+    expect(totals.values).toBe(33);
+  });
+});

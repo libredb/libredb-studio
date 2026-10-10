@@ -340,6 +340,43 @@ function costs(footer: ParquetFooter): PlannedColumn[] {
   });
 }
 
+/** The limits the column-stop sentences name. */
+function capsOf(limits: S3PreviewLimits) {
+  return {
+    fetchBudget: inMiB(limits.parquetFetchBudget),
+    decodeBudget: inMiB(limits.parquetDecodeBudget),
+    leafCap: limits.parquetMaxLeafColumns,
+    valueCap: limits.parquetMaxTotalValues,
+  };
+}
+
+/** N-PQ-NONE-FIT: the summary's sentence when even the first column does not fit. */
+function noneFit(column: PlannedColumn, limits: S3PreviewLimits): string {
+  return previewSentence("N-PQ-NONE-FIT", {
+    fetch: inMiB(column.fetch),
+    decode: inMiB(column.decode),
+    ...capsOf(limits),
+  });
+}
+
+/** The notices about the rows read: N-PQ-RG0 for a short first row group, N-PQ-DECIMAL for each chosen wide DECIMAL. */
+function rowNotices(footer: ParquetFooter, columns: readonly PlannedColumn[], rowsAsked: number): string[] {
+  const notices: string[] = [];
+  const firstRows = Number(footer.metadata.row_groups[0].num_rows);
+  if (firstRows < rowsAsked && footer.metadata.row_groups.length > 1)
+    notices.push(previewSentence("N-PQ-RG0", { m: firstRows }));
+  for (const column of columns) {
+    for (const decimal of column.decimals) {
+      if (decimal.precision > 15) {
+        notices.push(
+          previewSentence("N-PQ-DECIMAL", { c: spellName(decimal.path), p: decimal.precision, s: decimal.scale }),
+        );
+      }
+    }
+  }
+  return notices;
+}
+
 /** The columns to read from the first row group, leading or explicit, and how many rows. */
 export function planParquet(
   footer: ParquetFooter,
@@ -352,12 +389,7 @@ export function planParquet(
     return { kind: "summary", notices: [previewSentence("N-PQ-NO-ROWS")] };
   if (request.schemaOnly === true) return { kind: "summary", notices: [] };
   const all = costs(footer);
-  const caps = {
-    fetchBudget: inMiB(limits.parquetFetchBudget),
-    decodeBudget: inMiB(limits.parquetDecodeBudget),
-    leafCap: limits.parquetMaxLeafColumns,
-    valueCap: limits.parquetMaxTotalValues,
-  };
+  const caps = capsOf(limits);
   const over = (fetch: number, decode: number, leaves: number, values: number): boolean =>
     fetch > limits.parquetFetchBudget ||
     decode > limits.parquetDecodeBudget ||
@@ -383,7 +415,7 @@ export function planParquet(
       if (over(fetch + column.fetch, decode + column.decode, leaves + column.leaves, values + column.values)) {
         notices.push(
           chosen.length === 0
-            ? previewSentence("N-PQ-NONE-FIT", { fetch: inMiB(column.fetch), decode: inMiB(column.decode), ...caps })
+            ? noneFit(column, limits)
             : previewSentence("N-PQ-SOME-COLUMNS", { k: chosen.length, n: all.length, ...caps }),
         );
         break;
@@ -433,19 +465,14 @@ export function planParquet(
     }
   }
   const rowsAsked = purpose === "source" ? limits.sourceRows : (request.maxRows ?? limits.defaultRows);
-  const firstRows = Number(first.num_rows);
-  if (firstRows < rowsAsked && footer.metadata.row_groups.length > 1)
-    notices.push(previewSentence("N-PQ-RG0", { m: firstRows }));
-  for (const column of chosen) {
-    for (const decimal of column.decimals) {
-      if (decimal.precision > 15) {
-        notices.push(
-          previewSentence("N-PQ-DECIMAL", { c: spellName(decimal.path), p: decimal.precision, s: decimal.scale }),
-        );
-      }
-    }
-  }
-  return { kind: "rows", columns: chosen, rowsToRead: Math.min(rowsAsked, firstRows), rowsAsked, notices };
+  notices.push(...rowNotices(footer, chosen, rowsAsked));
+  return {
+    kind: "rows",
+    columns: chosen,
+    rowsToRead: Math.min(rowsAsked, Number(first.num_rows)),
+    rowsAsked,
+    notices,
+  };
 }
 
 /** The guarded compressors' refusal; previewParquet reports it as R-PQ-DECODE. */
@@ -606,7 +633,8 @@ export interface PrescanTotals {
  * Walks one chunk's pages with the guarded header reader: the walk must end exactly at the
  * chunk's end; a page may declare at most parquetMaxPageValues values; the data pages' values may not pass the
  * footer's count or parquetMaxChunkValues; the values of every page of every chosen chunk, dictionary pages included,
- * may not pass parquetMaxTotalValues; the declared decoded bytes may not pass the decode budget.
+ * may not pass `valueCap` (parquetMaxTotalValues unless the caller sums a column and checks it itself); the declared
+ * decoded bytes may not pass the decode budget.
  * A page may not declare a negative count.
  */
 export function prescanChunk(
@@ -615,6 +643,7 @@ export function prescanChunk(
   name: string,
   limits: S3PreviewLimits,
   totals: PrescanTotals,
+  valueCap: number = limits.parquetMaxTotalValues,
 ): void {
   const c = spellName(name);
   let offset = 0;
@@ -642,7 +671,7 @@ export function prescanChunk(
   if (dataValues > footerValues || dataValues > limits.parquetMaxChunkValues) {
     throw new PreviewRefusal(previewSentence("R-PQ-PAGE-VALUES", { c, v: dataValues }));
   }
-  if (totals.values > limits.parquetMaxTotalValues) {
+  if (totals.values > valueCap) {
     throw new PreviewRefusal(previewSentence("R-PQ-PAGE-VALUES", { c, v: totals.values }));
   }
 }
@@ -735,17 +764,37 @@ async function decodeRows(modules: ParquetModules, options: Parameters<ParquetMo
   }
 }
 
-/** Ranges, merge, prefetch, pre-scan, the slot, the guarded decode, the rows. */
+type PlannedRead =
+  | { readonly kind: "summary"; readonly notices: readonly string[] }
+  | {
+      readonly kind: "rows";
+      readonly rows: ReturnType<typeof buildRows>["rows"];
+      /** The plan's notices, rewritten when the pre-scan dropped columns. */
+      readonly planNotices: readonly string[];
+      readonly notices: readonly string[];
+    };
+
+/**
+ * Ranges, merge, prefetch, pre-scan, the slot, the guarded decode, the rows. In leading mode the pre-scan sums
+ * one top-level column at a time: the first column whose page values would take the total past
+ * parquetMaxTotalValues is dropped with every column after it (N-PQ-SOME-COLUMNS), and when that is the first
+ * column the answer is the summary (N-PQ-NONE-FIT). Explicit mode refuses instead (R-PQ-PAGE-VALUES).
+ */
 async function readPlannedRows(
   input: ParquetPreviewInput,
   footer: ParquetFooter,
   plan: Extract<ParquetPlan, { kind: "rows" }>,
   modules: ParquetModules,
   slots: DecodeSlots,
-): Promise<{ readonly rows: ReturnType<typeof buildRows>["rows"]; readonly notices: readonly string[] }> {
+): Promise<PlannedRead> {
   const size = input.head.size;
   const chunks = plan.columns.flatMap((column) =>
-    column.chunks.map((chunk) => ({ chunk, name: metaOf(chunk).path_in_schema.join("."), ...chunkRange(chunk) })),
+    column.chunks.map((chunk) => ({
+      chunk,
+      column,
+      name: metaOf(chunk).path_in_schema.join("."),
+      ...chunkRange(chunk),
+    })),
   );
   for (const each of chunks) {
     if (each.start < 4 || each.end > footer.footerStart || each.end < each.start) {
@@ -764,8 +813,7 @@ async function readPlannedRows(
   }
   const holding = (start: number, end: number): Span | undefined =>
     spans.find((span) => span.start <= start && end <= span.end);
-  const totals: PrescanTotals = { values: 0, decoded: 0 };
-  for (const each of chunks) {
+  const scan = (each: (typeof chunks)[number], totals: PrescanTotals, valueCap?: number): void => {
     const span = holding(each.start, each.end) as Span;
     prescanChunk(
       span.bytes.subarray(each.start - span.start, each.end - span.start),
@@ -773,7 +821,32 @@ async function readPlannedRows(
       each.name,
       input.limits,
       totals,
+      valueCap,
     );
+  };
+  const totals: PrescanTotals = { values: 0, decoded: 0 };
+  let columns = plan.columns;
+  let planNotices = plan.notices;
+  if (input.request.columns !== undefined) {
+    for (const each of chunks) scan(each, totals);
+  } else {
+    let kept = 0;
+    for (const column of plan.columns) {
+      const own: PrescanTotals = { values: 0, decoded: totals.decoded };
+      for (const each of chunks) if (each.column === column) scan(each, own, Number.POSITIVE_INFINITY);
+      if (totals.values + own.values > input.limits.parquetMaxTotalValues) break;
+      totals.values += own.values;
+      totals.decoded = own.decoded;
+      kept += 1;
+    }
+    if (kept === 0) return { kind: "summary", notices: [noneFit(plan.columns[0], input.limits)] };
+    if (kept < plan.columns.length) {
+      columns = plan.columns.slice(0, kept);
+      planNotices = [
+        previewSentence("N-PQ-SOME-COLUMNS", { k: kept, n: footer.shape.columns.length, ...capsOf(input.limits) }),
+        ...rowNotices(footer, columns, plan.rowsAsked),
+      ];
+    }
   }
   const held: readonly Span[] = [...spans, { start: footer.footerStart, end: size, bytes: footer.footerBytes }];
   const file: AsyncBuffer = {
@@ -792,7 +865,7 @@ async function readPlannedRows(
     objects = await decodeRows(modules, {
       file,
       metadata: footer.metadata,
-      columns: plan.columns.map((column) => column.name),
+      columns: columns.map((column) => column.name),
       rowStart: 0,
       rowEnd: plan.rowsToRead,
       compressors: guardedCompressors(input.limits.parquetDecodeBudget, modules),
@@ -807,17 +880,17 @@ async function readPlannedRows(
   const totalRows = Number(footer.metadata.num_rows);
   const built = buildRows(
     {
-      names: uniqueFieldNames(plan.columns.map((column) => column.name)),
-      typing: plan.columns.map((column) => column.type),
+      names: uniqueFieldNames(columns.map((column) => column.name)),
+      typing: columns.map((column) => column.type),
       rowCount: objects.length,
       available: firstRows >= plan.rowsAsked && totalRows > plan.rowsAsked ? totalRows : objects.length,
-      valueAt: (row, column) => objects[row][plan.columns[column].name],
+      valueAt: (row, column) => objects[row][columns[column].name],
     },
     undefined,
     plan.rowsToRead,
     input.limits,
   );
-  return { rows: built.rows, notices: built.notices };
+  return { kind: "rows", rows: built.rows, planNotices, notices: built.notices };
 }
 
 /**
@@ -838,11 +911,12 @@ export async function previewParquet(
   if (plan.kind === "summary") return { kind: "parquet", summary, notices: [...plan.notices, ...summaryNotices] };
   try {
     const read = await readPlannedRows(input, outcome.footer, plan, modules, deps.slots);
+    if (read.kind === "summary") return { kind: "parquet", summary, notices: [...read.notices, ...summaryNotices] };
     return {
       kind: "parquet",
       summary,
       rows: read.rows,
-      notices: [...plan.notices, ...summaryNotices, ...read.notices],
+      notices: [...read.planNotices, ...summaryNotices, ...read.notices],
     };
   } catch (error) {
     if (error instanceof PreviewRefusal) return { kind: "refused", sentence: error.sentence, notices: [] };
