@@ -90,7 +90,8 @@ interface QueryEditorProps {
     | "milvus"
     | "qdrant"
     | "influxql"
-    | "oxia";
+    | "oxia"
+    | "s3";
   /**
    * The connected engine, whose grammar decides where a statement ends.
    *
