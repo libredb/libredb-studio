@@ -4,7 +4,7 @@
  * Thrift compact writer. Bodies are only valid where a case decodes them (INT32 PLAIN, BOOLEAN RLE, both REQUIRED);
  * every other case stops before decode, so its bodies are filler.
  */
-import { THRIFT, type ThriftField, thriftStruct, varint } from "./thrift-compact";
+import { THRIFT, type ThriftField, type ThriftValue, thriftStruct, varint } from "./thrift-compact";
 
 export const PHYSICAL = { BOOLEAN: 0, INT32: 1, INT64: 2, BYTE_ARRAY: 6 } as const;
 export const CODEC = { UNCOMPRESSED: 0, SNAPPY: 1, GZIP: 2, LZO: 3, BROTLI: 4, LZ4: 5, ZSTD: 6, LZ4_RAW: 7 } as const;
@@ -42,12 +42,21 @@ export interface SyntheticChunk {
   readonly dataPageOffset?: number;
   readonly totalCompressedSize?: number;
   readonly totalUncompressedSize?: number;
+  /** ColumnMetaData fields that replace the written field of the same id, or are added, in id order. */
+  readonly metaFields?: readonly ThriftField[];
 }
 
 export interface SyntheticFile {
   readonly schema: readonly SyntheticSchemaElement[];
-  readonly rowGroups: readonly { readonly numRows: number; readonly chunks: readonly SyntheticChunk[] }[];
+  readonly rowGroups: readonly {
+    readonly numRows: number;
+    readonly chunks: readonly SyntheticChunk[];
+    /** The row group's num_rows as written, in place of the i64 of `numRows`. */
+    readonly numRowsValue?: ThriftValue;
+  }[];
   readonly createdBy?: string;
+  /** The file's num_rows as written, in place of the i64 sum of the row groups. */
+  readonly numRowsValue?: ThriftValue;
 }
 
 /** INT32 values, PLAIN: four little-endian bytes each. */
@@ -149,6 +158,12 @@ export function syntheticParquet(file: SyntheticFile): Uint8Array {
       ];
       if (dictionaryOffset !== undefined && chunk.dataPageOffset === undefined)
         meta.push([11, { i64: dictionaryOffset }]);
+      for (const field of chunk.metaFields ?? []) {
+        const at = meta.findIndex(([id]) => id === field[0]);
+        if (at === -1) meta.push(field);
+        else meta[at] = field;
+      }
+      meta.sort((a, b) => a[0] - b[0]);
       const fields: ThriftField[] = [];
       if (chunk.filePath !== undefined) fields.push([1, { binary: chunk.filePath }]);
       fields.push([2, { i64: start }], [3, { struct: meta }]);
@@ -158,14 +173,14 @@ export function syntheticParquet(file: SyntheticFile): Uint8Array {
       struct: [
         [1, { list: { type: THRIFT.STRUCT, items: chunks } }],
         [2, { i64: groupBytes }],
-        [3, { i64: group.numRows }],
+        [3, group.numRowsValue ?? { i64: group.numRows }],
       ],
     } as const;
   });
   const footerFields: ThriftField[] = [
     [1, { i32: 1 }],
     [2, { list: { type: THRIFT.STRUCT, items: file.schema.map((element) => ({ struct: schemaFields(element) })) } }],
-    [3, { i64: file.rowGroups.reduce((sum, group) => sum + group.numRows, 0) }],
+    [3, file.numRowsValue ?? { i64: file.rowGroups.reduce((sum, group) => sum + group.numRows, 0) }],
     [4, { list: { type: THRIFT.STRUCT, items: groups } }],
   ];
   if (file.createdBy !== undefined) footerFields.push([6, { binary: file.createdBy }]);

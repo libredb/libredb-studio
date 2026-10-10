@@ -172,6 +172,37 @@ function chunksMatchLeaves(chunks: readonly ColumnChunk[], shape: ParquetSchemaS
   });
 }
 
+const metaOf = (chunk: ColumnChunk): ColumnMetaData => chunk.meta_data as ColumnMetaData;
+
+const ZERO = BigInt(0);
+const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
+
+/** An i64 as hyparquet parses one (a bigint) between 0 and 2^53 - 1, checked before any Number() coercion. */
+const isCount = (value: unknown): boolean => typeof value === "bigint" && value >= ZERO && value <= MAX_SAFE;
+
+/**
+ * The footer values the plan and the reads use: the file's and the first row group's num_rows, and each first-row-group
+ * chunk's num_values, sizes and page offsets, the dictionary page offset when present. Each must be a non-negative safe
+ * integer read as an i64, so no running sum can drop below a cap, and a chunk's range computed with Number() equals the
+ * range hyparquet computes with bigint arithmetic.
+ */
+function footerValuesHold(metadata: FileMetaData): boolean {
+  if (!isCount(metadata.num_rows)) return false;
+  const first = metadata.row_groups[0];
+  if (first === undefined) return true;
+  if (!isCount(first.num_rows)) return false;
+  return first.columns.every((chunk) => {
+    const meta = metaOf(chunk);
+    return (
+      isCount(meta.num_values) &&
+      isCount(meta.total_compressed_size) &&
+      isCount(meta.total_uncompressed_size) &&
+      isCount(meta.data_page_offset) &&
+      (meta.dictionary_page_offset === undefined || isCount(meta.dictionary_page_offset))
+    );
+  });
+}
+
 /** The tail read, the footer length checks, the second read when needed, the guard, the parse, the walk. */
 export async function readParquetFooter(input: ParquetPreviewInput, modules: ParquetModules): Promise<FooterOutcome> {
   const { limits } = input;
@@ -215,13 +246,12 @@ export async function readParquetFooter(input: ParquetPreviewInput, modules: Par
   if (!shape.ok) return refused(previewSentence("R-PQ-SCHEMA"));
   const first = metadata.row_groups[0];
   if (first !== undefined && !chunksMatchLeaves(first.columns, shape)) return refused(FOOTER_BAD_BARE);
+  if (!footerValuesHold(metadata)) return refused(FOOTER_BAD_BARE);
   return {
     kind: "footer",
     footer: { metadata, shape, footerLength, footerStart: size - 8 - footerLength, footerBytes },
   };
 }
-
-const metaOf = (chunk: ColumnChunk): ColumnMetaData => chunk.meta_data as ColumnMetaData;
 
 /** A chunk's codec as the preview prints it: hyparquet maps an id past the format's table to undefined. */
 const codecOf = (meta: ColumnMetaData): string => (meta.codec as string | undefined) ?? "an unknown codec";
@@ -810,7 +840,7 @@ async function readPlannedRows(
     })),
   );
   for (const each of chunks) {
-    if (each.start < 4 || each.end > footer.footerStart || each.end < each.start) {
+    if (each.start < 4 || each.end > footer.footerStart || each.end <= each.start) {
       throw new PreviewRefusal(previewSentence("R-PQ-CHUNK-RANGE", { c: spellName(each.name) }));
     }
   }

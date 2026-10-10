@@ -37,11 +37,12 @@ import {
   int32Plain,
   PHYSICAL,
   type SyntheticChunk,
+  type SyntheticFile,
   syntheticParquet,
   withTail,
 } from "../../../helpers/parquet-synthetic";
 import { fakeReader, fixture, headOf } from "../../../helpers/s3-preview-reader";
-import { thriftStruct } from "../../../helpers/thrift-compact";
+import { THRIFT, type ThriftValue, thriftStruct } from "../../../helpers/thrift-compact";
 
 const limits = (changes: Partial<typeof S3_PREVIEW_LIMITS> = {}) => ({ ...S3_PREVIEW_LIMITS, ...changes });
 
@@ -1394,5 +1395,107 @@ describe("the page header and footer field budgets", () => {
       notices: [],
     });
     expect(calls.metadata).toBe(0);
+  });
+});
+
+/** One INT32 column `id` of one row: its file with `changes` to its chunk, and the file-level overrides given. */
+const oneColumn = (changes: Partial<SyntheticChunk> = {}, file: Partial<SyntheticFile> = {}): Uint8Array =>
+  syntheticParquet({
+    schema: [
+      { name: "schema", children: 1 },
+      { name: "id", type: PHYSICAL.INT32 },
+    ],
+    rowGroups: [{ numRows: 1, chunks: [int32Chunk("id", [1], changes)] }],
+    ...file,
+  });
+
+describe("the footer values the plan and the reads use", () => {
+  const bare = { kind: "refused", sentence: "The Parquet footer could not be read." };
+
+  test("a footer with a negative total_uncompressed_size on one column is refused", async () => {
+    expect(await footerOutcome(oneColumn({ totalUncompressedSize: -1 }))).toEqual(bare);
+  });
+
+  test("a footer whose num_values is past 2^53 is refused", async () => {
+    expect(await footerOutcome(oneColumn({ numValues: 2 ** 53 + 2 }))).toEqual(bare);
+    expect(await footerOutcome(oneColumn({ numValues: Number.MAX_SAFE_INTEGER }))).toMatchObject({ kind: "footer" });
+  });
+
+  test("a negative or non-i64 count of rows, offset or size is refused", async () => {
+    expect(await footerOutcome(oneColumn({}, { numRowsValue: { i64: -1 } }))).toEqual(bare);
+    expect(await footerOutcome(oneColumn({}, { numRowsValue: { i32: 1 } }))).toEqual(bare);
+    const groupRows = (value: ThriftValue) =>
+      oneColumn(
+        {},
+        {
+          rowGroups: [{ numRows: 1, numRowsValue: value, chunks: [int32Chunk("id", [1])] }],
+        },
+      );
+    expect(await footerOutcome(groupRows({ i64: -1 }))).toEqual(bare);
+    expect(await footerOutcome(groupRows({ double: 1 }))).toEqual(bare);
+    expect(await footerOutcome(oneColumn({ totalCompressedSize: -4 }))).toEqual(bare);
+    expect(await footerOutcome(oneColumn({ dataPageOffset: -4 }))).toEqual(bare);
+    expect(await footerOutcome(oneColumn({ metaFields: [[11, { i64: -4 }]] }))).toEqual(bare);
+  });
+
+  test("a footer whose data_page_offset is a binary is refused", async () => {
+    expect(await footerOutcome(oneColumn({ metaFields: [[9, { binary: Uint8Array.of(4) }]] }))).toEqual(bare);
+  });
+
+  test("a footer whose total_compressed_size is encoded as a list is refused", async () => {
+    const asList: ThriftValue = { list: { type: THRIFT.I64, items: [{ i64: 100 }] } };
+    expect(await footerOutcome(oneColumn({ metaFields: [[7, asList]] }))).toEqual(bare);
+  });
+
+  test("a footer whose dictionary_page_offset is an i32 is refused", async () => {
+    expect(await footerOutcome(oneColumn({ metaFields: [[11, { i32: 4 }]] }))).toEqual(bare);
+  });
+
+  test("two columns, one declaring a negative size, cannot together pass a cap the second exceeds alone", async () => {
+    const { modules, calls } = await spiedModules();
+    const object = syntheticParquet({
+      schema: [
+        { name: "schema", children: 2 },
+        { name: "a", type: PHYSICAL.INT32 },
+        { name: "b", type: PHYSICAL.INT32 },
+      ],
+      rowGroups: [
+        {
+          numRows: 1,
+          chunks: [
+            int32Chunk("a", [1], { totalUncompressedSize: -S3_PREVIEW_LIMITS.parquetDecodeBudget }),
+            int32Chunk("b", [1], { totalUncompressedSize: S3_PREVIEW_LIMITS.parquetDecodeBudget + 1 }),
+          ],
+        },
+      ],
+    });
+    const { reader, input } = inputFor(object, "f.parquet", { request: { columns: ["a", "b"] } });
+    expect(await previewParquet(input, depsOf(modules))).toEqual({ ...bare, notices: [] });
+    expect(reader.calls.filter((call) => call.range.kind === "span")).toEqual([]);
+    expect(calls.read).toEqual([]);
+  });
+});
+
+describe("an empty column chunk", () => {
+  test("a 0-byte chunk in a planned column ends in R-PQ-CHUNK-RANGE with no span read", async () => {
+    const { modules, calls } = await spiedModules();
+    const object = oneColumn({ totalCompressedSize: 0 });
+    const { reader, input } = inputFor(object, "f.parquet");
+    // The production range reader refuses a span of no bytes as a defect; this one does the same.
+    const strict: ParquetPreviewInput = {
+      ...input,
+      read: async (range, maxBytes) => {
+        if (range.kind === "span" && range.end <= range.start)
+          throw new Error("a span range must hold at least 1 byte");
+        return input.read(range, maxBytes);
+      },
+    };
+    expect(await previewParquet(strict, depsOf(modules))).toEqual({
+      kind: "refused",
+      sentence: "The Parquet footer places column id outside the file's data, so the file is not previewed.",
+      notices: [],
+    });
+    expect(reader.calls.filter((call) => call.range.kind === "span")).toEqual([]);
+    expect(calls.read).toEqual([]);
   });
 });
