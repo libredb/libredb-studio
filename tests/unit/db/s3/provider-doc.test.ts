@@ -77,6 +77,7 @@ import { S3_PREVIEW_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
 import { resolveConnectionCredentials } from "@/lib/seed/credential-resolver";
 import { SeedConfigSchema } from "@/lib/seed/types";
+import { readsSqlText } from "@/lib/sql/grammar";
 import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -1618,5 +1619,68 @@ describe("docs/providers/README.md", () => {
     const paragraph = flat(index.slice(index.indexOf("**S3-compatible object storage has six fixtures")));
     for (const fixture of S3_FIXTURES) expect(paragraph, fixture.service).toContain(`\`${fixture.service}\``);
     expect(paragraph).toContain("](../../docker/s3/README.md)");
+  });
+});
+
+describe("the architecture, provider, editor and guide docs", () => {
+  const ids = SHIPPED_DATABASE_TYPES.length;
+
+  test("57. CLAUDE.md, ARCHITECTURE and DATABASE_PROVIDERS count the ids and draw S3", () => {
+    const claude = read("CLAUDE.md");
+    expect(claude).toContain(
+      `${word(EXTERNAL_DATABASE_TYPES.length)} external engines, plus the embedded LibreDB store`,
+    );
+    expect(claude).toContain("`oxia`, `milvus`, `qdrant`, `s3`, `libredb`) extend `BaseDatabaseProvider` directly");
+    const architecture = read("docs/ARCHITECTURE.md");
+    expect(architecture).toContain(`It supports **${ids} database backends**`);
+    expect(architecture).toContain("Milvus, Qdrant, Oxia, S3-compatible object storage, LibreDB.");
+    expect(architecture).toContain("        DBFactory --> ObjectStore[Object Storage Providers]");
+    expect(architecture).toContain("        ObjectStore --> S3[(S3-compatible object storage)]");
+    expect(architecture).toContain("    BaseDatabaseProvider <|-- S3Provider");
+    expect(architecture).toContain("│   │   ├── objectstore/ # s3/");
+    expect(architecture).toContain("the LibreDB, Redis, etcd, Oxia and S3 command languages");
+    const providers = read("docs/DATABASE_PROVIDERS.md");
+    // Two pairs of type-ids share one module each: elasticsearch and opensearch, influxdb and influxdb3.
+    expect(providers).toContain(`${Word(ids)} type-ids are supported by ${word(ids - 2)} provider modules:`);
+    expect(providers).toContain("│   ├── objectstore/            # Object Storage Providers");
+    expect(providers).toContain(
+      "├── S3Provider ─────────────────────────────┤ Object storage (AWS CLI read commands over the S3 REST API, read-only)",
+    );
+    expect(providers).toContain(
+      "| S3-compatible object storage | `s3` | Object storage (AWS CLI read commands over the S3 REST API, read-only) | [providers/s3.md](./providers/s3.md) |",
+    );
+    expect(providers).toContain(
+      "- **S3-compatible object storage** (one AWS CLI read command, or Studio's own `preview`): [providers/s3.md](./providers/s3.md).",
+    );
+    expect(flat(providers)).toContain("Qdrant, Oxia, Databend, S3-compatible object storage, or LibreDB.");
+  });
+
+  test("58. the editor and schema-diff docs name the S3 module, the non-SQL count and the pagination count", () => {
+    expect(read("docs/editor/README.md")).toContain(
+      "`src/lib/editor/oxia-language.ts`, `src/lib/editor/s3-language.ts` |",
+    );
+    const nonSql = SHIPPED_DATABASE_TYPES.filter((type) => !readsSqlText(type)).length;
+    const optimization = read("docs/editor/query-optimization.md");
+    expect(optimization).toContain(
+      `Qdrant, Oxia and S3-compatible object storage are the ${word(nonSql)} types whose query text is not SQL at all**`,
+    );
+    expect(optimization).toContain(`holds exactly those ${word(nonSql)},`);
+    expect(provider.getCapabilities().supportsResultPagination).toBe(false);
+    expect(optimization).toContain("Fourteen providers cannot serve page two.");
+    expect(optimization).toContain("Qdrant, Oxia and S3-compatible object storage answer it with page one.");
+    expect(optimization).toContain("The S3 row names no operation and, like the Oxia row, is the gate's whole answer:");
+    expect(flat(read("docs/SCHEMA_DIFF.md"))).toContain(
+      "Qdrant, Oxia and S3-compatible object storage receive an explanatory",
+    );
+  });
+
+  test("59. ADDING_A_PROVIDER records what S3 shows about auth and dependencies", () => {
+    const guide = read("docs/ADDING_A_PROVIDER.md");
+    expect(guide).toContain(
+      "S3 shows it need not: its SigV4 is Studio's own `node:crypto` code, tested on the AWS suite vectors |",
+    );
+    expect(guide).toContain(
+      "      `s3` needs no driver but adds the Parquet decoders `hyparquet` and `hyparquet-compressors`, with their `//dependencies` note.",
+    );
   });
 });

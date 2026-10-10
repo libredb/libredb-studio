@@ -28,7 +28,7 @@ PostgreSQL 18.6 replay with `relation "<table>_pkey" already exists`. Every othe
 table is still created. An existing table's added indexes are all emitted, because the generator
 writes no key for one.
 
-MongoDB, Redis, LibreDB, Couchbase, Druid, Elasticsearch, OpenSearch, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia receive an explanatory
+MongoDB, Redis, LibreDB, Couchbase, Druid, Elasticsearch, OpenSearch, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia and S3-compatible object storage receive an explanatory
 comment instead of relational table DDL. Trino, ClickHouse and Databend refuse foreign-key clauses;
 Trino and Databend refuse primary keys too, so an added table's key is declined in a comment after its `CREATE TABLE`.
 Trino has no index grammar, Databend's indexes are inverted, ngram, vector and spatial search indexes the diff does not record, and the diff does not retain enough

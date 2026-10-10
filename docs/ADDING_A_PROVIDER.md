@@ -97,7 +97,7 @@ Score a candidate before writing code. Each criterion you fail becomes code you 
 | 3 | **Is there catalog introspection over the same surface?** | Otherwise the object surface has nothing to read |
 | 4 | **Is there monitoring data over the same surface?** | Decides how much of the monitoring panel is real rather than honestly empty |
 | 5 | **Is there an EXPLAIN?** | Decides `supportsExplain` and whether a strategy is needed |
-| 6 | **How complex is auth?** | Basic auth is three lines. SigV4, OAuth2 refresh or Kerberos is a library — and that is usually where the no-dependency promise ends |
+| 6 | **How complex is auth?** | Basic auth is three lines. SigV4, OAuth2 refresh or Kerberos is a library — and that is usually where the no-dependency promise ends. S3 shows it need not: its SigV4 is Studio's own `node:crypto` code, tested on the AWS suite vectors |
 | 7 | **Does the data model map onto containers, kinds and objects, and is an outer container level alone a real address?** | The object surface addresses an object by a path of segments, so a hierarchy is declared through `containerLevels` and `objectKinds` rather than flattened into a display name. Then choose `containerPathShapes` and declare it in `getCapabilities()`: `exact` when only the declared depth is an address (a PostgreSQL schema, a MongoDB database), `prefixes` when the outer levels alone are one too (a Trino catalog with no schema, a Couchbase bucket with no scope). An absent field reads as `exact`, and the provider's own check and the HTTP object routes both refuse by that one declaration through `acceptedContainerShapes()` in `src/lib/db/object-kinds.ts` |
 
 A good sanity check for criterion 1: **can a browser talk to it?** Couchbase's own Web Console and
@@ -1004,6 +1004,7 @@ The integration points, all of which need an entry. This is the list the Strateg
       fifteen shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
       `libsql`, `sqlite`, `prometheus`, `qdrant`, `milvus`, `influxdb`, `influxdb3`, `oxia` and `databend`
       each add nothing here (`milvus` and `oxia` only extend the `//dependencies` note)
+      `s3` needs no driver but adds the Parquet decoders `hyparquet` and `hyparquet-compressors`, with their `//dependencies` note.
 - [ ] `database-compose.yml` — a service, so the next person can repeat the live pass. A distributed
       engine contributes a `profiles: [...]` set instead, as Druid's seven services do, so the default
       stack does not grow for everyone. An EMBEDDED engine gets no service at all — SQLite, DuckDB and
