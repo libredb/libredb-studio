@@ -265,6 +265,23 @@ function plainText(line: string, word: LineWord): string | undefined {
   return text.includes("\\") ? undefined : text;
 }
 
+/**
+ * Whether a word is an option word, read from its tokens as `isOptionWord` reads the parser's word: its first token
+ * is a flag with no backslash in its name, and either that token holds the `=`, or it is longer than `-` alone and
+ * every later token is an empty quoted string. Returns the flag token's text when it is, undefined otherwise.
+ */
+function optionFlag(line: string, word: LineWord): string | undefined {
+  const [first, ...rest] = word.tokens;
+  if (first.kind !== "flag") return undefined;
+  const flag = line.slice(first.start, first.end);
+  const equals = flag.indexOf("=");
+  if (flag.slice(0, equals < 0 ? flag.length : equals).includes("\\")) return undefined;
+  if (equals >= 0) return flag;
+  const emptyString = (token: ShellToken): boolean =>
+    token.kind === "string" && ["''", '""'].includes(line.slice(token.start, token.end));
+  return flag.length >= 2 && rest.every(emptyString) ? flag : undefined;
+}
+
 /** Which of the line's words are lead words, the service and the operation, by word index. */
 function leadServiceOperation(
   line: string,
@@ -290,10 +307,12 @@ function leadServiceOperation(
     const word = words[at];
     // A word that runs on past this line is not read whole here, so it decides nothing.
     if (word.index === openIndex) break;
+    const flag = valueNext ? undefined : optionFlag(line, word);
     if (valueNext) {
       valueNext = false;
-    } else if (word.tokens[0].kind === "flag") {
-      valueNext = S3_VALUE_GLOBAL_OPTIONS.has(plainText(line, word) ?? "");
+    } else if (flag !== undefined) {
+      // A flag that holds its `=` is never in the set, so it takes no value.
+      valueNext = S3_VALUE_GLOBAL_OPTIONS.has(flag);
     } else if (service === undefined) {
       roles.set(word.index, "service");
       service = plainText(line, word) ?? "";

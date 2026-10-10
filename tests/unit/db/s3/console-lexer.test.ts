@@ -276,4 +276,20 @@ describe("tokenizeS3Line: the roles the editor draws", () => {
   test("a word left open before the service decides nothing on its line", () => {
     expect(roles("aws 's3")).toEqual(["lead:aws", "string:'s3"]);
   });
+
+  test.each([
+    ["aws - s3 ls", []],
+    ["aws -x'y' s3 ls", []],
+    ["aws s3 - ls", ["service:s3"]],
+    ["aws --region'' r s3 ls", ["service:s3", "operation:ls"]],
+    ["aws --prefix='-x y' s3 ls", ["service:s3", "operation:ls"]],
+  ] as const)("parity: %s draws the service and operation the parser reads", (line, expected) => {
+    const drawn = roles(line).filter((role) => role.startsWith("service:") || role.startsWith("operation:"));
+    expect(drawn).toEqual([...expected]);
+    const shape = shapeOf(line);
+    for (const role of drawn) {
+      const [name, text] = role.split(":") as ["service" | "operation", string];
+      expect(shape[name]).toBe(text);
+    }
+  });
 });
