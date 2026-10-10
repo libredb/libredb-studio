@@ -28,12 +28,13 @@ Three properties frame everything below, and each of them is load-bearing rather
   ([`tools.ts`](../src/lib/agent/tools.ts)) is its only production call site, and the editor's
   `/api/db/query` reaches the provider directly in `POST()`
   ([`query/route.ts`](../src/app/api/db/query/route.ts)).
-- **Agent mode requires PostgreSQL, SQLite, DuckDB or SQL Server — except the `operations` workflow,
+- **Agent mode requires PostgreSQL, SQLite, DuckDB, SQL Server or MySQL — except the `operations` workflow,
   which runs anywhere.** They are the only providers implementing `queryReadOnly`:
   [`postgres.ts`](../src/lib/db/providers/sql/postgres.ts),
   [`sqlite.ts`](../src/lib/db/providers/sql/sqlite.ts),
-  [`duckdb/index.ts`](../src/lib/db/providers/sql/duckdb/index.ts) and
-  [`mssql.ts`](../src/lib/db/providers/sql/mssql.ts), so on any other engine an
+  [`duckdb/index.ts`](../src/lib/db/providers/sql/duckdb/index.ts),
+  [`mssql.ts`](../src/lib/db/providers/sql/mssql.ts) and
+  [`mysql.ts`](../src/lib/db/providers/sql/mysql.ts), so on any other engine an
   agent-mode run whose workflow sends a statement is
   **refused when it is started**: `POST /api/agent/runs` answers `400` with the posture's own
   paragraph before a run id exists or a model turn is spent (#512). The provider factory's gate sits
@@ -456,7 +457,7 @@ that every statement it sends arrives inside `BEGIN READ ONLY`, down to the prov
 EXPLAIN-format probe at connect to keep that true, and an object read taken there acquired a second
 provider under `agent-operations` and sent the walk's catalog SQL outside that envelope.
 
-Those two dialects do not lose the kind for it. They are two of the four engines agent mode executes on, and
+Those two dialects do not lose the kind for it. They are two of the five engines agent mode executes on, and
 an inventory that hands a model a view under the word table is the defect #414 measured, so the kind is
 composed on the catalog path the same way every other fact that path carries is: the composed statement
 selects the ENGINE's own word for the relation, and `context-snapshot.ts` maps it onto the kind id the

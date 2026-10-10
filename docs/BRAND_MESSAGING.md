@@ -243,7 +243,7 @@ Direction, not copy. This brief contains no finished copy for any surface. It sa
 
 | Surface | Leads with | Why | Current state |
 | :--- | :--- | :--- | :--- |
-| GitHub About | Door 2, in one line | The first thing a repository visitor reads, and the only place a full sentence has to work with no layout around it | Defect: it names four engines against twenty-seven shipped. Fix before any campaign starts |
+| GitHub About | Door 2, in one line | The first thing a repository visitor reads, and the only place a full sentence has to work with no layout around it | Defect: it names five engines against the shipped set and drifts with every landing. Fix before any campaign starts |
 | README opening | Door 1, then Door 3 | Visitors arriving from search need the claim before the feature list | States a category rather than a claim. Rewrite |
 | Website hero | Door 1 | The site as a whole can carry the story; the hero carries the claim and a single proof | States a category rather than a claim. Rewrite |
 | Website story section | The brand story, both scenes | Nothing on the site currently says why LibreDB exists | Missing entirely. Add |

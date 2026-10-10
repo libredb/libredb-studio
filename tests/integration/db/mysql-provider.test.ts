@@ -10,7 +10,13 @@ import { join } from "node:path";
 import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider, MaintenanceOperation, ObjectKindSpec } from "@/lib/db/types";
 import { maintenanceControl } from "@/lib/db/types";
-import { DatabaseConfigError, NO_TRANSACTION_OPENED, QueryError, TRANSACTION_STATE_UNREPORTED } from "@/lib/db/errors";
+import {
+  DatabaseConfigError,
+  ExecutionProfileError,
+  NO_TRANSACTION_OPENED,
+  QueryError,
+  TRANSACTION_STATE_UNREPORTED,
+} from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
@@ -179,8 +185,115 @@ const mockPool = {
  */
 let lastPoolConfig: Record<string, unknown> = {};
 
+/**
+ * The configs of every read-only pool a provider built, in order. Distinguished by
+ * shape rather than by call order: the read-only pool is the only one this provider
+ * builds with `multipleStatements: false` spelled out (see `buildReadOnlyPoolConfig`),
+ * so a config carrying it is the read-only one however many pools came before it.
+ */
+let roPoolConfigs: Record<string, unknown>[] = [];
+
+/**
+ * One read-only session's observable history: what was set, in what state the
+ * statement ran, and how the connection left the call. The mssql suite models a
+ * SESSION for the same reason this one does (see its own header): a fixture keyed by
+ * statement text would make every assertion below a statement about the fixture
+ * rather than about the provider.
+ */
+interface RoSessionRecord {
+  readonly sets: string[];
+  readOnlyTxn: boolean;
+  rolledBack: boolean;
+  released: boolean;
+  destroyed: boolean;
+  readonly statements: string[];
+}
+let roSessions: RoSessionRecord[] = [];
+
+/** When true, the session-mode reset the profile issues REJECTS, modelling a connection
+ * that must not go back to the pool with a stranger's row limit. */
+let roResetShouldFail = false;
+
+/**
+ * The read-only connection: session commands are INTERPRETED here rather than routed
+ * to the fixture, and the statement under test is routed. `threadId` is a number the
+ * KILL fixture can name.
+ */
+const makeRoConnection = (record: RoSessionRecord) => ({
+  threadId: 4242,
+  connection: {},
+  query: (sql: string | { sql: string }) => {
+    const text = typeof sql === "string" ? sql : sql.sql;
+    const normalized = text.trim().toLowerCase();
+    if (normalized === "start transaction read only") {
+      record.readOnlyTxn = true;
+      return Promise.resolve([[{ affectedRows: 0 }], undefined] as [unknown, unknown[] | undefined]);
+    }
+    if (normalized === "rollback") {
+      record.rolledBack = true;
+      record.readOnlyTxn = false;
+      return Promise.resolve([[{ affectedRows: 0 }], undefined] as [unknown, unknown[] | undefined]);
+    }
+    if (normalized.startsWith("set session")) {
+      record.sets.push(text.trim());
+      if (normalized.includes("= default")) {
+        if (roResetShouldFail) {
+          const error = new Error("reset refused (fixture)") as Error & { fatal?: boolean };
+          error.fatal = true;
+          return Promise.reject(error);
+        }
+        return Promise.resolve([[{ affectedRows: 0 }], undefined] as [unknown, unknown[] | undefined]);
+      }
+      return Promise.resolve([[{ affectedRows: 0 }], undefined] as [unknown, unknown[] | undefined]);
+    }
+    record.statements.push(text.trim());
+    // The statement under test goes to the fixture in the form it was sent, so a
+    // rowsAsArray read is converted by the same path the editor's own reads are.
+    return answerStatement("query", sql);
+  },
+  release: () => {
+    record.released = true;
+  },
+  destroy: () => {
+    record.destroyed = true;
+  },
+});
+
+const buildRoPool = () => {
+  // One record per ACQUISITION, not per pool: a call's bounds, rollback and release
+  // are that call's, and a second call on the same pool must not read as the first
+  // one's. Nothing is recorded at construction - a pool built is not a session begun.
+  const newRecord = (): RoSessionRecord => ({
+    sets: [],
+    readOnlyTxn: false,
+    rolledBack: false,
+    released: false,
+    destroyed: false,
+    statements: [],
+  });
+  return {
+    getConnection: async () => {
+      const record = newRecord();
+      roSessions.push(record);
+      return makeRoConnection(record);
+    },
+    end: async () => {},
+    on: () => {},
+    query: (sql: string | { sql: string }) => {
+      const sent = typeof sql === "string" ? sql : sql.sql;
+      return answerStatement("query", sent);
+    },
+    execute: (sql: string | { sql: string }, params?: unknown[]) =>
+      answerStatement("execute", typeof sql === "string" ? sql : sql.sql, params),
+  };
+};
+
 const createPool = (config: Record<string, unknown>) => {
   lastPoolConfig = config;
+  if (config.multipleStatements === false) {
+    roPoolConfigs.push(config);
+    return buildRoPool();
+  }
   return mockPool;
 };
 
@@ -198,6 +311,9 @@ mock.module("mysql2/promise", () => ({
 afterEach(() => {
   const violations = fixtureViolations;
   fixtureViolations = [];
+  roPoolConfigs = [];
+  roSessions = [];
+  roResetShouldFail = false;
   expect(violations).toEqual([]);
 });
 
@@ -7968,5 +8084,431 @@ describe("endOpenQueryTransaction()", () => {
     expect(doc).toContain("performance_schema.events_transactions_current");
     expect(doc).toContain("information_schema.innodb_trx");
     expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["the driver cannot be asked"]);
+  });
+});
+
+// ============================================================================
+// queryReadOnly(): the agent read-only execution profile on MySQL and MariaDB (#1612)
+// ============================================================================
+//
+// MySQL's `START TRANSACTION READ ONLY` is not a boundary on its own - DDL, GRANT and
+// SET GLOBAL end it through their implicit commit, measured - so this profile is
+// two-layer: the PRINCIPAL is verified at open (SHOW GRANTS, fail-closed, USAGE and
+// SELECT alone admitted) and the read-only transaction is the second layer, refusing
+// the DML and locking reads the grants alone would not stop. The rows are bounded
+// server-side by `sql_select_limit`, the deadline by a session variable AND a KILL
+// timer this provider owns, because both engines' session variables are overridable
+// by the statement itself (measured: MySQL's MAX_EXECUTION_TIME hint, MariaDB's SET
+// STATEMENT prefix). Everything the fixture models below is a measurement from
+// 2026-10-09, MySQL 26.7.0 and MariaDB 13.0.2, as the least-privilege account
+// `libredb_agent` of docker/mysql-init/02-agent-principal.sql.
+//
+// The session model is the mssql suite's (its header argues the case): what
+// `SET SESSION` did decides what the next statement answers, so an assertion about
+// the row bound is about the limit the provider ISSUED, not one the fixture chose.
+// ---------------------------------------------------------------------------
+describe("queryReadOnly() - the agent read-only execution profile (#1612)", () => {
+  /** This suite's provider; the other describes' variable is scoped to theirs. */
+  let provider: InstanceType<typeof MySQLProvider>;
+
+  /** Grants a least-privilege `libredb_agent` answers `SHOW GRANTS` with, measured. */
+  const AGENT_GRANTS = ["GRANT USAGE ON *.* TO `libredb_agent`@`%`", "GRANT SELECT ON `app`.* TO `libredb_agent`@`%`"];
+  /** MariaDB appends the digest to the same lines, measured. */
+  const MARIADB_AGENT_GRANTS = [
+    "GRANT USAGE ON *.* TO `libredb_agent`@`%` IDENTIFIED BY PASSWORD '*7C4431B7825118A26ABFF34A69FE060B62DA9976'",
+    "GRANT SELECT ON `app`.* TO `libredb_agent`@`%`",
+  ];
+  /** What `root` answers, measured on 26.7.0: the first line alone ends the boundary. */
+  const ROOT_GRANTS = [
+    "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION",
+    "GRANT ALLOW_NONEXISTENT_DEFINER,AUDIT_ADMIN,CLONE_ADMIN,ROLE_ADMIN ON *.* TO `root`@`localhost` WITH GRANT OPTION",
+    "GRANT PROXY ON ``@`` TO `root`@`localhost` WITH GRANT OPTION",
+  ];
+
+  /** The fixtures the profiled connect needs beyond the default ones: SHOW GRANTS. */
+  function grantsFixture(lines: string[]): typeof mockExecuteFn {
+    return (sql: string) => {
+      if (sql.trim().toLowerCase() === "show grants") {
+        return Promise.resolve([
+          lines.map((line) => ({ "Grants for libredb_agent@%": line })),
+          [{ name: "Grants for libredb_agent@%" }],
+        ]);
+      }
+      return defaultMockExecute(sql);
+    };
+  }
+
+  /** A connected, profiled provider: the shape every behavioural test below starts from. */
+  async function profiledProvider(grants: string[] = AGENT_GRANTS, execution = { readOnly: true }) {
+    mockExecuteFn = grantsFixture(grants);
+    provider = new MySQLProvider(makeMySQLConfig(), {}, execution);
+    await provider.connect();
+    return provider;
+  }
+
+  /** The read-only budget the behavioural tests use; each field is a positive integer. */
+  const budget = (
+    overrides: Partial<{ statementTimeoutMs: number; maxResultRows: number; maxResultBytes: number }> = {},
+  ) => ({
+    statementTimeoutMs: 5000,
+    maxResultRows: 100,
+    maxResultBytes: 1024 * 1024,
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    mockExecuteFn = grantsFixture(AGENT_GRANTS);
+  });
+
+  // --------------------------------------------------------------------------
+  // The gate: a provider outside the profile serves nothing
+  // --------------------------------------------------------------------------
+
+  describe("the profile gate", () => {
+    test("a provider opened outside the profile refuses queryReadOnly outright", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await expect(provider.queryReadOnly("SELECT 1", budget())).rejects.toThrow(
+        /requires a provider opened under the agent read-only profile/,
+      );
+    });
+
+    test("a budget field that is not a positive integer is refused before anything is sent", async () => {
+      const profiled = await profiledProvider();
+      await expect(profiled.queryReadOnly("SELECT 1", budget({ statementTimeoutMs: 0 }))).rejects.toThrow(
+        /statementTimeoutMs must be a positive integer/,
+      );
+      expect(roSessions).toHaveLength(0);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // The open: engine admission and the principal
+  // --------------------------------------------------------------------------
+
+  describe("the open refuses what the boundary cannot prove", () => {
+    test("root's grants are refused with PROFILE_PRIVILEGES_TOO_BROAD, and the refusal names the line", async () => {
+      mockExecuteFn = grantsFixture(ROOT_GRANTS);
+      provider = new MySQLProvider(makeMySQLConfig(), {}, { readOnly: true });
+      await expect(provider.connect()).rejects.toThrow(/least-privilege principal/);
+      await expect(provider.connect()).rejects.toBeInstanceOf(ExecutionProfileError);
+    });
+
+    test("a server that answers SHOW GRANTS with nothing is refused fail-closed", async () => {
+      mockExecuteFn = grantsFixture([]);
+      provider = new MySQLProvider(makeMySQLConfig(), {}, { readOnly: true });
+      await expect(provider.connect()).rejects.toThrow(/could not read this session's grants/);
+    });
+
+    test("a grant line the parser cannot read is a refusal, not an admission", async () => {
+      mockExecuteFn = grantsFixture([...AGENT_GRANTS, "GRANT SOMETHING_NOBODY_LISTED ON *.* TO `x`@`%`"]);
+      provider = new MySQLProvider(makeMySQLConfig(), {}, { readOnly: true });
+      await expect(provider.connect()).rejects.toThrow(/cannot contain/);
+    });
+
+    test("WITH GRANT OPTION is refused: a session that can GRANT can widen the boundary", async () => {
+      mockExecuteFn = grantsFixture(["GRANT SELECT ON `app`.* TO `x`@`%` WITH GRANT OPTION"]);
+      provider = new MySQLProvider(makeMySQLConfig(), {}, { readOnly: true });
+      await expect(provider.connect()).rejects.toThrow(/cannot contain/);
+    });
+
+    test("EXECUTE is refused: a DEFINER-right routine can write from inside a read", async () => {
+      mockExecuteFn = grantsFixture(["GRANT EXECUTE ON `app`.* TO `x`@`%`", ...AGENT_GRANTS.slice(0, 1)]);
+      provider = new MySQLProvider(makeMySQLConfig(), {}, { readOnly: true });
+      await expect(provider.connect()).rejects.toThrow(/cannot contain/);
+    });
+
+    test("MariaDB's IDENTIFIED BY PASSWORD suffix on the USAGE line is read through", async () => {
+      const profiled = await profiledProvider(MARIADB_AGENT_GRANTS);
+      expect(profiled.isConnected()).toBe(true);
+    });
+
+    test("a TiDB version string is refused: the profile is proven on MySQL and MariaDB only", async () => {
+      mockExecuteFn = (sql: string) => {
+        if (sql.includes("VERSION()")) {
+          return Promise.resolve([[{ version: "8.0.11-TiDB-v8.5.1" }], [{ name: "version" }]]);
+        }
+        return grantsFixture(AGENT_GRANTS)(sql);
+      };
+      provider = new MySQLProvider(makeMySQLConfig(), {}, { readOnly: true });
+      await expect(provider.connect()).rejects.toThrow(/shares the wire but its own enforcement is not measured/);
+    });
+
+    test("a server whose VERSION() answer is empty is refused fail-closed", async () => {
+      mockExecuteFn = (sql: string) => {
+        if (sql.includes("VERSION()")) {
+          // The row came back without the column the boundary reads: an unidentified
+          // engine is an unproven one, and unproven is refused rather than assumed.
+          return Promise.resolve([[], [{ name: "version" }]]);
+        }
+        return grantsFixture(AGENT_GRANTS)(sql);
+      };
+      provider = new MySQLProvider(makeMySQLConfig(), {}, { readOnly: true });
+      await expect(provider.connect()).rejects.toThrow(/names its version, and this one did not/);
+    });
+
+    test("a Percona version comment is refused the same way", async () => {
+      mockExecuteFn = (sql: string) => {
+        if (sql.includes("version_comment")) {
+          return Promise.resolve([[{ version_comment: "Percona Server (GPL), Release 11" }], []]);
+        }
+        return grantsFixture(AGENT_GRANTS)(sql);
+      };
+      provider = new MySQLProvider(makeMySQLConfig(), {}, { readOnly: true });
+      await expect(provider.connect()).rejects.toThrow(/shares the wire but its own enforcement is not measured/);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // The pool: one statement per call, whatever the connection string said
+  // --------------------------------------------------------------------------
+
+  describe("the read-only pool", () => {
+    test("is built with multipleStatements false and the connection string's own parameter stripped", async () => {
+      mockExecuteFn = grantsFixture(AGENT_GRANTS);
+      provider = new MySQLProvider(
+        makeMySQLConfig({ connectionString: "mysql://root:secret@localhost:3306/app?multipleStatements=true" }),
+        {},
+        { readOnly: true },
+      );
+      await provider.connect();
+      expect(roPoolConfigs).toHaveLength(1);
+      const config = roPoolConfigs[0] as { multipleStatements?: boolean; uri?: string; connectionLimit?: number };
+      expect(config.multipleStatements).toBe(false);
+      expect(config.uri).not.toContain("multipleStatements");
+      expect(config.connectionLimit).toBe(2);
+    });
+
+    test("disconnect ends it beside the main pool", async () => {
+      const profiled = await profiledProvider();
+      await profiled.disconnect();
+      expect(profiled.isConnected()).toBe(false);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // The call: session order, the layers, the budgets
+  // --------------------------------------------------------------------------
+
+  describe("one admitted read", () => {
+    test("the session order is transaction, bounds, statement, rollback, reset, release", async () => {
+      const profiled = await profiledProvider();
+      mockExecuteFn = (sql: string) => {
+        if (sql.trim().toUpperCase().startsWith("SELECT")) {
+          return Promise.resolve([[{ id: 1 }], [{ name: "id" }]]);
+        }
+        return defaultMockExecute(sql);
+      };
+      const result = await profiled.queryReadOnly("SELECT id FROM app.orders", budget({ maxResultRows: 10 }));
+      expect(result.rows).toEqual([{ id: 1 }]);
+      expect(result.rowCount).toBe(1);
+      expect(result.fields).toEqual(["id"]);
+
+      const session = roSessions.at(-1);
+      expect(session).toBeDefined();
+      expect(session!.rolledBack).toBe(true);
+      expect(session!.released).toBe(true);
+      expect(session!.destroyed).toBe(false);
+      expect(session!.sets[0]).toBe("SET SESSION sql_select_limit = 11");
+      expect(session!.sets[1]).toBe("SET SESSION max_execution_time = 5000");
+      expect(session!.sets[2]).toBe("SET SESSION group_concat_max_len = 4194304");
+      expect(session!.sets.at(-1)).toContain("= DEFAULT");
+      expect(session!.statements).toEqual(["SELECT id FROM app.orders"]);
+    });
+
+    test("estimate-plan mode sends EXPLAIN FORMAT=JSON, under the same bounds", async () => {
+      const profiled = await profiledProvider();
+      mockExecuteFn = (sql: string) => {
+        if (sql.trim().toUpperCase().startsWith("EXPLAIN FORMAT=JSON")) {
+          return Promise.resolve([[{ EXPLAIN: '{"query_plan":{}}' }], [{ name: "EXPLAIN" }]]);
+        }
+        return defaultMockExecute(sql);
+      };
+      const result = await profiled.queryReadOnly("SELECT id FROM app.orders", budget(), "estimate-plan");
+      expect(roSessions.at(-1)!.statements).toEqual(["EXPLAIN FORMAT=JSON SELECT id FROM app.orders"]);
+      expect(result.rows.length).toBe(1);
+    });
+
+    test("a write the server refuses is mapped, and the session is still reset", async () => {
+      const profiled = await profiledProvider();
+      mockExecuteFn = (sql: string) => {
+        if (sql.trim().toUpperCase().startsWith("INSERT")) {
+          const error = new Error("INSERT command denied to user 'libredb_agent'@'%' for table 'orders'") as Error & {
+            code: string;
+            errno: number;
+            sqlState: string;
+          };
+          error.code = "ER_TABLEACCESS_DENIED_ERROR";
+          error.errno = 1142;
+          error.sqlState = "42000";
+          return Promise.reject(error);
+        }
+        return defaultMockExecute(sql);
+      };
+      await expect(profiled.queryReadOnly("INSERT INTO app.orders VALUES (1)", budget())).rejects.toThrow(
+        /INSERT command denied/,
+      );
+      const session = roSessions.at(-1)!;
+      expect(session.rolledBack).toBe(true);
+      expect(session.released).toBe(true);
+      expect(session.destroyed).toBe(false);
+    });
+
+    test("a row past the budget is the refusal, not a truncated answer", async () => {
+      const profiled = await profiledProvider();
+      const rows = Array.from({ length: 11 }, (_, i) => ({ id: i }));
+      mockExecuteFn = (sql: string) => {
+        if (sql.trim().toUpperCase().startsWith("SELECT")) return Promise.resolve([rows, [{ name: "id" }]]);
+        return defaultMockExecute(sql);
+      };
+      await expect(profiled.queryReadOnly("SELECT id FROM t", budget({ maxResultRows: 10 }))).rejects.toThrow(
+        /row budget: 11 rows > 10 allowed/,
+      );
+      expect(roSessions.at(-1)!.sets[0]).toBe("SET SESSION sql_select_limit = 11");
+    });
+
+    test("bytes past the byte budget are refused after the read", async () => {
+      const profiled = await profiledProvider();
+      const big = "x".repeat(600);
+      mockExecuteFn = (sql: string) => {
+        if (sql.trim().toUpperCase().startsWith("SELECT")) {
+          return Promise.resolve([[{ blob: big }], [{ name: "blob" }]]);
+        }
+        return defaultMockExecute(sql);
+      };
+      await expect(profiled.queryReadOnly("SELECT blob FROM t", budget({ maxResultBytes: 512 }))).rejects.toThrow(
+        /byte budget: \d+ bytes > 512 allowed/,
+      );
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // The deadline: a timer this provider owns
+  // --------------------------------------------------------------------------
+
+  describe("the deadline", () => {
+    /** An error shaped as KILL QUERY answers, measured: 1317. */
+    const interrupted = (): Error & { code: string; errno: number; sqlState: string } => {
+      const error = new Error("Query execution was interrupted") as Error & {
+        code: string;
+        errno: number;
+        sqlState: string;
+      };
+      error.code = "ER_QUERY_INTERRUPTED";
+      error.errno = 1317;
+      error.sqlState = "70100";
+      return error;
+    };
+
+    test("a statement past the deadline is killed from another session and refused", async () => {
+      const profiled = await profiledProvider();
+      let releaseSelect: ((value: [unknown[], unknown[]]) => void) | undefined;
+      mockExecuteFn = (sql: string) => {
+        const text = sql.trim().toLowerCase();
+        if (text.startsWith("select")) {
+          return new Promise((resolve, reject) => {
+            releaseSelect = resolve;
+            setTimeout(() => reject(interrupted()), 2000);
+          });
+        }
+        if (text.startsWith("kill query 4242")) {
+          releaseSelect?.([[], []]);
+          return Promise.reject(interrupted());
+        }
+        return defaultMockExecute(sql);
+      };
+      await expect(profiled.queryReadOnly("SELECT SLEEP(30)", budget({ statementTimeoutMs: 60 }))).rejects.toThrow(
+        /deadline of 60ms and was killed/,
+      );
+      expect(protocolCalls.some((c) => c.sql.toLowerCase().startsWith("kill query 4242"))).toBe(true);
+      const session = roSessions.at(-1)!;
+      expect(session.released).toBe(true);
+      expect(session.destroyed).toBe(false);
+    });
+
+    test("the deadline value carries MariaDB's unit: seconds, rounded up, never below one", async () => {
+      mockExecuteFn = (sql: string) => {
+        if (sql.includes("VERSION()")) {
+          return Promise.resolve([[{ version: "13.0.2-MariaDB-ubu2604" }], [{ name: "version" }]]);
+        }
+        if (sql.trim().toLowerCase() === "show grants") {
+          return Promise.resolve([
+            MARIADB_AGENT_GRANTS.map((line) => ({ "Grants for libredb_agent@%": line })),
+            [{ name: "Grants for libredb_agent@%" }],
+          ]);
+        }
+        if (sql.trim().toUpperCase().startsWith("SELECT")) {
+          return Promise.resolve([[{ id: 1 }], [{ name: "id" }]]);
+        }
+        return defaultMockExecute(sql);
+      };
+      provider = new MySQLProvider(makeMySQLConfig(), {}, { readOnly: true });
+      await provider.connect();
+      // 3000 ms is 3 seconds in MariaDB's unit, and a sub-second budget rounds UP to
+      // the one-second floor rather than to zero: the KILL timer holds the exact
+      // deadline, the session variable is the coarser second layer.
+      await provider.queryReadOnly("SELECT 1", budget({ statementTimeoutMs: 3000 }));
+      expect(roSessions.at(-1)!.sets[1]).toBe("SET SESSION max_statement_time = 3");
+      await provider.queryReadOnly("SELECT 1", budget({ statementTimeoutMs: 500 }));
+      expect(roSessions.at(-1)!.sets[1]).toBe("SET SESSION max_statement_time = 1");
+      // The concat ceiling rides on every call regardless of flavour.
+      expect(roSessions.at(-1)!.sets[2]).toBe("SET SESSION group_concat_max_len = 4194304");
+    });
+
+    test("a query that resolves while its kill is in flight is refused, not served", async () => {
+      const profiled = await profiledProvider();
+      mockExecuteFn = (sql: string) => {
+        const text = sql.trim().toLowerCase();
+        if (text.startsWith("select")) {
+          // SLEEP()'s measured shape: the kill lands and the query RESOLVES, with 1.
+          return new Promise((resolve) =>
+            setTimeout(() => resolve([[{ "SLEEP(30)": 1 }], [{ name: "SLEEP(30)" }]]), 2000),
+          );
+        }
+        if (text.startsWith("kill query 4242")) return Promise.resolve([[{ affectedRows: 0 }], undefined]);
+        return defaultMockExecute(sql);
+      };
+      await expect(profiled.queryReadOnly("SELECT SLEEP(30)", budget({ statementTimeoutMs: 60 }))).rejects.toThrow(
+        /deadline of 60ms and was killed/,
+      );
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // The reset: nothing a profile set survives the call
+  // --------------------------------------------------------------------------
+
+  describe("the reset", () => {
+    test("a reset that fails destroys the connection rather than returning it", async () => {
+      roResetShouldFail = true;
+      const profiled = await profiledProvider();
+      mockExecuteFn = (sql: string) => {
+        if (sql.trim().toUpperCase().startsWith("SELECT")) return Promise.resolve([[{ id: 1 }], [{ name: "id" }]]);
+        return defaultMockExecute(sql);
+      };
+      // The READ is served: the reset is hygiene for the next borrower, not a
+      // verdict on this call. What is refused is the connection's return.
+      const result = await profiled.queryReadOnly("SELECT 1", budget());
+      expect(result.rows).toEqual([{ id: 1 }]);
+      const session = roSessions.at(-1)!;
+      expect(session.destroyed).toBe(true);
+      expect(session.released).toBe(false);
+    });
+
+    test("every call re-applies its own bounds, so one call cannot serve another's", async () => {
+      const profiled = await profiledProvider();
+      mockExecuteFn = (sql: string) => {
+        if (sql.trim().toUpperCase().startsWith("SELECT")) return Promise.resolve([[{ id: 1 }], [{ name: "id" }]]);
+        return defaultMockExecute(sql);
+      };
+      await profiled.queryReadOnly("SELECT 1", budget({ maxResultRows: 5, statementTimeoutMs: 500 }));
+      await profiled.queryReadOnly("SELECT 1", budget({ maxResultRows: 7, statementTimeoutMs: 700 }));
+      const first = roSessions.at(-2)!;
+      const second = roSessions.at(-1)!;
+      expect(first.sets[0]).toBe("SET SESSION sql_select_limit = 6");
+      expect(second.sets[0]).toBe("SET SESSION sql_select_limit = 8");
+      expect(second.sets[1]).toBe("SET SESSION max_execution_time = 700");
+      expect(second.sets[2]).toBe("SET SESSION group_concat_max_len = 4194304");
+    });
   });
 });

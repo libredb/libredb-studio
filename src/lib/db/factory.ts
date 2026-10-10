@@ -162,7 +162,7 @@ export async function createDatabaseProvider(
 
     case "mysql": {
       const { MySQLProvider } = await import("./providers/sql/mysql");
-      return new MySQLProvider(connection, options);
+      return new MySQLProvider(connection, options, execution);
     }
 
     case "sqlite": {
@@ -914,8 +914,8 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * without stating both. The second field is the engine gate, and it is a PROPERTY OF
  * THE PROFILE rather than of the factory: `agent-read-only` sends model-authored
  * statements, so it is served only where the engine itself can bound one, and only
- * the providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite, DuckDB
- * and SQL Server (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
+ * the providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite, DuckDB,
+ * SQL Server and MySQL (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

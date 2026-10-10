@@ -60,12 +60,15 @@ import {
 import {
   DatabaseConfigError,
   ConnectionError,
+  ExecutionProfileError,
   QueryError,
   mapDatabaseError,
   NO_TRANSACTION_OPENED,
   TRANSACTION_STATE_UNREPORTED,
   MYSQL_ACCOUNT_LIMIT_ERRNOS,
 } from "../../errors";
+import type { ProviderExecutionContext, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "../../types";
+import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import {
   applySourceBound,
   assertContainerPathShape,
@@ -2986,6 +2989,31 @@ export class MySQLProvider extends SQLBaseProvider {
    */
   private measuredMaintenance: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> | undefined;
 
+  /**
+   * True when this instance was opened under the agent read-only execution profile.
+   *
+   * Server-injected only (see `ProviderExecutionContext`): the editor path builds
+   * providers from caller-supplied `ProviderOptions`, which has no route to this
+   * flag in either direction.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  /**
+   * The pool `queryReadOnly` runs on, built only when `readOnlyProfile` is true.
+   *
+   * Separate from the pool every other path shares, for two measured reasons:
+   *
+   * 1. `multipleStatements` must be FALSE on it, and a pasted connection string
+   *    carrying `?multipleStatements=true` beats an option mysql2 was handed
+   *    (measured 2026-10-09 on MySQL 26.7.0 through mysql2: the `;`-joined text
+   *    ran). `buildReadOnlyPoolConfig()` strips the parameter rather than trusting
+   *    the option to win.
+   * 2. Every call pins a transaction and several session modes on the connection it
+   *    holds, and resets them before release; keeping that traffic off the pool the
+   *    editor's own statements share costs an editor user nothing.
+   */
+  private roPool: Pool | null = null;
+
   // Transaction support: dedicated connection held outside pool
   private txConn: PoolConnection | null = null;
   private txActive = false;
@@ -2994,8 +3022,9 @@ export class MySQLProvider extends SQLBaseProvider {
   private txTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly TX_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
+    this.readOnlyProfile = execution.readOnly === true;
     this.validate();
   }
 
@@ -3125,8 +3154,9 @@ export class MySQLProvider extends SQLBaseProvider {
       // id to derive from.
       const version = await probeServerVersion(conn);
       this.measuredFlavour = flavourFor(version);
+      const versionComment = await probeVersionComment(conn);
       // Which databases this engine owns beyond the reserved four (#1428). Never rejects.
-      this.systemSchemas = systemSchemasFor(version, await probeVersionComment(conn));
+      this.systemSchemas = systemSchemasFor(version, versionComment);
       // Which of ANALYZE, OPTIMIZE and CHECK TABLE this server has (#1387). Never rejects.
       this.measuredMaintenance = await probeMaintenance(conn, this.config.database);
       // Every later acquisition, this probe connection's included, then reads utf8mb3
@@ -3136,14 +3166,52 @@ export class MySQLProvider extends SQLBaseProvider {
       }
       // The same per-pool marking for a server that will not prepare a statement, so its
       // parameterised reads bind their values client-side instead of failing.
-      if (await probeClientSideBinding(conn)) {
+      const bindsClientSide = await probeClientSideBinding(conn);
+      if (bindsClientSide) {
         this.pool.on("acquire", (core: object) => BINDS_CLIENT_SIDE.add(core));
+      }
+      const probeCore = (conn as { connection?: object }).connection;
+      const readsUtf8UnderUtf8mb3 = probeCore !== undefined && UTF8_UNDER_UTF8MB3.has(probeCore);
+
+      // Under the profile the boundary has to be PROVEN before the provider is handed
+      // out: which server this is, and what the session's principal may do. Both
+      // checks run on the connection the pool check already holds, and either failing
+      // refuses the open - an unproven boundary is not a boundary.
+      if (this.readOnlyProfile) {
+        MySQLProvider.assertAgentEngineIsAdmissible(version, versionComment);
+        const grants = await MySQLProvider.readAgentGrants(conn);
+        MySQLProvider.assertAgentPrincipalIsUnprivileged(grants);
+        this.roPool = mysql.createPool(this.buildReadOnlyPoolConfig());
+        // The same per-pool markings the main pool got, so a read through
+        // `queryReadOnly` decodes utf8mb3 and binds exactly the way `query` does.
+        if (readsUtf8UnderUtf8mb3) {
+          this.roPool.on("acquire", (core: object) => UTF8_UNDER_UTF8MB3.add(core));
+        }
+        if (bindsClientSide) {
+          this.roPool.on("acquire", (core: object) => BINDS_CLIENT_SIDE.add(core));
+        }
       }
       conn.release();
 
       this.setConnected(true);
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));
+      // The pools are built before anything that can fail after them, and
+      // `acquireExecutionProfileProvider` drops a provider whose connect threw WITHOUT
+      // calling disconnect(), so a pool left open here leaks its idle sockets and timers
+      // with no reference left to close them.
+      const failedPool = this.pool;
+      const failedRoPool = this.roPool;
+      this.pool = null;
+      this.roPool = null;
+      await failedPool?.end().catch(() => {});
+      await failedRoPool?.end().catch(() => {});
+      // A typed profile refusal keeps its identity: wrapping it would strip the deny
+      // code that callers branch on (`PROFILE_*`), which is the whole reason the code
+      // exists.
+      if (error instanceof ExecutionProfileError) {
+        throw error;
+      }
       throw new ConnectionError(
         `Failed to connect to MySQL: ${error instanceof Error ? error.message : error}`,
         "mysql",
@@ -3158,6 +3226,12 @@ export class MySQLProvider extends SQLBaseProvider {
       await this.pool.end();
       this.pool = null;
       this.setConnected(false);
+    }
+    // The read-only pool is separate (see `roPool`), so it is ended separately. It can
+    // exist without the main one surviving: `connect()` clears both when it fails.
+    if (this.roPool) {
+      await this.roPool.end().catch(() => {});
+      this.roPool = null;
     }
   }
 
@@ -3364,6 +3438,370 @@ export class MySQLProvider extends SQLBaseProvider {
     } catch (error) {
       console.error("[MySQL] Failed to cancel query:", error);
       return false;
+    }
+  }
+
+  // ============================================================================
+  // Agent Read-Only Execution Profile (#1612)
+  // ============================================================================
+
+  /**
+   * Runs EXACTLY ONE read statement, on a connection this call holds for its whole
+   * duration, inside a read-only transaction that is always rolled back.
+   *
+   * The database is the boundary in five places, none of which is a text match on the
+   * statement:
+   *
+   * 1. **The principal may not write** (`assertAgentPrincipalIsUnprivileged`, verified
+   *    at open). Measured 2026-10-09 on MySQL 26.7.0 and MariaDB 13.0.2 as a
+   *    SELECT-only account: INSERT, CREATE, DROP, TRUNCATE and GRANT were all refused
+   *    (1142), and so were SET GLOBAL and `SELECT ... INTO OUTFILE` (1227). `root` is
+   *    the positive control: it did all of them, and it is therefore refused at open.
+   *    MariaDB does not privilege-check `SELECT ... FOR UPDATE` the way MySQL does -
+   *    measured, it ran as a plain SELECT-granted user - which is why the transaction
+   *    below is a layer of its own rather than decoration.
+   * 2. **The transaction itself refuses the writes the principal could lie about.**
+   *    `START TRANSACTION READ ONLY` refuses DML, `SELECT ... FOR UPDATE` and CREATE
+   *    TEMPORARY TABLE with 1792 on both engines. It is NOT the boundary on its own -
+   *    DDL, GRANT and SET GLOBAL each cause an implicit commit that ends the read-only
+   *    transaction first, measured as `root` creating a table under one - which is
+   *    exactly why the principal is the first layer and this the second.
+   * 3. **One statement per call.** The read-only pool is built with
+   *    `multipleStatements: false`, so a `;`-joined text is refused by the server with
+   *    1064 before anything runs (measured), including when the saved connection
+   *    string itself says `multipleStatements=true` - that parameter is STRIPPED, for
+   *    the reason `buildReadOnlyPoolConfig` records: through mysql2, a `uri`'s
+   *    `multipleStatements=true` beats an option the pool was handed, measured.
+   * 4. **The server stops the result at the row budget.** `sql_select_limit` is set to
+   *    ONE MORE than the budget allows, so a statement that would stream past it is
+   *    stopped by the server and the extra row is the signal to refuse. This is not a
+   *    nicety: measured on this fixture, a 20-million-row recursive read under
+   *    `sql_select_limit = 501` handed the client 501 rows and 0.2 MB of heap, while
+   *    the unbounded 3-million-row form took 118.8 MB - the 20-million form is the
+   *    out-of-memory crash the SQL Server profile met, and no result-side cap can
+   *    prevent it.
+   * 5. **The deadline is enforced server-side AND by a timer this provider owns.**
+   *    `max_execution_time` (MySQL) or `max_statement_time` (MariaDB) is set on the
+   *    session, and each is defeatable by the statement itself, measured, both ways:
+   *    MySQL's `MAX_EXECUTION_TIME(60000)` optimizer hint - the comment form - overrode a 2000 ms session
+   *    limit and ran 6 s, and MariaDB's single-statement `SET STATEMENT
+   *    max_statement_time = 20 FOR SELECT ...` overrode a 2 s limit and ran 8 s. So
+   *    the timer this call owns is the deadline that cannot be disarmed: it fires
+   *    `KILL QUERY` for the connection's own thread id from another session of the
+   *    main pool, which ended a running cross join with 1317 in 700 ms and left the
+   *    connection alive and reusable, measured. `SLEEP()` is the one shape that
+   *    answers a kill as a normal result (the value `1`) rather than an error, so the
+   *    timer also sets a flag and a query that resolved while its kill was in flight
+   *    is refused rather than served.
+   *
+   * WHAT IT DOES NOT BOUND, stated rather than implied: what an admitted SELECT may
+   * READ. A least-privilege principal reaches only the databases its SELECT grants
+   * name, but metadata readable by `PUBLIC` (`information_schema` of its own grants,
+   * `performance_schema` where granted) is inside the boundary, exactly as it is on
+   * the other engines.
+   *
+   * A third session mode rides with the two: `group_concat_max_len`, raised to 4 MB
+   * for the column lists the catalog compositions aggregate (its default ceilings,
+   * measured, are 1024 on MySQL and 1048576 on MariaDB, and a ceiling hit there is a
+   * silent truncation of the array), and reset with the others.
+   *
+   * EVERY SESSION MODE THIS SETS LEAKS, and that is measured, not feared: the pool a
+   * connection returns to does not reset `sql_select_limit`, the deadline variable or
+   * `group_concat_max_len` -
+   * the next borrower read the values a previous call had set, measured through
+   * mysql2's own `release()`. So each is reset to `DEFAULT` on the same connection in
+   * a `finally`, and a reset that FAILS destroys the connection rather than returning
+   * one whose next statement would run with a stranger's row limit and deadline.
+   */
+  public async queryReadOnly(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    this.ensureConnected();
+    assertReadOnlyBudget(budget, "mysql");
+    if (!this.readOnlyProfile || this.roPool === null) {
+      // A provider opened outside the profile has had no principal verification, so
+      // its session may be able to write. Refuse rather than serve agent semantics
+      // without the layer that makes them true.
+      throw new QueryError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        "mysql",
+        sql,
+      );
+    }
+
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(async () => {
+        const conn = await this.roPool!.getConnection();
+        try {
+          await conn.query("START TRANSACTION READ ONLY");
+          // One more than the budget: the server stops the result there, and the extra
+          // row is what distinguishes "the statement returned exactly the budget" from
+          // "the server cut it off".
+          await conn.query(`SET SESSION sql_select_limit = ${budget.maxResultRows + 1}`);
+          await conn.query(`SET SESSION ${this.agentDeadlineVariable()} = ${this.agentDeadlineValue(budget)}`);
+          // The catalog compositions aggregate a table's column list through
+          // GROUP_CONCAT, whose ceiling is 1024 by default on MySQL (1048576 on
+          // MariaDB) and whose ceiling hit is a SILENT truncation: the JSON array
+          // would end mid-object and the model would read a column list that is not
+          // the table's. 4 MB is a column list of a size no measured database
+          // approaches, and it is put back on the reset below.
+          await conn.query("SET SESSION group_concat_max_len = 4194304");
+          // The estimating plan is a statement prefix on this engine, unlike SQL
+          // Server's session mode, and it needs no privilege a reader lacks (measured
+          // as the least-privilege account on both engines). Prefixing before the
+          // deadline keeps the plan under the same budget the execution would be.
+          const statement = mode === "estimate-plan" ? `EXPLAIN FORMAT=JSON ${sql}` : sql;
+          const [rows, fields] = await this.runWithAgentDeadline(conn, statement, budget);
+          return { rows: rows as unknown[], fields };
+        } catch (error) {
+          throw error instanceof QueryError ? error : mapDatabaseError(error, "mysql", sql);
+        } finally {
+          const sessionIsClean = await this.resetProfiledSession(conn);
+          // Ordering: the statement is settled by the time this runs - the deadline
+          // KILLs and AWAITS the rejection rather than abandoning the promise - so the
+          // rollback is never issued over a request still in flight. A rollback on a
+          // transaction the server already aborted throws, so that throw is swallowed;
+          // what is never swallowed is a session whose modes are still set.
+          await conn.query("ROLLBACK").catch(() => {});
+          if (!sessionIsClean) {
+            conn.destroy();
+          } else {
+            conn.release();
+          }
+        }
+      });
+
+      const rows = Array.isArray(result.rows) ? result.rows : [];
+      if (rows.length > budget.maxResultRows) {
+        throw new QueryError(
+          `Read-only execution exceeded the row budget: ${rows.length} rows > ${budget.maxResultRows} allowed`,
+          "mysql",
+          sql,
+        );
+      }
+      const resultBytes = measureResultBytes(rows);
+      if (resultBytes > budget.maxResultBytes) {
+        throw new QueryError(
+          `Read-only execution exceeded the byte budget: ${resultBytes} bytes > ${budget.maxResultBytes} allowed`,
+          "mysql",
+          sql,
+        );
+      }
+
+      return {
+        ...mysqlResults(rows, result.fields as FieldPacket[], sql),
+        executionTime,
+      };
+    });
+  }
+
+  /**
+   * The session variable that carries the server-side deadline, by flavour.
+   *
+   * MySQL spells it `max_execution_time` and MariaDB `max_statement_time`, and neither
+   * accepts the other's spelling, so the flavour probed at connect decides. The UNITS
+   * differ too, which is the trap: MySQL counts milliseconds and MariaDB seconds,
+   * measured 2026-10-09 on 13.0.2 - `max_statement_time = 3000` under a 3-second
+   * `SLEEP` let it run to completion, because the value was three thousand SECONDS.
+   */
+  private agentDeadlineVariable(): "max_execution_time" | "max_statement_time" {
+    return this.measuredFlavour === "mariadb" ? "max_statement_time" : "max_execution_time";
+  }
+
+  /**
+   * The value that variable is set to, in its own unit.
+   *
+   * MariaDB 10.8+ accepts decimals in `max_statement_time` (measured: 0.5 stopped a
+   * 2-second SLEEP at half a second), but the whole family below it takes integers,
+   * so the portable spelling is seconds rounded UP, never below one: a sub-second
+   * budget's exact deadline is the KILL timer this provider owns, and the session
+   * variable is the second, coarser layer - one second is the closest that layer can
+   * sit under a 500 ms budget without refusing budgets it was never asked to hold.
+   */
+  private agentDeadlineValue(budget: ReadOnlyStatementBudget): number {
+    return this.measuredFlavour === "mariadb"
+      ? Math.max(1, Math.ceil(budget.statementTimeoutMs / 1000))
+      : budget.statementTimeoutMs;
+  }
+
+  /**
+   * Sends one statement and ends it at the deadline, by KILLING it rather than by
+   * abandoning the promise.
+   *
+   * `KILL QUERY` must come from ANOTHER session: a connection cannot kill its own
+   * running query. The main pool provides that session, the same way `cancelQuery`
+   * already does. The kill's own failure is swallowed - the session deadline
+   * (`max_execution_time`/`max_statement_time`) is a second, independent layer, and a
+   * pool too busy to carry the kill right now is a reason to keep waiting, not to
+   * throw a plumbing error at the caller.
+   *
+   * A query that resolves while its kill is in flight is refused rather than served:
+   * `SLEEP()` answers a kill as a normal result (the value `1`), measured, and a
+   * partial result with no error is the one shape this boundary must not hand to a
+   * model as an answer.
+   */
+  private async runWithAgentDeadline(
+    conn: PoolConnection,
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+  ): Promise<[RowDataPacket[], FieldPacket[]]> {
+    let killIssued = false;
+    const deadline = setTimeout(() => {
+      killIssued = true;
+      void runStatement(this.pool!, `KILL QUERY ${conn.threadId}`).catch(() => {});
+    }, budget.statementTimeoutMs);
+    try {
+      // No parameters: the text protocol, which is also the one protocol every
+      // MySQL-wire relative fully implements (see `runStatement`), and the utf8mb3
+      // marking is honoured for exactly the connections that were measured to need it.
+      // Array rows, the same shape `query()` reads: one row its values in column
+      // order, so a result is one result however the fixture spelled it.
+      const answer = await runStatement<RowDataPacket[]>(conn, sql, undefined, true);
+      if (killIssued) {
+        throw new QueryError(
+          `Read-only execution exceeded the statement deadline of ${budget.statementTimeoutMs}ms and was killed server-side`,
+          "mysql",
+          sql,
+        );
+      }
+      return answer;
+    } finally {
+      clearTimeout(deadline);
+    }
+  }
+
+  /**
+   * Puts every session mode this profile sets back to its default, and says whether
+   * it succeeded. The caller destroys the connection when it did not: a connection
+   * returned to the pool with `sql_select_limit` still set runs the next borrower's
+   * statement under a stranger's row limit, and with the deadline variable set under
+   * a stranger's deadline, which are wrong answers rather than errors.
+   */
+  private async resetProfiledSession(conn: PoolConnection): Promise<boolean> {
+    try {
+      await conn.query(
+        `SET SESSION sql_select_limit = DEFAULT, ${this.agentDeadlineVariable()} = DEFAULT, group_concat_max_len = DEFAULT`,
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The pool `queryReadOnly` runs on: the shared shape with `multipleStatements`
+   * forced off and the connection string's own `multipleStatements` parameter
+   * stripped, because through mysql2 a `uri` key beats a same-named option the pool
+   * was handed (measured 2026-10-09: `mysql://…?multipleStatements=true` with
+   * `multipleStatements: false` in the options RAN the `;`-joined text).
+   *
+   * A pool of two: the agent sends one tool at a time, and the second slot absorbs a
+   * host that drives the profile directly. `waitForConnections` queues a third caller
+   * rather than failing it.
+   */
+  private buildReadOnlyPoolConfig(): mysql.PoolOptions {
+    const config = this.buildPoolConfig();
+    if (typeof config.uri === "string") {
+      const url = new URL(config.uri);
+      url.searchParams.delete("multipleStatements");
+      return { ...config, uri: url.toString(), multipleStatements: false, connectionLimit: 2 };
+    }
+    return { ...config, multipleStatements: false, connectionLimit: 2 };
+  }
+
+  /**
+   * What `SHOW GRANTS` answered, as the lines the server writes.
+   *
+   * `SHOW GRANTS` with no `FOR` clause is the session-EFFECTIVE answer, which is the
+   * one the boundary needs: a role granted but not activated does not write, and a
+   * role activated mid-session is a `SET ROLE` the single-statement rule already
+   * refuses to smuggle in.
+   */
+  private static async readAgentGrants(conn: PoolConnection): Promise<string[]> {
+    const [rows] = await conn.query("SHOW GRANTS");
+    return (rows as Record<string, unknown>[]).map((row) => String(Object.values(row)[0] ?? ""));
+  }
+
+  /**
+   * Refuses a principal whose privileges reach past what a read-only boundary can
+   * contain.
+   *
+   * The admitted shape is deliberately narrow: `USAGE` (no privilege at all) and
+   * `SELECT`, on any database the operator chose, with nothing else. Everything else
+   * a grant line can carry is refused - `INSERT` and friends by inspection, the
+   * dynamic privileges by shape (a comma list that is not USAGE/SELECT fails the
+   * pattern), `PROXY` by its own line, and `WITH GRANT OPTION` because a session that
+   * can GRANT can widen what the next statement may do. MariaDB appends `IDENTIFIED
+   * BY PASSWORD '*…'` to a grant line, measured, so that suffix is removed before the
+   * line is read; the digest inside it never leaves this comparison.
+   *
+   * FAIL-CLOSED, twice: a server that answers NOTHING (an older relative, a proxy that
+   * swallowed the command) leaves the boundary unproven and is refused, and so is any
+   * line this parser cannot read, because a line that is not understood is a
+   * privilege that is not ruled out.
+   */
+  private static assertAgentPrincipalIsUnprivileged(grants: readonly string[]): void {
+    if (grants.length === 0) {
+      throw new ExecutionProfileError(
+        "The agent read-only execution profile could not read this session's grants, so the boundary is unproven and the connection is refused.",
+        "PROFILE_PRIVILEGES_TOO_BROAD",
+      );
+    }
+    const admitted = /^(?:USAGE|SELECT)(?:\s*,\s*(?:USAGE|SELECT))*$/;
+    for (const line of grants) {
+      // MariaDB's password-digest suffix, removed before the line is read.
+      const text = line.replace(/\s+IDENTIFIED BY PASSWORD\s+'[^']*'$/, "");
+      // "GRANT <privileges> ON <scope> TO <grantee>[ WITH GRANT OPTION]"
+      const parsed = /^GRANT\s+([^]+?)\s+ON\s+(?!PROXY\b)\S+\s+TO\s/.exec(text);
+      const privileges = parsed?.[1];
+      if (
+        parsed === null ||
+        privileges === undefined ||
+        !admitted.test(privileges.trim()) ||
+        /\bWITH GRANT OPTION\b/i.test(text)
+      ) {
+        throw new ExecutionProfileError(
+          `The agent read-only execution profile requires a least-privilege principal holding only SELECT (and USAGE); this session holds "${(privileges ?? text).slice(0, 120)}", which the boundary cannot contain. Create a SELECT-only account for the agent, or point the connection at one.`,
+          "PROFILE_PRIVILEGES_TOO_BROAD",
+        );
+      }
+    }
+  }
+
+  /**
+   * Refuses, under the profile, every server that shares MySQL's wire but is not
+   * MySQL or MariaDB.
+   *
+   * A mechanism proven on MySQL is not proven on any of them - Vitess, for instance,
+   * refuses `KILL QUERY` - so admission is by NAME, taken from the server's own
+   * self-identification: TiDB, Vitess and OceanBase put their names in `VERSION()`,
+   * and Doris and Percona in `@@version_comment` (`SELF_IDENTIFYING_VERSION`,
+   * `DORIS_VERSION_COMMENT`, `PERCONA_VERSION_COMMENT`, all measured). StarRocks and
+   * SingleStore answer `VERSION()` with a plain MySQL number and nothing to key on,
+   * which is the compatibility table's own record; they cannot be refused by name and
+   * the profile does not pretend otherwise. An absent version string is refused
+   * fail-closed: an unidentified server is an unproven boundary.
+   */
+  private static assertAgentEngineIsAdmissible(version: string | undefined, versionComment: string | undefined): void {
+    if (version === undefined) {
+      throw new ExecutionProfileError(
+        "The agent read-only execution profile requires a server that names its version, and this one did not, so the boundary is unproven and the connection is refused.",
+        "PROFILE_UNSUPPORTED_TARGET",
+      );
+    }
+    const selfIdentified = SELF_IDENTIFYING_VERSION.test(version);
+    const mariadb = MARIADB_VERSION.test(version);
+    if (
+      (selfIdentified && !mariadb) ||
+      DORIS_VERSION_COMMENT.test(versionComment ?? "") ||
+      PERCONA_VERSION_COMMENT.test(versionComment ?? "")
+    ) {
+      throw new ExecutionProfileError(
+        `The agent read-only execution profile is proven on MySQL and MariaDB only; "${labelServerVersion(version, versionComment)}" shares the wire but its own enforcement is not measured, so the connection is refused.`,
+        "PROFILE_UNSUPPORTED_TARGET",
+      );
     }
   }
 

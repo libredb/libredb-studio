@@ -3244,7 +3244,7 @@ describe("inspectSchemaTool — the server composes the catalog statement", () =
   });
 
   test("a dialect with no verified catalog composition is reported the same way", async () => {
-    const h = harness({ connection: { ...connection, type: "mysql" } });
+    const h = harness({ connection: { ...connection, type: "oracle" } });
 
     const outcome = await inspectSchemaTool(h.context, {});
 
@@ -3474,7 +3474,7 @@ describe("inspectPlanTool — the estimating variant only", () => {
   });
 
   test("a dialect with no verified estimating form is refused before any provider is acquired", async () => {
-    const h = harness({ connection: { ...connection, type: "mysql" } });
+    const h = harness({ connection: { ...connection, type: "oracle" } });
 
     const outcome = await inspectPlanTool(h.context, { sql: "SELECT 1" });
 
@@ -4919,7 +4919,7 @@ describe("profileTableTool — the model names a table, the server decides the r
   });
 
   test("an engine with no verified profile composition is refused, not composed on a guess", () => {
-    const outcome = plan(harness({ connection: { ...connection, type: "mysql" } }), { table: "orders" });
+    const outcome = plan(harness({ connection: { ...connection, type: "oracle" } }), { table: "orders" });
 
     if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
     expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
@@ -5067,7 +5067,7 @@ function curatedHarness(
     actor: { sessionId: "session-1", role: "user" },
     // A connection type with no read-only statement path at all, which is the whole
     // point: this is the engine the other tools are refused on.
-    connection: { ...connection, type: "mysql" },
+    connection: { ...connection, type: "oracle" },
     capabilities,
     labels: TABLE_LABELS,
     registry: createCanonicalOperationRegistry(),

@@ -280,7 +280,12 @@ export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
             <HeroProof />
           </div>
 
-          <div className="mt-8">
+          {/* `mt-6`, not `mt-8`: the eighth engine-name length of the agent claim
+              (#1612) had to be paid back somewhere, and the page's 800px budget at
+              1280x800 (#541) has no slack of its own. The community block's breathing
+              room is the largest honest reserve left in this column; 24px still reads
+              as a section break below a three-column figure. */}
+          <div className="mt-6">
             <CommunitySection variant="desktop" />
           </div>
         </div>

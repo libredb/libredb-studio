@@ -5328,6 +5328,9 @@ and both of those read SQL — defense in depth, not a boundary:
 - **PostgreSQL:** the read-only role can read every table its grants allow, whatever catalog or schema
   the request declared. Per-table `SELECT` grants are the only real bound
   (`docs/providers/postgres.md` §12.3).
+- **MySQL and MariaDB (#1612):** the same shape as PostgreSQL's — the principal's SELECT grants are
+  the whole read reach, and the wire relatives that answer a plain MySQL `VERSION()` (StarRocks,
+  SingleStore) cannot be told apart and refused. `docs/providers/mysql.md` §12.5.
 
 **Done when:** out-of-scope reads are refused by something that does not read SQL — a per-target grant
 set generated for the agent role, an allowlisted directory for SQLite, or an authorizer both adapters

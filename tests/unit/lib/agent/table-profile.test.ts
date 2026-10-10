@@ -131,7 +131,7 @@ describe("the composed statement", () => {
   });
 
   test("an unverified dialect and an empty column list are refused rather than composed", () => {
-    expect(() => composeTableProfile("mysql", { segments: ["t"], depth: "basic" }, COLUMNS)).toThrow(
+    expect(() => composeTableProfile("oracle", { segments: ["t"], depth: "basic" }, COLUMNS)).toThrow(
       /no verified profile/,
     );
     expect(() => composeTableProfile("postgres", { segments: ["t"], depth: "basic" }, [])).toThrow(/no columns/);

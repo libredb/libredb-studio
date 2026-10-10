@@ -950,6 +950,132 @@ function composeMssqlStatistics(selector: AgentCatalogSelector): string {
 }
 
 /**
+ * The schemas MySQL and MariaDB reserve, excluded from every catalog read below.
+ *
+ * Four names, both engines: `information_schema` and `performance_schema` exist on
+ * both, `mysql` is the grant catalogue on both, and `sys` exists on MySQL and is
+ * harmlessly absent on MariaDB. Every other schema a server of this family owns is
+ * one an operator chose the name of (`probe` in the fixtures, `reporting` in them
+ * too), and a name list would have had to be right about all of them.
+ */
+const MYSQL_SCHEMA_EXCLUSION = "table_schema NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')";
+
+/**
+ * The column inventory, ONE ROW PER OBJECT, symmetric with the PostgreSQL and SQL
+ * Server arms (B52).
+ *
+ * The per-object column list is built by `GROUP_CONCAT` over `JSON_OBJECT`, not by
+ * `JSON_ARRAYAGG`, because the two engines disagree about ORDER: MariaDB accepts
+ * `JSON_ARRAYAGG(… ORDER BY …)` (measured, 13.0.2: the list arrived in ordinal
+ * order) and MySQL answers 1064 for the same text (measured, 26.7.0), while
+ * `GROUP_CONCAT(… ORDER BY …)` is the one aggregate-with-order BOTH spell. The
+ * brackets are concatenated rather than cast, because MariaDB answers 1064 for
+ * `CAST(… AS JSON)` (measured) - the text is a JSON array either way, and the
+ * consumer parses the cell.
+ *
+ * `GROUP_CONCAT` has a length ceiling (`group_concat_max_len`), 1024 by default on
+ * MySQL and 1048576 on MariaDB, measured, and a ceiling hit is a SILENT truncation.
+ * The read-only path raises it to 4 MB for the session (`MySQLProvider`
+ * `queryReadOnly`), which a column list of realistic size does not approach, and the
+ * reset puts back what the server shipped.
+ *
+ * `relkind` is `information_schema.tables.table_type` - `BASE TABLE` and `VIEW`,
+ * this family's own words for what an entry is, the role `pg_class.relkind` plays
+ * on PostgreSQL and `o.type` on SQL Server. It is joined rather than read from the
+ * columns view alone because that view does not carry it.
+ *
+ * Measured on MySQL 26.7.0 and MariaDB 13.0.2 as the least-privilege account
+ * `agent_ro`: every table of the `app` fixture, one row per object, columns in
+ * ordinal position order.
+ */
+function composeMysqlCatalog(selector: AgentCatalogSelector): string {
+  return (
+    "SELECT c.table_schema, c.table_name, t.table_type AS relkind, " +
+    "CONCAT('[', GROUP_CONCAT(JSON_OBJECT('name', c.column_name, 'type', c.data_type, " +
+    "'nullable', c.is_nullable) ORDER BY c.ordinal_position SEPARATOR ','), ']') AS columns " +
+    "FROM information_schema.columns c " +
+    "JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name " +
+    `WHERE ${MYSQL_SCHEMA_EXCLUSION}` +
+    equalsClause("c.table_schema", selector.schema, "schema", "mysql") +
+    equalsClause("c.table_name", selector.table, "table", "mysql") +
+    " GROUP BY c.table_schema, c.table_name, t.table_type ORDER BY c.table_schema, c.table_name"
+  );
+}
+
+/**
+ * The foreign-key inventory, one row per KEY COLUMN PAIR.
+ *
+ * `information_schema.key_column_usage`, which carries one row per column of each
+ * constraint with its own ordinal and the referenced pair on the same row, so a
+ * composite key pairs position with position by construction - the same reason the
+ * PostgreSQL arm reads `pg_constraint` rather than the constraint views. Measured on
+ * both engines as `agent_ro`: the `app` fixture's two foreign keys, two rows.
+ */
+function composeMysqlRelations(selector: AgentCatalogSelector): string {
+  return (
+    "SELECT kcu.table_schema, kcu.table_name, kcu.column_name, " +
+    "kcu.referenced_table_schema, kcu.referenced_table_name, kcu.referenced_column_name " +
+    "FROM information_schema.key_column_usage kcu " +
+    "WHERE kcu.referenced_table_name IS NOT NULL " +
+    `AND ${MYSQL_SCHEMA_EXCLUSION.replace(/\btable_schema\b/g, "kcu.table_schema")}` +
+    equalsClause("kcu.table_schema", selector.schema, "schema", "mysql") +
+    equalsClause("kcu.table_name", selector.table, "table", "mysql") +
+    " ORDER BY kcu.table_schema, kcu.table_name, kcu.constraint_name, kcu.ordinal_position"
+  );
+}
+
+/**
+ * The index inventory, one row per indexed KEY POSITION.
+ *
+ * `information_schema.statistics` is one row per column position of each index:
+ * `seq_in_index` is the position, `non_unique` inverted is `is_unique`, and the
+ * PRIMARY KEY of this family is an index NAMED `PRIMARY` - which is how `is_primary`
+ * is answered, the engine's own convention rather than a flag it does not publish.
+ * `sub_part` rows (an index on a prefix of a long column) still name the column, and
+ * prefix length is not something this inventory has ever carried.
+ *
+ * Measured on both engines as `agent_ro`: `PRIMARY` unique and primary, the
+ * constraint-backed `orders_customer_fk` neither, in position order.
+ */
+function composeMysqlIndexes(selector: AgentCatalogSelector): string {
+  return (
+    "SELECT table_schema, table_name, index_name, NOT non_unique AS is_unique, " +
+    "index_name = 'PRIMARY' AS is_primary, column_name " +
+    "FROM information_schema.statistics " +
+    `WHERE ${MYSQL_SCHEMA_EXCLUSION}` +
+    equalsClause("table_schema", selector.schema, "schema", "mysql") +
+    equalsClause("table_name", selector.table, "table", "mysql") +
+    " ORDER BY table_schema, table_name, index_name, seq_in_index"
+  );
+}
+
+/**
+ * The statistics inventory: one row per table, carrying the engine's own row
+ * estimate.
+ *
+ * `information_schema.tables.table_rows` is the estimate MySQL and MariaDB both
+ * keep for the optimizer - an ESTIMATE, exact for MyISAM and approximate for InnoDB,
+ * which is precisely what the other engines' arms answer too (`pg_class.reltuples`,
+ * `sys.partitions.rows`). It carries the TABLE half and says nothing about columns,
+ * the same shape the SQL Server, SQLite and DuckDB arms produce and the reason
+ * `AgentTableEstimate.columns` is allowed to be empty.
+ *
+ * Nothing here scans: it is a catalog read like every other statistics composition,
+ * which is what lets a plan run be pointed at production. Measured on both engines
+ * as `agent_ro`.
+ */
+function composeMysqlStatistics(selector: AgentCatalogSelector): string {
+  return (
+    "SELECT table_schema, table_name, table_rows AS estimated_rows " +
+    "FROM information_schema.tables " +
+    `WHERE table_type = 'BASE TABLE' AND ${MYSQL_SCHEMA_EXCLUSION}` +
+    equalsClause("table_schema", selector.schema, "schema", "mysql") +
+    equalsClause("table_name", selector.table, "table", "mysql") +
+    " ORDER BY table_schema, table_name"
+  );
+}
+
+/**
  * Per dialect, per kind. SQLite's relation read IS its object read: foreign keys
  * are declared inside `CREATE TABLE` and the only structured alternative
  * (`pragma_foreign_key_list`) is refused by the guard, so the same statement serves
@@ -995,6 +1121,12 @@ const CATALOG_COMPOSERS: Partial<
     indexes: composeMssqlIndexes,
     statistics: composeMssqlStatistics,
   },
+  mysql: {
+    columns: composeMysqlCatalog,
+    relations: composeMysqlRelations,
+    indexes: composeMysqlIndexes,
+    statistics: composeMysqlStatistics,
+  },
 };
 
 /**
@@ -1039,6 +1171,12 @@ const ESTIMATING_EXPLAIN_PREFIX: Partial<Record<DatabaseType, string>> = {
   postgres: "EXPLAIN (FORMAT JSON)",
   sqlite: "EXPLAIN QUERY PLAN",
   duckdb: "EXPLAIN (FORMAT JSON)",
+  // One spelling for MySQL and MariaDB: both accept `EXPLAIN FORMAT=JSON` with no
+  // privilege beyond SELECT (measured as the least-privilege account on 26.7.0 and
+  // 13.0.2), and the JSON shapes differ (`query_plan` on MySQL, `query_block` on
+  // MariaDB) without either refusing the prefix. `EXPLAIN ANALYZE` is deliberately
+  // not composed: it EXECUTES, see `withoutEstimatingPrefix`.
+  mysql: "EXPLAIN FORMAT=JSON",
 };
 
 /**

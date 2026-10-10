@@ -42,7 +42,7 @@ describe("the tool descriptions", () => {
   test("run_read_query names the engines derived from the one engine list", () => {
     const derived = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
     expect(RUN_READ_QUERY_ENGINES).toBe(derived);
-    expect(derived).toBe("PostgreSQL, SQLite, DuckDB and SQL Server");
+    expect(derived).toBe("PostgreSQL, SQLite, DuckDB, SQL Server and MySQL");
     expect(RUN_READ_QUERY_DESCRIPTION).toContain(
       `Runs on ${derived}; other engines refuse it, so use inspect_schema there.`,
     );

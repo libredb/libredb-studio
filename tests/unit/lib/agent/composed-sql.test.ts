@@ -408,7 +408,7 @@ describe("composeCatalogRead — the relation and index inventories (#329 T8)", 
 
   test("an unserved dialect is refused for every kind, never composed on a guess", () => {
     for (const kind of ["columns", "relations", "indexes", "statistics"] as const) {
-      expect(() => composeCatalogRead("mysql", { kind }), kind).toThrow(AgentComposedSqlError);
+      expect(() => composeCatalogRead("oracle", { kind }), kind).toThrow(AgentComposedSqlError);
     }
   });
 
@@ -508,7 +508,7 @@ describe("composeCatalogRead — the statistics inventory", () => {
   });
 
   test("an unserved dialect is refused with UNSUPPORTED_DIALECT rather than composed on a guess", () => {
-    for (const dialect of ["mysql", "oracle", "mongodb", "redis"] as const) {
+    for (const dialect of ["oracle", "mongodb", "redis"] as const) {
       try {
         composeCatalogRead(dialect, { kind: "statistics" });
         throw new Error(`expected a refusal for ${dialect}`);
@@ -543,7 +543,7 @@ describe("composeStatisticsAvailabilityProbe", () => {
 
   test("an unserved dialect is refused rather than answered with null", () => {
     try {
-      composeStatisticsAvailabilityProbe("mysql");
+      composeStatisticsAvailabilityProbe("oracle");
       throw new Error("expected a refusal");
     } catch (error) {
       expect(error).toBeInstanceOf(AgentComposedSqlError);
@@ -662,14 +662,14 @@ describe("composeCatalogRead — a hostile selector becomes a literal, never sta
 
 describe("composeCatalogRead — dialects this milestone does not serve", () => {
   test("refuses rather than composing SQL it has not verified", () => {
-    for (const dialect of ["mysql", "oracle", "mongodb", "redis"] as const) {
+    for (const dialect of ["oracle", "mongodb", "redis"] as const) {
       expect(() => composeCatalogRead(dialect, {}), dialect).toThrow(AgentComposedSqlError);
     }
   });
 
   test("the refusal carries the UNSUPPORTED_DIALECT code", () => {
     try {
-      composeCatalogRead("mysql", {});
+      composeCatalogRead("oracle", {});
       throw new Error("expected a refusal");
     } catch (error) {
       expect((error as AgentComposedSqlError).reasonCode).toBe("UNSUPPORTED_DIALECT");
@@ -721,7 +721,7 @@ describe("composeEstimatingExplain", () => {
   });
 
   test("refuses a dialect whose estimating EXPLAIN this milestone has not verified", () => {
-    expect(() => composeEstimatingExplain("mysql", "SELECT 1")).toThrow(AgentComposedSqlError);
+    expect(() => composeEstimatingExplain("oracle", "SELECT 1")).toThrow(AgentComposedSqlError);
   });
 
   test("refuses a blank statement rather than composing a bare EXPLAIN", () => {
@@ -1518,5 +1518,62 @@ describe("composeCatalogRead — the SQL Server selector is a Unicode literal", 
 
     expect(sql).not.toContain("s.name = N'");
     expect(sql).not.toContain("o.name = N'");
+  });
+});
+
+// ─── the MySQL arm (#1612) ───────────────────────────────────────────────────
+
+/*
+  One statement per kind, pinned by text because the statement IS the deliverable:
+  every spelling below was measured on MySQL 26.7.0 and MariaDB 13.0.2 as the
+  least-privilege account `libredb_agent` (docker/mysql-init and
+  docker/mariadb-init 02-agent-principal.sql), which is the only account the
+  read-only path ever runs as. The column list is GROUP_CONCAT rather than
+  JSON_ARRAYAGG because MySQL answers 1064 for ORDER BY inside that aggregate
+  and MariaDB accepts it - GROUP_CONCAT is the one spelling both take.
+*/
+describe("composeCatalogRead — the MySQL arm (#1612)", () => {
+  test("the column inventory is one row per object, columns in ordinal order", () => {
+    const sql = composeCatalogRead("mysql", { kind: "columns", schema: "app", table: "orders" });
+    expect(sql).toContain("information_schema.columns c");
+    expect(sql).toContain("JOIN information_schema.tables t");
+    expect(sql).toContain("t.table_type AS relkind");
+    expect(sql).toContain(
+      "GROUP_CONCAT(JSON_OBJECT('name', c.column_name, 'type', c.data_type, 'nullable', c.is_nullable) ORDER BY c.ordinal_position SEPARATOR ',')",
+    );
+    expect(sql).toContain("c.table_schema = 'app'");
+    expect(sql).toContain("c.table_name = 'orders'");
+    expect(sql).toContain("table_schema NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')");
+  });
+
+  test("the foreign keys read pairs position with position, on key_column_usage", () => {
+    const sql = composeCatalogRead("mysql", { kind: "relations" });
+    expect(sql).toContain("information_schema.key_column_usage kcu");
+    expect(sql).toContain("kcu.referenced_table_name IS NOT NULL");
+    expect(sql).toContain("kcu.table_name");
+    expect(sql).toContain("ORDER BY kcu.table_schema, kcu.table_name, kcu.constraint_name, kcu.ordinal_position");
+  });
+
+  test("the index inventory answers is_primary by the PRIMARY name", () => {
+    const sql = composeCatalogRead("mysql", { kind: "indexes" });
+    expect(sql).toContain("information_schema.statistics");
+    expect(sql).toContain("NOT non_unique AS is_unique");
+    expect(sql).toContain("index_name = 'PRIMARY' AS is_primary");
+    expect(sql).toContain("seq_in_index");
+  });
+
+  test("the statistics inventory carries the engine's own estimate, table_rows", () => {
+    const sql = composeCatalogRead("mysql", { kind: "statistics" });
+    expect(sql).toContain("information_schema.tables");
+    expect(sql).toContain("table_rows AS estimated_rows");
+    expect(sql).toContain("table_type = 'BASE TABLE'");
+  });
+});
+
+describe("composeEstimatingExplain — the MySQL arm (#1612)", () => {
+  test("the plan is a statement prefix, EXPLAIN FORMAT=JSON, executed under the budget", () => {
+    const composed = composeEstimatingExplain("mysql", "SELECT id FROM app.orders");
+    expect(composed.sql).toBe("EXPLAIN FORMAT=JSON SELECT id FROM app.orders");
+    expect(composed.mode).toBe("execute");
   });
 });

@@ -114,7 +114,7 @@ const PII_NAME_WORDS: readonly string[] = Object.freeze([
 const TEXTUAL_TYPE = /char|text|string|clob|varying/i;
 
 /** Dialects with a verified profile composition; enforced by `composeTableProfile`. */
-type ProfileDialect = "postgres" | "sqlite" | "mssql";
+type ProfileDialect = "postgres" | "sqlite" | "mssql" | "mysql";
 
 /** Something, an `@`, something, a `.`, something. All three dialects spell `LIKE` alike. */
 const EMAIL_SHAPE = "%_@_%._%";
@@ -170,6 +170,9 @@ const EMAIL_SHAPE_TEST: ProfileShape = Object.freeze({
     postgres: (quoted: string) => `${quoted} LIKE '${EMAIL_SHAPE}'`,
     sqlite: (quoted: string) => `${quoted} LIKE '${EMAIL_SHAPE}'`,
     mssql: (quoted: string) => `${quoted} LIKE '${EMAIL_SHAPE}'`,
+    // LIKE is spelled the same way on MySQL and MariaDB, `_` meaning "any character"
+    // included, measured on both engines as the least-privilege account.
+    mysql: (quoted: string) => `${quoted} LIKE '${EMAIL_SHAPE}'`,
   }),
 });
 
@@ -183,6 +186,10 @@ const DIGIT_RUN_SHAPE_TEST: ProfileShape = Object.freeze({
     // class, so the run is spelled as the class repeated: there is no quantifier, so
     // nine `[0-9]`s is the shortest faithful spelling of "nine or more digits".
     mssql: (quoted: string) => `${quoted} LIKE '${MSSQL_DIGIT_RUN}'`,
+    // Both engines of this family take the SQL:1999 REGEXP operator with a POSIX-ish
+    // pattern, measured on MySQL 26.7.0 and MariaDB 13.0.2 as the least-privilege
+    // account: the nine-digit run counted 1, the eight-digit one 0.
+    mysql: (quoted: string) => `${quoted} REGEXP '[0-9]{${DIGIT_RUN_LENGTH},}'`,
   }),
 });
 
@@ -312,6 +319,21 @@ const INCOMPARABLE_TYPE: Readonly<Record<ProfileDialect, RegExp>> = Object.freez
   // `UNCOUNTABLE_TYPE` below and never reach this test. `text` is also why this cannot
   // be one shared list, since PostgreSQL's `text` is its ordinary string type.
   mssql: /\b(xml|geography|geometry)\b/i,
+  // PER DIALECT, and this arm matches NOTHING - measured, not assumed. On MySQL
+  // 26.7.0 and MariaDB 13.0.2, as the least-privilege account, one
+  // `count(DISTINCT …)` per column of a probe table holding `json`, `blob`,
+  // `geometry`, `bigint` past 2^53, `varchar` and `text`: every one of them counted
+  // (the two engines compare by the value's own form, so each answered 1 for the one
+  // row). Neither engine of this family refuses a DISTINCT the way PostgreSQL
+  // refuses `json`, so listing any type here would cost a column its distinct count
+  // for nothing. `\b\B` cannot match ANY text, by construction: no position is both
+  // a word boundary and not one (`$^`, the first spelling of this, matches the empty
+  // string, which would have ruled out a column whose declared type read back empty).
+  //
+  // The engines DO refuse `ORDER BY` and comparison on some of these types - that is
+  // a different operation than the COUNT this test guards, and nothing this module
+  // composes orders by a column value.
+  mysql: /\b\B/,
 });
 
 const isComparable = (column: ColumnSchema, dialect: ProfileDialect): boolean =>
@@ -368,7 +390,7 @@ export function composeTableProfile(
   selector: { readonly segments: readonly string[]; readonly depth: AgentProfileDepth },
   columns: readonly ColumnSchema[],
 ): string {
-  if (dialect !== "postgres" && dialect !== "sqlite" && dialect !== "mssql") {
+  if (dialect !== "postgres" && dialect !== "sqlite" && dialect !== "mssql" && dialect !== "mysql") {
     throw new AgentComposedSqlError(
       `no verified profile composition for provider type "${dialect}"`,
       "UNSUPPORTED_DIALECT",

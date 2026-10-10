@@ -229,8 +229,8 @@ now two different sentences, and the difference is the whole of what changed:
 
 - **Grounding — every engine.** What a Plan run is TOLD about your database. It needs no read-only
   statement path, because the provider reading sends no statement, so it reaches all twenty-eight engines.
-- **Agent mode — PostgreSQL, SQLite, DuckDB and SQL Server.** What a run may DO by itself. Its tools
-  execute statements and need a database-native read-only path, which only those four providers implement, so a
+- **Agent mode — PostgreSQL, SQLite, DuckDB, SQL Server and MySQL.** What a run may DO by itself. Its tools
+  execute statements and need a database-native read-only path, which only those five providers implement, so a
   schema-workflow Agent run on any other engine still ends *"The agent cannot run on this database
   engine: it offers no read-only execution profile."* — after grounding has succeeded, which is
   slightly odd to watch and entirely honest: the run knows your schema and still may not read a row.
@@ -405,8 +405,8 @@ as an ordinary citable result.
 Two consequences you will notice:
 
 - **It runs on every engine.** The other workflows need a database-native read-only statement path,
-  which only PostgreSQL, SQLite, DuckDB and SQL Server have; this one needs none, so a run opened on
-  MySQL, Oracle, Cassandra, MongoDB or Redis works rather than ending `engine-unsupported`.
+  which only PostgreSQL, SQLite, DuckDB, SQL Server and MySQL have; this one needs none, so a run opened on
+  Oracle, Cassandra, MongoDB or Redis works rather than ending `engine-unsupported`.
 - **It has no free-form SQL, and its schema is a short list of names.** There is no `inspect_schema`
   and no `run_read_query` here, and the run is told so in its opening message rather than being left
   to discover it. What it is given instead is an inventory of your table names and the indexes on
@@ -947,9 +947,9 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   it. `/api/db/query` calls the provider directly (`src/app/api/db/query/route.ts:44`), so an editor
   query is neither policy-checked nor written to the agent audit trail. The controls above describe
   what the agent is held to, not a guarantee the whole product enforces.
-- **Agent mode runs on PostgreSQL, SQLite, DuckDB and SQL Server only.** The read-only profile has to
-  be implemented by the provider, and only four do: `queryReadOnly` exists on `postgres.ts`,
-  `sqlite.ts`, `duckdb/index.ts` and `mssql.ts`. The four do not draw the boundary the same way, and
+- **Agent mode runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL only.** The read-only profile has to
+  be implemented by the provider, and only five do: `queryReadOnly` exists on `postgres.ts`,
+  `sqlite.ts`, `duckdb/index.ts`, `mssql.ts` and `mysql.ts`. The five do not draw the boundary the same way, and
   SQL Server is the one that could not: it has no read-only transaction and no session-level
   read-only switch, so there the boundary is a session principal verified at open to be unable to
   write, an admission step that asks the optimizer to compile each statement without running it, a
