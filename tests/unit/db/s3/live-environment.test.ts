@@ -11,9 +11,11 @@
  * tree gives none, and a planted copy with one fault gives the finding that names it.
  */
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 
@@ -807,5 +809,98 @@ describe("the principals, Garage and TLS material of docker/s3", () => {
       ),
       "DNS:silo-tls",
     );
+  });
+});
+
+// -- docker/s3/data -------------------------------------------------------------------------------------------------
+
+const DATA_FILES = [
+  "bomb.ndjson.gz",
+  "noext",
+  "one-mib.bin",
+  "rows-partial.ndjson",
+  "truncated.json",
+  "truncated.parquet",
+  "utf8-boundary.txt",
+] as const;
+const DATA_MAX_BYTES = 2.5 * 1024 * 1024;
+const DERIVED_MULTIPART = "derived/multipart.bin";
+
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/** SHA256SUMS as name to digest. */
+function sums(data: S3Fixtures["data"]): Map<string, string> {
+  const text = new TextDecoder().decode(data.SHA256SUMS ?? new Uint8Array());
+  return new Map(
+    text
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => {
+        const [digest, name] = line.split("  ");
+        return [name, digest] as const;
+      }),
+  );
+}
+
+function dataFindings({ data }: S3Fixtures): string[] {
+  if (data.SHA256SUMS === undefined) return ["docker/s3/data/SHA256SUMS is missing"];
+  const findings: string[] = [];
+  const listed = sums(data);
+  for (const name of DATA_FILES) if (data[name] === undefined) findings.push(`docker/s3/data/${name} is missing`);
+  for (const [name, bytes] of Object.entries(data)) {
+    if (name === "SHA256SUMS") continue;
+    if (!(DATA_FILES as readonly string[]).includes(name))
+      findings.push(`docker/s3/data/${name} is not a file make-data.ts writes`);
+    if (listed.get(name) !== sha256(bytes)) findings.push(`docker/s3/data/${name} does not match its SHA256SUMS line`);
+    if (bytes.length > DATA_MAX_BYTES)
+      findings.push(`docker/s3/data/${name} holds ${bytes.length} bytes, over 2.5 MiB`);
+  }
+  for (const name of listed.keys())
+    if (name !== DERIVED_MULTIPART && data[name] === undefined)
+      findings.push(`SHA256SUMS lists ${name}, which is not on disk`);
+  const one = data["one-mib.bin"];
+  if (one !== undefined) {
+    const six = new Uint8Array(one.length * 6);
+    for (let part = 0; part < 6; part++) six.set(one, part * one.length);
+    if (listed.get(DERIVED_MULTIPART) !== sha256(six))
+      findings.push(`SHA256SUMS ${DERIVED_MULTIPART} is not one-mib.bin six times over`);
+  }
+  return findings;
+}
+
+/** The first byte of the 4-byte character must start within the 3 bytes before the text read cap. */
+function utf8BoundaryFindings({ data }: S3Fixtures, cap: number): string[] {
+  const bytes = data["utf8-boundary.txt"];
+  if (bytes === undefined) return ["docker/s3/data/utf8-boundary.txt is missing"];
+  const at = bytes.findIndex((byte) => byte >= 0xf0);
+  if (at < cap - 3 || at >= cap)
+    return [
+      `utf8-boundary.txt starts its 4-byte character at ${at}, not within the 3 bytes before ${cap}: run bun docker/s3/make-data.ts`,
+    ];
+  return [];
+}
+
+describe("the seed's own sample files in docker/s3/data", () => {
+  test("every file is make-data.ts's, listed with its digest, at most 2.5 MiB, and the multipart digest is derived", () => {
+    clean(dataFindings(real));
+    finds(
+      dataFindings(planted(real, (draft) => void (draft.data.noext = new Uint8Array([1])))),
+      "noext does not match",
+    );
+    finds(
+      dataFindings(planted(real, (draft) => void (draft.data["big.bin"] = new Uint8Array(3 * 1024 * 1024)))),
+      "big.bin is not a file",
+    );
+    finds(
+      dataFindings(planted(real, (draft) => void (draft.data["big.bin"] = new Uint8Array(3 * 1024 * 1024)))),
+      "big.bin holds 3145728 bytes",
+    );
+  });
+
+  test("the UTF-8 boundary file follows the provider's text read cap", () => {
+    clean(utf8BoundaryFindings(real, S3_PREVIEW_LIMITS.textFetchBytes));
+    finds(utf8BoundaryFindings(real, S3_PREVIEW_LIMITS.textFetchBytes + 64), "run bun docker/s3/make-data.ts");
   });
 });
