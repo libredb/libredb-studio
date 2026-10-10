@@ -15,9 +15,19 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { rfc3986Path } from "@/lib/db/http/endpoint";
+import { rfc3986Path, validateHost } from "@/lib/db/http/endpoint";
 import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
 import { SeedConfigSchema } from "@/lib/seed/types";
+import {
+  checkS3Step,
+  readS3Principals,
+  renderS3Acceptance,
+  S3_ACCEPTANCE,
+  S3_ACCEPTANCE_GROUPS,
+  S3_TARGET_NAMES,
+  s3LiveConnection,
+  sentenceRefFinding,
+} from "../../../live/s3-live-support";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 
@@ -1291,5 +1301,127 @@ describe("the run-time object generator tests/live/s3-seed-raw.ts", () => {
         "s3-seed-raw.ts: --target must be one of minio, minio-region, silo, garage, rustfs",
       );
     }
+  });
+});
+
+// -- tests/live/s3-live-support.ts: the acceptance matrix -----------------------------------------------------------
+
+const DOC = "docs/providers/s3.md";
+const BEGIN = "<!-- s3-acceptance:begin -->";
+const END = "<!-- s3-acceptance:end -->";
+
+function matrixDocFindings(doc: string): string[] {
+  const begin = doc.indexOf(BEGIN);
+  const end = doc.indexOf(END);
+  if (begin === -1 || end < begin) return [`${DOC} has no ${BEGIN} ... ${END} block`];
+  return doc.slice(begin + BEGIN.length, end).trim() === renderS3Acceptance()
+    ? []
+    : [`the matrix in ${DOC} is not renderS3Acceptance(): render the matrix into the doc again`];
+}
+
+function matrixShapeFindings(): string[] {
+  const findings: string[] = [];
+  const ids = S3_ACCEPTANCE.map((row) => row.id);
+  for (const id of new Set(ids))
+    if (ids.filter((other) => other === id).length > 1) findings.push(`${id} appears twice in S3_ACCEPTANCE`);
+  const grouped = S3_ACCEPTANCE_GROUPS.flatMap((group) => group.rows);
+  for (const id of ids)
+    if (grouped.filter((other) => other === id).length !== 1) findings.push(`${id} is not in exactly one group`);
+  for (const row of S3_ACCEPTANCE)
+    for (const target of S3_TARGET_NAMES) {
+      const cell = row.expect[target];
+      if (cell.length === 0) findings.push(`${row.id} has an empty cell on ${target}`);
+      for (const { outcome } of cell) {
+        if (outcome.kind !== "refused" && outcome.kind !== "refused-before-request") continue;
+        const finding = sentenceRefFinding(outcome.sentence);
+        if (finding !== undefined) findings.push(`${row.id} on ${target}: ${finding}`);
+      }
+      for (const { outcome } of cell)
+        if (outcome.kind === "ok" && "notice" in outcome.check) {
+          const finding = sentenceRefFinding(outcome.check.notice);
+          if (finding !== undefined) findings.push(`${row.id} on ${target}: ${finding}`);
+        }
+    }
+  return findings;
+}
+
+describe("the acceptance matrix S3_ACCEPTANCE", () => {
+  test("docs/providers/s3.md carries exactly the matrix renderS3Acceptance renders", () => {
+    const doc = readFileSync(path.join(ROOT, DOC), "utf8");
+    expect(matrixDocFindings(doc)).toEqual([]);
+    expect(matrixDocFindings(doc.replace("| A1 |", "| A1x |"))[0]).toContain("is not renderS3Acceptance()");
+  });
+
+  test("every row is unique, in one group, has a cell on every target, and names only sentences the provider exports", () => {
+    expect(matrixShapeFindings()).toEqual([]);
+    expect(sentenceRefFinding("notice:N-NO-SUCH")).toBe("the preview exports no sentence N-NO-SUCH");
+    expect(sentenceRefFinding('server:{"operation":"PutObject","status":200}')).toContain("names no S3Operation");
+    expect(sentenceRefFinding("retyped sentence")).toBe("retyped sentence is not a sentence ref");
+  });
+
+  test("the live support reads the README's principals, the ones the compose file and seed connections use", () => {
+    const principals = readS3Principals("silo");
+    expect(principals.root).toEqual({ accessKeyId: "libredb", secretAccessKey: "Probe123pass!" });
+    expect(principals.browse.accessKeyId).toBe("studio-browse");
+  });
+
+  test("the evaluator: a refusal before any request must be the provider's own sentence with no request and no socket", () => {
+    const connection = s3LiveConnection("silo", readS3Principals("silo"), { role: "root", host: "2852039166" });
+    const sentence = (() => {
+      try {
+        validateHost("2852039166");
+      } catch (error) {
+        return (error as Error).message;
+      }
+      return "";
+    })();
+    const expectation = { kind: "refused-before-request", sentence: "endpoint:host:2852039166" } as const;
+    expect(checkS3Step(expectation, { step: "x", refused: sentence, exchanges: 0 }, { connection }, 0)).toBeUndefined();
+    expect(checkS3Step(expectation, { step: "x", refused: sentence, exchanges: 1 }, { connection }, 0)).toContain(
+      "1 request(s)",
+    );
+    expect(checkS3Step(expectation, { step: "x", refused: sentence, exchanges: 0 }, { connection }, 1)).toContain(
+      "1 socket(s)",
+    );
+    expect(
+      checkS3Step(expectation, { step: "x", refused: "another sentence", exchanges: 0 }, { connection }, 0),
+    ).toContain("which is not");
+    expect(
+      checkS3Step(
+        { kind: "refused", sentence: "not:endpoint:host:2852039166" },
+        { step: "x", refused: "connect ECONNREFUSED", exchanges: 1 },
+        { connection },
+        1,
+      ),
+    ).toBeUndefined();
+  });
+
+  test("the evaluator: rows, names in order, pages with no repeat, headers", () => {
+    const connection = s3LiveConnection("silo", readS3Principals("silo"), { role: "root" });
+    const at = (check: Parameters<typeof checkS3Step>[0], ok: object) =>
+      checkS3Step(check, { step: "x", ok, exchanges: 1 }, { connection }, 1);
+    expect(at({ kind: "ok", detail: "", check: { rows: 5 } }, { rows: 5 })).toBeUndefined();
+    expect(at({ kind: "ok", detail: "", check: { rows: 5 } }, { rows: 4 })).toBe("4 rows, expected 5");
+    expect(at({ kind: "ok", detail: "", check: { names: ["a", "c"] } }, { names: ["a", "b", "c"] })).toBeUndefined();
+    expect(at({ kind: "ok", detail: "", check: { names: ["c", "a"] } }, { names: ["a", "b", "c"] })).toContain(
+      "in order",
+    );
+    expect(
+      at({ kind: "ok", detail: "", check: { pages: [2, 1], noRepeat: true } }, { pages: [2, 1], repeats: 1 }),
+    ).toContain("1 repeat(s)");
+    expect(
+      at({ kind: "ok", detail: "", check: { headers: { Status: "Enabled" } } }, { headers: { Status: "Suspended" } }),
+    ).toBe('Status is "Suspended", expected "Enabled"');
+    expect(
+      checkS3Step(
+        { kind: "ok", detail: "", check: { rows: 1 } },
+        { step: "x", refused: "no", exchanges: 1 },
+        { connection },
+        1,
+      ),
+    ).toBe("refused: no");
+    expect(
+      checkS3Step({ kind: "not-applicable", why: "w" }, { step: "x", ok: {}, exchanges: 0 }, { connection }, 0),
+    ).toContain("not applicable");
   });
 });
