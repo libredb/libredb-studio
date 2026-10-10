@@ -180,10 +180,10 @@ function chunksMatchLeaves(chunks: readonly ColumnChunk[], shape: ParquetSchemaS
 const metaOf = (chunk: ColumnChunk): ColumnMetaData => chunk.meta_data as ColumnMetaData;
 
 const ZERO = BigInt(0);
-const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 
 /** An i64 as hyparquet parses one (a bigint) between 0 and 2^53 - 1, checked before any Number() coercion. */
-const isCount = (value: unknown): boolean => typeof value === "bigint" && value >= ZERO && value <= MAX_SAFE;
+const isCount = (value: unknown): boolean =>
+  typeof value === "bigint" && value >= ZERO && Number.isSafeInteger(Number(value));
 
 /**
  * The footer values the plan and the reads use: the file's and the first row group's num_rows, and each first-row-group
