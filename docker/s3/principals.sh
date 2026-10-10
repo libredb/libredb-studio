@@ -4,8 +4,8 @@
 #   principals.sh <endpoint>
 #
 # Every step is safe to repeat: `user add` sets the password whether or not the user exists, `policy create`
-# replaces the policy, and a policy is attached only when the user does not hold it yet. POSIX sh with no grep,
-# because the mc images carry sh but not every one carries grep.
+# replaces the policy, and a policy is attached only when the user does not hold it yet. POSIX sh with no sed, awk,
+# grep or jq, because pgsty/mc carries sh and coreutils but none of those.
 set -eu
 
 ENDPOINT="$1"
@@ -44,10 +44,19 @@ done
 
 # attach <user> <policy>: attaches only when the policyName field of `user info` (a comma-separated list) does not
 # hold the policy yet. It reads that field alone, because the answer also carries the user's own name as accessKey,
-# and here the user and policy names match.
+# and here the user and policy names match. The field is cut out by parameter expansion: the text after the field
+# name, then after its opening quote, up to its closing quote.
 attach() {
   info="$(run "mc admin user info $1" admin user info fx "$1" --json)"
-  held="$(printf '%s' "$info" | sed -n 's/.*"policyName": *"\([^"]*\)".*/\1/p')"
+  key='"policyName"'
+  case "$info" in
+    *"$key"*)
+      rest="${info#*"$key"}"
+      rest="${rest#*\"}"
+      held="${rest%%\"*}"
+      ;;
+    *) held="" ;;
+  esac
   case ",$held," in *",$2,"*) return 0 ;; esac
   run "mc admin policy attach $2 to $1" admin policy attach fx "$2" --user "$1" >/dev/null
 }

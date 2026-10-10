@@ -25,7 +25,8 @@ Every port is bound to 127.0.0.1 only.
 
 Name the compose project and every service, as every command here does.
 Start a server with `up -d --wait`, which returns once it is healthy, and a one-shot with `up -d`, then read its exit code with `docker wait`, which must print `0`.
-`garage` is started without `--wait`: its health probe answers only after `garage-setup` has applied the layout, and `garage-setup` waits for the node itself.
+`garage` is started without `--wait`: its health probe exits 0 once the node answers, before a layout exists, so it says nothing about whether Garage can serve.
+`garage-setup` applies the layout and polls `GetClusterHealth` itself until the status is `healthy`.
 
 ```sh
 P="docker compose -p libredb-studio -f database-compose.yml"

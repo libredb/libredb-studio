@@ -326,6 +326,12 @@ const SILO_MC_PIN =
 const GARAGE_PIN = "dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020";
 const RUSTFS_PIN = "rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c";
 const CURL_PIN = "alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067";
+/**
+ * The seed one-shots' curl: 8.14 and later refuse --aws-sigv4 together with --path-as-is, and without --path-as-is they
+ * sign the normalized path, so no later curl can write the literal dot-segment keys. An older image with known CVEs,
+ * accepted only because the one-shot talks to the compose network's own servers.
+ */
+const SEED_CURL_PIN = "alpine/curl:8.12.1@sha256:edbbe6f64e9890474df2864d7ee92941bb03ce17b07fd9cadc1d14e9453fc031";
 const OPENSSL_PIN = "alpine/openssl:3.5.8@sha256:3f25da71f70eba788067daac3f3df03bd1de7a7c52ed89fa93b94ad2c92d986b";
 const MINIO_IMAGE = "libredb-fixture/minio:RELEASE.2025-10-15T17-29-55Z";
 const MC_IMAGE = "libredb-fixture/mc:RELEASE.2025-08-13T08-35-41Z";
@@ -336,20 +342,20 @@ const IMAGES: Readonly<Record<string, string>> = {
   "minio-region": MINIO_IMAGE,
   "minio-principals": MC_IMAGE,
   "minio-region-principals": MC_IMAGE,
-  "minio-seed": CURL_PIN,
-  "minio-region-seed": CURL_PIN,
+  "minio-seed": SEED_CURL_PIN,
+  "minio-region-seed": SEED_CURL_PIN,
   silo: SILO_PIN,
   "silo-tls": SILO_PIN,
   "silo-principals": SILO_MC_PIN,
-  "silo-seed": CURL_PIN,
+  "silo-seed": SEED_CURL_PIN,
   "s3-certs": OPENSSL_PIN,
   "garage-keys": OPENSSL_PIN,
   garage: GARAGE_PIN,
   "garage-setup": CURL_PIN,
-  "garage-seed": CURL_PIN,
+  "garage-seed": SEED_CURL_PIN,
   rustfs: RUSTFS_PIN,
   "rustfs-principals": SILO_MC_PIN,
-  "rustfs-seed": CURL_PIN,
+  "rustfs-seed": SEED_CURL_PIN,
 };
 const BUILT: Readonly<Record<string, string>> = {
   minio: "server",
@@ -714,9 +720,10 @@ function principalsFindings({ files }: S3Fixtures): string[] {
   for (const policy of ["studio-browse", "studio-scoped", "readonly"])
     if (!script.includes(`attach ${policy === "readonly" ? "studio-getonly readonly" : `${policy} ${policy}`}`))
       findings.push(`principals.sh does not attach ${policy}`);
-  if (/\bgrep\b/.test(shellCode(script)))
-    findings.push("principals.sh calls grep, which the Silo-line mc image may not carry");
   const code = shellCode(script);
+  for (const tool of ["sed", "awk", "grep", "jq"])
+    if (new RegExp(`\\b${tool}\\b`).test(code))
+      findings.push(`principals.sh calls ${tool}, which the Silo-line mc image does not carry`);
   if (!code.includes(`"policyName"`) || code.includes(`*"\\"$2\\""*`))
     findings.push("principals.sh matches the policy anywhere in the user info answer, not in its policyName field");
   return findings;
@@ -810,11 +817,17 @@ describe("the principals, Garage and TLS material of docker/s3", () => {
     finds(garageSetupFindings(oldAlias), "reads the scoped-local alias from a field GetBucketInfo does not answer");
   });
 
-  test("principals.sh adds the three users and attaches their policies, with no grep", () => {
+  test("principals.sh adds the three users and attaches their policies, with no sed, awk, grep or jq", () => {
     clean(principalsFindings(real));
     finds(
       principalsFindings(planted(real, (draft) => void (draft.files["docker/s3/principals.sh"] += "\ngrep x\n"))),
       "calls grep",
+    );
+    finds(
+      principalsFindings(
+        planted(real, (draft) => void (draft.files["docker/s3/principals.sh"] += '\nheld="$(sed -n p)"\n')),
+      ),
+      "calls sed",
     );
     clean(
       principalsFindings(
@@ -829,6 +842,42 @@ describe("the principals, Garage and TLS material of docker/s3", () => {
       (draft) => void (draft.files["docker/s3/principals.sh"] += `\ncase "$info" in *"\\"$2\\""*) return 0 ;; esac\n`),
     );
     finds(principalsFindings(wholeAnswer), "matches the policy anywhere in the user info answer");
+  });
+
+  test("principals.sh attaches a policy only when the policyName field lacks it, with nothing on PATH but mc", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "s3-principals-"));
+    const bin = path.join(dir, "bin");
+    mkdirSync(bin);
+    const log = path.join(dir, "mc.log");
+    writeFileSync(
+      path.join(bin, "mc"),
+      [
+        "#!/bin/sh",
+        'echo "$*" >> "$MC_LOG"',
+        'case "$*" in',
+        `  "admin user info fx studio-browse --json") printf '%s' '{"status":"success","accessKey":"studio-browse","userStatus":"enabled"}' ;;`,
+        `  "admin user info fx studio-scoped --json") printf '%s' '{"status":"success","accessKey":"studio-scoped","policyName":"studio-scoped,readonly"}' ;;`,
+        `  "admin user info fx studio-getonly --json") printf '%s' '{"status":"success","accessKey":"studio-getonly","policyName": "consoleAdmin"}' ;;`,
+        "esac",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const run = Bun.spawnSync(["/bin/sh", path.join(ROOT, "docker/s3/principals.sh"), "http://silo:9000"], {
+      env: { PATH: bin, MC_LOG: log, MC_CONFIG_DIR: dir, S3_ROOT_ACCESS_KEY: "root", S3_ROOT_SECRET_KEY: "secret" },
+    });
+    expect({ exit: run.exitCode, stdout: run.stdout.toString(), stderr: run.stderr.toString() }).toEqual({
+      exit: 0,
+      stdout: "principals.sh: 3 users, 2 policies\n",
+      stderr: "",
+    });
+    const attached = readFileSync(log, "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith("admin policy attach"));
+    expect(attached).toEqual([
+      "admin policy attach fx studio-browse --user studio-browse",
+      "admin policy attach fx readonly --user studio-getonly",
+    ]);
   });
 
   test("the browse policy is the least privilege Studio needs and the scoped one names one bucket", () => {

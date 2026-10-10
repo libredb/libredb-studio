@@ -2542,7 +2542,12 @@ services:
       memswap_limit: 128M
 
   minio-seed:
-    image: alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067
+    # The seed signs with curl --aws-sigv4 and sends every key as written with --path-as-is, so the literal
+    # dot-segment keys reach each server. curl 8.14 and later refuse that pair (exit 43) and, without
+    # --path-as-is, sign the normalized path, so this pin must not move to 8.14 or later. It is an older image
+    # with known CVEs, accepted only because each seed one-shot talks to the compose network's own servers with
+    # fixed fixture bytes; garage-setup keeps the current curl.
+    image: &s3-seed-curl alpine/curl:8.12.1@sha256:edbbe6f64e9890474df2864d7ee92941bb03ce17b07fd9cadc1d14e9453fc031
     container_name: libredb-minio-seed
     profiles: ["s3-minio"]
     restart: "no"
@@ -2585,7 +2590,7 @@ services:
     <<: *s3-one-shot-limits
 
   minio-region-seed:
-    image: alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067
+    image: *s3-seed-curl
     container_name: libredb-minio-region-seed
     profiles: ["s3-region"]
     restart: "no"
@@ -2628,7 +2633,7 @@ services:
     <<: *s3-one-shot-limits
 
   silo-seed:
-    image: alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067
+    image: *s3-seed-curl
     container_name: libredb-silo-seed
     restart: "no"
     depends_on: { silo: { condition: service_healthy } }
@@ -2691,8 +2696,9 @@ services:
       # Only the S3 API; RPC (3901) and admin (3903) stay on the compose network.
       - "127.0.0.1:3900:3900"
     healthcheck:
-      # The image has no shell. Garage answers this only once its layout is applied, so nothing
-      # waits for it to be healthy before garage-setup has run (docker/s3/README.md).
+      # The image has no shell, so the probe cannot read the answer's status: it exits 0 once the node
+      # answers, before a layout exists. garage-setup polls GetClusterHealth itself until the status is
+      # healthy (docker/s3/README.md).
       test: ["CMD", "/garage", "json-api", "GetClusterHealth"]
       start_period: 30s
       start_interval: 1s
@@ -2705,7 +2711,8 @@ services:
     image: alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067
     container_name: libredb-garage-setup
     restart: "no"
-    # service_started, not service_healthy: the health probe answers only after this sets the layout.
+    # service_started: the health probe passes before any layout exists, so garage-setup polls
+    # GetClusterHealth itself until the status is healthy.
     depends_on: { garage: { condition: service_started } }
     volumes: ["./docker/s3:/s3:ro", "s3-garage-keys:/keys:ro"]
     environment:
@@ -2714,7 +2721,7 @@ services:
     <<: *s3-one-shot-limits
 
   garage-seed:
-    image: alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067
+    image: *s3-seed-curl
     container_name: libredb-garage-seed
     restart: "no"
     depends_on: { garage-setup: { condition: service_completed_successfully } }
@@ -2758,7 +2765,7 @@ services:
     <<: *s3-one-shot-limits
 
   rustfs-seed:
-    image: alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067
+    image: *s3-seed-curl
     container_name: libredb-rustfs-seed
     restart: "no"
     depends_on: { rustfs: { condition: service_healthy } }
