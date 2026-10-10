@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { enumerateContainers, sessionDefaultContainer } from "@/lib/db/container-walk";
-import type { Container, DatabaseProvider } from "@/lib/db/types";
+import { sessionDefaultContainer } from "@/lib/db/container-walk";
+import type { Container } from "@/lib/db/types";
 
 const container = (name: string, isSessionDefault?: boolean): Container => ({
   path: [name],
@@ -40,50 +40,5 @@ describe("sessionDefaultContainer", () => {
   test("only a literal true flags a container", () => {
     const claimed = { path: ["app"], name: "app", level: 0, isSessionDefault: "yes" } as unknown as Container;
     expect(sessionDefaultContainer([claimed])).toBeUndefined();
-  });
-});
-
-/**
- * A walk that starts below the root (#1530): one database of a server-level connection is read
- * without opening a session in any other.
- */
-describe("enumerateContainers under a parent", () => {
-  function twoLevel() {
-    const asked: (readonly string[] | undefined)[] = [];
-    const provider = {
-      getCapabilities: () => ({
-        containerLevels: [
-          { id: "catalog", label: "Database", labelPlural: "Databases" },
-          { id: "schema", label: "Schema", labelPlural: "Schemas" },
-        ],
-      }),
-      listContainers: async (parent?: readonly string[]) => {
-        asked.push(parent);
-        if (parent === undefined) return [container("shop"), container("analytics")];
-        return [
-          { path: [...parent, "app"], name: "app", level: 1 },
-          { path: [...parent, "public"], name: "public", level: 1, isSessionDefault: true },
-        ];
-      },
-    } as unknown as DatabaseProvider;
-    return { provider, asked };
-  }
-
-  test("reads only the parent's children, and answers their session default", async () => {
-    const { provider, asked } = twoLevel();
-    expect(await enumerateContainers(provider, ["shop"])).toEqual({
-      containers: [
-        ["shop", "app"],
-        ["shop", "public"],
-      ],
-      defaultContainer: ["shop", "public"],
-    });
-    expect(asked).toEqual([["shop"]]);
-  });
-
-  test("a parent at the declared depth is the one container it names, read without a round trip", async () => {
-    const { provider, asked } = twoLevel();
-    expect(await enumerateContainers(provider, ["shop", "app"])).toEqual({ containers: [["shop", "app"]] });
-    expect(asked).toEqual([]);
   });
 });

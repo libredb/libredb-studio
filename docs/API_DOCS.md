@@ -1199,10 +1199,9 @@ Only a deeper parent is refused, at `400` with `{ "error": "<type> declares a co
 A caller that reaches a provider without these routes, such as the MCP `inspect-schema` tool or a host behind the embedded workspace, is refused by the provider itself under the same rule, in the provider's own words: `A PostgreSQL container path is [schema], received []`.
 
 **A server-level PostgreSQL connection is two levels deep** (#1530): `[database, schema]`, and
-`POST /api/db/objects/containers` answers the databases for no `parent`. Since its root is every
-database on the server, `POST /api/db/objects/inventory` and `POST /api/db/objects/search` take a
-`parent` cursor (`"parent": ["shop"]`) and refuse an unscoped walk there with `400`; `parent` beside
-`containers` is refused too.
+`POST /api/db/objects/containers` answers the databases for no `parent` and one database's schemas
+for `"parent": ["shop"]`. Since its root is every database on the server, an inventory that names no
+`containers`, and every search, is refused there with `400`: name the database's schemas instead.
 
 #### POST /api/db/objects/describe
 

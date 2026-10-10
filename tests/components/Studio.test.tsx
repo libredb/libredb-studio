@@ -1335,14 +1335,6 @@ describe("Studio", () => {
       await (capturedTestDataProps.onExecuteQuery as (sql: string) => unknown)("INSERT 1");
     });
     expect(mockExecuteQuery).toHaveBeenLastCalledWith("INSERT 1", undefined, false, { catalog: "shop" });
-    const onFailure = () => {};
-    await act(async () => {
-      await (capturedDataImportProps.onImport as (sql: string, f: () => void) => unknown)("INSERT 2", onFailure);
-    });
-    expect(mockExecuteQuery).toHaveBeenLastCalledWith("INSERT 2", undefined, false, {
-      onFailure,
-      catalog: "libredb_objects",
-    });
 
     // During a transaction the active database stays where it is.
     mockSetActiveCatalog.mockClear();

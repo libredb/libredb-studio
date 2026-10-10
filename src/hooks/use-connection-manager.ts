@@ -297,7 +297,7 @@ export function useConnectionManager(storageReady = false) {
 
         // A server-level connection reads one database (#1530): the chosen one, else the remembered
         // one while the server still lists it, else the first.
-        let scope: { parent?: readonly string[] } = {};
+        let scoped: ScopedContainers | undefined;
         if (declaresCatalogSessions(capabilities)) {
           const containersRes = await appFetch(...init("/api/db/objects/containers"));
           if (!containersRes.ok) {
@@ -320,7 +320,26 @@ export function useConnectionManager(storageReady = false) {
             return;
           }
           storage.setActiveCatalog(conn.id, chosen);
-          scope = { parent: [chosen] };
+          const schemasRes = await appFetch(...init("/api/db/objects/containers", { ...payload, parent: [chosen] }));
+          if (!schemasRes.ok) {
+            const body = await schemasRes.json().catch(() => ({}));
+            throw new Error(body.error || "Failed to list the database's schemas");
+          }
+          const schemas = (await schemasRes.json()) as Container[];
+          // A database with no schema reads as empty: the inventory refuses an empty `containers`.
+          if (schemas.length === 0) {
+            if (isCurrent()) {
+              setSchema([]);
+              setDefaultContainer(undefined);
+              setSchemaError(null);
+            }
+            return;
+          }
+          const schemaDefault = sessionDefaultContainer(schemas);
+          scoped = {
+            containers: schemas.map((schema) => schema.path),
+            ...(schemaDefault === undefined ? {} : { defaultContainer: schemaDefault }),
+          };
         } else if (isCurrent()) {
           setCatalogState(null);
         }
@@ -338,13 +357,10 @@ export function useConnectionManager(storageReady = false) {
           return;
         }
 
-        // A chosen database is already the scope; the session-default lookup is for the other engines.
-        const scoped =
-          scope.parent === undefined ? await scopedContainers(payload, containerDepth(capabilities)) : undefined;
+        scoped ??= await scopedContainers(payload, containerDepth(capabilities));
         const objectsRes = await appFetch(
           ...init("/api/db/objects/inventory", {
             ...payload,
-            ...scope,
             kinds,
             includeColumns: true,
             ...(scoped === undefined ? {} : { containers: scoped.containers }),

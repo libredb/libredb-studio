@@ -4112,7 +4112,11 @@ describe("SchemaDiff on a server-level connection", () => {
           },
         });
       }
-      if (url.includes("objects/containers")) return answer(listing.ok, listing.body);
+      if (url.includes("objects/containers")) {
+        const parent = (JSON.parse(String(init?.body)) as { parent?: string[] }).parent;
+        if (parent === undefined) return answer(listing.ok, listing.body);
+        return answer(true, [{ path: [...parent, "public"], name: "public" }]);
+      }
       inventoryBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       return answer(true, { objects: [], details: [] });
     }) as unknown as typeof fetch;
@@ -4138,10 +4142,10 @@ describe("SchemaDiff on a server-level connection", () => {
   test("a snapshot reads the remembered database, else the first, and saves nothing without one", async () => {
     const databases = { ok: true, body: [{ name: "analytics" }, { name: "shop" }] };
     mockActiveCatalog = "shop";
-    expect((await snapshot(databases)).inventoryBodies[0].parent).toEqual(["shop"]);
+    expect((await snapshot(databases)).inventoryBodies[0].containers).toEqual([["shop", "public"]]);
     cleanup();
     mockActiveCatalog = null;
-    expect((await snapshot(databases)).inventoryBodies[0].parent).toEqual(["analytics"]);
+    expect((await snapshot(databases)).inventoryBodies[0].containers).toEqual([["analytics", "public"]]);
     cleanup();
 
     mockSaveSchemaSnapshot.mockClear();

@@ -52,21 +52,14 @@ export interface ContainerEnumeration {
  * catalog path would name a container no object sits in and break no tie. More than one flagged
  * container at the deepest level is a provider defect, and it is answered as no default rather
  * than by picking one.
- *
- * `under` starts the walk below a container, so one database of a server-level connection is read
- * without opening a session in every other (#1530).
  */
-export async function enumerateContainers(
-  provider: DatabaseProvider,
-  under: readonly string[] = [],
-): Promise<ContainerEnumeration> {
+export async function enumerateContainers(provider: DatabaseProvider): Promise<ContainerEnumeration> {
   const depth = containerDepth(provider.getCapabilities());
   if (depth === 0) return { containers: [[]], defaultContainer: [] };
-  if (under.length >= depth) return { containers: [under] };
 
   const listContainers = provider.listContainers.bind(provider);
-  let level = await (under.length === 0 ? listContainers() : listContainers(under));
-  for (let below = under.length + 1; below < depth; below++) {
+  let level = await listContainers();
+  for (let below = 1; below < depth; below++) {
     const next: Container[] = [];
     for (const parent of level) {
       next.push(...(await listContainers(parent.path)));

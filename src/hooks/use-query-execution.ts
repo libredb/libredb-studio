@@ -242,15 +242,9 @@ function retryAfterSeconds(response: Response): number | null {
  * `undefined` is NOT database 0 and NOT "the session's number": it is the absence of an override, so
  * the body is byte for byte what it was before this existed.
  */
-function payloadForRun(
-  connection: DatabaseConnection,
-  database: number | undefined,
-  catalog: string | undefined,
-): Record<string, unknown> {
+function payloadForRun(connection: DatabaseConnection, database: number | undefined): Record<string, unknown> {
   const payload = buildConnectionPayload(connection);
-  // A server-level connection's database (#1530), beside the connection for the same reason.
-  const withCatalog = catalog === undefined ? payload : { ...payload, catalog };
-  return database === undefined ? withCatalog : { ...withCatalog, database };
+  return database === undefined ? payload : { ...payload, database };
 }
 
 export function useQueryExecution({
@@ -464,12 +458,10 @@ export function useQueryExecution({
       // tab opened from a key browser walked ONE numbered database, so every run of that tab - the
       // initial read, a re-run, a selection, an inline edit, the next page - names it. See
       // `payloadForRun`.
+      const runPayload = payloadForRun(activeConnection, tabToExec.databaseOverride);
       // On a server-level connection, also its database: an object's, else the active one (#1530).
-      const runPayload = payloadForRun(
-        activeConnection,
-        tabToExec.databaseOverride,
-        executionOptions?.catalog ?? activeCatalog,
-      );
+      const catalog = executionOptions?.catalog ?? activeCatalog;
+      if (catalog !== undefined) runPayload.catalog = catalog;
 
       // Safety check for dangerous queries (skip for explain, load-more, playground, and force-execute)
       const skipSafety = executionOptions?.skipSafety ?? false;

@@ -1,11 +1,13 @@
 import { firstResultSet } from "@/lib/api/first-result-set";
 import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-probe";
 import { NextRequest, NextResponse } from "next/server";
+import { getOrCreateProvider } from "@/lib/db";
 import type { BeginTransactionOptions, BeginTransactionResult, DatabaseProvider, QueryResult } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
-import { editorProvider, requestCatalog } from "@/lib/api/catalog-provider";
+import { editorExecutionContext } from "@/lib/api/execution-context";
+import { requestCatalog, scopeToCatalog } from "@/lib/db/catalog-scope";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { countCodeStatements, splitExecutionUnits, type ExecutionUnit } from "@/lib/sql/statement-splitter";
@@ -128,10 +130,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Connection and action are required" }, { status: 400 });
     }
 
-    // A server-level connection (#1530) runs the transaction in the database the caller chose, and
-    // each database's session holds a transaction of its own, so ownership is recorded per database.
+    // Each database of a server-level connection holds its own transaction (#1530), so ownership is per database.
     const catalog = requestCatalog(body);
-    const provider = await editorProvider(connection, guard.session, catalog);
+    const connected = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    const provider = await scopeToCatalog(connected, catalog);
     const owned = transactionKey(connection.id, catalog);
 
     if (!isTransactionProvider(provider)) {

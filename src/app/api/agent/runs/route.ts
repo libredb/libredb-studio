@@ -28,9 +28,9 @@ import {
   type AgentThreadHeader,
 } from "@/lib/agent/types";
 import { createErrorResponse } from "@/lib/api/errors";
-import { editorProvider } from "@/lib/api/catalog-provider";
-import { createDatabaseProvider } from "@/lib/db";
-import { catalogSessionConnection } from "@/lib/db/catalog-scope";
+import { editorExecutionContext } from "@/lib/api/execution-context";
+import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
+import { catalogSessionConnection, scopeToCatalog } from "@/lib/db/catalog-scope";
 import { resolveConfig } from "@/lib/llm/utils/config";
 import { guardRoute } from "@/lib/api/require-session";
 import { getDBConfig } from "@/lib/db-ui-config";
@@ -224,17 +224,9 @@ export async function POST(req: Request) {
       return badRequest("Request body must be JSON");
     }
 
-    const {
-      mode,
-      workflowType,
-      workflowSource,
-      workflowReading,
-      autoExecute,
-      objective,
-      connectionId,
-      previousRunId,
-      catalog,
-    } = body;
+    const { mode, workflowType, workflowSource, workflowReading, autoExecute, objective, connectionId, previousRunId } =
+      body;
+    const { catalog } = body;
     if (typeof mode !== "string" || !MODES.has(mode)) {
       return badRequest('mode must be "planning" or "agent"');
     }
@@ -403,7 +395,10 @@ export async function POST(req: Request) {
           : "catalog names a database only on a connection that reaches a whole server, and this one names its own",
       );
     }
-    if (catalog !== undefined) await editorProvider(connection, guard.session, catalog);
+    if (catalog !== undefined) {
+      const connected = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+      await scopeToCatalog(connected, catalog);
+    }
 
     /*
       WHICH DATABASE this run reads, fingerprinted here because here is the only place

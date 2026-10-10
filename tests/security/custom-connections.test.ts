@@ -79,7 +79,7 @@ const PROVIDER_ROUTES_OUTSIDE_DB: Record<string, string> = {
   "agent/runs/[runId]/handover":
     "opens only the run's recorded connectionId, resolved as a seed id under the run's own actor; the request carries no connection (tests/api/agent/handover.test.ts)",
   "agent/runs":
-    "reads the declaration of the connectionId it resolved through resolveConnection to decide whether the run names a catalog (#1530); an inline connection is refused before that (tests/api/agent/runs.test.ts)",
+    "reads the declaration of the connectionId it resolved through resolveConnection, and opens it only to admit the run's catalog (#1530); an inline connection is refused before that (tests/api/agent/runs.test.ts)",
 };
 
 /**
@@ -88,8 +88,6 @@ const PROVIDER_ROUTES_OUTSIDE_DB: Record<string, string> = {
  */
 const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
   "agent/runtime.ts": "drives an agent run on the seed its recorded connectionId resolves to through resolveConnection",
-  "api/catalog-provider.ts":
-    "editorProvider builds for a connection its db route already resolved through resolveConnection, and the census sends each of those routes a caller's connection",
   "api/object-route.ts":
     "handleObjectRequest resolves through resolveConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
   "mcp/context.ts": "opens only seeds that opted in with mcp: true, read from getManagedConnections",

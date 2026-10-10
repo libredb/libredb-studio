@@ -314,7 +314,7 @@ const NAMED_CITATIONS = [
       "disconnect",
       "connectWarnings",
       "forCatalog",
-      "openMaintenancePool",
+      "connectTemplate1",
       "buildPoolConfig",
       "buildSSLConfig",
       "query",

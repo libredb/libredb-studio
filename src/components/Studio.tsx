@@ -823,7 +823,7 @@ export default function Studio() {
   const closeProfiler = useCallback(() => setProfilerPath(null), []);
   const closeCodeGen = useCallback(() => setCodeGenPath(null), []);
   const closeTestData = useCallback(() => setTestDataPath(null), []);
-  // A modal's statement runs in its object's database, an import in the active one (#1530).
+  // A modal's statement runs in its object's database (#1530); an import runs in the active one.
   const catalogOfObject = useCallback(
     (path: readonly string[] | null) =>
       path === null || metadata === null ? undefined : catalogOfPath(metadata.capabilities, path),
@@ -839,9 +839,8 @@ export default function Studio() {
   );
   // The import dialog stays open on a failure and shows its message (#1396), so it is handed both.
   const runImport = useCallback(
-    (sql: string, onFailure: (message: string) => void) =>
-      executeQuery(sql, undefined, false, { onFailure, ...catalogField(conn.activeCatalog) }),
-    [executeQuery, conn.activeCatalog],
+    (sql: string, onFailure: (message: string) => void) => queryExec.executeQuery(sql, undefined, false, { onFailure }),
+    [queryExec.executeQuery],
   );
 
   const handleConnect = useCallback(

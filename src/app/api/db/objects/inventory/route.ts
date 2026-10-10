@@ -2,7 +2,6 @@ import { NextRequest } from "next/server";
 import {
   assertContainerAddress,
   dedupePaths,
-  enumerationParent,
   handleObjectRequest,
   INVENTORY_LIMIT,
   INVENTORY_PAIR_LIMIT,
@@ -16,6 +15,7 @@ import {
   type ObjectInventory,
 } from "@/lib/api/object-route";
 import { enumerateContainers } from "@/lib/db/container-walk";
+import { assertNotWholeServer } from "@/lib/db/catalog-scope";
 import type { DatabaseObject, ObjectDetail } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
@@ -74,8 +74,6 @@ export async function POST(req: NextRequest) {
     const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
     const named = optionalContainerList(body, "containers");
     named?.forEach((container) => assertContainerAddress(provider, "containers", container));
-    // Or the containers under one `parent`: one database of a server-level connection (#1530).
-    const parent = enumerationParent(provider, body, named !== undefined);
 
     // Deduplicated before the fan-out is built, not after: a repeated container costs one full
     // listing round trip per kind, and a body may name the same one any number of times.
@@ -83,7 +81,8 @@ export async function POST(req: NextRequest) {
     // The enumeration also answers which container the SESSION is in, off the same walk and at
     // no extra round trip. A body that NAMED its containers skips the walk, so there is no
     // default to report and none is invented (#789).
-    const enumerated = named === undefined ? await enumerateContainers(provider, parent) : { containers: named };
+    if (named === undefined) assertNotWholeServer(provider);
+    const enumerated = named === undefined ? await enumerateContainers(provider) : { containers: named };
     const containers = dedupePaths(enumerated.containers);
     const listObjects = provider.listObjects.bind(provider);
 

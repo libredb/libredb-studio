@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getOrCreateProvider } from "@/lib/db";
 import { splitExecutionUnits, unitIsModuleBody, type ExecutionUnit } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { isSelectQuery } from "@/lib/db/utils/query-limiter";
 import { createErrorResponse } from "@/lib/api/errors";
-import { editorProvider, requestCatalog } from "@/lib/api/catalog-provider";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
+import { editorExecutionContext } from "@/lib/api/execution-context";
+import { requestCatalog, scopeToCatalog } from "@/lib/db/catalog-scope";
 import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
 import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
@@ -195,8 +197,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No valid SQL statements found" }, { status: 400 });
     }
 
-    // In the database the caller chose, on a server-level connection (#1530).
-    const provider = await editorProvider(connection, guard.session, requestCatalog(body));
+    const connected = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    const provider = await scopeToCatalog(connected, requestCatalog(body));
     const results: StatementResult[] = [];
     let totalExecutionTime = 0;
     let openTransaction: OpenQueryTransactionOutcome = "none";

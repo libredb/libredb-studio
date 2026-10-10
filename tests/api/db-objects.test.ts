@@ -2518,14 +2518,10 @@ describe("the context the handler hands run", () => {
 // Server-level connections (#1530)
 // ============================================================================
 
-/** A server-level connection's root is every database, so the walking routes read one under `parent`. */
+/** A server-level connection's root is every database, so a walk must name one database's containers. */
 describe("a server-level connection's walks", () => {
   function serverLevel() {
-    const listContainers = mock(async (parent?: readonly string[]) =>
-      parent === undefined
-        ? [{ path: ["shop"], name: "shop", level: 0 }]
-        : [{ path: [...parent, "public"], name: "public", level: 1, isSessionDefault: true }],
-    );
+    const listContainers = mock(async () => [{ path: ["shop"], name: "shop", level: 0 }]);
     activeProvider = objectProvider({
       containerLevels: [CATALOG_LEVEL, SCHEMA_LEVEL],
       catalogSessions: true,
@@ -2538,30 +2534,13 @@ describe("a server-level connection's walks", () => {
   const post = (route: typeof inventoryRoute, path: string, body: Record<string, unknown>) =>
     route.POST(createMockRequest(path, { method: "POST", body: { connection, ...body } }) as never);
 
-  test("inventory and search under one database read that database alone", async () => {
+  test("an inventory of one database's containers reads them, and an unscoped walk or search is refused", async () => {
     const listContainers = serverLevel();
-    const inventory = await post(inventoryRoute, "/api/db/objects/inventory", { parent: ["shop"] });
-    const body = await parseResponseJSON<{ objects: DatabaseObject[]; defaultContainer?: string[] }>(inventory);
+    const inventory = await post(inventoryRoute, "/api/db/objects/inventory", { containers: [["shop", "public"]] });
+    const body = await parseResponseJSON<{ objects: DatabaseObject[] }>(inventory);
     expect(body.objects.map((found) => found.path)).toEqual([["shop", "public", "orders"]]);
-    expect(body.defaultContainer).toEqual(["shop", "public"]);
-    const search = await post(searchRoute, "/api/db/objects/search", { term: "orders", parent: ["shop"] });
-    expect(search.status).toBe(200);
-    expect(listContainers.mock.calls).toEqual([[["shop"]], [["shop"]]]);
-  });
-
-  test("an unscoped walk, a parent beside containers and a too-deep parent are refused", async () => {
-    const listContainers = serverLevel();
-    for (const [route, path, body] of [
-      [inventoryRoute, "/api/db/objects/inventory", {}],
-      [searchRoute, "/api/db/objects/search", { term: "orders" }],
-      [inventoryRoute, "/api/db/objects/inventory", { containers: [["shop", "public"]], parent: ["shop"] }],
-      [inventoryRoute, "/api/db/objects/inventory", { parent: ["shop", "public", "orders"] }],
-    ] as const) {
-      expect((await post(route, path, body)).status).toBe(400);
-    }
+    expect((await post(inventoryRoute, "/api/db/objects/inventory", {})).status).toBe(400);
+    expect((await post(searchRoute, "/api/db/objects/search", { term: "orders" })).status).toBe(400);
     expect(listContainers).not.toHaveBeenCalled();
-    expect((await post(inventoryRoute, "/api/db/objects/inventory", { containers: [["shop", "public"]] })).status).toBe(
-      200,
-    );
   });
 });

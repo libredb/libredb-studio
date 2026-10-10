@@ -115,11 +115,6 @@ const UNPOSTURED_ALLOWLIST: Record<string, { calls: number; reason: string }> = 
     reason:
       "a capability-only read for the run's catalog field (#1530): it builds the provider to read its catalogSessions declaration before the run exists, and never connects, so no handle opens",
   },
-  "lib/api/catalog-provider.ts": {
-    calls: 1,
-    reason:
-      "a capability-only read for the db routes' catalog field (#1530): it builds the provider to read its catalogSessions declaration before any socket, and never connects, so no handle opens",
-  },
 };
 
 const UNPOSTURED = findUnposturedCalls(SRC_DIR);

@@ -108,7 +108,7 @@ async function readLiveSchema(conn: DatabaseConnection): Promise<DetailedObject[
 
   // A server-level connection is compared one database at a time (#1530): its active one, else the
   // first it lists, since a read of every database on the server is refused.
-  let scope: { parent?: readonly string[] } = {};
+  let scope: { containers?: readonly string[][] } = {};
   if (declaresCatalogSessions(meta.capabilities as ProviderCapabilities)) {
     const listRes = await post("/api/db/objects/containers", payload);
     const listed = await listRes.json();
@@ -117,7 +117,10 @@ async function readLiveSchema(conn: DatabaseConnection): Promise<DetailedObject[
     const stored = storage.getActiveCatalog(conn.id);
     const catalog = stored !== null && names.includes(stored) ? stored : names[0];
     if (catalog === undefined) throw new Error(`${conn.name} lists no database this role can open`);
-    scope = { parent: [catalog] };
+    const schemasRes = await post("/api/db/objects/containers", { ...payload, parent: [catalog] });
+    const schemas = await schemasRes.json();
+    if (!schemasRes.ok) throw new Error(schemas.error);
+    scope = { containers: (schemas as { path: string[] }[]).map((schema) => schema.path) };
   }
 
   // `includeDefaultSql`: the SQL a migration pastes after DEFAULT, captured now, while the table

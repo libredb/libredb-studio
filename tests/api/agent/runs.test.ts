@@ -17,7 +17,7 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import * as realAuth from "@/lib/auth";
 import * as realSeed from "@/lib/seed/resolve-connection";
 import * as realGate from "@/lib/agent/capability-gate";
-import * as realCatalogProvider from "@/lib/api/catalog-provider";
+import * as realDb from "@/lib/db";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { AgentRunStoreError } from "@/lib/agent/run-store";
 import { agentPosture } from "@/lib/agent/posture";
@@ -45,7 +45,12 @@ const mockResolveConnection = mock(async (body: { connectionId?: string }) => ({
   type: "postgres",
 }));
 
-const mockEditorProvider = mock(async (_connection: unknown, _session: unknown, _catalog?: string) => ({}));
+const mockForCatalog = mock(async (_catalog: string) => ({}));
+const mockGetOrCreateProvider = mock(async () => ({
+  type: "postgres",
+  getCapabilities: () => ({ catalogSessions: true }),
+  forCatalog: mockForCatalog,
+}));
 
 // ─── The runtime: service and drive ─────────────────────────────────────────
 
@@ -167,7 +172,7 @@ function installMocks(): void {
   mock.module("@/lib/agent/capability-gate", () => ({ ...realGate, admitAgentModel: mockAdmitAgentModel }));
   mock.module("@/lib/seed/resolve-connection", () => ({ ...realSeed, resolveConnection: mockResolveConnection }));
   // Opening a database's session connects; the suite answers it instead (#1530).
-  mock.module("@/lib/api/catalog-provider", () => ({ ...realCatalogProvider, editorProvider: mockEditorProvider }));
+  mock.module("@/lib/db", () => ({ ...realDb, getOrCreateProvider: mockGetOrCreateProvider }));
   mock.module("@/lib/agent/runtime", () => ({
     getAgentRunService: mock(async () => ({
       start: mockStart,
@@ -1338,7 +1343,7 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
 
   beforeEach(() => {
     mockResolveConnection.mockImplementation(async () => SERVER);
-    mockEditorProvider.mockImplementation(async () => ({}));
+    mockForCatalog.mockImplementation(async () => ({}));
     mockStart.mockClear();
   });
 
@@ -1359,7 +1364,7 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
   test("no database, one the role cannot open, a malformed one, or one on a pinned connection is refused", async () => {
     expect((await POST(startRequest(VALID_BODY))).status).toBe(400);
     expect((await POST(startRequest({ ...VALID_BODY, catalog: 5 }))).status).toBe(400);
-    mockEditorProvider.mockImplementation(async () => {
+    mockForCatalog.mockImplementation(async () => {
       throw new DatabaseConfigError('"payroll" is not a database this PostgreSQL connection can open', "postgres");
     });
     expect((await POST(startRequest({ ...VALID_BODY, catalog: "payroll" }))).status).toBe(400);

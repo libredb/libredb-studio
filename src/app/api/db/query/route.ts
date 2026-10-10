@@ -1,11 +1,12 @@
 import { firstResultSet } from "@/lib/api/first-result-set";
 import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-probe";
 import { NextRequest, NextResponse } from "next/server";
-import { createDatabaseProvider } from "@/lib/db";
+import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
-import { editorProvider, requestCatalog } from "@/lib/api/catalog-provider";
+import { editorExecutionContext } from "@/lib/api/execution-context";
+import { requestCatalog, scopeToCatalog } from "@/lib/db/catalog-scope";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
@@ -201,10 +202,8 @@ export async function POST(req: NextRequest) {
     // The DuckDB editor file-access posture rides on the server-derived execution context: an
     // admin keeps the full editor reach, every other role opens with external access off, and so
     // does every role on a seed a non-admin role can use, whose one handle they share (non-admin DuckDB file access).
-    //
-    // On a server-level connection (#1530) the statement runs in the database the request names in
-    // `catalog` (the editor's active database), refused on any other connection before a socket opens.
-    const provider = await editorProvider(connection, guard.session, requestCatalog(body));
+    const connected = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    const provider = await scopeToCatalog(connected, requestCatalog(body));
 
     // The statement that actually runs. For an explain request it is the one the
     // CONNECTED provider's strategy builds, never the caller's own SQL: falling

@@ -10,7 +10,6 @@ import {
   acceptedContainerShapes,
   applySourceBound,
   containerDepth,
-  declaresCatalogSessions,
   enumerableKinds,
   findKind,
   isSourcePartUnavailable,
@@ -489,31 +488,6 @@ export function assertContainerAddress(provider: DatabaseProvider, name: string,
 }
 
 /**
- * Where a walk over the containers starts: the body's `parent` cursor, or the root (#1530). A
- * server-level connection must be scoped, by `parent` or by `named` containers, since its root is
- * every database on the server.
- */
-export function enumerationParent(
-  provider: DatabaseProvider,
-  body: Record<string, unknown>,
-  named: boolean,
-): readonly string[] {
-  const parent = optionalStringArray(body, "parent") ?? [];
-  if (named && parent.length > 0) {
-    throw new ObjectRouteError(`"parent" and "containers" both choose what to read; send one of them`, 400);
-  }
-  assertContainerDepth(provider, "parent", parent);
-  if (!named && parent.length === 0 && declaresCatalogSessions(provider.getCapabilities())) {
-    throw new ObjectRouteError(
-      `This ${provider.type} connection reaches every database on its server, so a read of all of them is ` +
-        `refused; name the database to read with "parent"`,
-      400,
-    );
-  }
-  return parent;
-}
-
-/**
  * The enumerable kinds, narrowed to the ones the caller asked for.
  *
  * An undeclared kind is a 400 and never an empty result. Answering nothing for `view` on an engine
@@ -737,7 +711,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * was the only engine that had landed; the day-one set is now three and the count was re-measured
  * rather than the digit bumped, because what it counts is what the paragraph is for.
  *
- * There are THREE producers of `edit`: `providers/sql/postgres.ts:4233`, gated on
+ * There are THREE producers of `edit`: `providers/sql/postgres.ts:4231`, gated on
  * `kindAcceptsSourceEdits(capabilities, kind)`; `providers/sql/trino/index.ts:1284` and
  * `providers/keyvalue/redis.ts:2235`, both gated on `spec.acceptsSourceEdits === true`, which is the
  * same fact read through the same declaration. All three sit on the READABLE arm, verified rather
@@ -771,7 +745,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  *
  * THE BOUND, on both sides of the same constant. `edit-plan/route.ts:74` refuses a SUBMITTED text
  * longer than `EDIT_CHARACTER_LIMIT`, and all three day-one providers refuse a READ definition longer
- * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:4401`, `providers/keyvalue/redis.ts:2325`
+ * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:4399`, `providers/keyvalue/redis.ts:2325`
  * and `providers/sql/trino/index.ts:1478`. The second is what closes the class rather than narrowing
  * it: a plan is minted only from the build's own read, so a definition the pane could only have shown
  * truncated never reaches a plan at all, whatever the client POSTs.

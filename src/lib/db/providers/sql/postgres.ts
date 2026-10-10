@@ -2706,8 +2706,8 @@ export class PostgresProvider extends SQLBaseProvider {
 
   /** An empty `database` on discrete fields reaches the whole server (#1530); a connection string never does. */
   private readonly serverLevel: boolean;
-  /** The database a server-level connection's own pool opened: `postgres`, or `template1`. */
-  private maintenanceDb: string | undefined;
+  /** The database a server-level connection's own pool opens: `postgres`, or `template1` when that is not the role's. */
+  private maintenanceDb = "postgres";
   /** The per-database providers a server-level connection runs requests on (#1530). */
   private readonly catalogSessions: CatalogSessions<PostgresProvider>;
 
@@ -2896,9 +2896,11 @@ export class PostgresProvider extends SQLBaseProvider {
   public validate(): void {
     super.validate();
 
-    // No database is not a mistake: it is a server-level connection (#1530).
-    if (!this.config.connectionString && !this.config.host) {
-      throw new DatabaseConfigError("Host is required for PostgreSQL", "postgres");
+    if (!this.config.connectionString) {
+      if (!this.config.host) {
+        throw new DatabaseConfigError("Host is required for PostgreSQL", "postgres");
+      }
+      // No database is not a mistake: it is a server-level connection (#1530).
     }
   }
 
@@ -2912,7 +2914,10 @@ export class PostgresProvider extends SQLBaseProvider {
     }
 
     try {
-      const client = this.serverLevel ? await this.openMaintenancePool() : await this.openPool(this.config.database);
+      const poolConfig = this.buildPoolConfig();
+      this.pool = new Pool(poolConfig);
+      this.attachPoolListeners(this.pool);
+      const client = await this.pool.connect().catch((error: unknown) => this.connectTemplate1(error));
       // Read before the probes below run on the same session, so what is kept is only what
       // the server said while opening it.
       const startup = takeNotices(client);
@@ -2963,8 +2968,7 @@ export class PostgresProvider extends SQLBaseProvider {
       // drops it WITHOUT calling disconnect(), so a pool left open here leaks
       // its idle socket and timers with no reference left to close them. End it
       // on every failed connect, not just the typed refusal.
-      // Widened: the early return above narrowed the field to null, and `openPool` set it out of sight.
-      const failedPool = this.pool as Pool | null;
+      const failedPool = this.pool;
       this.pool = null;
       await failedPool?.end().catch(() => {});
       // A typed profile refusal keeps its identity: wrapping it would strip the
@@ -3129,24 +3133,18 @@ export class PostgresProvider extends SQLBaseProvider {
     return schemas.map((schema) => ({ ...inCatalog(catalog, schema), level: 1 }));
   }
 
-  private async openPool(database: string | undefined): Promise<PoolClient> {
-    this.pool = new Pool(this.buildPoolConfig(database));
+  /** A server-level connection's own session (#1530) moves to `template1` when `postgres` is not this role's. */
+  private async connectTemplate1(error: unknown): Promise<PoolClient> {
+    const code = String((error as { code?: unknown }).code);
+    if (!this.serverLevel || this.maintenanceDb !== "postgres" || !NOT_THIS_DATABASE_SQLSTATES.has(code)) throw error;
+    await this.pool?.end().catch(() => {});
+    this.maintenanceDb = "template1";
+    this.pool = new Pool(this.buildPoolConfig());
     this.attachPoolListeners(this.pool);
     return this.pool.connect();
   }
 
-  /** A server-level connection's own session (#1530): `postgres`, else `template1` if that is not this role's. */
-  private async openMaintenancePool(): Promise<PoolClient> {
-    try {
-      return await this.openPool((this.maintenanceDb = "postgres"));
-    } catch (error) {
-      if (!NOT_THIS_DATABASE_SQLSTATES.has(String((error as { code?: unknown }).code))) throw error;
-      await this.pool?.end().catch(() => {});
-      return this.openPool((this.maintenanceDb = "template1"));
-    }
-  }
-
-  private buildPoolConfig(database: string | undefined): PgPoolConfig {
+  private buildPoolConfig(): PgPoolConfig {
     const sslConfig = this.buildSSLConfig();
 
     const baseConfig: PgPoolConfig = {
@@ -3174,7 +3172,7 @@ export class PostgresProvider extends SQLBaseProvider {
       port: this.config.port ?? 5432,
       user: this.config.user,
       password: this.config.password,
-      database,
+      database: this.serverLevel ? this.maintenanceDb : this.config.database,
     };
   }
 

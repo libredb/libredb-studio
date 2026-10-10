@@ -1709,7 +1709,7 @@ describe("POST /api/db/query on a server-level connection (#1530)", () => {
     }
   });
 
-  test("refuses a catalog on a connection pinned to its database, without connecting", async () => {
+  test("refuses a catalog on a connection pinned to its database", async () => {
     const res = await POST(
       createMockRequest("/api/db/query", {
         method: "POST",
@@ -1717,8 +1717,8 @@ describe("POST /api/db/query on a server-level connection (#1530)", () => {
       }) as never,
     );
     expect(res.status).toBe(400);
-    expect((await parseResponseJSON<{ error: string }>(res)).error).toContain('takes no "catalog"');
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect((await parseResponseJSON<{ error: string }>(res)).error).toContain('cannot run one in "shop"');
+    expect(mockProvider.query).not.toHaveBeenCalled();
   });
 
   test("refuses a catalog that is not a database name", async () => {
@@ -1729,6 +1729,6 @@ describe("POST /api/db/query on a server-level connection (#1530)", () => {
       }) as never,
     );
     expect(res.status).toBe(400);
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockProvider.query).not.toHaveBeenCalled();
   });
 });

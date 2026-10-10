@@ -1,12 +1,7 @@
 import { NextRequest } from "next/server";
-import {
-  enumerationParent,
-  handleObjectRequest,
-  optionalStringArray,
-  requireString,
-  resolveKinds,
-} from "@/lib/api/object-route";
+import { handleObjectRequest, optionalStringArray, requireString, resolveKinds } from "@/lib/api/object-route";
 import { enumerateContainers } from "@/lib/db/container-walk";
+import { assertNotWholeServer } from "@/lib/db/catalog-scope";
 import type { DatabaseObject } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
@@ -40,8 +35,8 @@ export async function POST(req: NextRequest) {
     const term = requireString(body, "term").toLowerCase();
     const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
 
-    // Under one `parent` when the body names one: a server-level connection must (#1530).
-    const { containers } = await enumerateContainers(provider, enumerationParent(provider, body, false));
+    assertNotWholeServer(provider);
+    const { containers } = await enumerateContainers(provider);
     const listObjects = provider.listObjects.bind(provider);
 
     // Sequential on purpose, and the `no-await-in-loop` warning is accepted here. Every listing

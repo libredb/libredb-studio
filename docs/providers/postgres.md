@@ -1317,7 +1317,7 @@ A discrete-field connection with an empty `database` reaches the whole server; a
 names one, and every connection string, behaves exactly as before.
 
 - **Its own session** opens `postgres`, or `template1` when the first answers `3D000`, `42501` or
-  `28000` (`openMaintenancePool()`). It lists the databases and runs nothing else.
+  `28000` (`connectTemplate1()`). It lists the databases and runs nothing else.
 - **Only databases the role can CONNECT to are listed**: `datallowconn AND NOT datistemplate AND
   has_database_privilege(oid, 'CONNECT')`. A requested name is checked with the same filter before a
   session opens, and refused with `DatabaseConfigError` (400) otherwise.
@@ -2616,7 +2616,7 @@ await server.disconnect();                                 // closes every datab
 - `POST /api/db/cancel` — cancel a running query by id.
 - `POST /api/db/maintenance` — vacuum/analyze/reindex/kill (admin only).
 - On a server-level connection each of these takes a `catalog` naming the database, and the
-  inventory and search walks a `parent: [database]`.
+  inventory reads the `containers` of one database.
 
 ---
 

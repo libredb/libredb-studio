@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import type { MaintenanceOperation } from "@/lib/db";
+import { getOrCreateProvider, type MaintenanceOperation } from "@/lib/db";
 import { emitAuditEvent } from "@/lib/audit";
 import { createErrorResponse } from "@/lib/api/errors";
-import { editorProvider, requestCatalog } from "@/lib/api/catalog-provider";
 import { mapDatabaseError } from "@/lib/db/errors";
 import { maintenanceControl, type MaintenancePlacement } from "@/lib/db/types";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
+import { editorExecutionContext } from "@/lib/api/execution-context";
+import { requestCatalog, scopeToCatalog } from "@/lib/db/catalog-scope";
 import { logger } from "@/lib/logger";
 
 export async function POST(request: Request) {
@@ -57,8 +58,8 @@ export async function POST(request: Request) {
     // falsy test would have refused anyway, because the audit row below records what arrived.
     const requestedContainer: string | undefined = container || undefined;
 
-    // In the database the caller chose, on a server-level connection (#1530).
-    const provider = await editorProvider(connection, guard.session, requestCatalog(body));
+    const connected = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    const provider = await scopeToCatalog(connected, requestCatalog(body));
     const capabilities = provider.getCapabilities();
 
     if (!capabilities.supportsMaintenance) {
