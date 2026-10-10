@@ -1,14 +1,16 @@
 /**
- * What a tree click and Generate Command write for an S3 bucket or object, read through
- * `DIALECT_GENERATORS.s3` in `src/lib/query-generators.ts`, and the read-on command the read-on notice names for `ls`.
+ * What the S3 generators write for a bucket or an object, read through `DIALECT_GENERATORS.s3` in
+ * `src/lib/query-generators.ts`, and the read-on command the read-on notice names for `ls`. No shipped click reaches
+ * the two generators in v1: both kinds are config kinds, so a bucket or object row opens its Source tab.
  *
- * Pure, and shipped to the browser, in the shape of Oxia's generators. A bucket's path is `[bucket]`, an object's
- * `[bucket, key]`. Every value is written by the value rule: `<flag>=` and the quoted value when it begins with `-`
+ * Pure, and shipped to the browser, in the shape of Oxia's generators. The path is the provider's own, one segment:
+ * a bucket's `[bucket]`, an object's `[<bucket>/<key>]`, split at its first `/`. Every value is written by the value rule: `<flag>=` and the quoted value when it begins with `-`
  * (which the console reads only after `=`), else `<flag>` and the quoted value. Every command line written,
  * and every comment line without its `# `, is one the console's parser accepts; the two notes for a key no command
  * line spells are the only lines that are not commands.
  */
 import { quoteShellWord } from "@/lib/db/console/shell-words";
+import { splitVirtualKey } from "../names";
 
 const CR_NOTE = "# This key holds a carriage return, which a command line cannot spell: open it from the Keys panel.";
 const NUL_NOTE = "# This key holds a NUL character, which a command line cannot pass: open it from the Keys panel.";
@@ -40,8 +42,11 @@ function unspelledNote(key: string): string | undefined {
   return undefined;
 }
 
-const bucketOf = (path: readonly string[]): string => path[0];
-const keyOf = (path: readonly string[]): string => path.slice(1).join("/");
+/** The bucket and key a one-segment path names; the key is empty for a bucket. */
+function namesOf(path: readonly string[]): { readonly bucket: string; readonly key: string } {
+  if (path.length !== 1) throw new Error(`An S3 bucket or object path is [name], received ${JSON.stringify(path)}`);
+  return splitVirtualKey(path[0]);
+}
 
 /** `aws s3 ls s3://<bucket>/`: the bucket's top level. */
 const listCommand = (bucket: string): string => `aws s3 ls ${shellWord(`s3://${bucket}/`)}`;
@@ -50,9 +55,8 @@ const previewCommand = (bucket: string, key: string): string => `preview ${shell
 
 /** A tree click (run): the bucket's listing, or the object's preview, or the note for a key no command line spells. */
 export function s3TableQuery(path: readonly string[]): string {
-  const bucket = bucketOf(path);
-  if (path.length === 1) return listCommand(bucket);
-  const key = keyOf(path);
+  const { bucket, key } = namesOf(path);
+  if (key === "") return listCommand(bucket);
   return unspelledNote(key) ?? previewCommand(bucket, key);
 }
 
@@ -62,14 +66,13 @@ export function s3TableQuery(path: readonly string[]): string {
  * a value, so for either the text is the preview alone.
  */
 export function s3SelectQuery(path: readonly string[]): string {
-  const bucket = bucketOf(path);
-  if (path.length === 1)
+  const { bucket, key } = namesOf(path);
+  if (key === "")
     return [
       listCommand(bucket),
       `# aws s3api list-objects-v2 ${s3FlagValue("--bucket", bucket)} --delimiter / --max-items 50`,
       `# aws s3api get-bucket-versioning ${s3FlagValue("--bucket", bucket)}`,
     ].join("\n");
-  const key = keyOf(path);
   const note = unspelledNote(key);
   if (note !== undefined) return note;
   if (key.includes("\n") || namesLocalFile(key)) return previewCommand(bucket, key);

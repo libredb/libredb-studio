@@ -1,5 +1,5 @@
 /**
- * What a tree click and Generate Command write for an S3 bucket or object, the value rule every generated value
+ * What the S3 generators write for a bucket or an object, given the provider's own path, the value rule every generated value
  * follows, and the read-on command the read-on notice names for `ls`. Every command line written, and
  * every generated comment line with its `# ` removed, is one the console's parser accepts, except the two notes for a
  * key no command line can spell.
@@ -32,18 +32,33 @@ function expectEveryLineParses(text: string): void {
 describe("the tree click (run)", () => {
   test("a bucket lists its top level, and an object previews", () => {
     expect(s3TableQuery(["sales"])).toBe("aws s3 ls s3://sales/");
-    expect(s3TableQuery(["sales", "2026/orders.csv"])).toBe("preview s3://sales/2026/orders.csv");
+    expect(s3TableQuery(["sales/2026/orders.csv"])).toBe("preview s3://sales/2026/orders.csv");
+  });
+
+  test("the path is the provider's own: [bucket] for a bucket, [<bucket>/<key>] for an object", () => {
+    expect(s3TableQuery(["sales/2026/a.csv"])).toBe("preview s3://sales/2026/a.csv");
+    expect(s3SelectQuery(["sales/2026/a.csv"])).toBe(
+      ["preview s3://sales/2026/a.csv", "# aws s3api head-object --bucket sales --key 2026/a.csv"].join("\n"),
+    );
+    expect(s3TableQuery(["sales/"])).toBe("aws s3 ls s3://sales/");
+  });
+
+  test("a path of any other length is refused", () => {
+    expect(() => s3TableQuery(["sales", "2026/a.csv"])).toThrow(
+      'An S3 bucket or object path is [name], received ["sales","2026/a.csv"]',
+    );
+    expect(() => s3SelectQuery([])).toThrow("An S3 bucket or object path is [name], received []");
   });
 
   test("a key with a space or a quote is quoted, and a key that begins with - stays in the path", () => {
-    expect(s3TableQuery(["sales", "a b.csv"])).toBe("preview 's3://sales/a b.csv'");
-    expect(s3TableQuery(["sales", "it's.csv"])).toBe("preview 's3://sales/it'\\''s.csv'");
-    expect(s3TableQuery(["sales", "-x"])).toBe("preview s3://sales/-x");
+    expect(s3TableQuery(["sales/a b.csv"])).toBe("preview 's3://sales/a b.csv'");
+    expect(s3TableQuery(["sales/it's.csv"])).toBe("preview 's3://sales/it'\\''s.csv'");
+    expect(s3TableQuery(["sales/-x"])).toBe("preview s3://sales/-x");
   });
 
   test("a key holding a carriage return or a NUL gets its note", () => {
-    expect(s3TableQuery(["sales", "a\rb"])).toBe(CR_NOTE);
-    expect(s3TableQuery(["sales", "a\u0000b"])).toBe(NUL_NOTE);
+    expect(s3TableQuery(["sales/a\rb"])).toBe(CR_NOTE);
+    expect(s3TableQuery(["sales/a\u0000b"])).toBe(NUL_NOTE);
   });
 });
 
@@ -59,31 +74,31 @@ describe("Generate Command (written, not run)", () => {
   });
 
   test("an object: the preview, then its head-object as a comment", () => {
-    expect(s3SelectQuery(["sales", "a b.csv"])).toBe(
+    expect(s3SelectQuery(["sales/a b.csv"])).toBe(
       ["preview 's3://sales/a b.csv'", "# aws s3api head-object --bucket sales --key 'a b.csv'"].join("\n"),
     );
-    expect(s3SelectQuery(["sales", "-x"])).toBe(
+    expect(s3SelectQuery(["sales/-x"])).toBe(
       ["preview s3://sales/-x", "# aws s3api head-object --bucket sales --key=-x"].join("\n"),
     );
   });
 
   test("a key that is exactly ^ is quoted, so the caret scan does not refuse the line", () => {
-    expect(s3SelectQuery(["sales", "^"])).toBe(
+    expect(s3SelectQuery(["sales/^"])).toBe(
       ["preview s3://sales/^", "# aws s3api head-object --bucket sales --key '^'"].join("\n"),
     );
-    expectEveryLineParses(s3SelectQuery(["sales", "^"]));
+    expectEveryLineParses(s3SelectQuery(["sales/^"]));
   });
 
   test("a key that begins with file:// or fileb:// writes the preview alone", () => {
-    expect(s3SelectQuery(["sales", "file://x"])).toBe("preview s3://sales/file://x");
-    expect(s3SelectQuery(["sales", "FILEB://y"])).toBe("preview s3://sales/FILEB://y");
-    expectEveryLineParses(s3SelectQuery(["sales", "file://x"]));
+    expect(s3SelectQuery(["sales/file://x"])).toBe("preview s3://sales/file://x");
+    expect(s3SelectQuery(["sales/FILEB://y"])).toBe("preview s3://sales/FILEB://y");
+    expectEveryLineParses(s3SelectQuery(["sales/file://x"]));
   });
 
   test("a key holding a line feed writes the preview alone, and CR and NUL keys get their notes", () => {
-    expect(s3SelectQuery(["sales", "a\nb"])).toBe("preview 's3://sales/a\nb'");
-    expect(s3SelectQuery(["sales", "a\rb"])).toBe(CR_NOTE);
-    expect(s3SelectQuery(["sales", "a\u0000b"])).toBe(NUL_NOTE);
+    expect(s3SelectQuery(["sales/a\nb"])).toBe("preview 's3://sales/a\nb'");
+    expect(s3SelectQuery(["sales/a\rb"])).toBe(CR_NOTE);
+    expect(s3SelectQuery(["sales/a\u0000b"])).toBe(NUL_NOTE);
   });
 
   test("every line written parses, over keys of every kind", () => {
@@ -102,8 +117,8 @@ describe("Generate Command (written, not run)", () => {
       "a\tb",
     ];
     for (const key of keys) {
-      expectEveryLineParses(s3TableQuery(["sales", key]));
-      expectEveryLineParses(s3SelectQuery(["sales", key]));
+      expectEveryLineParses(s3TableQuery([`sales/${key}`]));
+      expectEveryLineParses(s3SelectQuery([`sales/${key}`]));
     }
     for (const bucket of ["sales", "a.b-c_d"]) {
       expectEveryLineParses(s3TableQuery([bucket]));
