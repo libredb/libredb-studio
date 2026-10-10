@@ -9,6 +9,8 @@
  * A text that does not read as one command line is cut from its first declared flag to the end of that line, and
  * further when the line leaves a quote open or continues.
  *
+ * A history entry's error text is stored through the same mask, since an error can repeat the statement it refuses.
+ *
  * Only history is masked. The tab keeps what the user typed, a saved query keeps what the user saved, and the
  * embedded workspace writes no history of its own.
  */
