@@ -16,7 +16,7 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { connectionFieldHint, DB_UI_CONFIG, hostUriSchemes, offersSshTunnel, readOnlyHint } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { EXTERNAL_DATABASE_TYPES, MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import { assertNotLinkLocalLiteral, LINK_LOCAL_NETWORKS } from "@/lib/db/http/egress-policy";
 import {
@@ -249,6 +249,41 @@ const SERVER_TEXT_PARAGRAPH = [
   "A server's own message is shown only when Studio's sentence quotes it: a signing-scope refusal that names no other region, a server failure, and an error code Studio does not recognise; it follows Studio's sentence, cut to the length the provider exports, and a text that holds the secret access key or the access key ID in any form Studio sends is withheld whole.",
   "The secret access key never reaches an error, a result, a log line, an audit row or a notice.",
 ].join("\n");
+
+const UNITS = [
+  "",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+];
+const TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+
+/** An English numeral as the copy spells it, for 1 to 99: `twenty-eight`, `fifty-five`. */
+function word(count: number): string {
+  if (!Number.isInteger(count) || count < 1 || count > 99) throw new Error(`no numeral for ${count}`);
+  if (count < 20) return UNITS[count];
+  const unit = count % 10;
+  return unit === 0 ? TENS[Math.floor(count / 10)] : `${TENS[Math.floor(count / 10)]}-${UNITS[unit]}`;
+}
+
+/** The same numeral at the start of a sentence. */
+const Word = (count: number): string => `${word(count).charAt(0).toUpperCase()}${word(count).slice(1)}`;
 
 describe("docs/providers/s3.md: shape and fixed text", () => {
   test("1. the header and every section and subsection, in order", () => {
@@ -1211,5 +1246,33 @@ describe("docs/SECURITY.md: the S3 rows and limits", () => {
       "A key whose `.` and `..` segments, resolved with empty segments skipped, climb out of its bucket or name the bucket itself is refused wherever an object path is built, on every connection and before any request, so the scope holds under a server or proxy that resolves dot segments or merges slashes; such a key is listed but not opened.",
     );
     expect(s3).toContain("[`docs/providers/s3.md`](./providers/s3.md) section 13 lists the same limits.");
+  });
+});
+
+describe("packaging and listing copy no count gate reads", () => {
+  test("43. every exhaustive engine list in the packaging and listing descriptions names S3", () => {
+    for (const file of [
+      "snap/snapcraft.yaml",
+      "deploy/railway/TEMPLATE_OVERVIEW.md",
+      "deploy/koyeb/CATALOG_SUBMISSION.md",
+      "packaging/flatpak/org.libredb.Studio.metainfo.xml",
+      "packaging/flatpark/org.libredb.Studio.metainfo.xml",
+    ]) {
+      expect(read(file), file).toContain("S3-compatible object storage");
+    }
+    for (const file of [
+      "desktop/src-tauri/desktop-entry.hbs",
+      "packaging/flatpak/org.libredb.Studio.desktop",
+      "packaging/flatpark/org.libredb.Studio.desktop",
+    ]) {
+      expect(read(file), file).toContain(";Qdrant;Oxia;S3;ObjectStorage;MinIO;IDE;");
+    }
+  });
+
+  test("44. the numerals no gate reads count the external engines", () => {
+    const engines = word(EXTERNAL_DATABASE_TYPES.length);
+    expect(read("deploy/railway/TEMPLATE_OVERVIEW.md")).toContain(`any of the ${engines} engines above`);
+    expect(read("packaging/aur/README.md")).toContain(`The files here name ${engines} engines`);
+    expect(read("packaging/aur/.SRCINFO")).toContain(`for ${engines} database engines`);
   });
 });
