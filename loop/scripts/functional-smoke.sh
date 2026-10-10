@@ -39,7 +39,10 @@ fi
 # No-op when the browser is already cached.
 bunx playwright install chromium
 
+echo "=== functional smoke: live postgres agent read-only profile ==="
+bun test tests/integration/db/postgres-read-only-live.test.ts
+
 echo "=== functional smoke: run ==="
-bunx playwright test --config=playwright.smoke.config.ts
+node node_modules/playwright/cli.js test --config=playwright.smoke.config.ts
 
 echo "=== functional smoke: GREEN ==="
