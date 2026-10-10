@@ -11,14 +11,14 @@
  * The doc test never reaches a server: every provider it builds has a transport factory that throws or a fake one.
  */
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { connectionFieldHint, DB_UI_CONFIG, hostUriSchemes, offersSshTunnel, readOnlyHint } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
-import { assertNotLinkLocalLiteral } from "@/lib/db/http/egress-policy";
+import { assertNotLinkLocalLiteral, LINK_LOCAL_NETWORKS } from "@/lib/db/http/egress-policy";
 import {
   type NodeByteRequest,
   type NodeByteResponse,
@@ -51,6 +51,7 @@ import {
   S3_KEY_SCAN_MAX_COUNT,
   S3_LIST_RESPONSE_BYTES,
   S3_MAX_BUCKETS_READ,
+  S3_PARQUET_DECODE_SLOTS,
   S3_PREVIEW_DEFAULT_ROWS,
   S3_PREVIEW_LIMITS,
   S3_RESULT_MAX_ROWS,
@@ -923,5 +924,75 @@ describe("docs/providers/s3.md: the probe, the declarations and the errors, as t
     expect(linkLocal).not.toBe("");
     expect(errors).toContain(linkLocal);
     expect(errors).toContain(builderRefusal({ host: "s3.example.com" }));
+  });
+});
+
+/**
+ * The backlog ids section 13 cites, each as a link to its entry (Task 9 holds the anchors), under the PR's id mapping;
+ * D273 and D274 are the Parquet schema and row-group entries the measured caps left.
+ */
+const LIMITATION_IDS: readonly string[] = [
+  "D261",
+  "D262",
+  "D263",
+  "D264",
+  "D265",
+  "D267",
+  "D270",
+  "D271",
+  "D273",
+  "D274",
+  "U109",
+  "B104",
+];
+
+/** How a prose list names each entry of LINK_LOCAL_NETWORKS: a /128 as the address, the NAT64 range by name. */
+function networkWords(): string[] {
+  return LINK_LOCAL_NETWORKS.map(([network, prefix]) =>
+    prefix === 128 ? network : network.startsWith("64:ff9b:") ? "NAT64" : `${network}/${prefix}`,
+  );
+}
+
+describe("docs/providers/s3.md: networks, tests, limits and references", () => {
+  test("30. section 3.4 names exactly the networks the byte transport refuses", () => {
+    const networks = sectionOf(DOC, "### 3.4 Link-local networks are always refused");
+    expect(LINK_LOCAL_NETWORKS).toHaveLength(4);
+    for (const [network, prefix] of LINK_LOCAL_NETWORKS) expect(networks).toContain(`\`${network}/${prefix}\``);
+    expect(networks).not.toContain("cloud metadata addresses");
+  });
+
+  test("31. the slow-link bullet's numbers are the budget's and the deadline's", () => {
+    const seconds = S3_SURFACE_DEADLINE_MS / 1000;
+    const rate = Math.ceil((S3_PREVIEW_LIMITS.parquetFetchBudget * 8) / seconds / 1_000_000);
+    expect(flat(sectionOf(DOC, "## 13. Known limitations"))).toContain(
+      `A Parquet preview that reads the whole fetch budget needs a link of about ${rate} Mbit/s to finish within the Source tab's ${seconds}-second deadline; on a slower link it ends with the timeout sentence, and the console's \`preview --columns\` or \`--schema\` reads less.`,
+    );
+  });
+
+  test("32. section 13 cites exactly its backlog ids, each as a link", () => {
+    const limits = sectionOf(DOC, "## 13. Known limitations");
+    const cited = new Set([...limits.matchAll(/\b([DUB]\d+)\b/g)].map((match) => match[1]));
+    expect([...cited].sort()).toEqual([...LIMITATION_IDS].sort());
+    for (const id of LIMITATION_IDS) expect(limits, id).toContain(`([${id}](../BACKLOG.md#`);
+    expect(flat(limits)).toContain(`at most ${S3_PARQUET_DECODE_SLOTS} at a time`);
+    const leaves = S3_PREVIEW_LIMITS.parquetMaxLeafColumns;
+    expect(flat(limits)).toContain(
+      `A Parquet preview shows at most ${n(leaves)} leaf columns and refuses a schema of more than ${n(leaves * 8)} elements`,
+    );
+    expect(flat(limits)).toContain(`names at most ${n(S3_PREVIEW_LIMITS.maxColumns * 8)} columns`);
+  });
+
+  test("33. the testing section names files that exist", () => {
+    const testing = sectionOf(DOC, "## 11. Testing");
+    for (const file of [
+      "docker/s3/README.md",
+      "tests/live/s3-evidence.ts",
+      "tests/live/s3-live-check.ts",
+      "tests/integration/db/s3-provider.test.ts",
+    ]) {
+      expect(testing, file).toContain(`\`${file}\``);
+      expect(existsSync(path.join(ROOT, file)), file).toBe(true);
+    }
+    expect(testing).toContain("bun tests/run-tests.ts tests/integration/db/s3-provider.test.ts");
   });
 });
