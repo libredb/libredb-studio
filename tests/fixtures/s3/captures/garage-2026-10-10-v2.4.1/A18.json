@@ -1,0 +1,539 @@
+{
+  "file": "garage-2026-10-10-v2.4.1/A18.json",
+  "scenario": "A18",
+  "target": "garage",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "tab",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "662"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets><Bucket><CreationDate>2026-10-10T12:33:08.169Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.239Z</CreationDate><Name>studio-versions</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.381Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.316Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.091Z</CreationDate><Name>studio-demo</Name></Bucket></Buckets><Owner><DisplayName>rw</DisplayName><ID>GK000000000000000000000001</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "tab",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo",
+        "query": "delimiter=%2F&encoding-type=url&list-type=2&max-keys=1000&prefix=sp%2F",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "2435"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-demo</Name><Prefix>sp%2F</Prefix><KeyCount>12</KeyCount><MaxKeys>1000</MaxKeys><Delimiter>%2F</Delimiter><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated><Contents><Key>sp%2F.hidden</Key><LastModified>2026-10-10T12:33:11.710Z</LastModified><ETag>&quot;937ec4c10eb20c1f3324ef927697ea66&quot;</ETag><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>sp%2Flit%252Fname.txt</Key><LastModified>2026-10-10T12:33:11.723Z</LastModified><ETag>&quot;937ec4c10eb20c1f3324ef927697ea66&quot;</ETag><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>sp%2Flt%3Camp%26.txt</Key><LastModified>2026-10-10T12:33:11.659Z</LastModified><ETag>&quot;937ec4c10eb20c1f3324ef927697ea66&quot;</ETag><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>sp%2Fpercent%25sign.txt</Key><LastModified>2026-10-10T12:33:11.645Z</LastModified><ETag>&quot;937ec4c10eb20c1f3324ef927697ea66&quot;</ETag><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>sp%2Fplus%2Bsign.txt</Key><LastModified>2026-10-10T12:33:11.638Z</LastModified><ETag>&quot;937ec4c10eb20c1f3324ef927697ea66&quot;</ETag><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>sp%2Ftab%09char.txt</Key><LastModified>2026-10-10T12:33:11.730Z</LastModified><ETag>&quot;937ec4c10eb20c1f3324ef927697ea66&quot;</ETag><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>sp%2Ftrail.</Key><LastModified>2026-10-10T12:33:11.717Z</LastModified><ETag>&quot;937ec4c10eb20c1f3324ef927697ea66&quot;</ETag><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>sp%2Fwith%20space.txt</Key><LastModified>2026-10-10T12:33:11.632Z</LastModified><ETag>&quot;937ec4c10eb20c1f3324ef927697ea66&quot;</ETag><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>sp%2F%C3%BCn%C3%AFc%C3%B8d%C3%A9-%E6%97%A5%E6%9C%AC.txt</Key><LastModified>2026-10-10T12:33:11.652Z</LastModified><ETag>&quot;937ec4c10eb20c1f3324ef927697ea66&quot;</ETag><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents><CommonPrefixes><Prefix>sp%2F.%2F</Prefix></CommonPrefixes><CommonPrefixes><Prefix>sp%2Fdouble%2F</Prefix></CommonPrefixes><CommonPrefixes><Prefix>sp%2Fx%2F</Prefix></CommonPrefixes></ListBucketResult>"
+        }
+      }
+    },
+    {
+      "step": "tab",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "662"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets><Bucket><CreationDate>2026-10-10T12:33:08.091Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.169Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.381Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.316Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.239Z</CreationDate><Name>studio-versions</Name></Bucket></Buckets><Owner><DisplayName>rw</DisplayName><ID>GK000000000000000000000001</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "tab",
+      "request": {
+        "method": "HEAD",
+        "path": "/studio-demo/sp/tab%09char.txt",
+        "query": "",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 12:33:11 GMT"
+          ],
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "etag",
+            "\"937ec4c10eb20c1f3324ef927697ea66\""
+          ],
+          [
+            "content-length",
+            "12"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/plain",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "empty": true
+        }
+      }
+    },
+    {
+      "step": "tab",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo/sp/tab%09char.txt",
+        "query": "",
+        "headers": {
+          "range": "bytes=0-11",
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "range",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 206,
+        "headers": [
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 12:33:11 GMT"
+          ],
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "etag",
+            "\"937ec4c10eb20c1f3324ef927697ea66\""
+          ],
+          [
+            "content-length",
+            "12"
+          ],
+          [
+            "content-range",
+            "bytes 0-11/12"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/plain",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "hello depth\n"
+        }
+      }
+    },
+    {
+      "step": "control",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "662"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets><Bucket><CreationDate>2026-10-10T12:33:08.381Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.239Z</CreationDate><Name>studio-versions</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.091Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.169Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.316Z</CreationDate><Name>studio-bulk</Name></Bucket></Buckets><Owner><DisplayName>rw</DisplayName><ID>GK000000000000000000000001</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "control",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo",
+        "query": "delimiter=%2F&encoding-type=url&list-type=2&max-keys=1000&prefix=ctl%2F",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "514"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-demo</Name><Prefix>ctl%2F</Prefix><KeyCount>1</KeyCount><MaxKeys>1000</MaxKeys><Delimiter>%2F</Delimiter><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated><Contents><Key>ctl%2Fx%01y.txt</Key><LastModified>2026-10-10T12:33:11.736Z</LastModified><ETag>&quot;937ec4c10eb20c1f3324ef927697ea66&quot;</ETag><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>"
+        }
+      }
+    },
+    {
+      "step": "control",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "662"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets><Bucket><CreationDate>2026-10-10T12:33:08.091Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.169Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.316Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.239Z</CreationDate><Name>studio-versions</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.381Z</CreationDate><Name>studio-empty</Name></Bucket></Buckets><Owner><DisplayName>rw</DisplayName><ID>GK000000000000000000000001</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "control",
+      "request": {
+        "method": "HEAD",
+        "path": "/studio-demo/ctl/x%01y.txt",
+        "query": "",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 12:33:11 GMT"
+          ],
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "etag",
+            "\"937ec4c10eb20c1f3324ef927697ea66\""
+          ],
+          [
+            "content-length",
+            "12"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/plain",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "empty": true
+        }
+      }
+    },
+    {
+      "step": "control",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo/ctl/x%01y.txt",
+        "query": "",
+        "headers": {
+          "range": "bytes=0-11",
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "range",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 206,
+        "headers": [
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 12:33:11 GMT"
+          ],
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "etag",
+            "\"937ec4c10eb20c1f3324ef927697ea66\""
+          ],
+          [
+            "content-length",
+            "12"
+          ],
+          [
+            "content-range",
+            "bytes 0-11/12"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/plain",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "hello depth\n"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "tab",
+      "ok": {
+        "names": [
+          "studio-demo/sp/./",
+          "studio-demo/sp/double/",
+          "studio-demo/sp/x/",
+          "studio-demo/sp/.hidden",
+          "studio-demo/sp/lit%2Fname.txt",
+          "studio-demo/sp/lt<amp&.txt",
+          "studio-demo/sp/percent%sign.txt",
+          "studio-demo/sp/plus+sign.txt",
+          "studio-demo/sp/tab\tchar.txt",
+          "studio-demo/sp/trail.",
+          "studio-demo/sp/with space.txt",
+          "studio-demo/sp/ünïcødé-日本.txt"
+        ]
+      },
+      "exchanges": 5
+    },
+    {
+      "step": "control",
+      "ok": {
+        "names": [
+          "studio-demo/ctl/x\u0001y.txt"
+        ]
+      },
+      "exchanges": 5
+    }
+  ]
+}

@@ -1,0 +1,394 @@
+{
+  "target": "garage",
+  "commit": "b2fc7f8a5f999f9146d7599c9f3b52d33e3e8c19",
+  "uncommitted": [
+    "database-compose.yml",
+    "docker/s3/README.md",
+    "docker/s3/seed.sh",
+    "tests/live/s3-evidence-plan.ts",
+    "tests/live/s3-live-support.ts"
+  ],
+  "image": "dxflrs/garage@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020",
+  "version": "v2.4.1",
+  "date": "2026-10-10",
+  "scenarios": [
+    {
+      "name": "surface",
+      "ms": 12,
+      "exchanges": 8,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A1",
+      "ms": 3,
+      "exchanges": 3,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A2",
+      "ms": 2,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A3",
+      "ms": 2,
+      "exchanges": 1,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A4",
+      "ms": 1,
+      "exchanges": 1,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A4p",
+      "ms": 1,
+      "exchanges": 1,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A5",
+      "ms": 1,
+      "exchanges": 1,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A6",
+      "ms": 1,
+      "exchanges": 1,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A7",
+      "ms": 1,
+      "exchanges": 1,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A8",
+      "ms": 2,
+      "exchanges": 3,
+      "clockOffsetMs": 1200000
+    },
+    {
+      "name": "A10",
+      "ms": 2,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A11",
+      "ms": 1,
+      "exchanges": 1,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A12",
+      "ms": 3,
+      "exchanges": 4,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A55",
+      "ms": 1,
+      "exchanges": 0,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A55b",
+      "ms": 0,
+      "exchanges": 0,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A13",
+      "ms": 1,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A14",
+      "ms": 3,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A15",
+      "ms": 4,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A16",
+      "ms": 4,
+      "exchanges": 5,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A17",
+      "ms": 24,
+      "exchanges": 35,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A17b",
+      "ms": 5,
+      "exchanges": 4,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A18",
+      "ms": 7,
+      "exchanges": 10,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A19",
+      "ms": 10,
+      "exchanges": 11,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A20",
+      "ms": 2,
+      "exchanges": 1,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A22",
+      "ms": 17,
+      "exchanges": 3,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A23",
+      "ms": 17,
+      "exchanges": 3,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A24",
+      "ms": 4,
+      "exchanges": 3,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A24b",
+      "ms": 20,
+      "exchanges": 4,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A25",
+      "ms": 7,
+      "exchanges": 6,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A28",
+      "ms": 2,
+      "exchanges": 3,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A29",
+      "ms": 4,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A31",
+      "ms": 29,
+      "exchanges": 4,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A32",
+      "ms": 2,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A35",
+      "ms": 6,
+      "exchanges": 3,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A35b",
+      "ms": 41,
+      "exchanges": 6,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A36",
+      "ms": 3,
+      "exchanges": 3,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A37",
+      "ms": 8,
+      "exchanges": 9,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A38",
+      "ms": 48,
+      "exchanges": 31,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A40",
+      "ms": 90,
+      "exchanges": 8,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A41",
+      "ms": 7,
+      "exchanges": 6,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A42",
+      "ms": 4,
+      "exchanges": 3,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A43",
+      "ms": 2,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A46",
+      "ms": 2,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A47",
+      "ms": 7,
+      "exchanges": 6,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A48",
+      "ms": 2,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A49",
+      "ms": 11,
+      "exchanges": 7,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A50",
+      "ms": 9,
+      "exchanges": 5,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A51",
+      "ms": 24,
+      "exchanges": 21,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A58",
+      "ms": 2,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A59",
+      "ms": 1,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A60",
+      "ms": 1,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A61",
+      "ms": 1,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A62",
+      "ms": 1,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A64",
+      "ms": 1,
+      "exchanges": 1,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A66",
+      "ms": 5,
+      "exchanges": 4,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A66b",
+      "ms": 13,
+      "exchanges": 4,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A52",
+      "ms": 2,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A8-behind",
+      "ms": 1,
+      "exchanges": 1,
+      "clockOffsetMs": -90000000
+    },
+    {
+      "name": "console-ls",
+      "ms": 3,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "console-list-objects-v2-token",
+      "ms": 5,
+      "exchanges": 5,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "console-head-object",
+      "ms": 2,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "console-preview",
+      "ms": 2,
+      "exchanges": 3,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "preview-source",
+      "ms": 15,
+      "exchanges": 11,
+      "clockOffsetMs": 0
+    }
+  ]
+}

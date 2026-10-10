@@ -1,0 +1,132 @@
+{
+  "file": "rustfs-2026-10-10-1.0.1/console-ls.json",
+  "scenario": "console-ls",
+  "target": "rustfs",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "connect",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9020",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124510Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "studio-browse/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "x-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:10 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Buckets><Bucket><CreationDate>2026-10-10T12:11:35.192Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.065Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.221Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.092Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.128Z</CreationDate><Name>studio-versions</Name></Bucket></Buckets><Owner><DisplayName>rustfs</DisplayName><ID>c19050dbcee97fda828689dda99097a6321af2248fa760517237346e5d9c8a66</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "ls",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo",
+        "query": "delimiter=%2F&encoding-type=url&list-type=2&max-keys=500&prefix=data%2F",
+        "headers": {
+          "host": "127.0.0.1:9020",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124510Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "studio-browse/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "x-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "content-length",
+            "2943"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:10 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-demo</Name><Prefix>data/</Prefix><MaxKeys>500</MaxKeys><KeyCount>13</KeyCount><IsTruncated>false</IsTruncated><Contents><ETag>\"058cff9c159ab80c680f5dc3f0d3dc53\"</ETag><Key>data/bomb.ndjson.gz</Key><LastModified>2026-10-10T12:11:35.422Z</LastModified><Size>97791</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"816ff8529f994eee24010404d90e8304\"</ETag><Key>data/doc.json</Key><LastModified>2026-10-10T12:11:35.354Z</LastModified><Size>40</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"d41d8cd98f00b204e9800998ecf8427e\"</ETag><Key>data/empty.txt</Key><LastModified>2026-10-10T12:11:35.497Z</LastModified><Size>0</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"c77297f6d3b58aa5b3016710a3e70507-2\"</ETag><Key>data/multipart.bin</Key><LastModified>2026-10-10T12:11:35.604Z</LastModified><Size>6291456</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"2bcd3c4de20c918e19fab5c36249c70d\"</ETag><Key>data/noext</Key><LastModified>2026-10-10T12:11:35.487Z</LastModified><Size>4096</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"3f2c8bd9cfde6550fdff4b36617c3261\"</ETag><Key>data/one-mib.bin</Key><LastModified>2026-10-10T12:11:35.512Z</LastModified><Size>1048576</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"ec5438061ce5a4afa854f0ee85f99f45\"</ETag><Key>data/rows-partial.ndjson</Key><LastModified>2026-10-10T12:11:35.403Z</LastModified><Size>2097128</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"0cbd711872707f5c4720f78205ebc580\"</ETag><Key>data/rows.ndjson</Key><LastModified>2026-10-10T12:11:35.384Z</LastModified><Size>70</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"df60691c7a167def8d169249b9f53857\"</ETag><Key>data/rows.ndjson.gz</Key><LastModified>2026-10-10T12:11:35.413Z</LastModified><Size>64</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"336a1c20b77e4905e49ff81a12cfc23e\"</ETag><Key>data/table.csv</Key><LastModified>2026-10-10T12:11:35.333Z</LastModified><Size>72</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"0aecd6f420ca17b9c8d5e7f364297a17\"</ETag><Key>data/table.tsv</Key><LastModified>2026-10-10T12:11:35.344Z</LastModified><Size>68</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"d1e27f4357296497fd07177df0e30970\"</ETag><Key>data/truncated.json</Key><LastModified>2026-10-10T12:11:35.373Z</LastModified><Size>2097129</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"20b73b2e9bbe30766f585060b69e513f\"</ETag><Key>data/utf8-boundary.txt</Key><LastModified>2026-10-10T12:11:35.475Z</LastModified><Size>1000007</Size><StorageClass>STANDARD</StorageClass></Contents><Delimiter>/</Delimiter><EncodingType>url</EncodingType></ListBucketResult>"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "ls",
+      "ok": {
+        "rows": 13,
+        "names": [
+          "kind",
+          "last_modified",
+          "size",
+          "name",
+          "key"
+        ],
+        "headers": {
+          "last_modified": "timestamp"
+        },
+        "notices": []
+      },
+      "exchanges": 1
+    }
+  ]
+}

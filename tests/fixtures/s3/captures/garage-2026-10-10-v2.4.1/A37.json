@@ -1,0 +1,534 @@
+{
+  "file": "garage-2026-10-10-v2.4.1/A37.json",
+  "scenario": "A37",
+  "target": "garage",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "csv",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "662"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets><Bucket><CreationDate>2026-10-10T12:33:08.091Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.381Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.169Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.239Z</CreationDate><Name>studio-versions</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.316Z</CreationDate><Name>studio-bulk</Name></Bucket></Buckets><Owner><DisplayName>rw</DisplayName><ID>GK000000000000000000000001</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "csv",
+      "request": {
+        "method": "HEAD",
+        "path": "/studio-demo/data/table.csv",
+        "query": "",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 12:33:11 GMT"
+          ],
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "etag",
+            "\"336a1c20b77e4905e49ff81a12cfc23e\""
+          ],
+          [
+            "content-length",
+            "72"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/csv",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "empty": true
+        }
+      }
+    },
+    {
+      "step": "csv",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo/data/table.csv",
+        "query": "",
+        "headers": {
+          "range": "bytes=0-71",
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "range",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 206,
+        "headers": [
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 12:33:11 GMT"
+          ],
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "etag",
+            "\"336a1c20b77e4905e49ff81a12cfc23e\""
+          ],
+          [
+            "content-length",
+            "72"
+          ],
+          [
+            "content-range",
+            "bytes 0-71/72"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/csv",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "id,name,amount\n1,alice,10.5\n2,bob,20\n3,\"carol, jr\",30\n4,\"multi\nline\",40\n"
+        }
+      }
+    },
+    {
+      "step": "tsv",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "662"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets><Bucket><CreationDate>2026-10-10T12:33:08.381Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.316Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.091Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.239Z</CreationDate><Name>studio-versions</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.169Z</CreationDate><Name>studio-scoped</Name></Bucket></Buckets><Owner><DisplayName>rw</DisplayName><ID>GK000000000000000000000001</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "tsv",
+      "request": {
+        "method": "HEAD",
+        "path": "/studio-demo/data/table.tsv",
+        "query": "",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 12:33:11 GMT"
+          ],
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "etag",
+            "\"0aecd6f420ca17b9c8d5e7f364297a17\""
+          ],
+          [
+            "content-length",
+            "68"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/tab-separated-values",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "empty": true
+        }
+      }
+    },
+    {
+      "step": "tsv",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo/data/table.tsv",
+        "query": "",
+        "headers": {
+          "range": "bytes=0-67",
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "range",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 206,
+        "headers": [
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 12:33:11 GMT"
+          ],
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "etag",
+            "\"0aecd6f420ca17b9c8d5e7f364297a17\""
+          ],
+          [
+            "content-length",
+            "68"
+          ],
+          [
+            "content-range",
+            "bytes 0-67/68"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/tab-separated-values",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "id\tname\tamount\n1\talice\t10.5\n2\tbob\t20\n3\tcarol, jr\t30\n4\tmulti line\t40\n"
+        }
+      }
+    },
+    {
+      "step": "json",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "662"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets><Bucket><CreationDate>2026-10-10T12:33:08.381Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.169Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.239Z</CreationDate><Name>studio-versions</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.316Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.091Z</CreationDate><Name>studio-demo</Name></Bucket></Buckets><Owner><DisplayName>rw</DisplayName><ID>GK000000000000000000000001</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "json",
+      "request": {
+        "method": "HEAD",
+        "path": "/studio-demo/data/doc.json",
+        "query": "",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 12:33:11 GMT"
+          ],
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "etag",
+            "\"816ff8529f994eee24010404d90e8304\""
+          ],
+          [
+            "content-length",
+            "40"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/json",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "empty": true
+        }
+      }
+    },
+    {
+      "step": "json",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo/data/doc.json",
+        "query": "",
+        "headers": {
+          "range": "bytes=0-39",
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "range",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 206,
+        "headers": [
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 12:33:11 GMT"
+          ],
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "etag",
+            "\"816ff8529f994eee24010404d90e8304\""
+          ],
+          [
+            "content-length",
+            "40"
+          ],
+          [
+            "content-range",
+            "bytes 0-39/40"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/json",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "{\"items\":[{\"id\":1},{\"id\":2}],\"ok\":true}\n"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "csv",
+      "ok": {
+        "rows": 4,
+        "names": [
+          "id",
+          "name",
+          "amount"
+        ],
+        "notices": []
+      },
+      "exchanges": 2
+    },
+    {
+      "step": "tsv",
+      "ok": {
+        "rows": 4,
+        "names": [
+          "id",
+          "name",
+          "amount"
+        ],
+        "notices": []
+      },
+      "exchanges": 2
+    },
+    {
+      "step": "json",
+      "ok": {
+        "rows": 1,
+        "names": [
+          "items",
+          "ok"
+        ],
+        "notices": []
+      },
+      "exchanges": 2
+    }
+  ]
+}

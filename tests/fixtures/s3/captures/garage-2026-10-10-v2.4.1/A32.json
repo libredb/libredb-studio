@@ -1,0 +1,136 @@
+{
+  "file": "garage-2026-10-10-v2.4.1/A32.json",
+  "scenario": "A32",
+  "target": "garage",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "source",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "662"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets><Bucket><CreationDate>2026-10-10T12:33:08.239Z</CreationDate><Name>studio-versions</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.316Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.169Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.091Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.381Z</CreationDate><Name>studio-empty</Name></Bucket></Buckets><Owner><DisplayName>rw</DisplayName><ID>GK000000000000000000000001</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "source",
+      "request": {
+        "method": "HEAD",
+        "path": "/studio-demo/data/empty.txt",
+        "query": "",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 12:33:11 GMT"
+          ],
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "etag",
+            "\"d41d8cd98f00b204e9800998ecf8427e\""
+          ],
+          [
+            "content-length",
+            "0"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/plain",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "empty": true
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "source",
+      "ok": {
+        "headers": {
+          "bucket": "studio-demo",
+          "key": "data/empty.txt",
+          "size_bytes": "0",
+          "etag": "d41d8cd98f00b204e9800998ecf8427e",
+          "multipart_parts": "null",
+          "last_modified": "2026-10-10T12:33:11.000Z",
+          "content_type": "text/plain",
+          "content_encoding": "null",
+          "storage_class": "null",
+          "version_id": "null",
+          "server_side_encryption": "null",
+          "restore": "null",
+          "archive_status": "null",
+          "tags": "null",
+          "missing_user_metadata": "null",
+          "metadata_cut": "false",
+          "preview": "unavailable"
+        },
+        "notices": []
+      },
+      "exchanges": 2
+    }
+  ]
+}

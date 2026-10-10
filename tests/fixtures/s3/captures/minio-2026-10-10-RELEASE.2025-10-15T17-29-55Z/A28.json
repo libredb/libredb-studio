@@ -1,0 +1,304 @@
+{
+  "file": "minio-2026-10-10-RELEASE.2025-10-15T17-29-55Z/A28.json",
+  "scenario": "A28",
+  "target": "minio",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "tagged",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9000",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124505Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:05 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T12:34:02.857Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T12:34:02.827Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T12:34:02.867Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T12:34:02.837Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T12:34:02.848Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "tagged",
+      "request": {
+        "method": "HEAD",
+        "path": "/studio-demo/meta/tagged.txt",
+        "query": "",
+        "headers": {
+          "host": "127.0.0.1:9000",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124505Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "12"
+          ],
+          [
+            "etag",
+            "\"937ec4c10eb20c1f3324ef927697ea66\""
+          ],
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 12:34:02 GMT"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-meta-note",
+            "=?UTF-8?q?caf=C3=A9?="
+          ],
+          [
+            "x-amz-meta-owner",
+            "probe"
+          ],
+          [
+            "x-amz-meta-project",
+            "libredb"
+          ],
+          [
+            "x-amz-tagging-count",
+            "2"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:05 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/plain",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "empty": true
+        }
+      }
+    },
+    {
+      "step": "tagged",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo/meta/tagged.txt",
+        "query": "tagging=",
+        "headers": {
+          "host": "127.0.0.1:9000",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124505Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "165"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:05 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Tagging><TagSet><Tag><Key>env</Key><Value>probe</Value></Tag><Tag><Key>tier</Key><Value>gold</Value></Tag></TagSet></Tagging>"
+        }
+      }
+    },
+    {
+      "step": "tagged",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo/meta/tagged.txt",
+        "query": "",
+        "headers": {
+          "range": "bytes=0-11",
+          "host": "127.0.0.1:9000",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124505Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "range",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 206,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "12"
+          ],
+          [
+            "content-range",
+            "bytes 0-11/12"
+          ],
+          [
+            "etag",
+            "\"937ec4c10eb20c1f3324ef927697ea66\""
+          ],
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 12:34:02 GMT"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-meta-note",
+            "=?UTF-8?q?caf=C3=A9?="
+          ],
+          [
+            "x-amz-meta-owner",
+            "probe"
+          ],
+          [
+            "x-amz-meta-project",
+            "libredb"
+          ],
+          [
+            "x-amz-tagging-count",
+            "2"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:05 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/plain",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "hello depth\n"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "tagged",
+      "ok": {
+        "headers": {
+          "bucket": "studio-demo",
+          "key": "meta/tagged.txt",
+          "size_bytes": "12",
+          "etag": "937ec4c10eb20c1f3324ef927697ea66",
+          "multipart_parts": "null",
+          "last_modified": "2026-10-10T12:34:02.000Z",
+          "content_type": "text/plain",
+          "content_encoding": "null",
+          "storage_class": "null",
+          "version_id": "null",
+          "server_side_encryption": "null",
+          "restore": "null",
+          "archive_status": "null",
+          "tags": "env=probe&tier=gold",
+          "user_metadata.note": "=?UTF-8?q?caf=C3=A9?=",
+          "user_metadata.owner": "probe",
+          "user_metadata.project": "libredb",
+          "missing_user_metadata": "null",
+          "metadata_cut": "false",
+          "preview": "hello depth",
+          "preview-origin": "stored",
+          "preview-language": "plaintext",
+          "range-status": "206"
+        },
+        "notices": []
+      },
+      "exchanges": 4
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "file": "rustfs-2026-10-10-1.0.1/A55.json",
+  "scenario": "A55",
+  "target": "rustfs",
+  "clockOffsetMs": 0,
+  "exchanges": [],
+  "result": [
+    {
+      "step": "169.254.169.254 unset",
+      "refused": "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+      "exchanges": 0
+    },
+    {
+      "step": "169.254.169.254 false",
+      "refused": "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+      "exchanges": 0
+    },
+    {
+      "step": "169.254.0.1 unset",
+      "refused": "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+      "exchanges": 0
+    },
+    {
+      "step": "169.254.0.1 false",
+      "refused": "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+      "exchanges": 0
+    },
+    {
+      "step": "fe80::1 unset",
+      "refused": "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+      "exchanges": 0
+    },
+    {
+      "step": "fe80::1 false",
+      "refused": "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+      "exchanges": 0
+    },
+    {
+      "step": "fd00:ec2::254 unset",
+      "refused": "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+      "exchanges": 0
+    },
+    {
+      "step": "fd00:ec2::254 false",
+      "refused": "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+      "exchanges": 0
+    },
+    {
+      "step": "::ffff:169.254.169.254 unset",
+      "refused": "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+      "exchanges": 0
+    },
+    {
+      "step": "::ffff:169.254.169.254 false",
+      "refused": "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+      "exchanges": 0
+    },
+    {
+      "step": "64:ff9b::a9fe:a9fe unset",
+      "refused": "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+      "exchanges": 0
+    },
+    {
+      "step": "64:ff9b::a9fe:a9fe false",
+      "refused": "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
+      "exchanges": 0
+    },
+    {
+      "step": "2852039166",
+      "refused": "Invalid host: expected a hostname, an IPv4 address or an IPv6 address",
+      "exchanges": 0
+    },
+    {
+      "step": "0xa9fea9fe",
+      "refused": "Invalid host: expected a hostname, an IPv4 address or an IPv6 address",
+      "exchanges": 0
+    }
+  ]
+}

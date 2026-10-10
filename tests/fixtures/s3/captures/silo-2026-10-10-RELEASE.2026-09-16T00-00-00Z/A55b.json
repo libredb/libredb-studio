@@ -1,0 +1,14 @@
+{
+  "file": "silo-2026-10-10-RELEASE.2026-09-16T00-00-00Z/A55b.json",
+  "scenario": "A55b",
+  "target": "silo",
+  "clockOffsetMs": 0,
+  "exchanges": [],
+  "result": [
+    {
+      "step": "blocked",
+      "refused": "Invalid host: this HTTP database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS",
+      "exchanges": 0
+    }
+  ]
+}

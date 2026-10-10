@@ -1,0 +1,272 @@
+{
+  "file": "garage-2026-10-10-v2.4.1/console-list-objects-v2-token.json",
+  "scenario": "console-list-objects-v2-token",
+  "target": "garage",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "connect",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000002/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "666"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets><Bucket><CreationDate>2026-10-10T12:33:08.316Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.239Z</CreationDate><Name>studio-versions</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.091Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.169Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.381Z</CreationDate><Name>studio-empty</Name></Bucket></Buckets><Owner><DisplayName>browse</DisplayName><ID>GK000000000000000000000002</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "first-page",
+      "request": {
+        "method": "GET",
+        "path": "/studio-bulk",
+        "query": "encoding-type=url&list-type=2&max-keys=2&prefix=folders%2F",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000002/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "799"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders%2F</Prefix><NextContinuationToken>]Zm9sZGVycy9mLTAwMDEvb25seS50eHQ=</NextContinuationToken><KeyCount>2</KeyCount><MaxKeys>2</MaxKeys><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated><Contents><Key>folders%2Ff-0000%2Fonly.txt</Key><LastModified>2026-10-10T12:33:33.415Z</LastModified><ETag>&quot;9dd4e461268c8034f5c8564e155c67a6&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>folders%2Ff-0001%2Fonly.txt</Key><LastModified>2026-10-10T12:33:33.420Z</LastModified><ETag>&quot;9dd4e461268c8034f5c8564e155c67a6&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>"
+        }
+      }
+    },
+    {
+      "step": "first-page",
+      "request": {
+        "method": "GET",
+        "path": "/studio-bulk",
+        "query": "continuation-token=%5DZm9sZGVycy9mLTAwMDEvb25seS50eHQ%3D&encoding-type=url&list-type=2&max-keys=1&prefix=folders%2F",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000002/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "651"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders%2F</Prefix><ContinuationToken>]Zm9sZGVycy9mLTAwMDEvb25seS50eHQ=</ContinuationToken><NextContinuationToken>]Zm9sZGVycy9mLTAwMDIvb25seS50eHQ=</NextContinuationToken><KeyCount>1</KeyCount><MaxKeys>1</MaxKeys><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated><Contents><Key>folders%2Ff-0002%2Fonly.txt</Key><LastModified>2026-10-10T12:33:33.425Z</LastModified><ETag>&quot;9dd4e461268c8034f5c8564e155c67a6&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>"
+        }
+      }
+    },
+    {
+      "step": "starting-token",
+      "request": {
+        "method": "GET",
+        "path": "/studio-bulk",
+        "query": "continuation-token=%5DZm9sZGVycy9mLTAwMDIvb25seS50eHQ%3D&encoding-type=url&list-type=2&max-keys=2&prefix=folders%2F",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000002/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "871"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders%2F</Prefix><ContinuationToken>]Zm9sZGVycy9mLTAwMDIvb25seS50eHQ=</ContinuationToken><NextContinuationToken>]Zm9sZGVycy9mLTAwMDQvb25seS50eHQ=</NextContinuationToken><KeyCount>2</KeyCount><MaxKeys>2</MaxKeys><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated><Contents><Key>folders%2Ff-0003%2Fonly.txt</Key><LastModified>2026-10-10T12:33:33.429Z</LastModified><ETag>&quot;9dd4e461268c8034f5c8564e155c67a6&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>folders%2Ff-0004%2Fonly.txt</Key><LastModified>2026-10-10T12:33:33.433Z</LastModified><ETag>&quot;9dd4e461268c8034f5c8564e155c67a6&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>"
+        }
+      }
+    },
+    {
+      "step": "starting-token",
+      "request": {
+        "method": "GET",
+        "path": "/studio-bulk",
+        "query": "continuation-token=%5DZm9sZGVycy9mLTAwMDQvb25seS50eHQ%3D&encoding-type=url&list-type=2&max-keys=1&prefix=folders%2F",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T124512Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000002/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "651"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 12:45:12 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders%2F</Prefix><ContinuationToken>]Zm9sZGVycy9mLTAwMDQvb25seS50eHQ=</ContinuationToken><NextContinuationToken>]Zm9sZGVycy9mLTAwMDUvb25seS50eHQ=</NextContinuationToken><KeyCount>1</KeyCount><MaxKeys>1</MaxKeys><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated><Contents><Key>folders%2Ff-0005%2Fonly.txt</Key><LastModified>2026-10-10T12:33:33.439Z</LastModified><ETag>&quot;9dd4e461268c8034f5c8564e155c67a6&quot;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "first-page",
+      "ok": {
+        "rows": 3,
+        "names": [
+          "Kind",
+          "Key",
+          "Size",
+          "LastModified",
+          "ETag",
+          "StorageClass"
+        ],
+        "headers": {
+          "LastModified": "timestamp"
+        },
+        "notices": [
+          "The result holds the first 3 rows: to read on, run the command again with --starting-token eyJDb250aW51YXRpb25Ub2tlbiI6Il1abTlzWkdWeWN5OW1MVEF3TURJdmIyNXNlUzUwZUhRPSJ9."
+        ]
+      },
+      "exchanges": 2
+    },
+    {
+      "step": "starting-token",
+      "ok": {
+        "rows": 3,
+        "names": [
+          "Kind",
+          "Key",
+          "Size",
+          "LastModified",
+          "ETag",
+          "StorageClass"
+        ],
+        "headers": {
+          "LastModified": "timestamp"
+        },
+        "notices": [
+          "The result holds the first 3 rows: to read on, run the command again with --starting-token eyJDb250aW51YXRpb25Ub2tlbiI6Il1abTlzWkdWeWN5OW1MVEF3TURVdmIyNXNlUzUwZUhRPSJ9."
+        ]
+      },
+      "exchanges": 2
+    }
+  ]
+}

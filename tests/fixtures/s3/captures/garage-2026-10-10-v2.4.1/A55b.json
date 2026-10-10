@@ -1,0 +1,14 @@
+{
+  "file": "garage-2026-10-10-v2.4.1/A55b.json",
+  "scenario": "A55b",
+  "target": "garage",
+  "clockOffsetMs": 0,
+  "exchanges": [],
+  "result": [
+    {
+      "step": "blocked",
+      "refused": "Invalid host: this HTTP database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS",
+      "exchanges": 0
+    }
+  ]
+}

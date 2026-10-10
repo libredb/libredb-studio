@@ -1,0 +1,14 @@
+{
+  "file": "minio-2026-10-10-RELEASE.2025-10-15T17-29-55Z/A55b.json",
+  "scenario": "A55b",
+  "target": "minio",
+  "clockOffsetMs": 0,
+  "exchanges": [],
+  "result": [
+    {
+      "step": "blocked",
+      "refused": "Invalid host: this HTTP database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS",
+      "exchanges": 0
+    }
+  ]
+}
