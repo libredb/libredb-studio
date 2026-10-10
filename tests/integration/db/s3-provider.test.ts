@@ -137,7 +137,9 @@ describe("S3 captures", () => {
 
 describe("console over captures", () => {
   test("a write-shaped command is refused with nothing sent", async () => {
-    for (const file of CAPTURES.filter((name) => path.basename(name) === "A50.json")) {
+    const files = CAPTURES.filter((name) => path.basename(name) === "A50.json");
+    expect(files).toHaveLength(5);
+    for (const file of files) {
       const { recorded, summaries } = await replay(file);
       expect(summaries.every((summary) => summary.refused !== undefined && summary.exchanges === 0)).toBe(true);
       // Only the session's own connect probes were sent, never anything the refused commands asked for.
@@ -187,6 +189,7 @@ describe("console over captures", () => {
       "S3 commands take no parameters: write the values in the command.",
     );
     expect(transport.sent.length).toBe(1);
+    transport.assertConsumed();
   });
 
   test.each([
@@ -230,7 +233,9 @@ describe("console over captures", () => {
 
 describe("Source tab and preview over captures", () => {
   test("the Source tab's metadata part of meta/tagged.txt reads the measured fields on every set", async () => {
-    for (const file of CAPTURES.filter((name) => path.basename(name) === "A28.json")) {
+    const files = CAPTURES.filter((name) => path.basename(name) === "A28.json");
+    expect(files).toHaveLength(5);
+    for (const file of files) {
       const { summaries } = await replay(file);
       const tagged = summaries.find((summary) => summary.step === "tagged");
       expect(tagged?.ok?.headers?.size_bytes).toBe("12");
