@@ -257,6 +257,8 @@ describe("readPageHeader reads the count hyparquet reads", () => {
             [1, { i32: big }],
             [2, { i32: 0 }],
             [3, { i32: big }],
+            [5, { i32: 0 }],
+            [6, { i32: 0 }],
           ],
         },
       ],
@@ -377,8 +379,16 @@ describe("readPageHeader reads the count hyparquet reads", () => {
   });
 
   test("a data page v2 with no null count, or with more nulls than values or a negative count of them, is refused", () => {
+    const levels: readonly ThriftField[] = [
+      [5, { i32: 0 }],
+      [6, { i32: 0 }],
+    ];
     const v2 = (nulls: readonly ThriftField[]) =>
-      readPageHeader(pageHeader([[1, { i32: 3 }], ...sizes, [8, { struct: [[1, { i32: 5 }], ...nulls] }]]), 0, 32);
+      readPageHeader(
+        pageHeader([[1, { i32: 3 }], ...sizes, [8, { struct: [[1, { i32: 5 }], ...nulls, ...levels] }]]),
+        0,
+        32,
+      );
     expect(v2([])).toEqual({ ok: false, reason: "a data page v2 has no null count" });
     expect(v2([[2, { i32: -big }]])).toEqual({
       ok: false,
@@ -898,5 +908,167 @@ describe("the field budget", () => {
       [5, { struct: [[1, { i32: 1 }], [2, { i32: 0 }], [3, { i32: 3 }], [4, { i32: 3 }], statistics] }],
     ]);
     expect(readPageHeader(v1, 0, 32)).toMatchObject({ type: 0, numValues: 1 });
+  });
+});
+
+/** A data page v2 of 10 values with page sizes `unc` and `comp`, and the given fields after its null count. */
+const v2With = (levels: readonly ThriftField[], unc = 40, comp = 30): Uint8Array =>
+  pageHeader([
+    [1, { i32: 3 }],
+    [2, { i32: unc }],
+    [3, { i32: comp }],
+    [8, { struct: [[1, { i32: 10 }], [2, { i32: 0 }], [3, { i32: 10 }], [4, { i32: 0 }], ...levels] }],
+  ]);
+
+describe("readPageHeader: the level lengths of a data page v2", () => {
+  test("a data page v2 whose level lengths are not 32-bit integers is refused", () => {
+    const wrong: readonly ThriftValue[] = [
+      { double: Number.NaN },
+      { binary: "ab" },
+      { struct: [[1, { i32: 1 }]] },
+      { list: { type: THRIFT.I32, items: [{ i32: 1 }] } },
+      { i64: 1 },
+    ];
+    for (const value of wrong) {
+      expect(
+        readPageHeader(
+          v2With([
+            [5, value],
+            [6, { i32: 0 }],
+          ]),
+          0,
+          32,
+        ),
+        JSON.stringify(value),
+      ).toEqual({
+        ok: false,
+        reason: "page header field 8.5 is not a 16-bit or 32-bit integer",
+      });
+      expect(
+        readPageHeader(
+          v2With([
+            [5, { i32: 0 }],
+            [6, value],
+          ]),
+          0,
+          32,
+        ),
+        JSON.stringify(value),
+      ).toEqual({
+        ok: false,
+        reason: "page header field 8.6 is not a 16-bit or 32-bit integer",
+      });
+    }
+    expect(readPageHeader(v2With([[6, { i32: 0 }]]), 0, 32)).toEqual({
+      ok: false,
+      reason: "a data page v2 has no level lengths",
+    });
+    expect(readPageHeader(v2With([[5, { i32: 0 }]]), 0, 32)).toEqual({
+      ok: false,
+      reason: "a data page v2 has no level lengths",
+    });
+  });
+
+  test("a data page v2 whose level lengths exceed its page size is refused", () => {
+    const outside = { ok: false, reason: "a data page v2 declares level lengths outside 0 to its page sizes" };
+    expect(
+      readPageHeader(
+        v2With([
+          [5, { i32: -1 }],
+          [6, { i32: 0 }],
+        ]),
+        0,
+        32,
+      ),
+    ).toEqual(outside);
+    expect(
+      readPageHeader(
+        v2With([
+          [5, { i32: 0 }],
+          [6, { i32: -2_147_483_648 }],
+        ]),
+        0,
+        32,
+      ),
+    ).toEqual(outside);
+    expect(
+      readPageHeader(
+        v2With([
+          [5, { i32: 20 }],
+          [6, { i32: 11 }],
+        ]),
+        0,
+        32,
+      ),
+    ).toEqual(outside);
+    expect(
+      readPageHeader(
+        v2With(
+          [
+            [5, { i32: 20 }],
+            [6, { i32: 11 }],
+          ],
+          30,
+          40,
+        ),
+        0,
+        32,
+      ),
+    ).toEqual(outside);
+    expect(
+      readPageHeader(
+        v2With([
+          [5, { i32: 20 }],
+          [6, { i32: 10 }],
+        ]),
+        0,
+        32,
+      ),
+    ).toMatchObject({ type: 3 });
+    expect(
+      readPageHeader(
+        v2With(
+          [
+            [5, { i16: 20 }],
+            [6, { i16: 10 }],
+          ],
+          30,
+          40,
+        ),
+        0,
+        32,
+      ),
+    ).toMatchObject({ type: 3 });
+  });
+
+  test("a data page v2 level length that appears twice is refused", () => {
+    expect(
+      readPageHeader(
+        v2With([
+          [5, { i32: 0 }],
+          [5, { i32: 1 }],
+          [6, { i32: 0 }],
+        ]),
+        0,
+        32,
+      ),
+    ).toEqual({
+      ok: false,
+      reason: "page header field 8.5 appears more than once",
+    });
+  });
+
+  test("a data page v2 whose is_compressed is not a bool is refused; a bool or no field passes", () => {
+    const levels: ThriftField[] = [
+      [5, { i32: 0 }],
+      [6, { i32: 0 }],
+    ];
+    expect(readPageHeader(v2With([...levels, [7, { i32: 0 }]]), 0, 32)).toEqual({
+      ok: false,
+      reason: "page header field 8.7 is not a bool",
+    });
+    expect(readPageHeader(v2With([...levels, [7, { bool: false }]]), 0, 32)).toMatchObject({ type: 3 });
+    expect(readPageHeader(v2With([...levels, [7, { bool: true }]]), 0, 32)).toMatchObject({ type: 3 });
+    expect(readPageHeader(v2With(levels), 0, 32)).toMatchObject({ type: 3 });
   });
 });

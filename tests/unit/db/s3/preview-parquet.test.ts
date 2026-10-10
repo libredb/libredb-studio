@@ -861,6 +861,30 @@ describe("guardedCompressors", () => {
     }
   });
 
+  test("a non-integer output length is refused before the codec runs, and the budget stays whole", async () => {
+    const modules = await loadParquetModules();
+    let calls = 0;
+    const counting = (input: Uint8Array, outputLength: number): Uint8Array => {
+      calls += 1;
+      return modules.codecs.lz4Raw(input, outputLength);
+    };
+    const spied: ParquetModules = {
+      ...modules,
+      snappyUncompress: () => {
+        calls += 1;
+      },
+      codecs: { gzip: counting, brotli: counting, zstd: () => new Uint8Array(0), lz4: counting, lz4Raw: counting },
+    };
+    for (const codec of ["SNAPPY", "GZIP", "BROTLI", "ZSTD", "LZ4", "LZ4_RAW"] as const) {
+      const compressors = guardedCompressors(1_024, spied);
+      for (const length of [Number.NaN, -1, 1.5, Number.POSITIVE_INFINITY, 2 ** 53]) {
+        expect(() => compressors[codec]?.(new Uint8Array(0), length), `${codec} ${length}`).toThrow(DECODE_OVER_BUDGET);
+      }
+      expect(() => compressors[codec]?.(new Uint8Array(0), 2 ** 31), codec).toThrow(DECODE_OVER_BUDGET);
+    }
+    expect(calls).toBe(0);
+  });
+
   test("the budget is spent by each call, and a call within it decodes", async () => {
     const compressors = guardedCompressors(10, await loadParquetModules());
     const stored = new Uint8Array(gzipSync(new TextEncoder().encode("hello")));

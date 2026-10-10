@@ -208,7 +208,21 @@ export interface PageHeaderFacts {
 const COUNT_HOLDER: Readonly<Record<number, number>> = { 0: 5, 2: 7, 3: 8 };
 
 /** The page header fields the facts read; the reader records no other. */
-const FACT_KEYS: ReadonlySet<string> = new Set(["1", "2", "3", "5", "7", "8", "5.1", "7.1", "8.1", "8.2"]);
+const FACT_KEYS: ReadonlySet<string> = new Set([
+  "1",
+  "2",
+  "3",
+  "5",
+  "7",
+  "8",
+  "5.1",
+  "7.1",
+  "8.1",
+  "8.2",
+  "8.5",
+  "8.6",
+  "8.7",
+]);
 
 /**
  * A page header's bounds. The format's PageHeader holds at most 8 fields, its largest nested header 8 more and a
@@ -228,7 +242,9 @@ interface SeenField {
  * Guards, then reads the four facts of one PageHeader at `offset` the way hyparquet's column.js parquetHeader and
  * readPage read them, so a count the guard checks is the count hyparquet allocates from: the count comes from the
  * holder the page type names, every fact must be an i16 or i32 that appears once, and a data page v2's null count,
- * which hyparquet subtracts from its count, must lie between 0 and that count.
+ * which hyparquet subtracts from its count, must lie between 0 and that count. hyparquet decompresses a data page v2
+ * to its uncompressed size less its two level lengths, so both must be i16 or i32 values of at least 0 that together
+ * fit in either page size, and its is_compressed flag, which hyparquet tests with `!== false`, must be a bool.
  */
 export function readPageHeader(
   bytes: Uint8Array,
@@ -273,6 +289,17 @@ export function readPageHeader(
       if (type === 3) {
         const nulls = integer("8.2") ?? stop("a data page v2 has no null count");
         if (nulls < 0 || nulls > numValues) stop("a data page v2 declares a null count outside 0 to its values");
+        const definitionBytes = integer("8.5") ?? stop("a data page v2 has no level lengths");
+        const repetitionBytes = integer("8.6") ?? stop("a data page v2 has no level lengths");
+        if (
+          definitionBytes < 0 ||
+          repetitionBytes < 0 ||
+          definitionBytes + repetitionBytes > Math.min(uncompressedPageSize, compressedPageSize)
+        )
+          stop("a data page v2 declares level lengths outside 0 to its page sizes");
+        const compressed = once("8.7");
+        if (compressed !== undefined && compressed.type !== 1 && compressed.type !== 2)
+          stop("page header field 8.7 is not a bool");
       }
     }
     return { type, uncompressedPageSize, compressedPageSize, numValues, headerBytes: result.end - offset };

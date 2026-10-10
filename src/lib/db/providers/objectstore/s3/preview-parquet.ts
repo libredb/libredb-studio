@@ -604,8 +604,9 @@ export function boundedLz4(input: Uint8Array, outputLength: number): Uint8Array 
 }
 
 /**
- * The second line behind the pre-scan: each codec checks the declared output length against the budget
- * left before it runs, then spends it. Snappy is hyparquet's own pure-JavaScript decoder, so hysnappy's shared WASM
+ * The second line behind the pre-scan: each codec checks that the declared output length is a non-negative
+ * integer within the budget left before it runs, then spends it, so no call can leave the budget anything but a
+ * whole number. Snappy is hyparquet's own pure-JavaScript decoder, so hysnappy's shared WASM
  * memory is never grown; zstd gets a buffer of the declared size, since fzstd otherwise sizes from the frame. Gzip and
  * brotli decode through node:zlib with the declared length as the output limit, because the package decoders size
  * their output from the stream, and both LZ4 codecs through the bounded decoders above, because the package decoder
@@ -616,7 +617,8 @@ export function guardedCompressors(budget: number, modules: ParquetModules): Com
   const guard =
     (codec: (input: Uint8Array, outputLength: number) => Uint8Array) =>
     (input: Uint8Array, outputLength: number): Uint8Array => {
-      if (outputLength > left) throw new Error(DECODE_OVER_BUDGET);
+      if (!Number.isSafeInteger(outputLength) || outputLength < 0 || outputLength > left)
+        throw new Error(DECODE_OVER_BUDGET);
       const output = codec(input, outputLength);
       left -= outputLength;
       return output;
