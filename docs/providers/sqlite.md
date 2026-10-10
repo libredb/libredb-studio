@@ -231,11 +231,13 @@ A statement with no result columns answers `rowCount` from the driver's `changes
 not reset for a statement that changes no row: on node:sqlite a DDL statement or a value-setting
 `PRAGMA` reports the previous write's count (D139 in [`docs/BACKLOG.md`](../BACKLOG.md)).
 
-### 3.4 No transactions API, no cancellation, no pool
+### 3.4 No transactions API, no pool; cancellation via the child-process worker
 
 Unlike every networked SQL provider, SQLite exposes **no** `beginTransaction`/`commit`/`rollback`/
-`queryInTransaction`, **no** `cancelQuery`, and **no** pool/`getPoolStats`. It is a single embedded
-handle. (`POST /api/db/transaction` and `/api/db/cancel` are therefore not applicable to SQLite.)
+`queryInTransaction` and **no** pool/`getPoolStats` — it is a single embedded handle. Cancellation is
+different: on-disk statements run in a child process the provider can kill, so `cancelQuery` and a
+preemptive deadline exist there. (`POST /api/db/transaction` is not applicable to SQLite; `POST
+/api/db/cancel` is, for on-disk connections.)
 
 Since #464 the client can see that: `supportsTransactions: false`
 ([§9](#9-capabilities--labels)) is what withholds BEGIN/COMMIT/ROLLBACK and the auto-rolled-back
@@ -243,23 +245,24 @@ SANDBOX toggle from the editor toolbar here. Before that flag existed the only g
 `isTransactionProvider(provider)` inside the route — a runtime shape check the browser cannot read —
 so the controls rendered on every connection and the route answered HTTP 400.
 
-Since #1364 the same holds for Cancel. `/api/db/provider-meta` reports `supportsQueryCancel: false`
-here, read off the provider by the check the cancel route makes, and the provider declares
-`blocksServerWhileRunning: true`. On an engine that cannot cancel, the editor's control reads "Stop
-waiting" and only ends the editor's wait; here even that is withheld, because the server answers
-nothing else until the statement ends, so the control is shown disabled with the reason on hover.
-Before #1364 the button was live, the route answered 400 "Query cancellation is not supported for
-this database type", and the editor said "Query Cancelled" anyway.
+Since #1623, on-disk connections DO cancel. `/api/db/provider-meta` reports `supportsQueryCancel: true`
+and `blocksServerWhileRunning: false` there, because the statement runs in a child process the
+provider can `SIGKILL` (`src/lib/db/providers/sql/sqlite-worker.ts`). Before #1623 the route answered
+400 "Query cancellation is not supported for this database type", and the editor said "Query
+Cancelled" anyway.
 
-**A long statement blocks the whole server, and nothing can stop it.** Both drivers run the
-statement synchronously on the server's only JavaScript thread, and neither exposes
-`sqlite3_interrupt` or a progress handler (checked on Node 24.11, whose `DatabaseSync` offers
-`setAuthorizer` but neither of the two, and Bun 1.4.2). So no cancel and no deadline can reach a
-running statement: the query timeout is checked after it returns. Measured on 2026-10-03 with
-node:sqlite (SQLite 3.50.4): a 300M-row recursive CTE kept running after Cancel, and `/api/health`
-answered after 69.7 s instead of the usual 6 ms, so every user of the instance waited with it. Moving
-SQLite execution to a worker thread that can be terminated is recorded as D227 in
-[`docs/BACKLOG.md`](../BACKLOG.md).
+**A long on-disk statement no longer blocks the whole server (#1623).** The statement runs in a
+child process, so while one runs the server keeps answering other requests, `cancelQuery` kills the
+child, and the read-only deadline is preemptive. Measured on 2026-10-03, before the worker: a
+300M-row recursive CTE kept running after Cancel, and `/api/health` answered after 69.7 s instead of
+the usual 6 ms.
+
+**The escape hatch `LIBREDB_SQLITE_WORKER=0`** restores the old synchronous behaviour — the test
+suite sets it because Bun 1.4.x hangs a SQLite child process a `bun test` run spawned. With the
+worker off, on-disk statements run on the server thread again, `supportsQueryCancel` reads `false`,
+`blocksServerWhileRunning` reads `true`, and the read-only timeout is post-execution. `:memory:`
+always runs synchronously — a child process cannot share an in-memory database. Node (production)
+keeps the worker on.
 
 ### 3.5 `endOpenQueryTransaction()` — a transaction a statement left open
 

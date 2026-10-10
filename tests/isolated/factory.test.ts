@@ -58,6 +58,13 @@ import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import type { SSHTunnelConfig } from "@/lib/types";
 
+// The SQLite agent-profile tests below construct the read-only profile for its
+// query_only boundary, not to exercise the child transport. The worker's node:sqlite
+// child hangs on Windows (Bun 1.4.x) under the profile's repeated `PRAGMA query_only`,
+// so this file forces the synchronous in-process driver the way its provider tests
+// are designed around.
+process.env.LIBREDB_SQLITE_WORKER = "0";
+
 /** Enforcement caps for the sqlite agent-profile assertions below. */
 const AGENT_BUDGET: ReadOnlyStatementBudget = {
   statementTimeoutMs: 5_000,
@@ -908,7 +915,6 @@ describe("createDatabaseProvider", () => {
       "mongodb",
       "opensearch",
       "redis",
-      "sqlite",
     ]);
   });
 });

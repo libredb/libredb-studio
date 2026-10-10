@@ -216,7 +216,7 @@ describe("ConsentCard", () => {
 
     test("the SQLite chip is shown on SQLite and on nothing else", () => {
       const { getByTestId } = renderCard({ autoExecute: true, engine: "sqlite" });
-      expect(getByTestId("agent-consent-bounds").textContent).toContain("SQLite: not interruptible");
+      expect(getByTestId("agent-consent-bounds").textContent).toContain("SQLite: killed at its timeout");
       cleanup();
 
       const other = renderCard({ autoExecute: true, engine: "postgres" });
@@ -229,7 +229,7 @@ describe("ConsentCard", () => {
       const { getByTestId } = renderCard({ engine: "sqlite" });
 
       expect(getByTestId("agent-auto-execute-sqlite").textContent).toBe(
-        "On SQLite a read is not interrupted when it runs long: it blocks other writers and this application until it finishes.",
+        "On SQLite a read that runs past its timeout is now killed mid-flight; the in-memory database is the exception and still blocks this application until the read finishes.",
       );
     });
 

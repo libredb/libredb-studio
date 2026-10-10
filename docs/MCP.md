@@ -291,9 +291,10 @@ For the first few seconds after that service starts, `opencode mcp list` can say
 | PostgreSQL | Studio stops waiting; the statement runs on until `statement_timeout`, which is set to the time left | The database ends the statement, and the client gets the timeout answer |
 | SQL Server | Studio stops waiting; the statement runs until the provider's deadline cancels it | The provider cancels the statement, and the client gets the timeout answer |
 | DuckDB | Studio stops waiting; the statement runs to completion and its result is discarded | The client gets the timeout answer near `timeout_ms`, and the statement runs on |
-| SQLite | The driver is synchronous, so the whole Studio process, the UI included, waits until the statement ends | The client is answered after the statement ends |
+| SQLite | An on-disk statement runs in a killable child process, so the client is answered at `timeout_ms` | The statement is killed at `timeout_ms`; an in-memory statement still runs to completion |
 
-- One MCP query against a large SQLite table stops the Studio process while it runs.
+- One MCP query against a large SQLite table no longer stops the Studio process: the read runs in a
+  child process and is killed at `timeout_ms`; only an in-memory SQLite read still blocks it.
 - An MCP call on a LibreDB connection that no Studio session holds open opens the file itself and keeps its exclusive lock until that handle has been idle for 30 minutes.
   Every MCP call resets that clock, and meanwhile opening the connection in the Studio editor fails with 503, `LibreDB file is already open by another process (exclusive lock)`.
   When the editor opened the file first, MCP borrows its handle and nothing conflicts ([`docs/providers/libredb.md`](providers/libredb.md#421-on-disk-format-locking-and-version-compatibility-02x)).

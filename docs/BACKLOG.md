@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D260, U17 · 164
+- [Drivers and connections](#drivers-and-connections) — D1-D260, U17 · 163
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U108 · 99
@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
-- [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
+- [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 6
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B103 · 39
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246)
@@ -2497,17 +2497,6 @@ Three other callers list every declared kind without asking the count first, so 
 Found 2026-10-04 by the review of the #1351 fix; pre-existing, not measured end to end through those three surfaces.
 
 **Done when:** on a Materialize connection, search, inventory and the agent's grounding answer for tables, views and materialized views, with the two routine kinds reported as unavailable rather than failing the read.
-
-### D227. A long SQLite statement blocks the whole Studio server, and no cancel or timeout reaches it
-
-`sqlite.ts` runs every statement through `bun:sqlite` or `node:sqlite`, both synchronous, on the server's one JavaScript thread, and neither exposes `sqlite3_interrupt` or a progress handler (Node 24.11's `DatabaseSync` has `setAuthorizer` and neither of those; Bun 1.4.2's `Database` has neither).
-So a running statement cannot be stopped from inside the process, and while it runs no other request is served: measured 2026-10-03 on node:sqlite (SQLite 3.50.4), a 300M-row recursive CTE from the editor made `/api/health` answer after 69.7 s instead of 6 ms, and the 60 s query timeout, checked only after the statement returns, did not end it.
-Since #1364 the editor no longer offers Cancel there (`supportsQueryCancel: false`, `docs/providers/sqlite.md` section 3.4); the block itself is unchanged.
-A1 is the same property on the agent and MCP path.
-
-Found 2026-10-04 while fixing #1364.
-
-**Done when:** SQLite statements run in a worker thread that the provider terminates on cancel and on the query timeout, the SQLite provider implements `cancelQuery`, and a test shows `/api/health` answering while a long statement runs.
 
 ### D228. Platform discovery recognises only four engine families
 
@@ -5288,21 +5277,6 @@ And the code does not exist on `main`: it arrives only if #1070 merges, and a di
 ## Agent M1 deferrals (#328)
 
 Each was decided while building the operation/policy layer, not overlooked.
-
-### A1. A SQLite agent or MCP statement can block the runtime for its whole duration
-
-`sqlite.ts`'s `queryReadOnly` enforces `statementTimeoutMs` as a post-execution deadline: the result of
-an overrunning statement is refused, but the statement is never preempted. SQLite has no
-transaction-local statement timeout, and neither `bun:sqlite` nor `node:sqlite` exposes
-`sqlite3_interrupt` or a progress handler.
-
-Because both drivers are synchronous, a hostile recursive CTE blocks the whole runtime while it runs.
-Same property as the normal SQLite query path, but the input source differs in kind: there the SQL
-comes from an authenticated operator, here from an agent.
-
-`/api/mcp`'s `run_read_query` reaches the same path, `queryReadOnly` under `agent-read-only`, with SQL from an external MCP client, and `docs/MCP.md` states the risk.
-
-**Done when:** either driver exposes an interrupt or progress hook, or agent and MCP SQLite execution moves to a worker that can be killed on deadline.
 
 ### A2. `VACUUM INTO` can create an empty file at an agent-chosen path
 

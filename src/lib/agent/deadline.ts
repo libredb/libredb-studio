@@ -19,11 +19,12 @@
  *
  * What that clamp is worth depends on the adapter, and this module does not
  * pretend otherwise. PostgreSQL preempts (`SET LOCAL statement_timeout`), so
- * there the clamp really does bound the overrun. SQLite's `statementTimeoutMs`
- * is checked AFTER the statement returns — there is no interrupt to preempt it
- * with (`docs/BACKLOG.md` A1, `docs/providers/sqlite.md`) — so clamping bounds
- * what is reported, not what runs. A budget meter built on this must say the
- * same thing rather than imply preemption.
+ * there the clamp really does bound the overrun. SQLite's read-only statements
+ * run in a killable child process, so on disk its deadline preempts there too
+ * (`docs/providers/sqlite.md`); the synchronous fallback (`:memory:`, or
+ * `LIBREDB_SQLITE_WORKER=0`) checks the timeout after the statement returns, and
+ * there clamping bounds what is reported, not what runs. A budget meter built on
+ * this must say which case it is reading rather than imply either one.
  *
  * Three properties are load-bearing:
  *

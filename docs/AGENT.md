@@ -91,36 +91,38 @@ Two companion pages carry what this one deliberately does not:
 
 ## Table of Contents
 
-- [Turning it on](#turning-it-on)
-- [What a run is](#what-a-run-is)
-  - [The conversation a run belongs to](#the-conversation-a-run-belongs-to)
-  - [What a plan run knows](#what-a-plan-run-knows)
-  - [What the inventory is an inventory OF](#what-the-inventory-is-an-inventory-of)
-  - [The statement a plan run drafts](#the-statement-a-plan-run-drafts)
-- [Durability and resume](#durability-and-resume)
-  - [A drive that dies before the loop](#a-drive-that-dies-before-the-loop)
-- [The tool set](#the-tool-set)
-  - [The query-optimization template](#the-query-optimization-template)
-  - [The database-assessment template](#the-database-assessment-template)
-  - [The operations template](#the-operations-template)
-  - [The data-analysis template](#the-data-analysis-template)
-  - [Presenting an answer](#presenting-an-answer)
-  - [Handing the answer to the editor (auto-execute)](#handing-the-answer-to-the-editor-auto-execute)
-  - [What the fence is proved to hold against](#what-the-fence-is-proved-to-hold-against)
-- [What bounds a run](#what-bounds-a-run)
-- [Supported models](#supported-models)
-- [The model side](#the-model-side)
-  - [What a refused model looks like in the app](#what-a-refused-model-looks-like-in-the-app)
-- [Whether the run answered](#whether-the-run-answered)
-  - [The eval harness](#the-eval-harness)
-- [What the removed AI panels did that a run does not](#what-the-removed-ai-panels-did-that-a-run-does-not)
-- [HTTP surface](#http-surface)
-- [The surface in the app](#the-surface-in-the-app)
-- [Deployment](#deployment)
-- [Package boundary](#package-boundary)
-- [Module map](#module-map)
-- [Known limitations](#known-limitations)
-- [Related documentation](#related-documentation)
+- [Agent Runtime — LibreDB Studio](#agent-runtime--libredb-studio)
+  - [Table of Contents](#table-of-contents)
+  - [Turning it on](#turning-it-on)
+  - [What a run is](#what-a-run-is)
+    - [The conversation a run belongs to](#the-conversation-a-run-belongs-to)
+    - [What a plan run knows](#what-a-plan-run-knows)
+    - [What the inventory is an inventory OF](#what-the-inventory-is-an-inventory-of)
+    - [The statement a plan run drafts](#the-statement-a-plan-run-drafts)
+  - [Durability and resume](#durability-and-resume)
+    - [A drive that dies before the loop](#a-drive-that-dies-before-the-loop)
+  - [The tool set](#the-tool-set)
+    - [The query-optimization template](#the-query-optimization-template)
+    - [The database-assessment template](#the-database-assessment-template)
+    - [The operations template](#the-operations-template)
+    - [The data-analysis template](#the-data-analysis-template)
+    - [Presenting an answer](#presenting-an-answer)
+    - [Handing the answer to the editor (auto-execute)](#handing-the-answer-to-the-editor-auto-execute)
+    - [What the fence is proved to hold against](#what-the-fence-is-proved-to-hold-against)
+  - [What bounds a run](#what-bounds-a-run)
+  - [Supported models](#supported-models)
+  - [The model side](#the-model-side)
+    - [What a refused model looks like in the app](#what-a-refused-model-looks-like-in-the-app)
+  - [Whether the run answered](#whether-the-run-answered)
+    - [The eval harness](#the-eval-harness)
+  - [What the removed AI panels did that a run does not](#what-the-removed-ai-panels-did-that-a-run-does-not)
+  - [HTTP surface](#http-surface)
+  - [The surface in the app](#the-surface-in-the-app)
+  - [Deployment](#deployment)
+  - [Package boundary](#package-boundary)
+  - [Module map](#module-map)
+  - [Known limitations](#known-limitations)
+  - [Related documentation](#related-documentation)
 
 ## Turning it on
 
@@ -1500,8 +1502,8 @@ function enumerated over all eight combinations by its test):
    access path is `index` or `mixed` — never `full-scan`, never `unknown` — and the reported
    `estimatedCost` is at most 50 000. **SQLite:** every step a `SEARCH`; any `SCAN`, a mixed plan or
    an unreadable one is risky. SQLite is stricter on purpose: `EXPLAIN QUERY PLAN` reports no cost
-   and no row estimate to weigh, the engine does not preempt a read that overruns, and a runaway read
-   blocks writers and this application until it finishes. Any other dialect is risky, the same
+   and no row estimate to weigh, and an overrunning read is stopped only by killing the child process
+   that runs it, not by an interrupt inside the engine. Any other dialect is risky, the same
    fail-closed posture `summarisePlan` takes.
 
    **A plan the server could only PARTLY read is risky too**, which is the same rule one level down.
@@ -1783,10 +1785,10 @@ it run — `statementTimeoutMs` is clamped down to the time actually remaining, 
 to the execution layer can never exceed what is left of the run.
 
 What that clamp is worth depends on the engine, and this is the one caveat a budget meter must not
-hide: **PostgreSQL preempts an overrunning statement (`SET LOCAL statement_timeout`); SQLite does
-not.** There the timeout is a post-execution deadline, so an overrunning SQLite statement is
-detected after it finishes rather than being stopped mid-flight, and because the drivers are
-synchronous it blocks the runtime while it runs. The rail states this where the meter is shown.
+hide: **PostgreSQL preempts an overrunning statement (`SET LOCAL statement_timeout`); SQLite stops
+it by killing the child process that runs it.** An overrunning on-disk SQLite statement is killed
+mid-flight, so it stops at its timeout rather than running on; the in-memory database has no child
+to kill and is refused only once it returns. The rail states this where the meter is shown.
 
 **The repair loop is bounded twice, and the two bounds are different.** A statement that already
 failed is never admitted again — keyed on a canonical fingerprint built from the shared SQL span
@@ -2343,8 +2345,9 @@ Two further rules govern it:
   standing in for a capability: pause is offered on a running run and resume on a paused one, and
   neither is rendered where the service would refuse it.
 - **The meter reports only what is actually enforced** — statements, database time, the run deadline,
-  repair attempts — and states the SQLite non-preemption caveat rather than implying that an
-  overrunning statement is cut short. It reports no token budget because none is enforced. A statement that
+  repair attempts — and states that SQLite stops an overrunning statement by killing its child
+  process rather than implying the engine interrupts it. It reports no token budget because none is
+  enforced. A statement that
   failed at the database now carries the span the tracker charged for it, so the database-time figure
   no longer counts completed reads only, and a schema capture contributes the statements and the span
   the tracker charged it. What is left uncounted is the difference between an engine's elapsed time
@@ -2596,8 +2599,9 @@ They are listed here so the honest boundary is visible from the behaviour docume
 from the tracker.
 
 **Inherited from the enforcement layer** — `docs/BACKLOG.md`, section "Agent M1 deferrals (#328)",
-entries A1-A3. These bound what any agent statement can be promised: a SQLite statement is not
-preempted, so its timeout is post-execution and an overrunning statement blocks the runtime (A1);
+entries A1-A3. These bound what any agent statement can be promised: a SQLite statement has no
+engine-side interrupt, so stopping one over its timeout means killing the child process that runs
+it (A1);
 `VACUUM INTO` can create an empty file at a chosen path (A2); out-of-scope **reads** have no
 database-native control on either provider — the declared-target allowlist, the statement guard and
 the role's own grants are the whole boundary (A3).
