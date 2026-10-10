@@ -1885,6 +1885,16 @@ describe("the complete engine lists outside the agent docs", () => {
     expect(zh).toContain("InfluxDB 3 (SQL)、Oxia、S3-compatible object storage | Web、移动端 |");
     expect(zh).toContain("InfluxDB 3 (SQL)、Oxia 或 S3-compatible object storage）");
     expect(read("README_ko.md")).toContain("InfluxDB 3 (SQL), Oxia, S3-compatible object storage에 연결할 수 있으며");
+    // The newest-engine history names S3 as the newest and moves Databend one step back, in every README that carries it.
+    expect(readme).toContain("S3-compatible object storage is the newest: AWS CLI read commands");
+    expect(readme).toContain("Databend came before S3-compatible object storage: ");
+    expect(zh).toContain("S3-compatible object storage 是最新的一个：");
+    expect(zh).toContain("Databend 在 S3-compatible object storage 之前：");
+    expect(zh).not.toContain("Databend 是最新的一个");
+    const ko = read("README_ko.md");
+    expect(ko).toContain("가장 최근에 추가된 엔진은 S3-compatible object storage입니다.");
+    expect(ko).toContain("Databend는 S3-compatible object storage보다 먼저 추가된 엔진입니다.");
+    expect(ko).not.toContain("가장 최근에 추가된 엔진은 Databend입니다");
     // The seed table's type list is the union's members, so every README that carries it names s3.
     for (const [file, separator] of [
       ["README.md", ", "],
