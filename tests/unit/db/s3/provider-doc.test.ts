@@ -1003,3 +1003,90 @@ describe("docs/providers/s3.md: networks, tests, limits and references", () => {
     expect(testing).toContain("bun tests/run-tests.ts tests/integration/db/s3-provider.test.ts");
   });
 });
+
+const BACKLOG = read("docs/BACKLOG.md");
+const AGENT_DOC = read("docs/AGENT.md");
+
+/** A BACKLOG entry, from its heading to the next heading, as one line. */
+function backlogEntry(id: string): string {
+  const start = BACKLOG.indexOf(`\n### ${id}. `);
+  if (start < 0) throw new Error(`docs/BACKLOG.md has no entry ${id}`);
+  const end = BACKLOG.indexOf("\n#", start + 1);
+  return flat(BACKLOG.slice(start, end));
+}
+
+/** GitHub's heading anchor: lower case, spaces to `-`, everything but letters, digits, `-` and `_` dropped. */
+const anchorOf = (heading: string): string =>
+  heading
+    .toLowerCase()
+    .replace(/ /g, "-")
+    .replace(/[^a-z0-9_-]/g, "");
+
+/** The anchor of BACKLOG entry `id`, from its heading. */
+function backlogAnchor(id: string): string {
+  const heading = BACKLOG.split("\n").find((line) => line.startsWith(`### ${id}. `));
+  if (heading === undefined) throw new Error(`docs/BACKLOG.md has no entry ${id}`);
+  return anchorOf(heading.slice("### ".length));
+}
+
+/** The entries this part files in PR 3, with a phrase each must hold. */
+const S3_ENTRIES: Readonly<Record<string, string>> = {
+  D261: "No SQL over files in an S3 bucket",
+  D262: "S3 connections cannot use temporary credentials",
+  D263: "S3 connections address buckets by path only",
+  D264: "S3 connections cannot write",
+  D265: "The S3 provider is not verified on AWS S3 or any hosted service",
+  D266: "Each provider carries its own UTF-8 helpers",
+  D267: "The MinIO fixture is a frozen build of an archived project",
+  D268: "The CLI lead and verb-role tokenizer exists twice",
+  D269: "Four providers carry private byte-size formatters",
+  D270: "The HTTP egress guard is the same for every role",
+  D271: "Parquet previews decode on the server's main thread",
+  D273: "Wide Parquet schemas are refused above 1,024 elements",
+  D274: "Large Parquet row groups preview fewer columns or none",
+  U109: "The object tree is not paged, so an account with thousands of buckets lists them in one folder",
+  U110: "Databend declares a User placeholder the dialog never draws",
+  B104: "S3-compatible object storage has no agent execution and no MCP surface",
+};
+
+describe("the backlog record of the S3 provider", () => {
+  test("34. every entry exists under its title, with a Done when", () => {
+    for (const [id, title] of Object.entries(S3_ENTRIES)) {
+      expect(BACKLOG, id).toContain(`\n### ${id}. ${title}\n`);
+      expect(backlogEntry(id), id).toContain("**Done when:**");
+    }
+  });
+
+  test("35. every backlog link the provider doc holds lands on an entry", () => {
+    const anchors = BACKLOG.split("\n")
+      .filter((line) => line.startsWith("### "))
+      .map((line) => anchorOf(line.slice("### ".length)));
+    for (const [, anchor] of DOC.matchAll(/\]\(\.\.\/BACKLOG\.md#([^)]+)\)/g))
+      expect(anchors, anchor).toContain(anchor);
+    for (const id of LIMITATION_IDS) {
+      expect(sectionOf(DOC, "## 13. Known limitations"), id).toContain(`[${id}](../BACKLOG.md#${backlogAnchor(id)})`);
+    }
+  });
+
+  test("36. D223 carries the S3 hex-dump sentence and U82 the amendment", () => {
+    expect(backlogEntry("D223")).toContain(
+      "The S3 object preview's hex dump carries the same caption (src/lib/db/providers/objectstore/s3/preview-render.ts).",
+    );
+    expect(backlogEntry("U82")).toContain(
+      "Since the S3 provider the label is declarable: the dialog draws DB_UI_CONFIG.<type>.fieldLabels.allowInsecureAuth when a type declares it, and S3 declares Connect without TLS.",
+    );
+    expect(backlogEntry("U82")).toContain(
+      "**Done when:** Oxia, influxdb and influxdb3 each declare a fieldLabels.allowInsecureAuth that names their token, every refusal that quotes the label quotes the new one, and a test renders the dialog for a password type and a token type and asserts each label.",
+    );
+  });
+
+  test("37. docs/AGENT.md cites B104 with its reason, after B103", () => {
+    const b103 = AGENT_DOC.indexOf("- **B103**:");
+    const b104 = AGENT_DOC.indexOf("- **B104**:");
+    expect(b103).toBeGreaterThan(-1);
+    expect(b104).toBeGreaterThan(b103);
+    expect(AGENT_DOC).toContain(
+      "- **B104**: S3-compatible object storage is served by plan mode only: MCP is not offered for it (`MCP_EXPOSABLE.s3` is false), and its provider implements no `queryReadOnly`, so agent execution and MCP `run_read_query` refuse it, because no MCP surface that never returns a key is designed yet (`docs/providers/s3.md` section 3.6).",
+    );
+  });
+});
