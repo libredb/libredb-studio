@@ -465,6 +465,29 @@ describe("previewQueryResult", () => {
     expect(large.warnings).toEqual([{ message: "The preview stops at 500 rows." }]);
   });
 
+  test("hex: rows the preview carries are the grid, with the preview's notices as its warnings", () => {
+    const result = previewQueryResult(
+      {
+        kind: "hex",
+        bytes: new Uint8Array(65_536),
+        objectBytes: 65_536,
+        rows: {
+          columns: [
+            { name: "offset", type: "text" },
+            { name: "hex", type: "text" },
+            { name: "text", type: "text" },
+          ],
+          rows: [["00000000", "00 00", ".."]],
+        },
+        notices: ["The preview stops at 10 rows."],
+      },
+      1,
+    );
+    expect(result.fields).toEqual(["offset", "hex", "text"]);
+    expect(result.rows).toEqual([{ offset: "00000000", hex: "00 00", text: ".." }]);
+    expect(result.warnings).toEqual([{ message: "The preview stops at 10 rows." }]);
+  });
+
   test("Parquet summary only: one row per leaf column, with N-PQ-SUMMARY", () => {
     expect(previewQueryResult({ kind: "parquet", summary, notices: [] }, 1)).toMatchObject({
       fields: ["column", "type", "codec", "nulls", "min", "max", "compressed_bytes", "uncompressed_bytes"],

@@ -22,6 +22,7 @@ import {
   previewObject,
   type S3PreviewRequest,
 } from "@/lib/db/providers/objectstore/s3/preview";
+import { previewSentence } from "@/lib/db/providers/objectstore/s3/preview-render";
 import { fakeReader, fixture, headOf } from "../../../helpers/s3-preview-reader";
 
 describe("the preview's limits", () => {
@@ -391,6 +392,7 @@ describe("previewObject: the gzip layer and other encodings", () => {
       kind: "hex",
       notices: [
         "A Parquet file stored compressed as a whole cannot be read by range, so the decoded bytes are shown as hex.",
+        "The preview stops at 100 rows.",
       ],
     });
   });
@@ -483,5 +485,46 @@ describe("previewObject: a row builder that throws falls back to text rows", () 
       },
       notices: ["The object's rows could not be built, so it is shown as text."],
     });
+  });
+});
+
+describe("previewObject: hex rows for the console", () => {
+  const binary = new Uint8Array(65_536).fill(0xff);
+  const hexColumns = [
+    { name: "offset", type: "text" },
+    { name: "hex", type: "text" },
+    { name: "text", type: "text" },
+  ];
+
+  test("a console hex preview carries maxRows rows of 16 bytes and ends with N-ROWS at that cap", async () => {
+    for (const request of [{ maxRows: 10 }, { maxRows: 10, format: "hex" as const }]) {
+      // oxlint-disable-next-line no-await-in-loop -- each request is checked in turn against its own fake reader
+      const { preview } = await run(binary, "blob.bin", { request });
+      if (preview.kind !== "hex") throw new Error(`expected hex, got ${preview.kind}`);
+      expect(preview.rows?.columns).toEqual(hexColumns);
+      expect(preview.rows?.rows).toHaveLength(10);
+      expect(preview.notices.at(-1)).toBe(previewSentence("N-ROWS", { cap: 10 }));
+      expect(preview.notices.at(-1)).toBe("The preview stops at 10 rows.");
+    }
+  });
+
+  test("with no maxRows the console hex preview carries defaultRows rows and N-ROWS at that cap", async () => {
+    const { preview } = await run(binary, "blob.bin");
+    if (preview.kind !== "hex") throw new Error(`expected hex, got ${preview.kind}`);
+    expect(preview.rows?.rows).toHaveLength(100);
+    expect(preview.notices.at(-1)).toBe(previewSentence("N-ROWS", { cap: 100 }));
+  });
+
+  test("the Source tab's hex preview carries no rows", async () => {
+    const { preview } = await run(binary, "blob.bin", { purpose: "source", request: { maxRows: 10 } });
+    expect(preview.kind).toBe("hex");
+    expect("rows" in preview).toBe(false);
+  });
+
+  test("an object of 32 bytes or fewer gives at most two rows and no N-ROWS", async () => {
+    const { preview } = await run(new Uint8Array(32).fill(0xff), "small.bin", { request: { maxRows: 10 } });
+    if (preview.kind !== "hex") throw new Error(`expected hex, got ${preview.kind}`);
+    expect(preview.rows?.rows.length).toBeLessThanOrEqual(2);
+    expect(preview.notices).not.toContain(previewSentence("N-ROWS", { cap: 10 }));
   });
 });

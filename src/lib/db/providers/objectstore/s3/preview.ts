@@ -14,7 +14,7 @@ import { gunzipPrefix } from "./preview-gzip";
 import { jsonDocumentRows, ndjsonRows } from "./preview-json";
 import { PARQUET_DEPS, type ParquetDeps, previewParquet } from "./preview-parquet";
 import { previewMaxRowsSentence, previewSentence, spellName } from "./preview-render";
-import { decodeText, isPrintableText, reindentJson, textLines, utf8BackOff } from "./preview-text";
+import { decodeText, hexRows, isPrintableText, reindentJson, textLines, utf8BackOff } from "./preview-text";
 
 /** What the HEAD that the Source tab or the console already ran said about the object. */
 export interface S3ObjectHead {
@@ -133,6 +133,8 @@ export type S3Preview =
       readonly kind: "hex";
       readonly bytes: Uint8Array;
       readonly objectBytes: number;
+      /** Console purpose only. */
+      readonly rows?: S3PreviewRows;
       readonly notices: readonly string[];
     }
   | {
@@ -228,7 +230,16 @@ async function hex(
     held === undefined
       ? await context.read({ kind: "first", length }, length)
       : held.subarray(0, context.limits.hexBytes);
-  return { kind: "hex", bytes, objectBytes, notices };
+  if (context.purpose === "source") return { kind: "hex", bytes, objectBytes, notices };
+  const maxRows = context.request.maxRows ?? context.limits.defaultRows;
+  const built = hexRows(bytes, maxRows);
+  return {
+    kind: "hex",
+    bytes,
+    objectBytes,
+    rows: { columns: ["offset", "hex", "text"].map((name) => ({ name, type: "text" })), rows: built.rows },
+    notices: built.more ? [...notices, previewSentence("N-ROWS", { cap: maxRows })] : notices,
+  };
 }
 
 /** The console's line rows of a text that has no rows of its own; the Source tab gets none. */

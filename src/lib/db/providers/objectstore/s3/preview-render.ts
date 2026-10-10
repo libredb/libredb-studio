@@ -362,8 +362,9 @@ const bare = (message: string, executionTime: number): QueryResult => ({
 });
 
 /**
- * The console grid of a preview: the rows of a row format or of Parquet; a text's lines; hex
- * rows of 16 bytes; a Parquet summary as one row per leaf column; an empty or refused preview as its sentence alone.
+ * The console grid of a preview: the rows of a row format or of Parquet; a text's lines; hex rows of 16 bytes, taken
+ * from the preview when it carries them; a Parquet summary as one row per leaf column; an empty or refused preview as
+ * its sentence alone.
  */
 export function previewQueryResult(preview: S3Preview, executionTime: number): QueryResult {
   const maxRows = S3_PREVIEW_LIMITS.maxRows;
@@ -373,6 +374,7 @@ export function previewQueryResult(preview: S3Preview, executionTime: number): Q
     case "refused":
       return bare(preview.sentence, executionTime);
     case "hex": {
+      if (preview.rows !== undefined) return grid(preview.rows, preview.notices, executionTime);
       const hex = hexRows(preview.bytes, maxRows);
       const columns = ["offset", "hex", "text"].map((name) => ({ name, type: "text" }));
       const warnings = hex.more ? [...preview.notices, previewSentence("N-ROWS", { cap: maxRows })] : preview.notices;
