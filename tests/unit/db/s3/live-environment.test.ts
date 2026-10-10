@@ -12,18 +12,35 @@
  */
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { rfc3986Path, validateHost } from "@/lib/db/http/endpoint";
+import type { NodeByteTransportOptions, RequestSigner } from "@/lib/db/http/node-transport";
 import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
 import { SeedConfigSchema } from "@/lib/seed/types";
-import { S3_CAPTURE_TARGETS } from "../../../helpers/s3-fixtures";
-import { type S3RecordedAnswer, type S3RecordedRequest, scriptedS3Transport } from "../../../helpers/s3-wire";
+import { S3_CAPTURES_MAX_BYTES, S3_EXCHANGE_BODY_MAX_BYTES, scrubCapture } from "../../../helpers/s3-evidence-scrub";
+import {
+  captureFilesOnDisk,
+  loadS3Capture,
+  readDigestTable,
+  S3_CAPTURE_TARGETS,
+  S3_CAPTURES_ROOT,
+} from "../../../helpers/s3-fixtures";
+import {
+  bodyBytes,
+  type S3RecordedAnswer,
+  type S3RecordedRequest,
+  type S3TransportFactory,
+  scriptedS3Transport,
+  signingInput,
+} from "../../../helpers/s3-wire";
 import { S3_LIVE_ONLY_ROWS, scenariosFor } from "../../../live/s3-evidence-plan";
 import {
   checkS3Step,
   levelPageDefect,
+  readmeRows,
   readS3Principals,
   renderS3Acceptance,
   S3_ACCEPTANCE,
@@ -33,6 +50,7 @@ import {
   S3_TARGET_NAMES,
   s3Fingerprint,
   s3LiveConnection,
+  s3Recorder,
   sentenceRefFinding,
   wireViolations,
 } from "../../../live/s3-live-support";
@@ -1626,5 +1644,158 @@ describe("the bucket fingerprint", () => {
       scriptedS3Transport(fingerprintSteps(NOT_IMPLEMENTED, "1f343b0931126a20f133d67c2b018a3b")).createTransport,
     );
     expect(second["studio-demo"]).not.toBe(first["studio-demo"]);
+  });
+});
+
+// -- tests/fixtures/s3/captures -------------------------------------------------------------------------------------
+
+const EVIDENCE = "tests/live/s3-evidence.ts";
+
+/** The committed captures, held to the capture rules of the scrub; nothing to check before the first recording. */
+function captureFindings(root: string): string[] {
+  if (!existsSync(root)) return [];
+  const findings: string[] = [];
+  const onDisk = captureFilesOnDisk(root);
+  const table = readDigestTable(readFileSync(path.join(root, "README.md"), "utf8"));
+  const listed = new Map(table.map((row) => [row.file, row.sha256]));
+  for (const file of onDisk) {
+    const bytes = readFileSync(path.join(root, file));
+    if (listed.get(file) !== sha256(bytes))
+      findings.push(`${file} is not in the captures README's digest table with its sha256`);
+  }
+  for (const { file } of table)
+    if (!onDisk.includes(file)) findings.push(`the digest table lists ${file}, which is not on disk`);
+  const rows = readmeRows();
+  const secrets = (["root", "browse", "scoped", "getonly"] as const).map((role) => ({
+    label: `${role} password`,
+    value: rows[role].secret,
+  }));
+  let total = 0;
+  for (const file of onDisk) {
+    total += statSync(path.join(root, file)).size;
+    if (file.endsWith("/manifest.json")) continue;
+    const capture = loadS3Capture(file, root);
+    let rendered = "";
+    try {
+      rendered = scrubCapture(capture, secrets);
+    } catch (error) {
+      findings.push((error as Error).message);
+      continue;
+    }
+    if (rendered !== readFileSync(path.join(root, file), "utf8"))
+      findings.push(`${file} does not render unchanged through the scrub`);
+    for (const exchange of capture.exchanges) {
+      if (exchange.request.method !== "GET" && exchange.request.method !== "HEAD")
+        findings.push(`${file} records a ${exchange.request.method} request`);
+      if (bodyBytes(exchange.answer.body).length > S3_EXCHANGE_BODY_MAX_BYTES)
+        findings.push(`${file} step ${exchange.step} records a body over 512 KiB`);
+    }
+  }
+  if (total > S3_CAPTURES_MAX_BYTES) findings.push(`tests/fixtures/s3/captures holds ${total} bytes, over 8 MiB`);
+  return findings;
+}
+
+describe("the S3 captures and their harness", () => {
+  test("every capture is in the digest table, renders unchanged through the scrub, holds only GET and HEAD, and stays under the caps", () => {
+    expect(captureFindings(S3_CAPTURES_ROOT)).toEqual([]);
+  });
+
+  test("a capture with a secret, or one the table does not list, is found", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "s3-captures-rule-"));
+    const set = "silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z";
+    mkdirSync(path.join(root, set));
+    const file = `${set}/A1.json`;
+    writeFileSync(
+      path.join(root, file),
+      `${JSON.stringify({ file, scenario: "A1", target: "silo", clockOffsetMs: 0, exchanges: [], result: ["Probe123pass!"] }, null, 2)}\n`,
+    );
+    writeFileSync(path.join(root, "README.md"), "# S3 captures\n");
+    const findings = captureFindings(root);
+    expect(findings).toContain(`${file} is not in the captures README's digest table with its sha256`);
+    expect(findings.some((finding) => finding.includes("holds the fixture secret root password raw"))).toBe(true);
+  });
+
+  test("the recorder pairs each request with its one signer record, and fails by name when a request left none or two", async () => {
+    const authorization =
+      "AWS4-HMAC-SHA256 Credential=AK/20261009/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=ab12";
+    const signer: RequestSigner = {
+      headerNames: ["authorization", "x-amz-date"],
+      sign: () => ({ authorization, "x-amz-date": "20261009T141900Z" }),
+    };
+    const fake =
+      (signs: number): S3TransportFactory =>
+      (options) => ({
+        async request(sent) {
+          for (let at = 0; at < signs; at += 1) options.signer?.sign(signingInput(options, sent, undefined));
+          return {
+            status: 200,
+            contentType: "application/xml",
+            contentEncoding: null,
+            retryAfter: null,
+            headers: [],
+            headersTruncated: false,
+            bytes: Buffer.from("<ok/>"),
+            truncated: false,
+          };
+        },
+        close: () => undefined,
+      });
+    const options = (recording: ReturnType<typeof s3Recorder>, signed: boolean): NodeByteTransportOptions => ({
+      origin: { scheme: "http", host: "127.0.0.1", port: 9010 },
+      tls: null,
+      maxSockets: 1,
+      headers: {},
+      ...(signed ? { signer: recording.signerWrapper(signer) } : {}),
+    });
+    const sent = {
+      method: "GET" as const,
+      target: { path: "/studio-public", query: "list-type=2" },
+      signal: new AbortController().signal,
+      maxResponseBytes: 1024,
+    };
+
+    const recording = s3Recorder(fake(1), "A1");
+    recording.setStep("list");
+    await recording.createTransport(options(recording, true)).request(sent);
+    await recording.createTransport(options(recording, false)).request(sent);
+    expect(
+      recording.exchanges.map(({ step, request, answer }) => ({
+        step,
+        authorization: request.authorization,
+        date: "x-amz-date" in request.headers ? request.headers["x-amz-date"] : null,
+        body: answer.body,
+      })),
+    ).toEqual([
+      {
+        step: "list",
+        authorization: {
+          scheme: "AWS4-HMAC-SHA256",
+          credential: "AK/20261009/us-east-1/s3/aws4_request",
+          signedHeaders: ["host", "x-amz-date"],
+        },
+        date: "20261009T141900Z",
+        body: { text: "<ok/>" },
+      },
+      { step: "list", authorization: null, date: null, body: { text: "<ok/>" } },
+    ]);
+
+    for (const signs of [0, 2]) {
+      const broken = s3Recorder(fake(signs), "A1");
+      broken.setStep("list");
+      await expect(broken.createTransport(options(broken, true)).request(sent)).rejects.toThrow(
+        `A1 step list: a signed request left ${signs} signer records, not exactly one`,
+      );
+      expect(broken.exchanges).toEqual([]);
+    }
+  });
+
+  test("the harness refuses an argument it does not accept before anything runs", () => {
+    for (const args of [["--target", "silo-tls"], ["--target", "aws"], ["--target"], ["--only", "A1"]]) {
+      const run = Bun.spawnSync([process.execPath, path.join(ROOT, EVIDENCE), ...args], {
+        cwd: ROOT,
+        env: { ...process.env, PATH: "/nonexistent" },
+      });
+      expect({ args, exit: run.exitCode }).toEqual({ args, exit: 2 });
+    }
   });
 });

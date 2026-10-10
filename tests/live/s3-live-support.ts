@@ -29,7 +29,7 @@ import { parse as parseYaml } from "yaml";
 import { QueryCancelledError } from "@/lib/db/errors";
 import { assertNotLinkLocalLiteral, assertPublicLiteralHost } from "@/lib/db/http/egress-policy";
 import { validateHost } from "@/lib/db/http/endpoint";
-import type { NodeByteTransportOptions, RequestSigner } from "@/lib/db/http/node-transport";
+import type { NodeByteTransportOptions, RequestSigner, SigningInput } from "@/lib/db/http/node-transport";
 import { createS3Client } from "@/lib/db/providers/objectstore/s3/client";
 import { buildS3ConnectionOptions, s3EndpointText } from "@/lib/db/providers/objectstore/s3/connection-options";
 import { parseS3Command } from "@/lib/db/providers/objectstore/s3/console/commands";
@@ -45,7 +45,15 @@ import type { DatabaseProvider, KeyScanOptions, KeyScanPage } from "@/lib/db/typ
 import type { DatabaseConnection } from "@/lib/types";
 import type { ObjectSurfaceExpectation } from "../helpers/object-surface-conformance";
 import { normalizeMessage, type S3FixtureSecret } from "../helpers/s3-evidence-scrub";
-import type { S3RecordedRequest, S3TransportFactory } from "../helpers/s3-wire";
+import {
+  answerOf,
+  recordedRequest,
+  recordingSigner,
+  type S3Exchange,
+  type S3RecordedRequest,
+  type S3TransportFactory,
+  signingInput,
+} from "../helpers/s3-wire";
 
 export const ROOT: string =
   typeof import.meta.dir === "string" ? path.resolve(import.meta.dir, "../..") : process.cwd();
@@ -2740,4 +2748,52 @@ export async function s3Fingerprint(
   } finally {
     transport.close();
   }
+}
+
+// ============================================================================
+// The recorder the harness and the live check share
+// ============================================================================
+
+/**
+ * A recording run: the factory and the signer wrapper a provider is built with, and the exchanges they saw. The signer
+ * runs inside the transport at send time, so the signer wrapper records each input and the headers it returned, and
+ * the transport wrapper pairs that record with the request's target and its answer, in order. A signed request must
+ * leave exactly one new signer record, so a concurrent read can never pair a request with another's signature. An
+ * unsigned request is recorded from the same input the transport builds, so the replay rebuilds the same headers.
+ */
+export function s3Recorder(factory: S3TransportFactory, scenario: string) {
+  const exchanges: S3Exchange[] = [];
+  const signed: { readonly input: SigningInput; readonly headers: Readonly<Record<string, string>> }[] = [];
+  let step = scenario;
+  const createTransport: S3TransportFactory = (transportOptions) => {
+    const inner = factory(transportOptions);
+    return {
+      async request(request) {
+        const signs = transportOptions.signer !== undefined;
+        const before = signed.length;
+        const response = await inner.request(request);
+        if (signs && signed.length !== before + 1)
+          throw new Error(
+            `${scenario} step ${step}: a signed request left ${signed.length - before} signer records, not exactly one`,
+          );
+        const record = signs ? signed[before] : undefined;
+        const sent =
+          record === undefined
+            ? recordedRequest(signingInput(transportOptions, request, undefined), {})
+            : recordedRequest(record.input, record.headers);
+        exchanges.push({ step, request: sent, answer: answerOf(response) });
+        return response;
+      },
+      close: () => inner.close(),
+    };
+  };
+  return {
+    exchanges,
+    createTransport,
+    signerWrapper: (signer: RequestSigner) =>
+      recordingSigner(signer, (input, headers) => void signed.push({ input, headers })),
+    setStep(name: string) {
+      step = name;
+    },
+  };
 }
