@@ -267,3 +267,301 @@ describe("the MinIO source build in docker/minio", () => {
     finds(minioReadmeFindings(silent), "GHSA-hv4r-mvr4-25vw");
   });
 });
+
+// -- database-compose.yml ---------------------------------------------------------------------------------------
+
+const SILO_PIN =
+  "pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46";
+const SILO_MC_PIN =
+  "pgsty/mc:RELEASE.2026-09-16T00-00-00Z@sha256:cfc83108c3abb371f8fb84d99c1fdc88f8c237e022409b0081fb7c0a3be634dd";
+const GARAGE_PIN = "dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020";
+const RUSTFS_PIN = "rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c";
+const CURL_PIN = "alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067";
+const OPENSSL_PIN = "alpine/openssl:3.5.8@sha256:3f25da71f70eba788067daac3f3df03bd1de7a7c52ed89fa93b94ad2c92d986b";
+const MINIO_IMAGE = "libredb-fixture/minio:RELEASE.2025-10-15T17-29-55Z";
+const MC_IMAGE = "libredb-fixture/mc:RELEASE.2025-08-13T08-35-41Z";
+
+/** What each service runs: an image pinned by digest, or a local build that is never pulled. */
+const IMAGES: Readonly<Record<string, string>> = {
+  minio: MINIO_IMAGE,
+  "minio-region": MINIO_IMAGE,
+  "minio-principals": MC_IMAGE,
+  "minio-region-principals": MC_IMAGE,
+  "minio-seed": CURL_PIN,
+  "minio-region-seed": CURL_PIN,
+  silo: SILO_PIN,
+  "silo-tls": SILO_PIN,
+  "silo-principals": SILO_MC_PIN,
+  "silo-seed": CURL_PIN,
+  "s3-certs": OPENSSL_PIN,
+  "garage-keys": OPENSSL_PIN,
+  garage: GARAGE_PIN,
+  "garage-setup": CURL_PIN,
+  "garage-seed": CURL_PIN,
+  rustfs: RUSTFS_PIN,
+  "rustfs-principals": SILO_MC_PIN,
+  "rustfs-seed": CURL_PIN,
+};
+const BUILT: Readonly<Record<string, string>> = {
+  minio: "server",
+  "minio-region": "server",
+  "minio-principals": "mc",
+  "minio-region-principals": "mc",
+};
+const PROFILES: Readonly<Record<string, readonly string[] | undefined>> = {
+  minio: ["s3-minio"],
+  "minio-principals": ["s3-minio"],
+  "minio-seed": ["s3-minio"],
+  "minio-region": ["s3-region"],
+  "minio-region-principals": ["s3-region"],
+  "minio-region-seed": ["s3-region"],
+  "s3-certs": ["s3-tls"],
+  "silo-tls": ["s3-tls"],
+};
+const PORTS: Readonly<Record<string, readonly string[]>> = {
+  minio: ["127.0.0.1:9000:9000"],
+  "minio-region": ["127.0.0.1:9030:9000"],
+  silo: ["127.0.0.1:9010:9000"],
+  "silo-tls": ["127.0.0.1:9443:9000"],
+  garage: ["127.0.0.1:3900:3900"],
+  rustfs: ["127.0.0.1:9020:9000"],
+};
+const DEPENDS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "minio-principals": { minio: "service_healthy" },
+  "minio-seed": { minio: "service_healthy" },
+  "minio-region-principals": { "minio-region": "service_healthy" },
+  "minio-region-seed": { "minio-region": "service_healthy" },
+  "silo-principals": { silo: "service_healthy" },
+  "silo-seed": { silo: "service_healthy" },
+  "silo-tls": { "s3-certs": "service_completed_successfully" },
+  garage: { "garage-keys": "service_completed_successfully" },
+  "garage-setup": { garage: "service_started" },
+  "garage-seed": { "garage-setup": "service_completed_successfully" },
+  "rustfs-principals": { rustfs: "service_healthy" },
+  "rustfs-seed": { rustfs: "service_healthy" },
+};
+const HEALTH: Readonly<Record<string, readonly string[]>> = {
+  minio: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/ready"],
+  "minio-region": ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/ready"],
+  silo: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9000/minio/health/ready"],
+  "silo-tls": [
+    "CMD",
+    "curl",
+    "-fsS",
+    "-o",
+    "/dev/null",
+    "--cacert",
+    "/certs/CAs/ca.crt",
+    "https://localhost:9000/minio/health/ready",
+  ],
+  garage: ["CMD", "/garage", "json-api", "GetClusterHealth"],
+  rustfs: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9000/health/ready"],
+};
+
+function serviceSetFindings({ services }: S3Fixtures): string[] {
+  return S3_SERVICES.filter((name) => services[name] === undefined).map((name) => `${name} is missing`);
+}
+
+function imageFindings({ services }: S3Fixtures): string[] {
+  const findings: string[] = [];
+  for (const name of S3_SERVICES) {
+    const service = services[name];
+    if (service === undefined) continue;
+    if (service.image !== IMAGES[name]) findings.push(`${name} runs ${service.image}, not ${IMAGES[name]}`);
+    if (service.container_name !== `libredb-${name}`) findings.push(`${name} is named ${service.container_name}`);
+    const target = BUILT[name];
+    if (target === undefined) {
+      if (!/@sha256:[0-9a-f]{64}$/.test(service.image ?? "")) findings.push(`${name} is not pinned by digest`);
+      if (service.build !== undefined) findings.push(`${name} is built from source`);
+    } else {
+      if (service.build?.context !== "./docker/minio" || service.build.target !== target)
+        findings.push(`${name} is not built from docker/minio target ${target}`);
+      if (service.pull_policy !== "build") findings.push(`${name} may pull ${service.image} from a registry`);
+    }
+  }
+  return findings;
+}
+
+/** A plain `up` starts every service with no profile, so none of those may build anything from source. */
+function plainUpBuildFindings({ services }: S3Fixtures): string[] {
+  return S3_SERVICES.filter(
+    (name) => services[name]?.build !== undefined && (services[name]?.profiles ?? []).length === 0,
+  ).map((name) => `${name} is built from source and starts on a plain up`);
+}
+
+function profileFindings({ services }: S3Fixtures): string[] {
+  return S3_SERVICES.filter(
+    (name) => services[name] !== undefined && !Bun.deepEquals(services[name]?.profiles, PROFILES[name]),
+  ).map(
+    (name) =>
+      `${name} has the profiles ${JSON.stringify(services[name]?.profiles)}, not ${JSON.stringify(PROFILES[name])}`,
+  );
+}
+
+function restartFindings({ services }: S3Fixtures): string[] {
+  const mustNotRestart = ["minio", "minio-region", ...S3_ONE_SHOTS];
+  return mustNotRestart
+    .filter((name) => services[name] !== undefined && services[name]?.restart !== "no")
+    .map((name) => `${name} restarts (${services[name]?.restart}), so the daemon may start it again`);
+}
+
+function portFindings({ services }: S3Fixtures): string[] {
+  const findings: string[] = [];
+  for (const name of S3_SERVICES) {
+    const ports = services[name]?.ports;
+    if (ports === undefined && PORTS[name] === undefined) continue;
+    if (!Bun.deepEquals(ports, PORTS[name]))
+      findings.push(`${name} publishes ${JSON.stringify(ports)}, not ${JSON.stringify(PORTS[name])}`);
+    for (const port of ports ?? [])
+      if (!port.startsWith("127.0.0.1:")) findings.push(`${name} publishes ${port} beyond loopback`);
+  }
+  return findings;
+}
+
+function boundFindings({ services }: S3Fixtures): string[] {
+  const findings: string[] = [];
+  for (const name of S3_SERVICES) {
+    const service = services[name];
+    if (service === undefined) continue;
+    const limits = service.deploy?.resources?.limits;
+    if (limits?.cpus === undefined || limits.memory === undefined) findings.push(`${name} is not bounded`);
+    else if (service.memswap_limit !== limits.memory) findings.push(`${name} may swap past its bound`);
+  }
+  return findings;
+}
+
+function healthFindings({ services }: S3Fixtures): string[] {
+  const findings: string[] = [];
+  for (const name of S3_SERVERS) {
+    const check = services[name]?.healthcheck;
+    if (!Bun.deepEquals(check?.test, HEALTH[name]))
+      findings.push(`${name} does not probe ${JSON.stringify(HEALTH[name])}`);
+    const timing = { start_period: "30s", start_interval: "1s", interval: "30s", timeout: "5s", retries: 3 };
+    for (const [field, value] of Object.entries(timing))
+      if (check?.[field as keyof typeof timing] !== value)
+        findings.push(`${name} has ${field} ${String(check?.[field as keyof typeof timing])}, not ${value}`);
+  }
+  return findings;
+}
+
+function dependsFindings({ services }: S3Fixtures): string[] {
+  return Object.entries(DEPENDS)
+    .filter(([name]) => services[name] !== undefined)
+    .filter(([name, wanted]) => {
+      const actual = Object.fromEntries(
+        Object.entries(services[name]?.depends_on ?? {}).map(([key, value]) => [key, value.condition]),
+      );
+      return !Bun.deepEquals(actual, wanted);
+    })
+    .map(([name, wanted]) => `${name} does not wait for ${JSON.stringify(wanted)}`);
+}
+
+function volumeFindings({ volumes, volumesComment }: S3Fixtures): string[] {
+  const findings = ["s3-garage-keys", "s3-certs"]
+    .filter((name) => !volumes.includes(name))
+    .map((name) => `the volume ${name} is missing`);
+  const sentence =
+    "s3-garage-keys keeps Garage's generated RPC secret, admin and metrics tokens and its four key secrets, and s3-certs the TLS fixture's generated CA and certificate.";
+  if (!volumesComment.replace(/\n\s*#\s*/g, " ").includes(sentence))
+    findings.push("the volumes comment does not describe s3-garage-keys and s3-certs");
+  return findings;
+}
+
+function consolePortFindings({ services }: S3Fixtures): string[] {
+  return S3_SERVERS.flatMap((name) =>
+    (services[name]?.ports ?? [])
+      .filter((port) => /:(9001|9091|3903|3901)$/.test(port))
+      .map((port) => `${name} publishes the console or admin port ${port}`),
+  );
+}
+
+describe("the S3 services in database-compose.yml", () => {
+  test("every S3 fixture service is present", () => {
+    clean(serviceSetFindings(real));
+    finds(
+      serviceSetFindings(planted(real, (draft) => void delete draft.services["garage-setup"])),
+      "garage-setup is missing",
+    );
+  });
+
+  test("each pulled image is pinned by digest; MinIO and its mc are built locally and never pulled", () => {
+    clean(imageFindings(real));
+    finds(
+      imageFindings(planted(real, (draft) => void (draft.services.silo.image = "pgsty/silo:latest"))),
+      "silo runs pgsty/silo:latest",
+    );
+    finds(imageFindings(planted(real, (draft) => void delete draft.services.minio.pull_policy)), "minio may pull");
+  });
+
+  test("a plain up builds nothing from source", () => {
+    clean(plainUpBuildFindings(real));
+    finds(
+      plainUpBuildFindings(planted(real, (draft) => void delete draft.services.minio.profiles)),
+      "minio is built from source and starts on a plain up",
+    );
+  });
+
+  test("MinIO behind s3-minio, its region variant behind s3-region, the TLS fixture behind s3-tls, the rest on a plain up", () => {
+    clean(profileFindings(real));
+    finds(
+      profileFindings(planted(real, (draft) => void (draft.services.rustfs.profiles = ["s3"]))),
+      "rustfs has the profiles",
+    );
+  });
+
+  test("the frozen MinIO and every one-shot never restart", () => {
+    clean(restartFindings(real));
+    finds(
+      restartFindings(planted(real, (draft) => void (draft.services["minio-region"].restart = "unless-stopped"))),
+      "minio-region restarts",
+    );
+  });
+
+  test("every published port is on 127.0.0.1 and no console or admin port is published", () => {
+    clean(portFindings(real));
+    clean(consolePortFindings(real));
+    finds(
+      portFindings(planted(real, (draft) => void (draft.services.garage.ports = ["3900:3900"]))),
+      "garage publishes 3900:3900 beyond loopback",
+    );
+    finds(
+      consolePortFindings(planted(real, (draft) => void draft.services.silo.ports?.push("127.0.0.1:9011:9001"))),
+      "silo publishes the console",
+    );
+  });
+
+  test("every service is bounded with no swap past its bound", () => {
+    clean(boundFindings(real));
+    finds(
+      boundFindings(planted(real, (draft) => void (draft.services["rustfs-seed"].memswap_limit = "1G"))),
+      "rustfs-seed may swap",
+    );
+  });
+
+  test("every server has its measured probe and the five timing fields", () => {
+    clean(healthFindings(real));
+    finds(
+      healthFindings(planted(real, (draft) => void (draft.services.garage.healthcheck = { test: ["CMD", "true"] }))),
+      "garage does not probe",
+    );
+  });
+
+  test("each one-shot waits for the right condition, and nothing waits for Garage to be healthy before its layout exists", () => {
+    clean(dependsFindings(real));
+    const deadlock = planted(
+      real,
+      (draft) => void (draft.services["garage-setup"].depends_on = { garage: { condition: "service_healthy" } }),
+    );
+    finds(dependsFindings(deadlock), "garage-setup does not wait for");
+  });
+
+  test("the two named volumes exist and the comment says what each holds", () => {
+    clean(volumeFindings(real));
+    finds(
+      volumeFindings(
+        planted(real, (draft) => void (draft.volumes = draft.volumes.filter((name) => name !== "s3-certs"))),
+      ),
+      "the volume s3-certs is missing",
+    );
+  });
+});
