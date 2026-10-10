@@ -87,7 +87,11 @@ const mockFieldRefusal = (config: { label: string }, connection: Record<string, 
     const value = connection[field];
     if (value === undefined || value === "") {
       if (rule.required) return rule.required;
-    } else if (rule.format && !rule.format.test(String(value))) return MOCK_FORMAT_SENTENCES[field];
+    } else if (rule.format && !rule.format.test(String(value))) {
+      const sentence = MOCK_FORMAT_SENTENCES[field];
+      if (sentence === undefined) throw new Error(`the mock declares no format sentence for ${field}`);
+      return sentence;
+    }
   }
   return undefined;
 };

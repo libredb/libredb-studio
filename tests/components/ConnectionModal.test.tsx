@@ -2064,14 +2064,19 @@ describe("ConnectionModal", () => {
 
     test("draws the Region box for s3 only, from its field list, labelled, hinted and with its placeholder from its declaration", () => {
       mockFormOverrides = { type: "s3", region: "eu-central-1" };
+      // A declared label and placeholder that differ from the dialog's own, so the second half proves the fallback.
+      mockDeclaredCopy = {
+        fieldLabels: { ...MOCK_FIELD_COPY.s3.fieldLabels, region: "Signing region" },
+        fieldPlaceholders: { ...MOCK_FIELD_COPY.s3.fieldPlaceholders, region: "eu-west-3" },
+      };
       const { container, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
       const box = container.querySelector("#region") as HTMLInputElement;
       expect(box.value).toBe("eu-central-1");
-      expect(box.placeholder).toBe("us-east-1");
+      expect(box.placeholder).toBe("eu-west-3");
       expect(box.getAttribute("autocomplete")).toBe("off");
       expect(box.getAttribute("spellcheck")).toBe("false");
       expect(box.getAttribute("aria-describedby")).toBe("region-hint");
-      expect(container.querySelector('label[for="region"]')?.textContent).toBe("Region");
+      expect(container.querySelector('label[for="region"]')?.textContent).toBe("Signing region");
       expect(container.querySelector('[data-testid="region-hint"]')?.textContent).toBe(
         MOCK_FIELD_COPY.s3.fieldHints?.region,
       );

@@ -362,7 +362,9 @@ describe("docs/providers/s3.md: shape and fixed text", () => {
       ssl: { mode: "verify-full" },
     });
     const withMcp = { ...file, connections: [{ ...file.connections[0], mcp: true }] };
-    expect(SeedConfigSchema.safeParse(withMcp).success).toBe(false);
+    const refused = SeedConfigSchema.safeParse(withMcp);
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues.map((issue) => issue.path.at(-1))).toContain("mcp");
   });
 });
 
@@ -1305,7 +1307,9 @@ const COMPOSE = parseYaml(read("database-compose.yml"), { merge: true }) as {
 function hostPort(service: string): string {
   const published = COMPOSE.services[service]?.ports?.[0];
   if (published === undefined) throw new Error(`database-compose.yml publishes no port for ${service}`);
-  return published.split(":").at(-2) ?? "";
+  const parts = published.split(":");
+  if (parts.length !== 3) throw new Error(`${service} publishes ${published}, not 127.0.0.1:<host>:<container>`);
+  return parts[1];
 }
 
 /** The six S3 fixture targets, by the name the fixture tables give each. */
@@ -1622,7 +1626,10 @@ describe("docs/providers/README.md", () => {
       const profile = COMPOSE.services[fixture.service]?.profiles?.[0];
       expect(cells.at(-1), fixture.service).toBe(profile === undefined ? "*none* |" : `\`${profile}\` |`);
     }
-    const paragraph = flat(index.slice(index.indexOf("**S3-compatible object storage has six fixtures")));
+    const paragraphAt = index.indexOf("**S3-compatible object storage has six fixtures");
+    if (paragraphAt === -1) throw new Error("the fixtures index has no S3-compatible object storage paragraph");
+    const paragraphEnd = index.indexOf("\n\n", paragraphAt);
+    const paragraph = flat(index.slice(paragraphAt, paragraphEnd === -1 ? undefined : paragraphEnd));
     for (const fixture of S3_FIXTURES) expect(paragraph, fixture.service).toContain(`\`${fixture.service}\``);
     expect(paragraph).toContain("](../../docker/s3/README.md)");
     // A plain `up` starts every service with no profile; the one-shots are the ones that never restart.

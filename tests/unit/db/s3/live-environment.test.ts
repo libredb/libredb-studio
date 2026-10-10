@@ -153,8 +153,9 @@ function loadS3Fixtures(): S3Fixtures {
     readonly volumes: Readonly<Record<string, unknown>>;
   };
   const services = Object.fromEntries(Object.entries(compose.services).filter(([name]) => S3_SERVICES.includes(name)));
-  // The volumes comment sits under `volumes:` (database-compose.yml:3102-3117): every line up to the first entry.
+  // The volumes comment sits under the top-level `volumes:` of database-compose.yml: every line up to the first entry.
   const volumesAt = composeText.indexOf("\nvolumes:\n");
+  if (volumesAt === -1) throw new Error("database-compose.yml has no top-level volumes: key");
   const afterVolumes = composeText.slice(volumesAt + "\nvolumes:".length).split("\n");
   const firstEntry = afterVolumes.findIndex((line, index) => index > 0 && !/^\s*#/.test(line));
   const textFiles = [
@@ -225,8 +226,8 @@ function dockerfileFindings({ files }: S3Fixtures): string[] {
     const body = byName[name]?.body ?? "";
     for (const setting of ["CGO_ENABLED=0", "GOTOOLCHAIN=local", "GOSUMDB=sum.golang.org", "GOFLAGS=-trimpath"])
       if (!body.includes(setting)) findings.push(`stage ${name} does not set ${setting}`);
-    if (!/^FROM golang:1\.24\.\d+-alpine3\.22@sha256:[0-9a-f]{64} AS /m.test(dockerfile))
-      findings.push("the build stages are not FROM a golang:1.24.13-alpine3.22 image pinned by digest");
+    if (!/^golang:1\.24\.\d+-alpine3\.22@sha256:[0-9a-f]{64}$/.test(byName[name]?.from ?? ""))
+      findings.push(`stage ${name} is not FROM a golang:1.24.x-alpine3.22 image pinned by digest`);
   }
   if (!(byName["build-minio"]?.body ?? "").includes(`go install github.com/minio/minio@${MINIO_COMMIT}`))
     findings.push(`stage build-minio does not install minio at ${MINIO_COMMIT}`);
@@ -305,6 +306,16 @@ describe("the MinIO source build in docker/minio", () => {
       );
     });
     finds(dockerfileFindings(toolchain), "does not set GOTOOLCHAIN=local");
+    // Only build-mc moves off the Go image, so a rule over the whole file, which build-minio still satisfies, would miss it.
+    const oneStage = planted(real, (draft) => {
+      const text = draft.files["docker/minio/Dockerfile"];
+      const from = /^FROM (\S+) AS build-mc$/m.exec(text)?.[1] ?? "";
+      draft.files["docker/minio/Dockerfile"] = text.replace(
+        `FROM ${from} AS build-mc`,
+        `FROM ${ALPINE_PIN} AS build-mc`,
+      );
+    });
+    finds(dockerfileFindings(oneStage), "stage build-mc is not FROM a golang:1.24.x-alpine3.22 image pinned by digest");
   });
 
   test("the README says why it is built here, that it is frozen and unpatched, and where it may run", () => {
@@ -1080,8 +1091,15 @@ function seedFindings({ files }: S3Fixtures): string[] {
   return findings;
 }
 
+/** The seed script's text; a missing script is an error, never an empty script that finds nothing. */
+function seedScript(files: Readonly<Record<string, string>>): string {
+  const script = files[SEED];
+  if (script === undefined) throw new Error(`${SEED} is missing`);
+  return script;
+}
+
 function seedSourceFindings({ files }: S3Fixtures): string[] {
-  const script = files[SEED] ?? "";
+  const script = seedScript(files);
   const findings: string[] = [];
   for (const [, name] of script.matchAll(/\/preview\/([A-Za-z0-9._-]+)/g))
     if (!existsSync(path.join(ROOT, "tests/fixtures/s3/preview", name)))
@@ -2127,7 +2145,7 @@ describe("the tunnel check tests/live/s3-tunnel-check.ts", () => {
 
 function firstRunFindings({ files }: S3Fixtures): string[] {
   const findings: string[] = [];
-  for (const { wire, outcomes } of specialKeys(files[SEED] ?? ""))
+  for (const { wire, outcomes } of specialKeys(seedScript(files)))
     if (outcomes.includes("measure"))
       findings.push(`${SEED} still holds measure for ${wire}: record the first seed run's outcome`);
   for (const file of [README, "docker/minio/README.md"])
