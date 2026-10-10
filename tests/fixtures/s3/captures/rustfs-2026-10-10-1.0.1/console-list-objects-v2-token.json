@@ -13,7 +13,7 @@
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124510Z",
+          "x-amz-date": "20261010T154406Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -43,7 +43,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:10 GMT"
+            "Sat, 10 Oct 2026 15:44:06 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -52,7 +52,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Buckets><Bucket><CreationDate>2026-10-10T12:11:35.192Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.065Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.221Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.092Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.128Z</CreationDate><Name>studio-versions</Name></Bucket></Buckets><Owner><DisplayName>rustfs</DisplayName><ID>c19050dbcee97fda828689dda99097a6321af2248fa760517237346e5d9c8a66</ID></Owner></ListAllMyBucketsResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Buckets><Bucket><CreationDate>2026-10-10T15:37:06.165Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.039Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.235Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.076Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.127Z</CreationDate><Name>studio-versions</Name></Bucket></Buckets><Owner><DisplayName>rustfs</DisplayName><ID>c19050dbcee97fda828689dda99097a6321af2248fa760517237346e5d9c8a66</ID></Owner></ListAllMyBucketsResult>"
         }
       }
     },
@@ -65,7 +65,7 @@
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124510Z",
+          "x-amz-date": "20261010T154406Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -95,7 +95,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:10 GMT"
+            "Sat, 10 Oct 2026 15:44:06 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -104,7 +104,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><MaxKeys>2</MaxKeys><KeyCount>2</KeyCount><IsTruncated>true</IsTruncated><NextContinuationToken>Zm9sZGVycy9mLTAwMDEvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjZkNDZlOGNjLWUwYzctNGMxMC1hM2VhLTA4NDExMjk2MTllOSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><Contents><ETag>\"9dd4e461268c8034f5c8564e155c67a6\"</ETag><Key>folders/f-0000/only.txt</Key><LastModified>2026-10-10T12:12:04.123Z</LastModified><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"9dd4e461268c8034f5c8564e155c67a6\"</ETag><Key>folders/f-0001/only.txt</Key><LastModified>2026-10-10T12:12:04.133Z</LastModified><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><MaxKeys>2</MaxKeys><KeyCount>2</KeyCount><IsTruncated>true</IsTruncated><NextContinuationToken>Zm9sZGVycy9mLTAwMDEvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjY1MGE0NzMxLWFiZTUtNDRmNi1iMjQ5LTFhNGQxYTg4NGI0NSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><Contents><ETag>\"9dd4e461268c8034f5c8564e155c67a6\"</ETag><Key>folders/f-0000/only.txt</Key><LastModified>2026-10-10T15:37:32.629Z</LastModified><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"9dd4e461268c8034f5c8564e155c67a6\"</ETag><Key>folders/f-0001/only.txt</Key><LastModified>2026-10-10T15:37:32.639Z</LastModified><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
         }
       }
     },
@@ -113,11 +113,11 @@
       "request": {
         "method": "GET",
         "path": "/studio-bulk",
-        "query": "continuation-token=Zm9sZGVycy9mLTAwMDEvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjZkNDZlOGNjLWUwYzctNGMxMC1hM2VhLTA4NDExMjk2MTllOSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ%3D%3D&encoding-type=url&list-type=2&max-keys=1&prefix=folders%2F",
+        "query": "continuation-token=Zm9sZGVycy9mLTAwMDEvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjY1MGE0NzMxLWFiZTUtNDRmNi1iMjQ5LTFhNGQxYTg4NGI0NSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ%3D%3D&encoding-type=url&list-type=2&max-keys=1&prefix=folders%2F",
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124510Z",
+          "x-amz-date": "20261010T154406Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -147,7 +147,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:10 GMT"
+            "Sat, 10 Oct 2026 15:44:06 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -156,7 +156,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><MaxKeys>1</MaxKeys><KeyCount>1</KeyCount><ContinuationToken>Zm9sZGVycy9mLTAwMDEvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjZkNDZlOGNjLWUwYzctNGMxMC1hM2VhLTA4NDExMjk2MTllOSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</ContinuationToken><IsTruncated>true</IsTruncated><NextContinuationToken>Zm9sZGVycy9mLTAwMDIvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjZkNDZlOGNjLWUwYzctNGMxMC1hM2VhLTA4NDExMjk2MTllOSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><Contents><ETag>\"9dd4e461268c8034f5c8564e155c67a6\"</ETag><Key>folders/f-0002/only.txt</Key><LastModified>2026-10-10T12:12:04.190Z</LastModified><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><MaxKeys>1</MaxKeys><KeyCount>1</KeyCount><ContinuationToken>Zm9sZGVycy9mLTAwMDEvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjY1MGE0NzMxLWFiZTUtNDRmNi1iMjQ5LTFhNGQxYTg4NGI0NSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</ContinuationToken><IsTruncated>true</IsTruncated><NextContinuationToken>Zm9sZGVycy9mLTAwMDIvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjY1MGE0NzMxLWFiZTUtNDRmNi1iMjQ5LTFhNGQxYTg4NGI0NSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><Contents><ETag>\"9dd4e461268c8034f5c8564e155c67a6\"</ETag><Key>folders/f-0002/only.txt</Key><LastModified>2026-10-10T15:37:32.649Z</LastModified><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
         }
       }
     },
@@ -165,11 +165,11 @@
       "request": {
         "method": "GET",
         "path": "/studio-bulk",
-        "query": "continuation-token=Zm9sZGVycy9mLTAwMDIvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjZkNDZlOGNjLWUwYzctNGMxMC1hM2VhLTA4NDExMjk2MTllOSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ%3D%3D&encoding-type=url&list-type=2&max-keys=2&prefix=folders%2F",
+        "query": "continuation-token=Zm9sZGVycy9mLTAwMDIvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjY1MGE0NzMxLWFiZTUtNDRmNi1iMjQ5LTFhNGQxYTg4NGI0NSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ%3D%3D&encoding-type=url&list-type=2&max-keys=2&prefix=folders%2F",
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124510Z",
+          "x-amz-date": "20261010T154406Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -199,7 +199,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:10 GMT"
+            "Sat, 10 Oct 2026 15:44:06 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -208,7 +208,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><MaxKeys>2</MaxKeys><KeyCount>2</KeyCount><ContinuationToken>Zm9sZGVycy9mLTAwMDIvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjZkNDZlOGNjLWUwYzctNGMxMC1hM2VhLTA4NDExMjk2MTllOSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</ContinuationToken><IsTruncated>true</IsTruncated><NextContinuationToken>Zm9sZGVycy9mLTAwMDQvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjZkNDZlOGNjLWUwYzctNGMxMC1hM2VhLTA4NDExMjk2MTllOSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><Contents><ETag>\"9dd4e461268c8034f5c8564e155c67a6\"</ETag><Key>folders/f-0003/only.txt</Key><LastModified>2026-10-10T12:12:04.198Z</LastModified><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"9dd4e461268c8034f5c8564e155c67a6\"</ETag><Key>folders/f-0004/only.txt</Key><LastModified>2026-10-10T12:12:04.207Z</LastModified><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><MaxKeys>2</MaxKeys><KeyCount>2</KeyCount><ContinuationToken>Zm9sZGVycy9mLTAwMDIvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjY1MGE0NzMxLWFiZTUtNDRmNi1iMjQ5LTFhNGQxYTg4NGI0NSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</ContinuationToken><IsTruncated>true</IsTruncated><NextContinuationToken>Zm9sZGVycy9mLTAwMDQvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjY1MGE0NzMxLWFiZTUtNDRmNi1iMjQ5LTFhNGQxYTg4NGI0NSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><Contents><ETag>\"9dd4e461268c8034f5c8564e155c67a6\"</ETag><Key>folders/f-0003/only.txt</Key><LastModified>2026-10-10T15:37:32.660Z</LastModified><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"9dd4e461268c8034f5c8564e155c67a6\"</ETag><Key>folders/f-0004/only.txt</Key><LastModified>2026-10-10T15:37:32.671Z</LastModified><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
         }
       }
     },
@@ -217,11 +217,11 @@
       "request": {
         "method": "GET",
         "path": "/studio-bulk",
-        "query": "continuation-token=Zm9sZGVycy9mLTAwMDQvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjZkNDZlOGNjLWUwYzctNGMxMC1hM2VhLTA4NDExMjk2MTllOSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ%3D%3D&encoding-type=url&list-type=2&max-keys=1&prefix=folders%2F",
+        "query": "continuation-token=Zm9sZGVycy9mLTAwMDQvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjY1MGE0NzMxLWFiZTUtNDRmNi1iMjQ5LTFhNGQxYTg4NGI0NSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ%3D%3D&encoding-type=url&list-type=2&max-keys=1&prefix=folders%2F",
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124510Z",
+          "x-amz-date": "20261010T154406Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -251,7 +251,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:10 GMT"
+            "Sat, 10 Oct 2026 15:44:06 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -260,7 +260,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><MaxKeys>1</MaxKeys><KeyCount>1</KeyCount><ContinuationToken>Zm9sZGVycy9mLTAwMDQvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjZkNDZlOGNjLWUwYzctNGMxMC1hM2VhLTA4NDExMjk2MTllOSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</ContinuationToken><IsTruncated>true</IsTruncated><NextContinuationToken>Zm9sZGVycy9mLTAwMDUvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjZkNDZlOGNjLWUwYzctNGMxMC1hM2VhLTA4NDExMjk2MTllOSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><Contents><ETag>\"9dd4e461268c8034f5c8564e155c67a6\"</ETag><Key>folders/f-0005/only.txt</Key><LastModified>2026-10-10T12:12:04.263Z</LastModified><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><MaxKeys>1</MaxKeys><KeyCount>1</KeyCount><ContinuationToken>Zm9sZGVycy9mLTAwMDQvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjY1MGE0NzMxLWFiZTUtNDRmNi1iMjQ5LTFhNGQxYTg4NGI0NSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</ContinuationToken><IsTruncated>true</IsTruncated><NextContinuationToken>Zm9sZGVycy9mLTAwMDUvb25seS50eHRbcnVzdGZzX2NhY2hlOnYyLGlkOjY1MGE0NzMxLWFiZTUtNDRmNi1iMjQ5LTFhNGQxYTg4NGI0NSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><Contents><ETag>\"9dd4e461268c8034f5c8564e155c67a6\"</ETag><Key>folders/f-0005/only.txt</Key><LastModified>2026-10-10T15:37:32.683Z</LastModified><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
         }
       }
     }
@@ -282,7 +282,7 @@
           "LastModified": "timestamp"
         },
         "notices": [
-          "The result holds the first 3 rows: to read on, run the command again with --starting-token eyJDb250aW51YXRpb25Ub2tlbiI6IlptOXNaR1Z5Y3k5bUxUQXdNREl2YjI1c2VTNTBlSFJiY25WemRHWnpYMk5oWTJobE9uWXlMR2xrT2paa05EWmxPR05qTFdVd1l6Y3ROR014TUMxaE0yVmhMVEE0TkRFeE1qazJNVGxsT1N4emNtTTZkMkZzYTJWeUxHZGxianBzYVhabFhRPT0ifQ==."
+          "The result holds the first 3 rows: to read on, run the command again with --starting-token eyJDb250aW51YXRpb25Ub2tlbiI6IlptOXNaR1Z5Y3k5bUxUQXdNREl2YjI1c2VTNTBlSFJiY25WemRHWnpYMk5oWTJobE9uWXlMR2xrT2pZMU1HRTBOek14TFdGaVpUVXRORFJtTmkxaU1qUTVMVEZoTkdReFlUZzROR0kwTlN4emNtTTZkMkZzYTJWeUxHZGxianBzYVhabFhRPT0ifQ==."
         ]
       },
       "exchanges": 2
@@ -303,7 +303,7 @@
           "LastModified": "timestamp"
         },
         "notices": [
-          "The result holds the first 3 rows: to read on, run the command again with --starting-token eyJDb250aW51YXRpb25Ub2tlbiI6IlptOXNaR1Z5Y3k5bUxUQXdNRFV2YjI1c2VTNTBlSFJiY25WemRHWnpYMk5oWTJobE9uWXlMR2xrT2paa05EWmxPR05qTFdVd1l6Y3ROR014TUMxaE0yVmhMVEE0TkRFeE1qazJNVGxsT1N4emNtTTZkMkZzYTJWeUxHZGxianBzYVhabFhRPT0ifQ==."
+          "The result holds the first 3 rows: to read on, run the command again with --starting-token eyJDb250aW51YXRpb25Ub2tlbiI6IlptOXNaR1Z5Y3k5bUxUQXdNRFV2YjI1c2VTNTBlSFJiY25WemRHWnpYMk5oWTJobE9uWXlMR2xrT2pZMU1HRTBOek14TFdGaVpUVXRORFJtTmkxaU1qUTVMVEZoTkdReFlUZzROR0kwTlN4emNtTTZkMkZzYTJWeUxHZGxianBzYVhabFhRPT0ifQ==."
         ]
       },
       "exchanges": 2

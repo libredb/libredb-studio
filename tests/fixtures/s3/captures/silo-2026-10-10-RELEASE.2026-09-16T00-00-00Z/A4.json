@@ -13,7 +13,7 @@
         "headers": {
           "host": "127.0.0.1:9010",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124508Z",
+          "x-amz-date": "20261010T154404Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -43,7 +43,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:08 GMT"
+            "Sat, 10 Oct 2026 15:44:04 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -52,7 +52,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match the signature you provided. Check your key and signing method.</Message><Resource>/</Resource><RequestId>18DD2BBADDFB5A8A</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match the signature you provided. Check your key and signing method.</Message><Resource>/</Resource><RequestId>18DD357E77E951CB</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>"
         }
       }
     }

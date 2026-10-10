@@ -13,7 +13,7 @@
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124510Z",
+          "x-amz-date": "20261010T154406Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -43,7 +43,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:10 GMT"
+            "Sat, 10 Oct 2026 15:44:06 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -52,7 +52,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-demo</Name><Prefix></Prefix><MaxKeys>1</MaxKeys><KeyCount>1</KeyCount><IsTruncated>true</IsTruncated><NextContinuationToken>YS9bcnVzdGZzX2NhY2hlOnYyLGlkOmI5MjVkZWUzLWJmNGUtNDczOC1hMGM0LTIwNDFjMzU5ODlmYixzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><CommonPrefixes><Prefix>a/</Prefix></CommonPrefixes><Delimiter>/</Delimiter><EncodingType>url</EncodingType></ListBucketResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-demo</Name><Prefix></Prefix><MaxKeys>1</MaxKeys><KeyCount>1</KeyCount><IsTruncated>true</IsTruncated><NextContinuationToken>YS9bcnVzdGZzX2NhY2hlOnYyLGlkOjdjNTViODVmLWJlZGItNGIzMC1iZTlmLWZjMjRhZWQ1Mjc1NixzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><CommonPrefixes><Prefix>a/</Prefix></CommonPrefixes><Delimiter>/</Delimiter><EncodingType>url</EncodingType></ListBucketResult>"
         }
       }
     },
@@ -65,7 +65,7 @@
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124510Z",
+          "x-amz-date": "20261010T154406Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -95,7 +95,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:10 GMT"
+            "Sat, 10 Oct 2026 15:44:06 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -104,7 +104,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-demo</Name><Prefix></Prefix><MaxKeys>1</MaxKeys><KeyCount>1</KeyCount><IsTruncated>true</IsTruncated><NextContinuationToken>YS9bcnVzdGZzX2NhY2hlOnYyLGlkOjA2Mzk5ZDIxLWEzZjUtNGQyYS1hYWI2LTgyNDJlN2MwOTU2YixzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><CommonPrefixes><Prefix>a/</Prefix></CommonPrefixes><Delimiter>/</Delimiter><EncodingType>url</EncodingType></ListBucketResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-demo</Name><Prefix></Prefix><MaxKeys>1</MaxKeys><KeyCount>1</KeyCount><IsTruncated>true</IsTruncated><NextContinuationToken>YS9bcnVzdGZzX2NhY2hlOnYyLGlkOjQxZmMxOGNhLWY0NjgtNDMxMC1iZTEzLTk2ZGZiN2VhNDhlMSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><CommonPrefixes><Prefix>a/</Prefix></CommonPrefixes><Delimiter>/</Delimiter><EncodingType>url</EncodingType></ListBucketResult>"
         }
       }
     }

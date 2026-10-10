@@ -13,7 +13,7 @@
         "headers": {
           "host": "127.0.0.1:9000",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124505Z",
+          "x-amz-date": "20261010T154401Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -43,7 +43,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:05 GMT"
+            "Sat, 10 Oct 2026 15:44:01 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -52,7 +52,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T12:34:02.857Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T12:34:02.827Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T12:34:02.867Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T12:34:02.837Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T12:34:02.848Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:43.203Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:43.088Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:43.232Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:43.101Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:43.112Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
         }
       }
     },
@@ -65,7 +65,7 @@
         "headers": {
           "host": "127.0.0.1:9000",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124505Z",
+          "x-amz-date": "20261010T154401Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -95,7 +95,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:05 GMT"
+            "Sat, 10 Oct 2026 15:44:01 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -104,7 +104,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListVersionsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-versions</Name><Prefix>ver/</Prefix><KeyMarker></KeyMarker><NextVersionIdMarker></NextVersionIdMarker><VersionIdMarker></VersionIdMarker><MaxKeys>500</MaxKeys><IsTruncated>false</IsTruncated><DeleteMarker><Key>ver/deleted.txt</Key><LastModified>2026-10-10T12:34:03.549Z</LastModified><ETag></ETag><Size>0</Size><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><StorageClass>STANDARD</StorageClass><IsLatest>true</IsLatest><VersionId>433e7a67-b097-4471-87b4-37b93adadac0</VersionId></DeleteMarker><Version><Key>ver/deleted.txt</Key><LastModified>2026-10-10T12:34:03.543Z</LastModified><ETag>&#34;937ec4c10eb20c1f3324ef927697ea66&#34;</ETag><Size>12</Size><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><StorageClass>STANDARD</StorageClass><IsLatest>false</IsLatest><VersionId>865dbeb3-c71b-4219-8429-aa8996653aae</VersionId></Version><Version><Key>ver/doc.txt</Key><LastModified>2026-10-10T12:34:03.536Z</LastModified><ETag>&#34;223deef93d3131e3705ab44c2cd042f9&#34;</ETag><Size>12</Size><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><StorageClass>STANDARD</StorageClass><IsLatest>true</IsLatest><VersionId>b5afdf36-a745-43a4-8f89-f6eb35a305f7</VersionId></Version><Version><Key>ver/doc.txt</Key><LastModified>2026-10-10T12:34:03.529Z</LastModified><ETag>&#34;dd8f100298ff923592ab35dc15788abc&#34;</ETag><Size>12</Size><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><StorageClass>STANDARD</StorageClass><IsLatest>false</IsLatest><VersionId>c9078f32-3df2-443c-a320-02abac6bb498</VersionId></Version><Version><Key>ver/zz-last.txt</Key><LastModified>2026-10-10T12:34:03.555Z</LastModified><ETag>&#34;937ec4c10eb20c1f3324ef927697ea66&#34;</ETag><Size>12</Size><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><StorageClass>STANDARD</StorageClass><IsLatest>true</IsLatest><VersionId>7b9ee47b-2979-4797-abf8-a9e641b28bda</VersionId></Version><EncodingType>url</EncodingType></ListVersionsResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListVersionsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-versions</Name><Prefix>ver/</Prefix><KeyMarker></KeyMarker><NextVersionIdMarker></NextVersionIdMarker><VersionIdMarker></VersionIdMarker><MaxKeys>500</MaxKeys><IsTruncated>false</IsTruncated><DeleteMarker><Key>ver/deleted.txt</Key><LastModified>2026-10-10T15:38:47.623Z</LastModified><ETag></ETag><Size>0</Size><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><StorageClass>STANDARD</StorageClass><IsLatest>true</IsLatest><VersionId>c3c7db71-0de9-4661-9026-b7c2840c5922</VersionId></DeleteMarker><Version><Key>ver/deleted.txt</Key><LastModified>2026-10-10T15:38:47.617Z</LastModified><ETag>&#34;937ec4c10eb20c1f3324ef927697ea66&#34;</ETag><Size>12</Size><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><StorageClass>STANDARD</StorageClass><IsLatest>false</IsLatest><VersionId>f5eb440a-1885-48d4-ba15-448208634b05</VersionId></Version><Version><Key>ver/doc.txt</Key><LastModified>2026-10-10T15:38:47.610Z</LastModified><ETag>&#34;223deef93d3131e3705ab44c2cd042f9&#34;</ETag><Size>12</Size><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><StorageClass>STANDARD</StorageClass><IsLatest>true</IsLatest><VersionId>14b30809-4f4b-4c01-abab-efef4da8c3df</VersionId></Version><Version><Key>ver/doc.txt</Key><LastModified>2026-10-10T15:38:47.603Z</LastModified><ETag>&#34;dd8f100298ff923592ab35dc15788abc&#34;</ETag><Size>12</Size><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><StorageClass>STANDARD</StorageClass><IsLatest>false</IsLatest><VersionId>67dec37d-0e5a-4d98-9628-7e6210a7e0e0</VersionId></Version><Version><Key>ver/zz-last.txt</Key><LastModified>2026-10-10T15:38:47.629Z</LastModified><ETag>&#34;937ec4c10eb20c1f3324ef927697ea66&#34;</ETag><Size>12</Size><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><StorageClass>STANDARD</StorageClass><IsLatest>true</IsLatest><VersionId>113b94ac-fd63-40dc-8262-53e373629416</VersionId></Version><EncodingType>url</EncodingType></ListVersionsResult>"
         }
       }
     }

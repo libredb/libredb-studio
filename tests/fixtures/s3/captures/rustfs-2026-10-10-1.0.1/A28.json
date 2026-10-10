@@ -13,7 +13,7 @@
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124510Z",
+          "x-amz-date": "20261010T154406Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -43,7 +43,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:10 GMT"
+            "Sat, 10 Oct 2026 15:44:06 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -52,7 +52,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Buckets><Bucket><CreationDate>2026-10-10T12:11:35.192Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.065Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.221Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.092Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.128Z</CreationDate><Name>studio-versions</Name></Bucket></Buckets><Owner><DisplayName>rustfs</DisplayName><ID>c19050dbcee97fda828689dda99097a6321af2248fa760517237346e5d9c8a66</ID></Owner></ListAllMyBucketsResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Buckets><Bucket><CreationDate>2026-10-10T15:37:06.165Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.039Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.235Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.076Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.127Z</CreationDate><Name>studio-versions</Name></Bucket></Buckets><Owner><DisplayName>rustfs</DisplayName><ID>c19050dbcee97fda828689dda99097a6321af2248fa760517237346e5d9c8a66</ID></Owner></ListAllMyBucketsResult>"
         }
       }
     },
@@ -65,7 +65,7 @@
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124510Z",
+          "x-amz-date": "20261010T154406Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -95,11 +95,7 @@
           ],
           [
             "last-modified",
-            "Sat, 10 Oct 2026 12:11:35 GMT"
-          ],
-          [
-            "x-amz-meta-owner",
-            "probe"
+            "Sat, 10 Oct 2026 15:37:06 GMT"
           ],
           [
             "x-amz-meta-project",
@@ -108,6 +104,10 @@
           [
             "x-amz-meta-note",
             "=?UTF-8?B?Y2Fmw6k=?="
+          ],
+          [
+            "x-amz-meta-owner",
+            "probe"
           ],
           [
             "x-amz-tagging-count",
@@ -123,7 +123,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:10 GMT"
+            "Sat, 10 Oct 2026 15:44:06 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -145,7 +145,7 @@
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124510Z",
+          "x-amz-date": "20261010T154406Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -175,7 +175,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:10 GMT"
+            "Sat, 10 Oct 2026 15:44:06 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -198,7 +198,7 @@
           "range": "bytes=0-11",
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124510Z",
+          "x-amz-date": "20261010T154406Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -229,11 +229,7 @@
           ],
           [
             "last-modified",
-            "Sat, 10 Oct 2026 12:11:35 GMT"
-          ],
-          [
-            "x-amz-meta-project",
-            "libredb"
+            "Sat, 10 Oct 2026 15:37:06 GMT"
           ],
           [
             "x-amz-meta-owner",
@@ -242,6 +238,10 @@
           [
             "x-amz-meta-note",
             "=?UTF-8?B?Y2Fmw6k=?="
+          ],
+          [
+            "x-amz-meta-project",
+            "libredb"
           ],
           [
             "accept-ranges",
@@ -257,7 +257,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:10 GMT"
+            "Sat, 10 Oct 2026 15:44:06 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -281,7 +281,7 @@
           "size_bytes": "12",
           "etag": "937ec4c10eb20c1f3324ef927697ea66",
           "multipart_parts": "null",
-          "last_modified": "2026-10-10T12:11:35.000Z",
+          "last_modified": "2026-10-10T15:37:06.000Z",
           "content_type": "text/plain",
           "content_encoding": "null",
           "storage_class": "null",
@@ -290,9 +290,9 @@
           "restore": "null",
           "archive_status": "null",
           "tags": "env=probe&tier=gold",
-          "user_metadata.owner": "probe",
           "user_metadata.project": "libredb",
           "user_metadata.note": "=?UTF-8?B?Y2Fmw6k=?=",
+          "user_metadata.owner": "probe",
           "missing_user_metadata": "null",
           "metadata_cut": "false",
           "preview": "hello depth",

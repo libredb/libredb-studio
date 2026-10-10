@@ -13,7 +13,7 @@
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124510Z",
+          "x-amz-date": "20261010T154406Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -43,7 +43,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:10 GMT"
+            "Sat, 10 Oct 2026 15:44:06 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -52,7 +52,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Buckets><Bucket><CreationDate>2026-10-10T12:11:35.192Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.065Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.221Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.092Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T12:11:35.128Z</CreationDate><Name>studio-versions</Name></Bucket></Buckets><Owner><DisplayName>rustfs</DisplayName><ID>c19050dbcee97fda828689dda99097a6321af2248fa760517237346e5d9c8a66</ID></Owner></ListAllMyBucketsResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Buckets><Bucket><CreationDate>2026-10-10T15:37:06.165Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.039Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.235Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.076Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.127Z</CreationDate><Name>studio-versions</Name></Bucket></Buckets><Owner><DisplayName>rustfs</DisplayName><ID>c19050dbcee97fda828689dda99097a6321af2248fa760517237346e5d9c8a66</ID></Owner></ListAllMyBucketsResult>"
         }
       }
     },
@@ -65,7 +65,7 @@
         "headers": {
           "host": "127.0.0.1:9020",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124510Z",
+          "x-amz-date": "20261010T154406Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -95,7 +95,7 @@
           ],
           [
             "last-modified",
-            "Sat, 10 Oct 2026 12:11:35 GMT"
+            "Sat, 10 Oct 2026 15:37:06 GMT"
           ],
           [
             "x-request-id",
@@ -107,7 +107,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:10 GMT"
+            "Sat, 10 Oct 2026 15:44:06 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -135,7 +135,7 @@
         "headers": {
           "ContentLength": "72",
           "ETag": "\"336a1c20b77e4905e49ff81a12cfc23e\"",
-          "LastModified": "2026-10-10T12:11:35.000Z",
+          "LastModified": "2026-10-10T15:37:06.000Z",
           "ContentType": "text/csv"
         },
         "notices": []

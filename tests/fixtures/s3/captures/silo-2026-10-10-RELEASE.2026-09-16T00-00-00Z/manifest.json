@@ -1,32 +1,26 @@
 {
   "target": "silo",
-  "commit": "b2fc7f8a5f999f9146d7599c9f3b52d33e3e8c19",
-  "uncommitted": [
-    "database-compose.yml",
-    "docker/s3/README.md",
-    "docker/s3/seed.sh",
-    "tests/live/s3-evidence-plan.ts",
-    "tests/live/s3-live-support.ts"
-  ],
+  "commit": "b2d3cf1af6dc84ecccd42a7baa1c5e4c960850fa",
+  "uncommitted": [],
   "image": "pgsty/silo@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46",
   "version": "RELEASE.2026-09-16T00-00-00Z",
   "date": "2026-10-10",
   "scenarios": [
     {
       "name": "surface",
-      "ms": 12,
+      "ms": 14,
       "exchanges": 8,
       "clockOffsetMs": 0
     },
     {
       "name": "A1",
-      "ms": 3,
+      "ms": 2,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
     {
       "name": "A2",
-      "ms": 3,
+      "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
@@ -44,7 +38,7 @@
     },
     {
       "name": "A4p",
-      "ms": 1,
+      "ms": 2,
       "exchanges": 1,
       "clockOffsetMs": 0
     },
@@ -56,7 +50,7 @@
     },
     {
       "name": "A6",
-      "ms": 2,
+      "ms": 4,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
@@ -80,19 +74,19 @@
     },
     {
       "name": "A11",
-      "ms": 9,
+      "ms": 8,
       "exchanges": 7,
       "clockOffsetMs": 0
     },
     {
       "name": "A12",
-      "ms": 2,
+      "ms": 1,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
     {
       "name": "A55",
-      "ms": 2,
+      "ms": 1,
       "exchanges": 0,
       "clockOffsetMs": 0
     },
@@ -104,7 +98,7 @@
     },
     {
       "name": "A13",
-      "ms": 1,
+      "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
@@ -128,7 +122,7 @@
     },
     {
       "name": "A17",
-      "ms": 27,
+      "ms": 29,
       "exchanges": 35,
       "clockOffsetMs": 0
     },
@@ -140,7 +134,7 @@
     },
     {
       "name": "A18",
-      "ms": 8,
+      "ms": 9,
       "exchanges": 10,
       "clockOffsetMs": 0
     },
@@ -158,13 +152,13 @@
     },
     {
       "name": "A22",
-      "ms": 13,
+      "ms": 14,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
     {
       "name": "A23",
-      "ms": 26,
+      "ms": 19,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
@@ -182,73 +176,73 @@
     },
     {
       "name": "A24b",
-      "ms": 14,
+      "ms": 17,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
     {
       "name": "A25",
-      "ms": 4,
+      "ms": 5,
       "exchanges": 6,
       "clockOffsetMs": 0
     },
     {
       "name": "A28",
-      "ms": 3,
+      "ms": 4,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
     {
       "name": "A29",
-      "ms": 1,
-      "exchanges": 2,
-      "clockOffsetMs": 0
-    },
-    {
-      "name": "A31",
-      "ms": 24,
-      "exchanges": 4,
-      "clockOffsetMs": 0
-    },
-    {
-      "name": "A32",
       "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
     {
+      "name": "A31",
+      "ms": 28,
+      "exchanges": 4,
+      "clockOffsetMs": 0
+    },
+    {
+      "name": "A32",
+      "ms": 3,
+      "exchanges": 2,
+      "clockOffsetMs": 0
+    },
+    {
       "name": "A35",
-      "ms": 5,
+      "ms": 6,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
     {
       "name": "A35b",
-      "ms": 40,
+      "ms": 39,
       "exchanges": 6,
       "clockOffsetMs": 0
     },
     {
       "name": "A36",
-      "ms": 4,
+      "ms": 3,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
     {
       "name": "A37",
-      "ms": 7,
+      "ms": 8,
       "exchanges": 9,
       "clockOffsetMs": 0
     },
     {
       "name": "A38",
-      "ms": 47,
+      "ms": 49,
       "exchanges": 31,
       "clockOffsetMs": 0
     },
     {
       "name": "A40",
-      "ms": 8,
+      "ms": 6,
       "exchanges": 8,
       "clockOffsetMs": 0
     },
@@ -260,7 +254,7 @@
     },
     {
       "name": "A42",
-      "ms": 3,
+      "ms": 2,
       "exchanges": 3,
       "clockOffsetMs": 0
     },
@@ -278,25 +272,25 @@
     },
     {
       "name": "A47",
-      "ms": 8,
+      "ms": 6,
       "exchanges": 6,
       "clockOffsetMs": 0
     },
     {
       "name": "A48",
-      "ms": 1,
+      "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
     {
       "name": "A49",
-      "ms": 9,
+      "ms": 13,
       "exchanges": 7,
       "clockOffsetMs": 0
     },
     {
       "name": "A50",
-      "ms": 5,
+      "ms": 6,
       "exchanges": 5,
       "clockOffsetMs": 0
     },
@@ -308,19 +302,19 @@
     },
     {
       "name": "A58",
-      "ms": 2,
+      "ms": 3,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
     {
       "name": "A59",
-      "ms": 1,
+      "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
     {
       "name": "A60",
-      "ms": 1,
+      "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
@@ -344,19 +338,19 @@
     },
     {
       "name": "A66",
-      "ms": 6,
+      "ms": 3,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
     {
       "name": "A66b",
-      "ms": 11,
+      "ms": 17,
       "exchanges": 4,
       "clockOffsetMs": 0
     },
     {
       "name": "A52",
-      "ms": 1,
+      "ms": 2,
       "exchanges": 2,
       "clockOffsetMs": 0
     },
@@ -368,7 +362,7 @@
     },
     {
       "name": "console-list-objects-v2-token",
-      "ms": 57,
+      "ms": 59,
       "exchanges": 5,
       "clockOffsetMs": 0
     },
@@ -386,7 +380,7 @@
     },
     {
       "name": "preview-source",
-      "ms": 17,
+      "ms": 14,
       "exchanges": 11,
       "clockOffsetMs": 0
     }

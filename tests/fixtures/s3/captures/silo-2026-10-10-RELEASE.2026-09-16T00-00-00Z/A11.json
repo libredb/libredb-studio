@@ -13,7 +13,7 @@
         "headers": {
           "host": "127.0.0.1:9010",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124508Z",
+          "x-amz-date": "20261010T154404Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -43,7 +43,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:08 GMT"
+            "Sat, 10 Oct 2026 15:44:04 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -52,7 +52,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T12:12:48.505Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T12:12:48.416Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T12:12:48.516Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T12:12:48.467Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T12:12:48.491Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:37:06.301Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:37:06.253Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:37:06.313Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:37:06.276Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:37:06.289Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
         }
       }
     },
@@ -65,7 +65,7 @@
         "headers": {
           "host": "127.0.0.1:9010",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124508Z",
+          "x-amz-date": "20261010T154404Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -95,7 +95,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:08 GMT"
+            "Sat, 10 Oct 2026 15:44:04 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -104,7 +104,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T12:12:48.505Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T12:12:48.416Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T12:12:48.516Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T12:12:48.467Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T12:12:48.491Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:37:06.301Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:37:06.253Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:37:06.313Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:37:06.276Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:37:06.289Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
         }
       }
     },
@@ -117,7 +117,7 @@
         "headers": {
           "host": "127.0.0.1:9010",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124508Z",
+          "x-amz-date": "20261010T154404Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -147,7 +147,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:08 GMT"
+            "Sat, 10 Oct 2026 15:44:04 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -156,7 +156,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T12:12:48.505Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T12:12:48.416Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T12:12:48.516Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T12:12:48.467Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T12:12:48.491Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:37:06.301Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:37:06.253Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:37:06.313Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:37:06.276Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:37:06.289Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
         }
       }
     },
@@ -169,7 +169,7 @@
         "headers": {
           "host": "127.0.0.1:9010",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124508Z",
+          "x-amz-date": "20261010T154404Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -199,7 +199,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:08 GMT"
+            "Sat, 10 Oct 2026 15:44:04 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -208,7 +208,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied.</Message><BucketName>studio-demo</BucketName><Resource>/studio-demo</Resource><RequestId>18DD2BBADEDE8B0D</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied.</Message><BucketName>studio-demo</BucketName><Resource>/studio-demo</Resource><RequestId>18DD357E78FC4BB2</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>"
         }
       }
     },
@@ -221,7 +221,7 @@
         "headers": {
           "host": "127.0.0.1:9010",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124508Z",
+          "x-amz-date": "20261010T154404Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -251,7 +251,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:08 GMT"
+            "Sat, 10 Oct 2026 15:44:04 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -260,7 +260,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T12:12:48.505Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T12:12:48.416Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T12:12:48.516Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T12:12:48.467Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T12:12:48.491Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:37:06.301Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:37:06.253Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:37:06.313Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:37:06.276Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:37:06.289Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
         }
       }
     },
@@ -273,7 +273,7 @@
         "headers": {
           "host": "127.0.0.1:9010",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124508Z",
+          "x-amz-date": "20261010T154404Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -303,7 +303,7 @@
           ],
           [
             "last-modified",
-            "Sat, 10 Oct 2026 12:12:48 GMT"
+            "Sat, 10 Oct 2026 15:37:06 GMT"
           ],
           [
             "x-amz-request-id",
@@ -311,7 +311,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:08 GMT"
+            "Sat, 10 Oct 2026 15:44:04 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -333,7 +333,7 @@
         "headers": {
           "host": "127.0.0.1:9010",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124508Z",
+          "x-amz-date": "20261010T154404Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -363,7 +363,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:08 GMT"
+            "Sat, 10 Oct 2026 15:44:04 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -372,7 +372,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied.</Message><BucketName>studio-demo</BucketName><Resource>/studio-demo</Resource><RequestId>18DD2BBADF2BD0F1</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied.</Message><BucketName>studio-demo</BucketName><Resource>/studio-demo</Resource><RequestId>18DD357E7940EF8C</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>"
         }
       }
     }
@@ -410,7 +410,7 @@
         "headers": {
           "ContentLength": "72",
           "ETag": "\"336a1c20b77e4905e49ff81a12cfc23e\"",
-          "LastModified": "2026-10-10T12:12:48.000Z",
+          "LastModified": "2026-10-10T15:37:06.000Z",
           "ContentType": "text/csv"
         },
         "notices": []

@@ -13,7 +13,7 @@
         "headers": {
           "host": "127.0.0.1:9030",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124506Z",
+          "x-amz-date": "20261010T154402Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -47,7 +47,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:06 GMT"
+            "Sat, 10 Oct 2026 15:44:02 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -56,7 +56,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist</Message><BucketName>no-such-bucket</BucketName><Resource>/no-such-bucket</Resource><Region>eu-central-1</Region><RequestId>18DD2BBA8104C391</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist</Message><BucketName>no-such-bucket</BucketName><Resource>/no-such-bucket</Resource><Region>eu-central-1</Region><RequestId>18DD357E1D3C0A21</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>"
         }
       }
     }

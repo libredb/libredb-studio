@@ -13,7 +13,7 @@
         "headers": {
           "host": "127.0.0.1:9010",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124508Z",
+          "x-amz-date": "20261010T154404Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -43,7 +43,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:08 GMT"
+            "Sat, 10 Oct 2026 15:44:04 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -52,7 +52,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T12:12:48.505Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T12:12:48.416Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T12:12:48.516Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T12:12:48.467Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T12:12:48.491Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:37:06.301Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:37:06.253Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:37:06.313Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:37:06.276Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:37:06.289Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
         }
       }
     },
@@ -65,7 +65,7 @@
         "headers": {
           "host": "127.0.0.1:9010",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124508Z",
+          "x-amz-date": "20261010T154404Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -95,7 +95,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:08 GMT"
+            "Sat, 10 Oct 2026 15:44:04 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -104,7 +104,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><NextContinuationToken>Zm9sZGVycy9mLTAwMDEvb25seS50eHRbbWluaW9fY2FjaGU6djIscmV0dXJuOl0=</NextContinuationToken><KeyCount>2</KeyCount><MaxKeys>2</MaxKeys><IsTruncated>true</IsTruncated><Contents><Key>folders/f-0000/only.txt</Key><LastModified>2026-10-10T12:13:11.178Z</LastModified><ETag>&#34;9dd4e461268c8034f5c8564e155c67a6&#34;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>folders/f-0001/only.txt</Key><LastModified>2026-10-10T12:13:11.184Z</LastModified><ETag>&#34;9dd4e461268c8034f5c8564e155c67a6&#34;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><NextContinuationToken>Zm9sZGVycy9mLTAwMDEvb25seS50eHRbbWluaW9fY2FjaGU6djIscmV0dXJuOl0=</NextContinuationToken><KeyCount>2</KeyCount><MaxKeys>2</MaxKeys><IsTruncated>true</IsTruncated><Contents><Key>folders/f-0000/only.txt</Key><LastModified>2026-10-10T15:37:29.127Z</LastModified><ETag>&#34;9dd4e461268c8034f5c8564e155c67a6&#34;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>folders/f-0001/only.txt</Key><LastModified>2026-10-10T15:37:29.139Z</LastModified><ETag>&#34;9dd4e461268c8034f5c8564e155c67a6&#34;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
         }
       }
     },
@@ -117,7 +117,7 @@
         "headers": {
           "host": "127.0.0.1:9010",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124508Z",
+          "x-amz-date": "20261010T154404Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -147,7 +147,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:08 GMT"
+            "Sat, 10 Oct 2026 15:44:04 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -156,7 +156,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><ContinuationToken>Zm9sZGVycy9mLTAwMDEvb25seS50eHRbbWluaW9fY2FjaGU6djIscmV0dXJuOl0=</ContinuationToken><NextContinuationToken>Zm9sZGVycy9mLTAwMDIvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6YjI3Yzg3OGMtMmY4OC00ODk0LThmZWEtMDA0YTMxNTZiMzFiLHA6MCxzOjBd</NextContinuationToken><KeyCount>1</KeyCount><MaxKeys>1</MaxKeys><IsTruncated>true</IsTruncated><Contents><Key>folders/f-0002/only.txt</Key><LastModified>2026-10-10T12:13:11.190Z</LastModified><ETag>&#34;9dd4e461268c8034f5c8564e155c67a6&#34;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><ContinuationToken>Zm9sZGVycy9mLTAwMDEvb25seS50eHRbbWluaW9fY2FjaGU6djIscmV0dXJuOl0=</ContinuationToken><NextContinuationToken>Zm9sZGVycy9mLTAwMDIvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6MWRlNmVkYTYtNjRiYS00MTg2LWI0NWMtMTRmZTdhZmVjYTEwLHA6MCxzOjBd</NextContinuationToken><KeyCount>1</KeyCount><MaxKeys>1</MaxKeys><IsTruncated>true</IsTruncated><Contents><Key>folders/f-0002/only.txt</Key><LastModified>2026-10-10T15:37:29.149Z</LastModified><ETag>&#34;9dd4e461268c8034f5c8564e155c67a6&#34;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
         }
       }
     },
@@ -165,11 +165,11 @@
       "request": {
         "method": "GET",
         "path": "/studio-bulk",
-        "query": "continuation-token=Zm9sZGVycy9mLTAwMDIvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6YjI3Yzg3OGMtMmY4OC00ODk0LThmZWEtMDA0YTMxNTZiMzFiLHA6MCxzOjBd&encoding-type=url&list-type=2&max-keys=2&prefix=folders%2F",
+        "query": "continuation-token=Zm9sZGVycy9mLTAwMDIvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6MWRlNmVkYTYtNjRiYS00MTg2LWI0NWMtMTRmZTdhZmVjYTEwLHA6MCxzOjBd&encoding-type=url&list-type=2&max-keys=2&prefix=folders%2F",
         "headers": {
           "host": "127.0.0.1:9010",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124508Z",
+          "x-amz-date": "20261010T154404Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -199,7 +199,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:08 GMT"
+            "Sat, 10 Oct 2026 15:44:04 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -208,7 +208,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><ContinuationToken>Zm9sZGVycy9mLTAwMDIvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6YjI3Yzg3OGMtMmY4OC00ODk0LThmZWEtMDA0YTMxNTZiMzFiLHA6MCxzOjBd</ContinuationToken><NextContinuationToken>Zm9sZGVycy9mLTAwMDQvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6YjI3Yzg3OGMtMmY4OC00ODk0LThmZWEtMDA0YTMxNTZiMzFiLHA6MCxzOjBd</NextContinuationToken><KeyCount>2</KeyCount><MaxKeys>2</MaxKeys><IsTruncated>true</IsTruncated><Contents><Key>folders/f-0003/only.txt</Key><LastModified>2026-10-10T12:13:11.222Z</LastModified><ETag>&#34;9dd4e461268c8034f5c8564e155c67a6&#34;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>folders/f-0004/only.txt</Key><LastModified>2026-10-10T12:13:11.230Z</LastModified><ETag>&#34;9dd4e461268c8034f5c8564e155c67a6&#34;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><ContinuationToken>Zm9sZGVycy9mLTAwMDIvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6MWRlNmVkYTYtNjRiYS00MTg2LWI0NWMtMTRmZTdhZmVjYTEwLHA6MCxzOjBd</ContinuationToken><NextContinuationToken>Zm9sZGVycy9mLTAwMDQvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6MWRlNmVkYTYtNjRiYS00MTg2LWI0NWMtMTRmZTdhZmVjYTEwLHA6MCxzOjBd</NextContinuationToken><KeyCount>2</KeyCount><MaxKeys>2</MaxKeys><IsTruncated>true</IsTruncated><Contents><Key>folders/f-0003/only.txt</Key><LastModified>2026-10-10T15:37:29.173Z</LastModified><ETag>&#34;9dd4e461268c8034f5c8564e155c67a6&#34;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>folders/f-0004/only.txt</Key><LastModified>2026-10-10T15:37:29.179Z</LastModified><ETag>&#34;9dd4e461268c8034f5c8564e155c67a6&#34;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
         }
       }
     },
@@ -217,11 +217,11 @@
       "request": {
         "method": "GET",
         "path": "/studio-bulk",
-        "query": "continuation-token=Zm9sZGVycy9mLTAwMDQvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6YjI3Yzg3OGMtMmY4OC00ODk0LThmZWEtMDA0YTMxNTZiMzFiLHA6MCxzOjBd&encoding-type=url&list-type=2&max-keys=1&prefix=folders%2F",
+        "query": "continuation-token=Zm9sZGVycy9mLTAwMDQvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6MWRlNmVkYTYtNjRiYS00MTg2LWI0NWMtMTRmZTdhZmVjYTEwLHA6MCxzOjBd&encoding-type=url&list-type=2&max-keys=1&prefix=folders%2F",
         "headers": {
           "host": "127.0.0.1:9010",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124508Z",
+          "x-amz-date": "20261010T154404Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -251,7 +251,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:08 GMT"
+            "Sat, 10 Oct 2026 15:44:04 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -260,7 +260,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><ContinuationToken>Zm9sZGVycy9mLTAwMDQvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6YjI3Yzg3OGMtMmY4OC00ODk0LThmZWEtMDA0YTMxNTZiMzFiLHA6MCxzOjBd</ContinuationToken><NextContinuationToken>Zm9sZGVycy9mLTAwMDUvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6YjI3Yzg3OGMtMmY4OC00ODk0LThmZWEtMDA0YTMxNTZiMzFiLHA6MCxzOjBd</NextContinuationToken><KeyCount>1</KeyCount><MaxKeys>1</MaxKeys><IsTruncated>true</IsTruncated><Contents><Key>folders/f-0005/only.txt</Key><LastModified>2026-10-10T12:13:11.237Z</LastModified><ETag>&#34;9dd4e461268c8034f5c8564e155c67a6&#34;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-bulk</Name><Prefix>folders/</Prefix><ContinuationToken>Zm9sZGVycy9mLTAwMDQvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6MWRlNmVkYTYtNjRiYS00MTg2LWI0NWMtMTRmZTdhZmVjYTEwLHA6MCxzOjBd</ContinuationToken><NextContinuationToken>Zm9sZGVycy9mLTAwMDUvb25seS50eHRbbWluaW9fY2FjaGU6djIsaWQ6MWRlNmVkYTYtNjRiYS00MTg2LWI0NWMtMTRmZTdhZmVjYTEwLHA6MCxzOjBd</NextContinuationToken><KeyCount>1</KeyCount><MaxKeys>1</MaxKeys><IsTruncated>true</IsTruncated><Contents><Key>folders/f-0005/only.txt</Key><LastModified>2026-10-10T15:37:29.186Z</LastModified><ETag>&#34;9dd4e461268c8034f5c8564e155c67a6&#34;</ETag><Size>1</Size><StorageClass>STANDARD</StorageClass></Contents><EncodingType>url</EncodingType></ListBucketResult>"
         }
       }
     }
@@ -282,7 +282,7 @@
           "LastModified": "timestamp"
         },
         "notices": [
-          "The result holds the first 3 rows: to read on, run the command again with --starting-token eyJDb250aW51YXRpb25Ub2tlbiI6IlptOXNaR1Z5Y3k5bUxUQXdNREl2YjI1c2VTNTBlSFJiYldsdWFXOWZZMkZqYUdVNmRqSXNhV1E2WWpJM1l6ZzNPR010TW1ZNE9DMDBPRGswTFRobVpXRXRNREEwWVRNeE5UWmlNekZpTEhBNk1DeHpPakJkIn0=."
+          "The result holds the first 3 rows: to read on, run the command again with --starting-token eyJDb250aW51YXRpb25Ub2tlbiI6IlptOXNaR1Z5Y3k5bUxUQXdNREl2YjI1c2VTNTBlSFJiYldsdWFXOWZZMkZqYUdVNmRqSXNhV1E2TVdSbE5tVmtZVFl0TmpSaVlTMDBNVGcyTFdJME5XTXRNVFJtWlRkaFptVmpZVEV3TEhBNk1DeHpPakJkIn0=."
         ]
       },
       "exchanges": 2
@@ -303,7 +303,7 @@
           "LastModified": "timestamp"
         },
         "notices": [
-          "The result holds the first 3 rows: to read on, run the command again with --starting-token eyJDb250aW51YXRpb25Ub2tlbiI6IlptOXNaR1Z5Y3k5bUxUQXdNRFV2YjI1c2VTNTBlSFJiYldsdWFXOWZZMkZqYUdVNmRqSXNhV1E2WWpJM1l6ZzNPR010TW1ZNE9DMDBPRGswTFRobVpXRXRNREEwWVRNeE5UWmlNekZpTEhBNk1DeHpPakJkIn0=."
+          "The result holds the first 3 rows: to read on, run the command again with --starting-token eyJDb250aW51YXRpb25Ub2tlbiI6IlptOXNaR1Z5Y3k5bUxUQXdNRFV2YjI1c2VTNTBlSFJiYldsdWFXOWZZMkZqYUdVNmRqSXNhV1E2TVdSbE5tVmtZVFl0TmpSaVlTMDBNVGcyTFdJME5XTXRNVFJtWlRkaFptVmpZVEV3TEhBNk1DeHpPakJkIn0=."
         ]
       },
       "exchanges": 2

@@ -13,7 +13,7 @@
         "headers": {
           "host": "127.0.0.1:3900",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124512Z",
+          "x-amz-date": "20261010T154408Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -35,7 +35,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:12 GMT"
+            "Sat, 10 Oct 2026 15:44:08 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -44,7 +44,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets><Bucket><CreationDate>2026-10-10T12:33:08.091Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.169Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.316Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.381Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T12:33:08.239Z</CreationDate><Name>studio-versions</Name></Bucket></Buckets><Owner><DisplayName>rw</DisplayName><ID>GK000000000000000000000001</ID></Owner></ListAllMyBucketsResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets><Bucket><CreationDate>2026-10-10T15:37:06.807Z</CreationDate><Name>studio-versions</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.704Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.631Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.898Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.996Z</CreationDate><Name>studio-empty</Name></Bucket></Buckets><Owner><DisplayName>rw</DisplayName><ID>GK000000000000000000000001</ID></Owner></ListAllMyBucketsResult>"
         }
       }
     },
@@ -57,7 +57,7 @@
         "headers": {
           "host": "127.0.0.1:3900",
           "accept-encoding": "identity",
-          "x-amz-date": "20261010T124512Z",
+          "x-amz-date": "20261010T154408Z",
           "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "authorization": {
@@ -79,7 +79,7 @@
           ],
           [
             "date",
-            "Sat, 10 Oct 2026 12:45:12 GMT"
+            "Sat, 10 Oct 2026 15:44:08 GMT"
           ]
         ],
         "headersTruncated": false,
@@ -88,7 +88,7 @@
         "retryAfter": null,
         "truncated": false,
         "body": {
-          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-demo</Name><Prefix>data%2F</Prefix><KeyCount>13</KeyCount><MaxKeys>500</MaxKeys><Delimiter>%2F</Delimiter><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated><Contents><Key>data%2Fbomb.ndjson.gz</Key><LastModified>2026-10-10T12:33:11.475Z</LastModified><ETag>&quot;058cff9c159ab80c680f5dc3f0d3dc53&quot;</ETag><Size>97791</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Fdoc.json</Key><LastModified>2026-10-10T12:33:11.431Z</LastModified><ETag>&quot;816ff8529f994eee24010404d90e8304&quot;</ETag><Size>40</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Fempty.txt</Key><LastModified>2026-10-10T12:33:11.523Z</LastModified><ETag>&quot;d41d8cd98f00b204e9800998ecf8427e&quot;</ETag><Size>0</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Fmultipart.bin</Key><LastModified>2026-10-10T12:33:11.544Z</LastModified><ETag>&quot;c77297f6d3b58aa5b3016710a3e70507-2&quot;</ETag><Size>6291456</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Fnoext</Key><LastModified>2026-10-10T12:33:11.517Z</LastModified><ETag>&quot;2bcd3c4de20c918e19fab5c36249c70d&quot;</ETag><Size>4096</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Fone-mib.bin</Key><LastModified>2026-10-10T12:33:11.531Z</LastModified><ETag>&quot;3f2c8bd9cfde6550fdff4b36617c3261&quot;</ETag><Size>1048576</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Frows-partial.ndjson</Key><LastModified>2026-10-10T12:33:11.459Z</LastModified><ETag>&quot;ec5438061ce5a4afa854f0ee85f99f45&quot;</ETag><Size>2097128</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Frows.ndjson</Key><LastModified>2026-10-10T12:33:11.449Z</LastModified><ETag>&quot;0cbd711872707f5c4720f78205ebc580&quot;</ETag><Size>70</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Frows.ndjson.gz</Key><LastModified>2026-10-10T12:33:11.470Z</LastModified><ETag>&quot;df60691c7a167def8d169249b9f53857&quot;</ETag><Size>64</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Ftable.csv</Key><LastModified>2026-10-10T12:33:11.422Z</LastModified><ETag>&quot;336a1c20b77e4905e49ff81a12cfc23e&quot;</ETag><Size>72</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Ftable.tsv</Key><LastModified>2026-10-10T12:33:11.426Z</LastModified><ETag>&quot;0aecd6f420ca17b9c8d5e7f364297a17&quot;</ETag><Size>68</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Ftruncated.json</Key><LastModified>2026-10-10T12:33:11.439Z</LastModified><ETag>&quot;d1e27f4357296497fd07177df0e30970&quot;</ETag><Size>2097129</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Futf8-boundary.txt</Key><LastModified>2026-10-10T12:33:11.510Z</LastModified><ETag>&quot;20b73b2e9bbe30766f585060b69e513f&quot;</ETag><Size>1000007</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>"
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-demo</Name><Prefix>data%2F</Prefix><KeyCount>13</KeyCount><MaxKeys>500</MaxKeys><Delimiter>%2F</Delimiter><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated><Contents><Key>data%2Fbomb.ndjson.gz</Key><LastModified>2026-10-10T15:37:08.646Z</LastModified><ETag>&quot;058cff9c159ab80c680f5dc3f0d3dc53&quot;</ETag><Size>97791</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Fdoc.json</Key><LastModified>2026-10-10T15:37:08.599Z</LastModified><ETag>&quot;816ff8529f994eee24010404d90e8304&quot;</ETag><Size>40</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Fempty.txt</Key><LastModified>2026-10-10T15:37:08.692Z</LastModified><ETag>&quot;d41d8cd98f00b204e9800998ecf8427e&quot;</ETag><Size>0</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Fmultipart.bin</Key><LastModified>2026-10-10T15:37:08.710Z</LastModified><ETag>&quot;c77297f6d3b58aa5b3016710a3e70507-2&quot;</ETag><Size>6291456</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Fnoext</Key><LastModified>2026-10-10T15:37:08.686Z</LastModified><ETag>&quot;2bcd3c4de20c918e19fab5c36249c70d&quot;</ETag><Size>4096</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Fone-mib.bin</Key><LastModified>2026-10-10T15:37:08.699Z</LastModified><ETag>&quot;3f2c8bd9cfde6550fdff4b36617c3261&quot;</ETag><Size>1048576</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Frows-partial.ndjson</Key><LastModified>2026-10-10T15:37:08.630Z</LastModified><ETag>&quot;ec5438061ce5a4afa854f0ee85f99f45&quot;</ETag><Size>2097128</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Frows.ndjson</Key><LastModified>2026-10-10T15:37:08.621Z</LastModified><ETag>&quot;0cbd711872707f5c4720f78205ebc580&quot;</ETag><Size>70</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Frows.ndjson.gz</Key><LastModified>2026-10-10T15:37:08.641Z</LastModified><ETag>&quot;df60691c7a167def8d169249b9f53857&quot;</ETag><Size>64</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Ftable.csv</Key><LastModified>2026-10-10T15:37:08.590Z</LastModified><ETag>&quot;336a1c20b77e4905e49ff81a12cfc23e&quot;</ETag><Size>72</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Ftable.tsv</Key><LastModified>2026-10-10T15:37:08.594Z</LastModified><ETag>&quot;0aecd6f420ca17b9c8d5e7f364297a17&quot;</ETag><Size>68</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Ftruncated.json</Key><LastModified>2026-10-10T15:37:08.610Z</LastModified><ETag>&quot;d1e27f4357296497fd07177df0e30970&quot;</ETag><Size>2097129</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>data%2Futf8-boundary.txt</Key><LastModified>2026-10-10T15:37:08.656Z</LastModified><ETag>&quot;20b73b2e9bbe30766f585060b69e513f&quot;</ETag><Size>1000007</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>"
         }
       }
     }
