@@ -1886,6 +1886,28 @@ describe("the bounded zstd decoder", () => {
     expect(() => compressors.ZSTD?.(input, MiB)).toThrow(DECODE_OVER_BUDGET);
   });
 
+  test("a frame whose blocks regenerate fewer bytes than its declared content size is refused before it decodes", async () => {
+    const { codecs } = await loadParquetModules();
+    let calls = 0;
+    const counting = (input: Uint8Array, output: Uint8Array): Uint8Array => {
+      calls += 1;
+      return codecs.zstd(input, output);
+    };
+    const short = Uint8Array.from(
+      zstdFrame(
+        1_024,
+        zstdBlock(
+          0,
+          10,
+          true,
+          Array.from({ length: 10 }, () => 0x61),
+        ),
+      ),
+    );
+    expect(() => boundedZstd(short, 1_024, counting)).toThrow(DECODE_OVER_BUDGET);
+    expect(calls).toBe(0);
+  });
+
   test("a frame that declares no content size is refused before it decodes", async () => {
     const { codecs } = await loadParquetModules();
     let calls = 0;
