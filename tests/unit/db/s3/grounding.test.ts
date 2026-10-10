@@ -91,5 +91,6 @@ describe("plan-mode grounding on S3", () => {
     if (capture.kind !== "captured") return;
     expect(capture.snapshot.objects.map((object) => object.name)).toEqual(["sales"]);
     expect(fake.exchanges.length).toBe(before);
+    expect(JSON.stringify(capture)).not.toContain("tenant-secret-marker");
   });
 });
