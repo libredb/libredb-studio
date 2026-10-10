@@ -491,7 +491,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isRenderableShape(read: TreeRead, data: unknown): boolean {
   if (read.slot.kind === "counts") return isRecord(data) && Object.values(data).every(isRecord);
   // A container's `kinds` is read with `includes` inside the walk, so a host answering anything but a
-  // list of strings there would throw INSIDE the render; absent is the ordinary answer.
+  // list of strings there would throw INSIDE the render; absent is the ordinary answer. Its `path`
+  // segments go through `pathKey`, which calls `replaceAll` on each, so they must be strings too.
   if (read.slot.kind === "containers") {
     return (
       Array.isArray(data) &&
@@ -499,6 +500,7 @@ function isRenderableShape(read: TreeRead, data: unknown): boolean {
         (entry) =>
           isRecord(entry) &&
           Array.isArray(entry.path) &&
+          entry.path.every((segment) => typeof segment === "string") &&
           (entry.kinds === undefined ||
             (Array.isArray(entry.kinds) && entry.kinds.every((id) => typeof id === "string"))),
       )

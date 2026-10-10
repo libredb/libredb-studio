@@ -863,6 +863,7 @@ describe("kindsForContainer, applicableKinds and rowActionsForKind", () => {
         { id: "describe", label: "Describe" },
         null,
         { id: 7, label: "Seven", kinds: ["pods"] },
+        { id: "events", kinds: ["pods"] },
         { id: "logs", label: "Logs", kinds: ["pods"] },
       ],
     } as unknown as ProviderCapabilities;

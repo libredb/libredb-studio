@@ -1145,6 +1145,25 @@ describe("flattenTree kinds per container", () => {
     ]);
   });
 
+  test("two containers on one path draw the kinds the first one named", () => {
+    const rows = flattenTree(
+      stateOf({
+        kinds: clusterKinds,
+        containerDepth: 1,
+        containers: [
+          { path: ["shop"], name: "shop", level: 0, kinds: ["pods"] },
+          { path: ["shop"], name: "shop", level: 0, kinds: ["nodes"] },
+        ],
+        expanded: new Set(["shop"]),
+        counts: {},
+        objects: {},
+      }),
+    );
+    const folders = rows.filter((row) => row.kind === "folder").map((row) => row.label);
+    expect(folders.length).toBeGreaterThan(0);
+    expect(folders.every((label) => label === "Pods")).toBe(true);
+  });
+
   test("a container that names no kinds draws exactly the rows it drew before the field existed", () => {
     const rows = flattenTree(
       stateOf({

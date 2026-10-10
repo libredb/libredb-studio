@@ -160,6 +160,17 @@ describe("a tree over containers that name their kinds", () => {
     expect(hook.result.current.rows).toEqual([]);
   });
 
+  test("a host answering a container path that is not a list of strings is reported, not rendered", async () => {
+    const { source } = clusterSource([{ path: [1], name: "one", level: 0 }]);
+    const hook = mount(source);
+    await waitFor(() =>
+      expect(hook.result.current.rootFailure?.message).toBe(
+        "The containers reading answered with a body this tree cannot render",
+      ),
+    );
+    expect(hook.result.current.rows).toEqual([]);
+  });
+
   test("a group row asks for no read and offers no busy state", async () => {
     const { source, asked } = clusterSource();
     const hook = mount(source);
