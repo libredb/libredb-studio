@@ -85,8 +85,9 @@ import type {
   ReadOnlyStatementMode,
 } from "@/lib/db/types";
 import type { ContainerEnumeration } from "@/lib/db/container-walk";
-import { sessionDefaultContainer } from "@/lib/db/container-walk";
+import { enumerationOf, kindsByContainer } from "@/lib/db/container-walk";
 import {
+  applicableKinds,
   containerDepth,
   enumerableKinds,
   isCountSampled,
@@ -3051,7 +3052,11 @@ async function walkObjectInventory(
   const listObjects = provider.listObjects.bind(provider);
   const describeObjects = provider.describeObjects.bind(provider);
 
-  const { containers, defaultContainer } = await enumerateGroundingContainers(provider, capabilities);
+  const enumeration = await enumerateGroundingContainers(provider, capabilities);
+  const { containers, defaultContainer } = enumeration;
+  // A container that names its kinds is walked for those alone: asking it for another would meet the
+  // provider's refusal and end the whole capture.
+  const kindsOf = kindsByContainer(enumeration);
   const sampledFrom = new Map<string, string>();
   /** The provider's sentence for each `countIsListing` kind whose count was refused, never listed. */
   const unavailable = new Map<string, string>();
@@ -3061,7 +3066,7 @@ async function walkObjectInventory(
   let pairs = 0;
   for (const container of containers) {
     const counts = await countForGrounding(provider, container);
-    for (const spec of declared) {
+    for (const spec of applicableKinds(declared, kindsOf.get(JSON.stringify(container)))) {
       const count = Object.hasOwn(counts, spec.id) ? counts[spec.id] : undefined;
       if (count !== undefined && !isCountUnavailable(count) && count.count === 0) continue;
       // The exception the docblock names: the refusal this count met is the refusal the listing
@@ -3159,9 +3164,10 @@ async function walkObjectInventory(
  * without it (#789). A bare `orders` in the flat reading answers two databases on any
  * MySQL server holding `app` beside `app_test`, and the object side of the join walks both
  * while the flat side is a reading of ONE. `sessionDefaultContainer` is the shared rule for
- * which container that is, taken at the DEEPEST level only under ruling 5a2, and this walk
- * reads it rather than `enumerateContainers` for one reason: the depth here comes from the
- * capabilities the RUN CONTEXT holds, not from `provider.getCapabilities()`.
+ * which container that is, taken at the DEEPEST level only under ruling 5a2, and `enumerationOf`
+ * reads it, with each container's kinds, off that level. This walk calls it rather than
+ * `enumerateContainers` for one reason: the depth here comes from the capabilities the RUN
+ * CONTEXT holds, not from `provider.getCapabilities()`.
  */
 async function enumerateGroundingContainers(
   provider: DatabaseProvider,
@@ -3180,9 +3186,7 @@ async function enumerateGroundingContainers(
     level = next;
   }
 
-  const containers = level.map((container) => container.path);
-  const defaultContainer = sessionDefaultContainer(level);
-  return defaultContainer === undefined ? { containers } : { containers, defaultContainer };
+  return enumerationOf(level);
 }
 
 /** One container's counts, or none where the provider declares no counting. */

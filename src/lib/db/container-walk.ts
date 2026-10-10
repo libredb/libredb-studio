@@ -166,11 +166,11 @@ export async function describeNamedContainers(
 /**
  * Which of a DEEPEST LEVEL's containers is the session's, where exactly one says so.
  *
- * Exported because a second walk reads the same fact off the same answer: the agent's
- * grounding inventory (`src/lib/agent/tools.ts`) enumerates containers from the
- * capabilities its run context already holds rather than from `provider.getCapabilities()`,
- * so it cannot call `enumerateContainers` itself, and the rule for reading a default off a
- * level must not be written twice. Task 28's sweep is where the two walks become one.
+ * Exported because other readers take the same fact off a level of their own: the object
+ * browser's scoped read in `src/hooks/use-connection-manager.ts`, and the agent's grounding
+ * inventory (`src/lib/agent/tools.ts`), which enumerates containers from the capabilities its
+ * run context already holds rather than from `provider.getCapabilities()` and reads the default
+ * through `enumerationOf`, so the rule for reading a default off a level is written once.
  *
  * More than one flagged container is a provider defect and is answered as NO default
  * rather than by picking one, the same as none: a tie-breaker that guesses is worse than
