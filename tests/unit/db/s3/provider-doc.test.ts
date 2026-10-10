@@ -13,6 +13,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
+import { SeedConfigSchema } from "@/lib/seed/types";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -215,5 +217,27 @@ describe("docs/providers/s3.md: shape and fixed text", () => {
       const next = lines.slice(at + 1).find((candidate) => candidate.trim() !== "");
       expect(next?.startsWith("#"), `${line} is followed by text`).toBe(false);
     });
+  });
+
+  test("the read-only recipe loads as a seed file, read-only and managed, signing from the environment", () => {
+    const fixture = "tests/fixtures/seed-connections/s3-read-only-config.yaml";
+    const file = parseYaml(read(fixture)) as { connections: Record<string, unknown>[] };
+    const parsed = SeedConfigSchema.safeParse(file);
+    expect(parsed.success).toBe(true);
+    const connections = parsed.data?.connections ?? [];
+    expect(connections).toHaveLength(1);
+    expect(connections[0]).toMatchObject({
+      id: "s3-read-only",
+      type: "s3",
+      managed: true,
+      readOnly: true,
+      database: "reports",
+      region: "us-east-1",
+      user: "${S3_ACCESS_KEY_ID}",
+      password: "${S3_SECRET_ACCESS_KEY}",
+      ssl: { mode: "verify-full" },
+    });
+    const withMcp = { ...file, connections: [{ ...file.connections[0], mcp: true }] };
+    expect(SeedConfigSchema.safeParse(withMcp).success).toBe(false);
   });
 });

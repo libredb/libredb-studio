@@ -17,6 +17,7 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { rfc3986Path } from "@/lib/db/http/endpoint";
 import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
+import { SeedConfigSchema } from "@/lib/seed/types";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 
@@ -1112,5 +1113,123 @@ describe("the fixtures README docker/s3/README.md", () => {
       draft.files[README] = draft.files[README].replace(SILO_TLS_LINES[1], "");
     });
     finds(readmeFindings(lost), "does not carry the silo-tls line");
+  });
+});
+
+// -- docker/s3/seed-connections.yaml --------------------------------------------------------------------------------
+
+const SEED_CONNECTIONS = "docker/s3/seed-connections.yaml";
+const SEED_TARGETS = [
+  { target: "minio", port: 9000, region: "us-east-1" },
+  { target: "minio-region", port: 9030, region: "eu-central-1" },
+  { target: "silo", port: 9010, region: "us-east-1" },
+  { target: "garage", port: 3900, region: "garage" },
+  { target: "rustfs", port: 9020, region: "us-east-1" },
+] as const;
+const SEED_SUFFIXES = [
+  { suffix: "root", role: "root", pin: undefined },
+  { suffix: "browse", role: "browse", pin: undefined },
+  { suffix: "browse-demo", role: "browse", pin: "studio-demo" },
+  { suffix: "scoped", role: "scoped", pin: undefined },
+  { suffix: "scoped-pin", role: "scoped", pin: "studio-scoped" },
+  { suffix: "getonly", role: "getonly", pin: "studio-demo" },
+] as const;
+const GARAGE_ENV: Readonly<Record<S3RoleName, string>> = {
+  root: "${LIBREDB_S3_GARAGE_ROOT_SECRET}",
+  browse: "${LIBREDB_S3_GARAGE_BROWSE_SECRET}",
+  scoped: "${LIBREDB_S3_GARAGE_SCOPED_SECRET}",
+  getonly: "${LIBREDB_S3_GARAGE_GETONLY_SECRET}",
+};
+
+interface SeedRow {
+  readonly id: string;
+  readonly type: string;
+  readonly host: string;
+  readonly port: number;
+  readonly region?: string;
+  readonly user?: string;
+  readonly password?: string;
+  readonly database?: string;
+  readonly roles: readonly string[];
+  readonly managed?: boolean;
+  readonly readOnly?: boolean;
+  readonly allowInsecureAuth?: boolean;
+  readonly ssl?: { readonly mode: string; readonly caCert?: string };
+}
+
+function seedConnectionFindings({ files }: S3Fixtures): string[] {
+  const text = files[SEED_CONNECTIONS];
+  if (text === undefined) return [`${SEED_CONNECTIONS} is missing`];
+  const file = parseYaml(text) as { connections: SeedRow[] };
+  const findings: string[] = [];
+  const parsed = SeedConfigSchema.safeParse(file);
+  if (!parsed.success)
+    findings.push(`${SEED_CONNECTIONS} does not load: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);
+  const principals = readmePrincipals(files[README] ?? "");
+  const byId = new Map(file.connections.map((row) => [row.id, row]));
+  const expected: Record<string, Partial<SeedRow>> = {};
+  for (const { target, port, region } of SEED_TARGETS)
+    for (const { suffix, role, pin } of SEED_SUFFIXES) {
+      const principal = principals[role];
+      expected[`s3-${target}-${suffix}`] = {
+        port,
+        region,
+        user: target === "garage" ? principal?.garageKeyId : principal?.accessKeyId,
+        password: target === "garage" ? GARAGE_ENV[role] : principal?.secret,
+        database: pin,
+      };
+    }
+  expected["s3-silo-tls-browse"] = {
+    port: 9443,
+    region: "us-east-1",
+    user: principals.browse?.accessKeyId,
+    password: principals.browse?.secret,
+  };
+  for (const [id, want] of Object.entries(expected)) {
+    const row = byId.get(id);
+    if (row === undefined) {
+      findings.push(`${SEED_CONNECTIONS} has no ${id}`);
+      continue;
+    }
+    for (const [field, value] of Object.entries(want))
+      if (row[field as keyof SeedRow] !== value)
+        findings.push(
+          `${id} has ${field} ${JSON.stringify(row[field as keyof SeedRow])}, not ${JSON.stringify(value)}`,
+        );
+  }
+  for (const row of file.connections) {
+    if (expected[row.id] === undefined) findings.push(`${SEED_CONNECTIONS} holds ${row.id}, which no rule names`);
+    if (row.type !== "s3" || row.host !== "localhost") findings.push(`${row.id} is not an s3 connection to localhost`);
+    if (row.managed !== true || row.readOnly !== true) findings.push(`${row.id} is not managed and read-only`);
+    if (!Bun.deepEquals(row.roles, ["*"])) findings.push(`${row.id} is not offered to every role`);
+    if (row.allowInsecureAuth !== undefined)
+      findings.push(`${row.id} sets allowInsecureAuth, which a loopback target never needs`);
+    if (row.region === undefined) findings.push(`${row.id} leaves region implicit`);
+  }
+  const tls = byId.get("s3-silo-tls-browse")?.ssl;
+  if (tls?.mode !== "verify-ca" || tls.caCert !== "${LIBREDB_S3_TLS_CA}")
+    findings.push("s3-silo-tls-browse does not verify the CA of LIBREDB_S3_TLS_CA");
+  if (/\b[0-9a-f]{64}\b/.test(text))
+    findings.push(`${SEED_CONNECTIONS} holds a 64-hex value, which only a generated Garage secret would be`);
+  return findings;
+}
+
+describe("the seed connections docker/s3/seed-connections.yaml", () => {
+  test("load as a seed file, one per target and principal, managed, read-only, with the README's principals", () => {
+    clean(seedConnectionFindings(real));
+    const leaked = planted(real, (draft) => {
+      draft.files[SEED_CONNECTIONS] = draft.files[SEED_CONNECTIONS].replace(
+        "${LIBREDB_S3_GARAGE_ROOT_SECRET}",
+        "a".repeat(64),
+      );
+    });
+    finds(seedConnectionFindings(leaked), "holds a 64-hex value");
+    const consent = planted(real, (draft) => {
+      draft.files[SEED_CONNECTIONS] = draft.files[SEED_CONNECTIONS].replace(
+        'id: "s3-silo-root"',
+        'id: "s3-silo-root"\n    allowInsecureAuth: true',
+      );
+    });
+    finds(seedConnectionFindings(consent), "s3-silo-root sets allowInsecureAuth");
   });
 });
