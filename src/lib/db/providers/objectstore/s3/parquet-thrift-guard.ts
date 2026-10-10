@@ -3,7 +3,8 @@
  * struct without building values and never allocates per declared element: a list may declare at most the bytes left
  * (every compact element takes at least one), a binary at most the bytes left, a varint at most 10 bytes, nesting at
  * most `maxDepth`, and only the types hyparquet reads (thrift.js:6-16). Every footer and page header passes it before
- * any hyparquet parser sees it.
+ * any hyparquet parser sees it. A caller may also cap the list elements of the whole struct, since hyparquet builds an
+ * object or a value for each one.
  */
 
 export type ThriftGuardResult =
@@ -15,12 +16,23 @@ const KNOWN_TYPES: ReadonlySet<number> = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 12]
 /** Thrown inside the walk only, carrying the refusal's reason to `guardThriftStruct`. */
 class GuardStop extends Error {}
 
+export interface ThriftGuardOptions {
+  /** The most elements all lists of the struct may declare together, at any depth. */
+  readonly maxListElements?: number;
+  /**
+   * Called with each field outside any list, after its value: its path of field ids, its Thrift type, and its value
+   * when an i16 or i32, or its declared size when a list.
+   */
+  readonly onField?: (path: readonly number[], type: number, value: number | undefined) => void;
+}
+
 interface Walk {
   readonly bytes: Uint8Array;
   offset: number;
   readonly maxDepth: number;
-  /** Called with each i16 or i32 field outside any list and its path of field ids (page headers read four of them). */
-  readonly onNumber?: (path: readonly number[], value: number) => void;
+  readonly maxListElements: number;
+  listElements: number;
+  readonly onField?: ThriftGuardOptions["onField"];
 }
 
 const count = (value: number): string => value.toLocaleString("en-US");
@@ -55,49 +67,47 @@ function readByte(walk: Walk): number {
   return byte;
 }
 
+/** Walks one value; returns an i16 or i32 value, or a list's declared size. */
 function walkValue(
   walk: Walk,
   type: number,
   depth: number,
   path: readonly number[] | undefined,
   inList: boolean,
-): void {
+): number | undefined {
   switch (type) {
     case 1:
     case 2:
       if (inList) skip(walk, 1);
-      return;
+      return undefined;
     case 3:
       skip(walk, 1);
-      return;
+      return undefined;
     case 4:
-    case 5: {
-      const value = unzigzag(readVarint(walk));
-      if (path !== undefined) walk.onNumber?.(path, value);
-      return;
-    }
+    case 5:
+      return unzigzag(readVarint(walk));
     case 6:
       readVarint(walk);
-      return;
+      return undefined;
     case 7:
       skip(walk, 8);
-      return;
+      return undefined;
     case 8: {
       const length = readVarint(walk);
       const left = walk.bytes.length - walk.offset;
       if (length > left) stop(`a string declares ${count(length)} bytes in ${count(left)} bytes`);
       walk.offset += length;
-      return;
+      return undefined;
     }
     case 9:
-      walkList(walk, depth + 1);
-      return;
+      return walkList(walk, depth + 1);
     default:
       walkStruct(walk, depth + 1, path);
+      return undefined;
   }
 }
 
-function walkList(walk: Walk, depth: number): void {
+function walkList(walk: Walk, depth: number): number {
   if (depth > walk.maxDepth) stop(`nesting deeper than ${walk.maxDepth} levels`);
   const header = readByte(walk);
   const type = header & 0x0f;
@@ -105,7 +115,11 @@ function walkList(walk: Walk, depth: number): void {
   if (!KNOWN_TYPES.has(type)) stop(`an unknown Thrift type ${type}`);
   const left = walk.bytes.length - walk.offset;
   if (size > left) stop(`a list declares ${count(size)} elements in ${count(left)} bytes`);
+  walk.listElements += size;
+  if (walk.listElements > walk.maxListElements)
+    stop(`the lists declare more than ${count(walk.maxListElements)} elements in all`);
   for (let element = 0; element < size; element += 1) walkValue(walk, type, depth, undefined, true);
+  return size;
 }
 
 function walkStruct(walk: Walk, depth: number, path: readonly number[] | undefined): void {
@@ -118,13 +132,15 @@ function walkStruct(walk: Walk, depth: number, path: readonly number[] | undefin
     if (!KNOWN_TYPES.has(type)) stop(`an unknown Thrift type ${type}`);
     const delta = byte >> 4;
     field = delta !== 0 ? field + delta : unzigzag(readVarint(walk));
-    walkValue(walk, type, depth, path === undefined ? undefined : [...path, field], false);
+    const fieldPath = path === undefined ? undefined : [...path, field];
+    const value = walkValue(walk, type, depth, fieldPath, false);
+    if (fieldPath !== undefined) walk.onField?.(fieldPath, type, value);
   }
 }
 
 function run(walk: Walk): ThriftGuardResult {
   try {
-    walkStruct(walk, 1, walk.onNumber === undefined ? undefined : []);
+    walkStruct(walk, 1, walk.onField === undefined ? undefined : []);
     return { ok: true, end: walk.offset };
   } catch (error) {
     // Only GuardStop is thrown inside the walk: its depth is bounded, so no stack overflow can reach here.
@@ -133,8 +149,20 @@ function run(walk: Walk): ThriftGuardResult {
 }
 
 /** Walks one struct from `offset`; never allocates per declared element. */
-export function guardThriftStruct(bytes: Uint8Array, offset: number, maxDepth: number): ThriftGuardResult {
-  return run({ bytes, offset, maxDepth });
+export function guardThriftStruct(
+  bytes: Uint8Array,
+  offset: number,
+  maxDepth: number,
+  options: ThriftGuardOptions = {},
+): ThriftGuardResult {
+  return run({
+    bytes,
+    offset,
+    maxDepth,
+    maxListElements: options.maxListElements ?? Number.POSITIVE_INFINITY,
+    listElements: 0,
+    onField: options.onField,
+  });
 }
 
 export interface PageHeaderFacts {
@@ -142,36 +170,70 @@ export interface PageHeaderFacts {
   readonly type: number;
   readonly uncompressedPageSize: number;
   readonly compressedPageSize: number;
-  /** Field 1 of field 5, 7 or 8; 0 when none. */
+  /** Field 1 of field 5 for a data page, of field 7 for a dictionary page, of field 8 for a data page v2; 0 for an index page. */
   readonly numValues: number;
   readonly headerBytes: number;
 }
 
-/** Guards, then reads the four facts of one PageHeader at `offset` (hyparquet's column.js parquetHeader). */
+/** The field holding the value count of each page type, as hyparquet's readPage reads it (column.js:96-141). */
+const COUNT_HOLDER: Readonly<Record<number, number>> = { 0: 5, 2: 7, 3: 8 };
+
+interface SeenField {
+  readonly type: number;
+  readonly value: number | undefined;
+  readonly times: number;
+}
+
+/**
+ * Guards, then reads the four facts of one PageHeader at `offset` the way hyparquet's column.js parquetHeader and
+ * readPage read them, so a count the guard checks is the count hyparquet allocates from: the count comes from the
+ * holder the page type names, every fact must be an i16 or i32 that appears once, and a data page v2's null count,
+ * which hyparquet subtracts from its count, must lie between 0 and that count.
+ */
 export function readPageHeader(
   bytes: Uint8Array,
   offset: number,
   maxDepth: number,
 ): PageHeaderFacts | { readonly ok: false; readonly reason: string } {
-  const numbers = new Map<string, number>();
-  const result = run({
-    bytes,
-    offset,
-    maxDepth,
-    onNumber: (path, value) => {
-      if (path.length <= 2) numbers.set(path.join("."), value);
+  const fields = new Map<string, SeenField>();
+  const result = guardThriftStruct(bytes, offset, maxDepth, {
+    onField: (path, type, value) => {
+      if (path.length > 2) return;
+      const key = path.join(".");
+      fields.set(key, { type, value, times: (fields.get(key)?.times ?? 0) + 1 });
     },
   });
   if (!result.ok) return result;
-  const uncompressedPageSize = numbers.get("2") ?? -1;
-  const compressedPageSize = numbers.get("3") ?? -1;
-  if (uncompressedPageSize < 0 || compressedPageSize < 0)
-    return { ok: false, reason: "a page declares a negative size" };
-  return {
-    type: numbers.get("1") ?? -1,
-    uncompressedPageSize,
-    compressedPageSize,
-    numValues: numbers.get("5.1") ?? numbers.get("7.1") ?? numbers.get("8.1") ?? 0,
-    headerBytes: result.end - offset,
+  const once = (key: string): SeenField | undefined => {
+    const field = fields.get(key);
+    if (field !== undefined && field.times > 1) stop(`page header field ${key} appears more than once`);
+    return field;
   };
+  const integer = (key: string): number | undefined => {
+    const field = once(key);
+    if (field === undefined) return undefined;
+    if (field.type !== 4 && field.type !== 5) stop(`page header field ${key} is not a 16-bit or 32-bit integer`);
+    return field.value;
+  };
+  try {
+    const type = integer("1");
+    const uncompressedPageSize = integer("2") ?? -1;
+    const compressedPageSize = integer("3") ?? -1;
+    if (uncompressedPageSize < 0 || compressedPageSize < 0) stop("a page declares a negative size");
+    if (type === undefined) return stop("a page declares no type");
+    let numValues = 0;
+    if (type !== 1) {
+      const holder = COUNT_HOLDER[type];
+      if (holder === undefined) stop(`a page declares an unknown type ${type}`);
+      if (once(`${holder}`)?.type !== 12) stop(`a page of type ${type} has no field ${holder}`);
+      numValues = integer(`${holder}.1`) ?? stop(`a page of type ${type} has no value count`);
+      if (type === 3) {
+        const nulls = integer("8.2") ?? stop("a data page v2 has no null count");
+        if (nulls < 0 || nulls > numValues) stop("a data page v2 declares a null count outside 0 to its values");
+      }
+    }
+    return { type, uncompressedPageSize, compressedPageSize, numValues, headerBytes: result.end - offset };
+  } catch (error) {
+    return { ok: false, reason: (error as GuardStop).message };
+  }
 }

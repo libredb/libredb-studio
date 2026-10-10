@@ -18,6 +18,8 @@ export const THRIFT = {
 
 export type ThriftValue =
   | { readonly i32: number }
+  | { readonly i16: number }
+  | { readonly double: number }
   | { readonly i64: number | bigint }
   | { readonly binary: string | Uint8Array }
   | { readonly bool: boolean }
@@ -51,6 +53,8 @@ const zigzag = (value: number | bigint): bigint => {
 
 function typeOf(value: ThriftValue): number {
   if ("i32" in value) return THRIFT.I32;
+  if ("i16" in value) return THRIFT.I16;
+  if ("double" in value) return THRIFT.DOUBLE;
   if ("i64" in value) return THRIFT.I64;
   if ("binary" in value) return THRIFT.BINARY;
   if ("bool" in value) return value.bool ? THRIFT.TRUE : THRIFT.FALSE;
@@ -64,7 +68,12 @@ function pushAll(out: number[], values: Iterable<number>): void {
 
 function writeValue(out: number[], value: ThriftValue, inList: boolean): void {
   if ("i32" in value) pushAll(out, varint(zigzag(value.i32)));
-  else if ("i64" in value) pushAll(out, varint(zigzag(value.i64)));
+  else if ("i16" in value) pushAll(out, varint(zigzag(value.i16)));
+  else if ("double" in value) {
+    const bytes = new Uint8Array(8);
+    new DataView(bytes.buffer).setFloat64(0, value.double, true);
+    pushAll(out, bytes);
+  } else if ("i64" in value) pushAll(out, varint(zigzag(value.i64)));
   else if ("binary" in value) {
     const bytes = typeof value.binary === "string" ? new TextEncoder().encode(value.binary) : value.binary;
     pushAll(out, varint(bytes.length));

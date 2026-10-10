@@ -10,6 +10,8 @@ import { QueryError } from "@/lib/db/errors";
 import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
 import type { S3PreviewCell } from "@/lib/db/providers/objectstore/s3/preview";
 import {
+  boundedLz4,
+  boundedLz4Raw,
   boundedZlib,
   createDecodeSlots,
   DECODE_OVER_BUDGET,
@@ -39,6 +41,7 @@ import {
   withTail,
 } from "../../../helpers/parquet-synthetic";
 import { fakeReader, fixture, headOf } from "../../../helpers/s3-preview-reader";
+import { thriftStruct } from "../../../helpers/thrift-compact";
 
 const limits = (changes: Partial<typeof S3_PREVIEW_LIMITS> = {}) => ({ ...S3_PREVIEW_LIMITS, ...changes });
 
@@ -1018,5 +1021,206 @@ describe("the process-wide decode slot", () => {
     expect(calls.read).toEqual([]);
     const again = await inner.acquire(new AbortController().signal);
     again();
+  });
+});
+
+describe("prescanChunk reads each page's count where hyparquet does", () => {
+  test("a dictionary page whose field 7 count is over the page cap is refused, whatever a decoy field 5 says", () => {
+    const header = thriftStruct([
+      [1, { i32: 2 }],
+      [2, { i32: 16 }],
+      [3, { i32: 16 }],
+      [5, { struct: [[1, { i32: 1 }]] }],
+      [
+        7,
+        {
+          struct: [
+            [1, { i32: 50_000_000 }],
+            [2, { i32: 0 }],
+          ],
+        },
+      ],
+    ]);
+    const chunk = new Uint8Array([...header, ...new Uint8Array(16)]);
+    expect(() => prescanChunk(chunk, 1, "a", S3_PREVIEW_LIMITS, { values: 0, decoded: 0 })).toThrow(
+      new PreviewRefusal(
+        "A page of column a declares 50,000,000 values, more than its column chunk holds or the preview allows, so the file is not previewed.",
+      ),
+    );
+  });
+});
+
+describe("a codec id hyparquet has no name for", () => {
+  /** One INT32 column whose chunk names codec id 8, past the format's table. */
+  const unnamed = (): Uint8Array =>
+    syntheticParquet({
+      schema: [
+        { name: "schema", children: 1 },
+        { name: "a", type: PHYSICAL.INT32 },
+      ],
+      rowGroups: [{ numRows: 2, chunks: [int32Chunk("a", [1, 2], { codec: 8 })] }],
+    });
+
+  test("leading mode names it in N-PQ-CODEC, explicit mode in R-PQ-COLUMN-CODEC, and the summary shows the same name", async () => {
+    const footer = await footerOf(unnamed());
+    expect(planParquet(footer, {}, "source", S3_PREVIEW_LIMITS)).toEqual({
+      kind: "summary",
+      notices: [
+        "Column a is compressed with an unknown codec or stored in another file, which the preview cannot read, so the columns from it on are not shown.",
+      ],
+    });
+    expect(() => planParquet(footer, { columns: ["a"] }, "console", S3_PREVIEW_LIMITS)).toThrow(
+      new QueryError(
+        "Column a is compressed with an unknown codec or stored in another file, which the preview cannot read.",
+        "s3",
+      ),
+    );
+    expect(summarizeParquet(footer, S3_PREVIEW_LIMITS).summary.columns[0].codec).toBe("an unknown codec");
+  });
+
+  test("a preview of such a file answers with the summary for both purposes", async () => {
+    const outcomes = await Promise.all(
+      (["source", "console"] as const).map((purpose) =>
+        previewParquet(inputFor(unnamed(), "u.parquet", { purpose }).input),
+      ),
+    );
+    expect(outcomes.map((outcome) => outcome.kind)).toEqual(["parquet", "parquet"]);
+  });
+});
+
+describe("the footer's list budget, before hyparquet parses the footer", () => {
+  test("a schema list over parquetMaxLeafColumns times 8 elements is refused with R-PQ-SCHEMA and never reaches parquetMetadata", async () => {
+    const { modules, calls } = await spiedModules();
+    const width = S3_PREVIEW_LIMITS.parquetMaxLeafColumns * 8;
+    const object = syntheticParquet({
+      schema: [
+        { name: "schema", children: width },
+        ...Array.from({ length: width }, (_, index) => ({ name: `c${index}`, type: PHYSICAL.INT32 })),
+      ],
+      rowGroups: [],
+    });
+    expect(await previewParquet(inputFor(object, "w.parquet").input, depsOf(modules))).toEqual({
+      kind: "refused",
+      sentence: "The Parquet schema is nested deeper or wider than the preview reads, so the file is not previewed.",
+      notices: [],
+    });
+    expect(calls.metadata).toBe(0);
+  });
+
+  test("a footer whose lists declare more elements in all than the budget is refused and never reaches parquetMetadata", async () => {
+    const { modules, calls } = await spiedModules();
+    const small = limits({ parquetMaxLeafColumns: 1 });
+    const budget = small.parquetMaxLeafColumns * 8 * 128;
+    const object = syntheticParquet({
+      schema: [
+        { name: "schema", children: 1 },
+        { name: "a", type: PHYSICAL.INT32 },
+      ],
+      rowGroups: Array.from({ length: Math.ceil(budget / 5) + 1 }, () => ({
+        numRows: 1,
+        chunks: [int32Chunk("a", [1])],
+      })),
+    });
+    expect(await previewParquet(inputFor(object, "g.parquet", { limits: small }).input, depsOf(modules))).toEqual({
+      kind: "refused",
+      sentence: `The Parquet footer could not be read: the lists declare more than ${budget.toLocaleString("en-US")} elements in all.`,
+      notices: [],
+    });
+    expect(calls.metadata).toBe(0);
+    const fewer = syntheticParquet({
+      schema: [
+        { name: "schema", children: 1 },
+        { name: "a", type: PHYSICAL.INT32 },
+      ],
+      rowGroups: Array.from({ length: Math.floor((budget - 2) / 5) }, () => ({
+        numRows: 1,
+        chunks: [int32Chunk("a", [1])],
+      })),
+    });
+    expect((await footerOutcome(fewer, { limits: small })).kind).toBe("footer");
+  });
+});
+
+/** An LZ4 block of literals "abcd", a match of 8 at offset 4, then the literal "e": "abcdabcdabcde". */
+const LZ4_BLOCK = Uint8Array.of(0x44, 0x61, 0x62, 0x63, 0x64, 4, 0, 0x10, 0x65);
+const LZ4_TEXT = "abcdabcdabcde";
+/** One Hadoop LZ4 frame: big-endian output and input lengths, then the block. */
+const hadoopFrame = (block: Uint8Array, outputLength: number): number[] => {
+  const header = new Uint8Array(8);
+  new DataView(header.buffer).setUint32(0, outputLength);
+  new DataView(header.buffer).setUint32(4, block.length);
+  return [...header, ...block];
+};
+/** A block whose one match runs `inputBytes` long through 255-valued length bytes, far past any small output. */
+const longMatch = (inputBytes: number): Uint8Array => {
+  const input = new Uint8Array(inputBytes).fill(255);
+  input.set([0x1f, 0x41, 1, 0], 0);
+  input[inputBytes - 1] = 0;
+  return input;
+};
+
+describe("the bounded LZ4 decoders", () => {
+  const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+
+  test("a raw block decodes to exactly its declared length", () => {
+    expect(text(boundedLz4Raw(LZ4_BLOCK, 13))).toBe(LZ4_TEXT);
+    expect(boundedLz4Raw(new Uint8Array(0), 0)).toHaveLength(0);
+  });
+
+  test("a match or a literal run that would pass the declared length stops with DECODE_OVER_BUDGET", () => {
+    expect(() => boundedLz4Raw(LZ4_BLOCK, 12)).toThrow(DECODE_OVER_BUDGET);
+    expect(() => boundedLz4Raw(LZ4_BLOCK, 3)).toThrow(DECODE_OVER_BUDGET);
+  });
+
+  test("an output shorter than the declared length is refused with DECODE_OVER_BUDGET", () => {
+    expect(() => boundedLz4Raw(LZ4_BLOCK, 14)).toThrow(DECODE_OVER_BUDGET);
+  });
+
+  test("a match running far past the declared length is refused within a short time, raw and legacy alike", async () => {
+    const modules = await loadParquetModules();
+    const input = longMatch(4_000_000);
+    for (const [name, decode] of [
+      ["LZ4_RAW", modules.codecs.lz4Raw],
+      ["LZ4", modules.codecs.lz4],
+    ] as const) {
+      const started = performance.now();
+      expect(() => decode(input, 100), name).toThrow(DECODE_OVER_BUDGET);
+      expect(performance.now() - started, name).toBeLessThan(500);
+    }
+  });
+
+  test("malformed blocks throw an error of their own", () => {
+    for (const block of [
+      Uint8Array.of(0x50, 0x61),
+      Uint8Array.of(0x04),
+      Uint8Array.of(0x04, 0, 0),
+      Uint8Array.of(0x10, 0x61, 5, 0),
+      Uint8Array.of(0xf0),
+      Uint8Array.of(0x1f, 0x61, 1, 0),
+    ]) {
+      let message = "";
+      try {
+        boundedLz4Raw(block, 100);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message, `${block}`).toBe("The LZ4 data is malformed");
+    }
+  });
+
+  test("legacy LZ4 reads Hadoop frames, one or several, to exactly the declared length", () => {
+    expect(text(boundedLz4(Uint8Array.from(hadoopFrame(LZ4_BLOCK, 13)), 13))).toBe(LZ4_TEXT);
+    const two = Uint8Array.from([...hadoopFrame(LZ4_BLOCK, 13), ...hadoopFrame(LZ4_BLOCK, 13)]);
+    expect(text(boundedLz4(two, 26))).toBe(LZ4_TEXT + LZ4_TEXT);
+    expect(() => boundedLz4(Uint8Array.from(hadoopFrame(LZ4_BLOCK, 13)), 14)).toThrow(DECODE_OVER_BUDGET);
+  });
+
+  test("legacy LZ4 that is not Hadoop-framed decodes as one raw block", () => {
+    expect(text(boundedLz4(LZ4_BLOCK, 13))).toBe(LZ4_TEXT);
+    expect(text(boundedLz4(Uint8Array.of(0x10, 0x65), 1))).toBe("e");
+    const misframed = Uint8Array.from([...hadoopFrame(LZ4_BLOCK, 5), 0x10, 0x65]);
+    expect(() => boundedLz4(misframed, 13)).toThrow("The LZ4 data is malformed");
+    const overlong = Uint8Array.from(hadoopFrame(LZ4_BLOCK, 99));
+    expect(() => boundedLz4(overlong, 13)).toThrow("The LZ4 data is malformed");
   });
 });

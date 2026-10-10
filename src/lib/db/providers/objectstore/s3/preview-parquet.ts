@@ -52,8 +52,8 @@ async function importParquetModules(): Promise<ParquetModules> {
       gzip: boundedZlib(gunzipSync),
       brotli: boundedZlib(brotliDecompressSync),
       zstd: compressors.decompressZstd,
-      lz4: compressors.decompressLz4,
-      lz4Raw: compressors.decompressLz4Raw,
+      lz4: boundedLz4,
+      lz4Raw: boundedLz4Raw,
     },
   };
 }
@@ -141,6 +141,14 @@ const endsWithPar1 = (bytes: Uint8Array): boolean =>
 const refused = (sentence: string): FooterOutcome => ({ kind: "refused", sentence });
 
 /**
+ * The footer's list elements in all, per schema element the walk admits. hyparquet builds an object for each list
+ * element before the schema walk runs, so the guard bounds them first: measured on Node 26.10.0, 131,072 empty column
+ * chunks (this multiple at 128 leaf columns) hold 21 MiB after parquetMetadata, and a footer of 20,000 one-column row
+ * groups holds 100,002 list elements.
+ */
+const FOOTER_LIST_ELEMENTS_PER_SCHEMA_ELEMENT = 128;
+
+/**
  * Parquet writes a row group's column chunks one per schema leaf, in schema order; the plan and the summary pair
  * them by that order, so a chunk list of another length, a chunk with no metadata, or a chunk whose path is not the
  * leaf's at its position is refused.
@@ -176,8 +184,16 @@ export async function readParquetFooter(input: ParquetPreviewInput, modules: Par
   } else {
     footerBytes.set(tail.subarray(tailLength - footerLength - 8));
   }
-  const guard = guardThriftStruct(footerBytes.subarray(0, footerLength), 0, limits.thriftMaxDepth);
+  const schemaBound = limits.parquetMaxLeafColumns * 8;
+  let schemaElements = 0;
+  const guard = guardThriftStruct(footerBytes.subarray(0, footerLength), 0, limits.thriftMaxDepth, {
+    maxListElements: schemaBound * FOOTER_LIST_ELEMENTS_PER_SCHEMA_ELEMENT,
+    onField: (path, type, value) => {
+      if (path.length === 1 && path[0] === 2 && type === 9) schemaElements = Math.max(schemaElements, value as number);
+    },
+  });
   if (!guard.ok) return refused(previewSentence("R-PQ-FOOTER-BAD", { reason: guard.reason }));
+  if (schemaElements > schemaBound) return refused(previewSentence("R-PQ-SCHEMA"));
   let metadata: FileMetaData;
   try {
     metadata = modules.parquetMetadata(footerBytes.buffer, { geoparquet: false, parsers: PREVIEW_PARSERS });
@@ -195,6 +211,9 @@ export async function readParquetFooter(input: ParquetPreviewInput, modules: Par
 }
 
 const metaOf = (chunk: ColumnChunk): ColumnMetaData => chunk.meta_data as ColumnMetaData;
+
+/** A chunk's codec as the preview prints it: hyparquet maps an id past the format's table to undefined. */
+const codecOf = (meta: ColumnMetaData): string => (meta.codec as string | undefined) ?? "an unknown codec";
 
 /** Counts, the writer, the first row group, and each leaf's first-row-group statistics. */
 export function summarizeParquet(
@@ -223,7 +242,7 @@ export function summarizeParquet(
     return {
       path: meta.path_in_schema.join("."),
       type: leaf.type,
-      codec: meta.codec,
+      codec: codecOf(meta),
       nulls: cell(statistics?.null_count),
       min: cell(statistics?.min_value ?? statistics?.min),
       max: cell(statistics?.max_value ?? statistics?.max),
@@ -297,7 +316,7 @@ function costs(footer: ParquetFooter): PlannedColumn[] {
     const total = (read: (meta: ColumnMetaData) => bigint): number =>
       chunks.reduce((sum, chunk) => sum + Number(read(metaOf(chunk))), 0);
     const unreadable = chunks.find(
-      (chunk) => chunk.file_path !== undefined || !READABLE_CODECS.has(metaOf(chunk).codec),
+      (chunk) => chunk.file_path !== undefined || !READABLE_CODECS.has(codecOf(metaOf(chunk))),
     );
     return {
       name: column.name,
@@ -308,7 +327,7 @@ function costs(footer: ParquetFooter): PlannedColumn[] {
       leaves: chunks.length,
       values: total((meta) => meta.num_values),
       readable: unreadable === undefined,
-      codec: metaOf(unreadable ?? chunks[0]).codec,
+      codec: codecOf(metaOf(unreadable ?? chunks[0])),
       variant: column.variant,
       decimals: footer.shape.leaves
         .filter((leaf) => leaf.path[0] === column.name && leaf.decimal !== undefined)
@@ -457,12 +476,102 @@ export function boundedZlib(
   };
 }
 
+/** The bounded LZ4 decoders' refusal of a block that breaks the format; previewParquet reports it as R-PQ-DECODE. */
+const LZ4_MALFORMED = "The LZ4 data is malformed";
+
+/** An LZ4 length: the token's nibble, then while it reads 15, each following byte added until one is not 255. */
+function lz4Length(input: Uint8Array, nibble: number, at: { i: number }): number {
+  let length = nibble;
+  if (nibble !== 15) return length;
+  for (;;) {
+    if (at.i >= input.length) throw new Error(LZ4_MALFORMED);
+    const byte = input[at.i];
+    at.i += 1;
+    length += byte;
+    if (byte !== 255) return length;
+  }
+}
+
+/**
+ * Decodes one LZ4 block into `output` from `start`, never past `limit`: a literal run or a match that would pass it
+ * throws DECODE_OVER_BUDGET before it is copied, so the work is bounded by the input and the limit, not by the lengths
+ * the block declares. Returns where the output ends.
+ */
+function lz4Block(input: Uint8Array, output: Uint8Array, start: number, limit: number): number {
+  let out = start;
+  const at = { i: 0 };
+  while (at.i < input.length) {
+    const token = input[at.i];
+    at.i += 1;
+    const literals = lz4Length(input, token >> 4, at);
+    if (literals > 0) {
+      if (at.i + literals > input.length) throw new Error(LZ4_MALFORMED);
+      if (out + literals > limit) throw new Error(DECODE_OVER_BUDGET);
+      output.set(input.subarray(at.i, at.i + literals), out);
+      out += literals;
+      at.i += literals;
+      if (at.i >= input.length) return out;
+    }
+    if (at.i + 2 > input.length) throw new Error(LZ4_MALFORMED);
+    const offset = input[at.i] | (input[at.i + 1] << 8);
+    at.i += 2;
+    if (offset === 0 || offset > out) throw new Error(LZ4_MALFORMED);
+    const match = lz4Length(input, token & 0x0f, at) + 4;
+    if (out + match > limit) throw new Error(DECODE_OVER_BUDGET);
+    for (let end = out + match; out < end; out += 1) output[out] = output[out - offset];
+  }
+  return out;
+}
+
+/** LZ4_RAW: one block that must decode to exactly `outputLength` bytes, else DECODE_OVER_BUDGET. */
+export function boundedLz4Raw(input: Uint8Array, outputLength: number): Uint8Array {
+  const output = new Uint8Array(outputLength);
+  if (lz4Block(input, output, 0, outputLength) !== outputLength) throw new Error(DECODE_OVER_BUDGET);
+  return output;
+}
+
+/** Reads `input` as Hadoop LZ4 frames into `output`; false when it is not framed that way (hyparquet-compressors' rule). */
+function hadoopFrames(input: Uint8Array, output: Uint8Array): boolean {
+  const view = new DataView(input.buffer, input.byteOffset, input.byteLength);
+  let i = 0;
+  let o = 0;
+  while (i < input.length - 8) {
+    const frameOutput = view.getUint32(i);
+    const frameInput = view.getUint32(i + 4);
+    i += 8;
+    if (input.length - i < frameInput || o + frameOutput > output.length) return false;
+    try {
+      if (lz4Block(input.subarray(i, i + frameInput), output, o, o + frameOutput) !== o + frameOutput) return false;
+    } catch {
+      return false;
+    }
+    i += frameInput;
+    o += frameOutput;
+    if (i === input.length) {
+      if (o !== output.length) throw new Error(DECODE_OVER_BUDGET);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Legacy LZ4: Hadoop frames when the input reads as such, else one raw block, as hyparquet-compressors decides; either
+ * way bounded by `outputLength` and refused unless it fills it exactly.
+ */
+export function boundedLz4(input: Uint8Array, outputLength: number): Uint8Array {
+  const output = new Uint8Array(outputLength);
+  if (hadoopFrames(input, output)) return output;
+  return boundedLz4Raw(input, outputLength);
+}
+
 /**
  * The second line behind the pre-scan: each codec checks the declared output length against the budget
  * left before it runs, then spends it. Snappy is hyparquet's own pure-JavaScript decoder, so hysnappy's shared WASM
  * memory is never grown; zstd gets a buffer of the declared size, since fzstd otherwise sizes from the frame. Gzip and
  * brotli decode through node:zlib with the declared length as the output limit, because the package decoders size
- * their output from the stream.
+ * their output from the stream, and both LZ4 codecs through the bounded decoders above, because the package decoder
+ * keeps copying a match past its output.
  */
 export function guardedCompressors(budget: number, modules: ParquetModules): Compressors {
   let left = budget;
