@@ -934,12 +934,20 @@ describe("no typed value reaches a sentence", () => {
     `aws s3api head-object --profile=${SECRET}`,
     `aws s3api head-object --bucket b --key ../${SECRET}`,
     `preview s3://b/${SECRET}/../..`,
+    `aws --bucket ${SECRET} s3api head-bucket`,
+    `aws --sse-customer-key ${SECRET} s3api head-object --bucket b --key k`,
   ])("%s", (text) => {
     for (const context of [{}, SERVER, PINNED]) {
       const result = parseS3Command(text, context);
       if (result.ok) continue;
       expect(result.refusal.message).not.toContain(SECRET);
     }
+  });
+
+  test("a service word after an option that takes no global value is named by its place", () => {
+    expect(refused("aws --bucket x s3api head-bucket")).toBe(
+      "The word at line 1, column 14 is not S3: Studio's S3 console runs aws s3 ls, the aws s3api reads in the provider doc, and preview.",
+    );
   });
 
   test("a typed word is echoed at most 40 characters, and never past its first =", () => {

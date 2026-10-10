@@ -545,11 +545,16 @@ interface Located {
 const specOf = (operation: S3OperationKind): S3CommandSpec =>
   S3_COMMAND_TABLE.find((entry) => entry.operation === operation) as S3CommandSpec;
 
+/**
+ * Where the service stands: `echoable` is false when the word before it is an option word with no `=`, so the
+ * service word may be that option's typed value and a refusal names its place instead of its text.
+ */
 function locate(
   service: ShellWord,
   operation: ShellWord | undefined,
   afterAws: boolean,
   readOnly: boolean | undefined,
+  echoable: boolean,
 ): Located | S3Refusal {
   const name = service.text;
   if (name === "help") return refusal("help", HELP, service);
@@ -560,7 +565,7 @@ function locate(
   if (name !== "s3" && name !== "s3api")
     return refusal(
       "not-s3",
-      `${echo(name)} is not S3: Studio's S3 console runs aws s3 ls, the aws s3api reads in the provider doc, and preview.`,
+      `${echoable ? echo(name) : `The word at line ${service.line}, column ${service.column + 1}`} is not S3: Studio's S3 console runs aws s3 ls, the aws s3api reads in the provider doc, and preview.`,
       service,
     );
   if (operation === undefined) return refusal("empty", EMPTY, service);
@@ -975,7 +980,9 @@ export function parseS3Command(text: string, context: S3ParseContext): S3ParseRe
   if (shape.serviceAt === undefined) return failed("empty", EMPTY);
   const afterAws = lead.some((word) => !word.quoted && word.text === "aws");
   const operation = shape.operationAt === undefined ? undefined : words[shape.operationAt];
-  const located = locate(words[shape.serviceAt], operation, afterAws, context.readOnly);
+  const before = shape.serviceAt === 0 ? undefined : words[shape.serviceAt - 1];
+  const echoable = before === undefined || !isOptionWord(before, text) || before.text.includes("=");
+  const located = locate(words[shape.serviceAt], operation, afterAws, context.readOnly, echoable);
   if ("code" in located) return { ok: false, refusal: located };
   for (const word of words) {
     if (word.text.includes("\u0000")) return failed("nul-character", nulSentence(word), word);
