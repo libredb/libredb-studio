@@ -75,6 +75,7 @@ import { S3_LABELS } from "@/lib/db/providers/objectstore/s3/labels";
 import { S3_OBJECTS_LISTED_ELSEWHERE } from "@/lib/db/providers/objectstore/s3/objects";
 import { S3_PREVIEW_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-render";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
+import { resolveConnectionCredentials } from "@/lib/seed/credential-resolver";
 import { SeedConfigSchema } from "@/lib/seed/types";
 import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
 
@@ -1525,5 +1526,69 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
         .map((member) => member.replace(/'/g, ""))
         .sort(),
     ).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+  });
+});
+
+/** The SEED_CONNECTIONS `connections[].region` row, exactly. */
+const SEED_REGION_ROW =
+  "| `connections[].region` | No | absent | S3-compatible object storage only: the region every request is signed for; absent means `us-east-1`. Garage refuses any region but its s3_region; a MinIO or Silo started with a site region refuses bucket and object reads signed for another ([providers/s3.md](providers/s3.md)). A `${ENV}` or `${vault:...}` reference is resolved, as in `host`. A region name, neither a credential nor an address; not a secret |";
+
+describe("docs/SEED_CONNECTIONS.md and the seed schema agree on s3", () => {
+  const seed = read("docs/SEED_CONNECTIONS.md");
+
+  test("54. every place that lists the types or the fields names s3 and region", () => {
+    expect(seed).toContain("|influxdb|influxdb3|oxia|databend|s3\n");
+    expect(seed).toContain("`oxia`, `databend`, `s3` |");
+    expect(rowOf(seed, "`connections[].region`")).toBe(SEED_REGION_ROW);
+    expect(rowOf(seed, "`connections[].database`")).toContain("S3: the optional pinned bucket");
+    expect(rowOf(seed, "`connections[].user`")).toContain("S3: the access key ID");
+    expect(rowOf(seed, "`connections[].password`")).toContain("S3: the secret access key");
+    expect(rowOf(seed, "`connections[].readOnly`")).toContain(
+      "InfluxDB 3 (SQL), Oxia and S3-compatible object storage)",
+    );
+    expect(seed).toContain("both InfluxDB types', Oxia's and S3's do today");
+    expect(rowOf(seed, "`connections[].mcp`")).toContain(
+      "An etcd, Oxia or S3 connection refuses `mcp: true` when the file loads",
+    );
+    expect(seed).toContain(
+      "| `mcp: true` on an etcd, Oxia or S3 connection | The whole file fails like any invalid config, and the error names `mcp` and the type, `etcd`, `oxia` or `s3` |",
+    );
+    expect(seed.split("`dataServers`, `warehouse`, `region`, `apiKeyId`")).toHaveLength(3);
+  });
+
+  test("55. a seed written from the s3 rows loads and resolves, and mcp: true on it is refused", () => {
+    const connection = {
+      id: "s3-doc",
+      name: "S3 doc",
+      type: "s3",
+      host: "localhost",
+      port: 9000,
+      user: "studio-browse",
+      password: "${S3_DOC_SECRET}",
+      database: "studio-demo",
+      region: "${S3_DOC_REGION}",
+      allowInsecureAuth: false,
+      roles: ["user"],
+      managed: true,
+      readOnly: true,
+    };
+    const parsed = SeedConfigSchema.safeParse({ version: "1", connections: [connection] });
+    expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+    process.env.S3_DOC_SECRET = "doc-test-secret";
+    process.env.S3_DOC_REGION = "eu-central-1";
+    try {
+      const [loaded] = parsed.data?.connections ?? [];
+      const resolved = resolveConnectionCredentials(loaded);
+      expect(resolved.region).toBe("eu-central-1");
+      expect(resolved.database).toBe("studio-demo");
+    } finally {
+      delete process.env.S3_DOC_SECRET;
+      delete process.env.S3_DOC_REGION;
+    }
+    const refused = SeedConfigSchema.safeParse({ version: "1", connections: [{ ...connection, mcp: true }] });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues.map((issue) => issue.message)).toContain(
+      "mcp is not offered for s3: the product does not expose this engine to MCP clients. Remove mcp from this connection.",
+    );
   });
 });
