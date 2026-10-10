@@ -1401,3 +1401,37 @@ describe("DOCKERHUB.md", () => {
     expect(hub).toContain(`of one of the ${word(EXTERNAL_DATABASE_TYPES.length)} drivers above`);
   });
 });
+
+/** The chart description, exactly. */
+const CHART_DESCRIPTION =
+  "Web-based SQL IDE for cloud-native teams supporting twenty-eight engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend and S3-compatible object storage";
+
+describe("the chart and the operator name S3 where an evaluator searches", () => {
+  test("50. the description, the three keywords, the mirror and both CSV descriptions", () => {
+    const chart = parseYaml(read("charts/libredb-studio/Chart.yaml")) as {
+      readonly description: string;
+      readonly version: string;
+      readonly keywords: readonly string[];
+    };
+    expect(chart.description).toBe(CHART_DESCRIPTION);
+    expect(chart.description).toContain(` ${word(EXTERNAL_DATABASE_TYPES.length)} engines - `);
+    const databend = chart.keywords.indexOf("databend");
+    expect(chart.keywords.slice(databend + 1, databend + 4)).toEqual(["s3", "object-storage", "minio"]);
+    const readme = read("charts/libredb-studio/README.md");
+    expect(readme).toContain(`supporting ${word(EXTERNAL_DATABASE_TYPES.length)} engines - `);
+    expect(readme).toContain("InfluxDB 3, Oxia, Databend and S3-compatible object storage.");
+    expect(readme).toContain(`--version ${chart.version} \\`);
+    expect(read("operator/helm-charts/libredb-studio/Chart.yaml")).toBe(read("charts/libredb-studio/Chart.yaml"));
+    const csv = parseYaml(
+      read("operator/config/manifests/bases/libredb-studio-operator.clusterserviceversion.yaml"),
+    ) as {
+      readonly metadata: { readonly annotations: { readonly description: string } };
+      readonly spec: { readonly description: string };
+    };
+    expect(csv.metadata.annotations.description).toContain(`for ${word(EXTERNAL_DATABASE_TYPES.length)} engines - `);
+    expect(csv.metadata.annotations.description).toContain(
+      "Oxia, Databend and S3-compatible object storage - with AI-powered query assistance.",
+    );
+    expect(flat(csv.spec.description)).toContain("Oxia, Databend and S3-compatible object storage from the browser");
+  });
+});

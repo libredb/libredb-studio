@@ -22,12 +22,12 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.18.2
-    createdAt: "2026-10-09T18:56:13Z"
-    description: Open-source web-based SQL IDE for twenty-seven engines - PostgreSQL,
+    createdAt: "2026-10-10T11:12:09Z"
+    description: Open-source web-based SQL IDE for twenty-eight engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
       ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra,
       libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB
-      3, Oxia and Databend - with AI-powered query assistance.
+      3, Oxia, Databend and S3-compatible object storage - with AI-powered query assistance.
     olm.skipRange: '>=0.0.0 <0.18.2'
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: helm.sdk.operatorframework.io/v1
@@ -55,7 +55,7 @@ spec:
     MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
     ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache
     Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB,
-    InfluxDB 3, Oxia and Databend from the browser,
+    InfluxDB 3, Oxia, Databend and S3-compatible object storage from the browser,
     with AI-powered query assistance (natural-language-to-SQL, explain, fix),
     an ERD viewer, schema diff and a data profiler. No desktop client required.
 

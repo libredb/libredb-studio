@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting twenty-seven engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia and Databend
+description: Web-based SQL IDE for cloud-native teams supporting twenty-eight engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend and S3-compatible object storage
 type: application
-version: 0.1.81
+version: 0.1.82
 appVersion: "0.18.2"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -81,6 +81,12 @@ keywords:
   # One keyword, like oxia above: `databend` is the type-id and the word an evaluator looking for
   # a Databend client types, so there is no second spelling to catch.
   - databend
+  # Three keywords: `s3` is the type-id and the protocol an evaluator types, `object-storage` the
+  # category, and `minio` the server most self-hosted S3-compatible stores still run; the provider is
+  # verified on MinIO, Silo, Garage and RustFS (docs/providers/s3.md).
+  - s3
+  - object-storage
+  - minio
   - web-ide
 maintainers:
   - name: cevheri
@@ -212,6 +218,8 @@ annotations:
   # False: 0.1.81 tracks app release 0.18.2, which carries no security fix: Databend's official
   # icon, new connections that start unlabelled, Generate Test Data and Source tab fixes, and
   # provider fixes. No template, value or default moves, so the upgrade is the image.
+  # False: 0.1.82 changes chart metadata only, naming S3-compatible object storage in the
+  # description, the keywords and the README; no template, value or default moves.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
@@ -227,12 +235,8 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Databend shows its official icon from the Databend brand assets in place of the warehouse drawn for Studio"
-    - "A new connection starts with Environment set to Other, which shows no badge, instead of Local"
-    - "Generate Test Data leaves foreign-key columns out and keeps primary-key and unique values distinct, MongoDB included"
-    - "A Source tab re-reads its object when opened again and has a refresh control"
-    - "Fixes across PostgreSQL and its relatives, the wire-compatible engines, Vitess, MongoDB, Redis and Oracle Schema Diff"
-    - "Track app release 0.18.2 (appVersion bump; default image tag follows)"
+    - "Name S3-compatible object storage in the description and the README, which now count twenty-eight engines"
+    - "Add the keywords s3, object-storage and minio so an ArtifactHub search finds the S3-compatible object storage provider"
 dependencies:
   - name: postgresql
     version: "16.x.x"
