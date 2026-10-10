@@ -504,12 +504,13 @@ describe("the copied target grammar, held to the byte transport's", () => {
   });
 
   test("both transports refuse a path outside the byte transport's grammar", async () => {
-    // oxlint-disable-next-line no-await-in-loop -- one path at a time, so a failure names its path.
-    for (const path of ["relative", "//double", "/a b", "/%2f"])
+    for (const path of ["relative", "//double", "/a b", "/%2f"]) {
+      // oxlint-disable-next-line no-await-in-loop -- one path at a time, so a failure names its path.
       await refusedBoth(
         { path, query: "" },
         "Invalid request path: expected an absolute path of unreserved characters, slashes and upper-case percent escapes",
       );
+    }
   });
 
   test("both transports refuse a target past 16,384 bytes, and pass one of exactly 16,384", async () => {

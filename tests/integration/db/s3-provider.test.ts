@@ -120,6 +120,7 @@ describe("S3 captures", () => {
     const surfaces = CAPTURES.filter((file) => path.basename(file) === "surface.json");
     expect(surfaces).toHaveLength(5);
     for (const file of surfaces) {
+      // oxlint-disable-next-line no-await-in-loop -- one capture at a time, so a failure names its set.
       const { summaries } = await replay(file);
       expect(summaries).toEqual([{ step: "surface", ok: {}, exchanges: summaries[0].exchanges }]);
     }
@@ -140,6 +141,7 @@ describe("console over captures", () => {
     const files = CAPTURES.filter((name) => path.basename(name) === "A50.json");
     expect(files).toHaveLength(5);
     for (const file of files) {
+      // oxlint-disable-next-line no-await-in-loop -- one capture at a time, so a failure names its set.
       const { recorded, summaries } = await replay(file);
       expect(summaries.every((summary) => summary.refused !== undefined && summary.exchanges === 0)).toBe(true);
       // Only the session's own connect probes were sent, never anything the refused commands asked for.
@@ -236,6 +238,7 @@ describe("Source tab and preview over captures", () => {
     const files = CAPTURES.filter((name) => path.basename(name) === "A28.json");
     expect(files).toHaveLength(5);
     for (const file of files) {
+      // oxlint-disable-next-line no-await-in-loop -- one capture at a time, so a failure names its set.
       const { summaries } = await replay(file);
       const tagged = summaries.find((summary) => summary.step === "tagged");
       expect(tagged?.ok?.headers?.size_bytes).toBe("12");
@@ -247,6 +250,7 @@ describe("Source tab and preview over captures", () => {
     const files = CAPTURES.filter((name) => path.basename(name) === "preview-source.json");
     expect(files).toHaveLength(5);
     for (const file of files) {
+      // oxlint-disable-next-line no-await-in-loop -- one capture at a time, so a failure names its set.
       const { summaries } = await replay(file);
       expect(summaries.map((summary) => [summary.step, summary.ok?.names])).toEqual([
         ["source-table-csv", ["metadata", "preview", "preview-notes"]],

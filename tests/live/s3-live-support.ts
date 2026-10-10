@@ -2103,6 +2103,7 @@ async function walk(
   const headers: Record<string, string> = {};
   let cursor = "0";
   do {
+    // oxlint-disable-next-line no-await-in-loop -- each page starts from the cursor of the page before it.
     const page = await p.scanKeysPage!({ cursor, pattern, count, level: true });
     const defect = levelPageDefect(pattern, count, page);
     if (defect !== undefined) throw new Error(defect);
@@ -2440,6 +2441,7 @@ export const S3_RUNNERS: Readonly<Record<string, Readonly<Record<string, S3StepF
         name.slice("studio-demo/".length),
       );
       return step(run, wire, "open", { connection }, async () => {
+        // oxlint-disable-next-line no-await-in-loop -- one key at a time, so each Source tab's exchanges are its own.
         for (const key of keys) await source(provider(run, wire, connection), wire, "studio-demo", key);
         return { rows: keys.length };
       });
@@ -2489,6 +2491,7 @@ export const S3_RUNNERS: Readonly<Record<string, Readonly<Record<string, S3StepF
       const connection = connectionOf(run, { role: "root" });
       const keys = storedDotKeys(S3_TARGETS[run.target].server);
       return step(run, wire, "open", { connection }, async () => {
+        // oxlint-disable-next-line no-await-in-loop -- one key at a time, so each Source tab's exchanges are its own.
         for (const key of keys) await source(provider(run, wire, connection), wire, "studio-demo", key);
         return { rows: keys.length };
       });
@@ -2714,6 +2717,7 @@ export const S3_RUNNERS: Readonly<Record<string, Readonly<Record<string, S3StepF
           const running = p.query(command, [], "row-a57");
           const started = Date.now();
           while (wire.seen.length === before && Date.now() - started < 5_000)
+            // oxlint-disable-next-line no-await-in-loop -- polls until the request is on the wire, so the cancel comes while it is in flight.
             await new Promise((resolve) => setTimeout(resolve, 2));
           const atCancel = wire.seen.length;
           await (p as unknown as { cancelQuery(queryId: string): Promise<boolean> }).cancelQuery("row-a57");
@@ -2767,6 +2771,7 @@ export async function runS3Row(id: string, run: S3RunContext, steps: readonly st
   for (const name of steps) {
     const runner = runners[name];
     if (runner === undefined) throw new Error(`${id} has no step ${name}`);
+    // oxlint-disable-next-line no-await-in-loop -- the steps run in order on one server, each reading what the one before it left.
     runs.push(await runner(run, wire));
   }
   return runs;
@@ -2852,6 +2857,7 @@ export async function s3Fingerprint(
       const hash = createHash("sha256");
       let token: string | undefined;
       do {
+        // oxlint-disable-next-line no-await-in-loop -- each page starts after the continuation token of the page before it.
         const page = await client.listObjectsV2(
           { bucket, prefix: "", maxKeys: 1000, ...(token === undefined ? {} : { continuationToken: token }) },
           call(),
@@ -2861,6 +2867,7 @@ export async function s3Fingerprint(
       } while (token !== undefined);
       if (bucket === "studio-versions") {
         try {
+          // oxlint-disable-next-line no-await-in-loop -- the versions are read after the listing of the same bucket, one request at a time.
           const versions = await client.listObjectVersions({ bucket, prefix: "", maxKeys: 1000 }, call());
           if (versions.isTruncated)
             throw new Error(

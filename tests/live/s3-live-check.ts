@@ -254,6 +254,7 @@ try {
       line("FAIL", `factory: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  // oxlint-disable-next-line no-await-in-loop -- these rows run last and in order, after every other row.
   for (const id of LAST_ROWS) await runRow(id);
   const after = await s3Fingerprint(target, principals, production, () => new Date(), ca);
   if (JSON.stringify(before) === JSON.stringify(after)) line("PASS", "fingerprint unchanged");

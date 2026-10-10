@@ -322,6 +322,7 @@ describe("bucket listings and the pin", () => {
   test("a pinned connection sends no ListBuckets and answers its bucket", async () => {
     const { surface, calls } = fakeSurface({});
     for (const text of ["aws s3 ls", "aws s3api list-buckets"]) {
+      // oxlint-disable-next-line no-await-in-loop -- one command at a time, against the one fake surface whose calls are read after.
       expect(await executeS3Command(surface, parsed(text), { call: CALL, pinnedBucket: "sales" })).toEqual({
         kind: "buckets",
         buckets: [{ name: "sales" }],
@@ -444,6 +445,7 @@ describe("the reads of one request each", () => {
           throw new Error("no");
         },
       } as Partial<Record<Method, Answer>>);
+      // oxlint-disable-next-line no-await-in-loop -- one method at a time, so a failure names its operation.
       const failure = await executeS3Command(surface, parsed(text), { call: CALL }).catch((error: unknown) => error);
       expect((failure as Failed).operation).toBe(operation);
     }
@@ -544,6 +546,7 @@ describe("cancellation", () => {
         headObject: () => ({}),
         listBuckets: () => ({}),
       });
+      // oxlint-disable-next-line no-await-in-loop -- one command at a time, so a failure names its operation.
       const failure = await executeS3Command(surface, parsed(text), { call }).catch((error: unknown) => error);
       expect((failure as Failed).operation).toBe(operation);
       expect(calls).toEqual([]);

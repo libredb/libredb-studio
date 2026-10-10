@@ -102,6 +102,29 @@ function readOnToken(step: string, notices: readonly string[] | undefined): stri
   return tokens[0];
 }
 
+/**
+ * Runs one step and records it: what it observed, the exchanges it sent and the sockets it opened itself, both read
+ * as the difference across the step, so no earlier step's or the connect's count is charged to it.
+ */
+async function recordStep(
+  context: S3RunContext,
+  runs: S3StepRun[],
+  step: string,
+  ran: S3StepRun["context"],
+  act: () => Promise<S3Observed>,
+): Promise<S3Observed> {
+  context.setStep(step);
+  const before = context.recorded().length;
+  const sockets = context.sockets();
+  const ok = await act();
+  runs.push({
+    summary: { step, ok, exchanges: context.recorded().length - before },
+    context: ran,
+    sockets: context.sockets() - sockets,
+  });
+  return ok;
+}
+
 /** One console scenario's commands, in order, as the browse principal (the console's reader role). */
 async function consoleRunner(context: S3RunContext, name: ConsoleScenarioName): Promise<readonly S3StepRun[]> {
   const connection = s3LiveConnection(context.target, context.principals, { role: "browse" }, context.ca);
@@ -124,23 +147,17 @@ async function consoleRunner(context: S3RunContext, name: ConsoleScenarioName): 
       if (step === CONSOLE_TOKEN_STEP && token === undefined)
         throw new Error(`${name} ${step} runs after a step whose notice names a token`);
       const text = step === CONSOLE_TOKEN_STEP ? `${written}${token}` : written;
-      context.setStep(step);
-      const before = context.recorded().length;
-      const sockets = context.sockets();
-      const result = await provider.query(text, [], `${name}-${step}`);
-      const notices = (result.warnings ?? []).map((warning) => warning.message);
-      const ok: S3Observed = {
-        rows: result.rowCount,
-        names: result.fields,
-        ...(result.columnTypes === undefined ? {} : { headers: { ...result.columnTypes } }),
-        notices,
-      };
-      if (step === "first-page") token = readOnToken(`${name} ${step}`, notices);
-      runs.push({
-        summary: { step, ok, exchanges: context.recorded().length - before },
-        context: { connection, command: text },
-        sockets: context.sockets() - sockets,
+      // oxlint-disable-next-line no-await-in-loop -- each command may read on from the token the one before it named.
+      const ok = await recordStep(context, runs, step, { connection, command: text }, async () => {
+        const result = await provider.query(text, [], `${name}-${step}`);
+        return {
+          rows: result.rowCount,
+          names: result.fields,
+          ...(result.columnTypes === undefined ? {} : { headers: { ...result.columnTypes } }),
+          notices: (result.warnings ?? []).map((warning) => warning.message),
+        };
       });
+      if (step === "first-page") token = readOnToken(`${name} ${step}`, ok.notices);
     }
   } finally {
     await provider.disconnect();
@@ -174,20 +191,13 @@ async function runPreviewSource(run: S3RunContext): Promise<readonly S3StepRun[]
   );
   const runs: S3StepRun[] = [];
   const measured = async (step: string, command: string | undefined, act: () => Promise<S3Observed>): Promise<void> => {
-    run.setStep(step);
-    const before = run.recorded().length;
-    const sockets = run.sockets();
-    const ok = await act();
-    runs.push({
-      summary: { step, ok, exchanges: run.recorded().length - before },
-      context: { connection, ...(command === undefined ? {} : { command }) },
-      sockets: run.sockets() - sockets,
-    });
+    await recordStep(run, runs, step, command === undefined ? { connection } : { connection, command }, act);
   };
   run.setStep("connect");
   await provider.connect();
   try {
     for (const [step, key] of PREVIEW_SOURCE_OBJECTS) {
+      // oxlint-disable-next-line no-await-in-loop -- the steps are recorded in order, each exchange charged to its own step.
       await measured(step, undefined, async () => {
         const document = await provider.readObjectSource!([joinVirtualKey("studio-demo", key)], "object");
         return { names: document.parts.map((part) => part.id) };
@@ -220,7 +230,8 @@ export const S3_SCENARIOS: readonly S3Scenario[] = [
     (row): S3Scenario => ({
       name: row.id,
       row: row.id,
-      ...(RECORDED_STEPS[row.id] === undefined ? {} : { steps: RECORDED_STEPS[row.id] }),
+      // Undefined for a row with no recorded steps, which reads as every applicable step.
+      steps: RECORDED_STEPS[row.id],
       clockOffsetMs: row.id === "A8" ? 1_200_000 : 0,
       shows: row.behaviour,
     }),

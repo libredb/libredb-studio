@@ -712,6 +712,7 @@ describe("the limiter", () => {
 
   test("at most 16 in flight per process, a queue of 64, and a full queue refuses at once", async () => {
     const providers = Array.from({ length: 21 }, () => held());
+    // oxlint-disable-next-line no-await-in-loop -- the sessions connect one at a time, so each holds its probe's exchange alone.
     for (const one of providers) await one.s3.connect();
     for (const one of providers) one.hold();
     const calls = providers.flatMap((one) => Array.from({ length: 4 }, () => one.s3.getOverview()));

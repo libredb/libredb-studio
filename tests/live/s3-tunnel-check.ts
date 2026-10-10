@@ -121,6 +121,7 @@ try {
   failed = true;
   console.log(mask(`FAIL A63: ${error instanceof Error ? error.message : String(error)}`));
 } finally {
+  // oxlint-disable-next-line no-await-in-loop -- each provider is removed in turn, so one failure does not hide the others.
   for (const id of opened) await removeProvider(id);
 }
 console.log(mask(`${passed} of ${steps.length} checks passed on silo through the tunnel (bun ${Bun.version})`));

@@ -2081,6 +2081,7 @@ describe("the S3 captures and their harness", () => {
     for (const signs of [0, 2]) {
       const broken = s3Recorder(fake(signs), "A1");
       broken.setStep("list");
+      // oxlint-disable-next-line no-await-in-loop -- one signer count at a time, so a failure names its count.
       await expect(broken.createTransport(options(broken, true)).request(sent)).rejects.toThrow(
         `A1 step list: a signed request left ${signs} signer records, not exactly one`,
       );

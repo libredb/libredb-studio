@@ -149,6 +149,7 @@ try {
       recorded: () => recording.exchanges.map((exchange) => exchange.request),
     };
     const started = performance.now();
+    // oxlint-disable-next-line no-await-in-loop -- one scenario at a time against one server, so each capture holds only its own exchanges.
     const runs = await runS3Scenario(scenario, run, steps, {
       assertSurface: (provider) => assertObjectSurface(provider, S3_CONFORMANCE),
     });
