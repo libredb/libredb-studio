@@ -18,6 +18,14 @@ import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { connectionFieldHint, DB_UI_CONFIG, hostUriSchemes, offersSshTunnel, readOnlyHint } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
+import { assertNotLinkLocalLiteral } from "@/lib/db/http/egress-policy";
+import {
+  type NodeByteRequest,
+  type NodeByteResponse,
+  type NodeByteTransport,
+  TransportError,
+} from "@/lib/db/http/node-transport";
+import type { S3ClientContext } from "@/lib/db/providers/objectstore/s3/client";
 import { buildS3ConnectionOptions } from "@/lib/db/providers/objectstore/s3/connection-options";
 import { S3_COMMAND_TABLE, type S3FlagSpec } from "@/lib/db/providers/objectstore/s3/console/commands";
 import {
@@ -53,7 +61,9 @@ import {
   S3_XML_MAX_DEPTH,
   S3_XML_MAX_ELEMENTS,
 } from "@/lib/db/providers/objectstore/s3/constants";
+import { S3ServerError, toProviderError } from "@/lib/db/providers/objectstore/s3/errors";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
+import { S3_LABELS } from "@/lib/db/providers/objectstore/s3/labels";
 import { S3_OBJECTS_LISTED_ELSEWHERE } from "@/lib/db/providers/objectstore/s3/objects";
 import { S3_PREVIEW_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-render";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
@@ -659,5 +669,259 @@ describe("docs/providers/s3.md: the object preview's sentences, read back from p
       .filter((line) => /^\| [NR]-[A-Z0-9-]+ \| `/.test(line))
       .map((line) => line.slice(2, line.indexOf(" |", 2)));
     expect(ids.sort()).toEqual(Object.keys(S3_PREVIEW_SENTENCES).sort());
+  });
+});
+
+/** A transport that records every request and answers each with `status` and `body`. */
+function probeTransport(status: number, body: string): { sent: NodeByteRequest[]; create: () => NodeByteTransport } {
+  const sent: NodeByteRequest[] = [];
+  const answer: NodeByteResponse = {
+    status,
+    contentType: "application/xml",
+    contentEncoding: null,
+    retryAfter: null,
+    headers: [],
+    headersTruncated: false,
+    bytes: Buffer.from(body),
+    truncated: false,
+  };
+  const transport: NodeByteTransport = {
+    request: async (request) => {
+      sent.push(request);
+      return answer;
+    },
+    close: () => {},
+  };
+  return { sent, create: () => transport };
+}
+
+const LIST_BUCKET_RESULT =
+  '<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>studio-demo</Name><Prefix></Prefix><KeyCount>0</KeyCount><MaxKeys>1</MaxKeys><Delimiter>/</Delimiter><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated></ListBucketResult>';
+const LIST_ALL_MY_BUCKETS_RESULT =
+  '<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>studio</ID></Owner><Buckets></Buckets></ListAllMyBucketsResult>';
+
+/** The context every error row is worded for: a signed connection to localhost:9000 that signs for us-east-1. */
+const ERROR_CONTEXT: S3ClientContext = {
+  region: "us-east-1",
+  signs: true,
+  clock: () => new Date("2026-10-09T12:00:00Z"),
+  secretForms: [],
+  endpointText: "http://localhost:9000",
+};
+
+/** The message `toProviderError` words for one server answer. */
+function serverError(fields: ConstructorParameters<typeof S3ServerError>[0]): string {
+  const error = toProviderError(new S3ServerError(fields), fields.operation, ERROR_CONTEXT);
+  return (error as Error).message;
+}
+
+/** The rows of section 10: the answer as the doc names it, and the sentence Studio gives for it. */
+const ERROR_ROWS: ReadonlyArray<readonly [string, () => string]> = [
+  [
+    "403 `SignatureDoesNotMatch`",
+    () =>
+      serverError({
+        operation: "ListBuckets",
+        method: "GET",
+        status: 403,
+        code: "SignatureDoesNotMatch",
+        message: "The request signature we calculated does not match the signature you provided.",
+      }),
+  ],
+  [
+    "403 `InvalidAccessKeyId`",
+    () =>
+      serverError({
+        operation: "ListBuckets",
+        method: "GET",
+        status: 403,
+        code: "InvalidAccessKeyId",
+        message: "The Access Key Id you provided does not exist in our records.",
+      }),
+  ],
+  [
+    "403 `AccessDenied` on a bucket",
+    () =>
+      serverError({
+        operation: "ListObjectsV2",
+        method: "GET",
+        status: 403,
+        code: "AccessDenied",
+        message: "Access Denied.",
+        bucket: "sales",
+      }),
+  ],
+  [
+    "404 `NoSuchBucket`",
+    () =>
+      serverError({
+        operation: "ListObjectsV2",
+        method: "GET",
+        status: 404,
+        code: "NoSuchBucket",
+        message: "The specified bucket does not exist",
+        bucket: "sales",
+      }),
+  ],
+  [
+    "404 `NoSuchKey`",
+    () =>
+      serverError({
+        operation: "GetObject",
+        method: "GET",
+        status: 404,
+        code: "NoSuchKey",
+        message: "The specified key does not exist.",
+        bucket: "sales",
+        key: "2026/orders.csv",
+      }),
+  ],
+  [
+    "400 `AuthorizationHeaderMalformed` naming another region",
+    () =>
+      serverError({
+        operation: "ListObjectsV2",
+        method: "GET",
+        status: 400,
+        code: "AuthorizationHeaderMalformed",
+        message: "The authorization header is malformed.",
+        region: "eu-central-1",
+        bucket: "sales",
+      }),
+  ],
+  [
+    "403 `RequestTimeTooSkewed`",
+    () =>
+      serverError({
+        operation: "GetObject",
+        method: "GET",
+        status: 403,
+        code: "RequestTimeTooSkewed",
+        message: "The difference between the request time and the server's time is too large.",
+        bucket: "sales",
+        key: "2026/orders.csv",
+      }),
+  ],
+  [
+    "400 `XMinioInvalidResourceName`",
+    () =>
+      serverError({
+        operation: "ListObjectsV2",
+        method: "GET",
+        status: 400,
+        code: "XMinioInvalidResourceName",
+        message: "Object name contains unsupported characters.",
+        bucket: "sales",
+      }),
+  ],
+  [
+    "501 `NotImplemented` on a continuation token",
+    () =>
+      serverError({
+        operation: "ListObjectsV2",
+        method: "GET",
+        status: 501,
+        code: "NotImplemented",
+        message: "A header you provided implies functionality that is not implemented",
+        bucket: "sales",
+        sentToken: true,
+      }),
+  ],
+  [
+    "HEAD 403 with no body and no code",
+    () =>
+      serverError({ operation: "HeadObject", method: "HEAD", status: 403, bucket: "sales", key: "2026/orders.csv" }),
+  ],
+  [
+    "501 `NotImplemented` on `list-object-versions`",
+    () =>
+      serverError({
+        operation: "ListObjectVersions",
+        method: "GET",
+        status: 501,
+        code: "NotImplemented",
+        message: "A header you provided implies functionality that is not implemented",
+        bucket: "sales",
+      }),
+  ],
+  [
+    "Any 3xx",
+    () =>
+      (
+        toProviderError(
+          new TransportError("redirect", "redirect", {
+            redirect: { status: 301, headers: [], headersTruncated: false },
+          }),
+          "ListBuckets",
+          ERROR_CONTEXT,
+        ) as Error
+      ).message,
+  ],
+];
+
+describe("docs/providers/s3.md: the probe, the declarations and the errors, as the code answers them", () => {
+  test("24. the pinned probe is one ListObjectsV2 with the three parameters, and a non-S3 body fails it", async () => {
+    const good = probeTransport(200, LIST_BUCKET_RESULT);
+    const pinned = new S3Provider({ ...CONNECTION, database: "studio-demo" }, {}, {}, { createTransport: good.create });
+    await pinned.connect();
+    expect(good.sent).toHaveLength(1);
+    expect(good.sent[0].method).toBe("GET");
+    expect(good.sent[0].target.path).toBe("/studio-demo");
+    for (const parameter of ["max-keys=1", "delimiter=%2F", "encoding-type=url"]) {
+      expect(good.sent[0].target.query.split("&")).toContain(parameter);
+    }
+    await pinned.disconnect();
+    const html = probeTransport(200, "<html><body>not S3</body></html>");
+    const fake = new S3Provider({ ...CONNECTION, database: "studio-demo" }, {}, {}, { createTransport: html.create });
+    await expect(fake.connect()).rejects.toThrow();
+    expect(html.sent).toHaveLength(1);
+  });
+
+  test("25. the unpinned probe is one ListBuckets, and its root element is the one section 7 names", async () => {
+    const good = probeTransport(200, LIST_ALL_MY_BUCKETS_RESULT);
+    const unpinned = new S3Provider(CONNECTION, {}, {}, { createTransport: good.create });
+    await unpinned.connect();
+    expect(good.sent).toHaveLength(1);
+    expect(good.sent[0].target.path).toBe("/");
+    await unpinned.disconnect();
+    const wrongRoot = probeTransport(200, LIST_BUCKET_RESULT);
+    const fake = new S3Provider(CONNECTION, {}, {}, { createTransport: wrongRoot.create });
+    await expect(fake.connect()).rejects.toThrow();
+  });
+
+  test("26. section 9 is the built provider's capabilities and labels, whole", () => {
+    const declared = sectionOf(DOC, "## 9. Capabilities & labels");
+    const blocks = [...declared.matchAll(/```json\n([\s\S]*?)\n```/g)].map((match) => match[1]);
+    expect(blocks).toEqual([
+      JSON.stringify(provider.getCapabilities(), null, 2),
+      JSON.stringify(provider.getLabels(), null, 2),
+    ]);
+    expect(provider.getLabels()).toEqual(S3_LABELS);
+  });
+
+  test("27. section 8 is runMaintenance()'s refusal", async () => {
+    expect(flat(sectionOf(DOC, "## 8. Maintenance"))).toContain(S3_LABELS.vacuumGlobalDesc);
+  });
+
+  test("28. every row of section 10 is the sentence the error mapping gives for that answer", () => {
+    const errors = sectionOf(DOC, "## 10. Error handling");
+    for (const [answer, sentence] of ERROR_ROWS) {
+      expect(rowOf(errors, answer), answer).toBe(`| ${answer} | ${sentence()} |`);
+    }
+    expect(errors).toContain(`cut to ${S3_SERVER_TEXT_CHARS} characters`);
+    expect(errors).not.toContain("| 416");
+  });
+
+  test("29. the refusals before any connection are the transport's and the builder's", () => {
+    const errors = flat(sectionOf(DOC, "## 10. Error handling"));
+    let linkLocal = "";
+    try {
+      assertNotLinkLocalLiteral("169.254.169.254");
+    } catch (error) {
+      linkLocal = (error as Error).message;
+    }
+    expect(linkLocal).not.toBe("");
+    expect(errors).toContain(linkLocal);
+    expect(errors).toContain(builderRefusal({ host: "s3.example.com" }));
   });
 });
