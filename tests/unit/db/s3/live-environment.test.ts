@@ -1860,3 +1860,32 @@ describe("the S3 captures and their harness", () => {
     }
   });
 });
+
+// -- tests/live/s3-live-check.ts ------------------------------------------------------------------------------------
+
+const LIVE_CHECK = "tests/live/s3-live-check.ts";
+
+describe("the live check tests/live/s3-live-check.ts", () => {
+  test("refuses an argument it does not accept before any socket opens", () => {
+    for (const args of [
+      ["--target", "aws"],
+      ["--target", "10.0.0.5:9000"],
+      [],
+      ["--target", "silo", "--endpoint", "http://x"],
+    ]) {
+      const run = Bun.spawnSync([process.execPath, path.join(ROOT, LIVE_CHECK), ...args], { cwd: ROOT });
+      expect({ args, exit: run.exitCode }).toEqual({ args, exit: 2 });
+    }
+  });
+
+  test("silo-tls needs --ca and garage needs --garage-keys, each refused before any socket opens", () => {
+    for (const [args, message] of [
+      [["--target", "silo-tls"], "--ca"],
+      [["--target", "garage"], "--garage-keys"],
+    ] as const) {
+      const run = Bun.spawnSync([process.execPath, path.join(ROOT, LIVE_CHECK), ...args], { cwd: ROOT });
+      expect(run.exitCode).toBe(2);
+      expect(run.stderr.toString()).toContain(message);
+    }
+  });
+});
