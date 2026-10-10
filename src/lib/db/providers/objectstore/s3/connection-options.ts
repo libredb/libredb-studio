@@ -180,12 +180,16 @@ function unbracketed(host: string): string {
   return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 }
 
-/** The shared validators refuse with a DatabaseConfigError that names no provider; re-raised as S3's, unchanged. */
+/**
+ * The shared validators refuse with a DatabaseConfigError that names no provider; re-raised as S3's with its message
+ * unchanged. Any other error is a defect and is thrown on as the same value.
+ */
 function shared<T>(validate: () => T): T {
   try {
     return validate();
   } catch (error) {
-    throw refuse((error as Error).message);
+    if (!(error instanceof DatabaseConfigError)) throw error;
+    throw refuse(error.message);
   }
 }
 

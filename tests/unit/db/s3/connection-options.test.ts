@@ -3,8 +3,9 @@
  * sentence and in its order. The builder takes no transport, so nothing can be sent here; a refusal never names the
  * value it refuses.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import * as endpoint from "@/lib/db/http/endpoint";
 import { nodeTlsMaterial } from "@/lib/db/http/node-transport";
 import * as constants from "@/lib/db/providers/objectstore/s3/constants";
 import {
@@ -151,6 +152,22 @@ describe("the refusals, in order", () => {
     expect(refusal({ ...TUNNEL, [TUNNEL_FAR_END]: { host: "bad host", port: 9000 } })).toBe(
       "Invalid host: expected a hostname, an IPv4 address or an IPv6 address",
     );
+  });
+
+  test("an error from a shared validator that is not a config refusal is thrown on unchanged", () => {
+    const failure = new TypeError("validator failed");
+    const spy = spyOn(endpoint, "httpOrigin").mockImplementation(() => {
+      throw failure;
+    });
+    let caught: unknown;
+    try {
+      build();
+    } catch (error) {
+      caught = error;
+    } finally {
+      spy.mockRestore();
+    }
+    expect(caught).toBe(failure);
   });
 
   test("row 4: a link-local far end under a tunnel", () => {
