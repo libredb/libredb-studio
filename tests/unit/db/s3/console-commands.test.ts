@@ -795,12 +795,15 @@ describe("the address rules of the core's names.ts, worded by the console", () =
 });
 
 describe("the starting token", () => {
-  test.each(["bad", "abc___2", "eyJLZXlNYXJrZXIiOiAiYS50eHQiLCAiVmVyc2lvbklkTWFya2VyIjogIm51bGwifQ=="])(
-    "%s is refused with the one sentence",
-    (token) => {
-      expect(refused(`aws s3api list-objects-v2 --bucket b --starting-token ${token}`)).toBe(TOKEN);
-    },
-  );
+  test.each([
+    "bad",
+    "abc___2",
+    "eyJLZXlNYXJrZXIiOiAiYS50eHQiLCAiVmVyc2lvbklkTWFya2VyIjogIm51bGwifQ==",
+    // {"ContinuationToken":"\ud800"}: a lone surrogate cannot be percent-encoded into the request.
+    "eyJDb250aW51YXRpb25Ub2tlbiI6Ilx1ZDgwMCJ9",
+  ])("%s is refused with the one sentence", (token) => {
+    expect(refused(`aws s3api list-objects-v2 --bucket b --starting-token ${token}`)).toBe(TOKEN);
+  });
 
   test("a CLI token with a truncate amount is read", () => {
     expect(

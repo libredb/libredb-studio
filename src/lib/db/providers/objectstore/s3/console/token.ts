@@ -45,7 +45,9 @@ export function decodeS3StartingToken(text: string): S3ResumeToken | undefined {
   const keys = Object.keys(fields);
   if (!keys.every((key) => key === TOKEN_KEY || key === TRUNCATE_KEY)) return undefined;
   const continuationToken = fields[TOKEN_KEY];
-  if (typeof continuationToken !== "string" || continuationToken === "") return undefined;
+  // JSON escapes can spell a lone surrogate, which no request query can percent-encode.
+  if (typeof continuationToken !== "string" || continuationToken === "" || !continuationToken.isWellFormed())
+    return undefined;
   if (!keys.includes(TRUNCATE_KEY)) return { continuationToken };
   const amount = fields[TRUNCATE_KEY];
   // The truncate amount counts objects of one page, so it is at most the largest page.

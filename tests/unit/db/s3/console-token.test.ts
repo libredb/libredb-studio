@@ -87,6 +87,7 @@ describe("decodeS3StartingToken", () => {
     ["no ContinuationToken", btoa('{"boto_truncate_amount":1}')],
     ["an empty ContinuationToken", btoa('{"ContinuationToken":""}')],
     ["a ContinuationToken that is not a string", btoa('{"ContinuationToken":1}')],
+    ["a ContinuationToken holding a lone surrogate", "eyJDb250aW51YXRpb25Ub2tlbiI6Ilx1ZDgwMCJ9"],
     ["a negative truncate amount", btoa('{"ContinuationToken":"a","boto_truncate_amount":-1}')],
     ["a fractional truncate amount", btoa('{"ContinuationToken":"a","boto_truncate_amount":1.5}')],
     ["a truncate amount over 1,000", btoa('{"ContinuationToken":"a","boto_truncate_amount":1001}')],
