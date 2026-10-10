@@ -27,7 +27,9 @@ import {
   S3_MAX_TEXT_BYTES,
   S3_MAX_TOKEN_CHARS,
 } from "@/lib/db/providers/objectstore/s3/console/constants";
+import { S3_REPEATED_TOKEN_SENTENCE } from "@/lib/db/providers/objectstore/s3/console/execute";
 import { s3Refusal } from "@/lib/db/providers/objectstore/s3/console/guard";
+import { S3_CONSOLE_NOTICES } from "@/lib/db/providers/objectstore/s3/console/results";
 import {
   S3_ACCESS_KEY_ID_MAX_CHARS,
   S3_ACCESS_KEY_ID_MIN_CHARS,
@@ -507,5 +509,16 @@ describe("docs/providers/s3.md: the query interface, as the console's modules st
     const blocks = [...examples.matchAll(/```s3\n([\s\S]*?)```/g)].map((match) => match[1].trimEnd());
     expect(blocks.length).toBeGreaterThanOrEqual(9);
     for (const block of blocks) expect(s3Refusal(block), block).toBeUndefined();
+  });
+});
+
+describe("docs/providers/s3.md: the console's notices, as its modules state them", () => {
+  test("section 5.5 quotes every fixed notice a console result carries", () => {
+    const shape = flat(sectionOf(DOC, "### 5.5 Result shape"));
+    for (const [name, notice] of Object.entries(S3_CONSOLE_NOTICES)) expect(shape, name).toContain(notice);
+  });
+
+  test("section 5.7 quotes the repeated-token failure", () => {
+    expect(flat(sectionOf(DOC, "### 5.7 Pagination and the starting token"))).toContain(S3_REPEATED_TOKEN_SENTENCE);
   });
 });
