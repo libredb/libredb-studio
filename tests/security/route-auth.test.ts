@@ -110,6 +110,14 @@ mock.module("@/lib/llm/types", () => ({
   */
   isToolCallParseError: (error: unknown): boolean =>
     error instanceof MockLLMStreamError && /parsing tool call/i.test(error.message),
+  /*
+    Same whole-module mock requirement: `errors.ts` imports `isContextLengthError`
+    and route handlers import `MAX_SCHEMA_CONTEXT_CHARS`.
+  */
+  isContextLengthError: (error: unknown): boolean =>
+    (error instanceof MockLLMStreamError || error instanceof Error) &&
+    error.message.includes("exceeds the available context size"),
+  MAX_SCHEMA_CONTEXT_CHARS: 30_000,
 }));
 
 const { guardRoute } = await import("@/lib/api/require-session");

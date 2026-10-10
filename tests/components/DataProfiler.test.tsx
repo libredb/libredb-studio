@@ -470,6 +470,296 @@ describe("DataProfiler", () => {
     globalThis.fetch = originalFetch;
   });
 
+  test("sends only the profiled table schema when multiple schemas contain a table with the same name", async () => {
+    const aiText = "Profiled summary for app.users table.";
+    restoreGlobalFetch();
+
+    const originalFetch = globalThis.fetch;
+    let capturedBody: { schemaContext: string } | null = null;
+
+    const publicUsersTable = {
+      name: "users",
+      kind: "table" as const,
+      path: ["public", "users"],
+      rowCount: 50,
+      indexes: [],
+      columns: [
+        { name: "public_id", type: "integer", nullable: false, isPrimary: true },
+        { name: "public_profile", type: "text", nullable: true, isPrimary: false },
+      ],
+    };
+
+    const appUsersTable = {
+      name: "users",
+      kind: "table" as const,
+      path: ["app", "users"],
+      rowCount: 100,
+      indexes: [],
+      columns: [
+        { name: "app_id", type: "integer", nullable: false, isPrimary: true },
+        { name: "app_role", type: "varchar(50)", nullable: false, isPrimary: false },
+      ],
+    };
+
+    // rawSchemaContext contains both schemas and exceeds 30,000 characters
+    const largePadding = Array.from({ length: 60 }, (_, i) => ({
+      name: `other_table_${i}`,
+      columns: Array.from({ length: 20 }, (_, j) => ({
+        name: `col_${j}`,
+        type: "varchar(255)",
+      })),
+    }));
+    const rawSchemaContext = JSON.stringify([publicUsersTable, appUsersTable, ...largePadding]);
+    expect(rawSchemaContext.length).toBeGreaterThan(30_000);
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const pathname = new URL(url, "http://localhost:3000").pathname;
+
+      if (pathname.includes("/api/db/profile")) {
+        return new Response(JSON.stringify(mockProfileResponse), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (pathname.includes("/api/ai/describe-schema")) {
+        const bodyStr = typeof init?.body === "string" ? init.body : await (input as Request).text();
+        capturedBody = JSON.parse(bodyStr);
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(aiText));
+            controller.close();
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const props = createDefaultProps({
+      tablePath: ["app", "users"],
+      tableSchema: appUsersTable,
+      schemaContext: rawSchemaContext,
+    });
+    const { container } = render(<DataProfiler {...props} />);
+    const view = within(container);
+
+    await waitFor(() => {
+      expect(view.queryByText("Column Profiles")).not.toBeNull();
+    });
+
+    await waitFor(
+      () => {
+        expect(view.queryByText("AI Analysis")).not.toBeNull();
+      },
+      { timeout: 3000 },
+    );
+
+    await waitFor(
+      () => {
+        expect(view.queryByText(aiText)).not.toBeNull();
+      },
+      { timeout: 3000 },
+    );
+
+    expect(capturedBody).not.toBeNull();
+    expect(capturedBody!.schemaContext.length).toBeLessThanOrEqual(30_000);
+    // Sends only the profiled table's columns
+    expect(capturedBody!.schemaContext).toContain("app_id");
+    expect(capturedBody!.schemaContext).toContain("app_role");
+    // Does NOT contain the other schema's columns from rawSchemaContext
+    expect(capturedBody!.schemaContext).not.toContain("public_id");
+    expect(capturedBody!.schemaContext).not.toContain("public_profile");
+
+    globalThis.fetch = originalFetch;
+  });
+
+  test("preserves single-table schemaContext when provided", async () => {
+    restoreGlobalFetch();
+    let capturedBody: { schemaContext: string } | null = null;
+    const singleTableContext = JSON.stringify([{ name: "single_table", columns: [] }]);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/api/db/profile")) {
+        return new Response(JSON.stringify(mockProfileResponse), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/api/ai/describe-schema")) {
+        const bodyStr = typeof init?.body === "string" ? init.body : await (input as Request).text();
+        capturedBody = JSON.parse(bodyStr);
+        return new Response("summary", { status: 200 });
+      }
+      return new Response("Not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const props = createDefaultProps({ schemaContext: singleTableContext });
+    render(<DataProfiler {...props} />);
+    await waitFor(() => {
+      expect(capturedBody).not.toBeNull();
+    });
+    expect(capturedBody!.schemaContext).toContain(singleTableContext);
+    globalThis.fetch = originalFetch;
+  });
+
+  test("displays AI error when describe-schema route refuses", async () => {
+    const originalFetch = globalThis.fetch;
+    const refusalError = "The request is too large for the configured model's context.";
+    restoreGlobalFetch();
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const pathname = new URL(url, "http://localhost:3000").pathname;
+
+      if (pathname.includes("/api/db/profile")) {
+        return new Response(JSON.stringify(mockProfileResponse), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (pathname.includes("/api/ai/describe-schema")) {
+        return new Response(JSON.stringify({ error: refusalError }), {
+          status: 502,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const props = createDefaultProps();
+    const { container } = render(<DataProfiler {...props} />);
+    const view = within(container);
+
+    await waitFor(() => {
+      expect(view.queryByText("Column Profiles")).not.toBeNull();
+    });
+
+    await waitFor(
+      () => {
+        expect(view.queryByText(refusalError)).not.toBeNull();
+      },
+      { timeout: 3000 },
+    );
+
+    globalThis.fetch = originalFetch;
+  });
+
+  test("truncates fullSchemaContext to MAX_SCHEMA_CONTEXT_CHARS when tableSchema exceeds limit", async () => {
+    const aiText = "Profiled summary for massive table.";
+    restoreGlobalFetch();
+
+    const originalFetch = globalThis.fetch;
+    let capturedBody: { schemaContext: string } | null = null;
+    const massiveTable = {
+      ...mockUsersTable,
+      columns: Array.from({ length: 800 }, (_, i) => ({
+        name: `col_${i}_${"x".repeat(35)}`,
+        type: "varchar(255)",
+        nullable: true,
+        isPrimary: false,
+      })),
+    };
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const pathname = new URL(url, "http://localhost:3000").pathname;
+
+      if (pathname.includes("/api/db/profile")) {
+        return new Response(JSON.stringify(mockProfileResponse), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (pathname.includes("/api/ai/describe-schema")) {
+        const bodyStr = typeof init?.body === "string" ? init.body : await (input as Request).text();
+        capturedBody = JSON.parse(bodyStr);
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(aiText));
+            controller.close();
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const props = createDefaultProps({ tableSchema: massiveTable });
+    const { container } = render(<DataProfiler {...props} />);
+    const view = within(container);
+
+    await waitFor(() => {
+      expect(view.queryByText("Column Profiles")).not.toBeNull();
+    });
+
+    await waitFor(
+      () => {
+        expect(view.queryByText(aiText)).not.toBeNull();
+      },
+      { timeout: 3000 },
+    );
+
+    expect(capturedBody).not.toBeNull();
+    expect(capturedBody!.schemaContext.length).toBe(30_000);
+
+    globalThis.fetch = originalFetch;
+  });
+
+  test("displays AI error when describe-schema fetch throws a network error", async () => {
+    const originalFetch = globalThis.fetch;
+    restoreGlobalFetch();
+
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const pathname = new URL(url, "http://localhost:3000").pathname;
+
+      if (pathname.includes("/api/db/profile")) {
+        return new Response(JSON.stringify(mockProfileResponse), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      if (pathname.includes("/api/ai/describe-schema")) {
+        throw new Error("Network offline");
+      }
+
+      return new Response("Not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const props = createDefaultProps();
+    const { container } = render(<DataProfiler {...props} />);
+    const view = within(container);
+
+    await waitFor(() => {
+      expect(view.queryByText("Column Profiles")).not.toBeNull();
+    });
+
+    await waitFor(
+      () => {
+        expect(view.queryByText("Network offline")).not.toBeNull();
+      },
+      { timeout: 3000 },
+    );
+
+    globalThis.fetch = originalFetch;
+  });
+
   // ── Profile fetch error handling ─────────────────────────────────────────
 
   test("displays error message when profile fetch fails", async () => {
@@ -604,7 +894,7 @@ describe("DataProfiler", () => {
     const onProfile = mock(async () => mockProfileResponse);
     const onDescribeSchema = mock(async () => "Adapter AI summary");
 
-    const props = createDefaultProps({ onProfile, onDescribeSchema, schemaContext: "schema ctx" });
+    const props = createDefaultProps({ onProfile, onDescribeSchema });
     const { container } = render(<DataProfiler {...props} />);
     const view = within(container);
 
@@ -634,7 +924,7 @@ describe("DataProfiler", () => {
     };
     expect(describeArg.tableName).toBe("app.users");
     expect(describeArg.schemaContext).toContain("Column Profiles:");
-    expect(describeArg.schemaContext).toContain("schema ctx");
+    expect(describeArg.schemaContext).toContain("users");
 
     // Neither endpoint is hit when the adapters are provided
     expect(fetchSpy).not.toHaveBeenCalled();

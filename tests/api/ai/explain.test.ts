@@ -74,6 +74,14 @@ mock.module("@/lib/llm/types", () => ({
   LLMRateLimitError: MockLLMRateLimitError,
   LLMSafetyError: MockLLMSafetyError,
   LLMStreamError: MockLLMStreamError,
+  /*
+    Same whole-module mock requirement: `errors.ts` imports `isContextLengthError`
+    and route handlers import `MAX_SCHEMA_CONTEXT_CHARS`.
+  */
+  isContextLengthError: (error: unknown): boolean =>
+    (error instanceof MockLLMStreamError || error instanceof Error) &&
+    error.message.includes("exceeds the available context size"),
+  MAX_SCHEMA_CONTEXT_CHARS: 30_000,
 }));
 
 const mockGetSession = mock(

@@ -203,6 +203,15 @@ describe("createErrorResponse", () => {
     expect(body.statusCode).toBe(502);
     expect(body.retryable).toBe(true);
   });
+  test("LLMStreamError with context length exceeded returns 502 with friendly error and retryable false", async () => {
+    const err = new LLMStreamError("request exceeds the available context size (32768 tokens)", "openai");
+    const res = createErrorResponse(err);
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.code).toBe("LLM_STREAM");
+    expect(body.error).toBe("The request is too large for the configured model's context.");
+    expect(body.retryable).toBe(false);
+  });
 
   test("LLMError (base) uses statusCode or 500", async () => {
     const err = new LLMError("generic llm error", "gemini", 503);
