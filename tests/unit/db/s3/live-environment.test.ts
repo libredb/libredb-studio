@@ -21,6 +21,7 @@ import type { NodeByteTransportOptions, RequestSigner } from "@/lib/db/http/node
 import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
 import { encodeS3Cursor, S3_CURSOR_SENTENCES } from "@/lib/db/providers/objectstore/s3/cursor";
 import { SeedConfigSchema } from "@/lib/seed/types";
+import { MISSING_POSIX_FILE_MODES, testIf } from "../../../helpers/posix-tools";
 import {
   S3_CAPTURES_MAX_BYTES,
   S3_EXCHANGE_BODY_MAX_BYTES,
@@ -67,6 +68,11 @@ import {
 } from "../../../live/s3-live-support";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
+
+/** A path with Windows separators turned to "/", so a path built on any platform compares against this file's tables. */
+function posixPath(file: string): string {
+  return file.replaceAll("\\", "/");
+}
 
 interface ComposeLimits {
   readonly cpus?: string;
@@ -139,7 +145,7 @@ function walk(dir: string, skip: readonly string[] = []): string[] {
   const absolute = path.join(ROOT, dir);
   if (!existsSync(absolute)) return [];
   return readdirSync(absolute, { withFileTypes: true }).flatMap((entry) => {
-    const relative = path.join(dir, entry.name);
+    const relative = posixPath(path.join(dir, entry.name));
     if (entry.isDirectory()) return skip.includes(relative) ? [] : walk(relative, skip);
     return [relative];
   });
@@ -196,6 +202,20 @@ function finds(findings: readonly string[], ...needles: string[]): void {
 }
 
 const real = loadS3Fixtures();
+
+describe("the fixture paths", () => {
+  test("a path in its Windows form is keyed in its / form, the form every table here is written in", () => {
+    const windows = path.win32.join("docker", "s3", "data");
+    expect(windows).toBe("docker\\s3\\data");
+    expect(posixPath(windows)).toBe("docker/s3/data");
+  });
+
+  test("every file is keyed by its / path, and the data directory is skipped as text", () => {
+    const keys = Object.keys(real.files);
+    expect(keys).toContain("docker/s3/seed.sh");
+    expect(keys.filter((key) => key.includes("\\") || key.startsWith("docker/s3/data/"))).toEqual([]);
+  });
+});
 
 // -- docker/minio ------------------------------------------------------------------------------------------------
 
@@ -857,41 +877,46 @@ describe("the principals, Garage and TLS material of docker/s3", () => {
     finds(principalsFindings(wholeAnswer), "matches the policy anywhere in the user info answer");
   });
 
-  test("principals.sh attaches a policy only when the policyName field lacks it, with nothing on PATH but mc", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "s3-principals-"));
-    const bin = path.join(dir, "bin");
-    mkdirSync(bin);
-    const log = path.join(dir, "mc.log");
-    writeFileSync(
-      path.join(bin, "mc"),
-      [
-        "#!/bin/sh",
-        'echo "$*" >> "$MC_LOG"',
-        'case "$*" in',
-        `  "admin user info fx studio-browse --json") printf '%s' '{"status":"success","accessKey":"studio-browse","userStatus":"enabled"}' ;;`,
-        `  "admin user info fx studio-scoped --json") printf '%s' '{"status":"success","accessKey":"studio-scoped","policyName":"studio-scoped,readonly"}' ;;`,
-        `  "admin user info fx studio-getonly --json") printf '%s' '{"status":"success","accessKey":"studio-getonly","policyName": "consoleAdmin"}' ;;`,
-        "esac",
-        "",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    const run = Bun.spawnSync(["/bin/sh", path.join(ROOT, "docker/s3/principals.sh"), "http://silo:9000"], {
-      env: { PATH: bin, MC_LOG: log, MC_CONFIG_DIR: dir, S3_ROOT_ACCESS_KEY: "root", S3_ROOT_SECRET_KEY: "secret" },
-    });
-    expect({ exit: run.exitCode, stdout: run.stdout.toString(), stderr: run.stderr.toString() }).toEqual({
-      exit: 0,
-      stdout: "principals.sh: 3 users, 2 policies\n",
-      stderr: "",
-    });
-    const attached = readFileSync(log, "utf8")
-      .split("\n")
-      .filter((line) => line.startsWith("admin policy attach"));
-    expect(attached).toEqual([
-      "admin policy attach fx studio-browse --user studio-browse",
-      "admin policy attach fx readonly --user studio-getonly",
-    ]);
-  });
+  // The stub mc is an extension-less #! script with an exec bit, which Windows can neither mark nor exec.
+  testIf(
+    MISSING_POSIX_FILE_MODES,
+    "principals.sh attaches a policy only when the policyName field lacks it, with nothing on PATH but mc",
+    () => {
+      const dir = mkdtempSync(path.join(tmpdir(), "s3-principals-"));
+      const bin = path.join(dir, "bin");
+      mkdirSync(bin);
+      const log = path.join(dir, "mc.log");
+      writeFileSync(
+        path.join(bin, "mc"),
+        [
+          "#!/bin/sh",
+          'echo "$*" >> "$MC_LOG"',
+          'case "$*" in',
+          `  "admin user info fx studio-browse --json") printf '%s' '{"status":"success","accessKey":"studio-browse","userStatus":"enabled"}' ;;`,
+          `  "admin user info fx studio-scoped --json") printf '%s' '{"status":"success","accessKey":"studio-scoped","policyName":"studio-scoped,readonly"}' ;;`,
+          `  "admin user info fx studio-getonly --json") printf '%s' '{"status":"success","accessKey":"studio-getonly","policyName": "consoleAdmin"}' ;;`,
+          "esac",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const run = Bun.spawnSync(["/bin/sh", path.join(ROOT, "docker/s3/principals.sh"), "http://silo:9000"], {
+        env: { PATH: bin, MC_LOG: log, MC_CONFIG_DIR: dir, S3_ROOT_ACCESS_KEY: "root", S3_ROOT_SECRET_KEY: "secret" },
+      });
+      expect({ exit: run.exitCode, stdout: run.stdout.toString(), stderr: run.stderr.toString() }).toEqual({
+        exit: 0,
+        stdout: "principals.sh: 3 users, 2 policies\n",
+        stderr: "",
+      });
+      const attached = readFileSync(log, "utf8")
+        .split("\n")
+        .filter((line) => line.startsWith("admin policy attach"));
+      expect(attached).toEqual([
+        "admin policy attach fx studio-browse --user studio-browse",
+        "admin policy attach fx readonly --user studio-getonly",
+      ]);
+    },
+  );
 
   test("the browse policy is the least privilege Studio needs and the scoped one names one bucket", () => {
     clean(policyFindings(real));

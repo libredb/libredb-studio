@@ -8,11 +8,16 @@
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, win32 } from "node:path";
 import ts from "typescript";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const S3 = "src/lib/db/providers/objectstore/s3";
+
+/** A path with Windows separators turned to "/", so a path built on any platform compares against this file's tables. */
+function posixPath(file: string): string {
+  return file.replaceAll("\\", "/");
+}
 
 const BROWSER_MODULES: readonly string[] = [
   // The provider's core
@@ -82,9 +87,9 @@ function resolveModule(fromFile: string, specifier: string): string | undefined 
   else if (specifier.startsWith(".")) base = resolve(dirname(join(ROOT, fromFile)), specifier);
   else return undefined;
   for (const candidate of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) {
-    if (existsSync(candidate)) return relative(ROOT, candidate);
+    if (existsSync(candidate)) return posixPath(relative(ROOT, candidate));
   }
-  return relative(ROOT, `${base}.ts`);
+  return posixPath(relative(ROOT, `${base}.ts`));
 }
 
 /**
@@ -160,6 +165,13 @@ describe("the browser-shipped S3 modules", () => {
     [`${S3}/shapes.ts`, 'import { createHash } from "node:crypto";\n', "node:crypto"],
   ])("a planted import in %s fails by name", (file, planted, specifier) => {
     expect(findings(file, planted)).toEqual([`${file} imports ${specifier}, which is not browser-safe`]);
+  });
+
+  test("a path in its Windows form is compared in the / form the table is written in", () => {
+    const windows = win32.join("src", "lib", "db", "providers", "objectstore", "s3", "constants.ts");
+    expect(windows).toBe("src\\lib\\db\\providers\\objectstore\\s3\\constants.ts");
+    expect(posixPath(windows)).toBe(`${S3}/constants.ts`);
+    expect(BROWSER_MODULES).toContain(posixPath(windows));
   });
 
   test("a planted import of a shared module outside the list fails by name", () => {

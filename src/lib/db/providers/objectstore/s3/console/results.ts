@@ -278,7 +278,8 @@ function objectHeadRows(head: ObjectHead): [string, unknown][] {
   add("Restore", head.restore);
   add("ArchiveStatus", head.archiveStatus);
   add("MissingMeta", head.missingMetadata);
-  for (const name of Object.keys(head.userMetadata).sort()) {
+  // Code-unit order on purpose: a fixed byte order, where a locale comparison would reorder names by case and punctuation.
+  for (const name of Object.keys(head.userMetadata).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
     for (const value of head.userMetadata[name]) rows.push([`Metadata.${name}`, value]);
   }
   return rows;

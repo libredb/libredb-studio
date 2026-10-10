@@ -374,6 +374,14 @@ describe("Field and Value grids, tags", () => {
     expect(result.warnings).toEqual([{ message: S3_CONSOLE_NOTICES.headersCut }]);
   });
 
+  test("head-object orders metadata names by code unit, where a locale order would put a~ before ab and B after a", () => {
+    const head: ObjectHead = { ...HEAD, userMetadata: { "a~": ["2"], ab: ["1"], a: ["3"], B: ["4"] } };
+    expect(["ab", "a~", "a", "B"].sort((a, b) => a.localeCompare(b))).toEqual(["a", "a~", "ab", "B"]);
+    const result = s3Result({ kind: "object-head", head }, parsed("aws s3api head-object --bucket b --key k"), 1);
+    const fields = result.rows.map((row) => String(row.Field)).filter((field) => field.startsWith("Metadata."));
+    expect(fields).toEqual(["Metadata.B", "Metadata.a", "Metadata.ab", "Metadata.a~"]);
+  });
+
   test("head-object bounds a metadata name and value like any other cell", () => {
     const long = "m".repeat(70_000);
     const head: ObjectHead = { ...HEAD, userMetadata: { [long]: [long] }, headersCut: false };

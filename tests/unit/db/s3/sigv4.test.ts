@@ -94,6 +94,22 @@ test("the smithy S3-mode vector /foo=bar", () => {
   expect(authorization.split("Signature=")[1]).toBe("0d859e5a74374efc2c9f14ba9352df14c68e411a1f44bd639fdd024e5f7b7ef1");
 });
 
+test("signs header names in code-unit order, where a locale order would put a~ before ab", () => {
+  const authorization = signatureV4(
+    {
+      method: "GET",
+      canonicalUri: "/",
+      canonicalQuery: "",
+      headers: { "a~": "2", host: "127.0.0.1:9000", ab: "1" },
+      payloadHash: EMPTY_PAYLOAD_SHA256,
+    },
+    { accessKeyId: "AKIDTESTKEY", secretAccessKey: "test-secret-key" },
+    { region: "us-east-1", service: "s3", amzDate: "20261009T131443Z" },
+  );
+  expect(["ab", "a~"].sort((a, b) => a.localeCompare(b))).toEqual(["a~", "ab"]);
+  expect(authorization).toContain("SignedHeaders=ab;a~;host, Signature=");
+});
+
 test("the empty-payload hash is the SHA-256 of nothing", () => {
   expect(EMPTY_PAYLOAD_SHA256).toBe(sha256(""));
 });

@@ -59,7 +59,8 @@ function canonicalValue(value: string): string {
 
 /** The Authorization header value; exported for the suite vectors. */
 export function signatureV4(request: CanonicalRequest, credentials: S3Credentials, scope: SigningScope): string {
-  const names = Object.keys(request.headers).sort();
+  // Code-unit order on purpose: SigV4's canonical header order is byte order, which a locale comparison breaks.
+  const names = Object.keys(request.headers).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const canonical = [
     request.method,
     request.canonicalUri,

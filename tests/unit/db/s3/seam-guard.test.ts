@@ -8,11 +8,17 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, win32 } from "node:path";
+
+/** A path with Windows separators turned to "/", so a path built on any platform compares against this file's tables. */
+function posixPath(file: string): string {
+  return file.replaceAll("\\", "/");
+}
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const S3_DIR = join(ROOT, "src/lib/db/providers/objectstore/s3");
-const PROVIDERS_DIR = join(ROOT, "src/lib/db/providers");
+const PROVIDERS_DIR = posixPath(join(ROOT, "src/lib/db/providers"));
+const S3_DIR_POSIX = posixPath(S3_DIR);
 
 const SPECIFIER = /\bfrom\s+["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\bimport\s+["']([^"']+)["']/g;
 const LIBRARY = /^(?:@aws-sdk\/|aws-sdk$|aws4|minio$|fast-xml-parser$)/;
@@ -26,7 +32,7 @@ function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) return sourceFiles(path);
-    return entry.name.endsWith(".ts") ? [relative(S3_DIR, path)] : [];
+    return entry.name.endsWith(".ts") ? [posixPath(relative(S3_DIR, path))] : [];
   });
 }
 
@@ -40,7 +46,8 @@ function reachesAnotherProvider(file: string, specifier: string): boolean {
   if (specifier.startsWith("@/")) target = join(ROOT, "src", specifier.slice(2));
   else if (specifier.startsWith(".")) target = resolve(dirname(join(S3_DIR, file)), specifier);
   else return false;
-  return target.startsWith(`${PROVIDERS_DIR}/`) && target !== S3_DIR && !target.startsWith(`${S3_DIR}/`);
+  const posix = posixPath(target);
+  return posix.startsWith(`${PROVIDERS_DIR}/`) && posix !== S3_DIR_POSIX && !posix.startsWith(`${S3_DIR_POSIX}/`);
 }
 
 function findings(file: string, source: string): string[] {
@@ -66,6 +73,13 @@ function findings(file: string, source: string): string[] {
 }
 
 describe("the S3 provider directory's seams", () => {
+  test("a path in its Windows form is compared in its / form", () => {
+    const windows = win32.join("D:\\a\\studio", "src", "lib", "db", "providers", "keyvalue", "oxia", "constants");
+    expect(windows).toBe("D:\\a\\studio\\src\\lib\\db\\providers\\keyvalue\\oxia\\constants");
+    expect(posixPath(windows)).toBe("D:/a/studio/src/lib/db/providers/keyvalue/oxia/constants");
+    expect(posixPath(win32.join("console", "execute.ts"))).toBe("console/execute.ts");
+  });
+
   test("every source file passes", () => {
     const files = sourceFiles(S3_DIR);
     expect(files).toContain("constants.ts");
