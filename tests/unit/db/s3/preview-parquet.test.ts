@@ -5,7 +5,14 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { brotliCompressSync, brotliDecompressSync, gunzipSync, gzipSync } from "node:zlib";
+import {
+  brotliCompressSync,
+  brotliDecompressSync,
+  gunzipSync,
+  gzipSync,
+  constants as zlibConstants,
+  zstdCompressSync,
+} from "node:zlib";
 import { QueryError } from "@/lib/db/errors";
 import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
 import type { S3PreviewCell } from "@/lib/db/providers/objectstore/s3/preview";
@@ -1606,4 +1613,146 @@ describe("the bounded zstd decoder", () => {
       expect(() => boundedZstd(Uint8Array.from(input), 2, codecs.zstd), input.join(",")).toThrow(malformed);
     }
   });
+
+  test("compressed blocks whose sequences copy more than the frame's content size are refused before any decode", async () => {
+    const modules = await loadParquetModules();
+    let calls = 0;
+    const counting = (input: Uint8Array, output: Uint8Array): Uint8Array => {
+      calls += 1;
+      return modules.codecs.zstd(input, output);
+    };
+    const one = Uint8Array.from(zstdFrame(1_024, zstdSequenceBlocks(10_000, 1)));
+    const ten = Uint8Array.from(zstdFrame(1_024, zstdSequenceBlocks(1_000, 10)));
+    for (const input of [one, ten]) {
+      const started = performance.now();
+      expect(() => boundedZstd(input, 1_024, counting)).toThrow(DECODE_OVER_BUDGET);
+      expect(() => guardedCompressors(8 * MiB, modules).ZSTD?.(input, 1_024)).toThrow(DECODE_OVER_BUDGET);
+      expect(performance.now() - started).toBeLessThan(250);
+    }
+    expect(calls).toBe(0);
+  });
+
+  test("a compressed block whose sequences copy exactly the frame's content size decodes, in the three-byte count form too", async () => {
+    const { codecs } = await loadParquetModules();
+    const sequences = 0x7f01;
+    const blocks = zstdSequenceBlocks(sequences, 1, { matchCode: 0 });
+    expect(blocks.slice(4, 7)).toEqual([0xff, 0x01, 0x00]);
+    const input = Uint8Array.from(zstdFrame(3 * sequences, blocks));
+    expect(boundedZstd(input, 3 * sequences, codecs.zstd)).toHaveLength(3 * sequences);
+    const over = Uint8Array.from(zstdFrame(3 * sequences - 1, blocks));
+    expect(() => boundedZstd(over, 3 * sequences - 1, codecs.zstd)).toThrow(DECODE_OVER_BUDGET);
+  });
+
+  test("a compressed block whose literals pass the frame's content size is refused before any decode", async () => {
+    const { codecs } = await loadParquetModules();
+    const literals = [0x50, ...new TextEncoder().encode("0123456789")];
+    const block = zstdBlock(2, literals.length + 1, true, [...literals, 0x00]);
+    expect(() => boundedZstd(Uint8Array.from(zstdFrame(5, block)), 5, codecs.zstd)).toThrow(DECODE_OVER_BUDGET);
+    expect(text(boundedZstd(Uint8Array.from(zstdFrame(10, block)), 10, codecs.zstd))).toBe("0123456789");
+  });
+
+  test("sequences that take more literals than the block holds, or use a length or offset code the format does not define, are malformed", async () => {
+    const { codecs } = await loadParquetModules();
+    const malformed = "The ZSTD data is malformed";
+    const cases: readonly (readonly number[])[] = [
+      zstdSequenceBlocks(1, 1, { literalCode: 5, matchCode: 0 }),
+      zstdSequenceBlocks(1, 1, { literalCode: 36, matchCode: 0 }),
+      zstdSequenceBlocks(1, 1, { matchCode: 53 }),
+      zstdSequenceBlocks(1, 1, { offsetCode: 32, matchCode: 0 }),
+      zstdSequenceBlocks(1, 1, { modes: 0xfc }),
+      zstdSequenceBlocks(1, 1, { modes: 0x55 }),
+      zstdSequenceBlocks(1, 1, { matchCode: 0, lastByte: 0x00 }),
+    ];
+    for (const blocks of cases) {
+      const input = Uint8Array.from(zstdFrame(1_024, blocks));
+      expect(() => boundedZstd(input, 1_024, codecs.zstd), blocks.join(",")).toThrow(malformed);
+    }
+  });
+
+  test("frames the zstd encoder writes decode to their input at every level, across blocks and frames", async () => {
+    const { codecs } = await loadParquetModules();
+    const random = seededBytes(20261010);
+    const inputs = [
+      new Uint8Array(0),
+      new TextEncoder().encode("a single short line of text"),
+      random.mixed(70_000),
+      random.mixed(300_000),
+      random.noise(150_000),
+      random.letters(5_000),
+      random.letters(200_000),
+      new Uint8Array(400_000).fill(0x2a),
+    ];
+    for (const level of [-5, 1, 3, 9, 19]) {
+      for (const input of inputs) {
+        const frame = zstdCompressSync(input, {
+          params: { [zlibConstants.ZSTD_c_compressionLevel]: level, [zlibConstants.ZSTD_c_checksumFlag]: 1 },
+        });
+        expect(boundedZstd(frame, input.length, codecs.zstd), `level ${level} size ${input.length}`).toEqual(input);
+      }
+    }
+    const first = random.mixed(20_000);
+    const second = random.mixed(30_000);
+    const page = Uint8Array.from([...zstdCompressSync(first), ...zstdCompressSync(second)]);
+    expect(boundedZstd(page, 50_000, codecs.zstd)).toEqual(Uint8Array.from([...first, ...second]));
+  });
 });
+
+/**
+ * Compressed blocks of `sequences` sequences each, with no literals and RLE tables of one literal length code, one
+ * offset code and one match length code; the bitstream is its one closing byte, so every extra bit reads as zero.
+ */
+function zstdSequenceBlocks(
+  sequences: number,
+  count: number,
+  codes: { literalCode?: number; offsetCode?: number; matchCode?: number; modes?: number; lastByte?: number } = {},
+): number[] {
+  const counted =
+    sequences < 128
+      ? [sequences]
+      : sequences < 0x7f00
+        ? [0x80 | (sequences >> 8), sequences & 0xff]
+        : [0xff, (sequences - 0x7f00) & 0xff, (sequences - 0x7f00) >> 8];
+  const body = [
+    0x00,
+    ...counted,
+    codes.modes ?? 0x54,
+    codes.literalCode ?? 0,
+    codes.offsetCode ?? 0,
+    codes.matchCode ?? 52,
+    codes.lastByte ?? 0x01,
+  ];
+  return Array.from({ length: count }, (_, index) => zstdBlock(2, body.length, index === count - 1, body)).flat();
+}
+
+/** Fixed-seed bytes for the encoder round trip: noise, letters of a 16-letter alphabet, and text-like data of repeated phrases with noise between. */
+function seededBytes(seed: number) {
+  let state = seed >>> 0;
+  const next = (): number => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return (t ^ (t >>> 14)) >>> 0;
+  };
+  const phrases = ["SELECT", " id, name ", "FROM orders", " WHERE ", "2026-10-10", "null", "\n"].map((phrase) =>
+    new TextEncoder().encode(phrase),
+  );
+  return {
+    noise: (size: number): Uint8Array => Uint8Array.from({ length: size }, () => next() & 0xff),
+    letters: (size: number): Uint8Array => Uint8Array.from({ length: size }, () => 0x61 + (next() & 0x0f)),
+    mixed: (size: number): Uint8Array => {
+      const output = new Uint8Array(size);
+      let at = 0;
+      while (at < size) {
+        const roll = next();
+        const piece =
+          roll % 5 === 0
+            ? Uint8Array.from({ length: 1 + (roll % 13) }, () => next() & 0xff)
+            : phrases[roll % phrases.length];
+        output.set(piece.subarray(0, size - at), at);
+        at += piece.length;
+      }
+      return output;
+    },
+  };
+}

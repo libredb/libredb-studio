@@ -639,10 +639,255 @@ const ZSTD_MALFORMED = "The ZSTD data is malformed";
 /** The bytes of the dictionary id each value of a frame header's dictionary flag declares. */
 const ZSTD_DICTIONARY_BYTES = [0, 1, 2, 4];
 
+/** An FSE decoding table as fzstd builds one: accuracy log, and per state its symbol, bit count and next state base. */
+interface ZstdFseTable {
+  readonly b: number;
+  readonly s: Uint8Array;
+  readonly n: Uint8Array;
+  readonly t: Uint16Array;
+}
+
+/** The index of the highest set bit, -1 for 0 (fzstd's msb). */
+function zstdMsb(value: number): number {
+  let bits = 0;
+  while (1 << bits <= value) bits += 1;
+  return bits - 1;
+}
+
 /**
- * Reads the zstd frame header at `start` and walks its block headers without decoding them: where the frame ends and
- * the content size it declares. A frame that declares no content size, or one past `room`, is refused before any work,
- * and so are raw and RLE blocks whose sizes pass that content size.
+ * fzstd 0.1.1's FSE table reader (rfse), ported expression for expression so the sequence walk below reads the same
+ * symbols and states the decoder will. Out-of-range reads give undefined, which the bitwise operators read as 0, as
+ * they do in fzstd. Returns the byte after the table description and the table. fzstd is MIT licensed, Copyright (c)
+ * 2020 Arjun Barrett; this reader, the default tables and the block walk below follow its code.
+ */
+function zstdFse(dat: Uint8Array, bt: number, maxLog: number): [number, ZstdFseTable] {
+  let tpos = (bt << 3) + 4;
+  const al = (dat[bt] & 15) + 5;
+  if (al > maxLog) throw new Error(ZSTD_MALFORMED);
+  const sz = 1 << al;
+  let probs = sz;
+  let sym = -1;
+  let ht = sz;
+  const buf = new ArrayBuffer(512 + (sz << 2));
+  const freq = new Int16Array(buf, 0, 256);
+  const dstate = new Uint16Array(buf, 0, 256);
+  const nstate = new Uint16Array(buf, 512, sz);
+  const bb1 = 512 + (sz << 1);
+  const syms = new Uint8Array(buf, bb1, sz);
+  const nbits = new Uint8Array(buf, bb1 + sz);
+  while (sym < 255 && probs > 0) {
+    const bits = zstdMsb(probs + 1);
+    const cbt = tpos >> 3;
+    const msk = (1 << (bits + 1)) - 1;
+    let val = ((dat[cbt] | (dat[cbt + 1] << 8) | (dat[cbt + 2] << 16)) >> (tpos & 7)) & msk;
+    const msk1fb = (1 << bits) - 1;
+    const msv = msk - probs - 1;
+    const sval = val & msk1fb;
+    if (sval < msv) {
+      tpos += bits;
+      val = sval;
+    } else {
+      tpos += bits + 1;
+      if (val > msk1fb) val -= msv;
+    }
+    freq[++sym] = --val;
+    if (val === -1) {
+      probs += val;
+      syms[--ht] = sym;
+    } else probs -= val;
+    if (!val) {
+      let re: number;
+      do {
+        const rbt = tpos >> 3;
+        re = ((dat[rbt] | (dat[rbt + 1] << 8)) >> (tpos & 7)) & 3;
+        tpos += 2;
+        sym += re;
+      } while (re === 3);
+    }
+  }
+  if (sym > 255 || probs) throw new Error(ZSTD_MALFORMED);
+  let sympos = 0;
+  const sstep = (sz >> 1) + (sz >> 3) + 3;
+  const smask = sz - 1;
+  for (let s = 0; s <= sym; ++s) {
+    const sf = freq[s];
+    if (sf < 1) {
+      dstate[s] = -sf;
+      continue;
+    }
+    for (let i = 0; i < sf; ++i) {
+      syms[sympos] = s;
+      do {
+        sympos = (sympos + sstep) & smask;
+      } while (sympos >= ht);
+    }
+  }
+  if (sympos) throw new Error(ZSTD_MALFORMED);
+  for (let i = 0; i < sz; ++i) {
+    const ns = dstate[syms[i]]++;
+    const nb = (nbits[i] = al - zstdMsb(ns));
+    nstate[i] = (ns << nb) - sz;
+  }
+  return [(tpos + 7) >> 3, { b: al, s: syms, n: nbits, t: nstate }];
+}
+
+/** The predefined literal length, match length and offset tables, built from fzstd's own descriptions. */
+const ZSTD_DEFAULT_TABLES: readonly ZstdFseTable[] = [
+  zstdFse(
+    Uint8Array.from([
+      33, 20, 196, 24, 99, 140, 33, 132, 16, 66, 8, 33, 132, 16, 66, 8, 33, 68, 68, 68, 68, 68, 68, 68, 68, 36, 9,
+    ]),
+    0,
+    6,
+  )[1],
+  zstdFse(Uint8Array.from([32, 132, 16, 66, 102, 70, 68, 68, 68, 68, 36, 73, 2]), 0, 5)[1],
+  zstdFse(Uint8Array.from([81, 16, 99, 140, 49, 198, 24, 99, 12, 33, 196, 24, 99, 102, 102, 134, 70, 146, 4]), 0, 6)[1],
+];
+
+/** Extra bits and baselines of the 36 literal length codes and the 53 match length codes. */
+const ZSTD_LITERAL_BITS = [
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+];
+const ZSTD_MATCH_BITS = [
+  ...new Array<number>(32).fill(0),
+  1,
+  1,
+  1,
+  1,
+  2,
+  2,
+  3,
+  3,
+  4,
+  4,
+  5,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+];
+const zstdBaselines = (bits: readonly number[], start: number): number[] => {
+  let at = start;
+  return bits.map((width) => {
+    const baseline = at;
+    at += 1 << width;
+    return baseline;
+  });
+};
+const ZSTD_LITERAL_BASE = zstdBaselines(ZSTD_LITERAL_BITS, 0);
+const ZSTD_MATCH_BASE = zstdBaselines(ZSTD_MATCH_BITS, 3);
+
+/**
+ * The bytes a compressed block regenerates, read the way fzstd's block decoder (rzb) reads it: the literals header,
+ * the sequence count, the table modes and tables, then each sequence's literal and match lengths, without decoding a
+ * literal or copying a byte. fzstd runs a sequence's copy loops for the full lengths whatever its output holds, so the
+ * running total of literals plus match lengths is refused as soon as it passes `room`, the frame's content size left,
+ * and a sequence that takes more literals than the block carries, or a code the format does not define, is malformed.
+ * `tables` carries the last tables of the frame, which a later block may repeat.
+ */
+function zstdCompressedBlock(
+  dat: Uint8Array,
+  start: number,
+  end: number,
+  room: number,
+  frame: { tables?: readonly ZstdFseTable[] },
+): number {
+  let bt = start;
+  const b3 = dat[bt];
+  const lbt = b3 & 3;
+  const sf = (b3 >> 2) & 3;
+  let lss = b3 >> 4;
+  let lcs = 0;
+  if (lbt < 2) {
+    if (sf & 1) lss |= (dat[++bt] << 4) | (sf & 2 && dat[++bt] << 12);
+    else lss = b3 >> 3;
+  } else if (sf < 2) {
+    lss |= (dat[++bt] & 63) << 4;
+    lcs = (dat[bt] >> 6) | (dat[++bt] << 2);
+  } else if (sf === 2) {
+    lss |= (dat[++bt] << 4) | ((dat[++bt] & 3) << 12);
+    lcs = (dat[bt] >> 2) | (dat[++bt] << 6);
+  } else {
+    lss |= (dat[++bt] << 4) | ((dat[++bt] & 63) << 12);
+    lcs = (dat[bt] >> 6) | (dat[++bt] << 2) | (dat[++bt] << 10);
+  }
+  ++bt;
+  if (lss > room) throw new Error(DECODE_OVER_BUDGET);
+  bt += lbt === 0 ? lss : lbt === 1 ? 1 : lcs;
+  let ns = dat[bt++];
+  if (!ns) return lss;
+  if (ns === 255) ns = (dat[bt++] | (dat[bt++] << 8)) + 0x7f00;
+  else if (ns > 127) ns = ((ns - 128) << 8) | dat[bt++];
+  const scm = dat[bt++];
+  if (scm & 3) throw new Error(ZSTD_MALFORMED);
+  const dts = [...ZSTD_DEFAULT_TABLES];
+  for (let i = 2; i > -1; --i) {
+    const md = (scm >> ((i << 1) + 2)) & 3;
+    if (md === 1) {
+      dts[i] = { b: 0, s: Uint8Array.of(dat[bt++]), n: Uint8Array.of(0), t: Uint16Array.of(0) };
+    } else if (md === 2) {
+      [bt, dts[i]] = zstdFse(dat, bt, 9 - (i & 1));
+    } else if (md === 3) {
+      if (frame.tables === undefined) throw new Error(ZSTD_MALFORMED);
+      dts[i] = frame.tables[i];
+    }
+  }
+  frame.tables = dts;
+  const [mlt, oct, llt] = dts;
+  const lb = dat[end - 1];
+  if (!lb) throw new Error(ZSTD_MALFORMED);
+  let spos = (end << 3) - 8 + zstdMsb(lb) - llt.b;
+  let cbt = spos >> 3;
+  let lst = ((dat[cbt] | (dat[cbt + 1] << 8)) >> (spos & 7)) & ((1 << llt.b) - 1);
+  cbt = (spos -= oct.b) >> 3;
+  let ost = ((dat[cbt] | (dat[cbt + 1] << 8)) >> (spos & 7)) & ((1 << oct.b) - 1);
+  cbt = (spos -= mlt.b) >> 3;
+  let mst = ((dat[cbt] | (dat[cbt + 1] << 8)) >> (spos & 7)) & ((1 << mlt.b) - 1);
+  let literals = 0;
+  let matches = 0;
+  for (; ns > 0; ns -= 1) {
+    const llc = llt.s[lst];
+    const lbtr = llt.n[lst];
+    const mlc = mlt.s[mst];
+    const mbtr = mlt.n[mst];
+    const ofc = oct.s[ost];
+    const obtr = oct.n[ost];
+    if (llc > 35 || mlc > 52 || ofc > 31) throw new Error(ZSTD_MALFORMED);
+    spos -= ofc;
+    cbt = (spos -= ZSTD_MATCH_BITS[mlc]) >> 3;
+    const ml =
+      ZSTD_MATCH_BASE[mlc] +
+      (((dat[cbt] | (dat[cbt + 1] << 8) | (dat[cbt + 2] << 16)) >> (spos & 7)) & ((1 << ZSTD_MATCH_BITS[mlc]) - 1));
+    cbt = (spos -= ZSTD_LITERAL_BITS[llc]) >> 3;
+    const ll =
+      ZSTD_LITERAL_BASE[llc] +
+      (((dat[cbt] | (dat[cbt + 1] << 8) | (dat[cbt + 2] << 16)) >> (spos & 7)) & ((1 << ZSTD_LITERAL_BITS[llc]) - 1));
+    cbt = (spos -= lbtr) >> 3;
+    lst = llt.t[lst] + (((dat[cbt] | (dat[cbt + 1] << 8)) >> (spos & 7)) & ((1 << lbtr) - 1));
+    cbt = (spos -= mbtr) >> 3;
+    mst = mlt.t[mst] + (((dat[cbt] | (dat[cbt + 1] << 8)) >> (spos & 7)) & ((1 << mbtr) - 1));
+    cbt = (spos -= obtr) >> 3;
+    ost = oct.t[ost] + (((dat[cbt] | (dat[cbt + 1] << 8)) >> (spos & 7)) & ((1 << obtr) - 1));
+    literals += ll;
+    if (literals > lss) throw new Error(ZSTD_MALFORMED);
+    matches += ml;
+    if (lss + matches > room) throw new Error(DECODE_OVER_BUDGET);
+  }
+  return lss + matches;
+}
+
+/**
+ * Reads the zstd frame header at `start` and walks its blocks without decoding them: where the frame ends and the
+ * content size it declares. A frame that declares no content size, or one past `room`, is refused before any work.
+ * Then each block's regenerated bytes, raw and RLE from their headers and compressed ones from their sequences, are
+ * summed over the frame as the decoder will see it, and a frame whose blocks pass its content size is refused, so
+ * fzstd's work on the frame stays within that size.
  */
 function zstdFrame(input: Uint8Array, start: number, room: number): { readonly end: number; readonly size: number } {
   if (start + 5 > input.length) throw new Error(ZSTD_MALFORMED);
@@ -659,7 +904,7 @@ function zstdFrame(input: Uint8Array, start: number, room: number): { readonly e
   if (sizeBytes === 2) size += 256;
   if (size > room) throw new Error(DECODE_OVER_BUDGET);
   at += sizeBytes;
-  let regenerated = 0;
+  const blocks: { readonly at: number; readonly type: number; readonly size: number }[] = [];
   for (let last = false; !last; ) {
     if (at + 3 > input.length) throw new Error(ZSTD_MALFORMED);
     const header = input[at] | (input[at + 1] << 8) | (input[at + 2] << 16);
@@ -668,10 +913,7 @@ function zstdFrame(input: Uint8Array, start: number, room: number): { readonly e
     if (type === 3) throw new Error(ZSTD_MALFORMED);
     const body = type === 1 ? 1 : blockSize;
     if (at + 3 + body > input.length) throw new Error(ZSTD_MALFORMED);
-    if (type !== 2) {
-      regenerated += blockSize;
-      if (regenerated > size) throw new Error(DECODE_OVER_BUDGET);
-    }
+    blocks.push({ at: at + 3 - start, type, size: blockSize });
     at += 3 + body;
     last = (header & 1) === 1;
   }
@@ -679,14 +921,26 @@ function zstdFrame(input: Uint8Array, start: number, room: number): { readonly e
     if (at + 4 > input.length) throw new Error(ZSTD_MALFORMED);
     at += 4;
   }
+  const dat = input.subarray(start, at);
+  const frame: { tables?: readonly ZstdFseTable[] } = {};
+  let regenerated = 0;
+  for (const block of blocks) {
+    regenerated +=
+      block.type === 2
+        ? zstdCompressedBlock(dat, block.at, block.at + block.size, size - regenerated, frame)
+        : block.size;
+    if (regenerated > size) throw new Error(DECODE_OVER_BUDGET);
+  }
   return { end: at, size };
 }
 
 /**
  * zstd bounded by `outputLength`: fzstd given one output buffer starts every frame at its offset 0, so an input of many
- * frames would do that buffer's work once per frame. Each frame must declare its content size, the sizes may not pass
- * `outputLength`, and each frame decodes into its own part of the output; skippable frames are skipped by their length.
- * An output shorter than `outputLength` is refused with DECODE_OVER_BUDGET.
+ * frames would do that buffer's work once per frame, and its sequence loop runs each match for its full length even
+ * where its output view stops. Each frame must declare its content size, the sizes may not pass `outputLength`, the
+ * literals and match lengths of each frame's blocks may not pass its content size, and each frame decodes into its own
+ * part of the output; skippable frames are skipped by their length. An output shorter than `outputLength` is refused
+ * with DECODE_OVER_BUDGET.
  */
 export function boundedZstd(input: Uint8Array, outputLength: number, decompress: ParquetCodecs["zstd"]): Uint8Array {
   const output = new Uint8Array(outputLength);
@@ -717,8 +971,9 @@ export function boundedZstd(input: Uint8Array, outputLength: number, decompress:
  * The second line behind the pre-scan: each codec checks that the declared output length is a non-negative
  * integer within the budget left before it runs, then spends it, so no call can leave the budget anything but a
  * whole number. Snappy is hyparquet's own pure-JavaScript decoder, so hysnappy's shared WASM
- * memory is never grown; zstd decodes through the frame walk above, each frame into its own part of a buffer of the
- * declared size, since fzstd otherwise sizes from the frame and, given a buffer, restarts it for every frame. Gzip and
+ * memory is never grown; zstd decodes through the frame and sequence walk above, each frame into its own part of a
+ * buffer of the declared size, since fzstd otherwise sizes from the frame, given a buffer restarts it for every frame,
+ * and copies a match for its declared length past its output. Gzip and
  * brotli decode through node:zlib with the declared length as the output limit, because the package decoders size
  * their output from the stream, and both LZ4 codecs through the bounded decoders above, because the package decoder
  * keeps copying a match past its output.
