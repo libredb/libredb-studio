@@ -619,7 +619,11 @@ export function createS3Client(transport: NodeByteTransport): S3Client {
   };
 }
 
-/** One permit per operation; a permit-wait failure carries the operation's names, as a request failure does. */
+/**
+ * One permit per operation. A permit wait the deadline ended rejects with the signal's own reason, one object shared by
+ * every operation waiting under that signal, so each operation gets a fresh copy carrying its own names, as a request
+ * failure does; any other rejection passes unchanged and unnoted.
+ */
 async function withPermit<T>(
   limiter: ProviderLimiter,
   names: S3RequestNames,
@@ -630,8 +634,10 @@ async function withPermit<T>(
   try {
     ticket = await limiter.acquire(call.signal);
   } catch (error) {
-    noteRequestNames(error, names);
-    throw error;
+    if (!(error instanceof DOMException && error.name === "TimeoutError")) throw error;
+    const own = new DOMException(error.message, error.name);
+    noteRequestNames(own, names);
+    throw own;
   }
   try {
     return await run();

@@ -5,7 +5,7 @@
  * unsigned client.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { QueryError } from "@/lib/db/errors";
+import { QueryCancelledError, QueryError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   createS3Client,
@@ -15,7 +15,7 @@ import {
   type S3Operation,
 } from "@/lib/db/providers/objectstore/s3/client";
 import { S3ServerError, toProviderError } from "@/lib/db/providers/objectstore/s3/errors";
-import type { LimiterTicket, ProviderLimiter } from "@/lib/db/utils/bounded-limiter";
+import { engineLimiter, type LimiterTicket, type ProviderLimiter } from "@/lib/db/utils/bounded-limiter";
 import {
   bucketsXml,
   errorXml,
@@ -640,4 +640,39 @@ describe("the limited client", () => {
       expect(fake.exchanges).toHaveLength(0);
     },
   );
+
+  test("two operations whose permit wait one deadline ended are each worded with their own names", async () => {
+    const limiter = engineLimiter("s3-client-test-shared-reason", { perProvider: 1, perEngine: 1, queueDepth: 4 })();
+    const held = await limiter.acquire(new AbortController().signal);
+    const fake = fakeS3Transport(ANY);
+    const client = limitedS3Client(createS3Client(fake.createTransport(TEST_TRANSPORT_OPTIONS)), limiter);
+    const controller = new AbortController();
+    const call = { signal: controller.signal, deadline: Date.now() + 60_000 };
+    const bucketWait = failure(client.headBucket("sales", call));
+    const objectWait = failure(client.headObject("archive", "b.csv", call));
+    controller.abort(new DOMException("The operation timed out.", "TimeoutError"));
+    const [bucketError, objectError] = await Promise.all([bucketWait, objectWait]);
+    held.release();
+    expect((toProviderError(bucketError, "HeadBucket", CONTEXT, { timeoutMs: 10_000 }) as Error).message).toBe(
+      'The S3 server at http://localhost:9000 did not answer list bucket "sales" within 10 seconds; nothing was retried.',
+    );
+    expect((toProviderError(objectError, "HeadObject", CONTEXT, { timeoutMs: 10_000 }) as Error).message).toBe(
+      'The S3 server at http://localhost:9000 did not answer read object "b.csv" in bucket "archive" within 10 seconds; nothing was retried.',
+    );
+    expect(bucketError).not.toBe(objectError);
+    expect(fake.exchanges).toHaveLength(0);
+  });
+
+  test("a permit wait a cancel ended rejects with the cancel's own reason, the same instance", async () => {
+    const limiter: ProviderLimiter = { acquire: (signal) => Promise.reject(signal.reason) };
+    const fake = fakeS3Transport(ANY);
+    const client = limitedS3Client(createS3Client(fake.createTransport(TEST_TRANSPORT_OPTIONS)), limiter);
+    const controller = new AbortController();
+    const cancel = new QueryCancelledError("The query was cancelled.");
+    controller.abort(cancel);
+    const error = await failure(client.headBucket("sales", { signal: controller.signal, deadline: Date.now() }));
+    expect(error).toBe(cancel);
+    expect(toProviderError(error, "HeadBucket", CONTEXT, { signal: controller.signal })).toBe(cancel);
+    expect(fake.exchanges).toHaveLength(0);
+  });
 });
