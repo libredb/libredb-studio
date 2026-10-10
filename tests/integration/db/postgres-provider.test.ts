@@ -728,6 +728,27 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
   }
 
   // getTableStats: pg_stat_user_tables
+  // getTableStats, the pg_class arm: what an engine that keeps pg_stat_user_tables empty
+  // answers instead (#1540). Only the names and the sizes; pg_class publishes no tuple
+  // counts, so those columns are not in the statement and arrive here as absent.
+  if (normalized.includes("pg_catalog.pg_class c") && normalized.includes("reltuples::bigint as row_count")) {
+    const sized = (fn: string, bytes: string): string | null => (normalized.includes(`${fn}(c.oid)`) ? bytes : null);
+    return Promise.resolve({
+      rows: [
+        {
+          schema_name: "public",
+          table_name: "from_pg_class",
+          row_count: null,
+          table_size_bytes: sized("pg_table_size", "65536"),
+          index_size_bytes: sized("pg_indexes_size", "32768"),
+          total_size_bytes: sized("pg_total_relation_size", "98304"),
+        },
+      ],
+      fields: [],
+      rowCount: 1,
+    });
+  }
+
   if (normalized.includes("pg_stat_user_tables") && normalized.includes("n_live_tup")) {
     // A size column the statement no longer asks the engine for answers NULL, the way the
     // server answers the `NULL::bigint` a refused builtin is rewritten to (#1436). Without
@@ -3402,6 +3423,60 @@ describe("PostgresProvider", () => {
       expect(users.totalSize).toBe("N/A");
       // The rows are what the panel was opened for, and they are still there.
       expect(users.liveRowCount).toBe(1000);
+    });
+
+    // CockroachDB v26.3.2 publishes pg_stat_user_tables, keeps it empty, and holds the user's
+    // tables in pg_class (#1540). No rows is an answer rather than a refusal, so it is read and
+    // the second catalog is asked; before this the panel listed nothing and the Operations
+    // table list went with it, which is what put every per-table action out of reach.
+    test("reads the tables from pg_class when pg_stat_user_tables answers no rows", async () => {
+      const seen: string[] = [];
+      mockQueryFn = (sql: string) => {
+        seen.push(sql);
+        if (sql.includes("pg_stat_user_tables")) return Promise.resolve({ rows: [], fields: [], rowCount: 0 });
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const stats = await provider.getTableStats();
+      expect(stats.length).toBe(1);
+      expect(stats[0].tableName).toBe("from_pg_class");
+      expect(seen.some((sql) => sql.includes("pg_catalog.pg_class c"))).toBe(true);
+    });
+
+    // The order of the two reads is what makes the fallback safe without asking which engine
+    // it is: an engine that fills the view must never reach the thinner catalog.
+    test("does not read pg_class when pg_stat_user_tables answers rows", async () => {
+      const seen: string[] = [];
+      mockQueryFn = (sql: string) => {
+        seen.push(sql);
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const stats = await provider.getTableStats();
+      expect(stats.length).toBe(2);
+      expect(seen.some((sql) => sql.includes("pg_catalog.pg_class c"))).toBe(false);
+    });
+
+    test("a tuple count the answering catalog does not publish is absent, not zero", async () => {
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("pg_stat_user_tables")) return Promise.resolve({ rows: [], fields: [], rowCount: 0 });
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const row = (await provider.getTableStats())[0];
+      expect(row.liveRowCount).toBeUndefined();
+      expect(row.deadRowCount).toBeUndefined();
+      expect(row.bloatRatio).toBeUndefined();
+      // Required by the type, so it stays a number; D105 is where that residue is tracked.
+      expect(row.rowCount).toBe(0);
+      // The sizes pg_class CAN answer still arrive.
+      expect(row.tableSizeBytes).toBe(65536);
     });
 
     test("each size builtin is dropped on its own, so one absence does not cost the others", async () => {
