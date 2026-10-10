@@ -1186,6 +1186,26 @@ Only a deeper parent is refused, at `400` with `{ "error": "<type> declares a co
 
 A caller that reaches a provider without these routes, such as the MCP `inspect-schema` tool or a host behind the embedded workspace, is refused by the provider itself under the same rule, in the provider's own words: `A PostgreSQL container path is [schema], received []`.
 
+#### Kinds per container on the object routes
+
+A container in the answer of `POST /api/db/objects/containers` may carry `kinds`, the ids of the object kinds it holds, when it does not hold every kind the engine declares.
+A container without the field holds every kind, which is every container of every engine that does not declare it.
+
+`POST /api/db/objects/inventory` and `POST /api/db/objects/search` list each container only for the kinds it holds, and a `kinds` filter in the body is narrowed the same way, container by container.
+For containers named in `containers`, an engine whose containers carry `kinds` is asked for them with one container listing per distinct parent, one call on an engine with one container level, and a named container that listing does not hold is refused before any listing; every other engine reads named containers for every kind with no container listing, as before.
+
+| Condition | Status | Body |
+|-----------|--------|------|
+| a named container the listing does not hold, on an engine whose containers carry `kinds` | `400` | `{ "error": "\"containers\" names [[\"shop\"]], which the provider's container listing does not hold, so the kinds held there are unknown; name containers the containers route lists" }` |
+
+A search is refused before its first listing when the container and kind pairs it would list exceed the inventory's pair bound of 1,000:
+
+| Condition | Status | Body |
+|-----------|--------|------|
+| more than 1,000 container and kind pairs | `400` | `{ "error": "this search would list <n> container and kind pairs, more than the 1000 one search may list; name fewer kinds in \"kinds\"" }` |
+
+Naming fewer kinds brings the search under the bound; a search under it still answers every match.
+
 #### POST /api/db/objects/describe
 
 Read the columns, indexes and foreign keys of ONE object.
@@ -1271,7 +1291,7 @@ Build a plan for an edited object definition, and answer what an apply would sen
 It executes nothing and writes nothing.
 
 The describe route above is the one Phase 2 sibling documented in full in this file.
-The other six under `/api/db/objects/` (`containers`, `counts`, `list`, `search`, `inventory`, `source`) are not, except for the container-path rule four of them share, which [Container paths on the object routes](#container-paths-on-the-object-routes) documents.
+The other six under `/api/db/objects/` (`containers`, `counts`, `list`, `search`, `inventory`, `source`) are not, except for the container-path rule four of them share, which [Container paths on the object routes](#container-paths-on-the-object-routes) documents, and the per-container kinds three of them read, which [Kinds per container on the object routes](#kinds-per-container-on-the-object-routes) documents.
 
 **Authentication:** Required.
 There is NO admin gate on either route, and the reason is measured rather than preferred: a
