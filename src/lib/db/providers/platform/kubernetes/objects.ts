@@ -1,18 +1,50 @@
 /**
- * The tree surface: the containers (`Cluster`, then the namespaces) with the kinds each holds. The counts and the
- * capped listings join this module in the next task.
+ * The tree surface: the containers (`Cluster`, then the namespaces) with the kinds each holds, the capped listings,
+ * and the counts read from the same capped walk.
+ *
+ * A listing reads the Table with `includeObject=None` in pages of 500, following `continue`, up to 1,000 objects per
+ * kind and container; a count walks the same way one row further, so up to 1,000 it is exact and past it the count is
+ * the 1,000 the tree lists, marked as a floor. `remainingItemCount` is never a count: the API omits it with selectors
+ * and on the last page, and says not to rely on it.
+ *
+ * A kind the identity may not list keeps its folder: its count answers `{ unavailable }` with Studio's sentence, so
+ * one forbidden kind loses nothing else. A built-in kind this server does not serve answers the same way.
  */
 import { QueryError } from "@/lib/db/errors";
 import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
-import type { Container, ContainerLevels, ProviderCapabilities } from "@/lib/db/types";
+import type {
+  Container,
+  ContainerLevels,
+  DatabaseObject,
+  KindCount,
+  ObjectDetail,
+  ObjectDetailBatch,
+  ProviderCapabilities,
+} from "@/lib/db/types";
 import { ACCEPT_TABLE, type KubernetesCall, type KubernetesClient } from "./client";
 import type { ClusterEndpoint } from "./connection-options";
 import { DNS1123_LABEL } from "./connection-options";
-import { type DiscoveryCache, findResource, type IndexedResource, type ResourceIndex } from "./discovery";
-import { KubernetesRequestError } from "./errors";
-import { CLUSTER_CONTAINER, kindsForContainerName } from "./kinds";
-import { KUBERNETES_PAGE_SIZE, KUBERNETES_TREE_OBJECT_CAP, KUBERNETES_TYPE } from "./limits";
+import {
+  type DiscoveryCache,
+  findResource,
+  type IndexedResource,
+  type ResourceIndex,
+  withTypeRefresh,
+} from "./discovery";
+import { KubernetesRequestError, notServedSentence } from "./errors";
+import {
+  BUILT_IN_API_GROUPS,
+  type BuiltInKind,
+  builtInKind,
+  CLUSTER_CONTAINER,
+  CUSTOM_RESOURCES_KIND,
+  kindsForContainerName,
+  objectNameOf,
+  objectSegment,
+} from "./kinds";
+import { KUBERNETES_MAX_IN_FLIGHT, KUBERNETES_PAGE_SIZE, KUBERNETES_TREE_OBJECT_CAP, KUBERNETES_TYPE } from "./limits";
 import { redactResponse } from "./redaction";
+import { isRequestableName } from "./request-policy";
 import { cellOf, type KubeTable, parseTable, scanTable, type TableRow } from "./table";
 
 /** What every tree read goes through: the client, the discovery cache, the connection's namespaces and a fresh call. */
@@ -22,6 +54,21 @@ export interface KubernetesSurface {
   readonly endpoint: Pick<ClusterEndpoint, "namespaces" | "defaultNamespace">;
   readonly call: () => KubernetesCall;
 }
+
+/** What a count past the cap was counted from, completing "counted from". */
+export const KUBERNETES_SAMPLED_FROM = "the first 1,000 objects the tree lists; the console reads the rest";
+
+/** The words that mean an object needs nothing done, which the tree draws no status for. */
+const ORDINARY_STATUS: ReadonlySet<string> = new Set([
+  "Running",
+  "Completed",
+  "Succeeded",
+  "Ready",
+  "Active",
+  "Bound",
+  "Available",
+]);
+const READY_COUNTS = /^([0-9]+)\/([0-9]+)$/;
 
 function refuse(message: string): never {
   throw new QueryError(message, KUBERNETES_TYPE);
@@ -54,6 +101,26 @@ export function containerName(container: readonly string[]): string {
   return name;
 }
 
+/** The kind a container holds, or the sentence for a pair that does not exist. */
+function requireApplicable(container: string, kind: string): void {
+  if (kindsForContainerName(container).includes(kind)) return;
+  const entry = builtInKind(kind);
+  if (entry === undefined) refuse(`Kubernetes declares no object kind "${kind}"`);
+  refuse(
+    entry.scope === "Namespaced"
+      ? `${entry.labelPlural} live in a namespace, not under ${CLUSTER_CONTAINER}.`
+      : `${entry.labelPlural} are cluster-scoped: they are listed under ${CLUSTER_CONTAINER}, not in a namespace.`,
+  );
+}
+
+/** The served resource of a built-in kind, or the not-served sentence. */
+function servedResource(index: ResourceIndex, entry: BuiltInKind): IndexedResource | string {
+  const served = findResource(index, entry.group, entry.id);
+  if (served === undefined || !served.verbs.includes("list"))
+    return notServedSentence(entry.labelPlural, { resource: entry.id, group: entry.group });
+  return served;
+}
+
 /** One page reader of a Table list: requested with `includeObject=None`, redacted, parsed. */
 function tableReader(surface: KubernetesSurface, target: IndexedResource, namespace: string | undefined) {
   return async (page: { readonly continueToken?: string; readonly limit: number }): Promise<KubeTable> => {
@@ -74,11 +141,50 @@ function tableReader(surface: KubernetesSurface, target: IndexedResource, namesp
   };
 }
 
+/** The rows of a capped walk: `rows` up to the cap, `capped` when the list held more. */
+async function cappedWalk(
+  surface: KubernetesSurface,
+  target: IndexedResource,
+  namespace: string | undefined,
+  extra: number,
+): Promise<{ readonly table: Pick<KubeTable, "columns">; readonly rows: readonly TableRow[] }> {
+  const scan = await scanTable(tableReader(surface, target, namespace), {
+    offset: 0,
+    limit: KUBERNETES_TREE_OBJECT_CAP + extra,
+    pageSize: KUBERNETES_PAGE_SIZE,
+  });
+  return { table: scan, rows: scan.rows };
+}
+
+/** The count of a capped walk read one row past the cap: exact up to 1,000, the sampled floor past it. */
+export async function cappedCount(
+  surface: KubernetesSurface,
+  target: IndexedResource,
+  namespace: string | undefined,
+): Promise<{ readonly count: number } | { readonly count: number; readonly sampledFrom: string }> {
+  const { rows } = await cappedWalk(surface, target, namespace, 1);
+  return rows.length > KUBERNETES_TREE_OBJECT_CAP
+    ? { count: KUBERNETES_TREE_OBJECT_CAP, sampledFrom: KUBERNETES_SAMPLED_FROM }
+    : { count: rows.length };
+}
+
 function rowName(table: Pick<KubeTable, "columns">, row: TableRow, labelPlural: string): string {
   const name = cellOf(table, row, "Name");
   if (typeof name !== "string" || name === "")
     refuse(`The API server listed one of the ${labelPlural} without a name.`);
   return name;
+}
+
+/** The engine's own word for a state a reader should act on, from the Status and Ready cells; absent when ordinary. */
+export function notableStatus(table: Pick<KubeTable, "columns">, row: TableRow): string | undefined {
+  const status = cellOf(table, row, "Status");
+  if (typeof status === "string" && status !== "" && !ORDINARY_STATUS.has(status)) return status;
+  const ready = cellOf(table, row, "Ready");
+  const counts = typeof ready === "string" ? READY_COUNTS.exec(ready) : null;
+  if (counts === null || counts[1] === counts[2]) return undefined;
+  if (status === "Running") return `Running, ${ready} ready`;
+  // A finished pod (Completed, Succeeded) has no ready container, and that is ordinary.
+  return status === undefined || status === "" ? `${ready} ready` : undefined;
 }
 
 /** The namespaces the tree lists: `forbidden` when the API refused the list. */
@@ -142,4 +248,129 @@ export async function listKubernetesContainers(
       }),
     ),
   ];
+}
+
+/** The custom resource types discovery lists for a container's scope, each `<plural>.<group>`. */
+function customResourceTypes(index: ResourceIndex, container: string): readonly IndexedResource[] {
+  const namespaced = container !== CLUSTER_CONTAINER;
+  return index.resources.filter(
+    (entry) => !BUILT_IN_API_GROUPS.has(entry.group) && entry.namespaced === namespaced && entry.verbs.includes("list"),
+  );
+}
+
+async function countKind(
+  surface: KubernetesSurface,
+  index: ResourceIndex,
+  container: string,
+  kind: string,
+): Promise<KindCount> {
+  if (kind === CUSTOM_RESOURCES_KIND) return { count: customResourceTypes(index, container).length };
+  const entry = builtInKind(kind) as BuiltInKind;
+  const served = servedResource(index, entry);
+  if (typeof served === "string") return { unavailable: served };
+  try {
+    return await cappedCount(surface, served, container === CLUSTER_CONTAINER ? undefined : container);
+  } catch (error) {
+    if (error instanceof KubernetesRequestError) return { unavailable: error.message };
+    throw error;
+  }
+}
+
+/**
+ * Runs `work` on every item, at most `lanes` at a time, keeping the items' order in the answer. A count's deadline
+ * starts when its request is made, so the kinds are not all made at once to wait for the connection's four sockets.
+ */
+async function mapBounded<T, R>(items: readonly T[], lanes: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  let next = 0;
+  const lane = async (): Promise<void> => {
+    while (next < items.length) {
+      const position = next;
+      next += 1;
+      // oxlint-disable-next-line no-await-in-loop -- a lane runs its items in turn; the lanes run side by side.
+      results[position] = await work(items[position]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(lanes, items.length) }, lane));
+  return results;
+}
+
+/** Every kind the container holds, counted from the capped walk; a refused or unserved kind answers `unavailable`. */
+export async function countKubernetesObjects(
+  surface: KubernetesSurface,
+  container: readonly string[],
+): Promise<Record<string, KindCount>> {
+  const name = containerName(container);
+  const index = await surface.discovery.get();
+  const kinds = kindsForContainerName(name);
+  const counts = await mapBounded(kinds, KUBERNETES_MAX_IN_FLIGHT, (kind) => countKind(surface, index, name, kind));
+  return Object.fromEntries(kinds.map((kind, position) => [kind, counts[position]]));
+}
+
+/**
+ * The first 1,000 objects of a kind in a container; a custom resource type per row for Custom Resources. A type the
+ * server stopped serving since discovery was read (a `text/plain` 404) reads discovery again once.
+ */
+export async function listKubernetesObjects(
+  surface: KubernetesSurface,
+  container: readonly string[],
+  kind: string,
+): Promise<DatabaseObject[]> {
+  const name = containerName(container);
+  requireApplicable(name, kind);
+  return withTypeRefresh(surface.discovery, async (index) => {
+    if (kind === CUSTOM_RESOURCES_KIND)
+      return customResourceTypes(index, name).map((entry) => ({
+        path: [name, `${entry.resource}.${entry.group}`],
+        name: `${entry.resource}.${entry.group}`,
+        kind,
+      }));
+    const entry = builtInKind(kind) as BuiltInKind;
+    const served = servedResource(index, entry);
+    if (typeof served === "string") refuse(served);
+    const { table, rows } = await cappedWalk(surface, served, name === CLUSTER_CONTAINER ? undefined : name, 0);
+    const pod = entry.group === "" && entry.id === "pods";
+    return rows.map((row) => {
+      const objectName = rowName(table, row, entry.labelPlural);
+      // A name the request policy refuses could be listed but never read, and a generated statement would split on it.
+      if (!isRequestableName(objectName, pod))
+        refuse(
+          `The API server listed ${entry.labelPlural} whose name holds a character Studio never puts in a request path (it takes letters, digits and . _ : @ ~ -), so this folder cannot list them; list them in the console with kubectl get ${entry.id}.`,
+        );
+      const status = notableStatus(table, row);
+      return {
+        path: [name, objectSegment(entry, objectName)],
+        name: objectName,
+        kind,
+        ...(status === undefined ? {} : { status }),
+      };
+    });
+  });
+}
+
+/** The object a path names: its container, its kind's entry and its name; refused before any request. */
+export function objectAddress(
+  path: readonly string[],
+  kind: string,
+): { readonly container: string; readonly entry: BuiltInKind; readonly name: string } {
+  if (path.length !== 2)
+    refuse(`A Kubernetes "${kind}" path is [container, <kind>/<name>], received ${JSON.stringify(path)}`);
+  const container = containerName([path[0]]);
+  requireApplicable(container, kind);
+  const entry = builtInKind(kind);
+  if (entry === undefined) refuse("A custom resource type has no source: list its objects with the List action.");
+  return { container, entry, name: objectNameOf(entry, path[1]) };
+}
+
+/** No kind declares columns, so a described object answers none; the path is checked all the same. */
+export function describeKubernetesObject(path: readonly string[], kind: string): ObjectDetail {
+  if (kind !== CUSTOM_RESOURCES_KIND) objectAddress(path, kind);
+  else if (path.length !== 2)
+    refuse(`A Kubernetes "${kind}" path is [container, <plural>.<group>], received ${JSON.stringify(path)}`);
+  return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
+}
+
+export function describeKubernetesObjects(container: readonly string[], kind: string): ObjectDetailBatch {
+  requireApplicable(containerName(container), kind);
+  return { details: [] };
 }
