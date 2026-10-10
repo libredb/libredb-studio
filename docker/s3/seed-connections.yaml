@@ -1,0 +1,372 @@
+version: "1"
+
+# Seed connections for the S3 fixtures of docker/s3/README.md: one per target and principal, for the browser pass and
+# agent plan mode (a connection made in the browser cannot be rebuilt on the server for an agent run). Load it with
+# SEED_CONFIG_PATH=docker/s3/seed-connections.yaml. Every connection is managed and read-only, and every target is
+# loopback, so none needs allowInsecureAuth. The MinIO, MinIO region, Silo and RustFS passwords are the committed
+# throwaway values of database-compose.yml; Garage's secrets are generated, so they come from the environment that
+# docker/s3/garage-env.sh prints, and the TLS fixture's CA from LIBREDB_S3_TLS_CA as PEM text.
+connections:
+  # MinIO: 127.0.0.1:9000, signing region us-east-1.
+  - id: "s3-minio-root"
+    name: "S3 MinIO (root)"
+    type: s3
+    host: localhost
+    port: 9000
+    region: "us-east-1"
+    user: "libredb"
+    password: "Probe123pass!"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-minio-browse"
+    name: "S3 MinIO (browse)"
+    type: s3
+    host: localhost
+    port: 9000
+    region: "us-east-1"
+    user: "studio-browse"
+    password: "Browse123pass!"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-minio-browse-demo"
+    name: "S3 MinIO (browse-demo)"
+    type: s3
+    host: localhost
+    port: 9000
+    region: "us-east-1"
+    user: "studio-browse"
+    password: "Browse123pass!"
+    database: "studio-demo"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-minio-scoped"
+    name: "S3 MinIO (scoped)"
+    type: s3
+    host: localhost
+    port: 9000
+    region: "us-east-1"
+    user: "studio-scoped"
+    password: "Scoped123pass!"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-minio-scoped-pin"
+    name: "S3 MinIO (scoped-pin)"
+    type: s3
+    host: localhost
+    port: 9000
+    region: "us-east-1"
+    user: "studio-scoped"
+    password: "Scoped123pass!"
+    database: "studio-scoped"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-minio-getonly"
+    name: "S3 MinIO (getonly)"
+    type: s3
+    host: localhost
+    port: 9000
+    region: "us-east-1"
+    user: "studio-getonly"
+    password: "Getonly123pass!"
+    database: "studio-demo"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  # MinIO region: 127.0.0.1:9030, signing region eu-central-1.
+  - id: "s3-minio-region-root"
+    name: "S3 MinIO region (root)"
+    type: s3
+    host: localhost
+    port: 9030
+    region: "eu-central-1"
+    user: "libredb"
+    password: "Probe123pass!"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-minio-region-browse"
+    name: "S3 MinIO region (browse)"
+    type: s3
+    host: localhost
+    port: 9030
+    region: "eu-central-1"
+    user: "studio-browse"
+    password: "Browse123pass!"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-minio-region-browse-demo"
+    name: "S3 MinIO region (browse-demo)"
+    type: s3
+    host: localhost
+    port: 9030
+    region: "eu-central-1"
+    user: "studio-browse"
+    password: "Browse123pass!"
+    database: "studio-demo"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-minio-region-scoped"
+    name: "S3 MinIO region (scoped)"
+    type: s3
+    host: localhost
+    port: 9030
+    region: "eu-central-1"
+    user: "studio-scoped"
+    password: "Scoped123pass!"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-minio-region-scoped-pin"
+    name: "S3 MinIO region (scoped-pin)"
+    type: s3
+    host: localhost
+    port: 9030
+    region: "eu-central-1"
+    user: "studio-scoped"
+    password: "Scoped123pass!"
+    database: "studio-scoped"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-minio-region-getonly"
+    name: "S3 MinIO region (getonly)"
+    type: s3
+    host: localhost
+    port: 9030
+    region: "eu-central-1"
+    user: "studio-getonly"
+    password: "Getonly123pass!"
+    database: "studio-demo"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  # Silo: 127.0.0.1:9010, signing region us-east-1.
+  - id: "s3-silo-root"
+    name: "S3 Silo (root)"
+    type: s3
+    host: localhost
+    port: 9010
+    region: "us-east-1"
+    user: "libredb"
+    password: "Probe123pass!"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-silo-browse"
+    name: "S3 Silo (browse)"
+    type: s3
+    host: localhost
+    port: 9010
+    region: "us-east-1"
+    user: "studio-browse"
+    password: "Browse123pass!"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-silo-browse-demo"
+    name: "S3 Silo (browse-demo)"
+    type: s3
+    host: localhost
+    port: 9010
+    region: "us-east-1"
+    user: "studio-browse"
+    password: "Browse123pass!"
+    database: "studio-demo"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-silo-scoped"
+    name: "S3 Silo (scoped)"
+    type: s3
+    host: localhost
+    port: 9010
+    region: "us-east-1"
+    user: "studio-scoped"
+    password: "Scoped123pass!"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-silo-scoped-pin"
+    name: "S3 Silo (scoped-pin)"
+    type: s3
+    host: localhost
+    port: 9010
+    region: "us-east-1"
+    user: "studio-scoped"
+    password: "Scoped123pass!"
+    database: "studio-scoped"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-silo-getonly"
+    name: "S3 Silo (getonly)"
+    type: s3
+    host: localhost
+    port: 9010
+    region: "us-east-1"
+    user: "studio-getonly"
+    password: "Getonly123pass!"
+    database: "studio-demo"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  # Garage: 127.0.0.1:3900, signing region garage.
+  - id: "s3-garage-root"
+    name: "S3 Garage (root)"
+    type: s3
+    host: localhost
+    port: 3900
+    region: "garage"
+    user: "GK000000000000000000000001"
+    password: "${LIBREDB_S3_GARAGE_ROOT_SECRET}"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-garage-browse"
+    name: "S3 Garage (browse)"
+    type: s3
+    host: localhost
+    port: 3900
+    region: "garage"
+    user: "GK000000000000000000000002"
+    password: "${LIBREDB_S3_GARAGE_BROWSE_SECRET}"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-garage-browse-demo"
+    name: "S3 Garage (browse-demo)"
+    type: s3
+    host: localhost
+    port: 3900
+    region: "garage"
+    user: "GK000000000000000000000002"
+    password: "${LIBREDB_S3_GARAGE_BROWSE_SECRET}"
+    database: "studio-demo"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-garage-scoped"
+    name: "S3 Garage (scoped)"
+    type: s3
+    host: localhost
+    port: 3900
+    region: "garage"
+    user: "GK000000000000000000000003"
+    password: "${LIBREDB_S3_GARAGE_SCOPED_SECRET}"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-garage-scoped-pin"
+    name: "S3 Garage (scoped-pin)"
+    type: s3
+    host: localhost
+    port: 3900
+    region: "garage"
+    user: "GK000000000000000000000003"
+    password: "${LIBREDB_S3_GARAGE_SCOPED_SECRET}"
+    database: "studio-scoped"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-garage-getonly"
+    name: "S3 Garage (getonly)"
+    type: s3
+    host: localhost
+    port: 3900
+    region: "garage"
+    user: "GK000000000000000000000004"
+    password: "${LIBREDB_S3_GARAGE_GETONLY_SECRET}"
+    database: "studio-demo"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  # RustFS: 127.0.0.1:9020, signing region us-east-1.
+  - id: "s3-rustfs-root"
+    name: "S3 RustFS (root)"
+    type: s3
+    host: localhost
+    port: 9020
+    region: "us-east-1"
+    user: "libredb"
+    password: "Probe123pass!"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-rustfs-browse"
+    name: "S3 RustFS (browse)"
+    type: s3
+    host: localhost
+    port: 9020
+    region: "us-east-1"
+    user: "studio-browse"
+    password: "Browse123pass!"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-rustfs-browse-demo"
+    name: "S3 RustFS (browse-demo)"
+    type: s3
+    host: localhost
+    port: 9020
+    region: "us-east-1"
+    user: "studio-browse"
+    password: "Browse123pass!"
+    database: "studio-demo"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-rustfs-scoped"
+    name: "S3 RustFS (scoped)"
+    type: s3
+    host: localhost
+    port: 9020
+    region: "us-east-1"
+    user: "studio-scoped"
+    password: "Scoped123pass!"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-rustfs-scoped-pin"
+    name: "S3 RustFS (scoped-pin)"
+    type: s3
+    host: localhost
+    port: 9020
+    region: "us-east-1"
+    user: "studio-scoped"
+    password: "Scoped123pass!"
+    database: "studio-scoped"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "s3-rustfs-getonly"
+    name: "S3 RustFS (getonly)"
+    type: s3
+    host: localhost
+    port: 9020
+    region: "us-east-1"
+    user: "studio-getonly"
+    password: "Getonly123pass!"
+    database: "studio-demo"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  # Silo over TLS: 127.0.0.1:9443, the CA of the s3-certs volume as PEM text in LIBREDB_S3_TLS_CA.
+  - id: "s3-silo-tls-browse"
+    name: "S3 Silo TLS (browse)"
+    type: s3
+    host: localhost
+    port: 9443
+    region: "us-east-1"
+    user: "studio-browse"
+    password: "Browse123pass!"
+    ssl: { mode: verify-ca, caCert: "${LIBREDB_S3_TLS_CA}" }
+    roles: ["*"]
+    managed: true
+    readOnly: true

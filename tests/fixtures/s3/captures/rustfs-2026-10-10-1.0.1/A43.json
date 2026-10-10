@@ -1,0 +1,131 @@
+{
+  "file": "rustfs-2026-10-10-1.0.1/A43.json",
+  "scenario": "A43",
+  "target": "rustfs",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "console",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9020",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154406Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "x-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:06 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Buckets><Bucket><CreationDate>2026-10-10T15:37:06.165Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.039Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.235Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.076Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.127Z</CreationDate><Name>studio-versions</Name></Bucket></Buckets><Owner><DisplayName>rustfs</DisplayName><ID>c19050dbcee97fda828689dda99097a6321af2248fa760517237346e5d9c8a66</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "console",
+      "request": {
+        "method": "GET",
+        "path": "/studio-versions",
+        "query": "encoding-type=url&max-keys=500&prefix=ver%2F&versions=",
+        "headers": {
+          "host": "127.0.0.1:9020",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154406Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "x-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "content-length",
+            "1630"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:06 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListVersionsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><DeleteMarker><IsLatest>true</IsLatest><Key>ver/deleted.txt</Key><LastModified>2026-10-10T15:37:07.232Z</LastModified><VersionId>e3f56def-c65f-4de0-9c42-66f97ee0715e</VersionId></DeleteMarker><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated><KeyMarker></KeyMarker><MaxKeys>500</MaxKeys><Name>studio-versions</Name><Prefix>ver/</Prefix><VersionIdMarker></VersionIdMarker><Version><ETag>\"937ec4c10eb20c1f3324ef927697ea66\"</ETag><IsLatest>false</IsLatest><Key>ver/deleted.txt</Key><LastModified>2026-10-10T15:37:07.219Z</LastModified><Size>12</Size><StorageClass>STANDARD</StorageClass><VersionId>1043cb9e-17d8-42a7-b847-2f3a64527622</VersionId></Version><Version><ETag>\"223deef93d3131e3705ab44c2cd042f9\"</ETag><IsLatest>true</IsLatest><Key>ver/doc.txt</Key><LastModified>2026-10-10T15:37:07.208Z</LastModified><Size>12</Size><StorageClass>STANDARD</StorageClass><VersionId>17785a12-6fd1-4f0d-b834-3e6fb4eaba10</VersionId></Version><Version><ETag>\"dd8f100298ff923592ab35dc15788abc\"</ETag><IsLatest>false</IsLatest><Key>ver/doc.txt</Key><LastModified>2026-10-10T15:37:07.198Z</LastModified><Size>12</Size><StorageClass>STANDARD</StorageClass><VersionId>c811a1b1-a06c-4c2e-a565-c78f852cfabe</VersionId></Version><Version><ETag>\"937ec4c10eb20c1f3324ef927697ea66\"</ETag><IsLatest>true</IsLatest><Key>ver/zz-last.txt</Key><LastModified>2026-10-10T15:37:07.241Z</LastModified><Size>12</Size><StorageClass>STANDARD</StorageClass><VersionId>92d3b058-40b4-48f9-9e55-fab539831d01</VersionId></Version></ListVersionsResult>"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "console",
+      "ok": {
+        "rows": 5,
+        "names": [
+          "Kind",
+          "Key",
+          "VersionId",
+          "IsLatest",
+          "LastModified",
+          "Size",
+          "ETag"
+        ],
+        "notices": []
+      },
+      "exchanges": 1
+    }
+  ]
+}

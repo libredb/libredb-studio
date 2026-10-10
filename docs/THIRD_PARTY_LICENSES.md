@@ -33,6 +33,19 @@ The Graph tab's canvas library and its layout carry only the MIT notice each pac
 Each ships its LICENSE file in the package; all four were read on 2026-10-03.
 Only `src/components/results-graph/cytoscape-host.ts` loads them, and only through a dynamic import, so importing that module loads neither package.
 
+The object preview's Parquet decoders carry only the MIT notice each package ships, apart from the Snappy code compiled into hysnappy, and are recorded here because `hyparquet-compressors` arrives with two transitive packages that `package.json` does not name.
+Only `src/lib/db/providers/objectstore/s3/preview-parquet.ts` loads the four, through a dynamic import, so no other route or page pulls them in:
+
+| Package | Version | License | Reached as |
+| --- | --- | --- | --- |
+| [`hyparquet`](https://github.com/hyparam/hyparquet) | 1.31.1 | MIT | direct dependency |
+| [`hyparquet-compressors`](https://github.com/hyparam/hyparquet-compressors) | 1.1.2 | MIT | direct dependency |
+| [`fzstd`](https://github.com/101arrowz/fzstd) | 0.1.1 | MIT | dependency of `hyparquet-compressors` |
+| [`hysnappy`](https://github.com/hyparam/hysnappy) | 1.1.1 | MIT for the package; the compiled Snappy code is BSD-3-Clause (Google's Snappy) | dependency of `hyparquet-compressors`, an inline WebAssembly build of Snappy |
+
+Each ships its MIT LICENSE file in the package; all four were read on 2026-10-10.
+The hysnappy tarball carries only the compiled WebAssembly, and its decompressor's C source (`c/uncompress.c` at tag `v1.1.1`) has no license header, but it is derived from Andi Kleen's C port of Google's Snappy, [`andikleen/snappy-c`](https://github.com/andikleen/snappy-c), whose tables, function names and comments it keeps and whose files carry Google's BSD-3-Clause notice.
+
 The Oxia provider vendors two protocol definitions, unmodified, and ships the descriptor generated from them:
 
 | File | Upstream | License |

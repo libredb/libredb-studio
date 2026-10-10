@@ -1,0 +1,397 @@
+{
+  "file": "silo-2026-10-10-RELEASE.2026-09-16T00-00-00Z/A41.json",
+  "scenario": "A41",
+  "target": "silo",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "not-parquet",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9010",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154404Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:04 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:37:06.301Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:37:06.253Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:37:06.313Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:37:06.276Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:37:06.289Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "not-parquet",
+      "request": {
+        "method": "HEAD",
+        "path": "/studio-demo/parquet/not-parquet.parquet",
+        "query": "",
+        "headers": {
+          "host": "127.0.0.1:9010",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154404Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "72"
+          ],
+          [
+            "etag",
+            "\"336a1c20b77e4905e49ff81a12cfc23e\""
+          ],
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 15:37:06 GMT"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:04 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "binary/octet-stream",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "empty": true
+        }
+      }
+    },
+    {
+      "step": "not-parquet",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo/parquet/not-parquet.parquet",
+        "query": "",
+        "headers": {
+          "range": "bytes=-72",
+          "host": "127.0.0.1:9010",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154404Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "range",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 206,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "72"
+          ],
+          [
+            "content-range",
+            "bytes 0-71/72"
+          ],
+          [
+            "etag",
+            "\"336a1c20b77e4905e49ff81a12cfc23e\""
+          ],
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 15:37:06 GMT"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:04 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "binary/octet-stream",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "id,name,amount\n1,alice,10.5\n2,bob,20\n3,\"carol, jr\",30\n4,\"multi\nline\",40\n"
+        }
+      }
+    },
+    {
+      "step": "truncated",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9010",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154404Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:04 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:37:06.301Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:37:06.253Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:37:06.313Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:37:06.276Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:37:06.289Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "truncated",
+      "request": {
+        "method": "HEAD",
+        "path": "/studio-demo/parquet/truncated.parquet",
+        "query": "",
+        "headers": {
+          "host": "127.0.0.1:9010",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154404Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "4744"
+          ],
+          [
+            "etag",
+            "\"f01ed55ccd103714669a0cc446066b7e\""
+          ],
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 15:37:06 GMT"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:04 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "binary/octet-stream",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "empty": true
+        }
+      }
+    },
+    {
+      "step": "truncated",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo/parquet/truncated.parquet",
+        "query": "",
+        "headers": {
+          "range": "bytes=-4744",
+          "host": "127.0.0.1:9010",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154404Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "range",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 206,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "4744"
+          ],
+          [
+            "content-range",
+            "bytes 0-4743/4744"
+          ],
+          [
+            "etag",
+            "\"f01ed55ccd103714669a0cc446066b7e\""
+          ],
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 15:37:06 GMT"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:04 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "binary/octet-stream",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "base64": "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"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "not-parquet",
+      "ok": {
+        "rows": 5,
+        "names": [
+          "offset",
+          "hex",
+          "text"
+        ],
+        "notices": [
+          "The object does not end with the Parquet marker PAR1, so it is not a Parquet file; it is shown as hex."
+        ]
+      },
+      "exchanges": 2
+    },
+    {
+      "step": "truncated",
+      "ok": {
+        "rows": 100,
+        "names": [
+          "offset",
+          "hex",
+          "text"
+        ],
+        "notices": [
+          "The object does not end with the Parquet marker PAR1, so it is not a Parquet file; it is shown as hex.",
+          "The preview stops at 100 rows."
+        ]
+      },
+      "exchanges": 2
+    }
+  ]
+}

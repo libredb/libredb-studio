@@ -28,6 +28,7 @@ import {
   InfluxDBIcon,
   OxiaIcon,
   DatabendIcon,
+  S3Icon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -60,6 +61,7 @@ describe("db-icons", () => {
     { name: "OxiaIcon", Component: OxiaIcon },
     // Databend's published icon rather than a drawn mark: fixed fills, no stroke (see its own test below).
     { name: "DatabendIcon", Component: DatabendIcon, brandAsset: true },
+    { name: "S3Icon", Component: S3Icon },
   ];
 
   for (const { name, Component, brandAsset } of icons) {
@@ -122,5 +124,13 @@ describe("db-icons", () => {
       "f785f09847d68ad19488ab370ba952e1a16a4bd6a59be2fdd5b4984691904d76",
     );
     expect(html).toContain('<circle fill="#0175F2" cx="62.87" cy="46.71" r="2.28"></circle>');
+  });
+
+  test("S3Icon is a stroked mark on the house 24-unit grid, drawn for Studio", () => {
+    // A generic bucket drawn for Studio, never a vendor's logo.
+    const html = renderToStaticMarkup(React.createElement(S3Icon));
+    expect(html).toContain('viewBox="0 0 24 24"');
+    expect(html).toContain('fill="none"');
+    expect(html).toContain('stroke="currentColor"');
   });
 });

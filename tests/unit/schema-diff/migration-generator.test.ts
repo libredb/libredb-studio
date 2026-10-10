@@ -1109,6 +1109,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     oxia: "engine-has-no-foreign-key",
     // Constraints are CHECK only in Databend's grammar, and nothing declares or reports a foreign key (design 2.4).
     databend: "engine-has-no-foreign-key",
+    s3: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1243,6 +1244,8 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   // nullability and comment with the data kept. The MySQL spelling this generator writes fails `NOT NULL` on an
   // empty table (1058) and drops a default it does not restate, and the PostgreSQL spelling is a parse error (1005).
   databend: { label: "Databend", reason: "Databend has ALTER TABLE ... MODIFY COLUMN" },
+  // Not a table store: an object is bytes under a key, and the columns a listing shows are its fixed shape.
+  s3: { label: "S3-compatible object storage", reason: "with no schema, so there is no column definition to change" },
 };
 
 /**
@@ -1522,6 +1525,7 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "influxdb",
           "influxdb3",
           "oxia",
+          "s3",
         ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
@@ -1589,6 +1593,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   influxdb3: false, // SQL, but the 3.x planner takes no DDL, so there is no table DDL to wrap (`NO_TABLE_DDL`)
   oxia: false, // an `oxia client` read command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   databend: false, // a DDL statement commits the open transaction, so BEGIN; brackets nothing, the Oracle reason (module docstring)
+  s3: false, // one AWS CLI subset command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1624,6 +1629,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "influxdb",
             "influxdb3",
             "oxia",
+            "s3",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);

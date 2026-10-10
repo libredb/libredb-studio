@@ -223,7 +223,7 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
 ];
 
 /**
- * The twelve hues where two engines share a hue and are held apart only by step, so
+ * The thirteen hues where two engines share a hue and are held apart only by step, so
  * the `-alt` is a distinct IDENTITY and has to join the separation set. Pinned by
  * `tests/unit/lib/db-ui-config.test.ts`, which asserts every engine colour differs.
  * `fuchsia` joined with Neo4j: of the hues with no identity `-alt` yet, only
@@ -244,6 +244,9 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
  * leaves both minima where they were next to InfluxDB's `purple-alt` and `violet-alt`.
  * `red` joined with Databend: `hue-red` is Oracle's, and of the hues with no identity `-alt`, tried in the order
  * pink, red, amber, green, `pink-alt` made the light set tighter than the dark one and `red-alt` cleared every test.
+ * `green` joined with S3-compatible object storage: `hue-green` is Kafka's, and of the hues with no identity `-alt`
+ * (amber, pink, green, cyan), `green-alt` moved the light set's closest pair least (0.0337 to 0.0331, emerald-alt vs
+ * green-alt) and left the dark one where it was.
  */
 const IDENTITY_ALTS = [
   "blue",
@@ -258,6 +261,7 @@ const IDENTITY_ALTS = [
   "violet",
   "orange",
   "red",
+  "green",
 ] as const;
 
 /**

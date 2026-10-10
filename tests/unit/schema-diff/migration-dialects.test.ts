@@ -46,6 +46,7 @@ const COLUMN_GRAMMAR: Record<DatabaseType, [string, string] | null> = {
   oxia: null,
   // Databend's ALTER TABLE takes the standard ADD COLUMN and DROP COLUMN, with its backtick name quote.
   databend: ["ADD COLUMN `extra` integer;", "DROP COLUMN `old`;"],
+  s3: null,
 };
 
 describe("migration dialect regressions (#284)", () => {

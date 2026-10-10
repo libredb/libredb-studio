@@ -165,6 +165,7 @@ describe("renderProse code hand-off to the editor", () => {
       "influxdb",
       "influxdb3",
       "oxia",
+      "s3",
     ] satisfies DatabaseType[];
 
     // `influxql` is an alias rather than a type-id, so it rides beside the list instead of in it.

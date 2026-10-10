@@ -1,0 +1,67 @@
+{
+  "file": "silo-2026-10-10-RELEASE.2026-09-16T00-00-00Z/A5.json",
+  "scenario": "A5",
+  "target": "silo",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "test",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9010",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154404Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GKffffffffffffffffffffffff/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "307"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:04 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>InvalidAccessKeyId</Code><Message>The Access Key Id you provided does not exist in our records.</Message><Resource>/</Resource><RequestId>18DD357E781FC3E4</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "test",
+      "refused": "The server does not know this access key ID: check Access key ID.",
+      "exchanges": 1
+    }
+  ]
+}

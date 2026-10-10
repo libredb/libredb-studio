@@ -70,6 +70,10 @@ describe("resolveTabType", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "oxia" }))).toBe("oxia");
   });
 
+  test("S3 gets an s3 tab, not the MongoDB one its queryLanguage json would give", () => {
+    expect(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "s3" }))).toBe("s3");
+  });
+
   test("Neo4j (queryLanguage cypher, no dialect) gets a cypher tab, not the SQL fallback (Neo4j spec 6.5)", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "cypher" }))).toBe("cypher");
   });
@@ -129,6 +133,13 @@ describe("editorLanguageForTabType", () => {
     expect(editorLanguageForTabType("oxia")).toBe("oxia");
     expect(editorLanguageForTabType(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "oxia" })))).toBe(
       "oxia",
+    );
+  });
+
+  test("an s3 tab renders in the s3 language, restored with no capabilities", () => {
+    expect(editorLanguageForTabType("s3")).toBe("s3");
+    expect(editorLanguageForTabType(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "s3" })))).toBe(
+      "s3",
     );
   });
 });

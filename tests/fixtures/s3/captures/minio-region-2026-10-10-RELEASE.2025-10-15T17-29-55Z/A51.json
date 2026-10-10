@@ -1,0 +1,1291 @@
+{
+  "file": "minio-region-2026-10-10-RELEASE.2025-10-15T17-29-55Z/A51.json",
+  "scenario": "A51",
+  "target": "minio-region",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "profile",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "no-sign-request",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "ca-bundle",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "no-verify-ssl",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "debug",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "region-mismatch",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "endpoint-mismatch",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "get-object-attributes",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "get-object",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "sync",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "key-too-long",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "key-nul",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "semicolon",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "and",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "pipe",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "substitution",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "second-line",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "bucket-dotdot",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "bucket-space",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "key-leading-slash",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "preview-empty-segment",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID><DisplayName>minio</DisplayName></Owner><Buckets><Bucket><Name>studio-bulk</Name><CreationDate>2026-10-10T15:38:52.485Z</CreationDate></Bucket><Bucket><Name>studio-demo</Name><CreationDate>2026-10-10T15:38:52.342Z</CreationDate></Bucket><Bucket><Name>studio-empty</Name><CreationDate>2026-10-10T15:38:52.495Z</CreationDate></Bucket><Bucket><Name>studio-scoped</Name><CreationDate>2026-10-10T15:38:52.453Z</CreationDate></Bucket><Bucket><Name>studio-versions</Name><CreationDate>2026-10-10T15:38:52.468Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "profile",
+      "refused": "--profile is refused: the Access key and Secret on the connection sign every request, and Studio reads no AWS profile or credentials file.",
+      "exchanges": 0
+    },
+    {
+      "step": "no-sign-request",
+      "refused": "--no-sign-request is refused: a connection with a blank Access key and Secret sends unsigned requests, and one with a key pair signs every request.",
+      "exchanges": 0
+    },
+    {
+      "step": "ca-bundle",
+      "refused": "--ca-bundle is refused: TLS is set on the connection, and Studio reads no local file.",
+      "exchanges": 0
+    },
+    {
+      "step": "no-verify-ssl",
+      "refused": "--no-verify-ssl is refused: TLS verification is set on the connection, never by a command.",
+      "exchanges": 0
+    },
+    {
+      "step": "debug",
+      "refused": "--debug is refused: it prints request headers and signatures, which Studio never shows.",
+      "exchanges": 0
+    },
+    {
+      "step": "region-mismatch",
+      "refused": "--region names a region other than this connection's eu-central-1: the Region field on the connection decides the region every request is signed for.",
+      "exchanges": 0
+    },
+    {
+      "step": "endpoint-mismatch",
+      "refused": "--endpoint-url names an address other than this connection's http://127.0.0.1:9030: Host and Port on the connection decide where Studio connects.",
+      "exchanges": 0
+    },
+    {
+      "step": "get-object-attributes",
+      "refused": "get-object-attributes is not read in this version: one of the servers Studio is verified on answers it with the whole object. Run aws s3api head-object for the size, ETag and storage class.",
+      "exchanges": 0
+    },
+    {
+      "step": "get-object",
+      "refused": "get-object writes the object to a local file, which Studio never does: run preview s3://bucket/key to see its first rows.",
+      "exchanges": 0
+    },
+    {
+      "step": "sync",
+      "refused": "sync writes, and this connection is read-only. Studio's S3 support also reads only in this version, so turning the mode off would not run it: run it with the AWS CLI or your server's own tools. To read an object here, run preview s3://bucket/key.",
+      "exchanges": 0
+    },
+    {
+      "step": "key-too-long",
+      "refused": "--key is longer than 1,024 bytes, the longest key S3 allows: shorten it.",
+      "exchanges": 0
+    },
+    {
+      "step": "key-nul",
+      "refused": "The word at line 1, column 50 holds a NUL character, which no command line can pass: open such an object from the Keys panel, where its Source tab reads it.",
+      "exchanges": 0
+    },
+    {
+      "step": "semicolon",
+      "refused": "Studio runs one command and no shell, so it refuses the ; at line 1, column 28: write the text between single quotes to keep it as written.",
+      "exchanges": 0
+    },
+    {
+      "step": "and",
+      "refused": "Studio runs one command and no shell, so it refuses the & at line 1, column 29: write the text between single quotes to keep it as written.",
+      "exchanges": 0
+    },
+    {
+      "step": "pipe",
+      "refused": "Studio runs one command and no shell, so it refuses the | at line 1, column 29: write the text between single quotes to keep it as written.",
+      "exchanges": 0
+    },
+    {
+      "step": "substitution",
+      "refused": "Studio runs no shell, so it refuses the $ at line 1, column 28, which a shell may expand: put a backslash before the $, or write the text between single quotes, to keep it as written.",
+      "exchanges": 0
+    },
+    {
+      "step": "second-line",
+      "refused": "Line 2 holds a second command: Studio runs one command per run. Select the line to run it, and the editor sends the selection.",
+      "exchanges": 0
+    },
+    {
+      "step": "bucket-dotdot",
+      "refused": "--bucket is not a bucket name Studio addresses: a bucket name is 1 to 255 letters, digits, dots, hyphens or underscores, starting and ending with a letter or digit.",
+      "exchanges": 0
+    },
+    {
+      "step": "bucket-space",
+      "refused": "--bucket is not a bucket name Studio addresses: a bucket name is 1 to 255 letters, digits, dots, hyphens or underscores, starting and ending with a letter or digit.",
+      "exchanges": 0
+    },
+    {
+      "step": "key-leading-slash",
+      "refused": "--key begins with /, and a measured S3 server read a different key for such a name, so Studio does not open it.",
+      "exchanges": 0
+    },
+    {
+      "step": "preview-empty-segment",
+      "refused": "The path's key begins with /, and a measured S3 server read a different key for such a name, so Studio does not open it.",
+      "exchanges": 0
+    }
+  ]
+}

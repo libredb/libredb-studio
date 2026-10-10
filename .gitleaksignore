@@ -97,3 +97,49 @@ dfb4a9af0dcf58a7042b138d9d710a011041fb1a:docs/kubernetes-helm-chart-artifacthub-
 # never needs to know it. History keeps the commit, so the two findings stay.
 2ff08e3ac284bfbd9e3275f6b6c04b5dcf3081f6:.claude/skills/cut-release/SKILL.md:generic-api-key:247
 2ff08e3ac284bfbd9e3275f6b6c04b5dcf3081f6:.claude/skills/cut-release/SKILL.md:generic-api-key:307
+
+# The S3 provider branch. Every value below is either an S3 list cursor or a
+# published test vector, and none authenticates anything. The rule fires on
+# the cursors only after gitleaks decodes the base64 starting token that
+# carries them (`{"ContinuationToken": "..."}`).
+#
+# ListObjectsV2 continuation tokens: opaque, per-listing cursors that MinIO,
+# RustFS and Silo returned for a throwaway fixture bucket, kept in the console
+# captures, plus the same cursor and a toy "abc" one in the console token and
+# command tests that check Studio reads the AWS CLI's starting-token format.
+# A cursor names a position in one listing; it grants no access.
+c82ed5e440f04a8b966f07e2e0825d3742c53ba3:tests/fixtures/s3/captures/minio-2026-10-10-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:285
+c82ed5e440f04a8b966f07e2e0825d3742c53ba3:tests/fixtures/s3/captures/minio-2026-10-10-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:306
+c82ed5e440f04a8b966f07e2e0825d3742c53ba3:tests/fixtures/s3/captures/minio-region-2026-10-10-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:305
+c82ed5e440f04a8b966f07e2e0825d3742c53ba3:tests/fixtures/s3/captures/minio-region-2026-10-10-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:326
+c82ed5e440f04a8b966f07e2e0825d3742c53ba3:tests/fixtures/s3/captures/rustfs-2026-10-10-1.0.1/console-list-objects-v2-token.json:generic-api-key:285
+c82ed5e440f04a8b966f07e2e0825d3742c53ba3:tests/fixtures/s3/captures/rustfs-2026-10-10-1.0.1/console-list-objects-v2-token.json:generic-api-key:306
+c82ed5e440f04a8b966f07e2e0825d3742c53ba3:tests/fixtures/s3/captures/silo-2026-10-10-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:285
+c82ed5e440f04a8b966f07e2e0825d3742c53ba3:tests/fixtures/s3/captures/silo-2026-10-10-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:306
+ded61c50e6955fa467de08b76d2c0190dfefe2d3:tests/fixtures/s3/captures/minio-2026-10-10-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:285
+ded61c50e6955fa467de08b76d2c0190dfefe2d3:tests/fixtures/s3/captures/minio-2026-10-10-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:306
+ded61c50e6955fa467de08b76d2c0190dfefe2d3:tests/fixtures/s3/captures/minio-region-2026-10-10-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:305
+ded61c50e6955fa467de08b76d2c0190dfefe2d3:tests/fixtures/s3/captures/minio-region-2026-10-10-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:326
+ded61c50e6955fa467de08b76d2c0190dfefe2d3:tests/fixtures/s3/captures/rustfs-2026-10-10-1.0.1/console-list-objects-v2-token.json:generic-api-key:285
+ded61c50e6955fa467de08b76d2c0190dfefe2d3:tests/fixtures/s3/captures/rustfs-2026-10-10-1.0.1/console-list-objects-v2-token.json:generic-api-key:306
+ded61c50e6955fa467de08b76d2c0190dfefe2d3:tests/fixtures/s3/captures/silo-2026-10-10-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:285
+ded61c50e6955fa467de08b76d2c0190dfefe2d3:tests/fixtures/s3/captures/silo-2026-10-10-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:306
+e20a6f0d026524dd9df37c19ab4cb71b6773969e:tests/unit/db/s3/console-token.test.ts:generic-api-key:16
+e20a6f0d026524dd9df37c19ab4cb71b6773969e:tests/unit/db/s3/console-token.test.ts:generic-api-key:21
+e20a6f0d026524dd9df37c19ab4cb71b6773969e:tests/unit/db/s3/console-token.test.ts:generic-api-key:26
+ec1be60028304fe67738b67b075b69054b2d97da:tests/unit/db/s3/console-commands.test.ts:generic-api-key:65
+ec1be60028304fe67738b67b075b69054b2d97da:tests/unit/db/s3/console-commands.test.ts:generic-api-key:808
+ec1be60028304fe67738b67b075b69054b2d97da:tests/unit/db/s3/console-commands.test.ts:generic-api-key:811
+
+# The AWS SigV4 test suite's published `post-sts-header-before` vector: its
+# `x-amz-security-token` and expected signature are the example values AWS
+# ships with the suite (AKIDEXAMPLE), checked by the signer's tests.
+eeba3b2c152688368ecfbdd593872ced28bb9f4e:tests/fixtures/s3/sigv4-suite.json:generic-api-key:252
+
+# Backlog prose in the S3 MCP entry's "Done when" line, where the word for an
+# object's key was followed by a comma and a backticked identifier, which the
+# rule reads as an assignment. Two branch commits carry the line. HISTORY ONLY: the line now
+# reads "is designed;", which the rule does not fire on, so a squash of the
+# branch does not carry the finding.
+5d5d5ba7d0711048a6ba8c2623084405a4aeeb07:docs/BACKLOG.md:generic-api-key:6319
+d8446c144a70714bed8594e8d2ebd236db1f8c2c:docs/BACKLOG.md:generic-api-key:6292

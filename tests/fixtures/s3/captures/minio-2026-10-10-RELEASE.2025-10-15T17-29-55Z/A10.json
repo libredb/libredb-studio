@@ -1,0 +1,124 @@
+{
+  "file": "minio-2026-10-10-RELEASE.2025-10-15T17-29-55Z/A10.json",
+  "scenario": "A10",
+  "target": "minio",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "studio-demo",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo",
+        "query": "delimiter=%2F&encoding-type=url&list-type=2&max-keys=1&prefix=",
+        "headers": {
+          "host": "127.0.0.1:9000",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154400Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "studio-scoped/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "301"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:00 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied.</Message><BucketName>studio-demo</BucketName><Resource>/studio-demo</Resource><RequestId>18DD357DBE0781F9</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>"
+        }
+      }
+    },
+    {
+      "step": "no-such-bucket",
+      "request": {
+        "method": "GET",
+        "path": "/no-such-bucket",
+        "query": "delimiter=%2F&encoding-type=url&list-type=2&max-keys=1&prefix=",
+        "headers": {
+          "host": "127.0.0.1:9000",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154400Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "studio-scoped/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "307"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:00 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied.</Message><BucketName>no-such-bucket</BucketName><Resource>/no-such-bucket</Resource><RequestId>18DD357DBE1D73A6</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "studio-demo",
+      "refused": "This access key may not list bucket \"studio-demo\" (s3:ListBucket). The server answers the same way for a bucket that does not exist, so this does not say that bucket \"studio-demo\" exists.",
+      "exchanges": 1
+    },
+    {
+      "step": "no-such-bucket",
+      "refused": "This access key may not list bucket \"no-such-bucket\" (s3:ListBucket). The server answers the same way for a bucket that does not exist, so this does not say that bucket \"no-such-bucket\" exists.",
+      "exchanges": 1
+    }
+  ]
+}

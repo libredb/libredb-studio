@@ -194,6 +194,15 @@ describe("filterByRoles: engine-specific fields", () => {
     expect(none.warehouse).toBeUndefined();
   });
 
+  it("a seed's region is copied onto the managed connection", () => {
+    const result = filterByRoles([{ ...baseConn, region: "eu-central-1" }], ["user"]);
+    const [none] = filterByRoles([{ ...baseConn }], ["user"]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].region).toBe("eu-central-1");
+    expect(none.region).toBeUndefined();
+  });
+
   it("leaves the mechanism absent on a seeded connection that names none", () => {
     const [managed] = filterByRoles([{ ...baseConn, type: "kafka", port: 9092 }], ["user"]);
 

@@ -904,12 +904,15 @@ export interface ProviderCapabilities {
    *
    * `"oxia"` is the Oxia provider's: one `oxia client` read command per run (O10).
    *
+   * `"s3"` is the S3 provider's: one AWS CLI read command per run, `aws s3 ls`, the `aws s3api` reads its table names,
+   * or Studio's own `preview`.
+   *
    * Those arms are now records: a member added here does not compile until it has one in each of
    * `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`)
    * and `DIALECT_GENERATORS` (`src/lib/query-generators.ts`), and every other reader of this field and of
    * `queryLanguage` is held to a closed list by `tests/unit/lib/dialect-reader-allowlist.test.ts`.
    */
-  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant" | "oxia";
+  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant" | "oxia" | "s3";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).

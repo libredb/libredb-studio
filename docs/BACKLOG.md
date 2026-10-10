@@ -28,12 +28,12 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D260, U17 · 164
+- [Drivers and connections](#drivers-and-connections) — D1-D276, U17 · 179
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U108 · 99
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U110 · 101
 - [Dependencies](#dependencies) — P1-P9 · 7
-- [Documentation](#documentation) — DOC3-DOC20 · 17
+- [Documentation](#documentation) — DOC3-DOC21 · 18
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B103 · 39
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B104 · 40
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246)
 
@@ -2457,6 +2457,7 @@ Found 2026-10-04 by the review of that change.
 
 The shared Source tab captions a part from its `origin` alone (`sourceCaption` in `src/components/object-source/source-caption.ts`), and a hex dump of a binary value has no origin of its own, so it is captioned "A structured definition, rendered here as JSON."
 Oxia's hex dump and etcd's base64 view of a binary value both carry that caption, though neither is JSON.
+The S3 object preview's hex dump carries the same caption (src/lib/db/providers/objectstore/s3/preview-render.ts).
 
 Found 2026-10-04 by the review of the Oxia provider (ruling R37 of its PR).
 
@@ -2807,6 +2808,139 @@ A byte answer cut by `truncateAt` already frees its slot only once its request h
 Found 2026-10-10 while fixing the adversarial review of the S3 byte transport; pre-existing in the shared queue.
 
 **Done when:** every failure that destroys a request's socket frees the slot only once that request has closed, as `resolveCut` does, with every text outcome unchanged, and the runtimes test counts no empty connection after a failed request followed by a queued one cancelled as it fails.
+
+### D261. No SQL over files in an S3 bucket
+
+The `s3` provider previews objects; it cannot run a query across files (`docs/providers/s3.md` section 13).
+DuckDB's `httpfs` could, but the DuckDB provider turns extension loading off on every handle and refuses `INSTALL`, `LOAD` and `READ_PARQUET` in its agent profile on purpose, the extension is a native binary per engine version and platform, and a secret with write rights lets a query write to the bucket.
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** a design for SQL over S3 files is accepted that keeps the DuckDB provider's boundary, ships no native binary a channel cannot carry, and creates the S3 secret on the server from the connection record, never from statement text.
+
+### D262. S3 connections cannot use temporary credentials
+
+There is no session token field, so credentials issued by AWS STS (an access key, a secret and a session token) cannot sign a request (`docs/providers/s3.md` section 4.2).
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** a secret-classified session token field signs as `X-Amz-Security-Token`, refused on every other type, with a test that it never reaches an error, a log line or the fingerprint in the clear, measured against a server that issues temporary credentials, and the byte transport's header value cap, 1024 bytes in `src/lib/db/http/node-transport.ts`, admits the token, which STS issues longer than that.
+
+### D263. S3 connections address buckets by path only
+
+Studio sends `<endpoint>/<bucket>/<key>` and never a bucket host name, so a server that answers only virtual-hosted requests, and directory buckets, cannot be read (`docs/providers/s3.md` section 4.4).
+The shared transport pins one origin per connection, and a virtual-hosted request has one origin per bucket.
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** a connection can choose virtual-hosted addressing, every bucket origin is held to the connection's endpoint suffix and to the egress rules of rows 0.6 and 3.19 in `docs/SECURITY.md`, and a bucket name with a dot is refused over TLS with its reason, measured on real DNS.
+
+### D264. S3 connections cannot write
+
+v1 reads only: the client has GET and HEAD and no other method (`docs/SECURITY.md` row 3.18).
+Uploads, copies, deletes, bucket creation and versioning or policy changes are out.
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** each write runs behind typed confirmation with `READ_ONLY_ENFORCED.s3` still honoured, the client's method set grows only by the methods that writes need, and every write is measured live on each verified server.
+
+### D265. The S3 provider is not verified on AWS S3 or any hosted service
+
+v1 was accepted on MinIO, Silo, Garage and RustFS only (`docs/providers/s3.md` section 4.9).
+AWS-only behaviour stays unexercised: `301 PermanentRedirect` across regions, ListBuckets paging above 10,000 buckets, `InvalidObjectState` on archived objects, keys with `.`, `..` or `//` segments, and the region aliases of Cloudflare R2 and DigitalOcean Spaces.
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** the live check passes against an AWS S3 bucket with a least-privilege read-only key, each behaviour above is recorded with its measurement in the provider doc, and every hosted service named in the doc is either measured or still listed as not verified.
+
+### D266. Each provider carries its own UTF-8 helpers
+
+A strict UTF-8 decoder, a byte length and a byte-prefix back-off exist separately in `src/lib/db/providers/keyvalue/etcd/keys.ts`, `etcd/lexer.ts`, `keyvalue/oxia/values.ts`, `oxia/cursor.ts`, `oxia/walks.ts`, `stream/kafka/decode.ts` (`utf8Prefix`), `src/lib/db/console/bounds.ts`, `src/lib/db/destructive-commands.ts` and `src/lib/mcp/output.ts`, and the `s3` provider adds one more, because a provider may not import another provider's module.
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** one engine-neutral module under `src/lib/db/` exports the decoder, the byte length and the byte-prefix back-off, every copy above reads through it, and each provider's existing tests pass unchanged.
+
+### D267. The MinIO fixture is a frozen build of an archived project
+
+MinIO's community repository is archived and publishes no image or binary, so the `s3` acceptance fixture builds `RELEASE.2025-10-15T17-29-55Z` from source (`docker/s3/README.md`).
+That release carries unpatched advisories in upload paths; Studio never calls them, but the fixture can never be updated.
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** the owner decides whether S3 acceptance keeps MinIO, and either the MinIO fixture leaves the acceptance set with Garage and RustFS (and Silo) remaining, or it is rebuilt from a maintained source with the provider doc's verified-on table updated.
+
+### D268. The CLI lead and verb-role tokenizer exists twice
+
+`src/lib/db/providers/keyvalue/oxia/lexer.ts` and `src/lib/db/providers/objectstore/s3/console/lexer.ts` each strip a prompt and a CLI name and mark the verb word over the shared shell-word reader `src/lib/db/console/shell-words.ts`, because a provider may not import another provider's module.
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** one engine-neutral module under `src/lib/db/console/` takes the prompts, the lead words and the value-taking globals as data, both providers read through it, and `tests/unit/db/oxia/lexer.test.ts` and the S3 lexer test pass unchanged.
+
+### D269. Four providers carry private byte-size formatters
+
+`src/lib/db/providers/vector/qdrant/errors.ts`, `vector/milvus/errors.ts`, `keyvalue/etcd/errors.ts` and `timeseries/influxdb/errors.ts` each format a byte count with a private copy, while `formatBytes` in `src/lib/db/utils/pool-manager.ts` is the shared one; the `s3` provider imports the shared one and adds no fifth copy.
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** each imports `formatBytes` from `src/lib/db/utils/pool-manager.ts`.
+
+### D270. The HTTP egress guard is the same for every role
+
+`DB_HTTP_BLOCK_PRIVATE_HOSTS` in `src/lib/db/http/egress-policy.ts` is one deployment-wide switch, off by default, so every role that may open a custom connection reaches the same loopback and private hosts through every HTTP provider (`docs/SECURITY.md` "Known limits").
+An S3 connection reads only from a host whose connect probe parses as S3 XML, but any loopback or private host that answers as S3 is reachable by any such role while the switch is off; the operator's other control is `ALLOW_CUSTOM_CONNECTIONS`.
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** an egress policy that can differ by role is designed for every HTTP provider at once, with the byte transport's link-local refusal unchanged and role-free, and each HTTP provider's tests show a non-admin role refused a private host that an admin reaches.
+
+### D271. Parquet previews decode on the server's main thread
+
+The `s3` provider decodes a Parquet preview with `hyparquet` on the server's event loop (`src/lib/db/providers/objectstore/s3/preview-parquet.ts`); the only bounds are value caps measured to hold one decode under 128 MiB of heap and 1 s, and at most two decodes at once per process (`docs/providers/s3.md` section 13).
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** a Parquet preview decodes in a `worker_threads` Worker with `resourceLimits`, a decode that passes its heap or time bound is refused with a sentence, and every cap lowered for the main thread is re-measured in the Worker.
+
+### D273. Wide Parquet schemas are refused above 1,024 elements
+
+The `s3` provider's Parquet preview shows at most 128 leaf columns (`parquetMaxLeafColumns` in `S3_PREVIEW_LIMITS`, `src/lib/db/providers/objectstore/s3/constants.ts`), and the schema walk refuses a schema of more than eight times that, 1,024 elements (`src/lib/db/providers/objectstore/s3/parquet-schema.ts`), because the walk's bound is tied to the leaf-column bound (`docs/providers/s3.md` section 13).
+A budget on the chosen leaf columns times the schema elements would decouple the two: measured 2026-10-10 on Node 26.10.0 under a 128 MiB old-space limit, a product of 262,144 (a schema of 512 columns, all read) held at 74.61 MiB of heap growth, and 524,288 failed.
+With the walk bound back at 8,192 elements, such a budget would show up to 512 flat columns and summarise schemas up to 8,192 elements, at the cost of one more limit, a planner condition and notice wording.
+
+Found 2026-10-10 while measuring the S3 provider's Parquet preview.
+
+**Done when:** the preview bounds the chosen leaf columns times the schema elements by a measured budget instead of tying the schema walk to `parquetMaxLeafColumns`, the walk bound of 8,192 elements is re-measured, and a file of 512 flat columns previews them all, with tests at the budget and one over it.
+
+### D274. Large Parquet row groups preview fewer columns or none
+
+The `s3` provider's Parquet preview decodes whole column chunks of the first row group and admits at most 524,288 values per page, per column chunk and in all (`S3_PREVIEW_LIMITS` in `src/lib/db/providers/objectstore/s3/constants.ts`), so a file whose first row group holds more values previews fewer columns, or only its schema and statistics when its first column alone holds more values than a preview decodes, or is refused when one page declares more values than a preview allows (`docs/providers/s3.md` section 13).
+A row group written with pyarrow's defaults holds up to 1,048,576 rows, and a five-column pyarrow file of 1,000,000 rows previews as its schema and statistics only.
+Two routes would show rows: decode only the first data page of each column chunk, or weight the value caps by each column's decoded cost.
+Measured 2026-10-10 on Node 26.10.0 under a 128 MiB old-space limit: flat values held at 1,048,576 in 85 MiB, and the leaves of a list of INT64 held at 524,288 in 80 MiB and ran out of memory at 1,048,576.
+
+Found 2026-10-10 while measuring the S3 provider's Parquet preview.
+
+**Done when:** the preview either decodes only the first data page of each column chunk or weights its value caps by decoded cost, a pyarrow file written with the default row group size shows rows, and every cap the change touches is re-measured under the same 128 MiB bound, with tests at each cap and one over it.
+
+### D275. An S3 disconnect during connect's probe is undone when the probe ends
+
+`connect()` in `src/lib/db/providers/objectstore/s3/index.ts` opens its session, awaits the S3-proving probe, and then stores the session and marks the provider connected.
+A `disconnect()` that runs while the probe is in flight finds no stored session, so it closes nothing; when the probe then succeeds, `connect()` stores the session anyway, and the provider is connected with a live transport after the caller asked it to disconnect.
+
+Found 2026-10-10 by the review of the S3 provider; not reached by any shipped flow, which awaits `connect()` before it can call `disconnect()`.
+
+**Done when:** a `disconnect()` during `connect()`'s probe leaves the provider disconnected and the probe's transport closed once the probe settles, with a test that holds the probe, disconnects, releases it, and expects no stored session and one closed transport.
+
+### D276. A sessionless S3 health check racing connect replaces connect's session and leaks its transport
+
+`getHealth()` in `src/lib/db/providers/objectstore/s3/index.ts` opens a session of its own when none is stored and stores it when its read succeeds.
+When it runs while `connect()` is probing, both open a session; whichever finishes last overwrites `this.session`, and the transport of the other is never closed.
+
+Found 2026-10-10 by the review of the S3 provider.
+
+**Done when:** a health check that starts without a session and a `connect()` that overlaps it leave exactly one stored session and close every other transport they opened, with a test that runs the two concurrently in both finishing orders and counts the closed transports.
 
 ## Value interpolation
 
@@ -4081,13 +4215,14 @@ Found 2026-10-04 while designing the InfluxDB provider (rulings R1 and R16).
 
 The consent box the connection dialog draws while SSL Mode is disable is labelled "Send the password without TLS" for every type that takes `allowInsecureAuth` (`src/components/ConnectionModal.tsx`, the `allowInsecureAuth` block).
 On Oxia, `influxdb` and `influxdb3` the secret the box covers is a token: Oxia's field above the box is Token, and its declared hint under the box speaks of the token only.
+Since the S3 provider the label is declarable: the dialog draws DB_UI_CONFIG.<type>.fieldLabels.allowInsecureAuth when a type declares it, and S3 declares Connect without TLS.
 The refusals quote the label word for word, so they carry the same word: `CONSENT_CLAUSE` in `src/lib/db/providers/keyvalue/oxia/connection-options.ts` and the cleartext refusal in `src/lib/db/providers/timeseries/influxdb/connection-options.ts`.
 Seen 2026-10-04 in the final browser pass of the Oxia provider (#1310), in the New connection dialog for Oxia with SSL Mode disable.
 
 Found by the final browser pass of the Oxia provider (#1310).
 Not fixed there: the label is shared by every type that takes the field, and the refusals of two other providers quote it.
 
-**Done when:** the label names the secret the type takes, from a declared word in the type's UI config rather than a branch on the type id, every refusal that quotes the label quotes the new one, and a test renders the dialog for a password type and a token type and asserts each label.
+**Done when:** Oxia, influxdb and influxdb3 each declare a fieldLabels.allowInsecureAuth that names their token, every refusal that quotes the label quotes the new one, and a test renders the dialog for a password type and a token type and asserts each label.
 
 ### U83. A read-only engine's Source tab calls a key's value a definition it cannot replace
 
@@ -4378,6 +4513,24 @@ Measured 2026-10-10 in a browser on the folder-aware Keys panel branch: after Br
 Found 2026-10-10 by the browser pass of the folder-aware Keys panel; pre-existing.
 
 **Done when:** a Browse Keys request belongs to the connection it was made on, so the Keys panel of another connection opens without it, with a Sidebar test that does Browse Keys, switches connection, and finds the panel's pattern empty.
+
+### U109. The object tree is not paged, so an account with thousands of buckets lists them in one folder
+
+`listObjects` answers a whole folder in one call (`src/lib/db/types.ts`, the `listObjects` contract) and the tree has no Load more, so an S3 connection with no pinned bucket draws every bucket the key may list at once; AWS allows up to 10,000 buckets on an unpaginated ListBuckets and requires paging above that.
+Folders and objects are paged by the Keys panel, and the Keys panel's top level pages the bucket list too; the tree does not.
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** a tree folder can declare that it pages, the tree loads it a page at a time with a Load more row, and an S3 connection with more buckets than one page shows the first page and the control, measured with a server that holds more buckets than one page.
+
+### U110. Databend declares a User placeholder the dialog never draws
+
+`DB_UI_CONFIG.databend.fieldPlaceholders.user` (`src/lib/db-ui-config.ts`) is declared and never drawn: only the Database and Region boxes read declared placeholders (`src/components/ConnectionModal.tsx`), so the User box shows the dialog's default `user`.
+The S3 provider declares no `fieldPlaceholders.user` for that reason, since widening the dialog would change Databend's drawn placeholder in an S3 PR.
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** the User box draws a declared `fieldPlaceholders.user`, or the Databend declaration is removed, with a test that renders the dialog for Databend and asserts the User placeholder it shows.
 
 ## Dependencies
 
@@ -4787,6 +4940,15 @@ The guide says seven translated READMEs are gated by `readme:check` where `scrip
 Found 2026-10-09 while designing the S3 provider; pre-existing.
 
 **Done when:** each count is derived from the code it describes, the label table matches `ProviderLabels`, and the guide states one driver-free count with the list it counts.
+
+### DOC21. docs/TOOLCHAIN.md counts the providers the factory tests construct as seventeen
+
+`docs/TOOLCHAIN.md` says two `tests/unit` files "construct all seventeen providers through the real factory"; the shipped type-ids have grown well past seventeen since, the S3 provider among them, so the number no longer counts what those files construct.
+The other stale fleet counts the same sweep found (`docs/providers/mongodb.md` three times, `druid.md`, `mysql.md`, `sqlite.md` and `e2e/login.spec.ts`) are the ones DOC6 already lists, and each is further behind by the providers added since.
+
+Found 2026-10-10 by the documentation sweep of the S3 provider; pre-existing.
+
+**Done when:** the TOOLCHAIN.md sentence names the set those two files construct, or the number that set has, derived from the factory, and DOC6's entries are settled by its own Done when.
 
 ## Release pipeline
 
@@ -6147,6 +6309,14 @@ No statement classifier can be the boundary there: `nextval`, `EXECUTE IMMEDIATE
 Found 2026-10-07 while designing the Databend provider (design 5.7).
 
 **Done when:** a statement contract for Databend is measured and `queryReadOnly` implements it, `AGENT_EXECUTION_ENGINES` and `RUN_READ_QUERY_ENGINES` name Databend, and an agent run and an MCP call each drive a SELECT-shaped writer to its refusal in a test.
+
+### B104. S3-compatible object storage has no agent execution and no MCP surface
+
+`MCP_EXPOSABLE.s3` is false, so agent execution and MCP `run_read_query` refuse it (the provider implements no `queryReadOnly`, and no MCP surface that lists buckets but never returns an object key is designed yet).
+
+Found 2026-10-09 while designing the S3 provider.
+
+**Done when:** an MCP metadata surface that lists buckets and never returns an object key is designed; `MCP_EXPOSABLE.s3` turns true for it; and `run_read_query` and agent execution serve a `queryReadOnly` that runs one console read command, with tests; cited in `docs/AGENT.md` beside B103.
 
 ## Passkey deferrals (#785)
 

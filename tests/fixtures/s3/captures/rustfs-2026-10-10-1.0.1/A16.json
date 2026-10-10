@@ -1,0 +1,349 @@
+{
+  "file": "rustfs-2026-10-10-1.0.1/A16.json",
+  "scenario": "A16",
+  "target": "rustfs",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "level",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9020",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154406Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "x-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:06 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Buckets><Bucket><CreationDate>2026-10-10T15:37:06.165Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.039Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.235Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.076Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.127Z</CreationDate><Name>studio-versions</Name></Bucket></Buckets><Owner><DisplayName>rustfs</DisplayName><ID>c19050dbcee97fda828689dda99097a6321af2248fa760517237346e5d9c8a66</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "level",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo",
+        "query": "delimiter=%2F&encoding-type=url&list-type=2&max-keys=1000&prefix=keys%2Fdirmarker%2F",
+        "headers": {
+          "host": "127.0.0.1:9020",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154406Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "x-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "content-length",
+            "718"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:06 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-demo</Name><Prefix>keys/dirmarker/</Prefix><MaxKeys>1000</MaxKeys><KeyCount>2</KeyCount><IsTruncated>false</IsTruncated><Contents><ETag>\"cab6c1054b465754efe9fc15201b7743\"</ETag><Key>keys/dirmarker/</Key><LastModified>2026-10-10T15:37:06.456Z</LastModified><Size>9</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><ETag>\"937ec4c10eb20c1f3324ef927697ea66\"</ETag><Key>keys/dirmarker/inner.txt</Key><LastModified>2026-10-10T15:37:06.373Z</LastModified><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents><Delimiter>/</Delimiter><EncodingType>url</EncodingType></ListBucketResult>"
+        }
+      }
+    },
+    {
+      "step": "open",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9020",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154406Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "x-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "content-length",
+            "752"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:06 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Buckets><Bucket><CreationDate>2026-10-10T15:37:06.165Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.039Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.235Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.076Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.127Z</CreationDate><Name>studio-versions</Name></Bucket></Buckets><Owner><DisplayName>rustfs</DisplayName><ID>c19050dbcee97fda828689dda99097a6321af2248fa760517237346e5d9c8a66</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "open",
+      "request": {
+        "method": "HEAD",
+        "path": "/studio-demo/keys/dirmarker/",
+        "query": "",
+        "headers": {
+          "host": "127.0.0.1:9020",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154406Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "9"
+          ],
+          [
+            "etag",
+            "\"cab6c1054b465754efe9fc15201b7743\""
+          ],
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 15:37:06 GMT"
+          ],
+          [
+            "x-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:06 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/plain",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "empty": true
+        }
+      }
+    },
+    {
+      "step": "open",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo/keys/dirmarker/",
+        "query": "",
+        "headers": {
+          "range": "bytes=0-8",
+          "host": "127.0.0.1:9020",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154406Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "range",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 206,
+        "headers": [
+          [
+            "content-length",
+            "9"
+          ],
+          [
+            "content-range",
+            "bytes 0-8/9"
+          ],
+          [
+            "etag",
+            "\"cab6c1054b465754efe9fc15201b7743\""
+          ],
+          [
+            "last-modified",
+            "Sat, 10 Oct 2026 15:37:06 GMT"
+          ],
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "x-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:06 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/plain",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "marker!!\n"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "level",
+      "ok": {
+        "names": [
+          "studio-demo/keys/dirmarker/",
+          "studio-demo/keys/dirmarker/inner.txt"
+        ],
+        "pages": [
+          2
+        ],
+        "repeats": 0,
+        "headers": {
+          "studio-demo/keys/dirmarker/": "9 B",
+          "studio-demo/keys/dirmarker/inner.txt": "12 B"
+        },
+        "rows": 2,
+        "cursor": "0"
+      },
+      "exchanges": 2
+    },
+    {
+      "step": "open",
+      "ok": {
+        "headers": {
+          "bucket": "studio-demo",
+          "key": "keys/dirmarker/",
+          "size_bytes": "9",
+          "etag": "cab6c1054b465754efe9fc15201b7743",
+          "multipart_parts": "null",
+          "last_modified": "2026-10-10T15:37:06.000Z",
+          "content_type": "text/plain",
+          "content_encoding": "null",
+          "storage_class": "null",
+          "version_id": "null",
+          "server_side_encryption": "null",
+          "restore": "null",
+          "archive_status": "null",
+          "tags": "null",
+          "missing_user_metadata": "null",
+          "metadata_cut": "false",
+          "preview": "marker!!",
+          "preview-origin": "stored",
+          "preview-language": "plaintext",
+          "range-status": "206"
+        },
+        "notices": []
+      },
+      "exchanges": 3
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "file": "rustfs-2026-10-10-1.0.1/A5.json",
+  "scenario": "A5",
+  "target": "rustfs",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "test",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9020",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154406Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GKffffffffffffffffffffffff/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "x-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "content-length",
+            "164"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:06 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidAccessKeyId</Code><Message>The Access Key Id you provided does not exist in our records.</Message></Error>"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "test",
+      "refused": "The server does not know this access key ID: check Access key ID.",
+      "exchanges": 1
+    }
+  ]
+}

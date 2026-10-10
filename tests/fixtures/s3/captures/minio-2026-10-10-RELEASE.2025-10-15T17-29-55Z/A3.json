@@ -1,0 +1,67 @@
+{
+  "file": "minio-2026-10-10-RELEASE.2025-10-15T17-29-55Z/A3.json",
+  "scenario": "A3",
+  "target": "minio",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "test",
+      "request": {
+        "method": "GET",
+        "path": "/no-such-bucket",
+        "query": "delimiter=%2F&encoding-type=url&list-type=2&max-keys=1&prefix=",
+        "headers": {
+          "host": "127.0.0.1:9000",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154400Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 404,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "328"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:00 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist</Message><BucketName>no-such-bucket</BucketName><Resource>/no-such-bucket</Resource><RequestId>18DD357DBD0DC7B5</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "test",
+      "refused": "The server has no bucket \"no-such-bucket\".",
+      "exchanges": 1
+    }
+  ]
+}

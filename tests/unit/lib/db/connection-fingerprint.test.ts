@@ -69,7 +69,7 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(vary({ serviceName: "XEPDB1" }))).not.toBe(base);
     expect(await connectionFingerprint(vary({ instanceName: "SQLEXPRESS" }))).not.toBe(base);
     // The tenth, which the four above were audited without and which a review of THAT audit found
-    // one field away: the bastion is the ROUTE, and `factory.ts:852-859` rewrites `host` and `port`
+    // one field away: the bastion is the ROUTE, and `factory.ts:860-867` rewrites `host` and `port`
     // to the tunnel's local endpoint before the provider is constructed, so the tunnel and not the
     // record decides which machine the sealed statement reaches.
     expect(await connectionFingerprint(vary({ sshTunnel: BASTION }))).not.toBe(base);
@@ -95,7 +95,7 @@ describe("connectionFingerprint", () => {
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, port: 2222 } })));
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, username: "mallory" } })));
     // A DISABLED tunnel is not the same route as an enabled one to the same bastion, because
-    // `factory.ts:852` branches on exactly that flag and only the enabled arm rewrites the endpoint.
+    // `factory.ts:860` branches on exactly that flag and only the enabled arm rewrites the endpoint.
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, enabled: false } })));
     // And the tunnel's SECRETS are out, on the rule the database password already follows: rotating
     // a key changes who may reach the bastion, never which machine it is. `hostKeyFingerprint` is
@@ -197,6 +197,12 @@ describe("connectionFingerprint", () => {
     // The provider cache key carries it instead, since a cached provider holds the policy it built.
     const listed = vary({ dataServers: "oxia-1.example:6648,oxia-2.example:6648" });
     expect(await connectionFingerprint(listed)).toBe(await connectionFingerprint(BASE));
+  });
+
+  test("region is NOT in it: it changes how a request is signed, never which server receives it", async () => {
+    // An S3 region names a signing scope. Changing it alone can make the server refuse a request, never send a plan to
+    // another server, so by the docblock's criterion it is not a server field; the provider cache key frames it.
+    expect(await connectionFingerprint(vary({ region: "eu-central-1" }))).toBe(await connectionFingerprint(BASE));
   });
 
   test("the framing holds, so two fields cannot slide across their boundary", async () => {

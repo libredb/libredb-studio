@@ -1,0 +1,67 @@
+{
+  "file": "rustfs-2026-10-10-1.0.1/A3.json",
+  "scenario": "A3",
+  "target": "rustfs",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "test",
+      "request": {
+        "method": "GET",
+        "path": "/no-such-bucket",
+        "query": "delimiter=%2F&encoding-type=url&list-type=2&max-keys=1&prefix=",
+        "headers": {
+          "host": "127.0.0.1:9020",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154406Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 404,
+        "headers": [
+          [
+            "x-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "content-length",
+            "132"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:06 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist</Message></Error>"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "test",
+      "refused": "The server has no bucket \"no-such-bucket\".",
+      "exchanges": 1
+    }
+  ]
+}

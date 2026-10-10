@@ -144,7 +144,13 @@ export type DatabaseType =
   // repository's own (`src/lib/db/providers/sql/databend/`), extending `SQLBaseProvider`. Self-hosted Databend and
   // Databend Cloud are the same id: a Cloud connection differs in host, TLS and the `warehouse` below. The
   // connection's Database field is the session database, inside the `default` catalog.
-  | "databend";
+  | "databend"
+  // S3-compatible object storage, read over the S3 REST API with path-style addressing and SigV4 signing by a client of
+  // this repository's own on the shared node transport (`src/lib/db/providers/objectstore/s3/`). Its editor text is one
+  // command of an AWS CLI subset. Read-only in this version whatever `readOnly` says. The connection's User field is
+  // the access key ID, Password the secret access key, Database an optional pinned bucket, and `region` below the
+  // signing region; a blank key pair sends unsigned requests, never this server's own credentials.
+  | "s3";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -343,8 +349,12 @@ export interface DatabaseConnection {
    * InfluxDB types (`influxdb`, `influxdb3`, InfluxDB spec I7), each of which refuses a non-empty secret
    * with TLS off, to a host that is not loopback and outside a tunnel, unless this is `true`. Oxia reads
    * it too (DECISIONS O7): its bearer token crosses the network on every call, so an Oxia connection with
-   * a token and no TLS to a host other than this machine is refused unless this is `true`. Read by no
-   * other engine: each of those either encrypts the password itself or follows its own driver's default.
+   * a token and no TLS to a host other than this machine is refused unless this is `true`. Databend reads it
+   * for its password, which it refuses to send with no TLS to a host that is not loopback unless this is `true`.
+   * S3-compatible object storage reads it for the connection itself: the secret access key signs and is never
+   * sent, but listings and previews are, so a connection with no TLS to a host that is not loopback and outside
+   * a tunnel is refused unless this is `true`, signed or unsigned. Read by no other engine: each of those either
+   * encrypts the password itself or follows its own driver's default.
    */
   allowInsecureAuth?: boolean;
   /**
@@ -364,6 +374,15 @@ export interface DatabaseConnection {
    * empty are one value. Read by no other engine.
    */
   warehouse?: string;
+  /**
+   * S3-compatible object storage only: the region every request is signed for, the region part of the SigV4 credential
+   * scope. Absent and empty are one value, meaning `us-east-1`. Garage refuses every request signed for a region
+   * other than its `s3_region`; MinIO started with `MINIO_SITE_REGION` refuses bucket and object requests signed for
+   * another region but answers ListBuckets signed for `us-east-1`; RustFS accepts any region. The provider's refusal
+   * names the region the server expects. It names no credential and no address, and it is not a secret. Read by no
+   * other engine.
+   */
+  region?: string;
   /**
    * Read no catalog when this connection opens.
    *
@@ -758,7 +777,8 @@ export interface QueryTab {
     | "milvus"
     | "qdrant"
     | "influxql"
-    | "oxia";
+    | "oxia"
+    | "s3";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

@@ -39,6 +39,7 @@ describe("QUERY_DIALECTS", () => {
       "oxia",
       "qdrant",
       "redis",
+      "s3",
     ]);
   });
 
@@ -76,6 +77,15 @@ describe("QUERY_DIALECTS", () => {
         offersCountQuery: false,
         offersSqlExport: false,
       },
+      // S3: listings and fields of a fixed shape, no profile, model or count statement, and no
+      // SQL export.
+      s3: {
+        tabType: "s3",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+        offersSqlExport: false,
+      },
     });
   });
 
@@ -89,7 +99,7 @@ describe("QUERY_DIALECTS", () => {
     }
   });
 
-  test("a record may decline the SQL export formats, and only milvus's, qdrant's and oxia's do, so every other shipped engine keeps both", () => {
+  test("a record may decline the SQL export formats, and only milvus's, qdrant's, oxia's and s3's do, so every other shipped engine keeps both", () => {
     // `bun run typecheck` is the assertion for the field: this literal compiles only while `DialectSpec` declares
     // `offersSqlExport`, and bun strips types, so no runtime expect on it could fail. What a declining record does
     // to the menus is pinned by the export gate's own tests.
@@ -102,18 +112,19 @@ describe("QUERY_DIALECTS", () => {
     };
     void declining;
     for (const [dialect, spec] of Object.entries(QUERY_DIALECTS)) {
-      if (dialect === "milvus" || dialect === "qdrant" || dialect === "oxia") continue;
+      if (dialect === "milvus" || dialect === "qdrant" || dialect === "oxia" || dialect === "s3") continue;
       expect(Object.hasOwn(spec, "offersSqlExport"), `the ${dialect} record declares offersSqlExport`).toBe(false);
     }
     expect(QUERY_DIALECTS.milvus.offersSqlExport).toBe(false);
     expect(QUERY_DIALECTS.qdrant.offersSqlExport).toBe(false);
     expect(QUERY_DIALECTS.oxia.offersSqlExport).toBe(false);
+    expect(QUERY_DIALECTS.s3.offersSqlExport).toBe(false);
   });
 });
 
 describe("registeredDialect, dialectSpec and declaresDialect", () => {
   test("a declared, registered dialect is found, with its record", () => {
-    for (const dialect of ["libredb", "redis", "kafka", "etcd", "milvus", "qdrant", "oxia"] as const) {
+    for (const dialect of ["libredb", "redis", "kafka", "etcd", "milvus", "qdrant", "oxia", "s3"] as const) {
       const caps = makeCaps({ queryDialect: dialect });
       expect(registeredDialect(caps)).toBe(dialect);
       expect(dialectSpec(caps)).toBe(QUERY_DIALECTS[dialect]);

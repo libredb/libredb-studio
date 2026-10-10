@@ -1,0 +1,118 @@
+{
+  "file": "garage-2026-10-10-v2.4.1/A15.json",
+  "scenario": "A15",
+  "target": "garage",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "level",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154408Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "662"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:08 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets><Bucket><CreationDate>2026-10-10T15:37:06.996Z</CreationDate><Name>studio-empty</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.898Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.631Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.807Z</CreationDate><Name>studio-versions</Name></Bucket><Bucket><CreationDate>2026-10-10T15:37:06.704Z</CreationDate><Name>studio-scoped</Name></Bucket></Buckets><Owner><DisplayName>rw</DisplayName><ID>GK000000000000000000000001</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "level",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo",
+        "query": "delimiter=%2F&encoding-type=url&list-type=2&max-keys=1000&prefix=dir%2F",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154408Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261010/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "713"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:08 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-demo</Name><Prefix>dir%2F</Prefix><KeyCount>2</KeyCount><MaxKeys>1000</MaxKeys><Delimiter>%2F</Delimiter><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated><Contents><Key>dir%2F</Key><LastModified>2026-10-10T15:37:08.525Z</LastModified><ETag>&quot;d41d8cd98f00b204e9800998ecf8427e&quot;</ETag><Size>0</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>dir%2Fchild.txt</Key><LastModified>2026-10-10T15:37:08.516Z</LastModified><ETag>&quot;937ec4c10eb20c1f3324ef927697ea66&quot;</ETag><Size>12</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "level",
+      "ok": {
+        "names": [
+          "studio-demo/dir/",
+          "studio-demo/dir/child.txt"
+        ],
+        "pages": [
+          2
+        ],
+        "repeats": 0,
+        "headers": {
+          "studio-demo/dir/": "0 B",
+          "studio-demo/dir/child.txt": "12 B"
+        },
+        "rows": 2,
+        "cursor": "0"
+      },
+      "exchanges": 2
+    }
+  ]
+}

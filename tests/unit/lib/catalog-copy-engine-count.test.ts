@@ -94,6 +94,14 @@ const NUMERAL_WORDS: Record<string, number> = {
   "twenty-five": 25,
   "twenty-six": 26,
   "twenty-seven": 27,
+  "twenty-eight": 28,
+  "twenty-nine": 29,
+  thirty: 30,
+  "thirty-one": 31,
+  "thirty-two": 32,
+  "thirty-three": 33,
+  "thirty-four": 34,
+  "thirty-five": 35,
 };
 
 /**
@@ -352,5 +360,34 @@ describe("the gate fails the copy it exists to catch", () => {
     expect(engineCountProblems("Web-based SQL IDE for SQL, NoSQL, analytics and search engines.", "fixture")).toEqual(
       [],
     );
+  });
+
+  test("the numeral map has a word for every count up to two past the registry's", () => {
+    // The map stopped at "twenty-seven" while the registry grew past it, so a word-form numeral above the last
+    // word would have passed unread. Two of headroom gives the next two providers a failing test, not a silent one.
+    const words = new Set(Object.values(NUMERAL_WORDS));
+    for (let count = 1; count <= expected + 2; count += 1) expect(words.has(count), String(count)).toBe(true);
+  });
+
+  test("the S3 label is matched whole, so the shorter spelling is refused", () => {
+    // The count rule reads a list as naming an engine when the list contains its label verbatim, so the outward
+    // name and DB_UI_CONFIG.s3.label must be one string. This fixture is the one place the series writes the
+    // shorter spelling, and only to show that it fails.
+    expect(ENGINE_NAMES).toContainEqual({ type: "s3", name: "S3-compatible object storage" });
+    const others = ENGINE_NAMES.filter(({ type }) => type !== "s3")
+      .map(({ name }) => name)
+      .join(", ");
+    expect(
+      engineCountProblems(
+        `SQL IDE for ${expected} engines - ${others} and S3-compatible object storage - with AI.`,
+        "fixture",
+      ),
+    ).toEqual([]);
+    expect(
+      engineCountProblems(
+        `SQL IDE for ${expected} engines - ${others} and S3-compatible storage - with AI.`,
+        "fixture",
+      ),
+    ).toEqual([`fixture: the list after "${expected} engines" names ${expected - 1}, missing s3`]);
   });
 });

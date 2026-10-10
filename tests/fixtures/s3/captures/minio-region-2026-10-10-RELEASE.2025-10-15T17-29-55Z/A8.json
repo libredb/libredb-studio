@@ -1,0 +1,71 @@
+{
+  "file": "minio-region-2026-10-10-RELEASE.2025-10-15T17-29-55Z/A8.json",
+  "scenario": "A8",
+  "target": "minio-region",
+  "clockOffsetMs": 1200000,
+  "exchanges": [
+    {
+      "step": "ahead",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:9030",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T160402Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/eu-central-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 403,
+        "headers": [
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "content-length",
+            "356"
+          ],
+          [
+            "x-amz-bucket-region",
+            "eu-central-1"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:02 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>RequestTimeTooSkewed</Code><Message>The difference between the request time and the server&#39;s time is too large.</Message><Resource>/</Resource><Region>eu-central-1</Region><RequestId>18DD357E1DF6D5EB</RequestId><HostId>dd9025bab4ad464b049177c95eb6ebf374d3b3fd1af9251148b658df7ac2e3e8</HostId></Error>"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "ahead",
+      "refused": "This machine's clock and the server's differ by about 20 minutes, more than the server accepts: correct the clock on this machine or on the server.",
+      "exchanges": 1
+    }
+  ]
+}

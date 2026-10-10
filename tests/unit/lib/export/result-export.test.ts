@@ -559,7 +559,7 @@ describe("buildResultExport — a binary value in a statement", () => {
     // export can claim only the portable form, as `values.ts` does for their literals. Neo4j writes
     // Cypher, which has no INSERT and no byte literal, so the same holds for it, for Milvus and Qdrant, whose
     // console requests are JSON, for InfluxQL, which has no INSERT and no byte literal either, and for Oxia, which
-    // has no statement language for a value.
+    // has no statement language for a value, and for S3, whose console words name buckets and keys and never a value.
     for (const dialect of [
       "mongodb",
       "redis",
@@ -572,6 +572,7 @@ describe("buildResultExport — a binary value in a statement", () => {
       "qdrant",
       "influxdb",
       "oxia",
+      "s3",
     ] as const) {
       const file = buildResultExport("sql-insert", source({ ...binaryRow(wire), dialect }));
 
@@ -1082,6 +1083,7 @@ describe("buildResultExport — the bare names the remaining reachable dialects 
       "influxdb",
       "influxdb3",
       "oxia",
+      "s3",
     ] as const) {
       expect(ddl({ c: "VARCHAR2" }, dialect)).toContain(" TEXT\n");
       expect(ddl({ c: "BINARY_DOUBLE" }, dialect)).toContain(" DOUBLE PRECISION\n");

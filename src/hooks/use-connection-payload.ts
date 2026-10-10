@@ -139,6 +139,9 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // The warehouse a statement runs on (X21): two copies differing only here reach different compute, so a copy
   // naming another warehouse does not resolve to the seed's connection, the dataServers reasoning.
   warehouse: "resolution",
+  // The region every S3 request is signed for: a copy naming another region signs for another scope and a server
+  // with a region of its own refuses it, so it does not resolve to the seed's connection, the warehouse reasoning.
+  region: "resolution",
   ssl: "nested",
   sshTunnel: "nested",
 };

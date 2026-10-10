@@ -33,6 +33,8 @@ import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/
 import { qdrantSelectQuery, qdrantTableQuery } from "@/lib/db/providers/vector/qdrant/generators";
 import { parseOxiaCommand } from "@/lib/db/providers/keyvalue/oxia/commands";
 import { oxiaSelectQuery, oxiaTableQuery } from "@/lib/db/providers/keyvalue/oxia/generators";
+import { parseS3Command } from "@/lib/db/providers/objectstore/s3/console/commands";
+import { s3SelectQuery, s3TableQuery } from "@/lib/db/providers/objectstore/s3/console/generators";
 import { QDRANT_CONSOLE, QDRANT_ROUTES } from "@/lib/db/providers/vector/qdrant/routes";
 import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
 import { db2Capabilities } from "@/lib/db/providers/sql/db2/capabilities";
@@ -2505,5 +2507,33 @@ describe("generateTableQuery and generateSelectQuery: Oxia", () => {
 
   test("offers no count statement", () => {
     expect(generators.generateCountQuery(path, oxiaCaps)).toBeNull();
+  });
+});
+
+// S3: both generators read the DIALECT_GENERATORS record, which writes the console's own
+// browser-safe text, every output a command the console's parser accepts, and no count statement.
+describe("generateTableQuery and generateSelectQuery: S3", () => {
+  const s3Caps = makeCaps({ queryLanguage: "json", queryDialect: "s3", supportsExplain: false });
+
+  test("the click on a bucket lists its top level, never a MongoDB find", () => {
+    const text = generateTableQuery(["sales"], s3Caps, []);
+    expect(text).toBe(s3TableQuery(["sales"]));
+    expect(text).toBe("aws s3 ls s3://sales/");
+    const parsed = parseS3Command(text, {});
+    expect(parsed.ok && parsed.parsed.command).toMatchObject({ kind: "ls", bucket: "sales", prefix: "" });
+  });
+
+  test("Generate Command writes the listing, with two reads as comments", () => {
+    const text = generateSelectQuery(["sales"], [], s3Caps);
+    expect(text).toBe(s3SelectQuery(["sales"]));
+    expect(text.split("\n").slice(1)).toEqual([
+      "# aws s3api list-objects-v2 --bucket sales --delimiter / --max-items 50",
+      "# aws s3api get-bucket-versioning --bucket sales",
+    ]);
+    expect(parseS3Command(text, {}).ok).toBe(true);
+  });
+
+  test("offers no count statement", () => {
+    expect(generators.generateCountQuery(["sales"], s3Caps)).toBeNull();
   });
 });

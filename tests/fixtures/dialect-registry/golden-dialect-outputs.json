@@ -323,6 +323,18 @@
   "selectQuery": "SELECT\n  `id`,\n  `name`\nFROM `c0`.`Order\"Items`\nWHERE 1=1\nLIMIT 100;",
   "countQuery": "SELECT COUNT(*) AS row_count\nFROM `c0`.`Order\"Items`;"
  },
+ "s3": {
+  "queryLanguage": "json",
+  "queryDialect": "s3",
+  "tabType": "s3",
+  "monacoLanguage": "s3",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "THROWS An S3 bucket or object path is [name], received [\"c0\",\"Order\\\"Items\"]",
+  "selectQuery": "THROWS An S3 bucket or object path is [name], received [\"c0\",\"Order\\\"Items\"]",
+  "countQuery": null
+ },
  "libredb": {
   "queryLanguage": "json",
   "queryDialect": "libredb",

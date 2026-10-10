@@ -1,0 +1,128 @@
+{
+  "file": "rustfs-2026-10-10-1.0.1/A2.json",
+  "scenario": "A2",
+  "target": "rustfs",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "test",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo",
+        "query": "delimiter=%2F&encoding-type=url&list-type=2&max-keys=1&prefix=",
+        "headers": {
+          "host": "127.0.0.1:9020",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154406Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "x-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "content-length",
+            "500"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:06 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-demo</Name><Prefix></Prefix><MaxKeys>1</MaxKeys><KeyCount>1</KeyCount><IsTruncated>true</IsTruncated><NextContinuationToken>YS9bcnVzdGZzX2NhY2hlOnYyLGlkOjdjNTViODVmLWJlZGItNGIzMC1iZTlmLWZjMjRhZWQ1Mjc1NixzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><CommonPrefixes><Prefix>a/</Prefix></CommonPrefixes><Delimiter>/</Delimiter><EncodingType>url</EncodingType></ListBucketResult>"
+        }
+      }
+    },
+    {
+      "step": "test",
+      "request": {
+        "method": "GET",
+        "path": "/studio-demo",
+        "query": "delimiter=%2F&encoding-type=url&list-type=2&max-keys=1&prefix=",
+        "headers": {
+          "host": "127.0.0.1:9020",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261010T154406Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "libredb/20261010/us-east-1/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "x-request-id",
+            "<request-id>"
+          ],
+          [
+            "x-amz-request-id",
+            "<request-id>"
+          ],
+          [
+            "content-length",
+            "500"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:06 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>studio-demo</Name><Prefix></Prefix><MaxKeys>1</MaxKeys><KeyCount>1</KeyCount><IsTruncated>true</IsTruncated><NextContinuationToken>YS9bcnVzdGZzX2NhY2hlOnYyLGlkOjQxZmMxOGNhLWY0NjgtNDMxMC1iZTEzLTk2ZGZiN2VhNDhlMSxzcmM6d2Fsa2VyLGdlbjpsaXZlXQ==</NextContinuationToken><CommonPrefixes><Prefix>a/</Prefix></CommonPrefixes><Delimiter>/</Delimiter><EncodingType>url</EncodingType></ListBucketResult>"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "test",
+      "ok": {
+        "headers": {
+          "requests": "2",
+          "method": "GET",
+          "same probe": "yes",
+          "max-keys": "1",
+          "delimiter": "/",
+          "encoding-type": "url"
+        }
+      },
+      "exchanges": 2
+    }
+  ]
+}

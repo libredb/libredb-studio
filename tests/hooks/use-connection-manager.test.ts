@@ -18,6 +18,8 @@ import { logger } from "@/lib/logger";
 import { storage } from "@/lib/storage";
 import type { DatabaseConnection } from "@/lib/types";
 import { rowWritableObjects } from "@/lib/db/detailed-object";
+import { S3_OBJECT_KINDS } from "@/lib/db/providers/objectstore/s3/objects";
+import { s3CompletionBucketsOf } from "@/lib/editor/s3-completions";
 import type { ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
 import { SAMPLED_MARKER } from "../fixtures/sampled-schema";
 
@@ -2439,6 +2441,27 @@ describe("the object inventory the explorer reads", () => {
     // Asking for every kind is the defect the kind filter exists to prevent, so with no
     // declaration the request is not sent rather than sent unfiltered.
     expect(requestPaths(fetchMock)).toEqual(["/api/db/provider-meta"]);
+  });
+
+  test("an S3 connection declares no relation kind, so its schema holds no bucket for the editor's completion", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/provider-meta": {
+        ok: true,
+        json: { capabilities: { queryLanguage: "json", queryDialect: "s3", objectKinds: S3_OBJECT_KINDS }, labels: {} },
+      },
+      "/api/db/objects/inventory": inventoryRoute(OBJECTS),
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ type: "s3", port: 9000, database: "" }));
+    });
+
+    expect(requestPaths(fetchMock)).toEqual(["/api/db/provider-meta"]);
+    expect(result.current.schema).toEqual([]);
+    expect(result.current.schemaContext).toBe("[]");
+    expect(s3CompletionBucketsOf(JSON.parse(result.current.schemaContext))).toEqual([]);
   });
 
   test("the inventory is addressed the way the object routes require, never as a bare body", async () => {

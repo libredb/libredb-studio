@@ -997,7 +997,7 @@ describe("docs/providers/oxia.md quotes what the registered type-id declares (pa
       "- **Oxia has no authorization.** A token that authenticates reads and writes every namespace, so Studio's read-only mode is a property of what Studio sends (it has no write call at all, row 3.15), never of the token. A standalone server has no authentication. An advertised leader decides where reads go, which row 3.14 bounds, and a Data servers entry is the operator's statement that the token may go there.",
     );
     expect(knownLimit("**A statement the editor refuses is never sent and never written to history.**")).toContain(
-      "The Milvus, Qdrant, InfluxDB (InfluxQL) and Oxia rows declare both (rows 3.11, 3.12 and 3.15); no other shipped engine declares either.",
+      "The Milvus, Qdrant, InfluxDB (InfluxQL), Oxia and S3 rows declare both (rows 3.11, 3.12, 3.15 and 3.18); no other shipped engine declares either.",
     );
   });
 

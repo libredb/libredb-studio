@@ -47,13 +47,17 @@ export function DatabaseShowcase({ variant }: DatabaseShowcaseProps) {
  * The twenty-eighth entry (Databend) wrapped the list into a fifth row at 1366x768 and scrolled the
  * page to 781px. A 12px column gap keeps four rows there, with the page needing 759px of the 768;
  * 1280x800 takes five rows at either gap and needs 798px of its 800.
+ * The twenty-ninth entry (S3-compatible object storage, the longest label on the page) put
+ * 1366x768 back on five rows and scrolled it by 13px at both the 12px and the 10px column gap;
+ * at the 6px gap it holds four rows and the page measured 800, 768, 900 and 1080px of 800, 768,
+ * 900 and 1080, needing 798, 759, 759 and 701px of them.
  */
 function DesktopDatabases() {
   return (
     <ul
       aria-label="Supported databases"
       data-testid="database-showcase-desktop"
-      className="flex flex-wrap gap-x-3 gap-y-1.5 pointer-events-none select-none"
+      className="flex flex-wrap gap-x-1.5 gap-y-1.5 pointer-events-none select-none"
     >
       {listShowcaseDatabases().map((db) => {
         const Icon = db.icon;

@@ -33,13 +33,14 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Qdrant | `qdrant` | Vector | none, REST over the shared `node:http(s)` transport | Qdrant REST requests (read routes) | [qdrant.md](./qdrant.md) |
 | InfluxDB (InfluxQL) | `influxdb` | Time series | none, HTTP over the shared `node:http(s)` transport | InfluxQL (read-only) | [influxdb.md](./influxdb.md) |
 | InfluxDB 3 (SQL) | `influxdb3` | Time series | none, HTTP over the shared `node:http(s)` transport | SQL (Apache DataFusion, read-only) | [influxdb3.md](./influxdb3.md) |
+| S3-compatible object storage | `s3` | Object storage | none, REST over the shared `node:http(s)` transport, signed by Studio's own SigV4 code; `hyparquet` for Parquet previews | AWS CLI read commands (a subset, read-only) | [s3.md](./s3.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
-  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, Oxia and Databend are). The official product name (e.g.
+  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, Oxia, Databend and S3 are). The official product name (e.g.
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch`, and `providers/timeseries/influxdb/` is
   `influxdb` and `influxdb3`, two classes on two base classes sharing one connection layer — and each type-id still gets its own
@@ -272,8 +273,8 @@ InfluxDB (InfluxQL) has a row per server line it reads, because each line is a s
 The Oxia row was verified against the running container on 2026-10-04, by the capture `tests/fixtures/oxia/README.md` records.
 The Databend row was verified against the running `databend-http` container (v1.2.951-nightly) on 2026-10-08: the user and password below sign in, and `system.databases` lists the seeded `libredb_demo` and `studio_demo`.
 
-Start the thirty-four always-on services with a plain `docker compose -f database-compose.yml up -d`:
-twenty-five engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `etcd-seed`, `oxia-seed`, `milvus-seed`, `qdrant-seed`, `influxdb-seed` and `databend-http-seed` seed sidecars; the `Profile` column names
+Start the forty-four always-on services with a plain `docker compose -f database-compose.yml up -d`:
+twenty-eight engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `etcd-seed`, `oxia-seed`, `milvus-seed`, `qdrant-seed`, `influxdb-seed`, `databend-http-seed`, `silo-principals`, `silo-seed`, `garage-keys`, `garage-setup`, `garage-seed`, `rustfs-principals` and `rustfs-seed` seed sidecars; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider, so a plain `up -d` can reproduce that
 provider's integration pass.
@@ -306,6 +307,12 @@ provider's integration pass.
 | Neo4j | `neo4j` | localhost | 7687 | `neo4j` | `password123` | `neo4j`, or empty for the home database | *none* |
 | Milvus | `milvus` | localhost | 19530 | `root` | the documented default ([milvus.md, section 4.2](./milvus.md#42-authentication)) | `default` | *none* |
 | Qdrant | `qdrant` | localhost | 6333 | *none* | *none* | *none* | *none* |
+| S3-compatible object storage, MinIO | `minio` | localhost | 9000 | `studio-browse` | `Browse123pass!` | *none*, or a bucket such as `studio-demo` to pin it | `s3-minio` |
+| S3-compatible object storage, MinIO with a site region | `minio-region` | localhost | 9030 | `studio-browse` | `Browse123pass!` | *none*; Region `eu-central-1` | `s3-region` |
+| S3-compatible object storage, Silo | `silo` | localhost | 9010 | `studio-browse` | `Browse123pass!` | *none*, or a bucket such as `studio-demo` | *none* |
+| S3-compatible object storage, Silo over TLS | `silo-tls` | localhost | 9443 | `libredb` | `Probe123pass!` | *none*; SSL mode `verify-full` with the fixture's CA | `s3-tls` |
+| S3-compatible object storage, Garage | `garage` | localhost | 3900 | `GK000000000000000000000002` | the `browse` key's secret ([`docker/s3/README.md`](../../docker/s3/README.md) says how to read it) | *none*; Region `garage` | *none* |
+| S3-compatible object storage, RustFS | `rustfs` | localhost | 9020 | `studio-browse` | `Browse123pass!` | *none*, or a bucket such as `studio-demo` | *none* |
 | SQLite | *no service* | — | — | — | — | a file path on the Studio host | — |
 | LibreDB | *no service* | — | — | — | — | a directory on the Studio host | — |
 
@@ -335,6 +342,10 @@ The user `reader` may read the prefix `/app/` and the key `/config/a` only, whic
 **Oxia has four more fixtures behind profiles of their own, and the plain `oxia` service takes no token and no TLS.**
 `oxia` is seeded by its `oxia-seed` one-shot; `oxia-natural` (ports 6658 and 6659), `oxia-017` (port 6668, Oxia 0.17.1), `oxia-auth` (port 6678, TLS and an OIDC token) and `oxia-cluster` (three data servers on ports 6671 to 6673) each sit behind the profile of the same name.
 The auth fixture's certificates and tokens are generated into a volume at first start and never committed; [`docker/oxia/README.md`](../../docker/oxia/README.md) says how to start and seed each and what every seeded key is for.
+
+**S3-compatible object storage has six fixtures, three of them behind profiles, and none publishes a port beyond this machine.**
+`silo`, `garage` and `rustfs` start with a plain `up`, each seeded by its own one-shots; `minio` (port 9000, built from source because MinIO publishes no community image any more) sits behind the `s3-minio` profile, `minio-region` (port 9030, a MinIO that enforces the region `eu-central-1`) behind `s3-region`, and `silo-tls` (port 9443, TLS with a CA generated at first start) behind `s3-tls`.
+Garage's key secrets and the TLS material are generated into volumes at first start and never committed; [`docker/s3/README.md`](../../docker/s3/README.md) says how to start and seed each, which keys exist, and what every seeded object is for.
 
 **The `neo4j` service starts empty, and its graph is loaded by hand.**
 Once it is healthy, load the seed with `docker exec -i libredb-neo4j cypher-shell -u neo4j -p password123 < docker/neo4j/seed.cypher`; [`docker/neo4j/README.md`](../../docker/neo4j/README.md) says what the graph holds and why.

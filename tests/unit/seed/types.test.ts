@@ -430,6 +430,28 @@ describe("SeedConnectionSchema: the MCP opt-in where MCP is not offered (#1089)"
   });
 });
 
+describe("SeedConnectionSchema: an S3 connection is not offered to MCP", () => {
+  it("fails a seed with mcp: true on an S3 connection, naming mcp and the type", () => {
+    const result = SeedConnectionSchema.safeParse({
+      id: "objects",
+      name: "Objects",
+      type: "s3",
+      host: "minio.internal",
+      port: 9000,
+      roles: ["*"],
+      mcp: true,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
+      [
+        "mcp",
+        "mcp is not offered for s3: the product does not expose this engine to MCP clients. Remove mcp from this connection.",
+      ],
+    ]);
+  });
+});
+
 describe("SeedConnectionSchema: Db2's consent to a cleartext password (#786)", () => {
   const db2 = {
     id: "warehouse",
@@ -480,6 +502,25 @@ describe("SeedConnectionSchema: Db2's consent to a cleartext password (#786)", (
 
     expect(result.success).toBe(false);
     expect(result.error?.issues.map((issue) => issue.path)).toEqual([["warehouse"]]);
+  });
+
+  // The schema has no type gate on this field either: `db2` is only a valid seed to carry it.
+  it("region survives parsing (zod strips an undeclared key)", () => {
+    const result = SeedConnectionSchema.safeParse({ ...db2, region: "eu-central-1" });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.region).toBe("eu-central-1");
+  });
+
+  it("leaves region absent when the seed names none", () => {
+    expect(SeedConnectionSchema.safeParse(db2).data?.region).toBeUndefined();
+  });
+
+  it("rejects a region that is not a string, naming the field", () => {
+    const result = SeedConnectionSchema.safeParse({ ...db2, region: 1 });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path)).toEqual([["region"]]);
   });
 
   it("rejects a dataServers that is not a string, naming the field", () => {

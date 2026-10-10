@@ -92,6 +92,9 @@ export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> 
   // An Oxia command line renders in the language `oxia-language.ts` registers over the provider's own lexer, and has
   // no formatter: the SQL formatter rewrites a command line, and the console formatter is the HTTP grammar's (SB2-4.5).
   oxia: Object.freeze({ monacoId: "oxia" }),
+  // An S3 command line renders in the language `s3-language.ts` registers over the console's own lexer, and has no
+  // formatter: the SQL formatter rewrites a command line, Oxia's reason.
+  s3: Object.freeze({ monacoId: "s3" }),
 });
 
 /**

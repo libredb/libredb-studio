@@ -130,7 +130,7 @@ describe.each(Object.entries(ROWS))("row %s", (id, cited) => {
 describe("the notes state what the code does", () => {
   test("Known limits names the InfluxDB (InfluxQL) row among the rows that declare a refusal and a byte bound", () => {
     expect(SECURITY).toContain(
-      "The Milvus, Qdrant, InfluxDB (InfluxQL) and Oxia rows declare both (rows 3.11, 3.12 and 3.15); no other shipped engine declares either.",
+      "The Milvus, Qdrant, InfluxDB (InfluxQL), Oxia and S3 rows declare both (rows 3.11, 3.12, 3.15 and 3.18); no other shipped engine declares either.",
     );
     expect(SECURITY).not.toContain("Milvus's and Qdrant's rows declare both");
   });

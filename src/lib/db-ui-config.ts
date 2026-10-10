@@ -27,6 +27,7 @@ import {
   InfluxDBIcon,
   OxiaIcon,
   DatabendIcon,
+  S3Icon,
 } from "@/components/icons/db-icons";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
@@ -64,14 +65,17 @@ export interface DatabaseUIConfig {
     // Kafka only (#1088): which SASL mechanism checks the user and password, drawn as the select
     // `fieldOptions` below declares.
     | "saslMechanism"
-    // Db2 (#786), both InfluxDB types (InfluxDB spec I7), and Oxia for its token: the consent to send the password
-    // without TLS, drawn as a checkbox while SSL Mode is disable, under the sentence the type declares in
-    // `fieldHints`. The provider refuses a connection with no TLS unless it is set.
+    // Db2 (#786), both InfluxDB types (InfluxDB spec I7), Oxia for its token, Databend for its password, and
+    // S3-compatible object storage for the connection itself: the consent to connect without TLS, drawn as a checkbox
+    // while SSL Mode is disable, under the sentence the type declares in `fieldHints`. The provider refuses a
+    // connection with no TLS unless it is set.
     | "allowInsecureAuth"
     // Oxia only (O6): a cluster's data-server addresses, one text box.
     | "dataServers"
     // Databend only (design 6.1): the warehouse every statement runs on, one text box.
     | "warehouse"
+    // S3-compatible object storage only: the signing region, one text box.
+    | "region"
   )[];
   /**
    * The connection dialog's label for a field, where this engine names the field differently from
@@ -88,7 +92,7 @@ export interface DatabaseUIConfig {
   fieldHints?: Partial<Record<ConnectionField, string>>;
   /**
    * The connection dialog's placeholder for a field, where this engine's example differs from the dialog's own.
-   * Read through `connectionFieldPlaceholder`; only the `database` box reads it so far.
+   * Read through `connectionFieldPlaceholder`; the `database` and `region` boxes read it.
    */
   fieldPlaceholders?: Partial<Record<ConnectionField, string>>;
   /**
@@ -143,6 +147,8 @@ export interface ConnectionFieldRule {
   readonly required?: string;
   /** A field that is not blank must match `pattern` whole, or `sentence` is the refusal. */
   readonly format?: { readonly pattern: RegExp; readonly sentence: string };
+  /** A field that is not blank and passes `format` must hold `min` to `max` characters, or `sentence` is the refusal. */
+  readonly charRange?: { readonly min: number; readonly max: number; readonly sentence: string };
 }
 
 /**
@@ -176,6 +182,58 @@ export const DATABEND_FIELD_HINTS: Readonly<Partial<Record<ConnectionField, stri
     "Databend Cloud: the warehouse= value of the DSN from Connect. A suspended warehouse resumes on the first statement, opening the connection included, because it reads the object tree, and is billed while it runs; with Warehouse set, Studio sends no background health checks. Self-hosted: leave empty unless your cluster routes requests by warehouse.",
   allowInsecureAuth:
     "Ticked, the password crosses the network in cleartext to this host. Databend Cloud never needs this: it serves HTTPS on port 443.",
+});
+
+/**
+ * The form checks of S3-compatible object storage, in the provider's own sentences. The provider module
+ * is server code the dialog cannot import, so the three patterns and the access key ID's range are copies of the
+ * exports of src/lib/db/providers/objectstore/s3/connection-options.ts and constants.ts, and
+ * tests/unit/lib/db-ui-config.test.ts holds each copy, and each sentence, to the provider's.
+ */
+export const S3_FIELD_RULES: Readonly<Partial<Record<ConnectionField, ConnectionFieldRule>>> = Object.freeze({
+  user: {
+    format: {
+      pattern: /^[\x21-\x2b\x2d\x2e\x30-\x3c\x3e-\x7e]+$/,
+      sentence:
+        "Access key ID must be printable ASCII without spaces, commas, equals signs or slashes, because it is sent inside the signed Authorization header. Nothing was sent.",
+    },
+    charRange: {
+      min: 3,
+      max: 512,
+      sentence:
+        "Access key ID holds 3 to 512 characters, because S3 servers issue no shorter ID and it is sent inside the signed Authorization header. Nothing was sent.",
+    },
+  },
+  database: {
+    format: {
+      pattern: /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,253}[A-Za-z0-9])?$/,
+      sentence:
+        "Bucket must be 1 to 255 letters, digits, dots, hyphens or underscores, starting and ending with a letter or digit. Nothing was sent.",
+    },
+  },
+  region: {
+    format: {
+      pattern: /^[A-Za-z0-9_-]{1,64}$/,
+      sentence: "Region must be 1 to 64 letters, digits, hyphens or underscores, such as us-east-1. Nothing was sent.",
+    },
+  },
+});
+
+/**
+ * The sentences the connection dialog draws under the fields of S3-compatible object storage, exported so
+ * the docs and the tests can be held to the same words.
+ */
+export const S3_FIELD_HINTS: Readonly<Partial<Record<ConnectionField, string>>> = Object.freeze({
+  host: "A host name or address, or a pasted http:// or https:// endpoint such as http://localhost:9000, which is split into Host and Port. The endpoint only: a bucket goes under Bucket, never in the address. MinIO and RustFS serve on port 9000 unless configured otherwise, Garage on 3900. If Studio runs in a container, localhost is that container: use host.docker.internal.",
+  user: "The access key ID. It is stored and shown in the clear, like a user name. Leave both keys empty only for a bucket that allows anonymous reads: Studio then sends unsigned requests, never this server's own cloud credentials.",
+  password:
+    "The secret access key. Studio's server signs every request with it and never sends it to the S3 server. Fill in both keys, or neither.",
+  database:
+    "Optional. With a bucket here, Studio reads only that bucket and never lists the others, which a key limited to one bucket needs. Empty: every bucket this key can list.",
+  region:
+    "The region every request is signed for. Empty means us-east-1, which MinIO accepts unless it was started with a region of its own. Garage: its s3_region setting. AWS: the bucket's region.",
+  allowInsecureAuth:
+    "Ticked, Studio connects to this host over plain HTTP. The secret access key is never sent to this server, but bucket and object names, listings and previewed contents travel in the clear, readable by anyone on the path, and a captured request can be replayed for several minutes. Choose an SSL mode under SSL / TLS, or an SSH tunnel, wherever the server offers one.",
 });
 
 export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
@@ -692,6 +750,40 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     fieldRules: DATABEND_FIELD_RULES,
     hostAcceptsUri: ["http", "https"],
   },
+  s3: {
+    // A generic bucket drawn for Studio, never a vendor's logo.
+    icon: S3Icon,
+    // `hue-green` is Kafka's; of the hues with no identity `-alt` (amber, pink, green, cyan), `green-alt` left the light
+    // set's minimum where it was within 0.0006 and the dark one unchanged, which is why `green` joined IDENTITY_ALTS in
+    // tests/unit/theme-accent-contrast.test.ts with this entry.
+    color: "text-hue-green-alt",
+    // "S3-compatible": the servers this provider was verified on are named in docs/providers/s3.md, and AWS is not one.
+    label: "S3-compatible object storage",
+    // The API port MinIO and RustFS serve on by default. Garage serves on 3900 and an https:// paste sets 443.
+    defaultPort: "9000",
+    // No URI mode: an s3:// URI names a bucket and a key, never an endpoint and a credential, and the connection-string
+    // box reads http:// and https:// as ClickHouse, so a pasted endpoint belongs in the Host box, which splits it.
+    showConnectionStringToggle: false,
+    // The SSL panel and the SSH tunnel stay offered. The last field is the consent to plain HTTP, drawn while SSL Mode
+    // is disable.
+    connectionFields: ["host", "port", "user", "password", "database", "region", "allowInsecureAuth"],
+    fieldLabels: {
+      host: "Endpoint host",
+      user: "Access key ID",
+      password: "Secret access key",
+      database: "Bucket",
+      region: "Region",
+      allowInsecureAuth: "Connect without TLS",
+    },
+    // What an empty box means, as Oxia's "default" (ruling R34 there).
+    fieldPlaceholders: { database: "all buckets", region: "us-east-1" },
+    fieldHints: S3_FIELD_HINTS,
+    fieldRules: S3_FIELD_RULES,
+    // The dialog's own sentence says the mode can be turned off, which is false here.
+    readOnlyHint:
+      "S3-compatible connections are read-only in this version, whether or not this is ticked: Studio sends no write.",
+    hostAcceptsUri: ["http", "https"],
+  },
   libredb: {
     icon: LibreDBIcon,
     color: "text-hue-violet",
@@ -821,6 +913,12 @@ export function connectionFieldRefusal(config: DatabaseUIConfig, connection: Dat
       continue;
     }
     if (rule.format !== undefined && !rule.format.pattern.test(String(value))) return rule.format.sentence;
+    if (
+      rule.charRange !== undefined &&
+      (String(value).length < rule.charRange.min || String(value).length > rule.charRange.max)
+    ) {
+      return rule.charRange.sentence;
+    }
   }
   return undefined;
 }

@@ -80,9 +80,22 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   oxia: false,
   // `LIMIT n OFFSET m` is native, and it inherits `SQLBaseProvider.prepareQuery` (design 2.4).
   databend: true,
+  // One AWS CLI subset command per run; the console pages with --starting-token, never with LIMIT and OFFSET.
+  s3: false,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];
+
+/**
+ * The path a tree click hands `generateTableQuery`, per type-id where it differs from the
+ * container-and-object pair every other engine takes. S3's tree passes one segment,
+ * `<bucket>/<key>`, and its generators refuse any other length, so a two-segment path
+ * would test a click the S3 tree never makes.
+ */
+const TREE_CLICK_PATH: Readonly<Partial<Record<DatabaseType, string[]>>> = Object.freeze({
+  s3: ["app/orders"],
+});
+const DEFAULT_TREE_CLICK_PATH = ["app", "orders"];
 
 function prepare(
   provider: { prepareQuery: (q: string, o: object) => PreparedQuery },
@@ -153,7 +166,7 @@ describe("supportsResultPagination (#816)", () => {
   test.each(TYPES)("%s: the statement a tree click generates is bounded at the preview page size", async (type) => {
     const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
     const capabilities = provider.getCapabilities();
-    const generated = generateTableQuery(["app", "orders"], capabilities);
+    const generated = generateTableQuery(TREE_CLICK_PATH[type] ?? DEFAULT_TREE_CLICK_PATH, capabilities);
     const pageOne = prepare(provider, 0, generated);
     expect(pageOne.threw).toBe(false);
     if (pageOne.threw) return;
@@ -169,6 +182,8 @@ describe("supportsResultPagination (#816)", () => {
       // its own `prepareQuery` hands on untouched as well, and Kafka (#1088) with the read
       // request its generator writes, `limit` included, which the base `prepareQuery` hands on, and etcd
       // (#1089) with the `get` its generator writes, `--limit` included, which its own `prepareQuery` pins.
+      // S3 with the `preview s3://app/orders` its generator writes, which its own `prepareQuery`
+      // hands on untouched with `wasLimited: false`: the console bounds a preview itself.
       expect(pageOne.prepared.query).toBe(generated);
       return;
     }

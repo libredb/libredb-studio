@@ -444,6 +444,7 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   // Read off Databend's own lexer (`token.rs`) and parser, and the trailing clause measured on the pinned image (L3);
   // see the databend block below and DATABEND_GRAMMAR in `grammar.ts` for the source behind each fact.
   databend: "established",
+  s3: "default",
 };
 
 /**
@@ -694,6 +695,8 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   oxia: false,
   // SQL, and the statement text IS what the editor sends to `POST /v1/query`; the provider extends SQLBaseProvider.
   databend: true,
+  // AWS CLI words split by POSIX shell rules, not SQL text.
+  s3: false,
 };
 
 describe("readsSqlText", () => {

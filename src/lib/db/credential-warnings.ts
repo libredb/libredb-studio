@@ -28,8 +28,8 @@ export type CredentialWarning =
   | { readonly kind: "no-secret"; readonly message: string };
 
 /**
- * Each connection type's declared warnings. A provider adds its own row; Milvus, Qdrant, the two InfluxDB types, Oxia
- * and Databend declare one each.
+ * Each connection type's declared warnings. A provider adds its own row; Milvus, Qdrant, the two InfluxDB types, Oxia,
+ * Databend and S3 declare one each.
  *
  * Milvus (vector-family spec 3.12, E22): every server starts with the documented `root` pair, the default
  * survives a restart with a new configured default, and a server with authorization off, its default, accepts any
@@ -60,6 +60,12 @@ export type CredentialWarning =
  * the server accepts any password for it. The `pair` kind with an empty password
  * is the row: it warns for `root` and no password, and for nothing else. A read-only seed is refused for Databend
  * on `READ_ONLY_ENFORCED` already, so the shared refusal adds no new refusal there.
+ *
+ * S3: MinIO and RustFS start with a documented default credential when none is configured, so the pair warns in
+ * the dialog. A read-only seed with it is refused, as Milvus's is: the seed promises a boundary that rests only on
+ * Studio's own refusal while the server would grant the key every write. No no-secret row: an unsigned connection is
+ * anonymous to the server, which grants it only what the bucket policy grants anyone, so it promises no boundary the
+ * server does not keep.
  */
 export const CREDENTIAL_WARNINGS: Readonly<Partial<Record<DatabaseType, readonly CredentialWarning[]>>> = {
   milvus: [
@@ -120,6 +126,22 @@ export const CREDENTIAL_WARNINGS: Readonly<Partial<Record<DatabaseType, readonly
       password: "",
       message:
         "Signing in as root with no password works only when the server's root user has no password, and such a user accepts any password or none, so anyone who can reach the server signs in as its administrator. Set a password for root on the server, or connect as a user of your own.",
+    },
+  ],
+  s3: [
+    {
+      kind: "pair",
+      user: "minioadmin",
+      password: "minioadmin",
+      message:
+        "This is the documented default root credential a MinIO server starts with when MINIO_ROOT_USER and MINIO_ROOT_PASSWORD are not set, so anyone who knows MinIO can sign in with it as the administrator. Set both on the server, or connect with an access key of your own.",
+    },
+    {
+      kind: "pair",
+      user: "rustfsadmin",
+      password: "rustfsadmin",
+      message:
+        "This is the documented default credential a RustFS server starts with when RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY are not set, so anyone who knows RustFS can sign in with it. Set both on the server, or connect with an access key of your own.",
     },
   ],
 };

@@ -71,6 +71,9 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   "prometheus",
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 runs reads only (vector-family spec 4.4), which docs/providers/qdrant.md names.
   "qdrant",
+  // No kind declares acceptsRowWrites or acceptsSourceEdits: v1 reads only, whatever readOnly says, which
+  // docs/providers/s3.md names.
+  "s3",
   "sqlite",
 ] as const);
 

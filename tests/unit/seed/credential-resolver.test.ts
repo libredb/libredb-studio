@@ -41,6 +41,7 @@ describe("credential-resolver", () => {
     delete process.env.ELASTIC_API_KEY_SECRET;
     delete process.env.OXIA_DATA_SERVERS;
     delete process.env.DATABEND_WAREHOUSE;
+    delete process.env.S3_REGION;
   });
 
   it("resolves ${VAR} in password field", () => {
@@ -94,6 +95,20 @@ describe("credential-resolver", () => {
     const conn: SeedConnection = { ...baseConn, type: "databend", warehouse: "${DATABEND_WAREHOUSE}" };
     const resolved = resolveConnectionCredentials(conn);
     expect(resolved.warehouse).toBe("analytics");
+  });
+
+  it("resolves ${VAR} in region", () => {
+    process.env.S3_REGION = "eu-central-1";
+    const conn: SeedConnection = { ...baseConn, region: "${S3_REGION}" };
+    const resolved = resolveConnectionCredentials(conn);
+    expect(resolved.region).toBe("eu-central-1");
+  });
+
+  it("names the region field when its variable is not defined, so a literal reference is never signed for", () => {
+    const error = thrownBy(() => resolveConnectionCredentials({ ...baseConn, region: "${S3_REGION}" }));
+
+    expect(error).toBeInstanceOf(UndefinedSeedVariableError);
+    expect(error).toMatchObject({ variable: "S3_REGION", connectionId: "test", field: "region" });
   });
 
   it("throws an UndefinedSeedVariableError naming the variable, the connection and the field", () => {

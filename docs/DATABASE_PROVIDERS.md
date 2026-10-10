@@ -148,6 +148,8 @@ src/lib/db/
 │   ├── vector/                 # Vector Providers
 │   │   ├── milvus/             # Milvus Strategy (Milvus REST v2 requests run over its own gRPC client)
 │   │   └── qdrant/             # Qdrant Strategy (read-only REST over the shared node transport)
+│   ├── objectstore/            # Object Storage Providers
+│   │   └── s3/                 # S3 Strategy (read-only REST over the shared byte transport, Studio's own SigV4, AWS CLI read commands)
 │   └── embedded/               # Embedded (in-process) Providers
 │       └── libredb.ts          # LibreDB Strategy
 └── utils/
@@ -188,6 +190,7 @@ BaseDatabaseProvider (abstract)
 │   └── Neo4jProvider ──────────────────────┤ Graph (read-only Cypher over Bolt)
 ├── MilvusProvider ─────────────────────────┤ Vector (Milvus REST v2 requests over gRPC)
 ├── QdrantProvider ─────────────────────────┤ Vector (Qdrant REST requests, read-only)
+├── S3Provider ─────────────────────────────┤ Object storage (AWS CLI read commands over the S3 REST API, read-only)
 └── LibreDBProvider ────────────────────────┘ Embedded (key-value)
 ```
 
@@ -249,7 +252,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Twenty-eight type-ids are supported by twenty-six provider modules: two pairs share one, `elasticsearch` and `opensearch` in `providers/sql/search/`, and `influxdb` and `influxdb3` in `providers/timeseries/influxdb/`.
+Twenty-nine type-ids are supported by twenty-seven provider modules: two pairs share one, `elasticsearch` and `opensearch` in `providers/sql/search/`, and `influxdb` and `influxdb3` in `providers/timeseries/influxdb/`.
 The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice. For
 the per-provider reference (driver, pooling, query format,
@@ -284,6 +287,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | Milvus | `milvus` | Vector (Milvus REST v2 requests over gRPC) | [providers/milvus.md](./providers/milvus.md) |
 | Qdrant | `qdrant` | Vector (Qdrant REST requests, read-only) | [providers/qdrant.md](./providers/qdrant.md) |
 | Oxia | `oxia` | Key-Value (oxia client read commands over gRPC, read-only) | [providers/oxia.md](./providers/oxia.md) |
+| S3-compatible object storage | `s3` | Object storage (AWS CLI read commands over the S3 REST API, read-only) | [providers/s3.md](./providers/s3.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface
@@ -416,6 +420,7 @@ examples live in their prime docs:
 - **Qdrant** (one Qdrant REST request): [providers/qdrant.md](./providers/qdrant.md).
 - **LibreDB** (one command: `get`, `put`, `delete`, `prefix` or `range`): [providers/libredb.md](./providers/libredb.md).
 - **Oxia** (one oxia client read command): [providers/oxia.md](./providers/oxia.md).
+- **S3-compatible object storage** (one AWS CLI read command, or Studio's own `preview`): [providers/s3.md](./providers/s3.md).
 
 Couchbase is deliberately **not** in that list: SQL++ is a SQL dialect, so a Couchbase connection
 takes ordinary SQL in the `sql` field and inherits the SQL editor and the shared limiter.
@@ -494,7 +499,7 @@ maintenance operations, and known limitations — is documented per provider und
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
 Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid,
 Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL),
-Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, or LibreDB.
+Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, or LibreDB.
 
 Not every provider has every feature, and the docs record the absences rather than glossing over
 them. Druid is the sharpest case: its SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, no

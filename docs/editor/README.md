@@ -31,7 +31,7 @@ package, which does not ship `public/` — set `NEXT_PUBLIC_MONACO_VS_PATH`.
 | Tab type / language ladder | `src/lib/editor/tab-language.ts` |
 | Dialect editor registry (each tab type's Monaco language and formatter) | `src/lib/editor/dialect-editors.ts` |
 | Query dialect registry (each dialect's tab type and row-menu gates) | `src/lib/db/query-dialects.ts` |
-| Non-SQL command languages | `src/lib/editor/libredb-language.ts`, `src/lib/editor/redis-language.ts`, `src/lib/editor/etcd-language.ts`, `src/lib/editor/oxia-language.ts` |
+| Non-SQL command languages | `src/lib/editor/libredb-language.ts`, `src/lib/editor/redis-language.ts`, `src/lib/editor/etcd-language.ts`, `src/lib/editor/oxia-language.ts`, `src/lib/editor/s3-language.ts` |
 | PromQL language | `src/lib/editor/promql-language.ts` |
 | Alias extraction | `src/lib/sql/alias-extractor.ts` |
 | Query limiting | `src/lib/db/utils/query-limiter.ts` |

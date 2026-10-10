@@ -910,6 +910,28 @@ describe("Sidebar", () => {
     expect(getByTestId("object-tree").getAttribute("data-actions")).toBe("onBrowseKeys");
   });
 
+  test("offers no Keys tab to a shell that owns the reads when the declaration is S3's level walk", () => {
+    // The embedded workspace's host answers the tree's reads itself and ships no /api/db/keys/scan, so S3's level walk
+    // (a `levels` declaration with the bucket as its root) is withheld exactly as a flat walk is.
+    const props = createDefaultProps({
+      activeConnection: { ...mockPostgresConnection, id: "s3-1", type: "s3", port: 9000 },
+      metadata: {
+        capabilities: {
+          queryLanguage: "json",
+          containerLevels: [],
+          objectKinds: [{ id: "bucket", role: "config", label: "Bucket", labelPlural: "Buckets" }],
+          keyScan: { defaultCount: 500, maxCount: 1000, levels: { rootKind: "bucket" } },
+        },
+      } as unknown as ProviderMetadata,
+      objectSource: async () => ({}),
+    });
+    const { queryByRole, queryByTestId, getByTestId } = render(<Sidebar {...props} />);
+
+    expect(queryByRole("tab", { name: "Keys" })).toBeNull();
+    expect(queryByTestId("key-browser")).toBeNull();
+    expect(getByTestId("object-tree").getAttribute("data-actions")).toBe("");
+  });
+
   test("adds the one action it owns to the handlers the shell handed down, and no others", () => {
     const props = createDefaultProps({
       activeConnection: mockPostgresConnection,

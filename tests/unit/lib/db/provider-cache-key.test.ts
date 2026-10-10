@@ -225,6 +225,7 @@ describe("providerCacheKey frames every public field that decides who a connecti
     ["allowInsecureAuth", { ...base, allowInsecureAuth: true }, base],
     ["dataServers", { ...base, dataServers: "a.internal:6648" }, { ...base, dataServers: "b.internal:6648" }],
     ["warehouse", { ...base, warehouse: "analytics" }, { ...base, warehouse: "etl" }],
+    ["region", { ...base, region: "eu-central-1" }, { ...base, region: "us-east-1" }],
     [
       "sshTunnel.authMethod",
       { ...base, sshTunnel: { ...tunnel, authMethod: "privateKey" } },
@@ -243,6 +244,10 @@ describe("providerCacheKey frames every public field that decides who a connecti
 
   test("an absent authSource and a named one answer different keys", async () => {
     expect(await providerCacheKey({ ...base, authSource: "admin" })).not.toBe(await providerCacheKey(base));
+  });
+
+  test("an empty region and an absent one answer the same key, because both mean us-east-1", async () => {
+    expect(await providerCacheKey({ ...base, region: "" })).toBe(await providerCacheKey(base));
   });
 });
 

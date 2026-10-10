@@ -4,6 +4,7 @@ import { declaredLevels } from "@/lib/db/object-kinds";
 import { type QueryDialect, registeredDialect } from "@/lib/db/query-dialects";
 import { encodeKey } from "@/lib/db/providers/keyvalue/etcd/keys";
 import { oxiaSelectQuery, oxiaTableQuery } from "@/lib/db/providers/keyvalue/oxia/generators";
+import { s3SelectQuery, s3TableQuery } from "@/lib/db/providers/objectstore/s3/console/generators";
 import { quoteGoString, quoteTxnWord, quoteWord } from "@/lib/db/providers/keyvalue/etcd/lexer";
 import { influxqlSelectQuery, influxqlTableQuery } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
 import { influxqlSource, quoteInfluxqlIdentifier } from "@/lib/db/providers/timeseries/influxdb/influxql-quote";
@@ -748,6 +749,14 @@ const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Ob
   oxia: {
     table: (path) => oxiaTableQuery(path),
     select: (path) => oxiaSelectQuery(path),
+  },
+  // S3 reads through its console's commands, written by the provider's browser-safe generators.ts: a bucket's
+  // listing, or an object's preview, and Generate Command adds reads as comments. The path is the provider's own,
+  // [bucket] or [<bucket>/<key>]. No shipped click reaches them in v1 (a bucket or object row opens its Source tab).
+  // Every text is a command the console's parser accepts, or a note.
+  s3: {
+    table: (path) => s3TableQuery(path),
+    select: (path) => s3SelectQuery(path),
   },
 });
 

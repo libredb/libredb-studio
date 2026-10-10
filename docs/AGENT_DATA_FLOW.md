@@ -44,12 +44,12 @@ if it only lists the good news.
 | Surface | What it sends | Fenced? |
 | --- | --- | --- |
 | `POST /api/agent/classify`, **before any run exists** | Your objective, and nothing else. One short completion that asks the model to name one of the five workflows. It fires when you press **Start** with the workflow left on **Automatic**, which is the default; naming a workflow yourself under **Advanced** skips it entirely. See [the classification, before any run](#the-classification-before-any-run) | No — it carries no database content to fence. Your objective is sent as the user message, and the server's instructions tell the model to treat that text as data to classify and never as instructions to it |
-| Any **run**, in either mode, on **any** engine | Your objective, and a schema inventory (table, column, index identifiers and column types) with its relations graph (identifiers only). **Since #414 that inventory leaves on every engine**, where before it left on PostgreSQL and SQLite alone: those two are read with catalog statements the server composes, and the other twenty-six by asking the connection's own provider to describe its schema. On **MongoDB and Couchbase** the provider works out a collection's fields from a **sample of your own documents**: no value from them is in the message, but the **existence** of a field there is derived from your data rather than read from a catalog, which is a weaker claim than a catalog reading's and is why that reading has its own operation id (`db.schema.read`) an operator can deny alone. When the reading cannot be taken (a refusal, a provider that cannot describe its own schema, a description that overran the time the run granted it), nothing of the schema leaves and a server sentence saying which of those happened goes in its place. See [the schema inventory](#3-the-schema-inventory--identifiers-and-types-fenced) | Everything derived from the database is wrapped in an untrusted-content fence before it reaches a prompt |
+| Any **run**, in either mode, on **any** engine | Your objective, and a schema inventory (table, column, index identifiers and column types) with its relations graph (identifiers only). **Since #414 that inventory leaves on every engine**, where before it left on PostgreSQL and SQLite alone: those two are read with catalog statements the server composes, and the other twenty-seven by asking the connection's own provider to describe its schema. On **MongoDB and Couchbase** the provider works out a collection's fields from a **sample of your own documents**: no value from them is in the message, but the **existence** of a field there is derived from your data rather than read from a catalog, which is a weaker claim than a catalog reading's and is why that reading has its own operation id (`db.schema.read`) an operator can deny alone. When the reading cannot be taken (a refusal, a provider that cannot describe its own schema, a description that overran the time the run granted it), nothing of the schema leaves and a server sentence saying which of those happened goes in its place. See [the schema inventory](#3-the-schema-inventory--identifiers-and-types-fenced) | Everything derived from the database is wrapped in an untrusted-content fence before it reaches a prompt |
 | An **agent run** | The above, plus the rows of each read the model performed, up to 200 per read; engine error text; server-written refusals; server-minted ids | Same fence |
 | Any **run that continues a conversation**, in either mode, on any engine | **In addition to everything above**: the earlier steps' objectives — *your own earlier questions*, capped at 200 characters each — and the most recent step's report, which is a model's claims about your data. No row of any result, and no earlier step's report but the newest. Sent only when the rail attaches a previous run's id, which it does for a follow-up on the same connection; a run that starts its own conversation sends no such message. Bounded to 4000 characters by default and switchable off with `LIBREDB_AGENT_THREAD_CONTEXT=false`. See [the conversation](#2a-the-conversation-when-a-run-continues-one--fenced) | Same fence, identified as `operation agent/thread`: it is prose a user and a model wrote, and none of it is the server's voice |
 | An **agent run opened as Operate** | Your objective; a **schema inventory reduced to its own names and index names** (no column names, no column types, no relations graph), read whichever of the two ways that engine is read and named with whichever noun that engine's provider declares — tables, collections, datasources, key patterns; in Plan mode the engine's **row-count estimates** for those same tables where the engine holds any — PostgreSQL and SQLite — and nothing per column; and the rows of each curated reading — which, for the `sessions` and `slow-queries` kinds, include **other database users' in-flight statement text and their database usernames**. See [the operations workflow](#5a-the-operations-workflow-what-a-curated-reading-sends) | Same fence: the inventory and every reading's rows are database content and are fenced |
 | `POST /api/ai/explain` | Your statement, the EXPLAIN plan, the schema context the browser holds, the engine type | No |
-| `POST /api/ai/query-safety` | Your statement, a filtered schema context, the engine type. Never an etcd, Milvus, Qdrant, InfluxDB (InfluxQL) or Oxia statement: the dialog posts nothing for an engine whose destructive vocabulary declares `safetyAnalysis: false`, which those five do, because an etcd `put` carries its value in the statement (#1089), a Milvus or Qdrant request carries vectors, filters and values, an InfluxQL statement carries tag values and filters, and an Oxia command names keys whose paths name Pulsar tenants and namespaces | No |
+| `POST /api/ai/query-safety` | Your statement, a filtered schema context, the engine type. Never an etcd, Milvus, Qdrant, InfluxDB (InfluxQL), Oxia or S3-compatible object storage statement: the dialog posts nothing for an engine whose destructive vocabulary declares `safetyAnalysis: false`, which those six do, because an etcd `put` carries its value in the statement (#1089), a Milvus or Qdrant request carries vectors, filters and values, an InfluxQL statement carries tag values and filters, an Oxia command names keys whose paths name Pulsar tenants and namespaces, and an S3 command names buckets and object keys | No |
 | `POST /api/ai/describe-schema` | A schema context. From the **Data Profiler** that context includes a per-column `min=` and `max=`, which are **real column values**, except on a column the data masking configuration masks for you, which is sent masked | No |
 | Everything else in the **running server** | Every outbound connection goes to a host **you** configured — your databases, your OIDC issuer when `NEXT_PUBLIC_AUTH_PROVIDER=oidc` (`src/lib/oidc.ts`), and the model provider above. The one host `src/` names itself is OpenAI's default base URL, reached only if you set `LLM_PROVIDER=openai` (`src/lib/llm/utils/config.ts:23`) | — |
 | The **`npx` launcher**, before the server exists | The release tarball and `SHA256SUMS` from a hard-coded `github.com` URL (`bin/lib/launcher-utils.mjs:87`, from `bin/studio.js:218-219`). Once per version, cached in `~/.libredb-studio/`; no other install path uses it | — |
@@ -202,7 +202,7 @@ One field of your connection record *is*: its **engine type**, the canonical typ
 spends it on the fence tag the deliverable must carry, and since the Operate-engine fix a prose plan
 spends it twice: on the rule that binds the readings it may name to the engine it is planning
 against, and on the fence tag for a reading that engine happens to express as a statement. It is
-a server-side enum with twenty-eight members, so what it discloses is which of twenty-eight engines this
+a server-side enum with twenty-nine members, so what it discloses is which of twenty-nine engines this
 connection is — never its host, its database name or its credentials, none of which reach a prompt at
 all (see [What never leaves](#what-never-leaves)).
 
@@ -272,18 +272,18 @@ a refusal — nothing of the schema leaves and a server-written note says so in 
 
 **Two readings produce it, and which one runs is the dialect's decision** (#414). On PostgreSQL and
 SQLite the server composes a catalog statement per kind and executes it read-only. On the other
-twenty-six it invokes `db.schema.read`, which walks the connection's own OBJECT SURFACE, the same
+twenty-seven it invokes `db.schema.read`, which walks the connection's own OBJECT SURFACE, the same
 `listContainers`, `countObjects`, `listObjects` and `describeObjects` the sidebar walks when it lists
 your objects, and composes no statement at all.
-**Twenty-six counts type-ids the factory can build, not engines a user would name**: `SHIPPED` holds
-twenty-eight, `CATALOG_PLANS` serves two of them, and the remainder is what this second reading covers.
+**Twenty-seven counts type-ids the factory can build, not engines a user would name**: `SHIPPED` holds
+twenty-nine, `CATALOG_PLANS` serves two of them, and the remainder is what this second reading covers.
 Every other count said about grounding in these docs counts the same thing. libSQL is one of the
-twenty-six and not one of the two: it speaks SQLite's dialect, but the read-only catalog path
+twenty-seven and not one of the two: it speaks SQLite's dialect, but the read-only catalog path
 `CATALOG_PLANS` serves needs a database-native read-only profile, and `PRAGMA query_only` is refused
 by a libSQL server (see [`providers/libsql.md`](./providers/libsql.md)). Two things it does
 NOT count. The wire-compatible engines of
 [`docs/providers/README.md`](./providers/README.md) are not extra members — TiDB is grounded because it
-arrives as `mysql`, and it is that type-id that is counted. And two of the twenty-six, the embedded
+arrives as `mysql`, and it is that type-id that is counted. And two of the twenty-seven, the embedded
 `libredb` and `duckdb`, reach this path through a handle they do not open: the file takes an exclusive
 lock, so the grounding acquisition borrows the connection's own open provider rather than opening a
 second one that the lock would refuse (`findOpenSingleWriterProvider`, `src/lib/db/factory.ts`; see
@@ -313,6 +313,7 @@ two properties differ and are stated here rather than left to be discovered:
   one sentence, because a run that reads `user:*` as an addressable key drafts a command against
   something that does not exist (measured live, #414).
 - On Oxia the grounding carries the shard rows only, never a key, a value or a leader address (`key` is listed by the Keys panel, not by the object walk).
+- On S3-compatible object storage the grounding carries bucket names only, never an object key, a prefix, a size or any object content (objects are listed by the Keys panel, not by the object walk).
 
 **What the block CALLS these rows is the provider's own word** (#414). The prompt's header, its
 omission notice and the relations block take their noun from `ProviderLabels.entityName` — "table" on
@@ -349,7 +350,7 @@ The inventory's foreign keys, rendered as a relation list and fenced beside the 
 It carries table names, column names, and at the deepest detail level a table's primary-key and
 leading-index column names (`keyColumns`, `er-diagram.ts:145-157`). **Never a row value.**
 
-On the twenty engines that declare no foreign keys at all (MongoDB, Redis, LibreDB, Druid, ClickHouse, Couchbase, Trino, Cassandra, Elasticsearch, OpenSearch, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia and Databend) this block carries no relations and says why: the engine has no such constraint to
+On the twenty-one engines that declare no foreign keys at all (MongoDB, Redis, LibreDB, Druid, ClickHouse, Couchbase, Trino, Cassandra, Elasticsearch, OpenSearch, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend and S3-compatible object storage) this block carries no relations and says why: the engine has no such constraint to
 declare, so there is nothing here a reading could have missed (#414, driven from
 `ProviderCapabilities.declaresForeignKeys` rather than from the connection's type). It is one server
 sentence and no database content, which makes it the one form of this block that discloses nothing.
@@ -547,7 +548,7 @@ The frozen execution policies are the ceiling on one run's egress, one row per w
 | Bound | Value | What it caps |
 | --- | --- | --- |
 | `maxResultRows` / `maxResultBytes` | 200 rows / 256 KiB | The most one read can return — and therefore the most one tool result can send |
-| `maxStatementsPerRun` | 18-45, by workflow | Reads per run, folded across its drives (#999), grounding reads and repairs included: the composed catalog reads and, since #414, the one `db.schema.read` call that replaces them on the other twenty-six. The figures did not move for it: that path is the cheapest of the three, so nothing had to be bought (`docs/AGENT.md`, the budget arithmetic) |
+| `maxStatementsPerRun` | 18-45, by workflow | Reads per run, folded across its drives (#999), grounding reads and repairs included: the composed catalog reads and, since #414, the one `db.schema.read` call that replaces them on the other twenty-seven. The figures did not move for it: that path is the cheapest of the three, so nothing had to be bought (`docs/AGENT.md`, the budget arithmetic) |
 | `AGENT_CONTEXT_PACK_MAX_CHARS` | 6000 | The fenced schema inventory |
 | `MAX_ER_CHARS` | 2000 | The fenced relations block |
 | `AGENT_MAX_OBJECTIVE_LENGTH` | 4000 | Your objective |
@@ -643,7 +644,7 @@ fences what it sends:
 | Feature | Route | What the browser sends | Call site |
 | --- | --- | --- | --- |
 | Visual EXPLAIN's AI explanation | `POST /api/ai/explain` | `query`, `explainPlan`, `schemaContext`, `databaseType` | `src/components/VisualExplain.tsx:486-497` |
-| Query safety dialog | `POST /api/ai/query-safety` | `query`, a filtered `schemaContext`, `databaseType`; nothing at all for an etcd, Milvus, Qdrant, InfluxDB (InfluxQL) or Oxia statement (`vocabularySendsToModel`, `src/lib/db/destructive-commands.ts`) | `src/components/QuerySafetyDialog.tsx:221-231` |
+| Query safety dialog | `POST /api/ai/query-safety` | `query`, a filtered `schemaContext`, `databaseType`; nothing at all for an etcd, Milvus, Qdrant, InfluxDB (InfluxQL), Oxia or S3-compatible object storage statement (`vocabularySendsToModel`, `src/lib/db/destructive-commands.ts`) | `src/components/QuerySafetyDialog.tsx:221-231` |
 | Database documentation | `POST /api/ai/describe-schema` | A schema string built from table names, row counts and column definitions | `src/components/DatabaseDocs.tsx:61-68` |
 | Data Profiler's AI summary | `POST /api/ai/describe-schema` | Per column: null percent, distinct count, **`min=` and `max=`**, masked where the grid would mask the column | `src/components/DataProfiler.tsx:141-176` |
 

@@ -113,6 +113,9 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // A ```databend block holds one statement in Databend's SQL, sent as it is to `POST /v1/query`. No alias: `sql`
   // names no engine, and `mysql` names the MySQL-wire driver Databend no longer connects through.
   databend: true,
+  // A ```s3 block holds one AWS CLI subset read command the editor runs as it is. No alias: `aws` names every AWS
+  // service, and `sh`, `bash` and `shell` name no engine.
+  s3: true,
 });
 
 /**

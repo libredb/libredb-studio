@@ -1,0 +1,59 @@
+{
+  "file": "garage-2026-10-10-v2.4.1/A8-behind.json",
+  "scenario": "A8-behind",
+  "target": "garage",
+  "clockOffsetMs": -90000000,
+  "exchanges": [
+    {
+      "step": "behind",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261009T144408Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000001/20261009/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 400,
+        "headers": [
+          [
+            "content-length",
+            "172"
+          ],
+          [
+            "date",
+            "Sat, 10 Oct 2026 15:44:08 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidRequest</Code><Message>Bad request: Date is too old</Message><Resource>/</Resource><Region>garage</Region></Error>"
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "behind",
+      "refused": "This machine's clock and the server's differ by about 1500 minutes, more than the server accepts: correct the clock on this machine or on the server.",
+      "exchanges": 1
+    }
+  ]
+}

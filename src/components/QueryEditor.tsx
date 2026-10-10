@@ -15,6 +15,8 @@ import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
 import { registerRedisLanguage } from "@/lib/editor/redis-language";
 import { registerEtcdLanguage } from "@/lib/editor/etcd-language";
 import { registerOxiaLanguage } from "@/lib/editor/oxia-language";
+import { registerS3Language, S3_LANGUAGE_ID } from "@/lib/editor/s3-language";
+import { registerS3CompletionProvider, s3CompletionBucketsOf } from "@/lib/editor/s3-completions";
 import { registerPromqlLanguage } from "@/lib/editor/promql-language";
 import { CYPHER_LANGUAGE_ID, registerCypherLanguage } from "@/lib/editor/cypher-language";
 import { cypherCompletionSchemaOf, registerCypherCompletionProvider } from "@/lib/editor/cypher-completions";
@@ -90,7 +92,8 @@ interface QueryEditorProps {
     | "milvus"
     | "qdrant"
     | "influxql"
-    | "oxia";
+    | "oxia"
+    | "s3";
   /**
    * The connected engine, whose grammar decides where a statement ends.
    *
@@ -562,7 +565,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     }, []);
 
     const handleBeforeMount = (monacoInstance: typeof Monaco) => {
-      // Register the LibreDB, Redis, etcd and Oxia command languages, PromQL, Cypher and InfluxQL (each
+      // Register the LibreDB, Redis, etcd, Oxia and S3 command languages, PromQL, Cypher and InfluxQL (each
       // idempotent) so their tabs highlight correctly instead of being treated as JSON or SQL
       // (#427, #1085, #1089, #424, Neo4j spec 6.5, InfluxDB spec 6.7).
       registerLibreDBLanguage(monacoInstance);
@@ -570,6 +573,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       registerPromqlLanguage(monacoInstance);
       registerEtcdLanguage(monacoInstance);
       registerOxiaLanguage(monacoInstance);
+      registerS3Language(monacoInstance);
       registerCypherLanguage(monacoInstance);
       registerInfluxqlLanguage(monacoInstance);
       // Every console dialect's language, from its editor record (vector-family spec 3.5): the records are the
@@ -638,6 +642,16 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     useEffect(() => {
       if (monaco && language === INFLUXQL_LANGUAGE_ID) {
         const disposable = registerInfluxqlCompletionProvider(monaco, influxqlCompletionSchemaOf(parsedSchema));
+        return () => disposable.dispose();
+      }
+    }, [monaco, language, parsedSchema]);
+
+    // S3 completion provider. It reads bucket names from the schema context only, never by a request, and an S3
+    // connection's schema holds no bucket, because S3 declares no relation kind, so it offers commands, flags and
+    // closed values only. Every insert is quoted by the shared shell quoter.
+    useEffect(() => {
+      if (monaco && language === S3_LANGUAGE_ID) {
+        const disposable = registerS3CompletionProvider(monaco, s3CompletionBucketsOf(parsedSchema));
         return () => disposable.dispose();
       }
     }, [monaco, language, parsedSchema]);

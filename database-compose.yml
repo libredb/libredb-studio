@@ -2482,6 +2482,331 @@ services:
           memory: 128M
     memswap_limit: 128M
 
+  # ---------------------------------------------------------------------------------------
+  # S3-compatible object storage (the s3 provider). The four servers the provider is verified on
+  # (docs/providers/s3.md): MinIO, built here from its last community release because MinIO
+  # publishes no image any more, and the region-strict MinIO variant, both behind profiles
+  # because that build is frozen and unpatched (docker/minio/README.md); Silo, Garage and RustFS,
+  # pulled and pinned by tag and digest. Each server's principals and objects come from one-shots
+  # that create what is missing and leave what exists. docker/s3/README.md describes the servers,
+  # the principals and every seeded object.
+  # ---------------------------------------------------------------------------------------
+  minio:
+    build: { context: ./docker/minio, target: server }
+    image: libredb-fixture/minio:RELEASE.2025-10-15T17-29-55Z
+    pull_policy: build
+    container_name: libredb-minio
+    profiles: ["s3-minio"]
+    # Frozen and unpatched: never restarted by the daemon (docker/minio/README.md).
+    restart: "no"
+    environment: &minio-env
+      MINIO_ROOT_USER: libredb
+      MINIO_ROOT_PASSWORD: "Probe123pass!"
+      # MinIO checks dl.min.io for a newer release at startup unless this is off (docker/s3/README.md,
+      # "Telemetry"); Silo, which shares these variables, has no such check.
+      MINIO_UPDATE: "off"
+    ports:
+      - "127.0.0.1:9000:9000"
+    healthcheck: &minio-health
+      # The alpine build carries busybox wget and no curl.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/ready"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # Four times the peak the first live run measured (docker/s3/README.md, "Bounds, as measured").
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2816M
+    memswap_limit: 2816M
+
+  minio-principals:
+    build: { context: ./docker/minio, target: mc }
+    image: libredb-fixture/mc:RELEASE.2025-08-13T08-35-41Z
+    pull_policy: build
+    container_name: libredb-minio-principals
+    profiles: ["s3-minio"]
+    restart: "no"
+    depends_on: { minio: { condition: service_healthy } }
+    volumes: ["./docker/s3:/s3:ro"]
+    environment: &s3-root-env
+      S3_ROOT_ACCESS_KEY: libredb
+      S3_ROOT_SECRET_KEY: "Probe123pass!"
+    entrypoint: ["sh", "/s3/principals.sh", "http://minio:9000"]
+    # Four times the largest one-shot peak the first live run measured: pgsty/mc attaching a policy, which ran out of
+    # memory under the first 128M bound (docker/s3/README.md, "Bounds, as measured").
+    <<: &s3-one-shot-limits
+      deploy:
+        resources:
+          limits:
+            cpus: "0.5"
+            memory: 768M
+      memswap_limit: 768M
+
+  minio-seed:
+    # The seed signs with curl --aws-sigv4 and sends every key as written with --path-as-is, so the literal
+    # dot-segment keys reach each server. curl 8.14 and later refuse that pair (exit 43) and, without
+    # --path-as-is, sign the normalized path, so this pin must not move to 8.14 or later. It is an older image
+    # with known CVEs, accepted only because each seed one-shot talks to the compose network's own servers with
+    # fixed fixture bytes; garage-setup keeps the current curl.
+    image: &s3-seed-curl alpine/curl:8.12.1@sha256:edbbe6f64e9890474df2864d7ee92941bb03ce17b07fd9cadc1d14e9453fc031
+    container_name: libredb-minio-seed
+    profiles: ["s3-minio"]
+    restart: "no"
+    depends_on: { minio: { condition: service_healthy } }
+    volumes: &s3-seed-mounts ["./docker/s3:/s3:ro", "./tests/fixtures/s3/preview:/preview:ro"]
+    environment: &s3-seed-root-env
+      S3_SEED_ACCESS_KEY: libredb
+      S3_SEED_SECRET_KEY: "Probe123pass!"
+    entrypoint: ["sh", "/s3/seed.sh", "http://minio:9000", "us-east-1", "minio"]
+    <<: *s3-one-shot-limits
+
+  minio-region:
+    build: { context: ./docker/minio, target: server }
+    image: libredb-fixture/minio:RELEASE.2025-10-15T17-29-55Z
+    pull_policy: build
+    container_name: libredb-minio-region
+    profiles: ["s3-region"]
+    # Frozen and unpatched: never restarted by the daemon (docker/minio/README.md).
+    restart: "no"
+    environment:
+      <<: *minio-env
+      # Makes this MinIO refuse requests signed for another region (rows A6 and A7).
+      MINIO_SITE_REGION: eu-central-1
+    ports:
+      - "127.0.0.1:9030:9000"
+    healthcheck: *minio-health
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2560M
+    memswap_limit: 2560M
+
+  minio-region-principals:
+    build: { context: ./docker/minio, target: mc }
+    image: libredb-fixture/mc:RELEASE.2025-08-13T08-35-41Z
+    pull_policy: build
+    container_name: libredb-minio-region-principals
+    profiles: ["s3-region"]
+    restart: "no"
+    depends_on: { minio-region: { condition: service_healthy } }
+    volumes: ["./docker/s3:/s3:ro"]
+    environment: *s3-root-env
+    entrypoint: ["sh", "/s3/principals.sh", "http://minio-region:9000"]
+    <<: *s3-one-shot-limits
+
+  minio-region-seed:
+    image: *s3-seed-curl
+    container_name: libredb-minio-region-seed
+    profiles: ["s3-region"]
+    restart: "no"
+    depends_on: { minio-region: { condition: service_healthy } }
+    volumes: *s3-seed-mounts
+    environment: *s3-seed-root-env
+    entrypoint: ["sh", "/s3/seed.sh", "http://minio-region:9000", "eu-central-1", "minio"]
+    <<: *s3-one-shot-limits
+
+  silo:
+    # A maintained AGPL fork of MinIO that keeps MINIO_* variables; pinned to the build the
+    # captures under tests/fixtures/s3/captures are claims about.
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46
+    container_name: libredb-silo
+    restart: unless-stopped
+    environment: *minio-env
+    command: ["server", "/data"]
+    ports:
+      - "127.0.0.1:9010:9000"
+    healthcheck:
+      # Silo carries curl and no wget.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9000/minio/health/ready"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2560M
+    memswap_limit: 2560M
+
+  silo-principals:
+    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z@sha256:cfc83108c3abb371f8fb84d99c1fdc88f8c237e022409b0081fb7c0a3be634dd
+    container_name: libredb-silo-principals
+    restart: "no"
+    depends_on: { silo: { condition: service_healthy } }
+    volumes: ["./docker/s3:/s3:ro"]
+    environment:
+      <<: *s3-root-env
+      MC_CONFIG_DIR: /tmp/.mc
+    entrypoint: ["sh", "/s3/principals.sh", "http://silo:9000"]
+    <<: *s3-one-shot-limits
+
+  silo-seed:
+    image: *s3-seed-curl
+    container_name: libredb-silo-seed
+    restart: "no"
+    depends_on: { silo: { condition: service_healthy } }
+    volumes: *s3-seed-mounts
+    environment: *s3-seed-root-env
+    entrypoint: ["sh", "/s3/seed.sh", "http://silo:9000", "us-east-1", "silo"]
+    <<: *s3-one-shot-limits
+
+  s3-certs:
+    # One-shot: the TLS fixture's CA and server certificate, written only when missing.
+    image: alpine/openssl:3.5.8@sha256:3f25da71f70eba788067daac3f3df03bd1de7a7c52ed89fa93b94ad2c92d986b
+    container_name: libredb-s3-certs
+    profiles: ["s3-tls"]
+    restart: "no"
+    volumes: ["./docker/s3:/s3:ro", "s3-certs:/certs"]
+    entrypoint: ["sh", "/s3/certs.sh", "/certs", "0"]
+    <<: *s3-one-shot-limits
+
+  silo-tls:
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46
+    container_name: libredb-silo-tls
+    profiles: ["s3-tls"]
+    restart: unless-stopped
+    depends_on: { s3-certs: { condition: service_completed_successfully } }
+    environment: *minio-env
+    command: ["server", "/data", "--certs-dir", "/certs"]
+    volumes: ["s3-certs:/certs:ro"]
+    ports:
+      - "127.0.0.1:9443:9000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "--cacert", "/certs/CAs/ca.crt", "https://localhost:9000/minio/health/ready"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2048M
+    memswap_limit: 2048M
+
+  garage-keys:
+    # One-shot: Garage's RPC secret, admin and metrics tokens and four key secrets, generated
+    # into s3-garage-keys only when missing, so no Garage secret is ever committed.
+    image: alpine/openssl:3.5.8@sha256:3f25da71f70eba788067daac3f3df03bd1de7a7c52ed89fa93b94ad2c92d986b
+    container_name: libredb-garage-keys
+    restart: "no"
+    volumes: ["./docker/s3:/s3:ro", "s3-garage-keys:/keys"]
+    entrypoint: ["sh", "/s3/garage-keys.sh", "/keys"]
+    <<: *s3-one-shot-limits
+
+  garage:
+    image: dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020
+    container_name: libredb-garage
+    restart: unless-stopped
+    depends_on: { garage-keys: { condition: service_completed_successfully } }
+    environment:
+      GARAGE_RPC_SECRET_FILE: /keys/rpc.secret
+      GARAGE_ADMIN_TOKEN_FILE: /keys/admin.token
+      GARAGE_METRICS_TOKEN_FILE: /keys/metrics.token
+    volumes: ["./docker/s3/garage.toml:/etc/garage.toml:ro", "s3-garage-keys:/keys:ro"]
+    ports:
+      # Only the S3 API; RPC (3901) and admin (3903) stay on the compose network.
+      - "127.0.0.1:3900:3900"
+    healthcheck:
+      # The image has no shell, so the probe cannot read the answer's status: it exits 0 once the node
+      # answers, before a layout exists. garage-setup polls GetClusterHealth itself until the status is
+      # healthy (docker/s3/README.md).
+      test: ["CMD", "/garage", "json-api", "GetClusterHealth"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    memswap_limit: 512M
+
+  garage-setup:
+    image: alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067
+    container_name: libredb-garage-setup
+    restart: "no"
+    # service_started: the health probe passes before any layout exists, so garage-setup polls
+    # GetClusterHealth itself until the status is healthy.
+    depends_on: { garage: { condition: service_started } }
+    volumes: ["./docker/s3:/s3:ro", "s3-garage-keys:/keys:ro"]
+    environment:
+      GARAGE_KEYS_DIR: /keys
+    entrypoint: ["sh", "/s3/garage-setup.sh", "http://garage:3903"]
+    <<: *s3-one-shot-limits
+
+  garage-seed:
+    image: *s3-seed-curl
+    container_name: libredb-garage-seed
+    restart: "no"
+    depends_on: { garage-setup: { condition: service_completed_successfully } }
+    volumes: ["./docker/s3:/s3:ro", "./tests/fixtures/s3/preview:/preview:ro", "s3-garage-keys:/keys:ro"]
+    environment:
+      S3_SEED_ACCESS_KEY: GK000000000000000000000001
+      S3_SEED_SECRET_KEY_FILE: /keys/rw.secret
+    entrypoint: ["sh", "/s3/seed.sh", "http://garage:3900", "garage", "garage"]
+    <<: *s3-one-shot-limits
+
+  rustfs:
+    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    container_name: libredb-rustfs
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: libredb
+      RUSTFS_SECRET_KEY: "Probe123pass!"
+      # RustFS asks version.rustfs.com for the latest release at startup unless this is false (docker/s3/README.md,
+      # "Telemetry").
+      RUSTFS_CHECK_UPDATE: "false"
+    ports:
+      - "127.0.0.1:9020:9000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9000/health/ready"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1792M
+    memswap_limit: 1792M
+
+  rustfs-principals:
+    # pgsty/mc, not the source-built mc: RustFS starts on a plain up, which must never build from
+    # source (docker/s3/README.md).
+    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z@sha256:cfc83108c3abb371f8fb84d99c1fdc88f8c237e022409b0081fb7c0a3be634dd
+    container_name: libredb-rustfs-principals
+    restart: "no"
+    depends_on: { rustfs: { condition: service_healthy } }
+    volumes: ["./docker/s3:/s3:ro"]
+    environment:
+      <<: *s3-root-env
+      MC_CONFIG_DIR: /tmp/.mc
+    entrypoint: ["sh", "/s3/principals.sh", "http://rustfs:9000"]
+    <<: *s3-one-shot-limits
+
+  rustfs-seed:
+    image: *s3-seed-curl
+    container_name: libredb-rustfs-seed
+    restart: "no"
+    depends_on: { rustfs: { condition: service_healthy } }
+    volumes: *s3-seed-mounts
+    environment: *s3-seed-root-env
+    entrypoint: ["sh", "/s3/seed.sh", "http://rustfs:9000", "us-east-1", "rustfs"]
+    <<: *s3-one-shot-limits
+
   # ==========================================================================
   # Wire-compatible engines (issue #424, Phase 0)
   #
@@ -3111,8 +3436,9 @@ volumes:
   # passwords, and qdrant-keys the generated Qdrant keys, local.yaml files and certificates.
   # influxdb2-read-token keeps the InfluxDB 2.x read-only token influxdb-seed created, whose
   # value the server shows only once. oxia-auth-material carries the generated certificates, JWT
-  # keys and tokens from oxia-auth-certs to the Oxia auth server. Everything else uses the image's
-  # own anonymous volumes.
+  # keys and tokens from oxia-auth-certs to the Oxia auth server. s3-garage-keys keeps Garage's
+  # generated RPC secret, admin and metrics tokens and its four key secrets, and s3-certs the TLS
+  # fixture's generated CA and certificate. Everything else uses the image's own anonymous volumes.
   #
   # druid_shared is the deep-storage + indexing-log volume, mounted by the three processes
   # that write or read segments. A `down -v` resets the cluster to empty.
@@ -3132,3 +3458,5 @@ volumes:
   milvus-credentials: {}
   qdrant-keys: {}
   influxdb2-read-token: {}
+  s3-garage-keys: {}
+  s3-certs: {}

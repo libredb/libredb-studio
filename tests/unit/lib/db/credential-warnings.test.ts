@@ -26,11 +26,20 @@ const MANAGE_NO_EXP_URL_SAFE = "e30.eyJhY2Nlc3MiOiJtIiwic3ViIjoieHg_Pz8_Pz4-In0.
 type Credential = { user?: string; password?: string };
 
 describe("CREDENTIAL_WARNINGS", () => {
-  test("milvus, qdrant, influxdb, influxdb3, oxia and databend are the shipped types that declare credential warnings (vector-family spec 3.12, InfluxDB spec E12, SB3-1.5, Databend design 7.2)", () => {
-    expect(Object.keys(CREDENTIAL_WARNINGS)).toEqual(["milvus", "qdrant", "influxdb", "influxdb3", "oxia", "databend"]);
+  test("milvus, qdrant, influxdb, influxdb3, oxia, databend and s3 are the shipped types that declare credential warnings (vector-family spec 3.12, InfluxDB spec E12, SB3-1.5, Databend design 7.2)", () => {
+    expect(Object.keys(CREDENTIAL_WARNINGS)).toEqual([
+      "milvus",
+      "qdrant",
+      "influxdb",
+      "influxdb3",
+      "oxia",
+      "databend",
+      "s3",
+    ]);
     expect(CREDENTIAL_WARNINGS.milvus?.map((entry) => entry.kind)).toEqual(["pair", "no-secret"]);
     expect(CREDENTIAL_WARNINGS.qdrant?.map((entry) => entry.kind)).toEqual(["jwt", "no-secret"]);
     expect(CREDENTIAL_WARNINGS.oxia?.map((entry) => entry.kind)).toEqual(["jwt"]);
+    expect(CREDENTIAL_WARNINGS.s3?.map((entry) => entry.kind)).toEqual(["pair", "pair"]);
   });
 });
 
@@ -64,6 +73,34 @@ describe("the oxia row", () => {
     const record: Readonly<Record<string, readonly { readonly kind: string }[] | undefined>> = CREDENTIAL_WARNINGS;
     expect(record.influxdb?.map((entry) => entry.kind)).toEqual(["no-secret"]);
     expect(record.influxdb3?.map((entry) => entry.kind)).toEqual(["no-secret"]);
+  });
+});
+
+/**
+ * The S3 rows: MinIO and RustFS start with a documented default credential, so each pair warns
+ * in the dialog and refuses a read-only seed. No no-secret row: an unsigned connection is anonymous to the server.
+ */
+describe("the s3 rows", () => {
+  const MINIO_SENTENCE =
+    "Credential warning: This is the documented default root credential a MinIO server starts with when MINIO_ROOT_USER and MINIO_ROOT_PASSWORD are not set, so anyone who knows MinIO can sign in with it as the administrator. Set both on the server, or connect with an access key of your own.";
+  const RUSTFS_SENTENCE =
+    "Credential warning: This is the documented default credential a RustFS server starts with when RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY are not set, so anyone who knows RustFS can sign in with it. Set both on the server, or connect with an access key of your own.";
+
+  test("the MinIO and RustFS default pairs warn with their framed sentences", () => {
+    expect(credentialWarningFor("s3", { user: "minioadmin", password: "minioadmin" })).toBe(MINIO_SENTENCE);
+    expect(credentialWarningFor("s3", { user: "rustfsadmin", password: "rustfsadmin" })).toBe(RUSTFS_SENTENCE);
+  });
+
+  test("a default access key with another secret does not warn", () => {
+    expect(credentialWarningFor("s3", { user: "minioadmin", password: "rotated-secret" })).toBeUndefined();
+    expect(credentialWarningFor("s3", { user: "rustfsadmin", password: "minioadmin" })).toBeUndefined();
+  });
+
+  test("a read-only seed with a default pair is refused, and an unsigned one is not", () => {
+    expect(readOnlySeedRefusal("s3", { user: "minioadmin", password: "minioadmin" })).toBe(MINIO_SENTENCE);
+    expect(readOnlySeedRefusal("s3", { user: "rustfsadmin", password: "rustfsadmin" })).toBe(RUSTFS_SENTENCE);
+    expect(readOnlySeedRefusal("s3", {})).toBeUndefined();
+    expect(readOnlySeedRefusal("s3", { user: "", password: "" })).toBeUndefined();
   });
 });
 

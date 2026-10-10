@@ -124,6 +124,8 @@ describe("the classification is exhaustive by construction", () => {
         // Whether the provider refuses writes on this connection (#1089). A mode, not a credential:
         // it grants nothing, and the browser reads it to draw the Read-only marker.
         "readOnly",
+        // The S3 signing region. A region NAME (`us-east-1`) that decides how a request is signed and grants nothing.
+        "region",
         // Kafka's SASL mechanism (#1088). A mechanism NAME (`SCRAM-SHA-512`), which the
         // broker's own configuration lists in the clear, so `public`; the password it checks
         // is the secret and is classified above.
