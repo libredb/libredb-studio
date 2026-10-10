@@ -1,0 +1,310 @@
+/**
+ * `kubectl logs`: the pods and containers kubectl would read, one log request per stream, merged by time into one
+ * grid of TIME, POD, CONTAINER and LINE.
+ *
+ * Which pods (kubectl's `polymorphichelpers/logsforobject.go`): a pod name reads that pod; `TYPE/NAME` of a workload
+ * or a Service reads its selector's pods and takes the one `GetFirstPod` takes, sorted by `podutils.ByLogging`, unless
+ * --all-pods asks for every one; -l reads every pod it selects. Which containers: -c, else every container with
+ * --all-containers (init, then regular, then ephemeral), else the `kubectl.kubernetes.io/default-container`
+ * annotation when it names one of the pod's containers, else the first container.
+ *
+ * Bounds: at most 5 streams (kubectl's --max-log-requests default), past which a sentence asks for -c or a narrower
+ * selector; each request asks `limitBytes` (1 MiB, or --limit-bytes) and `tailLines` (--tail, else 10 per pod under
+ * -l as kubectl reads, else 500 with a warning that kubectl's default is every line). `timestamps=true` is always
+ * requested; the RFC 3339 prefix of each line is its TIME and the rest its LINE. `follow` is never sent.
+ */
+import { QueryError } from "@/lib/db/errors";
+import { ACCEPT_JSON } from "../client";
+import type { IndexedResource } from "../discovery";
+import {
+  KUBERNETES_LOG_LIMIT_BYTES,
+  KUBERNETES_LOG_SELECTOR_TAIL,
+  KUBERNETES_LOG_TAIL_DEFAULT,
+  KUBERNETES_MAX_LOG_STREAMS,
+  KUBERNETES_MAX_STATEMENT_ROWS,
+  KUBERNETES_PAGE_SIZE,
+  KUBERNETES_TYPE,
+} from "../limits";
+import { redactResponse } from "../redaction";
+import { type KubeTable, parseTable, scanTable } from "../table";
+import { inTurn, type KubectlContext, type KubectlGrid, objectOf, resolveType, stringOf, textGrid } from "./context";
+import type { KubectlStatement } from "./parse";
+
+type LogsStatement = Extract<KubectlStatement, { readonly command: "logs" }>;
+
+type Json = Readonly<Record<string, unknown>>;
+
+const DEFAULT_CONTAINER_ANNOTATION = "kubectl.kubernetes.io/default-container";
+
+const TAIL_WARNING =
+  "kubectl reads every line when --tail is absent; Studio read the last 500 lines of each stream. Ask for up to 5,000 with --tail.";
+
+const READ_SELECTOR_KINDS =
+  "a deployment, replica set, stateful set, daemon set, job, replication controller or service";
+
+/** The resources whose pods `logs TYPE/NAME` reads, by group and plural, as `SelectorsForObject` takes them. */
+const SELECTOR_RESOURCES: ReadonlySet<string> = new Set([
+  "/replicationcontrollers",
+  "/services",
+  "apps/deployments",
+  "apps/replicasets",
+  "apps/statefulsets",
+  "apps/daemonsets",
+  "batch/jobs",
+]);
+
+const array = (value: unknown): readonly Json[] =>
+  Array.isArray(value) ? value.map((entry) => objectOf(entry) ?? {}) : [];
+
+const millis = (value: unknown): number => {
+  const at = typeof value === "string" && value !== "" ? Date.parse(value) : Number.NaN;
+  return Number.isNaN(at) ? 0 : at;
+};
+
+function readyCondition(pod: Json): Json | undefined {
+  return array(objectOf(pod.status)?.conditions).find((condition) => condition.type === "Ready");
+}
+
+function isReady(pod: Json): boolean {
+  return readyCondition(pod)?.status === "True";
+}
+
+/** When a ready pod became ready; 0 (the zero time) for a pod that is not ready. */
+function readyTime(pod: Json): number {
+  return isReady(pod) ? millis(readyCondition(pod)?.lastTransitionTime) : 0;
+}
+
+function maxRestarts(pod: Json): number {
+  return Math.max(
+    0,
+    ...array(objectOf(pod.status)?.containerStatuses).map((status) => Number(status.restartCount ?? 0)),
+  );
+}
+
+/** kubectl's `afterOrZero(t1, t2)`: t1 is after t2, or t1 is the zero time while t2 is not. */
+function afterOrZero(t1: number, t2: number): boolean {
+  if (t1 === 0 || t2 === 0) return t1 === 0;
+  return t1 > t2;
+}
+
+/** Phases as `ByLogging` ranks them: Running, then Unknown, then Pending; any other phase ranks with Running. */
+const PHASE_RANK: Readonly<Record<string, number>> = { Running: 0, Unknown: 1, Pending: 2 };
+
+/**
+ * `podutils.ByLogging`'s order: assigned before unassigned, Running before Unknown before Pending, ready before not
+ * ready, ready longer before ready shorter, more restarts before fewer, older before newer. Ties keep the server's
+ * order, which is the order of names.
+ */
+export function compareForLogging(a: Json, b: Json): number {
+  const aNode = stringOf(objectOf(a.spec)?.nodeName) ?? "";
+  const bNode = stringOf(objectOf(b.spec)?.nodeName) ?? "";
+  if (aNode !== bNode && (aNode === "" || bNode === "")) return aNode !== "" ? -1 : 1;
+  const aPhase = PHASE_RANK[String(objectOf(a.status)?.phase)] ?? 0;
+  const bPhase = PHASE_RANK[String(objectOf(b.status)?.phase)] ?? 0;
+  if (aPhase !== bPhase) return aPhase - bPhase;
+  if (isReady(a) !== isReady(b)) return isReady(a) ? -1 : 1;
+  if (isReady(a) && isReady(b) && readyTime(a) !== readyTime(b))
+    return afterOrZero(readyTime(b), readyTime(a)) ? -1 : 1;
+  if (maxRestarts(a) !== maxRestarts(b)) return maxRestarts(b) - maxRestarts(a);
+  const aCreated = millis(objectOf(a.metadata)?.creationTimestamp);
+  const bCreated = millis(objectOf(b.metadata)?.creationTimestamp);
+  if (aCreated !== bCreated) return afterOrZero(bCreated, aCreated) ? -1 : 1;
+  return 0;
+}
+
+/** A label selector as the API reads it: `matchLabels` and `matchExpressions`, sorted by key as kubectl writes them. */
+export function selectorText(selector: Json): string {
+  const terms: { readonly key: string; readonly text: string }[] = [];
+  const labels = objectOf(selector.matchLabels) ?? {};
+  for (const key of Object.keys(labels)) terms.push({ key, text: `${key}=${String(labels[key])}` });
+  for (const expression of array(selector.matchExpressions)) {
+    const key = String(expression.key);
+    const values = (Array.isArray(expression.values) ? expression.values.map(String) : []).sort();
+    if (expression.operator === "In") terms.push({ key, text: `${key} in (${values.join(",")})` });
+    else if (expression.operator === "NotIn") terms.push({ key, text: `${key} notin (${values.join(",")})` });
+    else if (expression.operator === "Exists") terms.push({ key, text: key });
+    else if (expression.operator === "DoesNotExist") terms.push({ key, text: `!${key}` });
+  }
+  return [...terms]
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .map((term) => term.text)
+    .join(",");
+}
+
+/** The pod selector of a workload or a Service, as `SelectorsForObject` reads it. */
+function podSelectorOf(resource: IndexedResource, object: Json, label: string): string {
+  const spec = objectOf(object.spec) ?? {};
+  const selector = objectOf(spec.selector) ?? {};
+  const plain = resource.group === "" ? selector : undefined;
+  const text =
+    plain !== undefined
+      ? Object.keys(plain)
+          .sort()
+          .map((key) => `${key}=${String(plain[key])}`)
+          .join(",")
+      : selectorText(selector);
+  if (text === "")
+    throw new QueryError(
+      `${label} selects no pods (its selector is empty), so it has no logs to read; name a pod instead.`,
+      KUBERNETES_TYPE,
+    );
+  return text;
+}
+
+async function readPod(context: KubectlContext, pods: IndexedResource, namespace: string, name: string): Promise<Json> {
+  const body = await context.surface.client.json({ op: "get", target: pods, namespace, name }, context.call());
+  return objectOf(redactResponse(pods, body)) ?? {};
+}
+
+/** Every pod a selector picks in the namespace, in the server's order, at most 5,000. */
+async function selectedPods(
+  context: KubectlContext,
+  pods: IndexedResource,
+  namespace: string,
+  labelSelector: string,
+): Promise<readonly Json[]> {
+  const read = async (page: { readonly continueToken?: string; readonly limit: number }): Promise<KubeTable> => {
+    const body = await context.surface.client.json(
+      {
+        op: "list",
+        target: pods,
+        namespace,
+        query: {
+          limit: page.limit,
+          labelSelector,
+          ...(page.continueToken === undefined ? {} : { continue: page.continueToken }),
+        },
+      },
+      { ...context.call(), accept: ACCEPT_JSON },
+    );
+    return parseTable(redactResponse(pods, body));
+  };
+  const scan = await scanTable(read, {
+    offset: 0,
+    limit: KUBERNETES_MAX_STATEMENT_ROWS + 1,
+    pageSize: KUBERNETES_PAGE_SIZE,
+  });
+  if (scan.rows.length > KUBERNETES_MAX_STATEMENT_ROWS)
+    throw new QueryError(
+      "More than 5,000 pods match the selector: narrow it before reading their logs.",
+      KUBERNETES_TYPE,
+    );
+  return scan.rows.map((row) => row.object ?? {});
+}
+
+/** The pods the statement reads. */
+async function podsOf(context: KubectlContext, statement: LogsStatement, namespace: string): Promise<readonly Json[]> {
+  const pods = await resolveType(context, "pods");
+  if (statement.target === undefined) return selectedPods(context, pods, namespace, statement.labelSelector as string);
+  if (statement.target.type === undefined) return [await readPod(context, pods, namespace, statement.target.name)];
+  const resource = await resolveType(context, statement.target.type);
+  if (resource.group === "" && resource.resource === "pods")
+    return [await readPod(context, pods, namespace, statement.target.name)];
+  const label = `${resource.resource}/${statement.target.name}`;
+  if (!SELECTOR_RESOURCES.has(`${resource.group}/${resource.resource}`))
+    throw new QueryError(
+      `kubectl logs reads the pods of ${READ_SELECTOR_KINDS}; ${resource.resource} has none to read.`,
+      KUBERNETES_TYPE,
+    );
+  const owner =
+    objectOf(
+      redactResponse(
+        resource,
+        await context.surface.client.json(
+          { op: "get", target: resource, namespace, name: statement.target.name },
+          context.call(),
+        ),
+      ),
+    ) ?? {};
+  const matched = await selectedPods(context, pods, namespace, podSelectorOf(resource, owner, label));
+  if (matched.length === 0)
+    throw new QueryError(
+      `No pod matches the selector of ${label} in the namespace ${namespace}, so there are no logs to read.`,
+      KUBERNETES_TYPE,
+    );
+  const sorted = [...matched].sort(compareForLogging);
+  return statement.allPods ? sorted : [sorted[0]];
+}
+
+/** The containers of one pod the statement reads. */
+function containersOf(statement: LogsStatement, pod: Json): readonly string[] {
+  const spec = objectOf(pod.spec) ?? {};
+  const names = (key: string): string[] => array(spec[key]).map((container) => String(container.name));
+  const regular = names("containers");
+  const every = [...names("initContainers"), ...regular, ...names("ephemeralContainers")];
+  const podName = String(objectOf(pod.metadata)?.name);
+  if (statement.container !== undefined) {
+    if (!every.includes(statement.container))
+      throw new QueryError(`The container named by -c is not a container of pod ${podName}.`, KUBERNETES_TYPE);
+    return [statement.container];
+  }
+  if (statement.allContainers) return every;
+  const annotated = stringOf(objectOf(objectOf(pod.metadata)?.annotations)?.[DEFAULT_CONTAINER_ANNOTATION]);
+  if (annotated !== undefined && every.includes(annotated)) return [annotated];
+  if (regular.length === 0) throw new QueryError(`Pod ${podName} lists no container.`, KUBERNETES_TYPE);
+  return [regular[0]];
+}
+
+/** One log line's time and text: the RFC 3339 prefix `timestamps=true` writes, and the rest. */
+export function splitTimestamp(line: string): { readonly time: string | null; readonly text: string } {
+  const match = /^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+(?:Z|[+-][0-9]{2}:[0-9]{2})) ([\s\S]*)$/.exec(line);
+  return match === null ? { time: null, text: line } : { time: match[1], text: match[2] };
+}
+
+/** A time as a key that sorts in time order, its fraction padded to nanoseconds. */
+function timeKey(time: string | null): string {
+  if (time === null) return "";
+  // The kubelet writes UTC with up to nine fraction digits and drops trailing zeros, so the fraction is padded.
+  const match = /^(.*T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.([0-9]+))?(.*)$/.exec(time) as RegExpExecArray;
+  return `${match[1]}.${(match[2] ?? "").padEnd(9, "0")}${match[3]}`;
+}
+
+export async function readLogs(context: KubectlContext, statement: LogsStatement): Promise<KubectlGrid> {
+  const namespace = statement.namespace ?? context.surface.endpoint.defaultNamespace;
+  const pods = await podsOf(context, statement, namespace);
+  const streams = pods.flatMap((pod) =>
+    containersOf(statement, pod).map((container) => ({ pod: String(objectOf(pod.metadata)?.name), container })),
+  );
+  if (streams.length > KUBERNETES_MAX_LOG_STREAMS)
+    throw new QueryError(
+      `This statement would read ${streams.length} log streams, more than the 5 Studio reads at once: name one container with -c, or narrow the selector.`,
+      KUBERNETES_TYPE,
+    );
+  const tail =
+    statement.tail ?? (statement.target === undefined ? KUBERNETES_LOG_SELECTOR_TAIL : KUBERNETES_LOG_TAIL_DEFAULT);
+  const lines = await inTurn(streams, async (stream) => {
+    const answer = await context.surface.client.send(
+      {
+        op: "logs",
+        namespace,
+        pod: stream.pod,
+        query: {
+          container: stream.container,
+          tailLines: tail,
+          limitBytes: statement.limitBytes ?? KUBERNETES_LOG_LIMIT_BYTES,
+          ...(statement.sinceSeconds === undefined ? {} : { sinceSeconds: statement.sinceSeconds }),
+          ...(statement.sinceTime === undefined ? {} : { sinceTime: statement.sinceTime }),
+          ...(statement.previous ? { previous: true } : {}),
+          timestamps: true,
+        },
+      },
+      { ...context.call(), accept: "text/plain" },
+    );
+    const text = answer.text.endsWith("\n") ? answer.text.slice(0, -1) : answer.text;
+    if (text === "") return [];
+    return text.split("\n").map((line) => {
+      const split = splitTimestamp(line);
+      return { pod: stream.pod, container: stream.container, time: split.time, text: split.text };
+    });
+  });
+  // A stable sort: lines of one time keep their stream's order.
+  const merged = lines
+    .flat()
+    .sort((a, b) => (timeKey(a.time) < timeKey(b.time) ? -1 : timeKey(a.time) > timeKey(b.time) ? 1 : 0));
+  const grid = textGrid(
+    ["TIME", "POD", "CONTAINER", "LINE"],
+    merged.map((line) => [line.time, line.pod, line.container, line.text]),
+  );
+  const warned = statement.tail === undefined && statement.target !== undefined;
+  return warned ? { ...grid, warnings: [{ message: TAIL_WARNING }] } : grid;
+}
