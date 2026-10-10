@@ -4,7 +4,12 @@
  * Every preview sentence is one literal here; the console's `--max-rows` refusal imports it.
  */
 import { quoteShellWord } from "@/lib/db/console/shell-words";
-import { S3_SHOWN_NAME_CHARS } from "./constants";
+import { applySourceBound, SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import type { ObjectSourcePart } from "@/lib/db/types";
+import type { QueryResult } from "@/lib/types";
+import { S3_PREVIEW_LIMITS, S3_SHOWN_NAME_CHARS } from "./constants";
+import type { ParquetSummary, S3Preview, S3PreviewCell, S3PreviewRows } from "./preview";
+import { hexDump, hexRows, textLines } from "./preview-text";
 
 /** Every notice and refusal of the preview, by id; placeholders are filled by `previewSentence`. */
 export const S3_PREVIEW_SENTENCES = Object.freeze({
@@ -134,5 +139,286 @@ export class PreviewRefusal extends Error {
   constructor(readonly sentence: string) {
     super(sentence);
     this.name = "PreviewRefusal";
+  }
+}
+
+/** A hint longer than this is not worth a part of the screen. */
+const HINT_MAX_CHARS = 4_096;
+
+/**
+ * The whole path word of the console command that previews this object, `quoteShellWord("s3://bucket/key")`, never
+ * cut; undefined when no command line can spell it or it is longer than 4,096 characters, since a cut command would
+ * preview a different object.
+ */
+export function previewHint(bucket: string, key: string): string | undefined {
+  let word: string;
+  try {
+    word = quoteShellWord(`s3://${bucket}/${key}`);
+  } catch {
+    return undefined;
+  }
+  return word.length > HINT_MAX_CHARS ? undefined : word;
+}
+
+type SourceParts = [ObjectSourcePart, ...ObjectSourcePart[]];
+type Truncation = { readonly limit: number; readonly reason: string };
+
+/** A text part, cut only by a caller's own limit; a cut read keeps its own truncation mark otherwise. */
+function textPart(
+  id: string,
+  label: string,
+  text: string,
+  language: string,
+  origin: "stored" | "rendered",
+  limit: number | undefined,
+  cut?: Truncation,
+): ObjectSourcePart {
+  const bound = applySourceBound(text, limit);
+  const truncated = bound.truncated ?? cut;
+  return {
+    id,
+    label,
+    text: bound.text,
+    language,
+    form: "complete",
+    origin,
+    ...(truncated === undefined ? {} : { truncated }),
+  };
+}
+
+function withNotes(
+  first: ObjectSourcePart,
+  second: ObjectSourcePart | undefined,
+  notices: readonly string[],
+  limit: number | undefined,
+): SourceParts {
+  const parts: SourceParts = [first];
+  if (second !== undefined) parts.push(second);
+  if (notices.length > 0)
+    parts.push(textPart("preview-notes", "Preview notes", notices.join("\n"), "plaintext", "rendered", limit));
+  return parts;
+}
+
+/**
+ * `entries` as the JSON array `JSON.stringify(entries, null, 2)` writes at `indent`, over already-rendered cells only,
+ * stopping before the entry that would take the array past `room` characters.
+ */
+function boundedArray(
+  entries: readonly unknown[],
+  indent: string,
+  room: number,
+): { readonly text: string; readonly kept: number } {
+  const pieces: string[] = [];
+  let length = 0;
+  for (const entry of entries) {
+    const piece = JSON.stringify(entry, null, 2)
+      .split("\n")
+      .map((line) => `${indent}  ${line}`)
+      .join("\n");
+    const next = pieces.length === 0 ? indent.length + 4 + piece.length : length + 2 + piece.length;
+    if (next > room) break;
+    pieces.push(piece);
+    length = next;
+  }
+  return { text: pieces.length === 0 ? "[]" : `[\n${pieces.join(",\n")}\n${indent}]`, kept: pieces.length };
+}
+
+/** The summary as two-space JSON whose labels say the statistics are the first row group's. */
+function schemaText(summary: ParquetSummary): { readonly text: string; readonly kept: number } {
+  const head = JSON.stringify(
+    {
+      rows: summary.rows,
+      rowGroups: summary.rowGroups,
+      createdBy: summary.createdBy,
+      firstRowGroup: summary.firstRowGroup,
+      columnsOfFirstRowGroup: [],
+    },
+    null,
+    2,
+  );
+  const prefix = head.slice(0, -"[]\n}".length);
+  const columns = boundedArray(
+    summary.columns.map((column) => ({
+      path: column.path,
+      type: column.type,
+      codec: column.codec,
+      nullsInFirstRowGroup: column.nulls,
+      minInFirstRowGroup: column.min,
+      maxInFirstRowGroup: column.max,
+      compressedBytes: column.compressedBytes,
+      uncompressedBytes: column.uncompressedBytes,
+    })),
+    "  ",
+    SOURCE_CHARACTER_LIMIT - prefix.length - 2,
+  );
+  return { text: `${prefix}${columns.text}\n}`, kept: columns.kept };
+}
+
+const keyedRows = (rows: S3PreviewRows): Record<string, S3PreviewCell>[] =>
+  rows.rows.map((cells) => Object.fromEntries(rows.columns.map((column, index) => [column.name, cells[index]])));
+
+const countCell = (cell: S3PreviewCell): string | number =>
+  typeof cell === "number" || typeof cell === "string" ? cell : String(cell);
+
+function parquetParts(
+  preview: Extract<S3Preview, { kind: "parquet" }>,
+  place: { readonly limit?: number },
+): SourceParts {
+  const notices = [...preview.notices];
+  const schema = schemaText(preview.summary);
+  if (schema.kept < preview.summary.columns.length) {
+    notices.push(previewSentence("N-COLUMNS", { cap: schema.kept, n: preview.summary.columns.length }));
+  }
+  const schemaPart = textPart("schema", "Parquet schema", schema.text, "json", "rendered", place.limit);
+  if (preview.rows === undefined) {
+    const reason =
+      preview.notices[0] ??
+      previewSentence("N-PQ-SUMMARY", { rows: countCell(preview.summary.rows), groups: preview.summary.rowGroups });
+    return withNotes(schemaPart, { id: "rows", label: "First rows", unavailable: reason }, notices, place.limit);
+  }
+  const rows = boundedArray(keyedRows(preview.rows), "", SOURCE_CHARACTER_LIMIT);
+  if (rows.kept < preview.rows.rows.length)
+    notices.push(previewSentence("N-OUTPUT", { r: rows.kept, cap: SOURCE_CHARACTER_LIMIT }));
+  return withNotes(
+    schemaPart,
+    textPart("rows", "First rows", rows.text, "json", "rendered", place.limit),
+    notices,
+    place.limit,
+  );
+}
+
+/**
+ * The Source tab's parts of a preview, appended after the Metadata part: one to three, each
+ * built to fit SOURCE_CHARACTER_LIMIT, so only a caller's own `limit` cuts one.
+ */
+export function previewSourceParts(
+  preview: S3Preview,
+  place: { readonly bucket: string; readonly key: string; readonly limit?: number },
+): SourceParts {
+  switch (preview.kind) {
+    case "empty":
+      return [{ id: "preview", label: "Preview", unavailable: preview.notices[0] ?? EMPTY_OBJECT_SENTENCE }];
+    case "refused":
+      return [{ id: "preview", label: "Preview", unavailable: preview.sentence }];
+    case "hex":
+      return withNotes(
+        textPart(
+          "preview",
+          "Preview",
+          hexDump(preview.bytes, preview.objectBytes),
+          "plaintext",
+          "rendered",
+          place.limit,
+        ),
+        undefined,
+        preview.notices,
+        place.limit,
+      );
+    case "text": {
+      const cut = preview.cut
+        ? {
+            limit: preview.shownBytes,
+            reason:
+              preview.notices[0] ?? previewSentence("N-CUT", { shown: preview.shownBytes, size: preview.objectBytes }),
+          }
+        : undefined;
+      const rowsPossible =
+        preview.format === "csv" ||
+        preview.format === "tsv" ||
+        preview.format === "ndjson" ||
+        (preview.format === "json" && preview.language === "json");
+      const path = rowsPossible ? previewHint(place.bucket, place.key) : undefined;
+      const notices = path === undefined ? preview.notices : [...preview.notices, previewSentence("N-HINT", { path })];
+      return withNotes(
+        textPart("preview", "Preview", preview.text, preview.language, preview.origin, place.limit, cut),
+        undefined,
+        notices,
+        place.limit,
+      );
+    }
+    default:
+      return parquetParts(preview, place);
+  }
+}
+
+function grid(rows: S3PreviewRows, warnings: readonly string[], executionTime: number): QueryResult {
+  const fields = rows.columns.map((column) => column.name);
+  return {
+    fields,
+    rows: keyedRows(rows),
+    rowCount: rows.rows.length,
+    executionTime,
+    columnTypes: Object.fromEntries(rows.columns.map((column) => [column.name, column.type])),
+    ...(warnings.length > 0 ? { warnings: warnings.map((message) => ({ message })) } : {}),
+  };
+}
+
+const bare = (message: string, executionTime: number): QueryResult => ({
+  fields: [],
+  rows: [],
+  rowCount: 0,
+  executionTime,
+  warnings: [{ message }],
+});
+
+/**
+ * The console grid of a preview: the rows of a row format or of Parquet; a text's lines; hex
+ * rows of 16 bytes; a Parquet summary as one row per leaf column; an empty or refused preview as its sentence alone.
+ */
+export function previewQueryResult(preview: S3Preview, executionTime: number): QueryResult {
+  const maxRows = S3_PREVIEW_LIMITS.maxRows;
+  switch (preview.kind) {
+    case "empty":
+      return bare(preview.notices[0] ?? EMPTY_OBJECT_SENTENCE, executionTime);
+    case "refused":
+      return bare(preview.sentence, executionTime);
+    case "hex": {
+      const hex = hexRows(preview.bytes, maxRows);
+      const columns = ["offset", "hex", "text"].map((name) => ({ name, type: "text" }));
+      const warnings = hex.more ? [...preview.notices, previewSentence("N-ROWS", { cap: maxRows })] : preview.notices;
+      return grid({ columns, rows: hex.rows }, warnings, executionTime);
+    }
+    case "text": {
+      if (preview.rows !== undefined) return grid(preview.rows, preview.notices, executionTime);
+      const lines = textLines(preview.text, maxRows);
+      const columns = [
+        { name: "line", type: "number" },
+        { name: "text", type: "text" },
+      ];
+      return grid(
+        { columns, rows: lines.lines.map((line, index) => [index + 1, line]) },
+        preview.notices,
+        executionTime,
+      );
+    }
+    default: {
+      if (preview.rows !== undefined) return grid(preview.rows, preview.notices, executionTime);
+      const { summary } = preview;
+      const columns = [
+        { name: "column", type: "text" },
+        { name: "type", type: "text" },
+        { name: "codec", type: "text" },
+        { name: "nulls", type: "json" },
+        { name: "min", type: "json" },
+        { name: "max", type: "json" },
+        { name: "compressed_bytes", type: "number" },
+        { name: "uncompressed_bytes", type: "number" },
+      ];
+      const rows = summary.columns.map((column) => [
+        column.path,
+        column.type,
+        column.codec,
+        column.nulls,
+        column.min,
+        column.max,
+        column.compressedBytes,
+        column.uncompressedBytes,
+      ]);
+      const warnings = [
+        ...preview.notices,
+        previewSentence("N-PQ-SUMMARY", { rows: countCell(summary.rows), groups: summary.rowGroups }),
+      ];
+      return grid({ columns, rows }, warnings, executionTime);
+    }
   }
 }
