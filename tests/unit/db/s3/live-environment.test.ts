@@ -1233,3 +1233,63 @@ describe("the seed connections docker/s3/seed-connections.yaml", () => {
     finds(seedConnectionFindings(consent), "s3-silo-root sets allowInsecureAuth");
   });
 });
+
+// -- tests/live/s3-*.ts ---------------------------------------------------------------------------------------------
+
+const SEED_RAW = "tests/live/s3-seed-raw.ts";
+const SOCKET_IMPORTS = /from\s+"(node:)?(http|https|net|tls|dgram|http2)"|\bfetch\s*\(|new\s+WebSocket\b/;
+
+function seedRawFindings({ files }: S3Fixtures): string[] {
+  const script = files[SEED_RAW];
+  if (script === undefined) return [`${SEED_RAW} is missing`];
+  const findings: string[] = [];
+  if (SOCKET_IMPORTS.test(script)) findings.push(`${SEED_RAW} can open a socket`);
+  if (/from\s+"@\/lib\/db\/providers\//.test(script)) findings.push(`${SEED_RAW} imports a provider module`);
+  return findings;
+}
+
+/** No file of tests/live/s3-*.ts names a method other than GET or HEAD in a request it builds. */
+function liveMethodFindings({ files }: S3Fixtures): string[] {
+  const findings: string[] = [];
+  for (const [file, text] of Object.entries(files)) {
+    if (!file.startsWith("tests/live/s3-")) continue;
+    for (const [match] of text.matchAll(/method:\s*"([A-Z]+)"/g))
+      if (!/"(GET|HEAD)"/.test(match)) findings.push(`${file} builds a ${match} request`);
+  }
+  return findings;
+}
+
+describe("the run-time object generator tests/live/s3-seed-raw.ts", () => {
+  test("opens no socket and imports no provider module: the target's own seed one-shot uploads", () => {
+    clean(seedRawFindings(real));
+    finds(
+      seedRawFindings(planted(real, (draft) => void (draft.files[SEED_RAW] += '\nimport http from "node:http";\n'))),
+      "can open a socket",
+    );
+    finds(
+      seedRawFindings(planted(real, (draft) => void (draft.files[SEED_RAW] += "\nawait fetch(url);\n"))),
+      "can open a socket",
+    );
+  });
+
+  test("no live S3 file builds a request with a method other than GET or HEAD", () => {
+    clean(liveMethodFindings(real));
+    finds(
+      liveMethodFindings(planted(real, (draft) => void (draft.files[SEED_RAW] += '\nconst r = { method: "PUT" };\n'))),
+      "builds a method:",
+    );
+  });
+
+  test("refuses silo-tls and any target outside the loopback table before anything runs", () => {
+    for (const target of ["silo-tls", "10.0.0.5:9000", "aws"]) {
+      const run = Bun.spawnSync([process.execPath, path.join(ROOT, SEED_RAW), "--target", target], {
+        cwd: ROOT,
+        env: { ...process.env, PATH: "/nonexistent" },
+      });
+      expect({ target, exit: run.exitCode }).toEqual({ target, exit: 2 });
+      expect(run.stderr.toString()).toContain(
+        "s3-seed-raw.ts: --target must be one of minio, minio-region, silo, garage, rustfs",
+      );
+    }
+  });
+});
