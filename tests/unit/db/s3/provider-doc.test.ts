@@ -977,8 +977,15 @@ describe("docs/providers/s3.md: networks, tests, limits and references", () => {
     expect(flat(limits)).toContain(`at most ${S3_PARQUET_DECODE_SLOTS} at a time`);
     const leaves = S3_PREVIEW_LIMITS.parquetMaxLeafColumns;
     expect(flat(limits)).toContain(
-      `A Parquet preview shows at most ${n(leaves)} leaf columns and refuses a schema of more than ${n(leaves * 8)} elements`,
+      `A Parquet preview shows at most ${n(leaves)} leaf columns, the leaf-column bound the decode measurement set, and refuses a schema of more than ${n(leaves * 8)} elements, eight times it`,
     );
+    expect(flat(limits)).toContain("previews fewer columns");
+    expect(flat(limits)).toContain("only its schema and statistics when its first column alone");
+    expect(flat(limits)).toContain("is refused when one page declares more values than a preview allows");
+    expect(limits).toContain("(../BACKLOG.md#d274-large-parquet-row-groups-preview-fewer-columns-or-none)");
+    const rowGroups = limits.split("\n").find((line) => line.includes("[D274]"));
+    expect(rowGroups).toBeDefined();
+    expect(rowGroups).not.toContain("previews as its schema and statistics without rows");
     expect(flat(limits)).toContain(`names at most ${n(S3_PREVIEW_LIMITS.maxColumns * 8)} columns`);
   });
 
