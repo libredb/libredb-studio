@@ -2401,13 +2401,18 @@ export const S3_RUNNERS: Readonly<Record<string, Readonly<Record<string, S3StepF
   A24b: {
     handover: (run, wire) => {
       const connection = connectionOf(run, { role: "root" });
+      const level = { pattern: "studio-bulk/folders/", count: 1000 } as const;
       return step(run, wire, "handover", { connection }, async () => {
         const first = await withProvider(provider(run, wire, connection), (p) =>
-          p.scanKeysPage!({ cursor: "0", pattern: "studio-bulk/folders/", count: 1000, level: true }),
+          p.scanKeysPage!({ cursor: "0", ...level, level: true }),
         );
+        const firstDefect = levelPageDefect(level.pattern, level.count, first);
+        if (firstDefect !== undefined) throw new Error(firstDefect);
         const second = await withProvider(provider(run, wire, connection), (p) =>
-          p.scanKeysPage!({ cursor: first.cursor, pattern: "studio-bulk/folders/", count: 1000, level: true }),
+          p.scanKeysPage!({ cursor: first.cursor, ...level, level: true }),
         );
+        const secondDefect = levelPageDefect(level.pattern, level.count, second);
+        if (secondDefect !== undefined) throw new Error(secondDefect);
         const names = [...(first.prefixes ?? []), ...first.keys, ...(second.prefixes ?? []), ...second.keys];
         return {
           pages: [

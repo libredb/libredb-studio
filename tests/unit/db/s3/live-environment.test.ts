@@ -23,15 +23,17 @@ import type { S3RecordedRequest } from "../../../helpers/s3-wire";
 import { S3_LIVE_ONLY_ROWS, scenariosFor } from "../../../live/s3-evidence-plan";
 import {
   checkS3Step,
+  levelPageDefect,
   readS3Principals,
   renderS3Acceptance,
   S3_ACCEPTANCE,
   S3_ACCEPTANCE_GROUPS,
+  S3_RUNNERS,
   S3_TARGET_NAMES,
   s3LiveConnection,
   sentenceRefFinding,
+  wireViolations,
 } from "../../../live/s3-live-support";
-import { levelPageDefect, S3_RUNNERS, wireViolations } from "../../../live/s3-live-support";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 
@@ -1515,6 +1517,7 @@ describe("the runners and the scenario list", () => {
       'the level page holds the folder "b/dir/sub/deeper/", which is outside the level of "b/dir/"',
     );
     expect(levelPageDefect("b/dir/", 9, page([], ["b/other/"]))).toContain("outside the level");
+    expect(levelPageDefect("b/dir/", 9, page([], ["b/dir/sub"]))).toContain("outside the level");
     expect(levelPageDefect("b/dir/", 9, page([], ["b/dir/sub/", "b/dir/sub/"]))).toBe(
       'the level page holds "b/dir/sub/" twice',
     );

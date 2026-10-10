@@ -7,8 +7,7 @@
  * cap (A39's first row groups), or when it is a rule over every request (A26, A27, A33, A45, A53, A54), which the
  * replay checks over every capture instead. A37 records only the steps that read less than 512 KiB.
  */
-import type { S3CaptureTarget } from "../helpers/s3-fixtures";
-import { S3_CAPTURE_TARGETS } from "../helpers/s3-fixtures";
+import { S3_CAPTURE_TARGETS, type S3CaptureTarget } from "../helpers/s3-fixtures";
 import {
   applicableSteps,
   runS3Row,
