@@ -1034,3 +1034,83 @@ describe("the object seed docker/s3/seed.sh", () => {
     expect({ exit: parsed.exitCode, stderr: parsed.stderr.toString() }).toEqual({ exit: 0, stderr: "" });
   });
 });
+
+// -- docker/s3/README.md --------------------------------------------------------------------------------------------
+
+const README = "docker/s3/README.md";
+type S3RoleName = "root" | "browse" | "scoped" | "getonly";
+const ROLE_NAMES: readonly S3RoleName[] = ["root", "browse", "scoped", "getonly"];
+const SILO_TLS_LINES = [
+  "$P run --rm --no-deps -T -v libredb-studio_s3-certs:/certs:ro -e SSL_CERT_FILE=/certs/CAs/ca.crt --entrypoint sh silo-principals /s3/principals.sh https://silo-tls:9000",
+  "$P run --rm --no-deps -T -v libredb-studio_s3-certs:/certs:ro -e S3_SEED_CA=/certs/CAs/ca.crt --entrypoint sh silo-seed /s3/seed.sh https://silo-tls:9000 us-east-1 silo",
+];
+const README_HEADINGS = [
+  "## The servers",
+  "## Bringing them up",
+  "## The scripts",
+  "## Principals and keys",
+  "## Seeded data",
+  "## Special keys",
+  "## Bounds, as measured",
+  "## Telemetry",
+  "## First-run measurements",
+  "## The SSH bastion of the tunnel check",
+];
+
+/** The rows `| <role> | `<access key>` | `<password>` | `<Garage key id>` (...) | ... |` of the principals table. */
+function readmePrincipals(
+  readme: string,
+): Partial<Record<S3RoleName, { accessKeyId: string; secret: string; garageKeyId: string }>> {
+  const rows: Partial<Record<S3RoleName, { accessKeyId: string; secret: string; garageKeyId: string }>> = {};
+  for (const line of readme.split("\n")) {
+    const row = /^\| (root|browse|scoped|getonly) \| `([^`]+)` \| `([^`]+)` \| `(GK[0-9a-f]{24})`/.exec(line);
+    if (row) rows[row[1] as S3RoleName] = { accessKeyId: row[2], secret: row[3], garageKeyId: row[4] };
+  }
+  return rows;
+}
+
+function readmeFindings({ files, services }: S3Fixtures): string[] {
+  const readme = files[README];
+  if (readme === undefined) return [`${README} is missing`];
+  const findings: string[] = [];
+  for (const heading of README_HEADINGS)
+    if (!readme.split("\n").includes(heading)) findings.push(`${README} has no ${heading}`);
+  for (const line of SILO_TLS_LINES)
+    if (!readme.includes(line)) findings.push(`${README} does not carry the silo-tls line ${line.slice(0, 60)}`);
+  for (const name of S3_SERVICES) if (!readme.includes(`\`${name}\``)) findings.push(`${README} never names ${name}`);
+  const principals = readmePrincipals(readme);
+  for (const role of ROLE_NAMES)
+    if (principals[role] === undefined) findings.push(`${README} has no principals row for ${role}`);
+  const root = principals.root;
+  const env = services.minio?.environment ?? {};
+  if (root !== undefined && (env.MINIO_ROOT_USER !== root.accessKeyId || env.MINIO_ROOT_PASSWORD !== root.secret))
+    findings.push("the README's root principal is not the compose file's MinIO root");
+  const rustfs = services.rustfs?.environment ?? {};
+  if (root !== undefined && (rustfs.RUSTFS_ACCESS_KEY !== root.accessKeyId || rustfs.RUSTFS_SECRET_KEY !== root.secret))
+    findings.push("the README's root principal is not the compose file's RustFS root");
+  const principalsScript = files["docker/s3/principals.sh"] ?? "";
+  for (const role of ["browse", "scoped", "getonly"] as const) {
+    const row = principals[role];
+    if (row !== undefined && !principalsScript.includes(`"${row.accessKeyId} ${row.secret}"`))
+      findings.push(`principals.sh does not create ${row.accessKeyId} with the README's password`);
+  }
+  GARAGE_KEY_IDS.forEach((id, index) => {
+    if (principals[ROLE_NAMES[index]]?.garageKeyId !== id)
+      findings.push(`the README's ${ROLE_NAMES[index]} row does not name ${id}`);
+  });
+  return findings;
+}
+
+describe("the fixtures README docker/s3/README.md", () => {
+  test("names every service, carries the bring-up lines, and its principals are the ones the compose file and scripts create", () => {
+    clean(readmeFindings(real));
+    const drifted = planted(real, (draft) => {
+      draft.files[README] = draft.files[README].replace("`Browse123pass!`", "`Browse124pass!`");
+    });
+    finds(readmeFindings(drifted), "principals.sh does not create studio-browse");
+    const lost = planted(real, (draft) => {
+      draft.files[README] = draft.files[README].replace(SILO_TLS_LINES[1], "");
+    });
+    finds(readmeFindings(lost), "does not carry the silo-tls line");
+  });
+});
