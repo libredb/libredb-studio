@@ -2,7 +2,7 @@
 # Layout, buckets, keys, grants and the local alias of the Garage fixture, through Garage's admin API v2
 # (docker/s3/README.md; request bodies from the v2.4.1 OpenAPI document). Every step reads first and writes only
 # what is missing, so a second run changes nothing. POSIX sh in alpine/curl, which carries no jq: values are read
-# from the one-line JSON answers with sed and checked to be hex before use.
+# with sed from the answers, which api() flattens to compact JSON, and checked to be hex before use.
 #
 #   garage-setup.sh <admin url>
 set -eu
@@ -18,6 +18,7 @@ fail() {
 }
 
 # api <method> <path> [<json body>]: prints "<status> <body>" on one line.
+# Garage answers pretty-printed JSON; api() flattens it to compact JSON for the patterns below.
 api() {
   body="$(mktemp)"
   if [ "$#" -ge 3 ]; then
@@ -26,7 +27,7 @@ api() {
   else
     status="$(curl -sS -o "$body" -w '%{http_code}' -X "$1" -H "Authorization: Bearer $TOKEN" "$ADMIN$2")" || status=000
   fi
-  printf '%s %s' "$status" "$(tr -d '\n' < "$body")"
+  printf '%s %s' "$status" "$(awk '{ sub(/^ +/, ""); printf "%s", $0 }' "$body" | sed 's/": /":/g')"
   rm -f "$body"
 }
 
@@ -108,7 +109,7 @@ allow studio-scoped GK000000000000000000000003 false
 # 6. The scoped key's local alias for studio-scoped.
 scoped="$(api GET "/v2/GetBucketInfo?globalAlias=studio-scoped")"
 case "$scoped" in
-  *'"alias":"scoped-local"'*) ;;
+  *'"bucketLocalAliases":["scoped-local"'*) ;;
   *)
     expect_ok "AddBucketAlias scoped-local" "$(api POST /v2/AddBucketAlias \
       "{\"bucketId\":\"$(bucket_id studio-scoped)\",\"localAlias\":\"scoped-local\",\"accessKeyId\":\"GK000000000000000000000003\"}")"

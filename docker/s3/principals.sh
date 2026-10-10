@@ -42,12 +42,13 @@ for name in studio-browse studio-scoped; do
   policies=$((policies + 1))
 done
 
-# attach <user> <policy>: attaches only when `user info` does not list the policy yet.
+# attach <user> <policy>: attaches only when the policyName field of `user info` (a comma-separated list) does not
+# hold the policy yet. It reads that field alone, because the answer also carries the user's own name as accessKey,
+# and here the user and policy names match.
 attach() {
   info="$(run "mc admin user info $1" admin user info fx "$1" --json)"
-  case "$info" in
-    *"\"$2\""*) return 0 ;;
-  esac
+  held="$(printf '%s' "$info" | sed -n 's/.*"policyName": *"\([^"]*\)".*/\1/p')"
+  case ",$held," in *",$2,"*) return 0 ;; esac
   run "mc admin policy attach $2 to $1" admin policy attach fx "$2" --user "$1" >/dev/null
 }
 

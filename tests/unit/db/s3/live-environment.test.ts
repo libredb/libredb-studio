@@ -649,6 +649,10 @@ function garageSetupFindings({ files }: S3Fixtures): string[] {
   for (const id of GARAGE_KEY_IDS) if (!script.includes(id)) findings.push(`garage-setup.sh does not import ${id}`);
   if (!script.includes("scoped-local")) findings.push("garage-setup.sh does not add the local alias scoped-local");
   if (/\bjq\b/.test(shellCode(script))) findings.push("garage-setup.sh calls jq, which alpine/curl does not carry");
+  const code = shellCode(script);
+  if (!code.includes(`s/": /":/g`)) findings.push("garage-setup.sh does not flatten Garage's pretty-printed answers");
+  if (code.includes(`"alias":"scoped-local"`) || !code.includes(`"bucketLocalAliases":["scoped-local"`))
+    findings.push("garage-setup.sh reads the scoped-local alias from a field GetBucketInfo does not answer");
   return findings;
 }
 
@@ -663,6 +667,9 @@ function principalsFindings({ files }: S3Fixtures): string[] {
       findings.push(`principals.sh does not attach ${policy}`);
   if (/\bgrep\b/.test(shellCode(script)))
     findings.push("principals.sh calls grep, which the Silo-line mc image may not carry");
+  const code = shellCode(script);
+  if (!code.includes(`"policyName"`) || code.includes(`*"\\"$2\\""*`))
+    findings.push("principals.sh matches the policy anywhere in the user info answer, not in its policyName field");
   return findings;
 }
 
@@ -739,6 +746,19 @@ describe("the principals, Garage and TLS material of docker/s3", () => {
         ),
       ),
     );
+    const unflattened = planted(real, (draft) => {
+      draft.files["docker/s3/garage-setup.sh"] = draft.files["docker/s3/garage-setup.sh"].replaceAll(
+        `s/": /":/g`,
+        "s/x/x/",
+      );
+    });
+    finds(garageSetupFindings(unflattened), "does not flatten Garage's pretty-printed answers");
+    const oldAlias = planted(
+      real,
+      (draft) =>
+        void (draft.files["docker/s3/garage-setup.sh"] += `\ncase "$scoped" in *'"alias":"scoped-local"'*) ;; esac\n`),
+    );
+    finds(garageSetupFindings(oldAlias), "reads the scoped-local alias from a field GetBucketInfo does not answer");
   });
 
   test("principals.sh adds the three users and attaches their policies, with no grep", () => {
@@ -755,6 +775,11 @@ describe("the principals, Garage and TLS material of docker/s3", () => {
         ),
       ),
     );
+    const wholeAnswer = planted(
+      real,
+      (draft) => void (draft.files["docker/s3/principals.sh"] += `\ncase "$info" in *"\\"$2\\""*) return 0 ;; esac\n`),
+    );
+    finds(principalsFindings(wholeAnswer), "matches the policy anywhere in the user info answer");
   });
 
   test("the browse policy is the least privilege Studio needs and the scoped one names one bucket", () => {
