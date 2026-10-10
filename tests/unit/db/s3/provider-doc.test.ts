@@ -1693,3 +1693,51 @@ describe("the architecture, provider, editor and guide docs", () => {
     );
   });
 });
+
+/** The installed manifest of `name`: hoisted, or nested under hyparquet-compressors. */
+function installed(name: string): { readonly version: string; readonly license: string } {
+  for (const at of [
+    `node_modules/${name}/package.json`,
+    `node_modules/hyparquet-compressors/node_modules/${name}/package.json`,
+  ]) {
+    if (existsSync(path.join(ROOT, at))) return JSON.parse(read(at)) as { version: string; license: string };
+  }
+  throw new Error(`${name} is not installed`);
+}
+
+describe("docs/THIRD_PARTY_LICENSES.md", () => {
+  test("60. the four Parquet packages are recorded at the versions and licences installed", () => {
+    const licenses = read("docs/THIRD_PARTY_LICENSES.md");
+    const manifest = JSON.parse(read("package.json")) as { readonly dependencies: Readonly<Record<string, string>> };
+    // The preview imports fzstd itself only when it loads the codecs by path, and then package.json pins it.
+    const codecsByPath = "fzstd" in manifest.dependencies;
+    const direct = codecsByPath
+      ? ["hyparquet", "hyparquet-compressors", "fzstd"]
+      : ["hyparquet", "hyparquet-compressors"];
+    for (const name of direct) {
+      expect(manifest.dependencies[name], name).toMatch(/^\d+\.\d+\.\d+$/);
+      expect(installed(name).version, name).toBe(manifest.dependencies[name]);
+    }
+    for (const [name, reached] of [
+      ["hyparquet", "direct dependency"],
+      ["hyparquet-compressors", "direct dependency"],
+      [
+        "fzstd",
+        codecsByPath ? "direct dependency (the preview imports it directly)" : "dependency of `hyparquet-compressors`",
+      ],
+      ["hysnappy", "dependency of `hyparquet-compressors`"],
+    ] as const) {
+      const row = licenses.split("\n").find((line) => line.startsWith(`| [\`${name}\`](`));
+      expect(row, name).toBeDefined();
+      const cells = row?.split(" | ") ?? [];
+      expect(cells[1], name).toBe(installed(name).version);
+      expect(cells[2]?.startsWith(installed(name).license), name).toBe(true);
+      expect(cells[3], name).toContain(reached);
+    }
+    expect(licenses).toContain(
+      codecsByPath
+        ? "Only `src/lib/db/providers/objectstore/s3/preview-parquet.ts` loads three of them, through a dynamic import"
+        : "Only `src/lib/db/providers/objectstore/s3/preview-parquet.ts` loads the four, through a dynamic import",
+    );
+  });
+});
