@@ -53,6 +53,9 @@
  *   and every socket is opened through a lookup that checks the address it dials, after the guard's own check when the
  *   flag is on.
  *
+ * `createNodeTransport` takes two of these on request, the 101 refusal as `refusesUpgrade` and the link-local
+ * refusal as `refusesLinkLocal`, both off when absent, so a provider that does not ask keeps the behaviour it had.
+ *
  * `nodeTlsMaterial` is the TLS mapping D37 counts, shared here so that a new REST provider takes it instead of
  * writing another copy.
  *
@@ -107,6 +110,17 @@ export interface NodeTransportOptions {
    * transport or the connection sets is refused when the transport is built.
    */
   readonly requestHeaderNames?: readonly string[];
+  /**
+   * Text transport only, off when absent: never reach a link-local address or AWS's IPv6 instance metadata address,
+   * as the byte transport never does, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says. A literal is refused when the
+   * transport is built, and every socket is opened through a lookup that checks the address it dials.
+   */
+  readonly refusesLinkLocal?: boolean;
+  /**
+   * Text transport only, off when absent: fail a 101 answer at once as a network failure and destroy its socket, as
+   * the byte transport does, rather than leave the request waiting for its deadline.
+   */
+  readonly refusesUpgrade?: boolean;
 }
 
 export interface NodeRequest {
@@ -215,7 +229,8 @@ export interface RequestSigner {
   sign(input: SigningInput): Readonly<Record<string, string>>;
 }
 
-export interface NodeByteTransportOptions extends NodeTransportOptions {
+/** The byte transport always refuses link-local addresses and a 101 answer, so it takes neither option. */
+export interface NodeByteTransportOptions extends Omit<NodeTransportOptions, "refusesLinkLocal" | "refusesUpgrade"> {
   /** Absent: no response header is returned and `headers` is []. */
   readonly responseHeaders?: ResponseHeaderSelection;
   /** Absent: the request is sent unsigned, with no Authorization header, which the connection headers never carry. */
@@ -356,6 +371,7 @@ const INVALID_HEADER_NAMES = "Invalid requestHeaderNames: expected lower-case he
 const UNLISTED_HEADER = "Invalid request headers: a header this transport does not list was given";
 const NOT_A_RECORD = "Invalid request headers: expected a plain record of header names and values";
 const INVALID_METHOD = "Invalid method: this transport sends GET and HEAD only";
+const INVALID_TEXT_METHOD = "Invalid method: this transport sends GET and POST only";
 const INVALID_TRUNCATE_AT = "Invalid truncateAt: expected a positive integer no greater than maxResponseBytes";
 const INVALID_TARGET = "Invalid request target: expected a path and a query";
 const INVALID_TARGET_PATH =
@@ -517,6 +533,16 @@ function encodingRefusal(encoding: string): TransportError {
     "encoding",
     `The server answered with content-encoding ${named}, and this transport reads identity only, so the response was not read`,
   );
+}
+
+/**
+ * A text transport opt-in as checked when the transport is built: absent or false is off, true is on, and anything
+ * else is refused by name, never read as either.
+ */
+function optedIn(value: unknown, name: keyof NodeTransportOptions): boolean {
+  if (value === undefined || value === false) return false;
+  if (value === true) return true;
+  throw new DatabaseConfigError(`Invalid ${name}: expected true or false`);
 }
 
 function isPositiveInteger(value: number): boolean {
@@ -1103,9 +1129,9 @@ interface Connection<A> {
 
 interface ConnectionRules {
   /**
-   * The byte factory's: a link-local or metadata literal is refused, and every socket is opened through a lookup that
-   * checks the address it dials. The text factory leaves it off, so DB_HTTP_BLOCK_PRIVATE_HOSTS alone limits where
-   * it connects.
+   * A link-local or metadata literal is refused, and every socket is opened through a lookup that checks the address
+   * it dials. The byte factory always sets it; the text factory sets it when its caller asks, and otherwise
+   * DB_HTTP_BLOCK_PRIVATE_HOSTS alone limits where it connects.
    */
   readonly refusesLinkLocal: boolean;
   /** The connection's headers as checked: lowerCased for the text factory, checkedConnectionHeaders for the byte one. */
@@ -1134,7 +1160,7 @@ function connectionOf<A>(
   // With refusesLinkLocal, and whatever the flag says, a link-local or metadata literal is refused next, so the guard's
   // sentence wins when it is on, and every socket is opened through a lookup that checks the answer it dials: with the
   // guard on, its check and then the link-local check, because the guard's has no zone rule; with it off,
-  // linkLocalRefusingLookup (byte transport design 3.9). The text factory keeps the guard's lookup alone.
+  // linkLocalRefusingLookup (byte transport design 3.9). Without refusesLinkLocal the guard's lookup is kept alone.
   const { lookup: guardLookup } = guardedNodeOptions(origin.host);
   if (refusesLinkLocal) assertNotLinkLocalLiteral(origin.host);
   const linkLocalLookup = guardLookup === undefined ? linkLocalRefusingLookup : guardedLinkLocalRefusingLookup;
@@ -1164,11 +1190,11 @@ interface Prepared {
  * write, so whatever throws there or in node:http fails this request alone and frees its slot. `answered` is handed the
  * answer, its status and the request that carried it once the answer's own errors are wired to the exchange.
  *
- * With `refusesUpgrade`, the byte transport's, a 101 answer fails the request at once as a network failure and its
- * socket is destroyed. node:http hands a 101 that carries Connection: upgrade and an Upgrade header to the request's
- * `upgrade` event, never to the response callback, so without it the request never settles: it holds its slot until
- * its deadline and is reported as a timeout. Any other 101 reaches the response callback, where the byte transport
- * refuses it by its status.
+ * With `refusesUpgrade`, which the byte transport always sets and the text transport sets on request, a 101 answer
+ * fails the request at once as a network failure and its socket is destroyed. node:http hands a 101 that carries
+ * Connection: upgrade and an Upgrade header to the request's `upgrade` event, never to the response callback, so
+ * without it the request never settles: it holds its slot until its deadline and is reported as a timeout. Any other
+ * 101 reaches the response callback, where each factory that set it refuses it by its status.
  */
 function dispatch<T>(
   core: TransportCore,
@@ -1217,22 +1243,27 @@ function redirectRefusal(answer: IncomingMessage, status: number, requestUrl: st
 
 /**
  * One connection's text transport: GET and POST to a URL on the connection's origin, the answer decoded as UTF-8.
+ * Any other method is refused before any socket.
  * The constructor opens nothing; the first request opens the first socket.
  */
 export function createNodeTransport(options: NodeTransportOptions): NodeTransport {
+  // Read once and checked before anything else, so a refused value builds nothing.
+  const refusesLinkLocal = optedIn(options.refusesLinkLocal, "refusesLinkLocal");
+  const refusesUpgrade = optedIn(options.refusesUpgrade, "refusesUpgrade");
   const {
     address: connectionOrigin,
     connectionHeaders,
     requestHeaderNames,
     coreSettings,
   } = connectionOf(options, (origin) => new URL(endpointUrl(origin, "/")).origin, {
-    refusesLinkLocal: false,
+    refusesLinkLocal,
     headersOf: lowerCased,
   });
   const core = transportCore(coreSettings);
 
   const exchange = (
     request: NodeRequest,
+    method: "GET" | "POST",
     target: URL,
     perRequest: Readonly<Record<string, string>>,
   ): Promise<NodeResponse> =>
@@ -1247,12 +1278,18 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
             hostname,
             port,
             path,
-            method: request.method,
+            method,
             headers: requestHeaders(connectionHeaders, perRequest, payload),
           },
           body: payload?.text,
         }),
         (answer, status) => {
+          if (refusesUpgrade && status === 101) {
+            // A 101 without both Connection: upgrade and an Upgrade header, refused as the upgrade event refuses one;
+            // fail() destroys its socket, so it never returns to the pool.
+            pending.fail(new TransportError("network", SWITCHED_PROTOCOLS));
+            return;
+          }
           const redirect = redirectRefusal(answer, status, request.url);
           if (redirect !== null) {
             // Released unread: fail() destroys the answer, so no redirect is followed and no body is read.
@@ -1287,12 +1324,16 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
             });
           });
         },
+        refusesUpgrade,
       );
     });
 
   return {
     async request(request) {
       admit(core, request.signal);
+      // The type allows GET and POST only; read once and sent as read, so neither a cast nor a getter carries another.
+      const { method } = request;
+      if (method !== "GET" && method !== "POST") throw new DatabaseConfigError(INVALID_TEXT_METHOD);
       if (!isPositiveInteger(request.maxResponseBytes)) throw new DatabaseConfigError(INVALID_MAX_RESPONSE_BYTES);
       // Neither is dropped silently: a request naming both is refused before any socket.
       if (request.body !== undefined && request.form !== undefined) throw new DatabaseConfigError(BODY_AND_FORM);
@@ -1302,7 +1343,7 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
       if (target === null || target.origin !== connectionOrigin || target.username !== "" || target.password !== "") {
         throw new DatabaseConfigError(FOREIGN_URL);
       }
-      return exchange(request, target, perRequest);
+      return exchange(request, method, target, perRequest);
     },
     close() {
       core.close();

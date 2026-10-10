@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.82 \
+  --version 0.1.83 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -650,6 +650,11 @@ helm upgrade libredb libredb/libredb-studio
 > waiting in `CreateContainerConfigError`. To keep the previous fail-closed behavior, set
 > `config.authBootstrap=off` explicitly.
 
+> **Behavior change (chart 0.1.83):** `serviceAccount.automountServiceAccountToken` is now set on the pod spec too.
+> With `serviceAccount.create=false`, the pod used to mount the API token of the account it ran as, usually the namespace's `default` one; it now mounts none.
+> Studio reads that token only for Vault Kubernetes auth (`VAULT_ROLE`), so an install with `serviceAccount.create=false` that logs in to Vault this way loses its Vault-backed seed connections on upgrade unless it takes one of two steps.
+> Set `serviceAccount.automountServiceAccountToken=true`, or project a token through `extraVolumes` and `extraVolumeMounts` and point `VAULT_K8S_TOKEN_PATH` at it through `extraEnv`.
+
 ## Uninstalling
 
 ```bash
@@ -722,6 +727,8 @@ helm uninstall libredb
 | `podDisruptionBudget.minAvailable` | Min available pods (set only one of minAvailable/maxUnavailable) | `1` |
 | `podDisruptionBudget.maxUnavailable` | Max unavailable pods (unset minAvailable with `null` to use) | unset |
 | `networkPolicy.enabled` | Enable NetworkPolicy | `false` |
+| `serviceAccount.create` | Create a ServiceAccount for the pod; `false` runs it as `serviceAccount.name`, or the namespace's `default` account when that is empty | `true` |
+| `serviceAccount.automountServiceAccountToken` | Mount an API token into the pod. Set on the pod spec as well as on the created ServiceAccount, so it also holds for an account the chart does not create; only `true` mounts one. Studio reads the token only for Vault Kubernetes auth (`VAULT_ROLE`) | `false` |
 | `postgresql.enabled` | Deploy PostgreSQL subchart | `false` |
 | `extraVolumes` | Additional pod volumes (Kubernetes `Volume` objects), such as a private CA from a ConfigMap or Secret | `[]` |
 | `extraVolumeMounts` | Additional volume mounts for the app container (Kubernetes `VolumeMount` objects). With a CA mounted, set `NODE_EXTRA_CA_CERTS` to the file through `extraEnv` so an OIDC issuer or Vault on an internal CA is trusted | `[]` |

@@ -2,8 +2,14 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { CONNECTION_IMPORT_ACTION_ID as RENDERED_IMPORT_ACTION_ID } from "@/components/ConnectionImportPanel";
 import { credentialWarningFor } from "@/lib/db/credential-warnings";
-import { checkLibClosure, CREDENTIAL_WARNING_FRAME, moduleClosure } from "../../scripts/check-lib-closure.mjs";
+import {
+  CONNECTION_IMPORT_ACTION_ID,
+  checkLibClosure,
+  CREDENTIAL_WARNING_FRAME,
+  moduleClosure,
+} from "../../scripts/check-lib-closure.mjs";
 import {
   declareCredentialWarnings,
   SYNTHETIC_PAIR,
@@ -26,12 +32,12 @@ function dist(files: Record<string, string>): string {
 const GOOD = {
   "components.js": "'use strict';\nvar a = require('./chunk-a.js');\nrequire(\"./chunk-b.js\");\n",
   "chunk-a.js": "function ConnectionModal({ isOpen }) {}\nfunction useConnectionForm({ isOpen }) {}\n",
-  "chunk-b.js": `const frame = "${CREDENTIAL_WARNING_FRAME}";\n`,
+  "chunk-b.js": `const frame = "${CREDENTIAL_WARNING_FRAME}";\nconst action = "${CONNECTION_IMPORT_ACTION_ID}";\n`,
   "workspace.js": "'use strict';\nrequire('./chunk-c.js');\n",
   "chunk-c.js": "function StudioWorkspace() {}\n",
   "components.mjs": "import { ConnectionModal } from './chunk-a.mjs';\nimport \"./chunk-b.mjs\";\n",
   "chunk-a.mjs": "function ConnectionModal({ isOpen }) {}\nfunction useConnectionForm({ isOpen }) {}\n",
-  "chunk-b.mjs": `const frame = "${CREDENTIAL_WARNING_FRAME}";\n`,
+  "chunk-b.mjs": `const frame = "${CREDENTIAL_WARNING_FRAME}";\nconst action = "${CONNECTION_IMPORT_ACTION_ID}";\n`,
   "workspace.mjs": "import { StudioWorkspace } from './chunk-c.mjs';\n",
   "chunk-c.mjs": "function StudioWorkspace() {}\n",
 };
@@ -46,6 +52,12 @@ describe("CREDENTIAL_WARNING_FRAME", () => {
     } finally {
       restore();
     }
+  });
+});
+
+describe("CONNECTION_IMPORT_ACTION_ID", () => {
+  test("is the test id the import panel renders, so the check looks for the string it ships", () => {
+    expect(CONNECTION_IMPORT_ACTION_ID).toBe(RENDERED_IMPORT_ACTION_ID);
   });
 });
 
@@ -87,6 +99,13 @@ describe("checkLibClosure", () => {
     ]);
   });
 
+  test("reports a components closure without the import action, while the frame holds", () => {
+    const root = dist({ ...GOOD, "chunk-b.mjs": `const frame = "${CREDENTIAL_WARNING_FRAME}";\n` });
+    expect(checkLibClosure(root)).toEqual([
+      `dist/components.mjs: its import closure does not hold the import action "${CONNECTION_IMPORT_ACTION_ID}", so a host mounting ConnectionModal would offer no declared import.`,
+    ]);
+  });
+
   test("reports each broken claim in its own sentence", () => {
     const root = dist({
       ...GOOD,
@@ -97,6 +116,7 @@ describe("checkLibClosure", () => {
     });
     expect(checkLibClosure(root)).toEqual([
       `dist/components.js: its require closure does not hold the credential warning frame "${CREDENTIAL_WARNING_FRAME}", so a host mounting ConnectionModal would draw no warning.`,
+      `dist/components.js: its require closure does not hold the import action "${CONNECTION_IMPORT_ACTION_ID}", so a host mounting ConnectionModal would offer no declared import.`,
       "dist/components.js: its require closure holds no ConnectionModal function, so the workspace check would prove nothing.",
       "dist/workspace.js: its require closure holds the ConnectionModal module.",
       "dist/workspace.js: its require closure holds the useConnectionForm module.",

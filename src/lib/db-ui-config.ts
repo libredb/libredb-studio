@@ -31,6 +31,7 @@ import {
 } from "@/components/icons/db-icons";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
+import type { ConnectionImportDeclaration } from "@/lib/connection-import";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 
 // DB brand icons share the same interface as LucideIcon (className + SVG props)
@@ -136,6 +137,13 @@ export interface DatabaseUIConfig {
    * loader must not.
    */
   credentialWarnings?: readonly CredentialWarning[];
+  /**
+   * An import the connection dialog offers for this engine: the action's label and a loader of a browser-side parser
+   * that reads a pasted text into entries, one of which fills the form (src/lib/connection-import.ts). Absent means the
+   * dialog offers no import. The dialog reads it from the entry, never from a type branch, and offers it only for a new
+   * connection.
+   */
+  connectionImport?: ConnectionImportDeclaration;
 }
 
 /** One addressing field, named by the same list that decides whether a save writes it. */

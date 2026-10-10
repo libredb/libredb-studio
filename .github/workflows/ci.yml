@@ -113,6 +113,9 @@ jobs:
       - name: Check package types resolution (attw)
         run: bun run attw
 
+      - name: Check package entry closures (lib:closure)
+        run: bun run lib:closure
+
   test:
     name: Unit & Integration Tests
     runs-on: ubuntu-latest

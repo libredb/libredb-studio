@@ -1,6 +1,6 @@
 /**
  * The link-local and instance-metadata refusal a byte transport applies whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says
- * (byte transport design 3.9).
+ * (byte transport design 3.9), and a text transport built with `refusesLinkLocal` applies the same way.
  *
  * node:dns is mocked, as tests/unit/db/http/egress-policy-transport.test.ts mocks it, so every answer is chosen here
  * and no resolver is asked. The runner starts a process per file, so the mock reaches no other test file. Literals are
@@ -226,7 +226,7 @@ describe("linkLocalRefusingLookup", () => {
 });
 
 const { httpOrigin } = await import("@/lib/db/http/endpoint");
-const { createNodeByteTransport } = await import("@/lib/db/http/node-transport");
+const { createNodeByteTransport, createNodeTransport } = await import("@/lib/db/http/node-transport");
 const { closeAll, rawAnswer, rawHttpListener } = await import("../../../helpers/node-transport-fixtures");
 
 describe("through a byte transport with the guard off", () => {
@@ -377,4 +377,67 @@ describe("a byte transport refuses every link-local form whatever the guard flag
       expect(listener.accepted()).toBe(0);
     },
   );
+});
+
+describe("a text transport asked to refuse link-local addresses", () => {
+  const transports: Array<{ close(): void }> = [];
+  afterEach(async () => {
+    for (const transport of transports.splice(0)) transport.close();
+    await closeAll();
+  });
+
+  const OK = (): Buffer => rawAnswer("200 OK", ["content-length: 2"], "ok");
+
+  function send(host: string, port: number, guard: "off" | "on" = "off") {
+    if (guard === "on") process.env[FLAG] = "true";
+    else delete process.env[FLAG];
+    const origin = httpOrigin("http", host, port);
+    const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {}, refusesLinkLocal: true });
+    transports.push(transport);
+    return transport.request({
+      method: "GET",
+      url: `http://${host}:${port}/k`,
+      signal: AbortSignal.timeout(5000),
+      maxResponseBytes: 1024,
+    });
+  }
+
+  test.each(["metadata.test", "zoned.test", "mixed.test"])(
+    "%s, which the resolver answers with a link-local address, is refused at the lookup, and nothing is accepted",
+    async (host) => {
+      const listener = await rawHttpListener(OK);
+      let error: Error | undefined;
+      try {
+        await send(host, listener.port);
+      } catch (caught) {
+        error = caught as Error;
+      }
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect(error?.message).toBe(LINK_LOCAL);
+      expect(lookups).toEqual([host]);
+      expect(listener.accepted()).toBe(0);
+    },
+  );
+
+  test("a name the resolver answers with 127.0.0.1 reaches the listener", async () => {
+    const listener = await rawHttpListener(OK);
+    expect((await send("local.test", listener.port)).text).toBe("ok");
+    expect(listener.accepted()).toBe(1);
+  });
+
+  // With the guard on, the lookup is the guarded one. The guard's own answer check has no zone rule, so on Bun it
+  // passes fe80::1%eth0, and the link-local check run after it refuses the answer with its own sentence.
+  test("zoned.test with the guard on is refused at the guarded lookup, and nothing is accepted", async () => {
+    const listener = await rawHttpListener(OK);
+    let error: Error | undefined;
+    try {
+      await send("zoned.test", listener.port, "on");
+    } catch (caught) {
+      error = caught as Error;
+    }
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error?.message).toBe(LINK_LOCAL);
+    expect(lookups).toEqual(["zoned.test"]);
+    expect(listener.accepted()).toBe(0);
+  });
 });
