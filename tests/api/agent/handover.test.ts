@@ -224,6 +224,14 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
     expect(mockAcquire.mock.calls[0][0]).toEqual(SEED_CONNECTION);
   });
 
+  test("a run on a server-level connection hands over in the database it read (#1530)", async () => {
+    runs.set("arun_1", { ...fakeRun(), catalog: "shop" } as ReturnType<typeof fakeRun>);
+    const response = await POST(request(), params());
+
+    expect(mockAcquire.mock.calls[0][0]).toEqual({ ...SEED_CONNECTION, database: "shop" });
+    expect((await response.json()).catalog).toBe("shop");
+  });
+
   test("the run's persisted actor decides the file-access posture of the hand-over handle", async () => {
     // As it decides the connection above: SQLite opens only for a trusted requester, on this
     // profile as in the editor, so the route passes the posture the editor would derive for the

@@ -15,7 +15,13 @@ import { GitHubRepoLink } from "@/components/github-repo-link";
 import { getAppVersion } from "@/lib/app-version";
 import { cn } from "@/lib/utils";
 import { ConnectionsList } from "./ConnectionsList";
+import { CatalogSelect } from "@/components/catalog-select";
 import type { ConnectionGroup } from "@/lib/storage/types";
+
+/** One array, so a default prop is a stable reference. */
+const NO_CATALOGS: readonly string[] = [];
+
+const ACTIVE_CATALOG_LOCKED_REASON = "The open transaction runs in this database; commit or roll it back first.";
 
 interface SidebarProps {
   connections: DatabaseConnection[];
@@ -104,6 +110,11 @@ interface SidebarProps {
    * inventory; the embedded workspace does not, because its host runs the statements.
    */
   objectRefreshToken?: number;
+  /** A server-level connection's databases and its active one (#1530); nothing is drawn otherwise. */
+  catalogs?: readonly string[];
+  activeCatalog?: string;
+  onActiveCatalogChange?: (catalog: string) => void;
+  activeCatalogLocked?: boolean;
   /**
    * The active connection's pulse, the same state the header reads, handed through by the standalone shell.
    *
@@ -153,6 +164,10 @@ export const Sidebar = React.memo(function Sidebar({
   objectReadsColumns,
   objectRefreshToken,
   connectionPulse,
+  catalogs = NO_CATALOGS,
+  activeCatalog,
+  onActiveCatalogChange,
+  activeCatalogLocked = false,
   onOpenKey,
 }: SidebarProps) {
   const appVersion = getAppVersion();
@@ -399,6 +414,18 @@ export const Sidebar = React.memo(function Sidebar({
               )}
               {/* Anything other than "this engine declares a walk and the reader chose it" is the object
                   tree: the panel is an addition to the sidebar and never a replacement for it. */}
+              {!showingKeys && onActiveCatalogChange !== undefined && (
+                <div className="px-2 pb-2" data-testid="sidebar-active-catalog">
+                  <CatalogSelect
+                    catalogs={catalogs}
+                    value={activeCatalog}
+                    onChange={onActiveCatalogChange}
+                    disabled={activeCatalogLocked}
+                    disabledReason={ACTIVE_CATALOG_LOCKED_REASON}
+                    className="w-full"
+                  />
+                </div>
+              )}
               {!showingKeys && (
                 <div className="flex-1 min-h-0">
                   <ObjectTree

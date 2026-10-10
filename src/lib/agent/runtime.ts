@@ -28,6 +28,7 @@
 
 import { createDatabaseProvider } from "@/lib/db";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
+import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { type ExecutionArtifact, ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -157,10 +158,13 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
   }
 
   try {
-    const { actor, connectionId } = report.record;
+    const { actor, connectionId, catalog } = report.record;
     // The persisted actor is the sole authority: the role that decides which managed
     // connections are visible is the one recorded when the run was opened.
-    const connection = await resolveConnection({ connectionId }, { role: actor.role, username: actor.sessionId });
+    const resolved = await resolveConnection({ connectionId }, { role: actor.role, username: actor.sessionId });
+    // On a server-level connection the run reads the one database it opened on (#1530). A session
+    // in that database IS the connection naming it, so from here on this is a single-database run.
+    const connection = catalog === undefined ? resolved : catalogSessionConnection(resolved, catalog);
 
     // Capabilities and labels are type-driven and read without connecting, the way
     // /api/db/provider-meta reads them. The live, read-only provider a statement

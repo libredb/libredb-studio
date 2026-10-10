@@ -608,7 +608,8 @@ describe("a provider the profile seam should never hand out", () => {
     const result = await direct(
       { connection_id: "seed:fake", sql: "SELECT 1" },
       undefined,
-      fakeContext({ query: writable }),
+      // A declaration it still has: every provider does, and the tool reads it before anything runs (#1530).
+      fakeContext({ query: writable, getCapabilities: () => ({}) } as unknown as Partial<DatabaseProvider>),
     );
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("exposes no read-only execution path");
@@ -617,17 +618,56 @@ describe("a provider the profile seam should never hand out", () => {
 
   test("whose preparation throws is answered as an engine failure, redacted", async () => {
     const provider = {
+      getCapabilities: () => ({}),
       queryReadOnly: mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 0 })),
       prepareQuery: () => {
         throw new Error("prepare failed with password=hunter-two");
       },
     };
-    const result = await direct({ connection_id: "seed:fake", sql: "SELECT 1" }, undefined, fakeContext(provider));
+    const result = await direct(
+      { connection_id: "seed:fake", sql: "SELECT 1" },
+      undefined,
+      fakeContext(provider as unknown as Partial<DatabaseProvider>),
+    );
     expect(result.content[1]).toEqual({
       type: "text",
       text: "The database refused or failed the call: prepare failed with password=[REDACTED]",
     });
     expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
+  });
+
+  test("on a connection that reaches a whole server, a call naming no database is told which to name (#1530)", async () => {
+    const queryReadOnly = mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 0 }));
+    const provider = {
+      getCapabilities: () => ({ catalogSessions: true as const }),
+      listContainers: async () => [{ path: ["shop"], name: "shop", level: 0 }],
+      queryReadOnly,
+    };
+    const result = await direct(
+      { connection_id: "seed:fake", sql: "SELECT 1" },
+      undefined,
+      fakeContext(provider as unknown as Partial<DatabaseProvider>),
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("set to one of: shop.");
+    expect(queryReadOnly).not.toHaveBeenCalled();
+  });
+
+  test("a declaration that cannot be read is an engine failure, not a database choice", async () => {
+    const provider = {
+      getCapabilities: () => {
+        throw new Error("declaration unreadable");
+      },
+    };
+    const result = await direct(
+      { connection_id: "seed:fake", sql: "SELECT 1" },
+      undefined,
+      fakeContext(provider as unknown as Partial<DatabaseProvider>),
+    );
+    expect(result.content[1]).toEqual({
+      type: "text",
+      text: "The database refused or failed the call: declaration unreadable",
+    });
   });
 });
 

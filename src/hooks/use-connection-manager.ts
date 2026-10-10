@@ -4,7 +4,7 @@ import { appFetch, SESSION_REQUIRED_CODE } from "@/lib/config/base-path";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import { detailedObjects, schemaContextOf, type DetailedObject } from "@/lib/db/detailed-object";
-import { containerDepth, relationKindIds } from "@/lib/db/object-kinds";
+import { containerDepth, declaresCatalogSessions, relationKindIds } from "@/lib/db/object-kinds";
 import { sessionDefaultContainer } from "@/lib/db/container-walk";
 import type { Container, DatabaseObject, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
 import { useReadGeneration } from "@/hooks/use-read-generation";
@@ -29,6 +29,9 @@ import {
  * shortens the tick in source builds and tests only — NEXT_PUBLIC_ values are
  * inlined at build time, so packaged artifacts always use the default. */
 const MANAGED_POLL_MAX_ATTEMPTS = 30;
+
+/** One array, so a render that lists no database hands out the same one. */
+const NO_CATALOGS: readonly string[] = [];
 
 /**
  * Managed-list refresh after the first load (#1502): the interval
@@ -207,6 +210,12 @@ export function useConnectionManager(storageReady = false) {
    * what happened.
    */
   const [schemaError, setSchemaError] = useState<string | null>(null);
+  /** A server-level connection's databases and the active one everything reads (#1530). */
+  const [catalogState, setCatalogState] = useState<{
+    readonly connectionId: string;
+    readonly catalogs: readonly string[];
+    readonly active?: string;
+  } | null>(null);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
   /**
    * The connection whose deferred catalog read the reader has explicitly asked for, by
@@ -254,7 +263,7 @@ export function useConnectionManager(storageReady = false) {
     `loadObjects` is the one call that is allowed past the guard.
   */
   const readSchema = useCallback(
-    async (conn: DatabaseConnection) => {
+    async (conn: DatabaseConnection, chosenCatalog?: string) => {
       /** Whether this read is still the one on screen. Every write below asks first. */
       const isCurrent = reads.begin();
       heldIdRef.current = null;
@@ -285,6 +294,37 @@ export function useConnectionManager(storageReady = false) {
           }
           return;
         }
+
+        // A server-level connection reads one database (#1530): the chosen one, else the remembered
+        // one while the server still lists it, else the first.
+        let scope: { parent?: readonly string[] } = {};
+        if (declaresCatalogSessions(capabilities)) {
+          const containersRes = await appFetch(...init("/api/db/objects/containers"));
+          if (!containersRes.ok) {
+            const body = await containersRes.json().catch(() => ({}));
+            throw new Error(body.error || "Failed to list the server's databases");
+          }
+          const listed = ((await containersRes.json()) as Container[]).map((container) => container.name);
+          const wanted = chosenCatalog ?? storage.getActiveCatalog(conn.id) ?? undefined;
+          const chosen = wanted !== undefined && listed.includes(wanted) ? wanted : listed[0];
+          if (!isCurrent()) return;
+          setCatalogState({
+            connectionId: conn.id,
+            catalogs: listed,
+            ...(chosen === undefined ? {} : { active: chosen }),
+          });
+          if (chosen === undefined) {
+            setSchema([]);
+            setDefaultContainer(undefined);
+            setSchemaError(null);
+            return;
+          }
+          storage.setActiveCatalog(conn.id, chosen);
+          scope = { parent: [chosen] };
+        } else if (isCurrent()) {
+          setCatalogState(null);
+        }
+
         const kinds = relationKindIds(capabilities);
         // A true statement about the engine rather than a failure: nothing declared a kind whose
         // rows this list renders, so there is nothing to ask for and nothing to show. It is not
@@ -298,10 +338,13 @@ export function useConnectionManager(storageReady = false) {
           return;
         }
 
-        const scoped = await scopedContainers(payload, containerDepth(capabilities));
+        // A chosen database is already the scope; the session-default lookup is for the other engines.
+        const scoped =
+          scope.parent === undefined ? await scopedContainers(payload, containerDepth(capabilities)) : undefined;
         const objectsRes = await appFetch(
           ...init("/api/db/objects/inventory", {
             ...payload,
+            ...scope,
             kinds,
             includeColumns: true,
             ...(scoped === undefined ? {} : { containers: scoped.containers }),
@@ -465,6 +508,17 @@ export function useConnectionManager(storageReady = false) {
     markUsed(conn.id);
     if (heldIdRef.current === conn.id) void fetchSchema(conn);
   }, [visibleActive, markUsed, fetchSchema]);
+
+  /** Makes `catalog` the active database (#1530), remembered for this connection, and reads it. */
+  const setActiveCatalog = useCallback(
+    (catalog: string) => {
+      const conn = visibleActive;
+      if (conn === null) return;
+      storage.setActiveCatalog(conn.id, catalog);
+      void readSchema(conn, catalog);
+    },
+    [visibleActive, readSchema],
+  );
 
   /**
    * The schema as the AI panels and the agent rail are handed it.
@@ -897,6 +951,12 @@ export function useConnectionManager(storageReady = false) {
     activateFallback,
     schemaContext,
     defaultContainer,
+    // Only the active connection's (#1530): a list read for the one before it is not this one's.
+    catalogs:
+      catalogState !== null && catalogState.connectionId === visibleActive?.id ? catalogState.catalogs : NO_CATALOGS,
+    activeCatalog:
+      catalogState !== null && catalogState.connectionId === visibleActive?.id ? catalogState.active : undefined,
+    setActiveCatalog,
     /**
      * Whether the server lets this user create, edit or open connections of their own. The shell
      * withholds every control that would make one while it is false.

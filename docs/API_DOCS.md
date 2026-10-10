@@ -498,6 +498,18 @@ The declaration is read without connecting, so each refusal costs no socket, and
 | The provider declares `keyScan` and no container level (etcd, Oxia) | `400` | `{ "error": "<type> walks one key space and declares no database level: \"database\" names the numbered database a key was walked in, and this engine has none to name" }` |
 | The server has no such database | `400` | `{ "error": "Redis refused database <n>: ERR DB index is out of range", "code": "QUERY_ERROR", "statusCode": 400 }`, never a read of database 0 |
 
+**The database a request runs in on a server-level connection (optional):** `"catalog": "shop"`.
+A PostgreSQL connection with an empty `database` reaches every database on its server (#1530,
+[`docs/providers/postgres.md` §4.1.1](providers/postgres.md#411-server-level-connections-an-empty-database-1530)),
+and a request that runs somewhere names the database by name in `catalog`, beside the connection
+(it is not `database`, which is Redis's number). The same field is read by `/api/db/multi-query`,
+`/api/db/transaction` (owner recorded per database), `/api/db/monitoring`, `/api/db/pool-stats`,
+`/api/db/health`, `/api/db/profile` and both maintenance routes. Every refusal is `400` with
+`code: "CONFIG_ERROR"`: a `catalog` that is not a non-blank string, a connection that declares no
+`catalogSessions`, a database the role cannot CONNECT to, or no `catalog` on a server-level
+connection for a statement, transaction or maintenance. Five databases already open and all busy
+answers `503 POOL_EXHAUSTED`.
+
 **A connection type's console text bound:**
 
 A connection type can declare a bound on its statement text in UTF-8 bytes, on its row in `src/lib/db/destructive-commands.ts`.
@@ -1186,6 +1198,12 @@ Only a deeper parent is refused, at `400` with `{ "error": "<type> declares a co
 
 A caller that reaches a provider without these routes, such as the MCP `inspect-schema` tool or a host behind the embedded workspace, is refused by the provider itself under the same rule, in the provider's own words: `A PostgreSQL container path is [schema], received []`.
 
+**A server-level PostgreSQL connection is two levels deep** (#1530): `[database, schema]`, and
+`POST /api/db/objects/containers` answers the databases for no `parent`. Since its root is every
+database on the server, `POST /api/db/objects/inventory` and `POST /api/db/objects/search` take a
+`parent` cursor (`"parent": ["shop"]`) and refuse an unscoped walk there with `400`; `parent` beside
+`containers` is refused too.
+
 #### POST /api/db/objects/describe
 
 Read the columns, indexes and foreign keys of ONE object.
@@ -1743,6 +1761,7 @@ Opens a run and returns immediately; the drive happens in the background.
 | `workflowReading` | string | No | How that decision WENT, as against who made it: `"classified"` (a classifier named this workflow), `"unclassified"` (a classifier was asked and reached its fallback) or `"unrecorded"` (nothing classified anything — what a caller naming its own workflow sends). Absent means `"unrecorded"`. An unrecognised value is **refused, not defaulted**, for the reason `workflowSource` is: the surface reads this field back to choose which of three sentences it says about the run, and a fallback presented as a verdict is the one it may not say |
 | `objective` | string | Yes | Non-empty, at most 4000 characters |
 | `connectionId` | string | Yes | Must resolve **server-side**. An inline `connection` object in the body is refused |
+| `catalog` | string | On a server-level connection | The database the run reads on a connection that reaches a whole server (#1530). **Required** exactly when the connection declares `catalogSessions` and refused on every other connection, both with `400`; a database the role cannot open is refused before the run exists. It is recorded on the run and echoed back, part of the run's connection identity, and the run, its resumed drives and its hand-over read that database alone |
 | `previousRunId` | string | No | Continue the **conversation** a run this session opened belongs to. The server derives the earlier steps' objectives and the most recent step's report from those runs' own ledgers, verifies the named run belongs to this session, is on this connection and has ended, and persists the result as `thread` on the new run's header. A run it cannot reach **does not refuse the start**: the run opens carrying no conversation and the response says so through `thread.declined` — `"repointed"` when the predecessor was reachable but was established against a different database than this connection now addresses — the run still opens, and it records the connection as it now addresses it, so a follow-up naming **that** run carries normally: the decline is one question long, not a state the connection is left in — `"disabled"` when the server has conversations switched off, `"error"` on an unreadable ledger, and `"unavailable"` for the five remaining causes, which are deliberately not told apart. Only a value that is not a non-empty string is refused, with `400` — that is a malformed request rather than a runtime condition |
 
 **Response (202 Accepted):**
@@ -1771,6 +1790,7 @@ could arrive twice.
 { "error": "mode must be \"planning\" or \"agent\"" }
 { "error": "An agent run needs a server-resolvable connectionId; an inline connection cannot be resumed" }
 { "error": "previousRunId must be a non-empty string when provided" }
+{ "error": "This connection reaches every database on its server: name the database the run reads in catalog" }
 {
   "error": "Agent mode executes only where the provider implements a database-native read-only statement path — PostgreSQL, SQLite, DuckDB and SQL Server. On MySQL a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.",
   "refused": "engine-unsupported"
@@ -1884,6 +1904,9 @@ profile it runs under.
 ```json
 { "runId": "arun_…", "sql": "SELECT …", "result": { "rows": [], "fields": [], "rowCount": 0 } }
 ```
+
+On a server-level connection the statement runs in the database the run read, and the answer
+carries it as `catalog` beside `runId` (#1530).
 
 `404 { "error": "This run composed no answer" }` when the run never presented one. `409` when it did
 and the auto-execute gate declined it (`handover` is `applied` or `none`), with the gate's own
@@ -2130,7 +2153,7 @@ interface DatabaseConnection {
   port?: number;           // Port number
   user?: string;           // Username
   password?: string;       // Password
-  database?: string;       // Database name (Couchbase: the bucket; Druid: unused, it has one catalog; Trino: the CATALOG; Cassandra: the KEYSPACE)
+  database?: string;       // Database name (Couchbase: the bucket; Druid: unused, it has one catalog; Trino: the CATALOG; Cassandra: the KEYSPACE; PostgreSQL: empty on discrete fields reaches the whole server, #1530)
   schema?: string;         // Trino: session schema for unqualified table names
   connectionString?: string; // Full connection string (alternative; Druid has no URI form, host + port only; Cassandra has none either, no URI carries localDataCenter)
   queryTimeout?: number;  // Query timeout in milliseconds; omitted uses 60000 (60 seconds)

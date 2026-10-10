@@ -6,6 +6,7 @@ import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { MaskingConfig } from "@/lib/data-masking";
 import { objectAtPath } from "@/lib/db/detailed-object";
+import { catalogOfPath } from "@/lib/db/object-kinds";
 import { DataImportModal } from "@/components/DataImportModal";
 import { QuerySafetyDialog } from "@/components/QuerySafetyDialog";
 import { DataProfiler } from "@/components/DataProfiler";
@@ -164,6 +165,9 @@ export function StudioModals({
           tablePath={profilerPath ?? []}
           tableSchema={objectAtPath(schema, profilerPath)}
           connection={activeConnection}
+          catalog={
+            capabilities === undefined || profilerPath === null ? undefined : catalogOfPath(capabilities, profilerPath)
+          }
           schemaContext={schemaContext}
           databaseType={databaseType}
           maskingConfig={profilerMasking.config}

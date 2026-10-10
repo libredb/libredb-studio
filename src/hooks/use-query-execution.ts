@@ -25,6 +25,8 @@ import { sandboxRefusal } from "@/lib/editor/sandbox-refusal";
 import { buildConnectionPayload } from "./use-connection-payload";
 
 export interface QueryExecutionOptions {
+  /** The database to run in on a server-level connection when not the active one: an object's (#1530). */
+  catalog?: string;
   limit?: number;
   offset?: number;
   unlimited?: boolean;
@@ -58,6 +60,8 @@ interface UseQueryExecutionParams {
   currentTab: QueryTab;
   setTabs: Dispatch<SetStateAction<QueryTab[]>>;
   transactionActive: boolean;
+  /** The database a server-level connection's statements run in: its active one (#1530). */
+  activeCatalog?: string;
   playgroundMode: boolean;
   fetchSchema: (conn: DatabaseConnection) => Promise<void>;
   /**
@@ -238,9 +242,15 @@ function retryAfterSeconds(response: Response): number | null {
  * `undefined` is NOT database 0 and NOT "the session's number": it is the absence of an override, so
  * the body is byte for byte what it was before this existed.
  */
-function payloadForRun(connection: DatabaseConnection, database: number | undefined): Record<string, unknown> {
+function payloadForRun(
+  connection: DatabaseConnection,
+  database: number | undefined,
+  catalog: string | undefined,
+): Record<string, unknown> {
   const payload = buildConnectionPayload(connection);
-  return database === undefined ? payload : { ...payload, database };
+  // A server-level connection's database (#1530), beside the connection for the same reason.
+  const withCatalog = catalog === undefined ? payload : { ...payload, catalog };
+  return database === undefined ? withCatalog : { ...withCatalog, database };
 }
 
 export function useQueryExecution({
@@ -251,6 +261,7 @@ export function useQueryExecution({
   currentTab,
   setTabs,
   transactionActive,
+  activeCatalog,
   playgroundMode,
   fetchSchema,
   onObjectsChanged,
@@ -453,7 +464,12 @@ export function useQueryExecution({
       // tab opened from a key browser walked ONE numbered database, so every run of that tab - the
       // initial read, a re-run, a selection, an inline edit, the next page - names it. See
       // `payloadForRun`.
-      const runPayload = payloadForRun(activeConnection, tabToExec.databaseOverride);
+      // On a server-level connection, also its database: an object's, else the active one (#1530).
+      const runPayload = payloadForRun(
+        activeConnection,
+        tabToExec.databaseOverride,
+        executionOptions?.catalog ?? activeCatalog,
+      );
 
       // Safety check for dangerous queries (skip for explain, load-more, playground, and force-execute)
       const skipSafety = executionOptions?.skipSafety ?? false;
@@ -1127,6 +1143,7 @@ export function useQueryExecution({
       onStatementSent,
       metadata,
       transactionActive,
+      activeCatalog,
       playgroundMode,
       setTabs,
       queryEditorRef,

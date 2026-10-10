@@ -567,6 +567,9 @@ This is what makes the CapRover discovery export (Known limits) unreadable by th
 
 These are real, current, and not oversights. Each is a decision with a reason.
 
+- **A server-level PostgreSQL connection exposes every database its role can CONNECT to** (#1530),
+  to every user it is offered to. The boundary is the role's own `CONNECT` privilege, checked by the
+  server; a seed meant for one database names it and is then pinned to it.
 - **The HTTP destination guard is opt-in and address-based.** `DB_HTTP_BLOCK_PRIVATE_HOSTS` is off by
   default so local databases remain usable. When enabled, it covers ClickHouse, Druid, Elasticsearch,
   OpenSearch, Trino, libSQL, Couchbase, Prometheus, Qdrant, InfluxDB (InfluxQL) and InfluxDB 3 (SQL) HTTP requests, rejecting loopback, private,

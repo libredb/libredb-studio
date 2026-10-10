@@ -61,10 +61,20 @@ const defaultTables = [
 // The options the tab asked for, so a test can assert that a provider whose rows
 // are derived groupings never requests tables at all (#459).
 let lastMonitoringOptions: Record<string, unknown> | undefined;
+// The connection and database the tab monitors, so a server-level connection's database is asserted (#1530).
+let lastMonitored: { connection: unknown; catalog?: string } | undefined;
+
+// The databases a server-level connection lists, and the one the studio chose last (#1530).
+let mockCatalogs: { catalogs: string[]; catalog?: string } = { catalogs: [] };
+const mockSetCatalog = mock((_catalog: string) => {});
+mock.module("@/hooks/use-catalogs", () => ({
+  useCatalogs: mock(() => ({ ...mockCatalogs, setCatalog: mockSetCatalog })),
+}));
 
 mock.module("@/hooks/use-monitoring-data", () => ({
-  useMonitoringData: mock((_conn: unknown, options?: Record<string, unknown>) => {
+  useMonitoringData: mock((_conn: unknown, options?: Record<string, unknown>, catalog?: string) => {
     lastMonitoringOptions = options;
+    lastMonitored = { connection: _conn, catalog };
     return {
       data: {
         activeSessions: defaultSessions,
@@ -219,6 +229,9 @@ describe("OperationsTab", () => {
     mockRunMaintenance.mockClear();
     mockRunMaintenance.mockImplementation(() => true);
     lastMonitoringOptions = undefined;
+    lastMonitored = undefined;
+    mockCatalogs = { catalogs: [] };
+    mockSetCatalog.mockClear();
     resetMockSearchParams();
   });
 
@@ -3004,5 +3017,43 @@ describe("OperationsTab", () => {
     const dialog = await openTypedDialog(view, "Defragment", "Defragment the member");
     expect(within(dialog).getByLabelText("Type PG Dev to confirm")).toBeTruthy();
     expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  // A server-level connection is monitored one database at a time (#1530).
+  test("a deep link's database is monitored until the operator picks another, and none before one is known", async () => {
+    mockMetadata = {
+      capabilities: {
+        ...mockMetadata!.capabilities,
+        catalogSessions: true,
+        containerLevels: [{ id: "catalog" }, { id: "schema" }],
+      },
+    };
+    await act(async () => {
+      render(<OperationsTab />);
+    });
+    expect(lastMonitored).toEqual({ connection: null, catalog: undefined });
+    cleanup();
+
+    mockCatalogs = { catalogs: ["analytics", "shop"], catalog: "analytics" };
+    setMockSearchParams(
+      new URLSearchParams([
+        ["path", "shop"],
+        ["path", "public"],
+        ["path", "users"],
+      ]),
+    );
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(lastMonitored?.catalog).toBe("shop");
+    await act(async () => {
+      fireEvent.keyDown(view!.getByRole("combobox", { name: "Database" }), { key: "ArrowDown" });
+    });
+    await act(async () => {
+      fireEvent.keyDown(view!.getByRole("option", { name: "analytics" }), { key: "Enter" });
+    });
+    expect(mockSetCatalog).toHaveBeenCalledWith("analytics");
+    expect(lastMonitored?.catalog).toBe("analytics");
   });
 });

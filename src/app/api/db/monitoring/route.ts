@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOrCreateProvider } from "@/lib/db";
 import type { MonitoringOptions } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
+import { editorProvider, requestCatalog } from "@/lib/api/catalog-provider";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
-import { editorExecutionContext } from "@/lib/api/execution-context";
 
 /**
  * POST /api/db/monitoring
@@ -37,7 +36,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
     }
 
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    // In the database the caller chose, on a server-level connection (#1530).
+    const provider = await editorProvider(connection, guard.session, requestCatalog(body));
     const monitoringData = await provider.getMonitoringData(options);
     // The maintenance this connected server accepts (#1387). Read here, off the provider the
     // panels came from, because `POST /api/db/provider-meta` never connects and can only answer

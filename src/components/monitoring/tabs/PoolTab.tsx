@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import type { DatabaseConnection } from "@/lib/types";
-import { buildConnectionPayload } from "@/hooks/use-connection-payload";
+import { buildConnectionPayload, catalogField } from "@/hooks/use-connection-payload";
 
 interface PoolStats {
   total: number;
@@ -22,16 +22,18 @@ interface PoolStats {
 
 interface PoolTabProps {
   connection: DatabaseConnection | null;
+  /** The database whose pool to report on a server-level connection (#1530). */
+  catalog?: string;
 }
 
-export function PoolTab({ connection }: PoolTabProps) {
+export function PoolTab({ connection, catalog }: PoolTabProps) {
   // Only two things are state: which request the reader has asked for, and the
   // one that has come back. Everything the render needs - loading, stats, error
   // - follows from comparing the two, so nothing has to be set in the effect.
   const [refreshToken, setRefreshToken] = useState(0);
   const [settled, setSettled] = useState<{ key: string; stats: PoolStats | null; error: string | null } | null>(null);
 
-  const requestKey = connection === null ? null : `${connection.id}#${refreshToken}`;
+  const requestKey = connection === null ? null : `${connection.id}#${catalog ?? ""}#${refreshToken}`;
   const loading = requestKey !== null && settled?.key !== requestKey;
   const stats = settled?.stats ?? null;
   const error = settled?.error ?? null;
@@ -48,7 +50,7 @@ export function PoolTab({ connection }: PoolTabProps) {
       // The seed id, not the object: a managed connection arrives here with its
       // password and connection string stripped, so the object cannot be resolved
       // to a database once the provider cache is cold.
-      body: JSON.stringify(buildConnectionPayload(connection)),
+      body: JSON.stringify({ ...buildConnectionPayload(connection), ...catalogField(catalog) }),
     })
       .then(async (res) => {
         const data = await res.json();
@@ -72,7 +74,7 @@ export function PoolTab({ connection }: PoolTabProps) {
     return () => {
       ignore = true;
     };
-  }, [connection, requestKey]);
+  }, [connection, catalog, requestKey]);
 
   if (!connection) {
     return (

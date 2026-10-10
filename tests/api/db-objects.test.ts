@@ -166,6 +166,7 @@ interface ProviderShape {
   type?: DatabaseProvider["type"];
   containerLevels?: ContainerLevels;
   containerPathShapes?: ProviderCapabilities["containerPathShapes"];
+  catalogSessions?: true;
   objectKinds?: readonly ObjectKindSpec[];
   listContainers?: DatabaseProvider["listContainers"];
   countObjects?: DatabaseProvider["countObjects"];
@@ -182,6 +183,7 @@ function objectProvider(shape: ProviderShape = {}): DatabaseProvider {
     capabilities: {
       containerLevels: shape.containerLevels ?? [SCHEMA_LEVEL],
       ...(shape.containerPathShapes === undefined ? {} : { containerPathShapes: shape.containerPathShapes }),
+      ...(shape.catalogSessions === undefined ? {} : { catalogSessions: shape.catalogSessions }),
       objectKinds: shape.objectKinds ?? [TABLE_KIND, VIEW_KIND],
     },
   });
@@ -2509,5 +2511,57 @@ describe("the context the handler hands run", () => {
     });
 
     expect(seen?.session).toEqual({ role: "user", username: "auditor" });
+  });
+});
+
+// ============================================================================
+// Server-level connections (#1530)
+// ============================================================================
+
+/** A server-level connection's root is every database, so the walking routes read one under `parent`. */
+describe("a server-level connection's walks", () => {
+  function serverLevel() {
+    const listContainers = mock(async (parent?: readonly string[]) =>
+      parent === undefined
+        ? [{ path: ["shop"], name: "shop", level: 0 }]
+        : [{ path: [...parent, "public"], name: "public", level: 1, isSessionDefault: true }],
+    );
+    activeProvider = objectProvider({
+      containerLevels: [CATALOG_LEVEL, SCHEMA_LEVEL],
+      catalogSessions: true,
+      objectKinds: [TABLE_KIND],
+      listContainers,
+      listObjects: mock(async (container: readonly string[]) => [object([...container, "orders"], "table")]),
+    });
+    return listContainers;
+  }
+  const post = (route: typeof inventoryRoute, path: string, body: Record<string, unknown>) =>
+    route.POST(createMockRequest(path, { method: "POST", body: { connection, ...body } }) as never);
+
+  test("inventory and search under one database read that database alone", async () => {
+    const listContainers = serverLevel();
+    const inventory = await post(inventoryRoute, "/api/db/objects/inventory", { parent: ["shop"] });
+    const body = await parseResponseJSON<{ objects: DatabaseObject[]; defaultContainer?: string[] }>(inventory);
+    expect(body.objects.map((found) => found.path)).toEqual([["shop", "public", "orders"]]);
+    expect(body.defaultContainer).toEqual(["shop", "public"]);
+    const search = await post(searchRoute, "/api/db/objects/search", { term: "orders", parent: ["shop"] });
+    expect(search.status).toBe(200);
+    expect(listContainers.mock.calls).toEqual([[["shop"]], [["shop"]]]);
+  });
+
+  test("an unscoped walk, a parent beside containers and a too-deep parent are refused", async () => {
+    const listContainers = serverLevel();
+    for (const [route, path, body] of [
+      [inventoryRoute, "/api/db/objects/inventory", {}],
+      [searchRoute, "/api/db/objects/search", { term: "orders" }],
+      [inventoryRoute, "/api/db/objects/inventory", { containers: [["shop", "public"]], parent: ["shop"] }],
+      [inventoryRoute, "/api/db/objects/inventory", { parent: ["shop", "public", "orders"] }],
+    ] as const) {
+      expect((await post(route, path, body)).status).toBe(400);
+    }
+    expect(listContainers).not.toHaveBeenCalled();
+    expect((await post(inventoryRoute, "/api/db/objects/inventory", { containers: [["shop", "public"]] })).status).toBe(
+      200,
+    );
   });
 });

@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
-import type { DatabaseConnection } from "@/lib/types";
+import { TUNNEL_FAR_END, type DatabaseConnection } from "@/lib/types";
 import type { ContainerLevels, ObjectEditRefusalClass, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { maintenanceControl } from "@/lib/db/types";
 import {
@@ -21,9 +21,11 @@ import {
   DatabaseConfigError,
   DatabaseError,
   ExecutionProfileError,
+  PoolExhaustedError,
   QueryError,
   NO_TRANSACTION_OPENED,
 } from "@/lib/db/errors";
+import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 // The ender's raise is measured through the mapper the two routes answer through, because the
 // cost its docblock states is an HTTP status and not a class name.
 import { createErrorResponse } from "@/lib/api/errors";
@@ -244,13 +246,28 @@ class MockPool extends EventEmitter {
   public totalCount = 10;
   public idleCount = 7;
   public waitingCount = 0;
+  public ended = false;
+
+  constructor(public readonly config: Record<string, unknown> = {}) {
+    super();
+  }
 
   async connect() {
+    const refusal = mockConnectRefusal?.(this.config);
+    if (refusal !== undefined) throw refusal;
     return mockPooledClient?.(this) ?? mockClient;
   }
 
-  async end() {}
+  async end() {
+    this.ended = true;
+  }
 }
+
+/** When set, the error a pool's borrow answers for its config, so a test can refuse one database (#1530). */
+let mockConnectRefusal: ((config: Record<string, unknown>) => Error | undefined) | undefined;
+
+/** Every pool any provider built, in order, so a test can tell one database's pool from another's (#1530). */
+const mockPoolsMade: MockPool[] = [];
 
 /** The pool handed to the most recently constructed provider. */
 let lastPool: MockPool | undefined;
@@ -290,7 +307,8 @@ let mockPooledClient: ((pool: MockPool) => unknown) | undefined;
 mock.module("pg", () => ({
   Pool: function (config: Record<string, unknown>) {
     lastPoolConfig = config;
-    lastPool = new MockPool();
+    lastPool = new MockPool(config);
+    mockPoolsMade.push(lastPool);
     return lastPool;
   },
   Client: MockPgClient,
@@ -878,10 +896,9 @@ describe("PostgresProvider", () => {
       }).toThrow(DatabaseConfigError);
     });
 
-    test("missing database throws DatabaseConfigError", () => {
-      expect(() => {
-        new PostgresProvider(makePgConfig({ database: undefined }));
-      }).toThrow(DatabaseConfigError);
+    test("a missing database is a server-level connection, not a mistake (#1530)", () => {
+      expect(() => new PostgresProvider(makePgConfig({ database: undefined }))).not.toThrow();
+      expect(() => new PostgresProvider(makePgConfig({ database: "" }))).not.toThrow();
     });
 
     test("valid config passes validation", () => {
@@ -5831,7 +5848,8 @@ describe("object surface", () => {
     ).toEqual(["function", "procedure", "trigger"]);
   });
 
-  test("satisfies the shared object surface contract", async () => {
+  /** The object-surface fixture server, a function so a server-level connection can sit on it too (#1530). */
+  function objectSurfaceFixture(): typeof mockQueryFn {
     // The relations each kind holds, one place, because the helper now reads the listing
     // and the bulk column read against each other: two lists that had to be kept in step
     // by hand would make a mismatch look like a provider defect.
@@ -5872,7 +5890,7 @@ describe("object surface", () => {
     const relkindOf = (sql: string) => Object.keys(relations).find((relkinds) => sql.includes(`IN (${relkinds})`))!;
     const listedIn = (schema: string | undefined, relkinds: string) =>
       (schema === "public" ? publicRelations : relations)[relkinds];
-    mockQueryFn = async (sql, params) => {
+    return async (sql: string, params?: unknown[]) => {
       // The source statements FIRST: the view one also names `relkind` and the routine one
       // also names `prokind`, so a looser arm below would answer a definition read with a
       // listing row. Keyed on the `pg_get_*` function name, which is the token that tells the
@@ -5991,6 +6009,10 @@ describe("object surface", () => {
       }
       return { rows: [] };
     };
+  }
+
+  test("satisfies the shared object surface contract", async () => {
+    mockQueryFn = objectSurfaceFixture();
     const provider = makeProvider();
     await provider.connect();
     await assertObjectSurface(provider, {
@@ -6002,6 +6024,31 @@ describe("object surface", () => {
       // the raise design guarantee 6 requires rather than a refusal part (#789).
       absentSource: { path: ["app", "no_such_view"], kind: "view" },
     });
+    await provider.disconnect();
+  });
+
+  test("satisfies the shared object surface contract one database down", async () => {
+    const fixture = objectSurfaceFixture();
+    mockQueryFn = async (sql, params) => {
+      if (sql.includes("has_database_privilege") && sql.includes("ORDER BY d.datname")) {
+        return { rows: [{ name: "shop" }] };
+      }
+      if (sql.includes("d.datname = $1")) return { rows: [{ admitted: 1 }] };
+      return fixture(sql, params);
+    };
+    const provider = new PostgresProvider(makePgConfig({ database: "" }));
+    await provider.connect();
+    await assertObjectSurface(provider, {
+      // The parentless listing is the databases; the contract runs one level down, in a schema.
+      containers: [["shop"]],
+      container: ["shop", "app"],
+      kinds: { table: 3, view: 4, materialized_view: 1, function: 2, procedure: 1, trigger: 1 },
+      sampleObject: { path: ["shop", "app", "order_summary"], kind: "view" },
+      absentSource: { path: ["shop", "app", "no_such_view"], kind: "view" },
+    });
+    // Every address the session answered carries the database back in front.
+    const [detail] = (await provider.describeObjects(["shop", "app"], "view", 1)).details;
+    expect(detail.path).toEqual(["shop", "app", "order_summary"]);
     await provider.disconnect();
   });
 
@@ -10138,6 +10185,429 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
       const outcome = await provider.applyObjectEdit(build.plan);
       if (outcome.outcome !== "conflict" || outcome.conflict !== "object-changed") throw new Error("narrowing");
       expect(outcome.current.text).toBe("");
+      await provider.disconnect();
+    });
+  });
+});
+
+// ============================================================================
+// Server-level connections (#1530)
+// ============================================================================
+
+/**
+ * A connection with an empty `database` reaches the whole server: its own session opens the
+ * maintenance database, the databases its role can CONNECT to are the outer container level, and
+ * every request that runs somewhere runs in a per-database session `forCatalog()` hands out,
+ * at most `CATALOG_SESSION_LIMIT` of them, the idle one used least recently closed first.
+ */
+describe("PostgreSQL server-level connection (#1530)", () => {
+  const DATABASES = ["analytics", "postgres", "shop"];
+
+  /** The server: its database catalog first, then `next` for every other statement. */
+  function serverAnswers(next: typeof mockQueryFn = defaultMockQuery): typeof mockQueryFn {
+    return async (sql, params) => {
+      if (sql.includes("has_database_privilege") && sql.includes("ORDER BY d.datname")) {
+        return { rows: DATABASES.map((name) => ({ name })) };
+      }
+      if (sql.includes("has_database_privilege") && sql.includes("d.datname = $1")) {
+        return { rows: DATABASES.includes(params?.[0] as string) ? [{ admitted: 1 }] : [] };
+      }
+      return next(sql, params);
+    };
+  }
+
+  function serverLevel(overrides: Partial<DatabaseConnection> = {}) {
+    return new PostgresProvider(makePgConfig({ database: "", ...overrides }));
+  }
+
+  async function connectedServer(next?: typeof mockQueryFn) {
+    mockQueryFn = serverAnswers(next);
+    const provider = serverLevel();
+    await provider.connect();
+    return provider;
+  }
+
+  const poolsIn = (database: string) => mockPoolsMade.filter((pool) => pool.config.database === database);
+
+  /** A pool that has handed every client back, which is what `pg` reports once a request is done. */
+  function drained(pool: MockPool) {
+    pool.totalCount = 1;
+    pool.idleCount = 1;
+    pool.waitingCount = 0;
+  }
+
+  beforeEach(() => {
+    mockQueryFn = defaultMockQuery;
+    mockConnectRefusal = undefined;
+    mockTxStatus = "I";
+    mockWire = [];
+    mockPoolsMade.length = 0;
+  });
+
+  afterEach(() => {
+    mockConnectRefusal = undefined;
+  });
+
+  describe("the declaration", () => {
+    test("an empty database declares Databases above Schemas and takes its database per request", () => {
+      const capabilities = serverLevel().getCapabilities();
+      expect(capabilities.containerLevels).toEqual([
+        { id: "catalog", label: "Database", labelPlural: "Databases" },
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ]);
+      // Every kind lives in a schema, so a database alone is never an address.
+      expect(capabilities.containerPathShapes).toBe("exact");
+      expect(capabilities.catalogSessions).toBe(true);
+    });
+
+    test("a named database, and a connection string naming none, stay pinned exactly as before", () => {
+      for (const config of [
+        makePgConfig(),
+        makePgConfig({ database: undefined, connectionString: "postgresql://user@localhost:5432" }),
+      ]) {
+        const capabilities = new PostgresProvider(config).getCapabilities();
+        expect(capabilities.containerLevels).toEqual([{ id: "schema", label: "Schema", labelPlural: "Schemas" }]);
+        expect(Object.hasOwn(capabilities, "catalogSessions")).toBe(false);
+      }
+    });
+  });
+
+  describe("connect", () => {
+    test("opens its own session on the postgres maintenance database", async () => {
+      const provider = await connectedServer();
+      expect(provider.isConnected()).toBe(true);
+      expect(mockPoolsMade.map((pool) => pool.config.database)).toEqual(["postgres"]);
+      await provider.disconnect();
+    });
+
+    for (const code of ["3D000", "42501", "28000"]) {
+      test(`falls back to template1 when postgres answers ${code}, and ends the refused pool`, async () => {
+        mockConnectRefusal = (config) =>
+          config.database === "postgres" ? Object.assign(new Error("not this one"), { code }) : undefined;
+        const seen: unknown[][] = [];
+        const provider = await connectedServer(async (sql, params) => {
+          seen.push(params ?? []);
+          return defaultMockQuery(sql);
+        });
+        expect(poolsIn("postgres")[0].ended).toBe(true);
+        expect(poolsIn("template1")).toHaveLength(1);
+        // The monitoring reads name the database the session really opened.
+        await provider.getOverview();
+        expect(seen.some((params) => params[0] === "template1")).toBe(true);
+        expect(seen.some((params) => params[0] === "postgres")).toBe(false);
+        await provider.disconnect();
+      });
+    }
+
+    test("does not fall back on a refusal every database would answer the same way", async () => {
+      mockConnectRefusal = () => Object.assign(new Error("password authentication failed"), { code: "28P01" });
+      mockQueryFn = serverAnswers();
+      const provider = serverLevel();
+      await expect(provider.connect()).rejects.toThrow(ConnectionError);
+      expect(mockPoolsMade.map((pool) => pool.config.database)).toEqual(["postgres"]);
+      expect(mockPoolsMade[0].ended).toBe(true);
+    });
+
+    test("refuses the connection when neither maintenance database opens", async () => {
+      mockConnectRefusal = (config) =>
+        Object.assign(new Error(`database "${String(config.database)}" does not exist`), { code: "3D000" });
+      mockQueryFn = serverAnswers();
+      await expect(serverLevel().connect()).rejects.toThrow(/database "template1" does not exist/);
+      expect(poolsIn("template1")[0].ended).toBe(true);
+    });
+  });
+
+  describe("the databases", () => {
+    test("lists only the databases the role can connect to, and marks none as the session's", async () => {
+      const asked: string[] = [];
+      const provider = await connectedServer();
+      const answers = mockQueryFn;
+      mockQueryFn = async (sql, params) => {
+        asked.push(sql);
+        return answers(sql, params);
+      };
+      expect(await provider.listContainers()).toEqual(DATABASES.map((name) => ({ path: [name], name, level: 0 })));
+      const listing = asked.at(-1)!;
+      expect(listing).toContain("d.datallowconn");
+      expect(listing).toContain("NOT d.datistemplate");
+      expect(listing).toContain("has_database_privilege(d.oid, 'CONNECT')");
+      await provider.disconnect();
+    });
+
+    test("one database's schemas come from a session opened in it, under a small pool of its own", async () => {
+      const provider = await connectedServer(async (sql) => {
+        if (sql.includes("pg_namespace") && sql.includes("ORDER BY")) {
+          return {
+            rows: [
+              { name: "app", is_session_default: 0 },
+              { name: "public", is_session_default: 1 },
+            ],
+          };
+        }
+        return defaultMockQuery(sql);
+      });
+      expect(await provider.listContainers(["shop"])).toEqual([
+        { path: ["shop", "app"], name: "app", level: 1, isSessionDefault: false },
+        { path: ["shop", "public"], name: "public", level: 1, isSessionDefault: true },
+      ]);
+      const [pool] = poolsIn("shop");
+      expect(pool.config).toMatchObject({ min: 0, max: 3, host: "localhost", user: "postgres", password: "secret" });
+      // Nothing nests under a schema.
+      expect(await provider.listContainers(["shop", "app"])).toEqual([]);
+      await provider.disconnect();
+    });
+
+    test("a database the role cannot open is refused before any session opens in it", async () => {
+      const provider = await connectedServer();
+      await expect(provider.forCatalog("payroll")).rejects.toThrow(DatabaseConfigError);
+      expect(poolsIn("payroll")).toHaveLength(0);
+      await provider.disconnect();
+    });
+
+    test("a connection pinned to a database names no other one", async () => {
+      mockQueryFn = defaultMockQuery;
+      const provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await expect(provider.forCatalog("shop")).rejects.toThrow(/pinned to one database/);
+      await provider.disconnect();
+    });
+
+    test("a session is opened once and reused, also when two requests ask for it at once", async () => {
+      const provider = await connectedServer();
+      const [first, second] = await Promise.all([provider.forCatalog("shop"), provider.forCatalog("shop")]);
+      expect(first).toBe(second);
+      expect(await provider.forCatalog("shop")).toBe(first);
+      expect(poolsIn("shop")).toHaveLength(1);
+      expect(first.config.database).toBe("shop");
+      expect(first.getCapabilities().containerLevels).toEqual([
+        { id: "schema", label: "Schema", labelPlural: "Schemas" },
+      ]);
+      await provider.disconnect();
+    });
+
+    test("a session keeps the connection's tunnel, and its read-only profile with the role check", async () => {
+      let roleChecks = 0;
+      mockQueryFn = serverAnswers(async (sql) => {
+        if (sql.includes("is_superuser")) {
+          roleChecks += 1;
+          return {
+            rows: [
+              { is_superuser: false, reads_server_files: false, writes_server_files: false, executes_programs: false },
+            ],
+          };
+        }
+        return defaultMockQuery(sql);
+      });
+      const farEnd = { host: "db.internal", port: 5432 };
+      const tunnelled = { ...makePgConfig({ database: "" }), [TUNNEL_FAR_END]: farEnd };
+      const provider = new PostgresProvider(tunnelled, {}, { readOnly: true });
+      await provider.connect();
+      const session = await provider.forCatalog("shop");
+      expect((session.config as typeof tunnelled)[TUNNEL_FAR_END]).toEqual(farEnd);
+      expect(roleChecks).toBe(2);
+      // Under the profile the admission read runs inside the read-only envelope too.
+      const admits = mockWire.findIndex((sent) => typeof sent === "string" && sent.includes("d.datname = $1"));
+      expect(mockWire[admits - 1]).toBe("BEGIN READ ONLY");
+      expect(mockWire[admits + 1]).toBe("ROLLBACK");
+      await provider.disconnect();
+    });
+  });
+
+  describe("the session limit", () => {
+    let clock: number;
+    let nowSpy: ReturnType<typeof spyOn<typeof Date, "now">>;
+
+    beforeEach(() => {
+      clock = 1_000_000;
+      nowSpy = spyOn(Date, "now").mockImplementation(() => clock);
+    });
+
+    afterEach(() => {
+      nowSpy.mockRestore();
+    });
+
+    const SIX = ["d1", "d2", "d3", "d4", "d5", "d6"];
+
+    async function sixDatabaseServer() {
+      mockQueryFn = async (sql, params) => {
+        if (sql.includes("d.datname = $1"))
+          return { rows: SIX.includes(params?.[0] as string) ? [{ admitted: 1 }] : [] };
+        return defaultMockQuery(sql);
+      };
+      const provider = serverLevel();
+      await provider.connect();
+      return provider;
+    }
+
+    test("a sixth database closes the idle session used least recently", async () => {
+      const provider = await sixDatabaseServer();
+      for (const name of SIX.slice(0, 5)) {
+        // oxlint-disable-next-line no-await-in-loop -- opened in order, so the order is the recency.
+        await provider.forCatalog(name);
+        drained(poolsIn(name)[0]);
+        clock += 1_000;
+      }
+      // Used again, so d2 is now the least recent.
+      await provider.forCatalog("d1");
+      clock += 60_000;
+      await provider.forCatalog("d6");
+      expect(poolsIn("d2")[0].ended).toBe(true);
+      expect(SIX.filter((name) => name !== "d2").every((name) => !poolsIn(name)[0].ended)).toBe(true);
+      await provider.disconnect();
+      expect(SIX.every((name) => poolsIn(name)[0].ended)).toBe(true);
+    });
+
+    test("a session just handed out, or one still at work, is never the one closed", async () => {
+      const provider = await sixDatabaseServer();
+      for (const name of SIX.slice(0, 5)) {
+        // oxlint-disable-next-line no-await-in-loop -- opened in order, so the order is the recency.
+        await provider.forCatalog(name);
+      }
+      // Within the grace window every one counts as in use.
+      await expect(provider.forCatalog("d6")).rejects.toThrow(PoolExhaustedError);
+      clock += 60_000;
+      // Past it, a pool with clients out is still in use.
+      await expect(provider.forCatalog("d6")).rejects.toThrow(/already has 5 databases open/);
+      expect(poolsIn("d6")).toHaveLength(0);
+      await provider.disconnect();
+    });
+
+    test("each piece of work a session holds keeps it open", async () => {
+      const provider = await sixDatabaseServer();
+      const session = (await provider.forCatalog("d1")) as unknown as {
+        holdsWork(): boolean;
+        txActive: boolean;
+        runningQueries: Map<string, unknown>;
+        openQueryScopes: Map<string, unknown>;
+        state: { activeQueries: number };
+      };
+      const pool = poolsIn("d1")[0];
+      drained(pool);
+      expect(session.holdsWork()).toBe(false);
+      for (const [hold, release] of [
+        [() => (session.txActive = true), () => (session.txActive = false)],
+        [() => session.runningQueries.set("q", {}), () => session.runningQueries.clear()],
+        [() => session.openQueryScopes.set("s", new Set()), () => session.openQueryScopes.clear()],
+        [() => (session.state.activeQueries = 1), () => (session.state.activeQueries = 0)],
+        [() => (pool.waitingCount = 1), () => (pool.waitingCount = 0)],
+      ] as const) {
+        hold();
+        expect(session.holdsWork()).toBe(true);
+        release();
+      }
+      await provider.disconnect();
+      // A closed session holds nothing, pool or not.
+      expect(session.holdsWork()).toBe(false);
+    });
+  });
+
+  describe("requests that run somewhere", () => {
+    test("statements, transactions and maintenance are refused until a database is chosen", async () => {
+      const provider = await connectedServer();
+      await expect(provider.query("SELECT 1")).rejects.toThrow(/choose a database/);
+      await expect(provider.beginTransaction()).rejects.toThrow(DatabaseConfigError);
+      await expect(provider.runMaintenance("vacuum")).rejects.toThrow(/choose a database/);
+      // Ending a session is the server's business, and reaches any database.
+      expect((await provider.runMaintenance("kill", "4242")).success).toBe(true);
+      await provider.disconnect();
+    });
+
+    test("the read-only profile refuses a statement until a database is chosen", async () => {
+      mockQueryFn = serverAnswers(async (sql) =>
+        sql.includes("is_superuser")
+          ? {
+              rows: [
+                {
+                  is_superuser: false,
+                  reads_server_files: false,
+                  writes_server_files: false,
+                  executes_programs: false,
+                },
+              ],
+            }
+          : defaultMockQuery(sql),
+      );
+      const provider = new PostgresProvider(makePgConfig({ database: "" }), {}, { readOnly: true });
+      await provider.connect();
+      await expect(
+        provider.queryReadOnly("SELECT 1", { statementTimeoutMs: 1000, maxResultRows: 10, maxResultBytes: 1000 }),
+      ).rejects.toThrow(/choose a database/);
+      await provider.disconnect();
+    });
+
+    test("a cancel reaches the statement in whichever database it runs", async () => {
+      const provider = await connectedServer(async (sql) => {
+        if (sql.includes("pg_cancel_backend")) return { rows: [{ cancelled: true }] };
+        return defaultMockQuery(sql);
+      });
+      const session = await provider.forCatalog("shop");
+      (session as unknown as { runningQueries: Map<string, unknown> }).runningQueries.set("q-1", {
+        pid: 4242,
+        client: mockClient,
+      });
+      expect(await provider.cancelQuery("q-1")).toBe(true);
+      expect(await provider.cancelQuery("q-unknown")).toBe(false);
+      await provider.disconnect();
+    });
+
+    test("the monitoring reads on the connection itself name its own database, never an empty one", async () => {
+      const seen: unknown[][] = [];
+      const provider = await connectedServer(async (sql, params) => {
+        seen.push(params ?? []);
+        return defaultMockQuery(sql);
+      });
+      await provider.getHealth();
+      await provider.getPerformanceMetrics();
+      await provider.getSlowQueries();
+      await provider.getActiveSessions();
+      const named = seen.filter((params) => params.length > 0).map((params) => params[0]);
+      expect(named.length).toBeGreaterThan(0);
+      expect(named.every((database) => database === "postgres")).toBe(true);
+      expect(provider.getPoolStats().total).toBe(10);
+      await provider.disconnect();
+    });
+  });
+
+  describe("the object surface", () => {
+    test("a path of the wrong depth is refused before any database is opened", async () => {
+      const provider = await connectedServer();
+      await expect(provider.countObjects(["shop"])).rejects.toThrow(/\[catalog, schema\]/);
+      await expect(provider.describeObject(["shop", "orders"], "table")).rejects.toThrow(QueryError);
+      await expect(provider.describeObject(["shop", "app", "orders"], "index")).rejects.toThrow(
+        /declares no object kind "index"/,
+      );
+      expect(poolsIn("shop")).toHaveLength(0);
+      await provider.disconnect();
+    });
+
+    test("an edit plan is built in the database and sealed with the connection's own fingerprint", async () => {
+      const provider = await connectedServer(async () => ({ rows: [ROUTINE_ROW] }));
+      const build = await provider.buildObjectEdit({
+        path: ["shop", "app", "order_total(integer)"],
+        kind: "function",
+        partId: "definition",
+        text: EDITED,
+      });
+      if (!build.built) throw new Error("narrowing");
+      expect(build.plan.path).toEqual(["shop", "app", "order_total(integer)"]);
+      expect(build.plan.connectionFingerprint).toBe(await connectionFingerprint(makePgConfig({ database: "" })));
+
+      const session = await provider.forCatalog("shop");
+      const applied = { outcome: "applied" as const, revision: { token: "r" }, duration: 1 };
+      const apply = spyOn(session, "applyObjectEdit").mockResolvedValue(applied as never);
+      expect(await provider.applyObjectEdit(build.plan)).toBe(applied as never);
+      expect(apply.mock.calls[0][0].path).toEqual(["app", "order_total(integer)"]);
+
+      const refusal = { built: false as const, refusal: { refusal: "unsupported" } };
+      spyOn(session, "buildObjectEdit").mockResolvedValue(refusal as never);
+      expect(
+        await provider.buildObjectEdit({
+          path: ["shop", "app", "order_total(integer)"],
+          kind: "function",
+          partId: "definition",
+          text: EDITED,
+        }),
+      ).toBe(refusal as never);
       await provider.disconnect();
     });
   });

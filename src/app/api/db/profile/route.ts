@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOrCreateProvider } from "@/lib/db/factory";
 import {
   AuthenticationError,
   ConnectionError,
@@ -11,9 +10,9 @@ import {
 } from "@/lib/db/errors";
 import { type DatabaseProvider, offersColumnProfiling } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
+import { editorProvider, requestCatalog } from "@/lib/api/catalog-provider";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
-import { editorExecutionContext } from "@/lib/api/execution-context";
 import {
   jsonCommandAddress,
   objectSegment,
@@ -212,7 +211,8 @@ export async function POST(req: NextRequest) {
     // The LABEL, for the response alone: the profiler names its export after it.
     const tableName = objectSegment(path);
 
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    // In the database the caller chose, on a server-level connection (#1530).
+    const provider = await editorProvider(connection, guard.session, requestCatalog(body));
 
     {
       const capabilities = provider.getCapabilities();

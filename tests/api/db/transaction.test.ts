@@ -937,3 +937,64 @@ describe("POST /api/db/transaction", () => {
     expect(data.error).toContain("Internal database error");
   });
 });
+
+// ─── Server-level connections (#1530) ───────────────────────────────────────
+describe("POST /api/db/transaction on a server-level connection (#1530)", () => {
+  function session() {
+    return {
+      ...baseMockProvider,
+      beginTransaction: mock(async () => {}),
+      commitTransaction: mock(async () => {}),
+      rollbackTransaction: mock(async () => {}),
+      isInTransaction: mock(() => false),
+      queryInTransaction: mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 })),
+    };
+  }
+
+  test("each database holds its own transaction, owned by whoever opened it there", async () => {
+    const sessions = { shop: session(), analytics: session() };
+    mockTxProvider.beginTransaction.mockClear();
+    const defaults = mockTxProvider.getCapabilities();
+    const capabilities = mockTxProvider.getCapabilities as ReturnType<typeof mock>;
+    capabilities.mockImplementation(() => ({ ...defaults, catalogSessions: true }));
+    const server = mockTxProvider as typeof mockTxProvider & { forCatalog?: unknown };
+    server.forCatalog = mock(async (catalog: "shop" | "analytics") => sessions[catalog]);
+    const as = (username: string) => mockGetSession.mockImplementationOnce(async () => ({ role: "admin", username }));
+    const send = (body: Record<string, unknown>) =>
+      POST(
+        createMockRequest("/api/db/transaction", {
+          method: "POST",
+          body: { connection: { ...validConnection, id: "server-1", database: "" }, ...body },
+        }) as never,
+      );
+    try {
+      as("alice");
+      expect((await send({ action: "begin", catalog: "shop" })).status).toBe(200);
+      expect(sessions.shop.beginTransaction).toHaveBeenCalledTimes(1);
+      sessions.shop.isInTransaction.mockImplementation(() => true);
+
+      // Another database is another transaction, so Alice's does not refuse Bob there.
+      as("bob");
+      expect((await send({ action: "begin", catalog: "analytics" })).status).toBe(200);
+      sessions.analytics.isInTransaction.mockImplementation(() => true);
+
+      // And Alice's is still hers.
+      as("bob");
+      const refused = await send({ action: "commit", catalog: "shop" });
+      expect(refused.status).toBe(409);
+      expect(sessions.shop.commitTransaction).not.toHaveBeenCalled();
+
+      as("alice");
+      expect((await send({ action: "query", catalog: "shop", sql: "SELECT 1" })).status).toBe(200);
+      expect(sessions.shop.queryInTransaction).toHaveBeenCalledTimes(1);
+      expect(mockTxProvider.beginTransaction).not.toHaveBeenCalled();
+    } finally {
+      capabilities.mockImplementation(() => defaults);
+      delete server.forCatalog;
+      for (const catalog of ["shop", "analytics"]) {
+        as(catalog === "shop" ? "alice" : "bob");
+        await send({ action: "rollback", catalog });
+      }
+    }
+  });
+});

@@ -106,6 +106,10 @@ mock.module("@/hooks/use-connection-manager", () => ({
     activeConnection: null,
     schema: [],
     schemaContext: "[]",
+    // A connection that names its own database lists none (#1530).
+    catalogs: [],
+    activeCatalog: undefined,
+    setActiveCatalog: () => {},
     isLoadingSchema: false,
     setConnections: mock(() => {}),
     setActiveConnection: mock(() => {}),

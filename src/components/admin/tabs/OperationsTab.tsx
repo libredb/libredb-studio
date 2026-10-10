@@ -62,6 +62,9 @@ import {
 import { readObjectPathParam } from "@/lib/db/object-path";
 import { withConnectedMaintenance } from "@/lib/db/types";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
+import { useCatalogs } from "@/hooks/use-catalogs";
+import { catalogOfPath, declaresCatalogSessions } from "@/lib/db/object-kinds";
+import { CatalogSelect } from "@/components/catalog-select";
 
 /**
  * The per-row maintenance controls this tab can render, in display order, with the
@@ -298,8 +301,23 @@ export function OperationsTab() {
   // is reactive so it settles as soon as the capability arrives.
   const monitoringOptions = useMemo(() => ({ includeTables: true, includeIndexes: false, includeStorage: false }), []);
 
+  // On a server-level connection this panel is one database's (#1530): the one a deep link's path
+  // names, until the operator picks another, else the one the studio chose last.
+  const { catalogs, catalog: storedCatalog, setCatalog } = useCatalogs(selectedConnection, metadata?.capabilities);
+  const [pickedCatalog, setPickedCatalog] = useState<string | null>(null);
+  const linkedCatalog =
+    metadata === null || deepLinkedPath === null ? undefined : catalogOfPath(metadata.capabilities, deepLinkedPath);
+  const catalog =
+    pickedCatalog ?? (linkedCatalog !== undefined && catalogs.includes(linkedCatalog) ? linkedCatalog : storedCatalog);
+  const chooseCatalog = (next: string) => {
+    setPickedCatalog(next);
+    setCatalog(next);
+  };
+  const waitingForCatalog =
+    metadata !== null && declaresCatalogSessions(metadata.capabilities) && catalog === undefined;
+
   const { data, loading, error, refresh, killSession, runMaintenanceOutcome, maintenanceReport, previewMaintenance } =
-    useMonitoringData(selectedConnection, monitoringOptions);
+    useMonitoringData(waitingForCatalog ? null : selectedConnection, monitoringOptions, catalog);
   // Both maintenance surfaces ask ONE question - `maintenanceControl` in
   // src/lib/db/types.ts - so that neither can offer a control the other's engine
   // rejects. `capabilities` may be undefined here (provider-meta in flight, or its
@@ -398,6 +416,8 @@ export function OperationsTab() {
   const handleConnectionChange = (id: string) => {
     const conn = connections.find((c) => c.id === id);
     if (conn) setSelectedId(conn.id);
+    // A database picked for one connection is not a database of the next.
+    setPickedCatalog(null);
   };
 
   const addLogEntry = useCallback(
@@ -622,6 +642,12 @@ export function OperationsTab() {
             ))}
           </SelectContent>
         </Select>
+        <CatalogSelect
+          catalogs={catalogs}
+          value={catalog}
+          onChange={chooseCatalog}
+          className="h-9 w-full sm:w-[220px] ml-2 bg-panel border-hairline-strong text-fg-secondary"
+        />
         <Button
           variant="ghost"
           size="sm"

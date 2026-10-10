@@ -25,7 +25,7 @@ import { CopyButton } from "@/components/copy-button";
 import { cn } from "@/lib/utils";
 import type { SchemaSnapshot, DatabaseType, DatabaseConnection } from "@/lib/types";
 import { detailedObjects, type DetailedObject } from "@/lib/db/detailed-object";
-import { relationKindIds } from "@/lib/db/object-kinds";
+import { declaresCatalogSessions, relationKindIds } from "@/lib/db/object-kinds";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { storage } from "@/lib/storage";
 import { newLocalId } from "@/lib/ids";
@@ -106,11 +106,26 @@ async function readLiveSchema(conn: DatabaseConnection): Promise<DetailedObject[
   const kinds = relationKindIds(meta.capabilities as ProviderCapabilities);
   if (kinds.length === 0) throw new Error(`${conn.name} declares no object kinds a schema diff can compare`);
 
+  // A server-level connection is compared one database at a time (#1530): its active one, else the
+  // first it lists, since a read of every database on the server is refused.
+  let scope: { parent?: readonly string[] } = {};
+  if (declaresCatalogSessions(meta.capabilities as ProviderCapabilities)) {
+    const listRes = await post("/api/db/objects/containers", payload);
+    const listed = await listRes.json();
+    if (!listRes.ok) throw new Error(listed.error);
+    const names = (listed as { name: string }[]).map((container) => container.name);
+    const stored = storage.getActiveCatalog(conn.id);
+    const catalog = stored !== null && names.includes(stored) ? stored : names[0];
+    if (catalog === undefined) throw new Error(`${conn.name} lists no database this role can open`);
+    scope = { parent: [catalog] };
+  }
+
   // `includeDefaultSql`: the SQL a migration pastes after DEFAULT, captured now, while the table
   // is still the table this snapshot describes. On MySQL it costs one DDL read per table with a
   // default, which a user-initiated read can afford and the agent's inventory does not ask for (#1031).
   const res = await post("/api/db/objects/inventory", {
     ...payload,
+    ...scope,
     kinds,
     includeColumns: true,
     includeDefaultSql: true,

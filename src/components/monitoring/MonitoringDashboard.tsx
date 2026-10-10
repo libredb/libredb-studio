@@ -23,6 +23,9 @@ import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
 import { useAuth } from "@/hooks/use-auth";
+import { useCatalogs } from "@/hooks/use-catalogs";
+import { declaresCatalogSessions } from "@/lib/db/object-kinds";
+import { CatalogSelect } from "@/components/catalog-select";
 
 import { OverviewTab } from "./tabs/OverviewTab";
 import { PerformanceTab } from "./tabs/PerformanceTab";
@@ -73,6 +76,16 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
     [],
   );
 
+  // Declared provider capabilities, so tabs can hide controls the provider cannot
+  // perform (issue #272). Same hook Studio uses — no new API surface.
+  const { metadata } = useProviderMetadata(selectedConnection);
+
+  // On a server-level connection the panels are one database's (#1530): the one the studio chose
+  // last, or the one picked here. Nothing is read until there is one to name.
+  const { catalogs, catalog, setCatalog } = useCatalogs(selectedConnection, metadata?.capabilities);
+  const waitingForCatalog =
+    metadata !== null && declaresCatalogSessions(metadata.capabilities) && catalog === undefined;
+
   const {
     data,
     loading,
@@ -87,11 +100,8 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
     killSession,
     runMaintenance,
     previewMaintenance,
-  } = useMonitoringData(selectedConnection, monitoringOptions);
+  } = useMonitoringData(waitingForCatalog ? null : selectedConnection, monitoringOptions, catalog);
 
-  // Declared provider capabilities, so tabs can hide controls the provider cannot
-  // perform (issue #272). Same hook Studio uses — no new API surface.
-  const { metadata } = useProviderMetadata(selectedConnection);
   // The connected provider's maintenance over the declared capabilities (#1387): see
   // `withConnectedMaintenance`. The Sessions tab's Terminate and the Tables tab's per-row
   // controls both read it.
@@ -195,8 +205,8 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
           </div>
         </div>
 
-        {/* Bottom row: Connection selector (mobile-friendly) */}
-        <div className="px-3 pb-2 sm:px-4 sm:pb-3">
+        {/* Bottom row: Connection selector (mobile-friendly), and the database on a server-level one */}
+        <div className="flex flex-col gap-2 px-3 pb-2 sm:flex-row sm:items-center sm:px-4 sm:pb-3">
           <Select value={selectedConnection?.id || ""} onValueChange={handleConnectionChange}>
             <SelectTrigger className="w-full sm:w-[280px]">
               <SelectValue placeholder="Select connection">
@@ -226,6 +236,12 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
               )}
             </SelectContent>
           </Select>
+          <CatalogSelect
+            catalogs={catalogs}
+            value={catalog}
+            onChange={setCatalog}
+            className="h-9 w-full sm:w-[220px]"
+          />
         </div>
       </header>
 
@@ -350,7 +366,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 <StorageTab data={data} loading={loading} />
               </TabsContent>
               <TabsContent value="pool" className="h-full m-0 p-0">
-                <PoolTab connection={selectedConnection} />
+                <PoolTab connection={selectedConnection} catalog={catalog} />
               </TabsContent>
             </div>
           </Tabs>

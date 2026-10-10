@@ -98,7 +98,7 @@ Score a candidate before writing code. Each criterion you fail becomes code you 
 | 4 | **Is there monitoring data over the same surface?** | Decides how much of the monitoring panel is real rather than honestly empty |
 | 5 | **Is there an EXPLAIN?** | Decides `supportsExplain` and whether a strategy is needed |
 | 6 | **How complex is auth?** | Basic auth is three lines. SigV4, OAuth2 refresh or Kerberos is a library — and that is usually where the no-dependency promise ends |
-| 7 | **Does the data model map onto containers, kinds and objects, and is an outer container level alone a real address?** | The object surface addresses an object by a path of segments, so a hierarchy is declared through `containerLevels` and `objectKinds` rather than flattened into a display name. Then choose `containerPathShapes` and declare it in `getCapabilities()`: `exact` when only the declared depth is an address (a PostgreSQL schema, a MongoDB database), `prefixes` when the outer levels alone are one too (a Trino catalog with no schema, a Couchbase bucket with no scope). An absent field reads as `exact`, and the provider's own check and the HTTP object routes both refuse by that one declaration through `acceptedContainerShapes()` in `src/lib/db/object-kinds.ts` |
+| 7 | **Does the data model map onto containers, kinds and objects, and is an outer container level alone a real address?** | The object surface addresses an object by a path of segments, so a hierarchy is declared through `containerLevels` and `objectKinds` rather than flattened into a display name. Then choose `containerPathShapes` and declare it in `getCapabilities()`: `exact` when only the declared depth is an address (a PostgreSQL schema, a MongoDB database), `prefixes` when the outer levels alone are one too (a Trino catalog with no schema, a Couchbase bucket with no scope). An absent field reads as `exact`, and the provider's own check and the HTTP object routes both refuse by that one declaration through `acceptedContainerShapes()` in `src/lib/db/object-kinds.ts`. A connection that reaches a whole server and must open a session per catalog, as an empty PostgreSQL `database` does (#1530), declares `catalogSessions` and implements `forCatalog()`, and the API routes then take the caller's `catalog`; see `docs/providers/postgres.md` section 4.1.1 |
 
 A good sanity check for criterion 1: **can a browser talk to it?** Couchbase's own Web Console and
 the Capella UI are browser applications, so every service had to be reachable over HTTP for the
@@ -946,7 +946,7 @@ Trino closed the entry that had stood at the top of this table, and it is worth 
 **the product question really was the blocker, and the answer was a mapping rather than a feature**.
 "A catalog is another system, so what a connection pins is a product question" was correct. The answer
 is that the connection's `database` field pins **one catalog**, exactly as it pins one database on
-PostgreSQL, and the tree stays two levels; the alternative — fanning `information_schema` across every
+PostgreSQL when it names one, and the tree stays two levels; the alternative — fanning `information_schema` across every
 catalog — is unbounded in practice, because `jmx.current` alone publishes one table per MBean and one
 sidebar refresh would then depend on every configured connector being reachable. Cross-catalog queries
 still work, because a fully qualified name never needed the pin.
