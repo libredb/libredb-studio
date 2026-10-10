@@ -68,6 +68,19 @@ describe("walkParquetSchema: the refusals", () => {
     expect(walk([root(1), group("x", 1), leaf("x")]).ok).toBe(true);
   });
 
+  test("a DECIMAL logical or converted type lacking its precision or its scale is refused", () => {
+    expect(walk([root(1), { name: "d", type: "INT64", logical_type: { type: "DECIMAL", scale: 2 } }])).toEqual({
+      ok: false,
+    });
+    expect(walk([root(1), { name: "d", type: "INT64", logical_type: { type: "DECIMAL", precision: 9 } }])).toEqual({
+      ok: false,
+    });
+    expect(walk([root(1), { name: "d", type: "INT64", converted_type: "DECIMAL", scale: 0 }])).toEqual({ ok: false });
+    expect(walk([root(1), { name: "d", type: "INT64", converted_type: "DECIMAL", precision: 9 }])).toEqual({
+      ok: false,
+    });
+  });
+
   test("a chain of 100,000 groups is refused without a stack overflow", () => {
     expect(() => walk(chain(100_000))).not.toThrow();
     expect(walk(chain(100_000))).toEqual({ ok: false });
