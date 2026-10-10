@@ -143,3 +143,23 @@ eeba3b2c152688368ecfbdd593872ced28bb9f4e:tests/fixtures/s3/sigv4-suite.json:gene
 # branch does not carry the finding.
 5d5d5ba7d0711048a6ba8c2623084405a4aeeb07:docs/BACKLOG.md:generic-api-key:6319
 d8446c144a70714bed8594e8d2ebd236db1f8c2c:docs/BACKLOG.md:generic-api-key:6292
+
+# The S3 branch's phase 3 re-recording of the five capture sets, and one
+# console test. None is a credential. The eight capture lines are the same
+# kind of ListObjectsV2 continuation cursor as the first set above, which
+# MinIO, RustFS and Silo wrote again for the throwaway fixture bucket when the
+# captures were re-recorded; the rule fires on them only after gitleaks
+# decodes the base64 starting token that carries them. The console test line
+# is the base64 AWS CLI pagination token
+# `{"ContinuationToken": null, "boto_truncate_amount": 2}`, which checks that
+# Studio resumes the CLI's null token. A cursor names a position in one
+# listing; it grants no access.
+e3f53e252bba4a1392b0beab9053c4cfbfe170a1:tests/fixtures/s3/captures/minio-2026-10-10-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:285
+e3f53e252bba4a1392b0beab9053c4cfbfe170a1:tests/fixtures/s3/captures/minio-2026-10-10-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:306
+e3f53e252bba4a1392b0beab9053c4cfbfe170a1:tests/fixtures/s3/captures/minio-region-2026-10-10-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:305
+e3f53e252bba4a1392b0beab9053c4cfbfe170a1:tests/fixtures/s3/captures/minio-region-2026-10-10-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:326
+e3f53e252bba4a1392b0beab9053c4cfbfe170a1:tests/fixtures/s3/captures/rustfs-2026-10-10-1.0.1/console-list-objects-v2-token.json:generic-api-key:285
+e3f53e252bba4a1392b0beab9053c4cfbfe170a1:tests/fixtures/s3/captures/rustfs-2026-10-10-1.0.1/console-list-objects-v2-token.json:generic-api-key:306
+e3f53e252bba4a1392b0beab9053c4cfbfe170a1:tests/fixtures/s3/captures/silo-2026-10-10-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:285
+e3f53e252bba4a1392b0beab9053c4cfbfe170a1:tests/fixtures/s3/captures/silo-2026-10-10-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:306
+f896b55f2a6c697b38a046841537bf942c37be52:tests/unit/db/s3/console-execute.test.ts:generic-api-key:231
