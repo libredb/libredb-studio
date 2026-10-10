@@ -20,6 +20,7 @@ const EDITOR_LANGUAGES: readonly EditorLanguage[] = [
   "qdrant",
   "influxql",
   "oxia",
+  "s3",
 ];
 
 describe("DIALECT_EDITORS", () => {
@@ -36,6 +37,7 @@ describe("DIALECT_EDITORS", () => {
       "promql",
       "qdrant",
       "redis",
+      "s3",
       "sql",
     ]);
   });
@@ -57,6 +59,7 @@ describe("DIALECT_EDITORS", () => {
       qdrant: "qdrant",
       influxql: "influxql",
       oxia: "oxia",
+      s3: "s3",
     });
   });
 

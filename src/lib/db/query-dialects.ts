@@ -96,6 +96,15 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersCountQuery: false,
     offersSqlExport: false,
   }),
+  // S3: a command line of AWS CLI reads. Its rows are listings and fields of a fixed shape, so
+  // no profile, model or count statement applies, and neither SQL export format applies.
+  s3: Object.freeze({
+    tabType: "s3",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+    offersSqlExport: false,
+  }),
 });
 
 /**

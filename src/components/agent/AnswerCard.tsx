@@ -124,6 +124,7 @@ type StatementLanguage =
   | "qdrant"
   | "influxql"
   | "oxia"
+  | "s3"
   | "unknown";
 
 /**
@@ -159,6 +160,11 @@ type StatementLanguage =
  * "not checked" chip, and orange is ruled out for PromQL's reason. Of the declared `-alt` steps, purple's stands
  * furthest from every status hue and every other language here in both palettes (0.076 in OKLab from Cypher's purple,
  * its nearest), measured.
+ *
+ * S3 takes indigo's `-alt` step: no guard here reads an S3 command, so its draft stands beside the amber "not
+ * checked" chip, which rules out yellow and orange; red is ruled out as a failure hue. Of the remaining declared
+ * `-alt` steps, indigo's stands furthest from every status hue and every other language here in both palettes (0.073
+ * in OKLab from PromQL's indigo, its nearest), measured.
  */
 const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.freeze({
   sql: "border-hue-blue/40",
@@ -172,6 +178,7 @@ const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.fre
   qdrant: "border-hue-pink/40",
   influxql: "border-hue-green/40",
   oxia: "border-hue-purple-alt/40",
+  s3: "border-hue-indigo-alt/40",
   unknown: "border-hairline-strong",
 });
 

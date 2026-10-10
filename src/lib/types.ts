@@ -771,7 +771,8 @@ export interface QueryTab {
     | "milvus"
     | "qdrant"
     | "influxql"
-    | "oxia";
+    | "oxia"
+    | "s3";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

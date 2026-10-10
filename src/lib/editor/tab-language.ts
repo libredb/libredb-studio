@@ -15,7 +15,8 @@ export type EditorLanguage =
   | "milvus"
   | "qdrant"
   | "influxql"
-  | "oxia";
+  | "oxia"
+  | "s3";
 
 /**
  * The tab type a connection's tabs take.

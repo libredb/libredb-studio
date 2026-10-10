@@ -85,7 +85,7 @@ const STATEMENT = "SELECT count(*) FROM orders";
 
 const capabilitiesFor = (
   queryLanguage: ProviderCapabilities["queryLanguage"],
-  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant" | "oxia",
+  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant" | "oxia" | "s3",
 ): ProviderCapabilities => ({
   queryLanguage,
   supportsExplain: false,
@@ -142,7 +142,8 @@ function draftEvent(options: {
     | "milvus"
     | "qdrant"
     | "influxql"
-    | "oxia";
+    | "oxia"
+    | "s3";
 }): AgentLedgerEntry {
   return event({
     kind: "plan-statement-drafted",
@@ -498,6 +499,55 @@ describe("AnswerCard — a plan run's statement", () => {
     ] as const) {
       const other = render(<AnswerCard timeline={oxiaDraft} capabilities={capabilitiesFor(language, dialect)} />);
       expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-purple-alt/40");
+      cleanup();
+    }
+  });
+
+  test("tints an S3 command in the s3 language its tab renders in, in indigo's -alt step", () => {
+    // No guard here reads an S3 command, so the draft is shown beside the "not checked" chip, as an Oxia one is.
+    const s3Draft = planTimeline({
+      sql: "aws s3 ls s3://sales/2026/",
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const s3 = render(<AnswerCard timeline={s3Draft} capabilities={capabilitiesFor("json", "s3")} />);
+    const block = s3.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("s3");
+    expect(block.className).toContain("border-hue-indigo-alt/40");
+    cleanup();
+
+    // The ledger's own record of the language tints it the same way when no capabilities are at hand.
+    const recorded = render(
+      <AnswerCard
+        timeline={planTimeline({
+          sql: "aws s3api head-object --bucket sales --key 2026/orders.csv",
+          readOnly: false,
+          guardApplicable: false,
+          identifiers: { kind: "not-applicable" },
+          language: "s3",
+        })}
+      />,
+    );
+    expect(recorded.getByTestId("agent-answer-statement").className).toContain("border-hue-indigo-alt/40");
+    cleanup();
+
+    // The controls: no other language's block carries it, PromQL's indigo base and Oxia's purple-alt included.
+    for (const [language, dialect] of [
+      ["sql", undefined],
+      ["json", undefined],
+      ["promql", undefined],
+      ["cypher", undefined],
+      ["json", "redis"],
+      ["json", "libredb"],
+      ["json", "etcd"],
+      ["json", "milvus"],
+      ["json", "qdrant"],
+      ["json", "oxia"],
+      ["influxql", undefined],
+    ] as const) {
+      const other = render(<AnswerCard timeline={s3Draft} capabilities={capabilitiesFor(language, dialect)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-indigo-alt/40");
       cleanup();
     }
   });
