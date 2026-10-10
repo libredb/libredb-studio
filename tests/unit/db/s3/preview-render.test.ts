@@ -70,7 +70,7 @@ describe("the preview's sentences, verbatim", () => {
       "N-PQ-DECIMAL": "Column {c} is DECIMAL({p},{s}): values with more than 15 significant digits are shown rounded.",
       "N-PQ-ENCODED":
         "A Parquet file stored compressed as a whole cannot be read by range, so the decoded bytes are shown as hex.",
-      "N-PQ-SUMMARY": "{rows} rows in {groups} row group(s); statistics are the first row group's.",
+      "N-PQ-SUMMARY": "{rows} in {groups}; statistics are the first row group's.",
       "N-HINT": "The console's preview command shows these rows as a grid: preview {path}",
       "R-PQ-FOOTER-BIG": "The Parquet footer is {n} bytes, over the {footerMax} bytes a preview reads.",
       "R-PQ-SCHEMA":
@@ -390,8 +390,31 @@ describe("previewSourceParts", () => {
     expect(previewSourceParts({ kind: "parquet", summary, notices: [] }, place)[1]).toEqual({
       id: "rows",
       label: "First rows",
-      unavailable: "3 rows in 1 row group(s); statistics are the first row group's.",
+      unavailable: "3 rows in 1 row group; statistics are the first row group's.",
     });
+  });
+
+  test("the summary sentence writes 1 row and 1 row group in the singular, and more in the plural", () => {
+    const one = { ...summary, rows: 1, rowGroups: 1 };
+    const many = { ...summary, rows: 1_200, rowGroups: 2 };
+    const big = { ...summary, rows: "9007199254740993", rowGroups: 2 };
+    const unavailable = (shape: typeof summary | typeof big) =>
+      previewSourceParts({ kind: "parquet", summary: shape, notices: [] }, place)[1];
+    expect(unavailable(one)).toMatchObject({
+      unavailable: "1 row in 1 row group; statistics are the first row group's.",
+    });
+    expect(unavailable(many)).toMatchObject({
+      unavailable: "1,200 rows in 2 row groups; statistics are the first row group's.",
+    });
+    expect(unavailable(big)).toMatchObject({
+      unavailable: "9007199254740993 rows in 2 row groups; statistics are the first row group's.",
+    });
+    expect(previewQueryResult({ kind: "parquet", summary: one, summaryRows: 100, notices: [] }, 1).warnings).toEqual([
+      { message: "1 row in 1 row group; statistics are the first row group's." },
+    ]);
+    expect(previewQueryResult({ kind: "parquet", summary: many, summaryRows: 100, notices: [] }, 1).warnings).toEqual([
+      { message: "1,200 rows in 2 row groups; statistics are the first row group's." },
+    ]);
   });
 
   test("1,024 columns of 65,536-character statistics and 100 rows of 1,024 such cells stay within SOURCE_CHARACTER_LIMIT", () => {
@@ -511,7 +534,7 @@ describe("previewQueryResult", () => {
           uncompressed_bytes: 20,
         },
       ],
-      warnings: [{ message: "3 rows in 1 row group(s); statistics are the first row group's." }],
+      warnings: [{ message: "3 rows in 1 row group; statistics are the first row group's." }],
     });
   });
 
@@ -523,13 +546,13 @@ describe("previewQueryResult", () => {
     const byDefault = previewQueryResult({ kind: "parquet", summary: leaves, summaryRows: 100, notices: [] }, 1);
     expect(byDefault.rowCount).toBe(100);
     expect(byDefault.warnings).toEqual([
-      { message: "3 rows in 1 row group(s); statistics are the first row group's." },
+      { message: "3 rows in 1 row group; statistics are the first row group's." },
       { message: "The preview stops at 100 rows." },
     ]);
     const asked = previewQueryResult({ kind: "parquet", summary: leaves, summaryRows: 10, notices: [] }, 1);
     expect(asked.rows.map((row) => row.column)).toEqual(Array.from({ length: 10 }, (_, index) => `c${index}`));
     const exact = previewQueryResult({ kind: "parquet", summary, summaryRows: 1, notices: [] }, 1);
-    expect(exact.warnings).toEqual([{ message: "3 rows in 1 row group(s); statistics are the first row group's." }]);
+    expect(exact.warnings).toEqual([{ message: "3 rows in 1 row group; statistics are the first row group's." }]);
   });
 
   test("a Parquet summary without its row count is not a console preview, and throws", () => {

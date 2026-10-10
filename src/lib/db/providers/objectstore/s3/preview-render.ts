@@ -53,7 +53,7 @@ export const S3_PREVIEW_SENTENCES = Object.freeze({
   "N-PQ-DECIMAL": "Column {c} is DECIMAL({p},{s}): values with more than 15 significant digits are shown rounded.",
   "N-PQ-ENCODED":
     "A Parquet file stored compressed as a whole cannot be read by range, so the decoded bytes are shown as hex.",
-  "N-PQ-SUMMARY": "{rows} rows in {groups} row group(s); statistics are the first row group's.",
+  "N-PQ-SUMMARY": "{rows} in {groups}; statistics are the first row group's.",
   "N-HINT": "The console's preview command shows these rows as a grid: preview {path}",
   "R-PQ-FOOTER-BIG": "The Parquet footer is {n} bytes, over the {footerMax} bytes a preview reads.",
   "R-PQ-SCHEMA": "The Parquet schema is nested deeper or wider than the preview reads, so the file is not previewed.",
@@ -261,8 +261,15 @@ function schemaText(summary: ParquetSummary): { readonly text: string; readonly 
 const keyedRows = (rows: S3PreviewRows): Record<string, S3PreviewCell>[] =>
   rows.rows.map((cells) => Object.fromEntries(rows.columns.map((column, index) => [column.name, cells[index]])));
 
-const countCell = (cell: S3PreviewCell): string | number =>
-  typeof cell === "number" || typeof cell === "string" ? cell : String(cell);
+/**
+ * N-PQ-SUMMARY filled from a summary: the row count in the singular for exactly 1, as a sentence writes counts; a
+ * count past 2^53 - 1 arrives as its decimal text and is written as read, in the plural.
+ */
+const summarySentence = (summary: { readonly rows: S3PreviewCell; readonly rowGroups: number }): string =>
+  previewSentence("N-PQ-SUMMARY", {
+    rows: typeof summary.rows === "number" ? counted(summary.rows, "row", "rows") : `${String(summary.rows)} rows`,
+    groups: counted(summary.rowGroups, "row group", "row groups"),
+  });
 
 function parquetParts(
   preview: Extract<S3Preview, { kind: "parquet" }>,
@@ -275,9 +282,7 @@ function parquetParts(
   }
   const schemaPart = textPart("schema", "Parquet schema", schema.text, "json", "rendered", place.limit);
   if (preview.rows === undefined) {
-    const reason =
-      preview.notices[0] ??
-      previewSentence("N-PQ-SUMMARY", { rows: countCell(preview.summary.rows), groups: preview.summary.rowGroups });
+    const reason = preview.notices[0] ?? summarySentence(preview.summary);
     return withNotes(schemaPart, { id: "rows", label: "First rows", unavailable: reason }, notices, place.limit);
   }
   const rows = boundedArray(keyedRows(preview.rows), "", SOURCE_CHARACTER_LIMIT);
@@ -411,7 +416,7 @@ export function previewQueryResult(preview: S3Preview, executionTime: number): Q
         ]);
       const warnings = [
         ...preview.notices,
-        previewSentence("N-PQ-SUMMARY", { rows: countCell(summary.rows), groups: summary.rowGroups }),
+        summarySentence(summary),
         ...(summary.columns.length > summaryRows ? [previewSentence("N-ROWS", { cap: summaryRows })] : []),
       ];
       return grid({ columns, rows }, warnings, executionTime);
