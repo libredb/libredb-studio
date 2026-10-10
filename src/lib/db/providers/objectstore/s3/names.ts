@@ -47,10 +47,14 @@ export function shownName(name: string): string {
   return JSON.stringify(points.length > S3_SHOWN_NAME_CHARS ? points.slice(0, S3_SHOWN_NAME_CHARS).join("") : name);
 }
 
-/** The Source tab's and objectPath's sentence for a verdict, or for a bucket outside the pin; quotes names through shownName. */
+/**
+ * The Source tab's and objectPath's sentence for a verdict, or for a bucket outside the pin; quotes names through
+ * shownName. The "outside-pin" case requires the pin, so a caller cannot reach it without one.
+ */
 export function sourceAddressSentence(
-  refusal: S3AddressVerdict | "outside-pin",
-  names: { readonly bucket: string; readonly key: string; readonly pin?: string },
+  ...[refusal, names]:
+    | [S3AddressVerdict, { readonly bucket: string; readonly key: string }]
+    | ["outside-pin", { readonly bucket: string; readonly key: string; readonly pin: string }]
 ): string {
   switch (refusal) {
     case "key-leading-slash":
@@ -60,7 +64,7 @@ export function sourceAddressSentence(
     case "bucket-pattern":
       return `Studio does not open bucket ${shownName(names.bucket)}: a bucket it addresses is 1 to 255 letters, digits, dots, hyphens or underscores, starting and ending with a letter or digit.`;
     case "outside-pin":
-      return `This connection reads only bucket ${shownName(names.pin ?? "")}; bucket ${shownName(names.bucket)} is outside it.`;
+      return `This connection reads only bucket ${shownName(names.pin)}; bucket ${shownName(names.bucket)} is outside it.`;
   }
 }
 

@@ -85,6 +85,11 @@ describe("sourceAddressSentence", () => {
       'This connection reads only bucket "sales"; bucket "other" is outside it.',
     );
   });
+
+  test("an outside-pin call without a pin is a type error and throws, never a sentence about an empty bucket", () => {
+    // @ts-expect-error the outside-pin case requires the pin
+    expect(() => sourceAddressSentence("outside-pin", { bucket: "other", key: "k" })).toThrow();
+  });
 });
 
 describe("shownName", () => {
