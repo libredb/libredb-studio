@@ -1592,3 +1592,31 @@ describe("docs/SEED_CONNECTIONS.md and the seed schema agree on s3", () => {
     );
   });
 });
+
+/** The providers index row, exactly. */
+const PROVIDERS_INDEX_ROW =
+  "| S3-compatible object storage | `s3` | Object storage | none, REST over the shared `node:http(s)` transport, signed by Studio's own SigV4 code; `hyparquet` for Parquet previews | AWS CLI read commands (a subset, read-only) | [s3.md](./s3.md) |";
+
+describe("docs/providers/README.md", () => {
+  test("56. the index row, the directory note and every fixture row match the code and the compose file", () => {
+    const index = read("docs/providers/README.md");
+    const lines = index.split("\n");
+    const influxdb3 = lines.findIndex((line) => line.startsWith("| InfluxDB 3 (SQL) | `influxdb3` |"));
+    expect(lines[influxdb3 + 1]).toBe(PROVIDERS_INDEX_ROW);
+    expect(lines[influxdb3 + 2].startsWith("| LibreDB | `libredb` |")).toBe(true);
+    expect(index).toContain("Qdrant, InfluxDB, Oxia, Databend and S3 are)");
+    for (const fixture of S3_FIXTURES) {
+      const row = lines.find((line) =>
+        line.startsWith(`| S3-compatible object storage, ${fixture.name} | \`${fixture.service}\` |`),
+      );
+      expect(row, fixture.service).toBeDefined();
+      const cells = row?.split(" | ") ?? [];
+      expect(cells[3], fixture.service).toBe(hostPort(fixture.service));
+      const profile = COMPOSE.services[fixture.service]?.profiles?.[0];
+      expect(cells.at(-1), fixture.service).toBe(profile === undefined ? "*none* |" : `\`${profile}\` |`);
+    }
+    const paragraph = flat(index.slice(index.indexOf("**S3-compatible object storage has six fixtures")));
+    for (const fixture of S3_FIXTURES) expect(paragraph, fixture.service).toContain(`\`${fixture.service}\``);
+    expect(paragraph).toContain("](../../docker/s3/README.md)");
+  });
+});
