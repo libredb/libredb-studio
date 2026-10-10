@@ -8,7 +8,7 @@
       "name": "libredb-studio",
       "icon": "https://raw.githubusercontent.com/libredb/libredb-studio/main/deploy/railway/libredb-studio.png",
       "source": {
-        "image": "ghcr.io/libredb/libredb-studio:0.17.0"
+        "image": "ghcr.io/libredb/libredb-studio:0.18.2"
       },
       "networking": {
         "public": true,
@@ -42,9 +42,9 @@
       "variableDescriptions": {
         "JWT_SECRET": "Secret key used to sign login session tokens. Auto-generated — keep it.",
         "ADMIN_EMAIL": "Login email for the ADMIN account (full access incl. maintenance tools).",
-        "ADMIN_PASSWORD": "Password for the admin account. Auto-generated; find it in Variables after deploy.",
+        "ADMIN_PASSWORD": "Password for the admin account. Auto-generated; find it in Variables after deploy. It seeds the account once, while the server store is still empty; changing it later needs ADMIN_PASSWORD_RESET=true in the same redeploy.",
         "USER_EMAIL": "Login email for the standard, query-only account.",
-        "USER_PASSWORD": "Password for the standard user. Auto-generated; find it in Variables after deploy.",
+        "USER_PASSWORD": "Password for the standard user. Auto-generated; find it in Variables after deploy. Seeds the account once, with no reset flag and no warning: change it under Admin → Accounts in Studio.",
         "NEXT_PUBLIC_AUTH_PROVIDER": "Auth mode: 'local' (email/password). Set 'oidc' for SSO (needs the OIDC_* optional vars).",
         "STORAGE_PROVIDER": "Server-side storage for saved connections & settings: 'local' (browser only) | 'sqlite' (file on the volume) | 'postgres' (multi-node). Keep 'sqlite'.",
         "STORAGE_SQLITE_PATH": "SQLite file path on the mounted volume (/app/data). Keep the default.",
@@ -61,7 +61,8 @@
         "OIDC_SCOPE": { "example": "openid profile email", "description": "OIDC scopes. Defaults to 'openid profile email' if empty." },
         "OIDC_ROLE_CLAIM": { "example": "realm_access.roles", "description": "Claim path holding user roles, used for admin mapping." },
         "OIDC_ADMIN_ROLES": { "example": "admin", "description": "Comma-separated role values mapped to admin. Defaults to 'admin'." },
-        "STORAGE_POSTGRES_URL": { "example": "postgresql://user:pass@host:5432/db", "description": "PostgreSQL URL for multi-node storage. Also set STORAGE_PROVIDER=postgres." }
+        "STORAGE_POSTGRES_URL": { "example": "postgresql://user:pass@host:5432/db", "description": "PostgreSQL URL for multi-node storage. Also set STORAGE_PROVIDER=postgres." },
+        "ADMIN_PASSWORD_RESET": { "example": "true", "description": "Set it to true for one redeploy, together with a new ADMIN_PASSWORD, to replace the stored admin password, then remove it. It also clears that account's passkeys and second factor." }
       },
       "$note": "variables = pre-configured (entered with defaults). optionalVariables = mark each as OPTIONAL in the editor so deployers can fill them only if needed (empty non-optional vars become REQUIRED in Railway). Volumes are attached via right-click on the canvas, not the Settings panel."
     }

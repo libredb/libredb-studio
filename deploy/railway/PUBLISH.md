@@ -13,14 +13,14 @@ values to enter are in [`template.json`](./template.json).
 
 - In the editor, click **+ New** (top-right), or open the command palette
   (`⌘K` / `Ctrl+K`) → **+ New Service** → **Docker Image**.
-- Image: `ghcr.io/libredb/libredb-studio:0.17.0` (pinned, never `:latest`).
+- Image: `ghcr.io/libredb/libredb-studio:0.18.2` (pinned, never `:latest`).
 - Rename the service to `libredb-studio`.
 
 ## 3. Variables
 
 Fastest path: **Variables → Raw Editor → ENV**, paste the values below, **Update
 Variables**, then add a **description** to each (the publish form asks for one).
-The `${{ secret(...) }}` values are auto-generated per deploy.
+The `${{ secret(...) }}` values are generated once, when the template is deployed.
 
 ### Pre-configured variables (defaults — entered for the deployer)
 
@@ -28,9 +28,9 @@ The `${{ secret(...) }}` values are auto-generated per deploy.
 |----------|-------|-------------|
 | `JWT_SECRET` | `${{ secret(48) }}` | Secret key used to sign login session tokens. Auto-generated — keep it. |
 | `ADMIN_EMAIL` | `admin@libredb.org` | Login email for the ADMIN account (full access incl. maintenance tools). |
-| `ADMIN_PASSWORD` | `${{ secret(16) }}` | Password for the admin account. Auto-generated; find it in Variables after deploy. |
+| `ADMIN_PASSWORD` | `${{ secret(16) }}` | Password for the admin account. Auto-generated; find it in Variables after deploy. It seeds the account once, while the server store is still empty; changing it later needs `ADMIN_PASSWORD_RESET=true` in the same redeploy, see the README. |
 | `USER_EMAIL` | `user@libredb.org` | Login email for the standard, query-only account. |
-| `USER_PASSWORD` | `${{ secret(16) }}` | Password for the standard user. Auto-generated; find it in Variables after deploy. |
+| `USER_PASSWORD` | `${{ secret(16) }}` | Password for the standard user. Auto-generated; find it in Variables after deploy. Seeds the account once, with no reset flag and no warning: change it under **Admin → Accounts** in Studio. |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `local` | Auth mode: 'local' (email/password). Set 'oidc' for SSO (needs the OIDC_* optional vars). |
 | `STORAGE_PROVIDER` | `sqlite` | Server-side storage for saved connections & settings: 'local' (browser only, no server persistence) \| 'sqlite' (file on the volume) \| 'postgres' (multi-node). Keep 'sqlite'. |
 | `STORAGE_SQLITE_PATH` | `/app/data/libredb-storage.db` | SQLite file path on the mounted volume (/app/data). Keep the default. |
@@ -105,7 +105,9 @@ The `${{ secret(...) }}` values are auto-generated per deploy.
 
 On a new Studio release:
 
-1. Bump the image tag in `deploy/railway/template.json` and
-   `deploy/railway/README.md`.
+1. Bump the image tag in all three files that carry it:
+   `deploy/railway/template.json`, `deploy/railway/README.md` and this file
+   (line 16). `distribution/channels.yaml` says these three must move
+   together, and leaving this one out is how it last went stale.
 2. In the template editor / published template, update the image tag and
    re-publish (Docker-image templates are **not** auto-updated by Railway).

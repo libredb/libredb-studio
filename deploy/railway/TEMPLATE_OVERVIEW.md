@@ -4,15 +4,15 @@ LibreDB Studio is an open-source, web-based SQL IDE for cloud-native teams. Quer
 
 ## About Hosting libredb-studio
 
-Hosting LibreDB Studio means running a single stateless Next.js container that serves the web IDE and proxies queries to the databases you connect to. This template runs the prebuilt `ghcr.io/libredb/libredb-studio` image on port 3000 with a healthcheck at `/api/db/health` — no build step required. Saved connections and settings are persisted with SQLite on an attached Railway volume (`/app/data`), so they survive restarts and redeploys. Authentication is JWT-based; a strong `JWT_SECRET` and admin/user passwords are auto-generated per deploy. Optional add-ons — AI providers (Gemini, OpenAI, Ollama, custom), OIDC SSO, or a PostgreSQL storage backend — are enabled later via environment variables.
+Hosting LibreDB Studio means running a single stateless Next.js container that serves the web IDE and proxies queries to the databases you connect to. This template runs the prebuilt `ghcr.io/libredb/libredb-studio` image on port 3000 with a healthcheck at `/api/db/health`, with no build step required. Saved connections and settings are persisted with SQLite on an attached Railway volume (`/app/data`), so they survive restarts and redeploys. Authentication is JWT-based; a strong `JWT_SECRET` and the admin/user passwords are generated when the template is deployed. Optional add-ons are enabled later via environment variables: AI providers (Gemini, OpenAI, Ollama, custom), OIDC SSO, or a PostgreSQL storage backend.
 
 ## Common Use Cases
 
 - Give a team a browser-based SQL console for cloud databases, with no desktop client to install or update.
 - Spin up an admin/query UI right next to a Railway PostgreSQL or MySQL database in the same project.
-- Ask the read-only agent a question and get an answer whose every claim cites the result it came from — it executes SQL on PostgreSQL, SQLite, DuckDB and SQL Server only, in a session the database itself enforces as read-only, and on every other connection it drafts a statement for you to run yourself.
-- Draft a statement before anything runs: plan mode executes nothing it drafts, on every engine — its one reach into the database is the schema capture that grounds it, metadata only and no data rows — and the only statement that lands in your editor and runs there is the hand-over you consent to when the run opens.
-- Explain an unfamiliar query in plain English, with the connected schema as context and the engine's own `EXPLAIN` plan as the source — offered on PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino and Databend, the engines that return a plan.
+- Ask the read-only agent a question and get an answer whose every claim cites the result it came from. It executes SQL on PostgreSQL, SQLite, DuckDB and SQL Server only, in a session the database itself enforces as read-only, and on every other connection it drafts a statement for you to run yourself.
+- Draft a statement before anything runs: plan mode executes nothing it drafts, on every engine; its one reach into the database is the schema capture that grounds it, metadata only and no data rows, and the only statement that lands in your editor and runs there is the hand-over you consent to when the run opens.
+- Explain an unfamiliar query in plain English, with the connected schema as context and the engine's own `EXPLAIN` plan as the source, offered on PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino and Databend, the engines that return a plan.
 
 ## Dependencies for libredb-studio Hosting
 
@@ -27,7 +27,7 @@ Hosting LibreDB Studio means running a single stateless Next.js container that s
 
 ### Implementation Details
 
-After the service is healthy, open its public domain and log in with the **admin** account (`admin@libredb.org`) — the generated `ADMIN_PASSWORD` is shown in the service's **Variables** tab. A standard query-only user (`user@libredb.org`) is also created.
+After the service is healthy, open its public domain and log in with the **admin** account (`admin@libredb.org`). The generated `ADMIN_PASSWORD` is shown in the service's **Variables** tab. A standard query-only user (`user@libredb.org`) is also created. Those two variables seed the accounts once; changing them later needs `ADMIN_PASSWORD_RESET`, described in the repository's `deploy/railway/README.md`.
 
 To query a database hosted on Railway, add one to the project (**+ New → Database → PostgreSQL/MySQL**) and create a connection in Studio using the database's provided variables (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`).
 
@@ -39,7 +39,7 @@ LLM_PROVIDER=gemini          # gemini | openai | ollama | custom
 LLM_API_KEY=your_api_key
 LLM_MODEL=gemini-2.5-flash
 
-# SSO (OIDC) — Auth0, Keycloak, Okta, Azure AD
+# SSO (OIDC): Auth0, Keycloak, Okta, Azure AD
 NEXT_PUBLIC_AUTH_PROVIDER=oidc
 OIDC_ISSUER=https://your-tenant.example.com
 OIDC_CLIENT_ID=...
