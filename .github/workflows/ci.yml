@@ -183,10 +183,10 @@ jobs:
         with:
           node-version: "26.10.0"
 
-      - name: Run the transport runtime cases on Node 26.10.0
+      - name: Run the transport runtime cases and the S3 client wire cases on Node 26.10.0
         run: |
           test "$(node --version)" = "v26.10.0"
-          NODE_TRANSPORT_NODES="$(command -v node)" bun tests/run-tests.ts tests/unit/db/http/node-transport-runtimes.test.ts
+          NODE_TRANSPORT_NODES="$(command -v node)" bun tests/run-tests.ts tests/unit/db/http/node-transport-runtimes.test.ts tests/unit/db/s3/client-wire.test.ts
 
       - name: Upload coverage artifact
         # always(): keep the lcov available for debugging when coverage:check
