@@ -23,6 +23,14 @@ const PAGE_SIZE = 50;
 const STATEMENT = "SELECT * FROM t";
 
 /**
+ * The statement an engine whose text is not SQL is asked to page, where it declares pagination: the SQL statement
+ * above names no list such an engine could page. Kubernetes pages the list form of a single-type get.
+ */
+const PAGED_STATEMENT: Readonly<Partial<Record<DatabaseType, string>>> = Object.freeze({
+  kubernetes: "kubectl get pods -n app",
+});
+
+/**
  * The declaration every provider must carry, measured 2026-09-20 by calling each
  * provider's own `prepareQuery(STATEMENT, { limit: 50, offset: 50 })`:
  *
@@ -43,6 +51,8 @@ const STATEMENT = "SELECT * FROM t";
  * - `false` for `libredb`, the quiet one: it inherits `BaseDatabaseProvider.prepareQuery`,
  *   which echoes `offset: 50` back while applying nothing, so a `true` here would render a
  *   control whose every click re-fetches page one.
+ * - `true` for `kubernetes`, whose own `prepareQuery` adds the provider's paging line to the list form of a
+ *   single-type get (`PAGED_STATEMENT`) and hands every other statement on untouched.
  * - `true` for the other fourteen, each of which emits a real offset clause; the shapes
  *   differ per dialect and the invariant below does not care which, only that the
  *   statement CHANGED and the provider says it applied the bound.
@@ -82,8 +92,8 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   databend: true,
   // One AWS CLI subset command per run; the console pages with --starting-token, never with LIMIT and OFFSET.
   s3: false,
-  // Paged by the console's skip-scan once the console lands; until then no statement runs at all.
-  kubernetes: false,
+  // The list form of a single-type get, through the provider's own paging line (console/paging.ts).
+  kubernetes: true,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];
@@ -127,8 +137,9 @@ describe("supportsResultPagination (#816)", () => {
 
   test.each(TYPES.filter((type) => EXPECTED[type]))("%s applies an offset it was offered", async (type) => {
     const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
-    const pageOne = prepare(provider, 0);
-    const pageTwo = prepare(provider, PAGE_SIZE);
+    const statement = PAGED_STATEMENT[type] ?? STATEMENT;
+    const pageOne = prepare(provider, 0, statement);
+    const pageTwo = prepare(provider, PAGE_SIZE, statement);
 
     expect(pageTwo.threw).toBe(false);
     if (pageTwo.threw) return;
@@ -141,7 +152,7 @@ describe("supportsResultPagination (#816)", () => {
     expect(pageTwo.prepared.offset).toBe(PAGE_SIZE);
     expect(pageTwo.prepared.limit).toBe(PAGE_SIZE);
     expect(pageTwo.prepared.query).not.toBe(pageOne.prepared.query);
-    expect(pageTwo.prepared.query).not.toBe(STATEMENT);
+    expect(pageTwo.prepared.query).not.toBe(statement);
   });
 
   /**

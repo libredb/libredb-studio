@@ -942,8 +942,6 @@ describe("createDatabaseProvider", () => {
       "druid",
       "elasticsearch",
       "kafka",
-      // No cancelQuery until the console lands with its run registry.
-      "kubernetes",
       "libredb",
       "libsql",
       "mongodb",

@@ -11,9 +11,13 @@
  *
  * Read-only whatever `readOnly` says: no request path writes, and no maintenance is offered. No `queryReadOnly`, so
  * no agent statement execution and no MCP read. The clock, the randomness and the transport factory are seams.
+ *
+ * The console is `console/`: `query()` runs one statement through `console/run.ts` under the run registry, so a
+ * cancel stops it, and `prepareQuery` pages only the list form of a single-type get (`console/paging.ts`).
  */
+import { getAppVersion } from "@/lib/app-version";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, QueryCancelledError, QueryError } from "@/lib/db/errors";
 import type {
   ActiveSessionDetails,
   Container,
@@ -27,22 +31,29 @@ import type {
   ObjectDetailBatch,
   ObjectSourceDocument,
   PerformanceMetrics,
+  PreparedQuery,
   ProviderCapabilities,
   ProviderLabels,
   ProviderOptions,
+  QueryPrepareOptions,
   QueryResult,
   SlowQueryStats,
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
+import { createRunRegistry, type RunRegistry } from "@/lib/db/utils/bounded-limiter";
 import type { DatabaseConnection, QueryWarning, WithTunnelFarEnd } from "@/lib/types";
 import { createKubernetesClient, DEFAULT_KUBERNETES_SEAMS, type KubernetesCall, type KubernetesSeams } from "./client";
 import { kubernetesConnectWarnings } from "./connect-warnings";
+import { ExplainCache, type KubectlGrid, statementCall } from "./console/context";
+import { EXPLAIN_CACHE_ENTRIES } from "./console/explain";
+import { prepareKubectlQuery } from "./console/paging";
+import { runKubectl } from "./console/run";
 import { type ClusterEndpoint, readClusterEndpoint } from "./connection-options";
 import { DiscoveryCache, readDiscovery, requireSupportedServer } from "./discovery";
 import { CLUSTER_CONTAINER, KUBERNETES_OBJECT_KINDS, KUBERNETES_ROW_ACTIONS } from "./kinds";
 import { KUBERNETES_LABELS } from "./labels";
-import { KUBERNETES_DEFAULT_PORT, KUBERNETES_TYPE } from "./limits";
+import { KUBERNETES_DEFAULT_PORT, KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_TYPE } from "./limits";
 import { kubernetesHealth, kubernetesOverview } from "./monitoring";
 import {
   countKubernetesObjects,
@@ -55,10 +66,6 @@ import {
 } from "./objects";
 import { readKubernetesSource } from "./source";
 
-/** Until the console lands, a statement is refused before any request. */
-export const KUBERNETES_CONSOLE_PENDING =
-  "The kubectl console is not part of this build yet: the tree and the YAML view read this cluster, and no statement is sent.";
-
 /** What a connect or a health check still opening answers once a disconnect or a newer connect closed its session. */
 export const KUBERNETES_CLOSED_WHILE_OPENING =
   "The connection was closed while Studio was still opening it, so nothing was kept; connect again to use it.";
@@ -69,6 +76,31 @@ interface KubernetesSession {
   readonly surface: KubernetesSurface;
   /** Aborted at disconnect, so no request outlives its session. */
   readonly lifetime: AbortController;
+  /** The OpenAPI group documents `explain` read, kept for this session only. */
+  readonly explainCache: ExplainCache;
+}
+
+/** A command's grid as a query result: the rows it answered, and a bound it applied itself. */
+function resultOf(grid: KubectlGrid, executionTime: number): QueryResult {
+  return {
+    rows: grid.rows,
+    fields: grid.fields,
+    rowCount: grid.rows.length,
+    executionTime,
+    ...(grid.columnTypes === undefined ? {} : { columnTypes: grid.columnTypes }),
+    ...(grid.warnings === undefined ? {} : { warnings: grid.warnings }),
+    ...(grid.bounded === true
+      ? {
+          pagination: {
+            limit: KUBERNETES_MAX_STATEMENT_ROWS,
+            offset: 0,
+            hasMore: true,
+            totalReturned: grid.rows.length,
+            wasLimited: true,
+          },
+        }
+      : {}),
+  };
 }
 
 /** Aborts every request of a session and closes its transport; a second call changes nothing. */
@@ -90,6 +122,7 @@ export class KubernetesProvider extends BaseDatabaseProvider {
   private readonly opening = new Set<KubernetesSession>();
   private warnings: QueryWarning[] = [];
   private readonly seams: KubernetesSeams;
+  private readonly runs: RunRegistry = createRunRegistry();
 
   /**
    * Validates nothing and opens nothing: the connection rules run in `connect()`, so a provider built only for its
@@ -108,11 +141,12 @@ export class KubernetesProvider extends BaseDatabaseProvider {
       queryLanguage: "json",
       queryDialect: "kubectl",
       supportsExplain: false,
-      supportsExternalQueryLimiting: false,
+      // The list form of a single-type get is paged by a clause the provider owns (console/paging.ts).
+      supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
-      supportsResultPagination: false,
+      supportsResultPagination: true,
       supportsTransactions: false,
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
@@ -180,7 +214,12 @@ export class KubernetesProvider extends BaseDatabaseProvider {
     const lifetime = new AbortController();
     const call = (): KubernetesCall => ({ signal: lifetime.signal, timeoutMs: endpoint.callTimeoutMs });
     const discovery = new DiscoveryCache(() => readDiscovery(client, call()), this.seams.now);
-    return { endpoint, surface: { client, discovery, endpoint, call }, lifetime };
+    return {
+      endpoint,
+      surface: { client, discovery, endpoint, call },
+      lifetime,
+      explainCache: new ExplainCache(EXPLAIN_CACHE_ENTRIES),
+    };
   }
 
   public async disconnect(): Promise<void> {
@@ -207,14 +246,50 @@ export class KubernetesProvider extends BaseDatabaseProvider {
   // Query path
   // ==========================================================================
 
-  public async query(_statement: string, params?: unknown[]): Promise<QueryResult> {
+  /** The list form of a single-type get gains the provider's paging clause; every other statement goes untouched. */
+  public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
+    return prepareKubectlQuery(query, options);
+  }
+
+  /**
+   * One kubectl statement, under the run registry: a cancel aborts its requests and answers the cancel sentence.
+   * The connection's query timeout bounds the whole statement: it is one deadline taken at the start, and each
+   * request gets the time left before it, so pages, reads and log streams chained by one statement share it.
+   */
+  public async query(statement: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     if (params !== undefined && params.length > 0)
       throw new DatabaseConfigError(
         "kubectl statements take no parameters: write the values in the statement.",
         KUBERNETES_TYPE,
       );
-    this.requireSession();
-    throw new QueryError(KUBERNETES_CONSOLE_PENDING, KUBERNETES_TYPE);
+    const session = this.requireSession();
+    const run = this.runs.begin(queryId, session.lifetime.signal);
+    const started = this.seams.now();
+    try {
+      const grid = await runKubectl(
+        {
+          surface: session.surface,
+          call: statementCall(run.signal, started + session.endpoint.callTimeoutMs, this.seams.now),
+          now: this.seams.now,
+          explainCache: session.explainCache,
+          queryTimeoutMs: session.endpoint.callTimeoutMs,
+          appVersion: getAppVersion(),
+        },
+        statement,
+      );
+      return resultOf(grid, this.seams.now() - started);
+    } catch (error) {
+      // A cancelled run answers the cancel, whatever the aborted request raised.
+      if (run.signal.aborted && run.signal.reason instanceof QueryCancelledError) throw run.signal.reason;
+      throw error;
+    } finally {
+      run.end();
+    }
+  }
+
+  /** Stops a running statement by its id and answers true; an id that names no run answers false. */
+  public async cancelQuery(queryId: string): Promise<boolean> {
+    return this.runs.cancel(queryId);
   }
 
   // ==========================================================================

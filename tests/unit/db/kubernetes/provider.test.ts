@@ -1,17 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  QueryCancelledError,
+  QueryError,
+} from "@/lib/db/errors";
 import { VERSION_FLOOR_SENTENCE } from "@/lib/db/providers/platform/kubernetes/discovery";
 import { KUBERNETES_MAX_EMPTY_PAGES } from "@/lib/db/providers/platform/kubernetes/limits";
 import { EMPTY_PAGES_SENTENCE } from "@/lib/db/providers/platform/kubernetes/table";
-import {
-  KUBERNETES_CLOSED_WHILE_OPENING,
-  KUBERNETES_CONSOLE_PENDING,
-  KubernetesProvider,
-} from "@/lib/db/providers/platform/kubernetes/index";
+import { KUBERNETES_CLOSED_WHILE_OPENING, KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
 import { KUBERNETES_OBJECT_KINDS, KUBERNETES_ROW_ACTIONS } from "@/lib/db/providers/platform/kubernetes/kinds";
 import { KUBERNETES_LABELS } from "@/lib/db/providers/platform/kubernetes/labels";
 import type { DatabaseConnection } from "@/lib/types";
-import { fakeCluster, type FakeClusterOptions } from "../../../helpers/kubernetes-cluster";
+import { fakeCluster, type FakeClusterOptions, manyRows } from "../../../helpers/kubernetes-cluster";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
 import { discoveryList, resource } from "../../../helpers/kubernetes-discovery";
 import {
@@ -252,11 +254,53 @@ describe("the namespace walk Test Connection runs", () => {
 });
 
 describe("the console", () => {
-  test("a statement is refused before any request until the console lands", async () => {
+  test("pages the list form of a get, and pages it through the prepared statement", async () => {
+    const { provider } = providerWith(fakeCluster(SHOP), { database: "shop" });
+    expect(provider.getCapabilities()).toMatchObject({
+      supportsResultPagination: true,
+      supportsExternalQueryLimiting: true,
+    });
+    await provider.connect();
+    const prepared = provider.prepareQuery("kubectl get pods", { limit: 50, offset: 0 });
+    expect(prepared).toEqual({
+      query: "kubectl get pods\n# libredb:page offset=0 limit=50",
+      wasLimited: true,
+      limit: 50,
+      offset: 0,
+    });
+    const result = await provider.query(prepared.query);
+    expect(result).toMatchObject({ fields: ["Name", "Ready", "Status", "Age"], rowCount: 1, executionTime: 0 });
+    expect(result.rows[0]).toMatchObject({ Name: "web-1", Status: "Running" });
+    expect(result.pagination).toBeUndefined();
+    expect(provider.prepareQuery("kubectl describe pod web-1", { limit: 50, offset: 50 })).toEqual({
+      query: "kubectl describe pod web-1",
+      wasLimited: false,
+      limit: 50,
+      offset: 0,
+    });
+  });
+
+  test("an unpaged list past 5,000 rows says the provider bounded it", async () => {
+    const lists = { ...SHOP.lists, "/api/v1/namespaces/shop/pods": manyRows("p", 5_001) };
+    const { provider } = providerWith(fakeCluster({ lists }), { database: "shop" });
+    await provider.connect();
+    const result = await provider.query("get pods");
+    expect(result.rowCount).toBe(5_000);
+    expect(result.pagination).toEqual({
+      limit: 5_000,
+      offset: 0,
+      hasMore: true,
+      totalReturned: 5_000,
+      wasLimited: true,
+    });
+    expect(result.warnings?.[0].message).toContain("more than 5,000 objects");
+  });
+
+  test("a refused statement and parameters send nothing", async () => {
     const { provider, transport } = providerWith(fakeCluster(SHOP));
     await provider.connect();
     const before = transport.calls.length;
-    await expect(provider.query("kubectl get pods")).rejects.toThrow(KUBERNETES_CONSOLE_PENDING);
+    await expect(provider.query("kubectl delete pod web-1")).rejects.toThrow("it is not read-only");
     await expect(provider.query("get pods", ["x"])).rejects.toBeInstanceOf(DatabaseConfigError);
     expect(transport.calls).toHaveLength(before);
   });
@@ -264,6 +308,40 @@ describe("the console", () => {
   test("a statement on a provider that is not connected is refused", async () => {
     const { provider } = providerWith(fakeCluster());
     await expect(provider.query("get pods")).rejects.toThrow("Provider is not connected");
+  });
+
+  test("a cancel stops the run and answers the cancel sentence; an unknown id answers false", async () => {
+    const answer = fakeCluster(SHOP);
+    let started: () => void = () => {};
+    const waiting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const { provider } = providerWith(
+      (request, line) => {
+        if (!line.startsWith("GET /api/v1/namespaces/shop/pods?")) return answer(request, line);
+        started();
+        return new Promise((_resolve, reject) => {
+          request.signal.addEventListener("abort", () => reject(new Error("socket destroyed")), { once: true });
+        });
+      },
+      { database: "shop" },
+    );
+    await provider.connect();
+    const running = provider.query("get pods", undefined, "run-1");
+    await waiting;
+    expect(await provider.cancelQuery("run-1")).toBe(true);
+    await expect(running).rejects.toBeInstanceOf(QueryCancelledError);
+    expect(await provider.cancelQuery("run-1")).toBe(false);
+  });
+
+  test("a failure that is not a cancel passes as it was raised", async () => {
+    const { provider } = providerWith(fakeCluster({ ...SHOP, forbidden: ["/api/v1/namespaces/shop/pods"] }), {
+      database: "shop",
+    });
+    await provider.connect();
+    await expect(provider.query("get pods", undefined, "run-2")).rejects.toThrow(
+      "This connection's identity may not list pods in the namespace shop (403 Forbidden).",
+    );
   });
 });
 
