@@ -587,6 +587,16 @@ export interface AgentInventoryKind {
   readonly derivedGroupings?: boolean;
   /** The provider's sentence for a kind that could not be read. Present means none of it is listed. */
   readonly unavailable?: string;
+  /**
+   * How many objects of a kind whose names are withheld from machine surfaces (`ObjectKindSpec.machineNames`) the
+   * walk counted. Present means none of the kind is listed, by design rather than by a refusal.
+   */
+  readonly withheldCount?: number;
+  /**
+   * A kind whose names are withheld that some container read gave no count for, so the walk skipped it there
+   * uncounted: `withheldCount`, where present, is then a floor, and where absent nothing of the kind was counted.
+   */
+  readonly withheldUncounted?: true;
 }
 
 /**

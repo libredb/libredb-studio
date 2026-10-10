@@ -2671,6 +2671,21 @@ export interface ObjectKindSpec {
    */
   readonly countIsListing?: true;
   /**
+   * Whether THIS KIND's object names may reach a machine surface.
+   *
+   * Absent: they may, as every kind's always have. `"withheld"`: the object surface lists them to the user, in the
+   * tree and the console, and the agent's grounding walk counts the kind and lists none of it, so no name of this
+   * kind reaches the model; the inventory carries the count as `AgentInventoryKind.withheldCount`, or marks the kind
+   * `withheldUncounted` where a container read gave no count for it. It is for a kind whose names are themselves
+   * sensitive, such as stored secrets, whose names often say what they hold.
+   *
+   * Read through `kindNamesWithheld()` in `src/lib/db/object-kinds.ts`. The walk knows such a kind's size only
+   * through its count, so a provider that declares it counts it in `countObjects`. Only a kind whose role is not
+   * `relation` declares it: MCP's `inspect_schema` and the app's schema read take relation kinds, and this
+   * declaration does not reach them.
+   */
+  readonly machineNames?: "withheld";
+  /**
    * The folder this kind is drawn in, between its container and its own folder: Workloads, Config.
    *
    * Absent: the kind's folder hangs directly under the container, as every kind did before this
