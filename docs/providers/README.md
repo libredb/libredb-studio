@@ -287,6 +287,7 @@ provider's integration pass.
 | SQL Server | `mssql` | localhost | 1433 | `sa` | `Password123!` | `master` | — |
 | MongoDB | `mongodb` | localhost | 27017 | `admin` | `admin` | any; auth source `admin` | — |
 | Redis | `redis` | localhost | 6379 | *none* | *none* | *none* (db index 0) | — |
+| libSQL | `libsql` | localhost | **18080** | *none* | *none* | *none* | — |
 | Couchbase | `couchbase` | localhost | 8091 | `Administrator` | `password123` | `travel` (bucket) | — |
 | ClickHouse | `clickhouse` | localhost | 8123 | `libredb` | `password123` | `demo` | — |
 | Apache Druid | `druid-router` | localhost | 8888 | *none* | *none* | *none* | `druid` |
@@ -295,17 +296,17 @@ provider's integration pass.
 | Trino | `trino` | localhost | 8080 | *none* | *none* | `tpch` (catalog) | — |
 | Databend | `databend-http` | localhost | 8000 | `libredb` | `Probe123pass!` | `libredb_demo` | — |
 | Apache Cassandra | `cassandra` | localhost | 9042 | *none* | *none* | `probe` (keyspace) | — |
-| Prometheus | `prometheus` | localhost | 9090 | *none* | *none* | *none* | *none* |
-| InfluxDB (InfluxQL), 1.x | `influxdb1` | localhost | 8087 | `reader` | `readonly123` | `home` | *none* |
-| InfluxDB (InfluxQL), 2.x | `influxdb2` | localhost | 8086 | *none* | the read-only token for bucket `home` ([`docker/influxdb/README.md`](../../docker/influxdb/README.md) says how to read it out) | `home` | *none* |
-| InfluxDB 3 (SQL) | `influxdb3` | localhost | 8181 | *none* | `apiv3_libredb-influxdb3-admin-token` | `home` | *none* |
+| Prometheus | `prometheus` | localhost | 9090 | *none* | *none* | *none* | — |
+| InfluxDB (InfluxQL), 1.x | `influxdb1` | localhost | 8087 | `reader` | `readonly123` | `home` | — |
+| InfluxDB (InfluxQL), 2.x | `influxdb2` | localhost | 8086 | *none* | the read-only token for bucket `home` ([`docker/influxdb/README.md`](../../docker/influxdb/README.md) says how to read it out) | `home` | — |
+| InfluxDB 3 (SQL) | `influxdb3` | localhost | 8181 | *none* | `apiv3_libredb-influxdb3-admin-token` | `home` | — |
 | InfluxDB 3 (SQL), file-limit fixture | `influxdb3-filelimit` | localhost | 8182 | *none* | `apiv3_libredb-influxdb3-admin-token` | `home` | `influxdb-filelimit` |
-| Apache Kafka | `kafka` | localhost | 9092 | *none* | *none* | *none* | *none* |
-| etcd | `etcd` | localhost | 2379 | *none* | *none* | *none* (one connection is one cluster) | *none* |
-| Oxia | `oxia` | localhost | 6648 | *none* | *none* | `default` (namespace) | *none* |
-| Neo4j | `neo4j` | localhost | 7687 | `neo4j` | `password123` | `neo4j`, or empty for the home database | *none* |
-| Milvus | `milvus` | localhost | 19530 | `root` | the documented default ([milvus.md, section 4.2](./milvus.md#42-authentication)) | `default` | *none* |
-| Qdrant | `qdrant` | localhost | 6333 | *none* | *none* | *none* | *none* |
+| Apache Kafka | `kafka` | localhost | 9092 | *none* | *none* | *none* | — |
+| etcd | `etcd` | localhost | 2379 | *none* | *none* | *none* (one connection is one cluster) | — |
+| Oxia | `oxia` | localhost | 6648 | *none* | *none* | `default` (namespace) | — |
+| Neo4j | `neo4j` | localhost | 7687 | `neo4j` | `password123` | `neo4j`, or empty for the home database | — |
+| Milvus | `milvus` | localhost | 19530 | `root` | the documented default ([milvus.md, section 4.2](./milvus.md#42-authentication)) | `default` | — |
+| Qdrant | `qdrant` | localhost | 6333 | *none* | *none* | *none* | — |
 | SQLite | *no service* | — | — | — | — | a file path on the Studio host | — |
 | LibreDB | *no service* | — | — | — | — | a directory on the Studio host | — |
 
