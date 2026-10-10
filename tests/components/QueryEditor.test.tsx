@@ -2022,6 +2022,14 @@ describe("QueryEditor", () => {
     expect(capturedLanguageRegistrations).toContain("s3");
   });
 
+  test("registers the kubectl language before the editor mounts, beside Oxia", () => {
+    render(React.createElement(QueryEditor, createDefaultProps({ language: "kubectl", value: "kubectl get pods" })));
+
+    // Oxia's registration is the control: it reaches the same capture, so a missing "kubectl" is the component.
+    expect(capturedLanguageRegistrations).toContain("oxia");
+    expect(capturedLanguageRegistrations).toContain("kubectl");
+  });
+
   test("registers the etcd language before the editor mounts, beside LibreDB, Redis and PromQL (#1089)", () => {
     render(React.createElement(QueryEditor, createDefaultProps({ language: "etcd", value: "get /app/ --prefix" })));
 
@@ -2058,6 +2066,7 @@ describe("QueryEditor", () => {
       "etcd",
       "oxia",
       "s3",
+      "kubectl",
       "graph-cypher",
       "influxql",
       "milvus",
@@ -2477,6 +2486,7 @@ describe("QueryEditor", () => {
       ["etcd", false],
       ["oxia", false],
       ["s3", false],
+      ["kubectl", false],
       ["graph-cypher", false],
       ["influxql", false],
       ["sql", true],

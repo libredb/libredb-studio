@@ -15,6 +15,7 @@ import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
 import { registerRedisLanguage } from "@/lib/editor/redis-language";
 import { registerEtcdLanguage } from "@/lib/editor/etcd-language";
 import { registerOxiaLanguage } from "@/lib/editor/oxia-language";
+import { registerKubectlLanguage } from "@/lib/editor/kubectl-language";
 import { registerS3Language, S3_LANGUAGE_ID } from "@/lib/editor/s3-language";
 import { registerS3CompletionProvider, s3CompletionBucketsOf } from "@/lib/editor/s3-completions";
 import { registerPromqlLanguage } from "@/lib/editor/promql-language";
@@ -566,7 +567,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     }, []);
 
     const handleBeforeMount = (monacoInstance: typeof Monaco) => {
-      // Register the LibreDB, Redis, etcd, Oxia and S3 command languages, PromQL, Cypher and InfluxQL (each
+      // Register the LibreDB, Redis, etcd, Oxia, S3 and kubectl command languages, PromQL, Cypher and InfluxQL (each
       // idempotent) so their tabs highlight correctly instead of being treated as JSON or SQL
       // (#427, #1085, #1089, #424, Neo4j spec 6.5, InfluxDB spec 6.7).
       registerLibreDBLanguage(monacoInstance);
@@ -575,6 +576,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       registerEtcdLanguage(monacoInstance);
       registerOxiaLanguage(monacoInstance);
       registerS3Language(monacoInstance);
+      registerKubectlLanguage(monacoInstance);
       registerCypherLanguage(monacoInstance);
       registerInfluxqlLanguage(monacoInstance);
       // Every console dialect's language, from its editor record (vector-family spec 3.5): the records are the

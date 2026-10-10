@@ -78,6 +78,7 @@ import type { DatabaseConnection } from "@/lib/db/types";
 import { CYPHER_LANGUAGE_ID } from "@/lib/editor/cypher-language";
 import { ETCD_LANGUAGE_ID } from "@/lib/editor/etcd-language";
 import { INFLUXQL_LANGUAGE_ID } from "@/lib/editor/influxql-language";
+import { KUBECTL_LANGUAGE_ID } from "@/lib/editor/kubectl-language";
 import { PROMQL_LANGUAGE_ID } from "@/lib/editor/promql-language";
 import type { DatabaseType } from "@/lib/types";
 import { SOURCE_PART_FALLBACK_LANGUAGE } from "../helpers/object-surface-conformance";
@@ -318,11 +319,11 @@ describe("the installed editor's language ids", () => {
     expect(basic.has("sql")).toBe(true);
   });
 
-  test("no id the installed editor registers is named milvus, qdrant, oxia or s3, so each console's tokens provider is the one in charge (vector-family spec 3.5, SB2-4.5)", () => {
-    // registerConsoleLanguage, registerOxiaLanguage and registerS3Language return early when their id is already
-    // registered, as registerEtcdLanguage does, so a built-in id of any of these names would leave the console lexer
-    // out of the editor.
-    for (const id of ["milvus", "qdrant", "oxia", "s3"]) {
+  test("no id the installed editor registers is named milvus, qdrant, oxia, s3 or kubectl, so each console's tokens provider is the one in charge (vector-family spec 3.5, SB2-4.5)", () => {
+    // registerConsoleLanguage, registerOxiaLanguage, registerS3Language and registerKubectlLanguage return early when
+    // their id is already registered, as registerEtcdLanguage does, so a built-in id of any of these names would leave
+    // the console lexer out of the editor.
+    for (const id of ["milvus", "qdrant", "oxia", "s3", KUBECTL_LANGUAGE_ID]) {
       expect(basic.has(id)).toBe(false);
       expect(rich).not.toContain(id);
       expect(core.has(id)).toBe(false);
