@@ -33,6 +33,11 @@ export interface DialectSpec {
    * `src/lib/db/types.ts`). Absent means it does; Milvus's and Qdrant's records are the ones that decline them.
    */
   readonly offersSqlExport?: boolean;
+  /**
+   * The flags whose values query history must never keep (`maskStatementForHistory` in `src/lib/history-mask.ts`).
+   * Absent means history keeps the statement as typed, which is every dialect's answer until one declares it.
+   */
+  readonly historyMask?: { readonly credentialFlags: readonly string[] };
 }
 
 /**
