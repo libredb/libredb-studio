@@ -12,6 +12,7 @@ import {
   S3_CURSOR_SENTENCES,
   type S3Cursor,
 } from "@/lib/db/providers/objectstore/s3/cursor";
+import { S3_CURSOR_PAYLOAD_MAX_BYTES } from "@/lib/db/providers/objectstore/s3/constants";
 import { S3_ERROR_SENTENCES } from "@/lib/db/providers/objectstore/s3/errors";
 
 const spelled = (payload: unknown): string =>
@@ -113,6 +114,37 @@ describe("bounds at encode", () => {
     }
     expect(caught).toBeInstanceOf(QueryError);
     expect((caught as Error).message).toBe(S3_ERROR_SENTENCES.cursorTooLong);
+  });
+});
+
+describe("what the encoder writes, every cursor of which decodes", () => {
+  test("a cursor with neither a token nor an after, or with both, is a defect and throws", () => {
+    for (const cursor of [
+      { bucket: "sales", prefix: "", level: true },
+      { bucket: "sales", prefix: "", level: true, token: "t", after: "a" },
+    ]) {
+      let caught: unknown;
+      try {
+        encodeS3Cursor(cursor);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect(caught).not.toBeInstanceOf(QueryError);
+      expect((caught as Error).message).toBe("An S3 cursor carries exactly one of a token and an after");
+    }
+  });
+
+  test("a payload of exactly the payload bound round-trips, and one byte more is refused", () => {
+    const overhead = JSON.stringify({ b: "sales", p: "", l: 1, t: "t" }).length;
+    const exact: S3Cursor = {
+      bucket: "sales",
+      prefix: "x".repeat(S3_CURSOR_PAYLOAD_MAX_BYTES - overhead),
+      level: true,
+      token: "t",
+    };
+    expect(decodeS3Cursor(encodeS3Cursor(exact))).toEqual(exact);
+    expect(() => encodeS3Cursor({ ...exact, prefix: `${exact.prefix}x` })).toThrow(S3_ERROR_SENTENCES.cursorTooLong);
   });
 });
 

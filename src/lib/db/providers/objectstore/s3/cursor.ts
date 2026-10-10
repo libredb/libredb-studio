@@ -10,7 +10,9 @@
  * after a restart or an idle eviction, decodes a cursor another instance wrote.
  *
  * The decoder refuses a text longer than S3_CURSOR_TEXT_MAX_CHARS before any base64 work, because the route bounds no
- * cursor length, and that bound already holds the decoded payload to S3_CURSOR_PAYLOAD_MAX_BYTES; the encoder refuses a payload over S3_CURSOR_PAYLOAD_MAX_BYTES, so every cursor it writes decodes.
+ * cursor length, and that bound already holds the decoded payload to S3_CURSOR_PAYLOAD_MAX_BYTES; the encoder refuses
+ * a payload over S3_CURSOR_PAYLOAD_MAX_BYTES and a cursor without exactly one of a token and an after, so every cursor
+ * it writes decodes.
  * The token is passed back byte for byte, never parsed, never logged and never put in a sentence.
  */
 import { QueryError } from "@/lib/db/errors";
@@ -40,7 +42,10 @@ const SPELLING = "s3c:1:";
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 const FIELDS: ReadonlySet<string> = new Set(["b", "p", "l", "t", "a"]);
 
+/** The cursor's text; a cursor with neither or both of a token and an after is a caller's defect and throws. */
 export function encodeS3Cursor(cursor: S3Cursor): string {
+  if ((cursor.token === undefined) === (cursor.after === undefined))
+    throw new Error("An S3 cursor carries exactly one of a token and an after");
   if (cursor.token !== undefined && cursor.token.length > S3_CURSOR_TOKEN_MAX_CHARS)
     throw new QueryError(S3_ERROR_SENTENCES.tokenTooLong, S3_TYPE);
   const payload = Buffer.from(
