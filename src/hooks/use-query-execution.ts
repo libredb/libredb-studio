@@ -22,6 +22,7 @@ import { getExplainStrategy, type ExplainStrategy } from "@/lib/explain";
 import type { ExplainFormat } from "@/lib/db/types";
 import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
 import { sandboxRefusal } from "@/lib/editor/sandbox-refusal";
+import { historyMaskOf, maskStatementForHistory } from "@/lib/history-mask";
 import { buildConnectionPayload } from "./use-connection-payload";
 
 export interface QueryExecutionOptions {
@@ -768,7 +769,7 @@ export function useQueryExecution({
             connectionId: activeConnection.id,
             connectionName: activeConnection.name,
             tabName: tabToExec.name,
-            query: queryToExecute,
+            query: maskStatementForHistory(queryToExecute, historyMaskOf(metadata?.capabilities)),
             executionTime,
             status: "error",
             executedAt: new Date(),
@@ -795,7 +796,7 @@ export function useQueryExecution({
             connectionId: activeConnection.id,
             connectionName: activeConnection.name,
             tabName: tabToExec.name,
-            query: queryToExecute,
+            query: maskStatementForHistory(queryToExecute, historyMaskOf(metadata?.capabilities)),
             executionTime: resultData.executionTime || executionTime,
             status: resultData.hasError ? "error" : "success",
             executedAt: new Date(),
@@ -1196,7 +1197,7 @@ export function useQueryExecution({
           connectionId: activeConnection.id,
           connectionName: activeConnection.name,
           tabName: tabToExec.name,
-          query: sql,
+          query: maskStatementForHistory(sql, historyMaskOf(metadata?.capabilities)),
           executionTime: result.executionTime ?? Date.now() - startTime,
           status: "success",
           executedAt: new Date(),
@@ -1218,7 +1219,7 @@ export function useQueryExecution({
           connectionId: activeConnection.id,
           connectionName: activeConnection.name,
           tabName: tabToExec.name,
-          query: sql,
+          query: maskStatementForHistory(sql, historyMaskOf(metadata?.capabilities)),
           executionTime: Date.now() - startTime,
           status: "error",
           executedAt: new Date(),
@@ -1229,7 +1230,7 @@ export function useQueryExecution({
         toast({ title: "Query Error", description: errorMessage, variant: "destructive" });
       }
     },
-    [activeConnection, activeTabId, tabs, currentTab, setTabs, toast],
+    [activeConnection, activeTabId, tabs, currentTab, setTabs, toast, metadata],
   );
 
   /**

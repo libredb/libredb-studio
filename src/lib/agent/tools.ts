@@ -85,7 +85,7 @@ import type {
   ReadOnlyStatementMode,
 } from "@/lib/db/types";
 import type { ContainerEnumeration } from "@/lib/db/container-walk";
-import { enumerationOf, kindsByContainer } from "@/lib/db/container-walk";
+import { enumerationOf, kindsByContainer, scopeGroundingContainers } from "@/lib/db/container-walk";
 import {
   applicableKinds,
   containerDepth,
@@ -93,6 +93,7 @@ import {
   isCountSampled,
   isCountUnavailable,
   kindCountIsListing,
+  kindNamesWithheld,
 } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
 import { machineColumns } from "@/lib/db/detailed-object";
@@ -3052,7 +3053,13 @@ async function walkObjectInventory(
   const listObjects = provider.listObjects.bind(provider);
   const describeObjects = provider.describeObjects.bind(provider);
 
-  const enumeration = await enumerateGroundingContainers(provider, capabilities);
+  // A provider that declares a walk scope is read in its session-default container and the ones it names; the
+  // rest are counted, so the inventory can say what it did not read.
+  const scoped = scopeGroundingContainers(
+    await enumerateGroundingContainers(provider, capabilities),
+    capabilities.agentWalkScope,
+  );
+  const enumeration = scoped.enumeration;
   const { containers, defaultContainer } = enumeration;
   // A container that names its kinds is walked for those alone: asking it for another would meet the
   // provider's refusal and end the whole capture.
@@ -3060,6 +3067,10 @@ async function walkObjectInventory(
   const sampledFrom = new Map<string, string>();
   /** The provider's sentence for each `countIsListing` kind whose count was refused, never listed. */
   const unavailable = new Map<string, string>();
+  /** What each kind whose names are withheld counted, summed over the containers read; none of it is listed. */
+  const withheld = new Map<string, number>();
+  /** The kinds whose names are withheld that some container read answered no count for. */
+  const withheldUncounted = new Set<string>();
   const objects: AgentInventoryObject[] = [];
   let truncated: AgentInventory["truncated"];
 
@@ -3069,6 +3080,16 @@ async function walkObjectInventory(
     for (const spec of applicableKinds(declared, kindsOf.get(JSON.stringify(container)))) {
       const count = Object.hasOwn(counts, spec.id) ? counts[spec.id] : undefined;
       if (count !== undefined && !isCountUnavailable(count) && count.count === 0) continue;
+      // A kind whose names are withheld is counted and never listed, so no name of it reaches a model.
+      if (kindNamesWithheld(spec)) {
+        if (count === undefined) withheldUncounted.add(spec.id);
+        else if (isCountUnavailable(count)) unavailable.set(spec.id, count.unavailable);
+        else {
+          withheld.set(spec.id, (withheld.get(spec.id) ?? 0) + count.count);
+          if (isCountSampled(count)) sampledFrom.set(spec.id, count.sampledFrom);
+        }
+        continue;
+      }
       // The exception the docblock names: the refusal this count met is the refusal the listing
       // would meet, so no listing is sent and the sentence travels on the kind (#1089 4.7).
       if (count !== undefined && isCountUnavailable(count) && kindCountIsListing(capabilities, spec.id)) {
@@ -3143,13 +3164,24 @@ async function walkObjectInventory(
     labelPlural: spec.labelPlural,
     ...(sampledFrom.has(spec.id) ? { sampledFrom: sampledFrom.get(spec.id) } : {}),
     ...(unavailable.has(spec.id) ? { unavailable: unavailable.get(spec.id) } : {}),
+    ...(withheld.has(spec.id) ? { withheldCount: withheld.get(spec.id) } : {}),
+    ...(withheldUncounted.has(spec.id) ? { withheldUncounted: true as const } : {}),
     // The refusal `tablesAreDerivedGroupings` carries is about the rows of the inventory,
     // which are the relation kinds: a Redis Function Library is a named object and a Redis
     // key pattern is not, and both are declared by the one provider that sets the flag.
     ...(capabilities.tablesAreDerivedGroupings === true && spec.role === "relation" ? { derivedGroupings: true } : {}),
   }));
 
-  const inventory: AgentInventory = truncated === undefined ? { objects, kinds } : { objects, kinds, truncated };
+  // The deepest level's words, because the scope keeps or skips containers at that level.
+  const level = capabilities.containerLevels?.[containerDepth(capabilities) - 1];
+  const inventory: AgentInventory = {
+    objects,
+    kinds,
+    ...(truncated === undefined ? {} : { truncated }),
+    ...(scoped.unread > 0 && level !== undefined
+      ? { unreadContainers: { count: scoped.unread, label: level.label, labelPlural: level.labelPlural } }
+      : {}),
+  };
   return defaultContainer === undefined ? { inventory } : { inventory, defaultContainer };
 }
 

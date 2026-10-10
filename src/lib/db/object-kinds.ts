@@ -437,6 +437,16 @@ export function kindCountIsListing(capabilities: ProviderCapabilities, id: strin
 }
 
 /**
+ * Whether THIS KIND's object names are kept off every machine surface (`ObjectKindSpec.machineNames`).
+ *
+ * Absent and undeclared both read as false. It takes the SPEC, as `kindHasColumns` does, because its one reader,
+ * the agent's grounding walk, already holds it.
+ */
+export function kindNamesWithheld(kind: ObjectKindSpec | undefined): boolean {
+  return kind?.machineNames === "withheld";
+}
+
+/**
  * The one sentence every provider reports a CALLER's bulk-read bound with (#789).
  *
  * `ObjectDetailBatch.truncated.reason` is a sentence a person reads beside a partial
