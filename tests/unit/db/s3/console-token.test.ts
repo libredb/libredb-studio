@@ -5,6 +5,8 @@
  * the CLI's own encoder.
  */
 import { describe, expect, test } from "bun:test";
+import { S3_CURSOR_TOKEN_MAX_CHARS } from "@/lib/db/providers/objectstore/s3/constants";
+import { S3_MAX_TOKEN_CHARS } from "@/lib/db/providers/objectstore/s3/console/constants";
 import { decodeS3StartingToken, encodeS3StartingToken } from "@/lib/db/providers/objectstore/s3/console/token";
 
 /** The JSON a token holds, read back by base64 and JSON.parse as the CLI reads it. */
@@ -68,7 +70,7 @@ describe("decodeS3StartingToken", () => {
 
   test.each([
     ["the empty text", ""],
-    ["8,193 characters", "A".repeat(8_193)],
+    ["32,801 characters", "A".repeat(32_801)],
     ["text that is not base64", "not a token!"],
     ["the AWS CLI's legacy ___ form", "abc___2"],
     ["unpadded base64", "eyJDb250aW51YXRpb25Ub2tlbiI6ImFiYyJ"],
@@ -98,7 +100,27 @@ describe("decodeS3StartingToken", () => {
 
   test("a token wrapping the longest service token the client reads stays inside the bound", () => {
     const written = encodeS3StartingToken("t".repeat(4_096));
-    expect(written.length).toBeLessThanOrEqual(8_192);
+    expect(written.length).toBeLessThanOrEqual(S3_MAX_TOKEN_CHARS);
     expect(decodeS3StartingToken(written)).toEqual({ continuationToken: "t".repeat(4_096) });
+  });
+
+  test.each([
+    ["a control character JSON escapes in six characters", "\u0001"],
+    ["a quote JSON escapes", '"'],
+    ["a character UTF-8 widens to two bytes", "\u00e9"],
+    ["a character UTF-8 widens to three bytes", "\u4e00"],
+    ["a surrogate pair UTF-8 writes in four bytes", "\u{1f600}"],
+  ])("a service token at the client's bound made of %s round-trips", (_name, unit) => {
+    const token = unit.repeat(Math.floor(S3_CURSOR_TOKEN_MAX_CHARS / unit.length));
+    const written = encodeS3StartingToken(token);
+    expect(written.length).toBeLessThanOrEqual(S3_MAX_TOKEN_CHARS);
+    expect(decodeS3StartingToken(written)).toEqual({ continuationToken: token });
+  });
+
+  test("the widest token at the client's bound fills the bound exactly, and one character more is refused", () => {
+    expect(encodeS3StartingToken("\u0001".repeat(S3_CURSOR_TOKEN_MAX_CHARS))).toHaveLength(S3_MAX_TOKEN_CHARS);
+    expect(
+      decodeS3StartingToken(encodeS3StartingToken("\u0001".repeat(S3_CURSOR_TOKEN_MAX_CHARS + 1))),
+    ).toBeUndefined();
   });
 });

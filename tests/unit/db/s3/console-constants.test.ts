@@ -55,7 +55,7 @@ describe("the console's constants", () => {
       S3_CELL_CHARS: 65_536,
       S3_MAX_TEXT_BYTES: 65_536,
       S3_MAX_PAGES_PER_RUN: 50,
-      S3_MAX_TOKEN_CHARS: 8_192,
+      S3_MAX_TOKEN_CHARS: 32_800,
       S3_MAX_BUCKET_BYTES: 255,
       S3_ECHO_WORD_CHARS: 40,
     });
