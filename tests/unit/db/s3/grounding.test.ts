@@ -74,6 +74,8 @@ describe("plan-mode grounding on S3", () => {
       ["bucket", "sales"],
     ]);
     expect(JSON.stringify(capture)).not.toContain("tenant-secret-marker");
+    expect(JSON.stringify(capture)).not.toContain("test-secret-key");
+    expect(JSON.stringify(capture)).not.toContain("AKIDTESTKEY");
     // The count and the listing of the countIsListing kind are answered by one ListBuckets, and no ListObjectsV2 is sent.
     expect(fake.lines().slice(before)).toEqual(["GET /?max-buckets=10000"]);
   });
@@ -92,5 +94,7 @@ describe("plan-mode grounding on S3", () => {
     expect(capture.snapshot.objects.map((object) => object.name)).toEqual(["sales"]);
     expect(fake.exchanges.length).toBe(before);
     expect(JSON.stringify(capture)).not.toContain("tenant-secret-marker");
+    expect(JSON.stringify(capture)).not.toContain("test-secret-key");
+    expect(JSON.stringify(capture)).not.toContain("AKIDTESTKEY");
   });
 });

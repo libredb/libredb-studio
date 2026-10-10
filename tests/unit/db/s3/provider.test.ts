@@ -148,6 +148,33 @@ describe("nothing ambient", () => {
     process.env.AWS_REGION = "eu-west-1";
     expect(await send()).toEqual(before);
   });
+
+  test("environment credentials and region change nothing a signed request sends", async () => {
+    const send = async () => {
+      const { s3, fake } = provider(BUCKETS);
+      await s3.connect();
+      return {
+        lines: fake.lines(),
+        signing: fake.exchanges.map((exchange) => exchange.signing?.headers),
+        headers: fake.exchanges.map((exchange) => exchange.request.headers),
+      };
+    };
+    const before = await send();
+    expect(before.signing[0]).toEqual({
+      authorization: expect.stringContaining("Credential=AKIDTESTKEY/20261009/us-east-1/s3/aws4_request,"),
+      "x-amz-date": "20261009T131443Z",
+      "x-amz-content-sha256": expect.any(String),
+    });
+    process.env.AWS_ACCESS_KEY_ID = "AKIDFROMENVIRONMENT";
+    process.env.AWS_SECRET_ACCESS_KEY = "secret-from-environment";
+    process.env.AWS_SESSION_TOKEN = "token-from-environment";
+    process.env.AWS_PROFILE = "default";
+    process.env.AWS_REGION = "eu-west-1";
+    const after = await send();
+    expect(after).toEqual(before);
+    for (const signed of after.signing) expect(Object.keys(signed ?? {})).not.toContain("x-amz-security-token");
+    for (const headers of after.headers) expect(Object.keys(headers ?? {})).not.toContain("x-amz-security-token");
+  });
 });
 
 describe("deadlines and disconnect", () => {
@@ -381,7 +408,7 @@ describe("the Source tab", () => {
   });
 
   test("a refused preview read is an unavailable Preview part beside the Metadata part", async () => {
-    const { s3 } = provider(
+    const { s3, fake } = provider(
       (request) => {
         if (request.method === "HEAD") return rangedObject(request);
         if (request.target.query.includes("list-type=2")) return xmlAnswer(objectsXml({}));
@@ -398,6 +425,7 @@ describe("the Source tab", () => {
       unavailable:
         'This access key may not read object "a.csv" in bucket "sales" (s3:GetObject). The server answers the same way for an object that does not exist, so this does not say that object "a.csv" exists.',
     });
+    expect(fake.lines().slice(1)).toEqual(["HEAD /sales/a.csv", "GET /sales/a.csv"]);
   });
 
   test("a preview read past the query timeout fails the whole document, not the Preview part", async () => {
@@ -525,7 +553,8 @@ describe("the console query", () => {
     const { s3, fake } = provider(BUCKETS);
     await s3.connect();
     const result = await s3.query("aws s3api list-buckets");
-    expect(Array.isArray(result.rows)).toBe(true);
+    expect(result.fields).toEqual(["Name", "CreationDate"]);
+    expect(result.rows).toEqual([{ Name: "sales", CreationDate: "2026-10-09T13:13:17.442Z" }]);
     expect(fake.lines()).toEqual(["GET /?max-buckets=10000", "GET /?max-buckets=10000"]);
   });
 
@@ -536,6 +565,7 @@ describe("the console query", () => {
     const error = await s3.query("aws s3api list-buckets").catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(TimeoutError);
     expect((error as Error).message).toContain("within 1 second; nothing was retried.");
+    await s3.disconnect();
   });
 
   test("cancel of a running run, and of an id that names none", async () => {
