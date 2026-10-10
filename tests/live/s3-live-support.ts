@@ -12,7 +12,7 @@
  *
  *   connection              the refusal buildS3ConnectionOptions throws for the step's connection
  *   console                 the refusal parseS3Command answers for the step's command, with the connection's context
- *   keys                    the refusal readS3KeyScanOptions throws for the step's page options
+ *   keys                    the refusal readS3KeyScanRequest throws for the step's page options and cursor
  *   egress:link-local:<h>   the refusal assertNotLinkLocalLiteral throws for host <h>
  *   egress:blocked:<h>      the refusal assertPublicLiteralHost throws for <h> with DB_HTTP_BLOCK_PRIVATE_HOSTS on
  *   endpoint:host:<h>       the refusal validateHost throws for <h>
@@ -37,7 +37,7 @@ import { S3_PREVIEW_DEFAULT_ROWS } from "@/lib/db/providers/objectstore/s3/const
 import { S3ServerError, toProviderError } from "@/lib/db/providers/objectstore/s3/errors";
 import { S3_RESPONSE_HEADERS } from "@/lib/db/providers/objectstore/s3/headers";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
-import { readS3KeyScanOptions } from "@/lib/db/providers/objectstore/s3/key-scan";
+import { readS3KeyScanRequest } from "@/lib/db/providers/objectstore/s3/key-scan";
 import { joinVirtualKey } from "@/lib/db/providers/objectstore/s3/names";
 import { S3_PREVIEW_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-render";
 import { s3Signer } from "@/lib/db/providers/objectstore/s3/sigv4";
@@ -371,6 +371,11 @@ function perServer(build: (server: S3Server) => readonly S3Step[]): Readonly<Rec
   return cells({ minio: build("minio"), silo: build("silo"), garage: build("garage"), rustfs: build("rustfs") });
 }
 
+/** The Field rows head-object answers for a seeded object, in the console's fixed order; a server may add others. */
+const HEAD_OBJECT_FIELDS = ["ContentLength", "ETag", "LastModified", "ContentType"];
+const HEAD_OBJECT_DETAIL =
+  "head-object answers one Field row each for ContentLength, ETag, LastModified and ContentType";
+
 const TOP_LEVEL = ["a/", "data/", "dir/", "keys/", "long/", "meta/", "parquet/", "sp/"].map(
   (name) => `studio-demo/${name}`,
 );
@@ -455,19 +460,29 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
   {
     id: "A2",
     behaviour:
-      "Test Connection, root, pinned studio-demo: one ListObjectsV2 on the pin with max-keys=1, delimiter=/ and encoding-type=url, and no HEAD",
+      "Test Connection, root, pinned studio-demo: connect and the health read each send one ListObjectsV2 on the pin with max-keys=1, delimiter=/ and encoding-type=url, and no HEAD",
     expect: cells(
       {
         minio: one(
-          ok("ok: one ListObjectsV2 with max-keys=1, delimiter=/ and encoding-type=url, no HEAD", {
-            headers: { requests: "1", method: "GET", "max-keys": "1", delimiter: "/", "encoding-type": "url" },
-          }),
+          ok(
+            "ok: two ListObjectsV2, connect's probe and the health read's, each with max-keys=1, delimiter=/ and encoding-type=url, no HEAD",
+            {
+              headers: {
+                requests: "2",
+                method: "GET",
+                "same probe": "yes",
+                "max-keys": "1",
+                delimiter: "/",
+                "encoding-type": "url",
+              },
+            },
+          ),
           "test",
         ),
       },
       "as-silo",
     ),
-    evidence: ["docs/providers/s3.md", "Garage, measured live", "RustFS, measured live"],
+    evidence: ["docs/providers/s3.md", "Garage, measured live", "RustFS, measured live", "first live run, 2026-10-10"],
   },
   {
     id: "A3",
@@ -583,11 +598,16 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
         ["ahead", ok("ok (no future bound)", { rows: 5 })],
         [
           "behind",
-          refused(server("ListBuckets", 400, "InvalidRequest", { message: "Date is too old", anyNumber: true })),
+          refused(
+            server("ListBuckets", 400, "InvalidRequest", {
+              message: "Bad request: Date is too old",
+              anyNumber: true,
+            }),
+          ),
         ],
       ),
     }),
-    evidence: ["Silo, measured live", "Garage, measured live", "RustFS, measured live"],
+    evidence: ["Silo, measured live", "Garage, measured live", "RustFS, measured live", "first live run, 2026-10-10"],
   },
   {
     id: "A9",
@@ -648,7 +668,7 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
       minio: steps(
         ["list", ok("buckets listed, filtered by the policy", { rows: 5 })],
         ["open", refused(server("ListObjectsV2", 403, "AccessDenied", { bucket: "studio-demo" }))],
-        ["head", ok("head-object answers one row", { rows: 1 })],
+        ["head", ok(HEAD_OBJECT_DETAIL, { names: HEAD_OBJECT_FIELDS })],
         ["pinned", refused(server("ListObjectsV2", 403, "AccessDenied", { bucket: "studio-demo" }))],
       ),
       garage: steps(
@@ -658,7 +678,12 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
         ["pinned", refused(server("ListObjectsV2", 403, "AccessDenied", { bucket: "studio-demo" }))],
       ),
     }),
-    evidence: ["AWS S3 behaviour as documented", "Garage, measured live", "RustFS, measured live"],
+    evidence: [
+      "AWS S3 behaviour as documented",
+      "Garage, measured live",
+      "RustFS, measured live",
+      "first live run, 2026-10-10",
+    ],
   },
   {
     id: "A12",
@@ -680,7 +705,7 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
   {
     id: "A55",
     behaviour:
-      "Endpoints 169.254.169.254, 169.254.0.1, [fe80::1], [fd00:ec2::254], [::ffff:169.254.169.254] and [64:ff9b::a9fe:a9fe], with DB_HTTP_BLOCK_PRIVATE_HOSTS unset and again false; then 2852039166 and 0xa9fea9fe",
+      "Endpoints 169.254.169.254, 169.254.0.1, [fe80::1], [fd00:ec2::254], [::ffff:169.254.169.254] and [64:ff9b::a9fe:a9fe], with Connect without TLS ticked and DB_HTTP_BLOCK_PRIVATE_HOSTS unset and again false; then 2852039166 and 0xa9fea9fe",
     expect: cells({
       minio: [
         ...LINK_LOCAL_HOSTS.flatMap((host) => [
@@ -1104,16 +1129,27 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
     behaviour: "parquet/large/narrow-zstd.parquet; parquet/large/wide-zstd.parquet",
     expect: cells({
       minio: steps(
-        ["narrow", ok("rows, all five columns", { names: ["id", "name", "amount", "d", "flag"] })],
+        [
+          "narrow",
+          ok("rows for the leading 4 of 5 columns, with notice N-PQ-SOME-COLUMNS: the fifth passes the value cap", {
+            notice: "notice:N-PQ-SOME-COLUMNS",
+            rows: S3_PREVIEW_DEFAULT_ROWS,
+          }),
+        ],
         [
           "wide",
-          ok("rows for the leading columns that fit, with notice N-PQ-SOME-COLUMNS naming k of 60", {
+          ok("rows for the leading columns that fit, with notice N-PQ-SOME-COLUMNS naming k = 4 of 60", {
             notice: "notice:N-PQ-SOME-COLUMNS",
+            rows: S3_PREVIEW_DEFAULT_ROWS,
           }),
         ],
       ),
     }),
-    evidence: ["pyarrow and Polars default files, measured on Node and Bun", "docs/providers/s3.md"],
+    evidence: [
+      "pyarrow and Polars default files, measured on Node and Bun",
+      "docs/providers/s3.md",
+      "first live run, 2026-10-10: k = 4 on both files, as the offline plan gives over the same generated files",
+    ],
   },
   {
     id: "A40",
@@ -1208,8 +1244,8 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
   {
     id: "A48",
     behaviour: "aws s3api head-object --bucket studio-demo --key data/table.csv",
-    expect: cells({ minio: one(ok("one row of metadata", { rows: 1 }), "console") }),
-    evidence: ["docs/providers/s3.md"],
+    expect: cells({ minio: one(ok(HEAD_OBJECT_DETAIL, { names: HEAD_OBJECT_FIELDS }), "console") }),
+    evidence: ["docs/providers/s3.md", "first live run, 2026-10-10"],
   },
   {
     id: "A49",
@@ -1242,11 +1278,17 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
     id: "A59",
     behaviour: "aws s3api head-bucket --bucket studio-demo",
     expect: cells({
-      minio: one(ok("one Field/Value grid with the members the server sends", { names: ["BucketRegion"] }), "console"),
-      garage: one(ok("one Field/Value grid with the members the server sends", { rows: 0 }), "console"),
-      rustfs: one(ok("one Field/Value grid with the members the server sends", { rows: 0 }), "console"),
+      minio: one(ok("one Field/Value grid with the members the server sends: none", { rows: 0 }), "console"),
+      "minio-region": one(
+        ok("one Field/Value grid with the members the server sends: BucketRegion eu-central-1", {
+          headers: { BucketRegion: "eu-central-1" },
+        }),
+        "console",
+      ),
+      garage: one(ok("one Field/Value grid with the members the server sends: none", { rows: 0 }), "console"),
+      rustfs: one(ok("one Field/Value grid with the members the server sends: none", { rows: 0 }), "console"),
     }),
-    evidence: ["docs/providers/s3.md"],
+    evidence: ["docs/providers/s3.md", "first live run, 2026-10-10"],
   },
   {
     id: "A60",
@@ -1265,15 +1307,15 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
     behaviour: "aws s3api get-bucket-location --bucket studio-demo",
     expect: cells({
       minio: one(
-        ok("one row, LocationConstraint empty or us-east-1, as the first run measures", {
-          headers: { LocationConstraint: "" },
+        ok("one row, LocationConstraint us-east-1", {
+          headers: { LocationConstraint: "us-east-1" },
         }),
         "console",
       ),
       "minio-region": one(ok("eu-central-1", { headers: { LocationConstraint: "eu-central-1" } }), "console"),
       garage: one(ok("garage", { headers: { LocationConstraint: "garage" } }), "console"),
     }),
-    evidence: ["MinIO, measured live", "Garage, measured live"],
+    evidence: ["MinIO, measured live", "Garage, measured live", "first live run, 2026-10-10"],
   },
   {
     id: "A62",
@@ -1281,11 +1323,11 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
     expect: cells({
       minio: one(ok("Status Enabled", { headers: { Status: "Enabled" } }), "console"),
       garage: one(
-        refused(server("GetBucketVersioning", 501, "NotImplemented", { bucket: "studio-versions" })),
+        ok("a grid with no Status, and the note that versioning was never turned on for the bucket", { rows: 0 }),
         "console",
       ),
     }),
-    evidence: ["Garage, measured live"],
+    evidence: ["Garage, measured live", "first live run, 2026-10-10"],
   },
   {
     id: "A64",
@@ -1304,15 +1346,13 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
     behaviour: "The same command with a well-formed token taken from a studio-bulk listing",
     expect: cells({
       minio: one(
-        ok("sent; the server authorises it with the connection's own key: one request", { rows: 1 }),
-        "foreign",
-      ),
-      garage: one(
-        refused(server("ListObjectsV2", 400, "InvalidRequest", { bucket: "studio-demo", sentToken: true })),
+        ok("sent; the server authorises it with the connection's own key and answers the listing's rows: one request", {
+          rows: 1,
+        }),
         "foreign",
       ),
     }),
-    evidence: ["docs/providers/s3.md", "Garage, measured live"],
+    evidence: ["docs/providers/s3.md", "Garage, measured live", "first live run, 2026-10-10"],
   },
   // Read-only, signing and bounds
   {
@@ -1470,14 +1510,23 @@ const OPERATIONS = new Set([
   "GetObjectTagging",
 ]);
 
+/** The check a ref names accepted the step's input, so the ref names no sentence for that input. */
+class S3AcceptedInput extends Error {}
+
 function thrown(run: () => unknown, what: string): string {
   try {
     run();
   } catch (error) {
     return (error as Error).message;
   }
-  throw new Error(`${what} accepted the step's input, so the cell's sentence names no refusal`);
+  throw new S3AcceptedInput(`${what} accepted the step's input, so the cell's sentence names no refusal`);
 }
+
+/** Matches no message, so `not:` of it matches every refusal. */
+const NO_SENTENCE: S3ResolvedSentence = { pattern: /(?!)/, anyNumber: false };
+
+/** A date an hour ahead of now, so a skew answer resolves to the sentence that names the measured minutes. */
+const skewedServerDate = () => new Date(Date.now() + 3_600_000).toUTCString();
 
 function connectionOptions(connection: DatabaseConnection) {
   return buildS3ConnectionOptions(connection as Parameters<typeof buildS3ConnectionOptions>[0], {
@@ -1513,7 +1562,15 @@ export function sentenceRefFinding(ref: string): string | undefined {
 }
 
 export function resolveS3Sentence(ref: string, context: S3SentenceContext): S3ResolvedSentence {
-  if (ref.startsWith("not:")) return { anyNumber: false, not: resolveS3Sentence(ref.slice(4), context) };
+  if (ref.startsWith("not:")) {
+    // An input the named check accepts has no such sentence, so every refusal differs from it.
+    try {
+      return { anyNumber: false, not: resolveS3Sentence(ref.slice(4), context) };
+    } catch (error) {
+      if (error instanceof S3AcceptedInput) return { anyNumber: false, not: NO_SENTENCE };
+      throw error;
+    }
+  }
   if (ref === "connection")
     return { text: thrown(() => connectionOptions(context.connection), "buildS3ConnectionOptions"), anyNumber: false };
   if (ref === "console") {
@@ -1533,8 +1590,8 @@ export function resolveS3Sentence(ref: string, context: S3SentenceContext): S3Re
   if (ref === "keys")
     return {
       text: thrown(
-        () => readS3KeyScanOptions(context.scan as KeyScanOptions, context.connection.database || undefined),
-        "readS3KeyScanOptions",
+        () => readS3KeyScanRequest(context.scan as KeyScanOptions, context.connection.database || undefined),
+        "readS3KeyScanRequest",
       ),
       anyNumber: false,
     };
@@ -1595,6 +1652,7 @@ export function resolveS3Sentence(ref: string, context: S3SentenceContext): S3Re
       ...(answer.bucket === undefined ? {} : { bucket: answer.bucket }),
       ...(answer.key === undefined ? {} : { key: answer.key }),
       ...(answer.sentToken === undefined ? {} : { sentToken: answer.sentToken }),
+      ...(answer.anyNumber === true ? { serverDate: skewedServerDate() } : {}),
     });
     const mapped = toProviderError(error, answer.operation, {
       region: options.region,
@@ -2192,10 +2250,10 @@ export function wireViolations(
 }
 
 const wireStep =
-  (row: Parameters<typeof wireViolations>[0]): S3StepFunction =>
+  (row: Parameters<typeof wireViolations>[0], name = "run"): S3StepFunction =>
   (run, wire) => {
     const connection = connectionOf(run, { role: "root" });
-    return step(run, wire, "run", { connection }, async () => ({ rows: wireViolations(row, run.recorded()).length }));
+    return step(run, wire, name, { connection }, async () => ({ rows: wireViolations(row, run.recorded()).length }));
   };
 
 const DOT_ENTRIES = new Set([
@@ -2230,11 +2288,13 @@ const needsLive = (row: string) => {
 
 function linkLocalSteps(): Record<string, S3StepFunction> {
   const steps: Record<string, S3StepFunction> = {};
+  // Connect without TLS is ticked, so the plain-HTTP consent check passes and the link-local check is what
+  // refuses: no consent unlocks a link-local origin.
   for (const host of LINK_LOCAL_HOSTS)
     for (const setting of ["unset", "false"] as const)
       steps[`${host} ${setting}`] = (run, wire) =>
         withEnv("DB_HTTP_BLOCK_PRIVATE_HOSTS", setting === "unset" ? undefined : "false", () =>
-          testStep(`${host} ${setting}`, { role: "root", host })(run, wire),
+          testStep(`${host} ${setting}`, { role: "root", host, allowInsecureAuth: true })(run, wire),
         );
   for (const host of NUMERIC_HOSTS) steps[host] = testStep(host, { role: "root", host });
   return steps;
@@ -2259,7 +2319,10 @@ export const S3_RUNNERS: Readonly<Record<string, Readonly<Record<string, S3StepF
         return {
           headers: {
             requests: String(sent.length),
-            method: first?.method ?? "",
+            method: [...new Set(sent.map((request) => request.method))].join(","),
+            "same probe": sent.every((request) => request.path === first?.path && request.query === first?.query)
+              ? "yes"
+              : "no",
             "max-keys": value("max-keys"),
             delimiter: value("delimiter"),
             "encoding-type": value("encoding-type"),
@@ -2376,7 +2439,9 @@ export const S3_RUNNERS: Readonly<Record<string, Readonly<Record<string, S3StepF
       return step(run, wire, "console", { connection, command }, async () => {
         const before = wire.seen.length;
         await withProvider(provider(run, wire, connection), (p) => consoleRun(p, command));
-        return { headers: { prefix: queryValue(wire.seen[before]?.query ?? "", "prefix") ?? "" } };
+        // The listing, not the connect probe that precedes it.
+        const listing = wire.seen.slice(before).find((request) => queryValue(request.query, "list-type") === "2");
+        return { headers: { prefix: queryValue(listing?.query ?? "", "prefix") ?? "" } };
       });
     },
   },
@@ -2518,7 +2583,13 @@ export const S3_RUNNERS: Readonly<Record<string, Readonly<Record<string, S3StepF
       return step(run, wire, "gets", { connection, command }, async () => {
         const before = wire.seen.length;
         await withProvider(provider(run, wire, connection), (p) => consoleRun(p, command));
-        return { rows: wire.seen.slice(before).filter((request) => request.method === "GET").length };
+        // The object's own GETs, not the connect probe that precedes them.
+        return {
+          rows: wire.seen
+            .slice(before)
+            .filter((request) => request.method === "GET" && request.path === "/studio-demo/data/bomb.ndjson.gz")
+            .length,
+        };
       });
     },
   },
@@ -2597,12 +2668,15 @@ export const S3_RUNNERS: Readonly<Record<string, Readonly<Record<string, S3StepF
       return step(run, wire, "foreign", { connection, command }, async () => {
         const before = wire.seen.length;
         await withProvider(provider(run, wire, connection), (p) => consoleRun(p, command));
-        return { rows: wire.seen.length - before };
+        // The listings the command sent, not the connect probe that precedes them.
+        return {
+          rows: wire.seen.slice(before).filter((request) => queryValue(request.query, "list-type") === "2").length,
+        };
       });
     },
   },
   A52: {
-    wire: wireStep("A52"),
+    wire: wireStep("A52", "wire"),
     "readonly-off": consoleStep("readonly-off", "aws s3api list-buckets", { role: "root", readOnly: false }),
   },
   A53: { run: wireStep("A53") },
@@ -2694,6 +2768,9 @@ export const S3_CONFORMANCE: ObjectSurfaceExpectation = {
   containers: [],
   kinds: { bucket: 5 },
   sampleObject: { path: ["studio-demo"], kind: "bucket" },
+  // The Source tab answers a missing bucket or object with an unavailable part and never raises, so the authored
+  // absence is a bucket name the bucket rule refuses before any request: it names nothing on any server.
+  absentSource: { path: ["-no-such-bucket-"], kind: "bucket" },
   keyBrowserSample: { path: [joinVirtualKey("studio-demo", "data/table.csv")], kind: "object" },
   noColumnKinds: true,
 };

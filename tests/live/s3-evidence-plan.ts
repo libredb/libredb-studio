@@ -4,8 +4,10 @@
  *
  * A row is not recorded when it needs the live process (A9's ambient credentials and canary, A56's host address, A65's
  * search of every message), the tunnel (A63), wall-clock timing (A57), when its exchanges pass the scrub's 512 KiB
- * cap (A39's first row groups), or when it is a rule over every request (A26, A27, A33, A45, A53, A54), which the
- * replay checks over every capture instead. A37 records only the steps that read less than 512 KiB.
+ * cap (A39's first row groups, A30's one-MiB ranged read), when it walks many/, whose 210 KB pages a listing scenario
+ * leaves to folders/ so the captures stay under 8 MiB (A21; A22 and A24b record the paged listing), or when it is a
+ * rule over every request (A26, A27, A33, A45, A53, A54), which the replay checks over every capture instead. A28 and
+ * A37 record only the steps that read less than 512 KiB.
  */
 import { S3_CAPTURE_TARGETS, type S3CaptureTarget } from "../helpers/s3-fixtures";
 import {
@@ -45,8 +47,10 @@ export interface S3Scenario {
 
 export const S3_LIVE_ONLY_ROWS: readonly string[] = [
   "A9",
+  "A21",
   "A26",
   "A27",
+  "A30",
   "A33",
   "A39",
   "A45",
@@ -60,18 +64,19 @@ export const S3_LIVE_ONLY_ROWS: readonly string[] = [
 
 const RECORDED_STEPS: Readonly<Record<string, readonly string[]>> = {
   A8: ["ahead"],
+  A28: ["tagged"],
   A37: ["csv", "tsv", "json"],
   A52: ["readonly-off"],
 };
 
-/** The console scenarios over the seeded bucket studio-demo: each step's name and its console text. */
+/** The console scenarios over the seeded buckets (studio-bulk for the paged listing): each step's name and its console text. */
 const CONSOLE_SCENARIO_STEPS = {
   "console-ls": [["ls", "aws s3 ls s3://studio-demo/data/"]],
   "console-list-objects-v2-token": [
-    ["first-page", "aws s3api list-objects-v2 --bucket studio-demo --prefix folders/ --max-items 3 --page-size 2"],
+    ["first-page", "aws s3api list-objects-v2 --bucket studio-bulk --prefix folders/ --max-items 3 --page-size 2"],
     [
       "starting-token",
-      "aws s3api list-objects-v2 --bucket studio-demo --prefix folders/ --max-items 3 --page-size 2 --starting-token ",
+      "aws s3api list-objects-v2 --bucket studio-bulk --prefix folders/ --max-items 3 --page-size 2 --starting-token ",
     ],
   ],
   "console-head-object": [["head-object", "aws s3api head-object --bucket studio-demo --key data/table.csv"]],
@@ -143,16 +148,18 @@ async function consoleRunner(context: S3RunContext, name: ConsoleScenarioName): 
   return runs;
 }
 
-/** The objects the replay case opens in the Source tab, each step named after one. */
+/**
+ * The objects the replay case opens in the Source tab, each step named after one. data/one-mib.bin is not among them:
+ * its Source tab reads 1,000,000 bytes, past the scrub's 512 KiB exchange cap, so row A30 checks it live only.
+ */
 const PREVIEW_SOURCE_OBJECTS: readonly (readonly [string, string])[] = [
   ["source-table-csv", "data/table.csv"],
   ["source-rows-ndjson", "data/rows.ndjson"],
   ["source-fx-zstd", "parquet/fx-zstd.parquet"],
-  ["source-one-mib", "data/one-mib.bin"],
 ];
 const PREVIEW_PARQUET_COMMAND = "preview s3://studio-demo/parquet/fx-zstd.parquet";
 
-/** The scenario: the Source tab of four objects as root, then the console's preview of the Parquet object. */
+/** The scenario: the Source tab of three objects as root, then the console's preview of the Parquet object. */
 async function runPreviewSource(run: S3RunContext): Promise<readonly S3StepRun[]> {
   const connection = s3LiveConnection(run.target, run.principals, { role: "root" }, run.ca);
   const provider = new S3Provider(
@@ -239,7 +246,7 @@ export const S3_SCENARIOS: readonly S3Scenario[] = [
     steps: ["first-page", "starting-token"],
     clockOffsetMs: 0,
     shows:
-      "aws s3api list-objects-v2 --bucket studio-demo --prefix folders/ --max-items 3 --page-size 2, then the same command with the --starting-token its read-on notice names",
+      "aws s3api list-objects-v2 --bucket studio-bulk --prefix folders/ --max-items 3 --page-size 2, then the same command with the --starting-token its read-on notice names",
   },
   {
     name: "console-head-object",
@@ -260,7 +267,7 @@ export const S3_SCENARIOS: readonly S3Scenario[] = [
     runner: (run) => runPreviewSource(run),
     clockOffsetMs: 0,
     shows:
-      "The Source tab of data/table.csv, data/rows.ndjson, parquet/fx-zstd.parquet and data/one-mib.bin, then the console's preview of the Parquet object",
+      "The Source tab of data/table.csv, data/rows.ndjson and parquet/fx-zstd.parquet, then the console's preview of the Parquet object",
   },
 ];
 

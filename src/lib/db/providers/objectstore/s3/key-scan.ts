@@ -173,17 +173,26 @@ async function listingPage(
   };
 }
 
+/** Every refusal a page gives before any request: the options, then the cursor's spelling and scope. */
+export function readS3KeyScanRequest(
+  options: KeyScanOptions,
+  pinned?: string,
+): { read: ReadScanOptions; scope: S3CursorScope; cursor: S3Cursor | "start" } {
+  const read = readS3KeyScanOptions(options, pinned);
+  const scope: S3CursorScope = { bucket: read.bucket, prefix: read.prefix, level: read.level };
+  const cursor = decodeS3Cursor(read.cursor);
+  if (cursor === undefined) throw refuse(S3_CURSOR_SENTENCES.foreign);
+  if (cursor !== "start" && !cursorInScope(cursor, scope)) throw refuse(S3_CURSOR_SENTENCES.scope);
+  return { read, scope, cursor };
+}
+
 /** One page of the Keys panel: options and cursor refused before any request, then one server call at most. */
 export async function scanS3KeysPage(
   surface: S3Surface,
   options: KeyScanOptions,
   call: S3CallOptions,
 ): Promise<KeyScanPage> {
-  const read = readS3KeyScanOptions(options, surface.options.pinnedBucket);
-  const scope: S3CursorScope = { bucket: read.bucket, prefix: read.prefix, level: read.level };
-  const cursor = decodeS3Cursor(read.cursor);
-  if (cursor === undefined) throw refuse(S3_CURSOR_SENTENCES.foreign);
-  if (cursor !== "start" && !cursorInScope(cursor, scope)) throw refuse(S3_CURSOR_SENTENCES.scope);
+  const { read, scope, cursor } = readS3KeyScanRequest(options, surface.options.pinnedBucket);
   return read.bucket === null
     ? rootPage(surface, read, scope, cursor, call)
     : listingPage(surface, read, read.bucket, scope, cursor, call);
