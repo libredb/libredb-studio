@@ -341,6 +341,13 @@ describe("cursor refusals", () => {
     );
   });
 
+  test("a cursor whose token is a lone surrogate is one the panel did not write, before any request", async () => {
+    const cursor = `s3c:1:${Buffer.from(JSON.stringify({ b: "sales", p: "", l: 1, t: "\ud800" }), "utf8").toString("base64url")}`;
+    expect(await refusedBeforeAnyRequest({ cursor, count: 10, pattern: "sales/", level: true })).toBe(
+      S3_CURSOR_SENTENCES.foreign,
+    );
+  });
+
   test("a cursor of another bucket, prefix or level, before any request", async () => {
     const other = encodeS3Cursor({ bucket: "sales", prefix: "a/", level: true, token: "t" });
     expect(await refusedBeforeAnyRequest({ cursor: other, pattern: "sales/b/", level: true })).toBe(

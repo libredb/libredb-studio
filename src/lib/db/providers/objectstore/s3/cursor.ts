@@ -75,18 +75,26 @@ export function decodeS3Cursor(text: string): S3Cursor | "start" | undefined {
   return cursorOf(value);
 }
 
+/**
+ * A string with no lone surrogate. The encoder writes only names and tokens decoded from UTF-8, and a JSON escape
+ * can spell a lone surrogate, which no request query or path can percent-encode.
+ */
+function wellFormed(value: unknown): value is string {
+  return typeof value === "string" && value.isWellFormed();
+}
+
 function cursorOf(value: unknown): S3Cursor | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
   if (Object.keys(record).some((field) => !FIELDS.has(field))) return undefined;
   const { b, p, l, t, a } = record;
-  if ((b !== null && typeof b !== "string") || typeof p !== "string" || (l !== 0 && l !== 1)) return undefined;
+  if ((b !== null && !wellFormed(b)) || !wellFormed(p) || (l !== 0 && l !== 1)) return undefined;
   if ((t === undefined) === (a === undefined)) return undefined;
   if (t !== undefined) {
-    if (typeof t !== "string" || t.length > S3_CURSOR_TOKEN_MAX_CHARS) return undefined;
+    if (!wellFormed(t) || t.length > S3_CURSOR_TOKEN_MAX_CHARS) return undefined;
     return { bucket: b, prefix: p, level: l === 1, token: t };
   }
-  if (typeof a !== "string") return undefined;
+  if (!wellFormed(a)) return undefined;
   return { bucket: b, prefix: p, level: l === 1, after: a };
 }
 

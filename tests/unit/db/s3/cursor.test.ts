@@ -68,6 +68,10 @@ describe("texts the Keys panel did not write", () => {
     ["a token that is not text", spelled({ b: "b", p: "", l: 1, t: 5 })],
     ["an after that is not text", spelled({ b: null, p: "", l: 1, a: 5 })],
     ["a token over 4,096 characters", spelled({ b: "b", p: "", l: 1, t: "t".repeat(4_097) })],
+    ["a token holding a lone surrogate", spelled({ b: "b", p: "", l: 1, t: "\ud800" })],
+    ["an after holding a lone surrogate", spelled({ b: null, p: "", l: 1, a: "\udc00" })],
+    ["a bucket holding a lone surrogate", spelled({ b: "b\ud800", p: "", l: 1, t: "t" })],
+    ["a prefix holding a lone surrogate", spelled({ b: "b", p: "\udfff/", l: 1, t: "t" })],
   ])("%s is undefined", (_name, text) => {
     expect(decodeS3Cursor(text)).toBeUndefined();
   });
