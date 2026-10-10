@@ -1151,6 +1151,30 @@
           "The bound was the literal 1 in investigation.ts until this model was measured against it. At 1 the cell held 4/5 across five rolls; at 5 it read 5/5. The hold fires only on a run already earning no-plan-comparison, so raising it spends turns only on a run that has already lost."
         ]
       }
+    },
+    {
+      "id": "qwen3.8:27b",
+      "measured": "6/6 locked, 30/30 - investigate 45s, optimize 80s, assess 130s, operate 48s, analyze 59s, plan 29s (medians of the passing runs). Every one of the six cells closed on the same single setting, temperature 0.3, and on the first attempt at it; nothing else was spent. Chosen off the library listing on 2026-10-09 as one of five untried names that advertise tool calling, and the only one of the five to clear the tool probe and the whole board - two of the five answered `does not support chat` and were deleted, one returned an inconclusive transport error. At temperature 0 its runs lose to notices they are given and cannot act on, because the retry after a notice repeats the turn word for word; 0.3 is what lets a notice change the next attempt.",
+      "settings": {
+        "sampling": {
+          "temperature": 0.3,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      },
+      "rationale": {
+        "sampling": [
+          "At temperature 0 the retry after a notice repeats the turn word for word, so no sentence this loop delivers can change the answer - and every cell this model lost was lost holding a notice it had been given.",
+          "It is the only setting this model carries and the only one it needed: all six cells read 5/5 at 0.3, each on the first attempt, with no other field moved."
+        ]
+      }
     }
   ]
 }
