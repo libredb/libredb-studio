@@ -10,6 +10,8 @@
  *
  * - the closure of `dist/components.js` and of `dist/components.mjs` holds the fixed sentence frame of
  *   `credentialWarningFor`, so a host that mounts the exported `ConnectionModal` draws the warning;
+ * - the same closures hold the test id of the dialog's import action, so a host that mounts the exported
+ *   `ConnectionModal` offers the import a type declares;
  * - the closure of `dist/workspace.js` and of `dist/workspace.mjs` holds neither the `ConnectionModal` nor the
  *   `useConnectionForm` module, so `StudioWorkspace`, which mounts no connection dialog, shows none.
  *
@@ -33,6 +35,9 @@ const ENTRY_PAIRS = [
 
 /** The frame `credentialWarningFor` builds every sentence from (src/lib/db/credential-warnings.ts). */
 export const CREDENTIAL_WARNING_FRAME = "Credential warning: ";
+
+/** The test id of the connection dialog's import action (`CONNECTION_IMPORT_ACTION_ID` in src/components/ConnectionImportPanel.tsx). */
+export const CONNECTION_IMPORT_ACTION_ID = "connection-import-open";
 
 const CONNECTION_MODAL = /\bfunction ConnectionModal\(/;
 const USE_CONNECTION_FORM = /\bfunction useConnectionForm\(/;
@@ -76,6 +81,11 @@ export function checkLibClosure(distDir) {
         `dist/${pair.components}: its ${pair.closure} closure does not hold the credential warning frame "${CREDENTIAL_WARNING_FRAME}", so a host mounting ConnectionModal would draw no warning.`,
       );
     }
+    if (!components.includes(CONNECTION_IMPORT_ACTION_ID)) {
+      failures.push(
+        `dist/${pair.components}: its ${pair.closure} closure does not hold the import action "${CONNECTION_IMPORT_ACTION_ID}", so a host mounting ConnectionModal would offer no declared import.`,
+      );
+    }
     if (!CONNECTION_MODAL.test(components)) {
       failures.push(
         `dist/${pair.components}: its ${pair.closure} closure holds no ConnectionModal function, so the workspace check would prove nothing.`,
@@ -98,7 +108,9 @@ function main(argv) {
   const failures = checkLibClosure(distDir);
   for (const failure of failures) console.error(failure);
   if (failures.length === 0) {
-    console.log("lib closure: components carries the credential warning; workspace carries no connection dialog.");
+    console.log(
+      "lib closure: components carries the credential warning and the import action; workspace carries no connection dialog.",
+    );
   }
   process.exit(failures.length === 0 ? 0 : 1);
 }

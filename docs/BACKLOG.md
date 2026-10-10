@@ -2792,6 +2792,7 @@ Found 2026-10-10 by the adversarial review of the S3 byte transport; pre-existin
 node:http hands a `101 Switching Protocols` answer to the request's `upgrade` event, never to the response callback, and `createNodeTransport` in `src/lib/db/http/node-transport.ts` has no `upgrade` listener, so the request holds its socket slot until its deadline and is reported as a timeout, or forever without one.
 Measured 2026-10-10 on Bun 1.4.2 and Node 24.14 against a raw listener that answers every request with a 101: a GET with a 1.5 s deadline failed as `timeout` after 1501 ms.
 `createNodeByteTransport` refuses a 101 at once as a network failure and destroys the switched socket.
+A text transport built with `refusesUpgrade: true` refuses it the same way; the default is unchanged, so this entry covers every text transport that does not ask.
 
 Found 2026-10-10 by the adversarial review of the S3 byte transport; pre-existing in the text transport.
 

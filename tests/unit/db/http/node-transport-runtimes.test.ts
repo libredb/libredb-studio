@@ -14,7 +14,8 @@
  *
  * The byte transport's cases run after that control request (runByteCases). Each child starts from an unbundled
  * entry.mjs that answers the name metadata.test with 169.254.169.254 before the bundle loads, so the byte transport's
- * refusal of a link-local DNS answer, with DB_HTTP_BLOCK_PRIVATE_HOSTS off, is proven on every runtime listed.
+ * refusal of a link-local DNS answer, and a text transport's built with `refusesLinkLocal`, with
+ * DB_HTTP_BLOCK_PRIVATE_HOSTS off, are proven on every runtime listed.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -353,6 +354,28 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
   await record("request headers: an unlisted header is refused before a socket", () =>
     sendHeaders(ports.guarded, "/unlisted", { "x-other": "1" }),
   );
+  // A text transport asked to refuse link-local addresses, with the guard off: entry.mjs answers metadata.test with
+  // 169.254.169.254, and the lookup on the Agent refuses it before a socket, so the guarded listener sees nothing.
+  await record("text: metadata.test refused with refusesLinkLocal", async () => {
+    const origin = deps.httpOrigin("http", "metadata.test", ports.guarded);
+    const transport = deps.createNodeTransport({
+      origin,
+      tls: null,
+      maxSockets: 1,
+      headers: {},
+      refusesLinkLocal: true,
+    });
+    try {
+      return await transport.request({
+        method: "GET",
+        url: deps.endpointUrl(origin, "/metadata"),
+        signal: AbortSignal.timeout(10_000),
+        maxResponseBytes: MIB,
+      });
+    } finally {
+      transport.close();
+    }
+  });
   // Built before the guard is on, so the refusal below is the transport's own and not httpOrigin's.
   const guardedOrigin = deps.httpOrigin("http", "127.0.0.1", ports.guarded);
   process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "true";
@@ -1056,6 +1079,12 @@ const EXPECTED: Readonly<Record<string, Expected>> = {
     ok: false,
     errorName: "DatabaseConfigError",
     message: "Invalid request headers: a header this transport does not list was given",
+  },
+  "text: metadata.test refused with refusesLinkLocal": {
+    ok: false,
+    errorName: "DatabaseConfigError",
+    message:
+      "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says",
   },
   "guard: 127.0.0.1 refused before a socket": { ok: false, errorName: "DatabaseConfigError", message: BLOCKED },
   "guard: localhost refused by the lookup on the Agent": {

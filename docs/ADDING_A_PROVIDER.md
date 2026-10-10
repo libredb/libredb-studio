@@ -137,6 +137,7 @@ Besides `contentType`, `contentEncoding` and `retryAfter`, it returns only the r
 A `signer` is called once per request just before it is written, with the exact method, Host, path, query and headers, and adds only the header names it lists.
 Its connection headers meet the rule a request's own headers meet, so `authorization` comes from the signer alone.
 It never reaches a link-local address or AWS's IPv6 instance metadata address, whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says.
+`createNodeTransport` takes both of the byte transport's refusals on request, each off when absent: `refusesLinkLocal: true` keeps a text transport off those addresses the same way, a literal when the transport is built and a DNS answer at the lookup, and `refusesUpgrade: true` fails a 101 answer at once instead of leaving the request to its deadline.
 The older HTTP providers keep their own transports until D37 in [`BACKLOG.md`](BACKLOG.md) moves them.
 
 **Send gRPC calls through the shared gRPC transport.**
@@ -511,6 +512,12 @@ An entry is a `pair` (a published default user and password), a `jwt` (a token t
 The dialog draws a `pair` or `jwt` warning beside the password before Test Connection, and blocks nothing.
 The seed loader refuses a `readOnly: true` seed whose literal credential matches a `pair` entry, or that has no password where the type declares `no-secret`, and the provider runs `readOnlySeedRefusal` on a seed connection once its references resolve, before it dials.
 Add a test that the real record declares each entry you add.
+
+`connectionImport`, a third optional declaration, offers an import in the dialog: a `label` for its action and a `load` that resolves to the parser, a function from the pasted text to `{ contexts, refusals }` (`src/lib/connection-import.ts`).
+The dialog loads the parser only when the import opens, offers it only for a new connection, and fills the form from the entry the user picks through `applyImported`, which refuses an entry that names a field the type does not take or an SSL / TLS setting the dialog does not draw for the type and mode, and never takes the consent to send a password without TLS.
+The import keeps the user's choices about how to connect (read-only, the object scan and the query timeout) and resets every server-scoped field before it fills.
+The parser runs in the browser: it imports no `node:` module and no provider, never throws, and never keeps or prints a parser error, which can quote a credential.
+A declaring type is listed in `DECLARING` in `tests/unit/lib/connection-import-declaration.test.ts`.
 
 ## Step 5: Install the Driver
 
@@ -1107,6 +1114,8 @@ Those three reach code and tests only; the four prose greps of the published blo
       Declare them there rather than adding a type test to `src/components/ConnectionModal.tsx`, which already carries five (`docs/BACKLOG.md` U36).
 - [ ] `src/lib/db-ui-config.ts`: `hostAcceptsUri`, when the engine's documentation gives its endpoint as an `http://` or `https://` address; and the type's row of `CREDENTIAL_WARNINGS` in `src/lib/db/credential-warnings.ts`, which the entry's `credentialWarnings` reads by reference, when the engine ships a default credential, accepts no secret, or takes a token whose claims say how far it reaches.
       Each needs a test that the real record declares it, and a declared `pair` or `no-secret` entry needs the provider's own `readOnlySeedRefusal` check in `connect()` for a seed connection.
+- [ ] `src/lib/db-ui-config.ts`: `connectionImport`, when users keep this engine's connections in a file of their own, such as a client configuration file.
+      Its parser module stays browser-side, and the type joins `DECLARING` in `tests/unit/lib/connection-import-declaration.test.ts`.
 
 **Published where a human reads it, and this is the block with the fewest gates.** `readme:check`
 compares the translated READMEs against `README.md` and `chart:check` compares versions. The catalog

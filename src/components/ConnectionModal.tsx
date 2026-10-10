@@ -46,6 +46,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useConnectionForm } from "@/hooks/use-connection-form";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { WireCompatibilityHint } from "@/components/WireCompatibilityHint";
+import { ConnectionImportPanel } from "@/components/ConnectionImportPanel";
 
 /**
  * What each SSL mode actually does, in the panel where it is chosen.
@@ -272,6 +273,7 @@ export function ConnectionModal({
     handleTestConnection,
     handleConnect,
     handlePasteConnectionString,
+    applyImported,
 
     // Derived data
     dbTypes,
@@ -539,6 +541,14 @@ export function ConnectionModal({
 
           {/* Wire-compatible engines served by the selected driver (#424) */}
           <WireCompatibilityHint type={type} />
+
+          {/*
+            The import the selected engine declares, read from its entry rather than an isX branch, and only for a
+            new connection. Keyed by the type, so a switch to another engine drops whatever the import had read.
+          */}
+          {!isEditMode && uiConfig.connectionImport !== undefined && (
+            <ConnectionImportPanel key={type} declaration={uiConfig.connectionImport} onApply={applyImported} />
+          )}
 
           <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <>
