@@ -54,3 +54,4 @@ docker run --rm --entrypoint cat libredb-fixture/mc:RELEASE.2025-08-13T08-35-41Z
 ```
 
 The images are `libredb-fixture/minio:RELEASE.2025-10-15T17-29-55Z` (159 MB) and `libredb-fixture/mc:RELEASE.2025-08-13T08-35-41Z` (52.3 MB).
+The server ran as uid 10001 on the first `up` of 2026-10-10: `docker exec libredb-minio id -u` printed `10001`, and so did `libredb-minio-region`.

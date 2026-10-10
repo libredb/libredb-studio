@@ -110,20 +110,81 @@ The raw seed adds `parquet/large/narrow-zstd.parquet` (5 columns, 1,000,000 rows
 
 ## Special keys
 
-`seed.sh`'s `SPECIAL_KEYS` table gives each special key's wire form and the outcome every server must give; the first seed run measures every `measure` cell, and this section then records each measured outcome.
+`seed.sh`'s `SPECIAL_KEYS` table holds each special key's wire form and the outcome each server gave on the first seed run, measured on 2026-10-10; the seed asserts it on every later run.
+MinIO and the MinIO region variant gave the same outcome for every key.
+
+| Key (as stored) | Sent on the wire as | MinIO, MinIO region | Silo | Garage | RustFS |
+|---|---|---|---|---|---|
+| `sp/with space.txt` | `sp/with%20space.txt` | stored | stored | stored | stored |
+| `sp/plus+sign.txt` | `sp/plus%2Bsign.txt` | stored | stored | stored | stored |
+| `sp/percent%sign.txt` | `sp/percent%25sign.txt` | stored | stored | stored | stored |
+| `sp/ünïcødé-日本.txt` | `sp/%C3%BCn%C3%AFc%C3%B8d%C3%A9-%E6%97%A5%E6%9C%AC.txt` | stored | stored | stored | stored |
+| `sp/lt<amp&.txt` | `sp/lt%3Camp%26.txt` | stored | stored | stored | stored |
+| `sp/.hidden` | `sp/.hidden` | stored | stored | stored | stored |
+| `sp/trail.` | `sp/trail.` | stored | stored | stored | stored |
+| `sp/lit%2Fname.txt` | `sp/lit%252Fname.txt` | stored | stored | stored | stored |
+| `sp/tab<TAB>char.txt` | `sp/tab%09char.txt` | stored | stored | stored | stored |
+| `ctl/x<U+0001>y.txt` | `ctl/x%01y.txt` | stored | stored | stored | stored |
+| `long/` and four segments of 250, 250, 250 and 245 characters of `abcdefghijklmnopqrstuvwxyz` repeated, 1,003 bytes | the same | stored | stored | stored | stored |
+| `sp/double//slash.txt` | `sp/double//slash.txt` | 400:XMinioInvalidObjectName | 400:XMinioInvalidObjectName | stored | 400:InvalidArgument |
+| `sp/./dot.txt` | `sp/./dot.txt` | 400:XMinioInvalidResourceName | 400:XMinioInvalidResourceName | stored | 400:InvalidArgument |
+| `sp/x/../dotdot.txt` | `sp/x/../dotdot.txt` | 400:XMinioInvalidResourceName | 400:XMinioInvalidResourceName | stored | 400:InvalidArgument |
 
 ## Bounds, as measured
 
-Written by the first run.
+Measured on 2026-10-10 on containers started from empty data, after the seed, the raw seed and one live check run of every target.
+`memory.peak` is the container's cgroup peak, read from the host because the Garage image carries no `cat`; it counts the page cache of the objects written as well as the process.
+
+| Server | Resident after the seed and the live check | `memory.peak` | Bound |
+|---|---|---|---|
+| `minio` | 398 MiB | 712,400,896 bytes (679 MiB) | 2816M |
+| `minio-region` | 405 MiB | 662,556,672 bytes (632 MiB) | 2560M |
+| `silo` | 345 MiB | 658,399,232 bytes (628 MiB) | 2560M |
+| `silo-tls` | 230 MiB | 489,177,088 bytes (467 MiB) | 2048M |
+| `garage` | 22 MiB | 86,540,288 bytes (83 MiB) | 512M |
+| `rustfs` | 195 MiB | 460,582,912 bytes (439 MiB) | 1792M |
+
+Each bound is at least four times the server's peak, rounded up to a whole 256M, with `memswap_limit` equal to it.
+The resident size was not read separately between the seed and the live check, so one column holds both.
+The largest one-shot peak was `pgsty/mc` attaching a policy in `principals.sh`: 172,769,280 bytes (165 MiB), against 26,259,456 bytes for a full `seed.sh` run.
+Under the first 128M bound the kernel killed that `mc` (exit 137, `OOMKilled` true) on the first attach, so every one-shot is bounded at 768M, at least four times that peak.
 
 ## Telemetry
 
-Written by the first run.
+Read from each server's source at its pinned release on 2026-10-10.
+
+| Server | Default | Switch set here |
+|---|---|---|
+| MinIO `RELEASE.2025-10-15T17-29-55Z` | At startup the server asks dl.min.io for a newer release unless `MINIO_UPDATE` is `off` ([cmd/server-main.go](https://github.com/minio/minio/blob/RELEASE.2025-10-15T17-29-55Z/cmd/server-main.go), "Check for updates in non-blocking manner", and [cmd/common-main.go](https://github.com/minio/minio/blob/RELEASE.2025-10-15T17-29-55Z/cmd/common-main.go)); call home is off by default ([internal/config/callhome/callhome.go](https://github.com/minio/minio/blob/RELEASE.2025-10-15T17-29-55Z/internal/config/callhome/callhome.go), `DefaultKVS`) | `MINIO_UPDATE: "off"` on `minio` and `minio-region` |
+| Silo `RELEASE.2026-09-16T00-00-00Z` | No update check at startup ([cmd/server-main.go](https://github.com/pgsty/silo/blob/RELEASE.2026-09-16T00-00-00Z/cmd/server-main.go)); call home is off by default ([internal/config/callhome/callhome.go](https://github.com/pgsty/silo/blob/RELEASE.2026-09-16T00-00-00Z/internal/config/callhome/callhome.go), `DefaultKVS`) | None needed; Silo shares MinIO's variables, so `MINIO_UPDATE: "off"` reaches it too and changes nothing |
+| RustFS `1.0.1` | At startup the server asks version.rustfs.com for the latest release unless `RUSTFS_CHECK_UPDATE` is `false` ([rustfs/src/init.rs](https://github.com/rustfs/rustfs/blob/1.0.1/rustfs/src/init.rs), `init_update_check`, and [crates/config/src/constants/console.rs](https://github.com/rustfs/rustfs/blob/1.0.1/crates/config/src/constants/console.rs), `DEFAULT_UPDATE_CHECK`); the OpenTelemetry endpoint is empty by default ([crates/config/src/constants/app.rs](https://github.com/rustfs/rustfs/blob/1.0.1/crates/config/src/constants/app.rs), `DEFAULT_OBS_ENDPOINT`) | `RUSTFS_CHECK_UPDATE: "false"` on `rustfs` |
+| Garage `v2.4.1` | Nothing is sent unless `admin.trace_sink` names an OpenTelemetry collector ([configuration reference](https://git.deuxfleurs.fr/Deuxfleurs/garage/src/tag/v2.4.1/doc/book/reference-manual/configuration.md), `trace_sink`), and `garage.toml` sets none | None needed |
 
 ## First-run measurements
 
-Written by the first run.
+Measured on 2026-10-10, from no S3 container or volume.
+
+- `minio` and `minio-region` served as uid 10001: `docker exec libredb-minio id -u` printed `10001`.
+- `silo-tls` reached healthy with `command: ["server", "/data", "--certs-dir", "/certs"]`.
+- Garage's health probe on a fresh volume, 5 s after start and before `garage-setup` applied the layout: the container was `healthy` and `GetClusterHealth` exited 0 answering `"status": "unavailable"` with no storage node, so the probe says only that the node answers.
+- `garage-setup.sh` made its admin API calls and exited 0 twice in a row, and `GetKeyInfo` read back the grants of the table under "Principals and keys": `rw` read, write and owner on the five buckets, `browse` read on the five, `scoped` read on `studio-scoped` with the local alias `scoped-local`, `none` no bucket.
+- `pgsty/mc` managed RustFS users and policies: `rustfs-principals` printed `principals.sh: 3 users, 2 policies`, and `mc admin user info` showed `studio-browse`, `studio-scoped` and `readonly` attached to their users.
+- The two by-hand `silo-tls` one-shots exited 0 twice in a row with the CA given by `SSL_CERT_FILE` (for `mc`) and `S3_SEED_CA` (for the seed), the lines under "Bringing them up"; the second seed printed `0 objects written, 4 buckets skipped`.
+  The seed counts the four buckets that have a last object; `studio-empty` has none to skip.
+- Every one-shot ran a second time and exited 0, each seed printing `0 objects written, 4 buckets skipped`.
+- The seed wrote 4,839 objects per server: 42 s on MinIO and 41 s on MinIO region, run side by side; 43 s on Silo; 42 s on Garage and 60 s on RustFS, run side by side; 68 s on `silo-tls`.
+- The raw seed wrote 10,052 objects per target in 89 to 90 s on MinIO, MinIO region, Silo and Garage and 116 s on RustFS, DuckDB's generation included; a second run wrote nothing in about 2.4 s.
+- Each server's outcome for each special key is under "Special keys"; the `café` value of `meta/tagged.txt` came back as `=?UTF-8?q?caf=C3=A9?=` from MinIO and Silo, as `café` from Garage and as `=?UTF-8?B?Y2Fmw6k=?=` from RustFS.
 
 ## The SSH bastion of the tunnel check
 
-Written by the first run.
+The repository defines no SSH bastion; this is the one the tunnel check used on 2026-10-10, the newest `lscr.io/linuxserver/openssh-server` tag at least 14 days old, pinned by digest:
+
+```sh
+export LIVE_SSH_PASSWORD="$(openssl rand -hex 16)"
+docker run -d --rm --name libredb-s3-bastion --network libredb-studio_default -p 127.0.0.1:12222:2222 \
+  -e PASSWORD_ACCESS=true -e USER_NAME=tunnel -e USER_PASSWORD="$LIVE_SSH_PASSWORD" \
+  -e DOCKER_MODS=linuxserver/mods:openssh-server-ssh-tunnel lscr.io/linuxserver/openssh-server:10.3_p1-r1-ls237@sha256:946fa26105e0ec212fdf821b9ddc59aab65f2c2d07c02b25ff0f5001fc332ff0
+bun tests/live/s3-tunnel-check.ts --ca "$dir/ca.pem"
+docker stop libredb-s3-bastion
+```

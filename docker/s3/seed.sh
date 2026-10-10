@@ -105,23 +105,24 @@ seg() {
 LONG="$(seg 250)/$(seg 250)/$(seg 250)/$(seg 245)"
 
 # The special keys: the wire form (RFC 3986, upper-case hex, "/" kept), then the outcome on MinIO (and the MinIO
-# region variant), Silo, Garage and RustFS: stored, <status>:<code> for a refusal, or measure for a cell the
-# first seed run measures and docker/s3/README.md records. Each key is stored with the body of root.txt.
+# region variant), Silo, Garage and RustFS: stored, <status>:<code> for a refusal, or measure for a cell a seed run
+# measures and docker/s3/README.md records. Every cell below is the outcome the first seed run measured on
+# 2026-10-10. Each key is stored with the body of root.txt.
 SPECIAL_KEYS='
 sp/with%20space.txt|stored|stored|stored|stored
 sp/plus%2Bsign.txt|stored|stored|stored|stored
 sp/percent%25sign.txt|stored|stored|stored|stored
 sp/%C3%BCn%C3%AFc%C3%B8d%C3%A9-%E6%97%A5%E6%9C%AC.txt|stored|stored|stored|stored
-sp/lt%3Camp%26.txt|stored|measure|stored|measure
-sp/.hidden|stored|measure|measure|stored
-sp/trail.|stored|measure|measure|measure
-sp/lit%252Fname.txt|stored|measure|measure|measure
-sp/tab%09char.txt|measure|measure|stored|measure
-ctl/x%01y.txt|measure|measure|stored|measure
-long/@LONG@|stored|measure|measure|measure
+sp/lt%3Camp%26.txt|stored|stored|stored|stored
+sp/.hidden|stored|stored|stored|stored
+sp/trail.|stored|stored|stored|stored
+sp/lit%252Fname.txt|stored|stored|stored|stored
+sp/tab%09char.txt|stored|stored|stored|stored
+ctl/x%01y.txt|stored|stored|stored|stored
+long/@LONG@|stored|stored|stored|stored
 sp/double//slash.txt|400:XMinioInvalidObjectName|400:XMinioInvalidObjectName|stored|400:InvalidArgument
-sp/./dot.txt|400:XMinioInvalidResourceName|measure|stored|400:InvalidArgument
-sp/x/../dotdot.txt|400:XMinioInvalidResourceName|measure|stored|400:InvalidArgument
+sp/./dot.txt|400:XMinioInvalidResourceName|400:XMinioInvalidResourceName|stored|400:InvalidArgument
+sp/x/../dotdot.txt|400:XMinioInvalidResourceName|400:XMinioInvalidResourceName|stored|400:InvalidArgument
 '
 
 seed_special() {

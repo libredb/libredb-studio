@@ -19,6 +19,7 @@ import { parse as parseYaml } from "yaml";
 import { rfc3986Path, validateHost } from "@/lib/db/http/endpoint";
 import type { NodeByteTransportOptions, RequestSigner } from "@/lib/db/http/node-transport";
 import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
+import { encodeS3Cursor, S3_CURSOR_SENTENCES } from "@/lib/db/providers/objectstore/s3/cursor";
 import { SeedConfigSchema } from "@/lib/seed/types";
 import {
   S3_CAPTURES_MAX_BYTES,
@@ -49,6 +50,7 @@ import {
   readS3Principals,
   renderS3Acceptance,
   replayPrincipals,
+  resolveS3Sentence,
   runS3Step,
   S3_ACCEPTANCE,
   S3_ACCEPTANCE_GROUPS,
@@ -1480,6 +1482,57 @@ describe("the acceptance matrix S3_ACCEPTANCE", () => {
     ).toBeUndefined();
   });
 
+  test("the evaluator: not:connection on an input the connection check accepts matches any refusal", () => {
+    const host = "192.0.2.10";
+    const consent = s3LiveConnection("silo", readS3Principals("silo"), { role: "root", host, allowInsecureAuth: true });
+    expect(
+      checkS3Step(
+        { kind: "refused", sentence: "not:connection" },
+        { step: "consent", refused: "connect ECONNREFUSED 192.0.2.10:9010", exchanges: 1 },
+        { connection: consent },
+        1,
+      ),
+    ).toBeUndefined();
+    const refusedConnection = s3LiveConnection("silo", readS3Principals("silo"), { role: "root", host });
+    const sentence = resolveS3Sentence("connection", { connection: refusedConnection }).text ?? "";
+    expect(
+      checkS3Step(
+        { kind: "refused", sentence: "not:connection" },
+        { step: "no-consent", refused: sentence, exchanges: 0 },
+        { connection: refusedConnection },
+        0,
+      ),
+    ).toContain("which is not not:connection");
+  });
+
+  test("the evaluator: the keys ref names the cursor refusals the Keys page gives before any request", () => {
+    const connection = s3LiveConnection("silo", readS3Principals("silo"), { role: "root" });
+    const at = (cursor: string, pattern: string, refused: string) =>
+      checkS3Step(
+        { kind: "refused-before-request", sentence: "keys" },
+        { step: "x", refused, exchanges: 0 },
+        { connection, scan: { cursor, pattern, count: 1000, level: true } },
+        0,
+      );
+    expect(at("s3c:2:abc", "studio-bulk/many/", S3_CURSOR_SENTENCES.foreign)).toBeUndefined();
+    const demo = encodeS3Cursor({ bucket: "studio-demo", prefix: "", level: true, token: "t" });
+    expect(at(demo, "studio-scoped/", S3_CURSOR_SENTENCES.scope)).toBeUndefined();
+    expect(at(demo, "studio-scoped/", S3_CURSOR_SENTENCES.foreign)).toContain("which is not keys");
+  });
+
+  test("the evaluator: a skew cell with anyNumber matches the measured skew sentence whatever the minutes", () => {
+    const connection = s3LiveConnection("silo", readS3Principals("silo"), { role: "root" });
+    const expectation = {
+      kind: "refused",
+      sentence: 'server:{"operation":"ListBuckets","status":403,"code":"RequestTimeTooSkewed","anyNumber":true}',
+    } as const;
+    const measured =
+      "This machine's clock and the server's differ by about 20 minutes, more than the server accepts: correct the clock on this machine or on the server.";
+    expect(checkS3Step(expectation, { step: "ahead", refused: measured, exchanges: 1 }, { connection }, 1)).toBe(
+      undefined,
+    );
+  });
+
   test("the evaluator: rows, names in order, pages with no repeat, headers", () => {
     const connection = s3LiveConnection("silo", readS3Principals("silo"), { role: "root" });
     const at = (check: Parameters<typeof checkS3Step>[0], ok: object) =>
@@ -1641,7 +1694,7 @@ describe("the runners and the scenario list", () => {
     for (const target of S3_CAPTURE_TARGETS) {
       const names = scenariosFor(target).map(({ scenario }) => scenario.name);
       expect(names).toContain("surface");
-      expect(names).toContain("A21");
+      expect(names).toContain("A22");
       for (const row of S3_LIVE_ONLY_ROWS) expect(names).not.toContain(row);
       expect(names.includes("A8-behind")).toBe(target === "garage");
     }
@@ -2043,5 +2096,28 @@ describe("the tunnel check tests/live/s3-tunnel-check.ts", () => {
     expect(text).toContain('const BASTION = { host: "127.0.0.1", port: 12222 };');
     expect(text).toMatch(/sshTunnel: \{\s*enabled: true,\s*host: BASTION\.host,\s*port: BASTION\.port,/);
     expect(text).toContain("target.host === BASTION.host && target.port === BASTION.port");
+  });
+});
+
+// -- the first run is recorded --------------------------------------------------------------------------------------
+
+function firstRunFindings({ files }: S3Fixtures): string[] {
+  const findings: string[] = [];
+  for (const { wire, outcomes } of specialKeys(files[SEED] ?? ""))
+    if (outcomes.includes("measure"))
+      findings.push(`${SEED} still holds measure for ${wire}: record the first seed run's outcome`);
+  for (const file of [README, "docker/minio/README.md"])
+    if (/Written by the first (run|build)\b/.test(files[file] ?? ""))
+      findings.push(`${file} still holds a section the first run has not written`);
+  return findings;
+}
+
+describe("the first live run", () => {
+  test("left no seed cell unmeasured and no README section unwritten", () => {
+    clean(firstRunFindings(real));
+    const unmeasured = planted(real, (draft) => {
+      draft.files[SEED] = draft.files[SEED].replace("sp/with%20space.txt|stored", "sp/with%20space.txt|measure");
+    });
+    finds(firstRunFindings(unmeasured), "still holds measure for sp/with%20space.txt");
   });
 });

@@ -2502,6 +2502,9 @@ services:
     environment: &minio-env
       MINIO_ROOT_USER: libredb
       MINIO_ROOT_PASSWORD: "Probe123pass!"
+      # MinIO checks dl.min.io for a newer release at startup unless this is off (docker/s3/README.md,
+      # "Telemetry"); Silo, which shares these variables, has no such check.
+      MINIO_UPDATE: "off"
     ports:
       - "127.0.0.1:9000:9000"
     healthcheck: &minio-health
@@ -2512,13 +2515,13 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-    <<: &s3-server-limits
-      deploy:
-        resources:
-          limits:
-            cpus: "1"
-            memory: 1G
-      memswap_limit: 1G
+    # Four times the peak the first live run measured (docker/s3/README.md, "Bounds, as measured").
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2816M
+    memswap_limit: 2816M
 
   minio-principals:
     build: { context: ./docker/minio, target: mc }
@@ -2533,13 +2536,15 @@ services:
       S3_ROOT_ACCESS_KEY: libredb
       S3_ROOT_SECRET_KEY: "Probe123pass!"
     entrypoint: ["sh", "/s3/principals.sh", "http://minio:9000"]
+    # Four times the largest one-shot peak the first live run measured: pgsty/mc attaching a policy, which ran out of
+    # memory under the first 128M bound (docker/s3/README.md, "Bounds, as measured").
     <<: &s3-one-shot-limits
       deploy:
         resources:
           limits:
             cpus: "0.5"
-            memory: 128M
-      memswap_limit: 128M
+            memory: 768M
+      memswap_limit: 768M
 
   minio-seed:
     # The seed signs with curl --aws-sigv4 and sends every key as written with --path-as-is, so the literal
@@ -2574,7 +2579,12 @@ services:
     ports:
       - "127.0.0.1:9030:9000"
     healthcheck: *minio-health
-    <<: *s3-server-limits
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2560M
+    memswap_limit: 2560M
 
   minio-region-principals:
     build: { context: ./docker/minio, target: mc }
@@ -2618,7 +2628,12 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-    <<: *s3-server-limits
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2560M
+    memswap_limit: 2560M
 
   silo-principals:
     image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z@sha256:cfc83108c3abb371f8fb84d99c1fdc88f8c237e022409b0081fb7c0a3be634dd
@@ -2670,7 +2685,12 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-    <<: *s3-server-limits
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2048M
+    memswap_limit: 2048M
 
   garage-keys:
     # One-shot: Garage's RPC secret, admin and metrics tokens and four key secrets, generated
@@ -2705,7 +2725,12 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-    <<: *s3-server-limits
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    memswap_limit: 512M
 
   garage-setup:
     image: alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067
@@ -2739,6 +2764,9 @@ services:
     environment:
       RUSTFS_ACCESS_KEY: libredb
       RUSTFS_SECRET_KEY: "Probe123pass!"
+      # RustFS asks version.rustfs.com for the latest release at startup unless this is false (docker/s3/README.md,
+      # "Telemetry").
+      RUSTFS_CHECK_UPDATE: "false"
     ports:
       - "127.0.0.1:9020:9000"
     healthcheck:
@@ -2748,7 +2776,12 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-    <<: *s3-server-limits
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1792M
+    memswap_limit: 1792M
 
   rustfs-principals:
     # pgsty/mc, not the source-built mc: RustFS starts on a plain up, which must never build from
