@@ -58,6 +58,19 @@ describe("objectPath", () => {
   test("a key whose dot segments stay inside its bucket is sent as given", () => {
     expect(objectPath("sp", "x/../dotdot.txt")).toBe("/sp/x/../dotdot.txt");
   });
+
+  test("a backslash counts as a separator: backslash dot segments that leave the bucket are refused before any request", () => {
+    for (const key of ["..\\other\\x", "a\\..\\..\\b", "\\.."]) {
+      expect(() => objectPath("sales", key), key).toThrow(
+        sourceAddressSentence("key-dot-segments", { bucket: "sales", key }),
+      );
+    }
+  });
+
+  test("a key with backslashes whose dot segments stay inside its bucket is sent, each backslash encoded", () => {
+    expect(objectPath("sales", "dir\\file.txt")).toBe("/sales/dir%5Cfile.txt");
+    expect(objectPath("sales", "a\\b\\..\\c")).toBe("/sales/a%5Cb%5C..%5Cc");
+  });
 });
 
 describe("s3Query", () => {

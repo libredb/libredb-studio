@@ -80,6 +80,18 @@ describe("the addressability verdicts", () => {
     expect(objectAddressRefusal("sales", "a//")).toBeUndefined();
   });
 
+  test("a backslash counts as a separator, so backslash dot segments that leave the bucket are refused", () => {
+    expect(objectAddressRefusal("sales", "..\\other\\x")).toBe("key-dot-segments");
+    expect(objectAddressRefusal("sales", "a\\..\\..\\b")).toBe("key-dot-segments");
+    expect(objectAddressRefusal("sales", "\\..")).toBe("key-dot-segments");
+    expect(objectAddressRefusal("sales", "a/b\\..\\..\\..\\c")).toBe("key-dot-segments");
+  });
+
+  test("a key with backslashes whose dot segments stay inside its bucket opens", () => {
+    expect(objectAddressRefusal("sales", "dir\\file.txt")).toBeUndefined();
+    expect(objectAddressRefusal("sales", "a\\b\\..\\c")).toBeUndefined();
+  });
+
   test("a verdict is one of four fixed words and carries no character of the names passed", () => {
     const verdicts = [
       objectAddressRefusal("zz top", "q"),
