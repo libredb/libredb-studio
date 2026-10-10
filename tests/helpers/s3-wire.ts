@@ -234,10 +234,18 @@ export function signingInput(
 }
 
 /**
- * The byte transport's query grammar and its sentence, copied from TARGET_QUERY and INVALID_TARGET_QUERY in
- * src/lib/db/http/node-transport.ts, which does not export them: name=value pairs only, so a valueless subresource
- * such as `versions` is refused here as it is refused before any socket on the wire.
+ * The byte transport's target grammar and its sentences, copied from TARGET_PATH, TARGET_QUERY, MAX_TARGET_LENGTH and
+ * their sentences in src/lib/db/http/node-transport.ts, which does not export them (tests/unit/db/s3/s3-wire.test.ts
+ * reads that file to hold the copies to it): an absolute path, name=value pairs only, so a valueless subresource such
+ * as `versions` is refused here as it is refused before any socket on the wire, and at most 16384 bytes in all.
  */
+const TARGET_PATH = /^\/(?!\/)(?:[A-Za-z0-9._~/-]|%[0-9A-F]{2})*$/;
+const INVALID_TARGET_PATH =
+  "Invalid request path: expected an absolute path of unreserved characters, slashes and upper-case percent escapes";
+const MAX_TARGET_LENGTH = 16384;
+const TARGET_TOO_LONG = "Invalid request target: the path and query exceed 16384 bytes";
+const UNLISTED_SIGNATURE_HEADER =
+  "Invalid signature headers: the signer returned a header this transport does not list";
 const TARGET_QUERY_CHARACTER = "(?:[A-Za-z0-9._~-]|%[0-9A-F]{2})";
 const TARGET_QUERY = new RegExp(
   `^(?:${TARGET_QUERY_CHARACTER}+=${TARGET_QUERY_CHARACTER}*(?:&${TARGET_QUERY_CHARACTER}+=${TARGET_QUERY_CHARACTER}*)*)?$`,
@@ -245,17 +253,24 @@ const TARGET_QUERY = new RegExp(
 const INVALID_TARGET_QUERY =
   "Invalid request query: expected name=value pairs of unreserved characters and upper-case percent escapes, joined by &";
 
-function checkQuery(query: string): void {
+function checkTarget({ path, query }: { readonly path: string; readonly query: string }): void {
+  if (!TARGET_PATH.test(path)) throw new DatabaseConfigError(INVALID_TARGET_PATH);
   if (!TARGET_QUERY.test(query)) throw new DatabaseConfigError(INVALID_TARGET_QUERY);
+  if ((query === "" ? path.length : path.length + 1 + query.length) > MAX_TARGET_LENGTH)
+    throw new DatabaseConfigError(TARGET_TOO_LONG);
 }
 
 /**
- * The signer's headers for one request, held to the byte transport's rule on every value a signer returns (isHeaderValue
- * in src/lib/db/http/node-transport.ts): visible ASCII or space and at most 1024 bytes, refused by name, never by value.
+ * The signer's headers for one request, held to the byte transport's rules on what a signer returns
+ * (src/lib/db/http/node-transport.ts): every name one of the signer's headerNames, and every value (isHeaderValue)
+ * visible ASCII or space and at most 1024 bytes, refused by name, never by value.
  */
 function signatureOf(options: NodeByteTransportOptions, input: SigningInput): Readonly<Record<string, string>> {
   if (options.signer === undefined) return {};
   const returned = options.signer.sign(input);
+  const listed = new Set(options.signer.headerNames);
+  for (const name of Object.keys(returned))
+    if (!listed.has(name)) throw new DatabaseConfigError(UNLISTED_SIGNATURE_HEADER);
   for (const [name, value] of Object.entries(returned))
     if (value.length > 1024 || !/^[\x20-\x7e]*$/.test(value))
       throw new DatabaseConfigError(
@@ -289,7 +304,7 @@ export function recordedS3Transport(capture: S3Capture): S3RecordedTransport {
     return {
       async request(request) {
         abortIfAsked(request.signal);
-        checkQuery(request.target.query);
+        checkTarget(request.target);
         const index = next++;
         const exchange = capture.exchanges[index];
         if (exchange === undefined)
@@ -364,7 +379,7 @@ export function scriptedS3Transport(steps: readonly S3ScriptedStep[]): S3Recorde
     return {
       async request(request) {
         abortIfAsked(request.signal);
-        checkQuery(request.target.query);
+        checkTarget(request.target);
         const index = next++;
         const step = steps[index];
         if (step === undefined)

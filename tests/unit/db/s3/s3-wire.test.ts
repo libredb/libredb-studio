@@ -7,7 +7,7 @@
  * served for a request that differs. No case opens a socket: a spy on node:net counts connects.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -451,6 +451,79 @@ describe("the byte transport's own checks, replayed with no socket", () => {
         await expect(failure).rejects.not.toThrow(value);
       }
     }
+  });
+});
+
+describe("the copied target grammar, held to the byte transport's", () => {
+  const scriptedOk = () =>
+    scriptedS3Transport([
+      { answer: OK, synthetic: true, source: "the ListAllMyBucketsResult shape of the S3 API reference" },
+    ]);
+  const refusedBoth = async (target: { path: string; query: string }, sentence: string, signer = fakeSigner([])) => {
+    for (const wire of [recordedS3Transport(capture([exchange(target.path, { query: target.query })])), scriptedOk()]) {
+      // oxlint-disable-next-line no-await-in-loop -- one transport at a time, so a failure names which one.
+      await expect(
+        wire.createTransport(options(signer)).request({ method: "GET", target, signal, maxResponseBytes: 1 }),
+      ).rejects.toThrow(sentence);
+      expect(wire.sent).toEqual([]);
+    }
+  };
+
+  test("node-transport.ts still holds the query grammar and the sentence the replay copies", () => {
+    const source = readFileSync(path.join(import.meta.dir, "../../../../src/lib/db/http/node-transport.ts"), "utf8");
+    expect(source).toContain('const TARGET_QUERY_CHARACTER = "(?:[A-Za-z0-9._~-]|%[0-9A-F]{2})";');
+    expect(source).toContain(
+      "`^(?:${TARGET_QUERY_CHARACTER}+=${TARGET_QUERY_CHARACTER}*(?:&${TARGET_QUERY_CHARACTER}+=${TARGET_QUERY_CHARACTER}*)*)?$`,",
+    );
+    expect(source).toContain(
+      '"Invalid request query: expected name=value pairs of unreserved characters and upper-case percent escapes, joined by &";',
+    );
+    expect(source).toContain("const TARGET_PATH = /^\\/(?!\\/)(?:[A-Za-z0-9._~/-]|%[0-9A-F]{2})*$/;");
+    expect(source).toContain(
+      '"Invalid request path: expected an absolute path of unreserved characters, slashes and upper-case percent escapes";',
+    );
+    expect(source).toContain(
+      'const TARGET_TOO_LONG = "Invalid request target: the path and query exceed 16384 bytes";',
+    );
+    expect(source).toContain("const MAX_TARGET_LENGTH = 16384;");
+    expect(source).toContain(
+      'const UNLISTED_SIGNATURE_HEADER =\n  "Invalid signature headers: the signer returned a header this transport does not list";',
+    );
+  });
+
+  test("both transports refuse a signer header outside the signer's headerNames with the byte transport's sentence", async () => {
+    const unlisted: RequestSigner = {
+      headerNames: ["authorization", "x-amz-date", "x-amz-content-sha256"],
+      sign: (input) => ({ ...fakeSigner([]).sign(input), "x-amz-security-token": "t" }),
+    };
+    await refusedBoth(
+      { path: "/", query: "" },
+      "Invalid signature headers: the signer returned a header this transport does not list",
+      unlisted,
+    );
+  });
+
+  test("both transports refuse a path outside the byte transport's grammar", async () => {
+    // oxlint-disable-next-line no-await-in-loop -- one path at a time, so a failure names its path.
+    for (const path of ["relative", "//double", "/a b", "/%2f"])
+      await refusedBoth(
+        { path, query: "" },
+        "Invalid request path: expected an absolute path of unreserved characters, slashes and upper-case percent escapes",
+      );
+  });
+
+  test("both transports refuse a target past 16,384 bytes, and pass one of exactly 16,384", async () => {
+    await refusedBoth(
+      { path: "/b", query: `k=${"v".repeat(16_384 - 4)}` },
+      "Invalid request target: the path and query exceed 16384 bytes",
+    );
+    const at = `k=${"v".repeat(16_384 - 5)}`;
+    expect(`/b?${at}`).toHaveLength(16_384);
+    const wire = recordedS3Transport(capture([exchange("/b", { query: at })]));
+    const answer = await wire
+      .createTransport(options(fakeSigner([])))
+      .request({ method: "GET", target: { path: "/b", query: at }, signal, maxResponseBytes: 1024 });
+    expect(answer.status).toBe(200);
   });
 });
 
