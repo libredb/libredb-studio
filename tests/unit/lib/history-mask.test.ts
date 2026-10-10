@@ -120,6 +120,22 @@ describe("maskStatementForHistory: a text the shell reader refuses", () => {
     expect(maskStatementForHistory(text, MASK)).not.toContain(SECRET);
   });
 
+  test.each([
+    [
+      "a later flag on the line whose quote carries its value on",
+      `cli get pods \u2014token "x --password "${SECRET}\n${SECRET}"`,
+      "cli get pods \u2014token ***",
+    ],
+    [
+      "a later flag on the line whose quote carries its value on, after a quoted flag",
+      `cli get pods a"--token"b" --password "${SECRET}\n${SECRET}" 'x`,
+      'cli get pods a"--token" ***',
+    ],
+  ])("%s drops the lines after it", (_name, text, masked) => {
+    expect(maskStatementForHistory(text, MASK)).toBe(masked);
+    expect(maskStatementForHistory(text, MASK)).not.toContain(SECRET);
+  });
+
   test("a refused text with no declared flag is kept as typed", () => {
     expect(maskStatementForHistory("cli get pods | head", MASK)).toBe("cli get pods | head");
   });

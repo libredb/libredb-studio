@@ -84,7 +84,7 @@ const INSIDE_NAME = /["'\\\p{Default_Ignorable_Code_Point}]/u;
  */
 function flagPattern(flags: readonly string[], after = "(?=$|[^A-Za-z0-9_-])"): RegExp {
   const names = flags.map((flag) => [...flag].map(escapeForPattern).join(`${INSIDE_NAME.source}*`));
-  return new RegExp(`(?<![A-Za-z0-9_-])-*(?:${names.join("|")})${after}`, "iu");
+  return new RegExp(`(?<![A-Za-z0-9_-])-*(?:${names.join("|")})${after}`, "giu");
 }
 
 /** A declared flag at the start of a word's text, followed by anything a flag name does not hold. */
@@ -100,32 +100,41 @@ const NO_VALUE_CHARACTER = /[=:\s"'\\\p{Default_Ignorable_Code_Point}]/u;
 const NO_VALUE = new RegExp(`^${NO_VALUE_CHARACTER.source}*$`, "u");
 
 /**
- * Where a source's first declared flag ends, past any quotes or backslashes that close it; undefined when the
- * source holds none. The source is read as written, and again with each dash other than `-` read as `--`, and the
- * flag that ends first in either reading is the one taken: a dash can stand for a flag's two hyphens, and it can
- * also part a flag from the text around it, as it does where it is read as written.
+ * Where each declared flag in a source ends, in order, past any quotes or backslashes that close it. The source is
+ * read as written, and again with each dash other than `-` read as `--`: a dash can stand for a flag's two hyphens,
+ * and it can also part a flag from the text around it, as it does where it is read as written. A flag that starts
+ * inside another one's match is found too.
  */
-function flagEndIn(source: string, flag: RegExp): number | undefined {
-  const written = flag.exec(source);
-  let end = written === null ? undefined : written.index + written[0].length;
-  // `ends[i]` is the source offset just past the character the dashed reading's i-th unit was read from.
-  const ends: number[] = [];
+function flagEnds(source: string, flag: RegExp): number[] {
+  // `dashedEnds[i]` is the source offset just past the character the dashed reading's i-th unit was read from.
+  const dashedEnds: number[] = [];
   const reads: string[] = [];
   let offset = 0;
   for (const char of source) {
     offset += char.length;
     const read = char !== "-" && DASH.test(char) ? "--" : char;
-    for (let unit = 0; unit < read.length; unit++) ends.push(offset);
+    for (let unit = 0; unit < read.length; unit++) dashedEnds.push(offset);
     reads.push(read);
   }
-  const dashed = flag.exec(reads.join(""));
-  if (dashed !== null) {
-    const dashedEnd = ends[dashed.index + dashed[0].length - 1];
-    end = end === undefined ? dashedEnd : Math.min(end, dashedEnd);
-  }
-  if (end === undefined) return undefined;
-  while (end < source.length && QUOTING.test(source[end])) end += 1;
-  return end;
+  const ends = new Set<number>();
+  const collect = (reading: string, endOf: (match: RegExpExecArray) => number): void => {
+    flag.lastIndex = 0;
+    for (let match = flag.exec(reading); match !== null; match = flag.exec(reading)) {
+      let end = endOf(match);
+      while (end < source.length && QUOTING.test(source[end])) end += 1;
+      ends.add(end);
+      flag.lastIndex = match.index + 1;
+    }
+  };
+  collect(source, (match) => match.index + match[0].length);
+  collect(reads.join(""), (match) => dashedEnds[match.index + match[0].length - 1]);
+  return [...ends].sort((left, right) => left - right);
+}
+
+/** Where a source's first declared flag ends, as `flagEnds` finds it; undefined when the source holds none. */
+function flagEndIn(source: string, flag: RegExp): number | undefined {
+  const ends = flagEnds(source, flag);
+  return ends.length === 0 ? undefined : ends[0];
 }
 
 /** The offset each physical line starts at, with lines ended as the shell reader ends them: CRLF, CR or LF. */
@@ -225,9 +234,9 @@ const escapeForPattern = (text: string): string => text.replace(/[.*+?^${}()|[\]
  *
  * A flag name the shell would join from quoted or escaped parts (`--to"ken"`, `--to\ken`) is found too, since
  * quotes and backslashes may stand inside a name.
- * A line that leaves a quote open or continues, as the shell reader reads it from the lines before, or a cut part
- * that opens a quote it does not close or ends in a backslash, carries the value on to a later line, and the reader
- * that refused the text cannot say where it ends, so everything after the flag is dropped.
+ * A line that leaves a quote open or continues, as the shell reader reads it from the lines before, or one where the
+ * part after any of its flags opens a quote it does not close or ends in a backslash, carries a value on to a later
+ * line, and the reader that refused the text cannot say where it ends, so everything after the first flag is dropped.
  */
 function maskLines(text: string, flags: readonly string[]): string {
   const flag = flagPattern(flags);
@@ -239,17 +248,27 @@ function maskLines(text: string, flags: readonly string[]): string {
     // A line past the command line is read as a command of its own, so its quotes are followed too.
     const reading = tokenizeShellLine(line, state.section === "after" ? INITIAL_SHELL_LINE_STATE : state);
     state = reading.state;
-    const cut = flagEndIn(line, flag);
-    if (cut === undefined) continue;
-    const rest = line.slice(cut);
-    parts[index] = `${line.slice(0, cut)} ${MASK}`;
-    if (runsOn(rest) || state.quote !== "none" || state.continued) return parts.slice(0, index + 1).join("");
+    const ends = flagEnds(line, flag);
+    if (ends.length === 0) continue;
+    parts[index] = `${line.slice(0, ends[0])} ${MASK}`;
+    if (runsOn(line, ends) || state.quote !== "none" || state.continued) return parts.slice(0, index + 1).join("");
   }
   return parts.join("");
 }
 
-/** Whether a cut part leaves a quote open or ends in a backslash that joins the next line. */
-function runsOn(rest: string): boolean {
-  const count = (char: string): number => rest.split(char).length - 1;
-  return count("'") % 2 === 1 || count('"') % 2 === 1 || /(^|[^\\])(\\\\)*\\$/.test(rest);
+/**
+ * Whether the part of a line after one of its flags' `ends` opens a quote it does not close, or the part after the
+ * first ends in a backslash that joins the next line. Each quote is counted once, walking back from the line's end.
+ */
+function runsOn(line: string, ends: readonly number[]): boolean {
+  if (/(^|[^\\])(\\\\)*\\$/.test(line.slice(ends[0]))) return true;
+  const after = new Set(ends);
+  let single = false;
+  let double = false;
+  for (let index = line.length; index >= ends[0]; index--) {
+    if (after.has(index) && (single || double)) return true;
+    if (line[index - 1] === "'") single = !single;
+    else if (line[index - 1] === '"') double = !double;
+  }
+  return false;
 }
