@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { flattenTree, type FlattenTreeState, type TreeRowModel } from "@/components/object-tree/flatten";
 import { TreeRow, type TreeRowProps } from "@/components/object-tree/TreeRow";
 import { containerDepth } from "@/lib/db/object-kinds";
-import type { DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
+import type { Container, DatabaseObject, ProviderCapabilities } from "@/lib/db/types";
 
 const kinds = [
   { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
@@ -1107,5 +1107,160 @@ describe("a filtered row's label", () => {
     const mark = drawRow({ row: { ...base, match: [9, 13] } }).querySelector("mark");
     expect(mark?.classList.contains("text-inherit")).toBe(true);
     expect(mark?.classList.contains("text-foreground")).toBe(false);
+  });
+});
+
+/**
+ * Kinds per container. A container that names its kinds (`Container.kinds`) draws a folder for those
+ * alone, and a container that names none draws every enumerable kind: the tree of every engine
+ * declared before the field existed is unchanged, row for row.
+ */
+describe("flattenTree kinds per container", () => {
+  const clusterKinds = [
+    { id: "pods", role: "config", label: "Pod", labelPlural: "Pods" },
+    { id: "nodes", role: "config", label: "Node", labelPlural: "Nodes" },
+    { id: "events", role: "config", label: "Event", labelPlural: "Events" },
+  ] as const;
+
+  test("each container draws the folders of the kinds it names, in declaration order", () => {
+    const rows = flattenTree(
+      stateOf({
+        kinds: clusterKinds,
+        containerDepth: 1,
+        containers: [
+          { path: ["Cluster"], name: "Cluster", level: 0, kinds: ["nodes"] },
+          { path: ["shop"], name: "shop", level: 0, kinds: ["events", "pods"] },
+        ],
+        expanded: new Set(["Cluster", "shop"]),
+        counts: {},
+        objects: {},
+      }),
+    );
+    expect(rows.map((row) => `${row.depth}:${row.label}:${row.posInSet}/${row.setSize}`)).toEqual([
+      "0:Cluster:1/2",
+      "1:Nodes:1/1",
+      "0:shop:2/2",
+      "1:Pods:1/2",
+      "1:Events:2/2",
+    ]);
+  });
+
+  test("a container that names no kinds draws exactly the rows it drew before the field existed", () => {
+    const rows = flattenTree(
+      stateOf({
+        kinds,
+        containerDepth: 1,
+        containers: [{ path: ["app"], name: "app", level: 0 }],
+        expanded: new Set(["app", "app/table"]),
+        counts: { app: { table: { count: 1 }, view: { count: 0 }, procedure: { count: 1 } } },
+        objects: { "app/table": [{ path: ["app", "orders"], name: "orders", kind: "table" }] },
+      }),
+    );
+    expect(rows).toEqual([
+      { id: "app", kind: "container", label: "app", depth: 0, setSize: 1, posInSet: 1, expanded: true, path: ["app"] },
+      {
+        id: "app/table",
+        kind: "folder",
+        label: "Tables",
+        depth: 1,
+        setSize: 3,
+        posInSet: 1,
+        expanded: true,
+        badge: "1",
+        badgeTitle: undefined,
+        unavailable: undefined,
+        path: ["app"],
+        kindId: "table",
+      },
+      {
+        id: "app/orders/table",
+        kind: "object",
+        label: "orders",
+        depth: 2,
+        setSize: 1,
+        posInSet: 1,
+        expanded: undefined,
+        unavailable: undefined,
+        path: ["app", "orders"],
+        kindId: "table",
+      },
+      {
+        id: "app/view",
+        kind: "folder",
+        label: "Views",
+        depth: 1,
+        setSize: 3,
+        posInSet: 2,
+        expanded: false,
+        badge: "0",
+        badgeTitle: undefined,
+        unavailable: undefined,
+        path: ["app"],
+        kindId: "view",
+      },
+      {
+        id: "app/procedure",
+        kind: "folder",
+        label: "Procedures",
+        depth: 1,
+        setSize: 3,
+        posInSet: 3,
+        expanded: false,
+        badge: "1",
+        badgeTitle: undefined,
+        unavailable: undefined,
+        path: ["app"],
+        kindId: "procedure",
+      },
+    ]);
+  });
+
+  test("an engine with no container level draws every kind at the root", () => {
+    const rows = flattenTree(
+      stateOf({ kinds: clusterKinds, containerDepth: 0, containers: [], expanded: new Set(), counts: {}, objects: {} }),
+    );
+    expect(rows.map((row) => row.label)).toEqual(["Pods", "Nodes", "Events"]);
+  });
+
+  test("an open tree's kinds are looked up in one index, with or without kinds, never by a scan per container", () => {
+    // Every path segment counts the `replaceAll` calls `pathKey` makes on it, so the test counts path
+    // keys. A walk computes a handful per open container (its row, its folders); a scan per container
+    // for its kinds would compute about half a million more over a thousand open containers, on every
+    // engine, which is what a filter that opens every container would pay on every keystroke.
+    const COUNT = 1000;
+    let keyed = 0;
+    const segment = (text: string): string => {
+      const counted = new String(text);
+      Object.defineProperty(counted, "replaceAll", {
+        value: (search: string, replacement: string) => {
+          keyed += 1;
+          return text.replaceAll(search, replacement);
+        },
+      });
+      return counted as unknown as string;
+    };
+    const containersOf = (named: boolean): Container[] =>
+      Array.from({ length: COUNT }, (_unused, index) => ({
+        path: [segment(`s${index}`)],
+        name: `s${index}`,
+        level: 0,
+        ...(named ? { kinds: ["pods"] } : {}),
+      }));
+    const expanded = new Set(Array.from({ length: COUNT }, (_unused, index) => `s${index}`));
+    for (const named of [false, true]) {
+      keyed = 0;
+      const rows = flattenTree(
+        stateOf({
+          kinds: clusterKinds,
+          containerDepth: 1,
+          containers: containersOf(named),
+          expanded,
+          counts: {},
+          objects: {},
+        }),
+      );
+      expect(rows).toHaveLength(named ? 2 * COUNT : 4 * COUNT);
+      expect(keyed).toBeLessThan(20 * COUNT);
+    }
   });
 });

@@ -9,7 +9,13 @@
  * are computed here, per sibling group, before any row of that group is emitted, and the
  * row component takes all four numbers verbatim.
  */
-import { containerDepth, isCountSampled, isCountUnavailable, kindHasColumns } from "@/lib/db/object-kinds";
+import {
+  applicableKinds,
+  containerDepth,
+  isCountSampled,
+  isCountUnavailable,
+  kindHasColumns,
+} from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, KindCount, ObjectDetail, ObjectKindSpec } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 
@@ -110,6 +116,7 @@ export interface FlattenTreeState {
   /**
    * Every kind the object surface enumerates (`enumerableKinds()`), in declaration order, which is
    * the folder order. A kind only the Keys panel enumerates is declared and is not in here (#1089 3.4).
+   * A container that names its kinds (`Container.kinds`) draws a folder for those alone.
    */
   readonly kinds: readonly ObjectKindSpec[];
   /** Every container known so far, at every level, as a flat list addressed by `path`. */
@@ -179,7 +186,7 @@ export interface FlattenTreeState {
  */
 export function flattenTree(state: FlattenTreeState): readonly TreeRowModel[] {
   const rows: TreeRowModel[] = [];
-  appendContainerChildren(state, rows, [], -1);
+  appendContainerChildren({ ...state, kindsOf: kindsByRowKey(state.containers) }, rows, [], -1);
   return rows;
 }
 
@@ -201,7 +208,7 @@ type ContainerChild = { readonly container: Container } | { readonly spec: Objec
  * answers for those engines.
  */
 function appendContainerChildren(
-  state: FlattenTreeState,
+  state: WalkState,
   rows: TreeRowModel[],
   parentPath: readonly string[],
   parentDepth: number,
@@ -211,13 +218,46 @@ function appendContainerChildren(
     ...state.containers
       .filter((candidate) => isChildPath(parentPath, candidate.path))
       .map((container) => ({ container })),
-    ...(depth >= state.containerDepth ? state.kinds.map((spec) => ({ spec })) : []),
+    ...(depth >= state.containerDepth
+      ? applicableKinds(state.kinds, containerKinds(state, parentPath)).map((spec) => ({ spec }))
+      : []),
   ];
 
   children.forEach((child, index) => {
     if ("container" in child) appendContainer(state, rows, child.container, depth, children.length, index + 1);
     else appendFolder(state, rows, parentPath, child.spec, depth, children.length, index + 1);
   });
+}
+
+/** What the walk reads: the caller's state, plus each container's named kinds indexed once per walk. */
+interface WalkState extends FlattenTreeState {
+  /** `Container.kinds` by the container's row key; empty on every engine whose containers name none. */
+  readonly kindsOf: ReadonlyMap<string, readonly string[]>;
+}
+
+/**
+ * Each container's `Container.kinds` by its row key, read once per walk, so the lookup under every open
+ * container is one map read: a find per container would make a tree the filter has opened in full
+ * quadratic in its containers, on exactly the large schemas the filter is for. The first container on
+ * a path wins, as everywhere a path is deduplicated; a container that named none has no entry, and an
+ * engine whose containers name none computes no key at all.
+ */
+function kindsByRowKey(containers: readonly Container[]): ReadonlyMap<string, readonly string[]> {
+  const byKey = new Map<string, readonly string[]>();
+  for (const container of containers) {
+    if (container.kinds === undefined) continue;
+    const key = pathKey(container.path);
+    if (!byKey.has(key)) byKey.set(key, container.kinds);
+  }
+  return byKey;
+}
+
+/**
+ * The kinds the container at `path` named, or undefined where it named none or is the root of an
+ * engine with no container level, which no listing holds. Looked up by the same key as its row id.
+ */
+function containerKinds(state: WalkState, path: readonly string[]): readonly string[] | undefined {
+  return state.kindsOf.size === 0 ? undefined : state.kindsOf.get(pathKey(path));
 }
 
 /**
@@ -276,7 +316,7 @@ export function containerRowId(path: readonly string[]): string {
 }
 
 function appendContainer(
-  state: FlattenTreeState,
+  state: WalkState,
   rows: TreeRowModel[],
   container: Container,
   depth: number,
