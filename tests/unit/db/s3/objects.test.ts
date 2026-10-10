@@ -7,8 +7,8 @@
 import { describe, expect, test } from "bun:test";
 import { ConnectionError, QueryError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
-import type { ObjectHead } from "@/lib/db/providers/objectstore/s3/client";
-import { S3_ERROR_SENTENCES } from "@/lib/db/providers/objectstore/s3/errors";
+import type { ObjectHead, S3Surface } from "@/lib/db/providers/objectstore/s3/client";
+import { S3_ERROR_SENTENCES, toProviderError } from "@/lib/db/providers/objectstore/s3/errors";
 import {
   countS3Objects,
   describeS3Object,
@@ -207,9 +207,16 @@ describe("the bucket Source document", () => {
   });
 
   test("a closed connection is no refusal: it fails the whole document", async () => {
-    const { surface } = fakeS3Surface(() => {
+    const { surface: open, context } = fakeS3Surface(() => {
       throw new TransportError("aborted", "The transport is closed");
     });
+    // disconnect() ends the session's lifetime before it closes the transport.
+    const lifetime = new AbortController();
+    lifetime.abort();
+    const surface: S3Surface = {
+      ...open,
+      fail: (error, operation) => toProviderError(error, operation, context, { lifetime: lifetime.signal }),
+    };
     const error = await readS3ObjectSource(surface, ["archive"], "bucket", undefined, CALL, memory()).catch(
       (caught: unknown) => caught,
     );
