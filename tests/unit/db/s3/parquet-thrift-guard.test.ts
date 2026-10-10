@@ -4,7 +4,10 @@
  * headers are walked here first, without building values, and refused with a reason before any allocation.
  */
 import { describe, expect, test } from "bun:test";
+import { readdirSync, statSync } from "node:fs";
+import path from "node:path";
 import { guardThriftStruct, readPageHeader } from "@/lib/db/providers/objectstore/s3/parquet-thrift-guard";
+import { fixture, PREVIEW_FIXTURES } from "../../../helpers/s3-preview-reader";
 import { THRIFT, type ThriftField, thriftStruct, varint } from "../../../helpers/thrift-compact";
 
 const guard = (bytes: Uint8Array, maxDepth = 32) => guardThriftStruct(bytes, 0, maxDepth);
@@ -193,5 +196,37 @@ describe("readPageHeader", () => {
       ],
     ]);
     expect(readPageHeader(bytes, 0, 32)).toMatchObject({ numValues: 2 });
+  });
+});
+
+describe("the committed preview fixtures", () => {
+  const parquet = readdirSync(PREVIEW_FIXTURES)
+    .filter((name) => name.endsWith(".parquet"))
+    .sort();
+
+  test("every preview fixture exists and stays under 200 KiB", () => {
+    expect(parquet).toEqual([
+      "bigcells-zstd.parquet",
+      "fx-brotli.parquet",
+      "fx-empty.parquet",
+      "fx-gzip.parquet",
+      "fx-lz4_raw.parquet",
+      "fx-snappy.parquet",
+      "fx-two-groups.parquet",
+      "fx-uncompressed.parquet",
+      "fx-zstd.parquet",
+    ]);
+    for (const name of readdirSync(PREVIEW_FIXTURES)) {
+      expect(statSync(path.join(PREVIEW_FIXTURES, name)).size, name).toBeLessThan(200 * 1_024);
+    }
+  });
+
+  test("every fixture's footer passes the guard", () => {
+    for (const name of parquet) {
+      const bytes = fixture(name);
+      const length = new DataView(bytes.buffer).getUint32(bytes.length - 8, true);
+      const footer = bytes.subarray(bytes.length - 8 - length, bytes.length - 8);
+      expect(guardThriftStruct(footer, 0, 32), name).toMatchObject({ ok: true });
+    }
   });
 });
