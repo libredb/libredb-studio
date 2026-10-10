@@ -28,7 +28,9 @@ function refuse(message: string): never {
 }
 
 /** The container declaration the provider's capabilities carry: one Namespace level, exact paths only. */
-export const KUBERNETES_CONTAINER_LEVELS: ContainerLevels = [{ id: "schema", label: "Namespace", labelPlural: "Namespaces" }];
+export const KUBERNETES_CONTAINER_LEVELS: ContainerLevels = [
+  { id: "schema", label: "Namespace", labelPlural: "Namespaces" },
+];
 
 const KUBERNETES_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
   code: KUBERNETES_TYPE,
