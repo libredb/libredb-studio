@@ -34,9 +34,9 @@ channel count.
 
 ## Coverage snapshot
 
-**45 channels · 38 live · 6 pending · 1 deprecated**
+**46 channels · 39 live · 6 pending · 1 deprecated**
 
-Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 6 · Kubernetes 5 · Cloud 16**
+Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 7 · Kubernetes 5 · Cloud 16**
 
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
@@ -45,7 +45,7 @@ Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 6 · K
 | Kubernetes & operators | 4 | 0 | 0 |
 | Package managers | 6 | 1 | 1 |
 | OS / desktop packages | 3 | 0 | 0 |
-| PaaS catalogs (listed) | 14 | 3 | 0 |
+| PaaS catalogs (listed) | 15 | 3 | 0 |
 | Deploy recipes | 3 | 0 | 0 |
 | Cloud marketplaces | 4 | 2 | 0 |
 
@@ -84,6 +84,7 @@ Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 6 · K
 | [Dokploy template catalog](https://templates.dokploy.com) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/dokploy/README.md](../deploy/dokploy/README.md) |
 | [Kubero template catalog](https://www.kubero.dev/templates) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/kubero/README.md](../deploy/kubero/README.md) |
 | [1Panel community store](https://github.com/okxlin/appstore/tree/localApps/apps/libredb-studio) | PaaS catalogs (listed) | Container | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Portainer templates (as93)](https://portainer-templates.as93.net) | PaaS catalogs (listed) | Container | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Railway one-click template](https://railway.com/deploy/libredb-studio) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/railway/PUBLISH.md](../deploy/railway/PUBLISH.md) |
 | [Railyard template catalog](https://railyard.run/templates/libredb-studio) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Sealos App Store template](https://sealos.io/products/app-store/libredb-studio) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |

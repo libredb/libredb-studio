@@ -1,0 +1,46 @@
+{
+  "type": 1,
+  "title": "LibreDB Studio",
+  "name": "libredb-studio",
+  "description": "Self-hosted database IDE you use from a browser, covering twenty-seven engines - PostgreSQL, MySQL, Oracle, SQL Server, MongoDB, Redis, ClickHouse, Cassandra, Elasticsearch and more - with a schema browser and query history on all of them, and ER diagrams and EXPLAIN plans wherever the engine declares keys or returns a plan. Source: https://github.com/libredb/libredb-studio",
+  "categories": [
+    "Database",
+    "Tools",
+    "Development"
+  ],
+  "platform": "linux",
+  "logo": "https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg",
+  "image": "ghcr.io/libredb/libredb-studio:latest",
+  "restart_policy": "unless-stopped",
+  "ports": [
+    "3006:3000/tcp"
+  ],
+  "volumes": [
+    {
+      "container": "/app/data"
+    }
+  ],
+  "env": [
+    {
+      "name": "AUTH_COOKIE_SECURE",
+      "label": "Reached over plain HTTP, with no HTTPS in front",
+      "description": "Leave it false to reach the app at http://your-host:3006. Without it the session cookie is marked Secure, the browser throws it away over plain HTTP, and sign-in returns you to the login page while the container stays healthy. The cookie then travels in cleartext, so keep it to a trusted network and set this to true once a reverse proxy puts HTTPS in front.",
+      "default": "false"
+    },
+    {
+      "name": "STORAGE_PROVIDER",
+      "label": "Where saved connections are kept",
+      "description": "sqlite keeps them in the volume below, so they survive the container being recreated. The alternatives are local, which keeps them in the browser instead, so a volume backup holds none of them, and postgres for a shared server.",
+      "default": "sqlite",
+      "preset": true
+    },
+    {
+      "name": "STORAGE_SQLITE_PATH",
+      "label": "Path of that SQLite file",
+      "description": "Inside the volume, so it persists.",
+      "default": "/app/data/libredb-storage.db",
+      "preset": true
+    }
+  ],
+  "note": "Open <code>http://&lt;your-host&gt;:3006</code>. On the first start the app creates the admin account <code>admin@libredb.org</code>, generates its password and its signing secret, and prints the password to the container log, so read the log before signing in. Both are kept in <code>/app/data</code> and reused on later starts, which is why setting <code>ADMIN_PASSWORD</code> on its own afterwards does not change the stored one: to replace it, set <code>ADMIN_PASSWORD</code> to the new value and <code>ADMIN_PASSWORD_RESET=true</code> together for one start, then remove the flag. Saved connections, query history and the app's SQLite file all live under <code>/app/data</code>, which the volume covers. The databases you connect to are not part of this template, which runs LibreDB Studio alone. MIT licensed, no paid tier. Docs: <a href=\"https://libredb.org\">libredb.org</a>"
+}
