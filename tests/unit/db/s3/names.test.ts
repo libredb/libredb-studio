@@ -59,13 +59,28 @@ describe("the addressability verdicts", () => {
     expect(objectAddressRefusal("sales", "/root.txt")).toBe("key-leading-slash");
   });
 
-  test("a verdict is one of three fixed words and carries no character of the names passed", () => {
+  test("a key whose dot segments climb out of its bucket or name the bucket itself is refused", () => {
+    expect(objectAddressRefusal("sales", "../x")).toBe("key-dot-segments");
+    expect(objectAddressRefusal("sales", "x/../../y")).toBe("key-dot-segments");
+    expect(objectAddressRefusal("sales", "a/..")).toBe("key-dot-segments");
+    expect(objectAddressRefusal("sales", "../other/x")).toBe("key-dot-segments");
+  });
+
+  test("a key whose dot segments resolve inside its bucket opens", () => {
+    expect(objectAddressRefusal("sales", "a/../b")).toBeUndefined();
+    expect(objectAddressRefusal("sales", "./x")).toBeUndefined();
+    expect(objectAddressRefusal("sales", "sp/x/../dotdot.txt")).toBeUndefined();
+    expect(objectAddressRefusal("sales", "sp/./dot.txt")).toBeUndefined();
+  });
+
+  test("a verdict is one of four fixed words and carries no character of the names passed", () => {
     const verdicts = [
       objectAddressRefusal("zz top", "q"),
       objectAddressRefusal("qq", "/zz"),
       objectAddressRefusal("qq", ""),
+      objectAddressRefusal("qq", "../zz"),
     ];
-    expect(verdicts).toEqual(["bucket-pattern", "key-leading-slash", "key-empty"]);
+    expect(verdicts).toEqual(["bucket-pattern", "key-leading-slash", "key-empty", "key-dot-segments"]);
     for (const verdict of verdicts) expect(verdict).not.toMatch(/z|q/);
   });
 });
@@ -83,6 +98,9 @@ describe("sourceAddressSentence", () => {
     );
     expect(sourceAddressSentence("outside-pin", { bucket: "other", key: "k", pin: "sales" })).toBe(
       'This connection reads only bucket "sales"; bucket "other" is outside it.',
+    );
+    expect(sourceAddressSentence("key-dot-segments", { bucket: "sales", key: "../other/x" })).toBe(
+      'Studio does not open "../other/x": once its . and .. segments are resolved, it names no object inside bucket "sales", and a server or proxy that resolves them would read something else.',
     );
   });
 

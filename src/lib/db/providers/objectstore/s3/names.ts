@@ -11,7 +11,7 @@
 import { S3_BUCKET_PATTERN, S3_SHOWN_NAME_CHARS } from "./constants";
 
 /** Why Studio does not address a bucket or object; a fixed word that carries no character of the name. */
-export type S3AddressVerdict = "bucket-pattern" | "key-leading-slash" | "key-empty";
+export type S3AddressVerdict = "bucket-pattern" | "key-leading-slash" | "key-empty" | "key-dot-segments";
 
 const PERCENT_HEX = /^[0-9A-Fa-f]{2}$/;
 const utf8 = new TextEncoder();
@@ -31,14 +31,32 @@ export function bucketAddressRefusal(bucket: string): "bucket-pattern" | undefin
   return S3_BUCKET_PATTERN.test(bucket) ? undefined : "bucket-pattern";
 }
 
-/** undefined when Studio may open the object; else the first failing verdict: the bucket, then the key. */
+/**
+ * undefined when Studio may open the object; else the first failing verdict: the bucket, then the key. A key is
+ * refused when it is empty, when it begins with /, and when its dot segments, resolved under the bucket as RFC 3986
+ * remove_dot_segments resolves them, climb out of the bucket or leave nothing: a server or proxy that resolves them
+ * would read another bucket, or the bucket itself, which a pinned connection must never reach.
+ */
 export function objectAddressRefusal(bucket: string, key: string): S3AddressVerdict | undefined {
   const refusal = bucketAddressRefusal(bucket);
   if (refusal !== undefined) return refusal;
   if (key === "") return "key-empty";
   // Silo reads `root.txt` for `/root.txt`, and Garage and RustFS drop the slash when they store such a key.
   if (key.startsWith("/")) return "key-leading-slash";
-  return undefined;
+  return dotSegmentsLeaveBucket(key) ? "key-dot-segments" : undefined;
+}
+
+/** "." is skipped, ".." pops a segment, every other segment (the empty one too) is pushed. */
+function dotSegmentsLeaveBucket(key: string): boolean {
+  let depth = 0;
+  for (const segment of key.split("/")) {
+    if (segment === ".") continue;
+    if (segment === "..") {
+      if (depth === 0) return true;
+      depth -= 1;
+    } else depth += 1;
+  }
+  return depth === 0;
 }
 
 /** At most S3_SHOWN_NAME_CHARS characters, cut on a code point, then JSON.stringify. */
@@ -61,6 +79,8 @@ export function sourceAddressSentence(
       return `Studio does not open ${shownName(names.key)}: it begins with /, and a measured S3 server read a different key for such a name (Silo reads the key without its leading slash).`;
     case "key-empty":
       return "A bucket's own folder has no object to open.";
+    case "key-dot-segments":
+      return `Studio does not open ${shownName(names.key)}: once its . and .. segments are resolved, it names no object inside bucket ${shownName(names.bucket)}, and a server or proxy that resolves them would read something else.`;
     case "bucket-pattern":
       return `Studio does not open bucket ${shownName(names.bucket)}: a bucket it addresses is 1 to 255 letters, digits, dots, hyphens or underscores, starting and ending with a letter or digit.`;
     case "outside-pin":

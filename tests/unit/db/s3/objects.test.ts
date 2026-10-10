@@ -350,6 +350,11 @@ describe("the object Source document", () => {
     expect(await refusal(readS3ObjectSource(pinned.surface, ["sales/"], "object", undefined, CALL, memory()))).toBe(
       "A bucket's own folder has no object to open.",
     );
+    expect(
+      await refusal(readS3ObjectSource(pinned.surface, ["sales/../other/x"], "object", undefined, CALL, memory())),
+    ).toBe(
+      'Studio does not open "../other/x": once its . and .. segments are resolved, it names no object inside bucket "sales", and a server or proxy that resolves them would read something else.',
+    );
     expect(pinned.fake.exchanges).toHaveLength(0);
   });
 });
