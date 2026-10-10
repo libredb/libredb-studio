@@ -36,13 +36,14 @@ import {
   scriptedS3Transport,
   signingInput,
 } from "../../../helpers/s3-wire";
-import { S3_LIVE_ONLY_ROWS, scenariosFor } from "../../../live/s3-evidence-plan";
+import { runS3Scenario, S3_LIVE_ONLY_ROWS, scenariosFor } from "../../../live/s3-evidence-plan";
 import {
   checkS3Step,
   levelPageDefect,
   readmeRows,
   readS3Principals,
   renderS3Acceptance,
+  replayPrincipals,
   S3_ACCEPTANCE,
   S3_ACCEPTANCE_GROUPS,
   S3_FIXTURE_BUCKETS,
@@ -51,6 +52,7 @@ import {
   s3Fingerprint,
   s3LiveConnection,
   s3Recorder,
+  type S3RunContext,
   sentenceRefFinding,
   wireViolations,
 } from "../../../live/s3-live-support";
@@ -1562,6 +1564,65 @@ describe("the runners and the scenario list", () => {
     expect(a37?.steps).toEqual(["csv", "tsv", "json"]);
     const a23b = scenariosFor("garage").find(({ scenario }) => scenario.name === "A23b");
     expect(a23b).toBeUndefined();
+  });
+
+  test("a console run records the sockets its own step opened, not the run's running total", async () => {
+    const planned = scenariosFor("minio").find(({ scenario }) => scenario.name === "console-head-object");
+    if (planned === undefined) throw new Error("minio records no console-head-object scenario");
+    const transport = scriptedS3Transport([
+      {
+        expect: { method: "GET", path: "/", query: "max-buckets=10000" },
+        answer: {
+          status: 200,
+          headers: [["content-type", "application/xml"]],
+          headersTruncated: false,
+          contentType: "application/xml",
+          contentEncoding: null,
+          retryAfter: null,
+          truncated: false,
+          body: {
+            text: '<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>o</ID></Owner><Buckets><Bucket><Name>studio-demo</Name><CreationDate>2026-10-01T00:00:00.000Z</CreationDate></Bucket></Buckets></ListAllMyBucketsResult>',
+          },
+        },
+        synthetic: true,
+        source: "MinIO, measured live: the unpinned connect probe",
+      },
+      {
+        expect: { method: "HEAD", path: "/studio-demo/data/table.csv" },
+        answer: {
+          status: 200,
+          headers: [
+            ["content-length", "12"],
+            ["etag", '"0f343b0931126a20f133d67c2b018a3b"'],
+            ["last-modified", "Fri, 09 Oct 2026 14:19:00 GMT"],
+          ],
+          headersTruncated: false,
+          contentType: null,
+          contentEncoding: null,
+          retryAfter: null,
+          truncated: false,
+          body: { text: "" },
+        },
+        synthetic: true,
+        source: "MinIO, measured live: HeadObject on a seeded key",
+      },
+    ]);
+    const run: S3RunContext = {
+      target: "minio",
+      principals: replayPrincipals("minio"),
+      createTransport: transport.createTransport,
+      clockFor: () => () => new Date("2026-10-09T14:19:00.000Z"),
+      signerWrapper: (signer) => signer,
+      setStep: (step) => transport.setStep(step),
+      sockets: () => 3,
+      recorded: () => transport.sent,
+    };
+    const runs = await runS3Scenario(planned.scenario, run, planned.steps, {
+      assertSurface: () => Promise.resolve(),
+    });
+    expect(runs.length).toBeGreaterThan(0);
+    expect(runs.map((stepRun) => stepRun.sockets)).toEqual(runs.map(() => 0));
+    transport.assertConsumed();
   });
 });
 

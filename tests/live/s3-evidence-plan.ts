@@ -120,6 +120,7 @@ async function consoleRunner(context: S3RunContext, name: ConsoleScenarioName): 
       const text = step === CONSOLE_TOKEN_STEP ? `${written}${token}` : written;
       context.setStep(step);
       const before = context.recorded().length;
+      const sockets = context.sockets();
       const result = await provider.query(text, [], `${name}-${step}`);
       const notices = (result.warnings ?? []).map((warning) => warning.message);
       const ok: S3Observed = {
@@ -132,7 +133,7 @@ async function consoleRunner(context: S3RunContext, name: ConsoleScenarioName): 
       runs.push({
         summary: { step, ok, exchanges: context.recorded().length - before },
         context: { connection, command: text },
-        sockets: context.sockets(),
+        sockets: context.sockets() - sockets,
       });
     }
   } finally {
