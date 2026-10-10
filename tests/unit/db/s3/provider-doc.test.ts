@@ -1435,3 +1435,95 @@ describe("the chart and the operator name S3 where an evaluator searches", () =>
     expect(flat(csv.spec.description)).toContain("Oxia, Databend and S3-compatible object storage from the browser");
   });
 });
+
+/** The FEATURES group, exactly. */
+const FEATURES_GROUP = [
+  "*   **Object Storage:**",
+  "    *   **S3-compatible object storage:** Read-only over the S3 REST API with **no SDK and no driver**: Studio's own SigV4 code signs each request with the access key pair typed into the connection, never with the server's environment, shared credential files or instance role, and an empty pair sends unsigned requests.",
+  "        AWS CLI read commands in the editor, such as `aws s3api list-buckets`, `aws s3 ls`, `aws s3api head-object` and `aws s3api list-object-versions`, plus Studio's own `preview`; buckets in the tree, or the one bucket the connection names; folders and objects in the Keys panel, one folder level at a time with a Load more per level.",
+  "        An object opens with its metadata and a capped preview of text, JSON, NDJSON, CSV, TSV and Parquet (through `hyparquet`, with Snappy, gzip, zstd, brotli and LZ4 pages), and a hex dump for anything else.",
+  "        Path-style addressing only, a Region field that defaults to `us-east-1`, and link-local addresses (169.254.0.0/16 and fe80::/10) and AWS's IPv6 metadata address refused whatever the egress setting.",
+  "        Verified on MinIO, Silo, Garage and RustFS ([providers/s3.md](./providers/s3.md)); AWS S3 and hosted services are not verified.",
+].join("\n");
+
+/** BRAND_MESSAGING rule 9, exactly. */
+const BRAND_RULE_9 =
+  '9. **Studio\'s S3 provider is read-only object browsing on S3-compatible servers, verified on four of them.** Write "S3-compatible object storage", never "S3" alone as a supported product, and never "AWS S3" or "Amazon S3" as one, because Studio was verified on MinIO, Silo, Garage and RustFS and not on AWS S3 or any hosted service. Never write that Studio queries files in a bucket with SQL; it previews them.';
+
+describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
+  const engines = EXTERNAL_DATABASE_TYPES.length;
+
+  test("51. FEATURES has the Object Storage group in its place, naming the networks of LINK_LOCAL_NETWORKS", () => {
+    const features = read("docs/FEATURES.md");
+    expect(features).toContain(FEATURES_GROUP);
+    expect(features.indexOf("*   **Vector Databases:**")).toBeLessThan(features.indexOf("*   **Object Storage:**"));
+    expect(features.indexOf("*   **Object Storage:**")).toBeLessThan(features.indexOf("*   **Embedded Stores:**"));
+    // The group names the two link-local CIDRs and AWS's IPv6 metadata address in words; the NAT64 entry is a form
+    // of 169.254.0.0/16. A network added to LINK_LOCAL_NETWORKS fails case 46 until this group is re-read too.
+    for (const words of networkWords().filter((words) => words !== "NAT64")) {
+      expect(FEATURES_GROUP, words).toContain(words === "fd00:ec2::254" ? "AWS's IPv6 metadata address" : words);
+    }
+    expect(flat(features)).toContain(
+      "Milvus, Qdrant, Oxia and S3-compatible object storage have no count grammar here",
+    );
+  });
+
+  test("52. BRAND_MESSAGING counts the external engines and carries rule 9", () => {
+    const brand = read("docs/BRAND_MESSAGING.md");
+    expect(brand).toContain(`2. One tab, ${word(engines)} engines.`);
+    expect(brand).toContain(`### Door 2: One tab, ${word(engines)} engines.`);
+    expect(brand).toContain(`- **Promise:** ${word(engines)} engines in one interface`);
+    expect(brand).toContain(`- **Proof:** ${word(engines)} providers, each with its own reference document`);
+    expect(brand).toContain(`| ${Word(engines)} database engines | One reference document per engine:`);
+    expect(brand).toContain(
+      "Qdrant, Oxia, S3-compatible object storage. A twenty-ninth, `libredb.md`, is the embedded provider",
+    );
+    expect(brand).toContain(`against ${word(engines)} here.`);
+    expect(brand).toContain(`"${Word(engines)} engines" beats "extensive database support".`);
+    expect(brand).toContain(`against ${word(engines)} shipped.`);
+    expect(brand).not.toContain("twenty-seven");
+    const rules = brand.split("\n");
+    const rule8 = rules.findIndex((line) => line.startsWith("8. **AI is not described as magic.**"));
+    expect(rules[rule8 + 1]).toBe(BRAND_RULE_9);
+  });
+
+  test("53. API_DOCS names S3 where it lists engines and states S3's declarations", () => {
+    const api = read("docs/API_DOCS.md");
+    const capabilities = provider.getCapabilities();
+    const keyScan = capabilities.keyScan;
+    expect(api).toContain("Milvus, Qdrant, Oxia, Databend and S3-compatible object storage.");
+    expect(api).toMatch(
+      new RegExp(
+        `- \\*\\*Multi-Database Support\\*\\* - ${Word(engines)} engines: .*, Databend, S3-compatible object storage$`,
+        "m",
+      ),
+    );
+    expect(capabilities.supportsResultPagination).toBe(false);
+    expect(api).toContain("Milvus, Qdrant, Oxia and S3-compatible object storage ignore it.");
+    expect(capabilities.containerLevels).toEqual([]);
+    expect(api).toContain(
+      "etcd, Oxia and S3-compatible object storage declare the walk and no container level, because one connection is one key space (one etcd cluster, one Oxia namespace, one S3 endpoint), so they refuse the field as well.",
+    );
+    expect(api).toContain(
+      "| The provider declares `keyScan` and no container level (etcd, Oxia, S3-compatible object storage) | `400` |",
+    );
+    expect(consoleTextByteLimit("s3")).toBe(S3_MAX_TEXT_BYTES);
+    expect(api).toContain(
+      `InfluxDB (InfluxQL), Oxia and S3-compatible object storage one of ${n(S3_MAX_TEXT_BYTES)} bytes each`,
+    );
+    expect(api).toContain(
+      `S3-compatible object storage declares \`{ "defaultCount": ${keyScan?.defaultCount}, "maxCount": ${keyScan?.maxCount} }\` ([providers/s3.md](./providers/s3.md), section 6.4).`,
+    );
+    expect(api).toContain(
+      `S3-compatible object storage declares \`"${keyScan?.separator}"\`, \`"${keyScan?.cursor}"\`, \`"${keyScan?.pattern}"\` and \`"${keyScan?.totalScope}"\` too, with \`levels.rootKind\` \`"${keyScan?.levels?.rootKind}"\`: one folder level at a time, a cursor only it can read, a literal prefix, and no count.`,
+    );
+    expect(api).toContain("Cassandra: the KEYSPACE; S3: the optional pinned bucket)");
+    const union = /^type DatabaseType = (.+);$/m.exec(api)?.[1] ?? "";
+    expect(
+      union
+        .split(" | ")
+        .map((member) => member.replace(/'/g, ""))
+        .sort(),
+    ).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+  });
+});

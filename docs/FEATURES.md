@@ -124,6 +124,12 @@
         Collections are browsable with their vectors, payload indexes and a sampled view of payload keys, and vectors reach the grid as vector cells with their dimension and full-value copy.
         Every inference input but local BM25 is refused, in every release.
         See [`providers/qdrant.md`](providers/qdrant.md).
+*   **Object Storage:**
+    *   **S3-compatible object storage:** Read-only over the S3 REST API with **no SDK and no driver**: Studio's own SigV4 code signs each request with the access key pair typed into the connection, never with the server's environment, shared credential files or instance role, and an empty pair sends unsigned requests.
+        AWS CLI read commands in the editor, such as `aws s3api list-buckets`, `aws s3 ls`, `aws s3api head-object` and `aws s3api list-object-versions`, plus Studio's own `preview`; buckets in the tree, or the one bucket the connection names; folders and objects in the Keys panel, one folder level at a time with a Load more per level.
+        An object opens with its metadata and a capped preview of text, JSON, NDJSON, CSV, TSV and Parquet (through `hyparquet`, with Snappy, gzip, zstd, brotli and LZ4 pages), and a hex dump for anything else.
+        Path-style addressing only, a Region field that defaults to `us-east-1`, and link-local addresses (169.254.0.0/16 and fe80::/10) and AWS's IPv6 metadata address refused whatever the egress setting.
+        Verified on MinIO, Silo, Garage and RustFS ([providers/s3.md](./providers/s3.md)); AWS S3 and hosted services are not verified.
 *   **Embedded Stores:**
     *   **LibreDB:** Support for embedded, server-less `.libredb` files via the `@libredb/libredb` package — a small get/put/delete/prefix/range command grammar over the key-value lens, with catalog-aware schema views for relational and document namespaces.
 *   **Connection Pooling:** Configurable pool settings (min/max connections, idle timeout) for production workloads.
@@ -151,7 +157,7 @@ Two components are described below and a claim true of one can be false of the o
 *   **Contextual Actions (schema tab):** Quick access menus for each table including "Select Top 50", "Generate Query", "Generate Count Query", and "Copy Name". Action labels adapt per provider (e.g. "Scan Keys" for Redis, "Find Documents" for MongoDB).
 *   **Generate Count Query (both explorers):** Opens an editable count statement in a new tab without running it, so a filter can be added before Run.
     SQL engines get a qualified, dialect-quoted `SELECT COUNT(*)` (`COUNT_BIG(*)` on SQL Server), and MongoDB gets its `count` document.
-    Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia have no count grammar here, and a derived key-prefix grouping has nothing to count, so they are not offered it.
+    Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia and S3-compatible object storage have no count grammar here, and a derived key-prefix grouping has nothing to count, so they are not offered it.
 *   **DBA Quick Tools:** (Admin Only) Instant access to "Analyze Table" and "Vacuum Table" directly from the table context menu, on the providers whose rows are real objects. A key-value provider such as Redis, whose rows are derived key-prefix groupings, offers neither -- there is no table for the maintenance page to act on.
 *   **Visual Clarity:** Modern glassmorphic design with Framer Motion animations for smooth transitions.
 *   **Database Stats:** Integrated table counts and connection health monitoring directly in the sidebar.
