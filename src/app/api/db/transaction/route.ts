@@ -7,6 +7,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
+import { requestCatalog, scopeToCatalog } from "@/lib/db/catalog-scope";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { countCodeStatements, splitExecutionUnits, type ExecutionUnit } from "@/lib/sql/statement-splitter";
@@ -16,6 +17,7 @@ import {
   OWNERSHIP_IDLE_MS,
   releaseTransaction,
   touchTransaction,
+  transactionKey,
   transactionOwner,
 } from "@/lib/api/transaction-ownership";
 
@@ -128,7 +130,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Connection and action are required" }, { status: 400 });
     }
 
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    // Each database of a server-level connection holds its own transaction (#1530), so ownership is per database.
+    const catalog = requestCatalog(body);
+    const connected = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    const provider = await scopeToCatalog(connected, catalog);
+    const owned = transactionKey(connection.id, catalog);
 
     if (!isTransactionProvider(provider)) {
       return NextResponse.json(
@@ -141,12 +147,12 @@ export async function POST(req: NextRequest) {
     // connection drives it, so the caller's right to act on it is decided here, before any
     // action runs. See src/lib/api/transaction-ownership.ts for what was measured.
     const inTransaction = provider.isInTransaction();
-    let owner = transactionOwner(connection.id);
+    let owner = transactionOwner(owned);
     if (!inTransaction && owner) {
       // The provider ended the transaction without a session behind it - PostgresProvider and
       // MySQLProvider auto-roll back after TX_TIMEOUT_MS - so the record names a transaction that
       // no longer exists. Dropping it here is what stops that record from refusing the next user.
-      releaseTransaction(connection.id);
+      releaseTransaction(owned);
       owner = null;
     }
     const ownedByYou = owner !== null && owner.username === guard.session.username;
@@ -175,7 +181,7 @@ export async function POST(req: NextRequest) {
         // server that never says whether a transaction is open is refused rather than trusted.
         const opened = await provider.beginTransaction({ requireReportedState: body.requireReportedState === true });
         // After the provider, never before: a begin that throws must leave no owner behind.
-        claimTransaction(connection.id, guard.session.username);
+        claimTransaction(owned, guard.session.username);
         // `stateReported: false` lets the UI say Studio cannot verify this transaction; `null`
         // is a provider that does not say, which is not a claim either way.
         return NextResponse.json({
@@ -192,13 +198,13 @@ export async function POST(req: NextRequest) {
         // here so the record's lifetime matches the transaction's, rather than lasting until
         // somebody happens to touch this connection again - which for an idle connection is the
         // life of the process.
-        releaseTransaction(connection.id);
+        releaseTransaction(owned);
         return NextResponse.json({ status: "committed", message: "Transaction committed" });
       }
 
       case "rollback": {
         await provider.rollbackTransaction();
-        releaseTransaction(connection.id);
+        releaseTransaction(owned);
         return NextResponse.json({ status: "rolled_back", message: "Transaction rolled back" });
       }
 
@@ -232,8 +238,8 @@ export async function POST(req: NextRequest) {
           if (units.length > 1) {
             const script = await runScriptInTransaction(provider, units, options);
             const stillOpen = provider.isInTransaction();
-            if (stillOpen) touchTransaction(connection.id);
-            else releaseTransaction(connection.id);
+            if (stillOpen) touchTransaction(owned);
+            else releaseTransaction(owned);
             return NextResponse.json({ ...script, inTransaction: stillOpen });
           }
           if (units.length === 1) statementSql = units[0].sql;
@@ -251,8 +257,8 @@ export async function POST(req: NextRequest) {
         // ROLLBACK that would answer success and undo nothing (SANDBOX said "Changes
         // auto-rolled back" over a committed CREATE TABLE). The record goes with it.
         const stillInTransaction = provider.isInTransaction();
-        if (stillInTransaction) touchTransaction(connection.id);
-        else releaseTransaction(connection.id);
+        if (stillInTransaction) touchTransaction(owned);
+        else releaseTransaction(owned);
 
         // THE SAME CONJUNCT AS `/api/db/query` (#816), for the same reason and on purpose.
         //

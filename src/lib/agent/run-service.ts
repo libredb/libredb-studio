@@ -189,6 +189,8 @@ export interface AgentRunStartInput {
    * conversation it continues was established. See `AgentRunRecord.connectionIdentity`.
    */
   readonly connectionIdentity?: string;
+  /** The database a server-level connection's run reads (#1530); see `AgentRunRecord.catalog`. */
+  readonly catalog?: string;
   readonly objective: string;
   readonly runId?: string;
 }

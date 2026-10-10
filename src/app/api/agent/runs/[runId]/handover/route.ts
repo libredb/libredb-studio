@@ -4,6 +4,7 @@ import type { AgentRunEvent } from "@/lib/agent/types";
 import { accessAgentRun } from "@/lib/api/agent-run-access";
 import { createErrorResponse } from "@/lib/api/errors";
 import { editorExecutionContext } from "@/lib/api/execution-context";
+import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
 import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
@@ -88,10 +89,13 @@ export async function POST(req: Request, context?: HandoverParams) {
   }
 
   try {
-    const connection = await resolveConnection(
+    const resolved = await resolveConnection(
       { connectionId: record.connectionId },
       { role: record.actor.role, username: record.actor.sessionId },
     );
+    // In the database the run read, on a server-level connection (#1530): the run drafted the
+    // statement against that database's objects, so it runs there and nowhere else.
+    const connection = record.catalog === undefined ? resolved : catalogSessionConnection(resolved, record.catalog);
     // The run's own actor decides the file-access posture, as it decided the connection above: SQLite
     // opens only for a trusted requester, on this profile as in the editor.
     const provider = await acquireExecutionProfileProvider(
@@ -123,6 +127,7 @@ export async function POST(req: Request, context?: HandoverParams) {
     // NaN and the infinities as words, as on `/api/db/query` (`src/lib/non-finite.ts`).
     return NextResponse.json({
       runId,
+      ...(record.catalog === undefined ? {} : { catalog: record.catalog }),
       sql: answer.sql,
       result: { ...result, rows: rowsWithNonFiniteWords(result.rows) },
     });

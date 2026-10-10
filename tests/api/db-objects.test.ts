@@ -166,6 +166,7 @@ interface ProviderShape {
   type?: DatabaseProvider["type"];
   containerLevels?: ContainerLevels;
   containerPathShapes?: ProviderCapabilities["containerPathShapes"];
+  catalogSessions?: true;
   objectKinds?: readonly ObjectKindSpec[];
   listContainers?: DatabaseProvider["listContainers"];
   countObjects?: DatabaseProvider["countObjects"];
@@ -182,6 +183,7 @@ function objectProvider(shape: ProviderShape = {}): DatabaseProvider {
     capabilities: {
       containerLevels: shape.containerLevels ?? [SCHEMA_LEVEL],
       ...(shape.containerPathShapes === undefined ? {} : { containerPathShapes: shape.containerPathShapes }),
+      ...(shape.catalogSessions === undefined ? {} : { catalogSessions: shape.catalogSessions }),
       objectKinds: shape.objectKinds ?? [TABLE_KIND, VIEW_KIND],
     },
   });
@@ -2509,5 +2511,36 @@ describe("the context the handler hands run", () => {
     });
 
     expect(seen?.session).toEqual({ role: "user", username: "auditor" });
+  });
+});
+
+// ============================================================================
+// Server-level connections (#1530)
+// ============================================================================
+
+/** A server-level connection's root is every database, so a walk must name one database's containers. */
+describe("a server-level connection's walks", () => {
+  function serverLevel() {
+    const listContainers = mock(async () => [{ path: ["shop"], name: "shop", level: 0 }]);
+    activeProvider = objectProvider({
+      containerLevels: [CATALOG_LEVEL, SCHEMA_LEVEL],
+      catalogSessions: true,
+      objectKinds: [TABLE_KIND],
+      listContainers,
+      listObjects: mock(async (container: readonly string[]) => [object([...container, "orders"], "table")]),
+    });
+    return listContainers;
+  }
+  const post = (route: typeof inventoryRoute, path: string, body: Record<string, unknown>) =>
+    route.POST(createMockRequest(path, { method: "POST", body: { connection, ...body } }) as never);
+
+  test("an inventory of one database's containers reads them, and an unscoped walk or search is refused", async () => {
+    const listContainers = serverLevel();
+    const inventory = await post(inventoryRoute, "/api/db/objects/inventory", { containers: [["shop", "public"]] });
+    const body = await parseResponseJSON<{ objects: DatabaseObject[] }>(inventory);
+    expect(body.objects.map((found) => found.path)).toEqual([["shop", "public", "orders"]]);
+    expect((await post(inventoryRoute, "/api/db/objects/inventory", {})).status).toBe(400);
+    expect((await post(searchRoute, "/api/db/objects/search", { term: "orders" })).status).toBe(400);
+    expect(listContainers).not.toHaveBeenCalled();
   });
 });

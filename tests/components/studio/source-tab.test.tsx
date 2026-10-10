@@ -185,6 +185,10 @@ const connectionManagerAnswer = {
   activeConnection: pgConn as typeof pgConn | null,
   schema: [],
   schemaContext: "[]",
+  // A connection that names its own database lists none (#1530).
+  catalogs: [],
+  activeCatalog: undefined,
+  setActiveCatalog: () => {},
   isLoadingSchema: false,
   setConnections: () => {},
   setActiveConnection: () => {},

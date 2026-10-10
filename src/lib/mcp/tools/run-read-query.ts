@@ -3,7 +3,7 @@ import { z } from "zod";
 import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { ExecutionProfileError } from "@/lib/db/errors";
-import type { PreparedQuery } from "@/lib/db/types";
+import type { DatabaseProvider, PreparedQuery } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import type { ManagedConnection } from "@/lib/seed";
 import type { QueryResult } from "@/lib/types";
@@ -21,6 +21,7 @@ import {
   type McpToolCall,
 } from "../context";
 import { checkReadOnlyStatement } from "../guards/execution-fence";
+import { DATABASE_ARGUMENT_DESCRIPTION, McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
 import {
   engineError,
   MCP_CANCELLED_TEXT,
@@ -67,6 +68,7 @@ import {
 
 export const RunReadQueryInputSchema = z.object({
   connection_id: z.string().min(1, "connection_id is required"),
+  database: z.string().min(1).optional().describe(DATABASE_ARGUMENT_DESCRIPTION),
   sql: z.string().min(1, "SQL cannot be empty"),
   max_rows: z.number().int().min(1).max(500).default(100),
   offset: z.number().int().min(0).default(0),
@@ -75,6 +77,7 @@ export const RunReadQueryInputSchema = z.object({
 
 const RunReadQueryOutputSchema = z.object({
   connection_id: z.string(),
+  database: z.string().optional(),
   columns: z.array(z.object({ name: z.string(), type: z.string().optional() })),
   rows: z.array(z.record(z.string(), z.unknown())),
   row_count: z.number().int(),
@@ -142,6 +145,7 @@ function resultOf(args: RunReadQueryInput, prepared: PreparedQuery, raw: QueryRe
     return withByteSize(
       {
         connection_id: args.connection_id,
+        ...(args.database === undefined ? {} : { database: args.database }),
         columns,
         rows: page.slice(0, count),
         row_count: count,
@@ -182,7 +186,14 @@ async function execute(
       ? [ownWordsError(profileRefusalText(acquired.error.message, RUN_READ_QUERY_ENGINES)), "mcp_execution_failed"]
       : failureAnswer(acquired.error, acquired.settledAt, deadline, args.timeout_ms, record);
   }
-  const provider = acquired.value;
+  // In the database the call names, on a connection that reaches a whole server (#1530).
+  let provider: DatabaseProvider;
+  try {
+    provider = await providerInDatabase(acquired.value, args.database);
+  } catch (error) {
+    if (error instanceof McpDatabaseChoiceError) return [ownWordsError(error.message), "mcp_execution_failed"];
+    throw error;
+  }
   const queryReadOnly = provider.queryReadOnly?.bind(provider);
   if (queryReadOnly === undefined) {
     // The profile seam refuses such a provider, so this is a server fault; query() is never the fallback.

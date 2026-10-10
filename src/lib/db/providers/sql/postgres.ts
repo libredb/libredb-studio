@@ -81,6 +81,7 @@ import {
   ConnectionError,
   DatabaseError,
   ExecutionProfileError,
+  PoolExhaustedError,
   QueryError,
   mapDatabaseError,
   NO_TRANSACTION_OPENED,
@@ -94,6 +95,7 @@ import { uniqueFieldNames } from "../../utils/result-fields";
 import { keyRowsByPosition } from "../../utils/positional-rows";
 import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
+import { CatalogSessions } from "../../utils/catalog-sessions";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
 /**
@@ -2594,6 +2596,35 @@ const MAINTENANCE_UNMEASURED: Partial<Record<MaintenanceOperation, MeasuredMaint
 );
 
 // ============================================================================
+// Server-level connections (#1530)
+// ============================================================================
+
+/** Refusals meaning "not this database" (missing, no CONNECT, pg_hba), so `template1` is tried next. */
+const NOT_THIS_DATABASE_SQLSTATES = new Set(["3D000", "42501", "28000"]);
+
+/** At most this many per-database sessions, each over a small pool that may drain to nothing. */
+const CATALOG_SESSION_LIMIT = 5;
+const CATALOG_SESSION_POOL = { min: 0, max: 3 } as const;
+/** A session just handed out is not closed before it has had time to borrow a client. */
+const CATALOG_LEASE_GRACE_MS = 30_000;
+
+/** The databases a role can open: accepting connections, not a template, and granting it CONNECT. */
+const CONNECTABLE_DATABASE = `d.datallowconn AND NOT d.datistemplate AND pg_catalog.has_database_privilege(d.oid, 'CONNECT')`;
+const CATALOGS_SQL = `SELECT d.datname AS name FROM pg_catalog.pg_database d WHERE ${CONNECTABLE_DATABASE} ORDER BY d.datname`;
+const CATALOG_ADMITS_SQL = `SELECT 1 AS admitted FROM pg_catalog.pg_database d WHERE d.datname = $1 AND ${CONNECTABLE_DATABASE}`;
+
+const CATALOG_LEVEL: ContainerLevelSpec = { id: "catalog", label: "Database", labelPlural: "Databases" };
+const SCHEMA_LEVEL: ContainerLevelSpec = { id: "schema", label: "Schema", labelPlural: "Schemas" };
+
+const NO_CATALOG_CHOSEN =
+  "This PostgreSQL connection reaches a whole server and names no database; choose a database to run this in";
+
+/** `path` with the database it was read in put back in front. */
+function inCatalog<T extends { readonly path: readonly string[] }>(catalog: string, item: T): T {
+  return { ...item, path: [catalog, ...item.path] };
+}
+
+// ============================================================================
 // PostgreSQL Provider
 // ============================================================================
 
@@ -2673,12 +2704,35 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   private measuredMaintenance: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> | undefined;
 
+  /** An empty `database` on discrete fields reaches the whole server (#1530); a connection string never does. */
+  private readonly serverLevel: boolean;
+  /** The database a server-level connection's own pool opens: `postgres`, or `template1` when that is not the role's. */
+  private maintenanceDb = "postgres";
+  /** The per-database providers a server-level connection runs requests on (#1530). */
+  private readonly catalogSessions: CatalogSessions<PostgresProvider>;
+
   constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
     // Server-injected only (see ProviderExecutionContext): the editor path
     // builds providers from caller-supplied ProviderOptions, which has no route
     // to this flag in either direction.
     this.readOnlyProfile = execution.readOnly === true;
+    this.serverLevel = !config.connectionString && !config.database;
+    this.catalogSessions = new CatalogSessions(
+      {
+        open: (name) => this.openCatalogSession(name),
+        close: (session) => session.disconnect(),
+        isBusy: (session) => session.holdsWork(),
+        exhausted: (open) =>
+          new PoolExhaustedError(
+            `This PostgreSQL connection already has ${CATALOG_SESSION_LIMIT} databases open and every one is in use ` +
+              `(${open.join(", ")}); finish or cancel the work in one of them first`,
+            "postgres",
+            CATALOG_SESSION_LIMIT,
+          ),
+      },
+      { limit: CATALOG_SESSION_LIMIT, leaseGraceMs: CATALOG_LEASE_GRACE_MS },
+    );
     this.validate();
   }
 
@@ -2712,13 +2766,13 @@ export class PostgresProvider extends SQLBaseProvider {
       // PostgreSQL's own set, narrowed to what the connected server accepted (#1387): see
       // `probeMaintenance`. Unconnected, and under the read-only profile, it is the whole set.
       ...narrowMaintenance(POSTGRES_MAINTENANCE, this.measuredMaintenance),
-      // One level. `catalog` is not a second one here: a `pg` pool is opened against one
-      // database and nothing in the product can switch it on a live connection, so
-      // declaring a catalog level would draw a folder with exactly one child forever.
-      containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      // A pool is opened against one database, so only a server-level connection (#1530) declares a
+      // catalog level above the schema: it reaches each database through a session of its own.
+      containerLevels: this.serverLevel ? [CATALOG_LEVEL, SCHEMA_LEVEL] : [SCHEMA_LEVEL],
       // Only the declared depth is an address (#1147). Which level the reads need is PostgreSQL's
       // own rule and stays in `containerSchema`, beside the reads it protects.
       containerPathShapes: "exact",
+      ...(this.serverLevel ? { catalogSessions: true as const } : {}),
       // Seven kinds, each with the catalog that answers for it (#789):
       // table, view, materialized view and sequence from `pg_class.relkind`; function and
       // procedure from `pg_proc.prokind`; trigger from `pg_trigger`.
@@ -2846,9 +2900,7 @@ export class PostgresProvider extends SQLBaseProvider {
       if (!this.config.host) {
         throw new DatabaseConfigError("Host is required for PostgreSQL", "postgres");
       }
-      if (!this.config.database) {
-        throw new DatabaseConfigError("Database name is required for PostgreSQL", "postgres");
-      }
+      // No database is not a mistake: it is a server-level connection (#1530).
     }
   }
 
@@ -2865,8 +2917,7 @@ export class PostgresProvider extends SQLBaseProvider {
       const poolConfig = this.buildPoolConfig();
       this.pool = new Pool(poolConfig);
       this.attachPoolListeners(this.pool);
-
-      const client = await this.pool.connect();
+      const client = await this.pool.connect().catch((error: unknown) => this.connectTemplate1(error));
       // Read before the probes below run on the same session, so what is kept is only what
       // the server said while opening it.
       const startup = takeNotices(client);
@@ -2935,6 +2986,7 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   public async disconnect(): Promise<void> {
+    await this.catalogSessions.closeAll();
     if (this.pool) {
       await this.pool.end();
       this.pool = null;
@@ -2988,6 +3040,110 @@ export class PostgresProvider extends SQLBaseProvider {
     return this.startupWarnings;
   }
 
+  // ============================================================================
+  // Server-level connections (#1530)
+  // ============================================================================
+
+  /**
+   * The provider that runs requests in `catalog` on a server-level connection: an ordinary
+   * single-database provider, opened on first use and owned (and disconnected) by this one.
+   */
+  public async forCatalog(catalog: string): Promise<PostgresProvider> {
+    this.ensureConnected();
+    if (!this.serverLevel) {
+      throw new DatabaseConfigError(
+        `This PostgreSQL connection is pinned to one database and cannot run in "${catalog}"`,
+        "postgres",
+      );
+    }
+    return this.catalogSessions.acquire(catalog);
+  }
+
+  /** A session in `name`, only if the role may open it; it inherits everything but the database. */
+  private async openCatalogSession(name: string): Promise<PostgresProvider> {
+    const admitted = await this.serverRead(CATALOG_ADMITS_SQL, [name]);
+    if (admitted.length === 0) {
+      throw new DatabaseConfigError(`"${name}" is not a database this PostgreSQL connection can open`, "postgres");
+    }
+    const session = new PostgresProvider(
+      { ...this.config, database: name },
+      { ...this.options, pool: { ...this.options.pool, ...CATALOG_SESSION_POOL } },
+      { readOnly: this.readOnlyProfile },
+    );
+    await session.connect();
+    return session;
+  }
+
+  /** True while closing this session would lose work: a transaction, a statement, a borrowed client. */
+  private holdsWork(): boolean {
+    const pool = this.pool;
+    return (
+      this.txActive ||
+      this.runningQueries.size > 0 ||
+      this.openQueryScopes.size > 0 ||
+      this.state.activeQueries > 0 ||
+      (pool !== null && (pool.totalCount > pool.idleCount || pool.waitingCount > 0))
+    );
+  }
+
+  /** One read on the connection's own session, inside `BEGIN READ ONLY` under the agent profile. */
+  private async serverRead(sql: string, params: unknown[] = []): Promise<Record<string, unknown>[]> {
+    const client = await this.pool!.connect();
+    try {
+      if (!this.readOnlyProfile) return (await client.query(sql, params)).rows;
+      await client.query("BEGIN READ ONLY");
+      try {
+        return (await client.query(sql, params)).rows;
+      } finally {
+        await client.query("ROLLBACK");
+      }
+    } finally {
+      client.release();
+    }
+  }
+
+  private refuseWithoutCatalog(): void {
+    if (this.serverLevel) throw new DatabaseConfigError(NO_CATALOG_CHOSEN, "postgres");
+  }
+
+  private catalogOfContainer(container: readonly string[]): string {
+    assertContainerPathShape(this.getCapabilities(), container, POSTGRES_CONTAINER_PATH_ENGINE);
+    return container[0];
+  }
+
+  private catalogOfObject(path: readonly string[], kind: string): string {
+    const capabilities = this.getCapabilities();
+    const spec = findKind(capabilities, kind);
+    if (spec === undefined) {
+      throw new QueryError(`PostgreSQL declares no object kind "${kind}"`, "postgres");
+    }
+    assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
+    return path[0];
+  }
+
+  /** The databases, then one database's schemas as its own session lists them. */
+  private async listServerContainers(parent: readonly string[] | undefined): Promise<Container[]> {
+    if (parent === undefined || parent.length === 0) {
+      const rows = await this.serverRead(CATALOGS_SQL);
+      return rows.map((row) => ({ path: [String(row.name)], name: String(row.name), level: 0 }));
+    }
+    if (parent.length > 1) return [];
+    const [catalog] = parent;
+    const schemas = await (await this.forCatalog(catalog)).listContainers();
+    return schemas.map((schema) => ({ ...inCatalog(catalog, schema), level: 1 }));
+  }
+
+  /** A server-level connection's own session (#1530) moves to `template1` when `postgres` is not this role's. */
+  private async connectTemplate1(error: unknown): Promise<PoolClient> {
+    const code = String((error as { code?: unknown }).code);
+    if (!this.serverLevel || this.maintenanceDb !== "postgres" || !NOT_THIS_DATABASE_SQLSTATES.has(code)) throw error;
+    await this.pool?.end().catch(() => {});
+    this.maintenanceDb = "template1";
+    this.pool = new Pool(this.buildPoolConfig());
+    this.attachPoolListeners(this.pool);
+    return this.pool.connect();
+  }
+
   private buildPoolConfig(): PgPoolConfig {
     const sslConfig = this.buildSSLConfig();
 
@@ -3016,7 +3172,7 @@ export class PostgresProvider extends SQLBaseProvider {
       port: this.config.port ?? 5432,
       user: this.config.user,
       password: this.config.password,
-      database: this.config.database,
+      database: this.serverLevel ? this.maintenanceDb : this.config.database,
     };
   }
 
@@ -3066,6 +3222,7 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public async query(sql: string, params?: unknown[], queryId?: string, scope?: string): Promise<QueryResult> {
     this.ensureConnected();
+    this.refuseWithoutCatalog();
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
@@ -3118,7 +3275,10 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async cancelQuery(queryId: string): Promise<boolean> {
     const running = this.runningQueries.get(queryId);
-    if (!running) return false;
+    if (!running) {
+      const session = this.catalogSessions.find((candidate) => candidate.runningQueries.has(queryId));
+      return session === undefined ? false : session.cancelQuery(queryId);
+    }
 
     if (await this.cancelBackend(running.pid)) return true;
 
@@ -3191,6 +3351,7 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async queryReadOnly(sql: string, budget: ReadOnlyStatementBudget): Promise<QueryResult> {
     this.ensureConnected();
+    this.refuseWithoutCatalog();
     assertReadOnlyBudget(budget, "postgres");
     if (!this.readOnlyProfile) {
       // A provider opened outside the profile has had no role verification, so
@@ -3294,6 +3455,7 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public async beginTransaction(): Promise<void> {
     this.ensureConnected();
+    this.refuseWithoutCatalog();
     if (this.txActive) throw new QueryError("Transaction already active", "postgres");
     this.txClient = await this.pool!.connect();
     try {
@@ -3620,6 +3782,7 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async listContainers(parent?: readonly string[]): Promise<Container[]> {
     this.ensureConnected();
+    if (this.serverLevel) return this.listServerContainers(parent);
     if (parent !== undefined && parent.length > 0) return [];
 
     const client = await this.pool!.connect();
@@ -3688,6 +3851,10 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
     this.ensureConnected();
+    if (this.serverLevel) {
+      const catalog = this.catalogOfContainer(container);
+      return (await this.forCatalog(catalog)).countObjects(container.slice(1));
+    }
     const schema = containerSchema(this.getCapabilities(), container);
     const declared = declaredKinds(this.getCapabilities());
     const counts = seedZeroCounts(declared);
@@ -3781,6 +3948,11 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     this.ensureConnected();
+    if (this.serverLevel) {
+      const catalog = this.catalogOfContainer(container);
+      const objects = await (await this.forCatalog(catalog)).listObjects(container.slice(1), kind);
+      return objects.map((object) => inCatalog(catalog, object));
+    }
     const schema = containerSchema(this.getCapabilities(), container);
     // Two questions, asked in order, and only the DECLARATION answers the first one.
     // Deciding "is this kind declared" from whether a listing statement exists made the two
@@ -3844,6 +4016,10 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
     this.ensureConnected();
+    if (this.serverLevel) {
+      const catalog = this.catalogOfObject(path, kind);
+      return inCatalog(catalog, await (await this.forCatalog(catalog)).describeObject(path.slice(1), kind));
+    }
     const spec = findKind(this.getCapabilities(), kind);
     if (spec === undefined) {
       throw new QueryError(`PostgreSQL declares no object kind "${kind}"`, "postgres");
@@ -3895,6 +4071,11 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
     this.ensureConnected();
+    if (this.serverLevel) {
+      const catalog = this.catalogOfContainer(container);
+      const batch = await (await this.forCatalog(catalog)).describeObjects(container.slice(1), kind, limit);
+      return { ...batch, details: batch.details.map((detail) => inCatalog(catalog, detail)) };
+    }
     if (findKind(this.getCapabilities(), kind) === undefined) {
       throw new QueryError(`PostgreSQL declares no object kind "${kind}"`, "postgres");
     }
@@ -3966,6 +4147,10 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
     this.ensureConnected();
+    if (this.serverLevel) {
+      const catalog = this.catalogOfObject(path, kind);
+      return inCatalog(catalog, await (await this.forCatalog(catalog)).readObjectSource(path.slice(1), kind, limit));
+    }
     const capabilities = this.getCapabilities();
     const spec = requireSourceKind(capabilities, kind, { displayName: "PostgreSQL", type: "postgres" });
     assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
@@ -4150,6 +4335,17 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async buildObjectEdit(request: ObjectEditRequest): Promise<ObjectEditBuild> {
     this.ensureConnected();
+    if (this.serverLevel) {
+      // Sealed with this connection's fingerprint, which the edit routes recompute (#1530).
+      const catalog = this.catalogOfObject(request.path, request.kind);
+      const session = await this.forCatalog(catalog);
+      const build = await session.buildObjectEdit({ ...request, path: request.path.slice(1) });
+      if (!build.built) return build;
+      return {
+        ...build,
+        plan: { ...inCatalog(catalog, build.plan), connectionFingerprint: await connectionFingerprint(this.config) },
+      };
+    }
     const capabilities = this.getCapabilities();
     const spec = requireEditableKind(capabilities, request.kind, { displayName: "PostgreSQL", type: "postgres" });
     assertObjectPathShape(capabilities, spec, request.kind, request.path, PATH_SHAPE_ENGINE);
@@ -4653,6 +4849,10 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   public async applyObjectEdit(plan: ObjectEditPlan): Promise<ObjectEditOutcome> {
     this.ensureConnected();
+    if (this.serverLevel) {
+      const catalog = this.catalogOfObject(plan.path, plan.kind);
+      return (await this.forCatalog(catalog)).applyObjectEdit({ ...plan, path: plan.path.slice(1) });
+    }
     if (plan.unit.medium !== "statement") {
       // A command unit is not a shape this provider ever issues. It raises rather than refusing,
       // because a refusal reports an engine fact and this is a plan from somewhere else.
@@ -4889,7 +5089,7 @@ export class PostgresProvider extends SQLBaseProvider {
 
       let databaseSize = "N/A";
       try {
-        const sizeRes = await client.query("SELECT pg_size_pretty(pg_database_size($1))", [this.config.database]);
+        const sizeRes = await client.query("SELECT pg_size_pretty(pg_database_size($1))", [this.monitoredDatabase()]);
         databaseSize = sizeRes.rows[0].pg_size_pretty;
       } catch {
         databaseSize = "N/A";
@@ -4923,7 +5123,7 @@ export class PostgresProvider extends SQLBaseProvider {
 
       let activeSessions: ActiveSession[] = [];
       try {
-        const sessionsRes = await client.query(HEALTH_SESSIONS_SQL, [this.config.database]);
+        const sessionsRes = await client.query(HEALTH_SESSIONS_SQL, [this.monitoredDatabase()]);
         activeSessions = sessionsRes.rows.map((r) => ({
           pid: r.pid,
           user: r.user || "unknown",
@@ -5111,6 +5311,7 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
+    if (type !== "kill") this.refuseWithoutCatalog();
 
     const { result, executionTime } = await this.measureExecution(async () => {
       const client = await this.pool!.connect();
@@ -5171,6 +5372,11 @@ export class PostgresProvider extends SQLBaseProvider {
   // Pool Statistics
   // ============================================================================
 
+  /** The database the monitoring reads name; `""` names none on a server-level connection (#1530). */
+  private monitoredDatabase(): string | undefined {
+    return this.serverLevel ? this.maintenanceDb : this.config.database;
+  }
+
   public getPoolStats() {
     if (!this.pool) {
       return { total: 0, idle: 0, active: 0, waiting: 0 };
@@ -5222,7 +5428,7 @@ export class PostgresProvider extends SQLBaseProvider {
       let activeConnections: number | undefined;
       let maxConnections = 0;
       try {
-        const connRes = await client.query(OVERVIEW_CONNECTIONS_SQL, [this.config.database]);
+        const connRes = await client.query(OVERVIEW_CONNECTIONS_SQL, [this.monitoredDatabase()]);
         activeConnections = parseInt(connRes.rows[0].active_connections || "0");
         maxConnections = parseInt(connRes.rows[0].max_connections || "100");
       } catch {
@@ -5233,7 +5439,7 @@ export class PostgresProvider extends SQLBaseProvider {
       let databaseSize = "N/A";
       let databaseSizeBytes: number | undefined;
       try {
-        const sizeRes = await client.query(OVERVIEW_SIZE_SQL, [this.config.database]);
+        const sizeRes = await client.query(OVERVIEW_SIZE_SQL, [this.monitoredDatabase()]);
         databaseSizeBytes = measuredNullableAggregate(sizeRes.rows[0], "database_size_bytes");
         if (databaseSizeBytes !== undefined) databaseSize = formatBytes(databaseSizeBytes);
       } catch {
@@ -5294,7 +5500,7 @@ export class PostgresProvider extends SQLBaseProvider {
       // deadlocks below is already written to stay absent rather than default to 0.
       let txRow: { deadlocks?: unknown } | undefined;
       try {
-        const txRes = await client.query(PERF_TRANSACTION_STATS_SQL, [this.config.database]);
+        const txRes = await client.query(PERF_TRANSACTION_STATS_SQL, [this.monitoredDatabase()]);
         txRow = txRes.rows[0];
       } catch {
         txRow = undefined;
@@ -5363,7 +5569,7 @@ export class PostgresProvider extends SQLBaseProvider {
     try {
       // Try pg_stat_statements first (requires extension)
       try {
-        const res = await client.query(SLOW_QUERIES_SQL, [this.config.database, limit]);
+        const res = await client.query(SLOW_QUERIES_SQL, [this.monitoredDatabase(), limit]);
 
         return res.rows.map((r) => ({
           queryId: r.query_id,
@@ -5381,7 +5587,7 @@ export class PostgresProvider extends SQLBaseProvider {
         // Fallback: use pg_stat_activity for currently running queries
         // This doesn't provide historical stats, but shows active queries
         try {
-          const fallbackRes = await client.query(SLOW_QUERIES_FALLBACK_SQL, [this.config.database, limit]);
+          const fallbackRes = await client.query(SLOW_QUERIES_FALLBACK_SQL, [this.monitoredDatabase(), limit]);
 
           return fallbackRes.rows.map((r) => ({
             queryId: r.query_id,
@@ -5418,7 +5624,7 @@ export class PostgresProvider extends SQLBaseProvider {
       // No pg_stat_activity at all (Materialize, RisingWave): no sessions to show,
       // not a failure - matches getSlowQueries()'s exhausted-fallback behavior.
       try {
-        const res = await client.query(ACTIVE_SESSIONS_SQL, [this.config.database, limit]);
+        const res = await client.query(ACTIVE_SESSIONS_SQL, [this.monitoredDatabase(), limit]);
 
         return res.rows.map((r) => ({
           pid: r.pid,

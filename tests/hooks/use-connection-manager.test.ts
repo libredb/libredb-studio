@@ -4,7 +4,7 @@ import "../helpers/mock-navigation";
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
+import { mockGlobalFetch, restoreGlobalFetch, type MockFetchResponse } from "../helpers/mock-fetch";
 
 import {
   MANAGED_REFRESH_DEFAULT_FLOOR_MS,
@@ -2998,5 +2998,116 @@ describe("the custom connections policy", () => {
       expect(result.current.activeConnection?.id).toBe("seed:orders");
     });
     expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/api/connections/policy"))).toHaveLength(1);
+  });
+});
+
+// =============================================================================
+// A server-level connection reads one database (#1530)
+// =============================================================================
+describe("useConnectionManager on a server-level connection (#1530)", () => {
+  const SERVER = makeConnection({ id: "srv-1", name: "Server", database: "" });
+  const serverMeta = {
+    ok: true,
+    json: {
+      capabilities: {
+        queryLanguage: "sql",
+        catalogSessions: true,
+        containerLevels: [{ id: "catalog" }, { id: "schema" }],
+        objectKinds: PG_OBJECT_KINDS,
+      },
+      labels: {},
+    },
+  };
+  const databases = (...names: string[]) => ({ ok: true, json: names.map((name) => ({ path: [name], name })) });
+  const publicOf = (parent: string[]): MockFetchResponse => ({
+    ok: true,
+    json: [{ path: [...parent, "public"], name: "public", isSessionDefault: true }],
+  });
+  // The databases for no `parent`, one database's schemas under one.
+  const routes = (
+    containers: MockFetchResponse,
+    bodies: { containers?: string[][] }[] = [],
+    schemas: (parent: string[]) => MockFetchResponse = publicOf,
+  ) => ({
+    "/api/db/health": { ok: true, json: { status: "healthy" } },
+    "/api/db/provider-meta": serverMeta,
+    "/api/db/objects/containers": async (req: Request) => {
+      const { parent } = (await req.json()) as { parent?: string[] };
+      return parent === undefined ? containers : schemas(parent);
+    },
+    "/api/db/objects/inventory": inventoryRoute(OBJECTS, bodies as { kinds?: string[] }[]),
+  });
+
+  beforeEach(() => {
+    localStorage.clear();
+    storage.saveConnection(SERVER);
+    storage.setActiveConnectionId(SERVER.id);
+  });
+
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  async function readSchema(hook: { current: ReturnType<typeof useConnectionManager> }) {
+    await waitFor(() => expect(hook.current.activeConnection?.id).toBe(SERVER.id));
+    await act(async () => {
+      await hook.current.fetchSchema(hook.current.activeConnection!);
+    });
+  }
+
+  test("reads the remembered database while listed, else the first, and a new choice is remembered", async () => {
+    const bodies: { containers?: string[][] }[] = [];
+    mockGlobalFetch(routes(databases("analytics", "shop"), bodies));
+    storage.setActiveCatalog(SERVER.id, "shop");
+    const { result } = renderHook(() => useConnectionManager(true));
+    await readSchema(result);
+    expect(result.current.catalogs).toEqual(["analytics", "shop"]);
+    expect(result.current.activeCatalog).toBe("shop");
+    expect(bodies.at(-1)?.containers).toEqual([["shop", "public"]]);
+    expect(result.current.defaultContainer).toEqual(["shop", "public"]);
+
+    storage.setActiveCatalog(SERVER.id, "dropped_since");
+    await readSchema(result);
+    expect(result.current.activeCatalog).toBe("analytics");
+
+    act(() => result.current.setActiveCatalog("shop"));
+    await waitFor(() => expect(bodies.at(-1)?.containers).toEqual([["shop", "public"]]));
+    expect(storage.getActiveCatalog(SERVER.id)).toBe("shop");
+  });
+
+  test("no database to open holds no objects, and a refused list is the schema error", async () => {
+    mockGlobalFetch(routes(databases()));
+    const { result } = renderHook(() => useConnectionManager(true));
+    await readSchema(result);
+    expect(result.current.activeCatalog).toBeUndefined();
+    expect(result.current.schemaError).toBeNull();
+
+    mockGlobalFetch(routes({ ok: false, status: 503, json: { error: "the server is unreachable" } }));
+    await readSchema(result);
+    expect(result.current.schemaError).toBe("the server is unreachable");
+    mockGlobalFetch(routes({ ok: false, status: 500, text: "not json" }));
+    await readSchema(result);
+    expect(result.current.schemaError).toBe("Failed to list the server's databases");
+
+    // A database with no schema holds no objects; its schemas refused is the schema error.
+    mockGlobalFetch(routes(databases("empty"), [], () => ({ ok: true, json: [] })));
+    await readSchema(result);
+    expect(result.current.schema).toEqual([]);
+    expect(result.current.schemaError).toBeNull();
+    mockGlobalFetch(routes(databases("shop"), [], () => ({ ok: false, status: 500, text: "not json" })));
+    await readSchema(result);
+    expect(result.current.schemaError).toBe("Failed to list the database's schemas");
+  });
+
+  test("a connection naming its own database lists none, and a choice with no connection does nothing", async () => {
+    localStorage.clear();
+    mockGlobalFetch({ ...catalogRoutes(), "/api/db/health": { ok: true, json: { status: "healthy" } } });
+    const { result } = renderHook(() => useConnectionManager(true));
+    act(() => result.current.setActiveCatalog("shop"));
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+    expect(result.current.catalogs).toEqual([]);
+    expect(storage.getActiveCatalog("conn-1")).toBeNull();
   });
 });

@@ -60,6 +60,11 @@ export function buildConnectionPayload(
   return { connection: conn };
 }
 
+/** The body's `catalog` on a server-level connection (#1530); nothing at all otherwise. */
+export function catalogField(catalog: string | undefined): { catalog?: string } {
+  return catalog === undefined ? {} : { catalog };
+}
+
 /**
  * Whether a field decides WHICH database a connection reaches and as whom, or only
  * how the connection is presented.

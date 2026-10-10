@@ -427,9 +427,14 @@ knows about it:
 
 Five of the seven also declare `hasSource` and a `sourceLanguage`, which is what gives a row a Source tab; [§3.1.5](#315-object-source-789) says which, what each definition text IS, and why `table` and `sequence` declare nothing.
 
-`containerLevels` is one level, `schema`. A `catalog` level is not declared: a `pg` pool is opened
-against one database and nothing in the product can switch it on a live connection, so the level
-would draw a folder with exactly one child forever.
+`containerLevels` is one level, `schema`, on a connection that names a database: a `pg` pool is
+opened against one database and cannot switch it. A **server-level connection**
+([§4.1.1](#411-server-level-connections-an-empty-database-1530)) declares `catalog` (Database) above
+`schema` and `catalogSessions: true`, so an object's path is `[database, schema, name]`
+(`containerPathShapes` stays `exact`). Its `listContainers()` answers the databases, then one
+database's schemas; every other object method strips the database segment, asks that database's
+session, and puts the segment back on every path it returns. `buildObjectEdit` re-seals the plan
+with the connection's own fingerprint, which is what the edit routes recompute.
 
 **No `index` kind**, deliberately, and this is the line the other providers are read
 against. PostgreSQL's own catalog models an index as a property of the relation it is on:
@@ -1277,11 +1282,13 @@ bind parameters for object names).
 ### 4.1 Configuration
 
 Two forms are accepted (`validate()`, [`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)).
-`validate()` requires `host` **and** `database` only when no `connectionString` is given — it does
-**not** reject supplying both. If both are present the **connection string wins**: `buildPoolConfig()`
-uses it and ignores the discrete fields.
+`validate()` requires `host` only when no `connectionString` is given — it does **not** reject
+supplying both. If both are present the **connection string wins**: `buildPoolConfig()` uses it and
+ignores the discrete fields. `database` is optional: a discrete-field connection without one is a
+server-level connection ([§4.1.1](#411-server-level-connections-an-empty-database-1530)).
 
-**Discrete fields** — `host` and `database` are both required (when no connection string):
+**Discrete fields** — `host` is required (when no connection string), and `database` pins the
+connection to one database:
 
 ```ts
 const connection = {
@@ -1292,7 +1299,9 @@ const connection = {
 };
 ```
 
-**Connection string** — bypasses the host/database requirement:
+**Connection string** — bypasses the host requirement. A string naming no database lands where
+libpq puts it (the database named after the user), exactly as before; it never turns on
+server-level mode:
 
 ```ts
 const connection = {
@@ -1301,6 +1310,27 @@ const connection = {
   createdAt: new Date(),
 };
 ```
+
+### 4.1.1 Server-level connections: an empty `database` (#1530)
+
+A discrete-field connection with an empty `database` reaches the whole server; a connection that
+names one, and every connection string, behaves exactly as before.
+
+- **Its own session** opens `postgres`, or `template1` when the first answers `3D000`, `42501` or
+  `28000` (`connectTemplate1()`). It lists the databases and runs nothing else.
+- **Only databases the role can CONNECT to are listed**: `datallowconn AND NOT datistemplate AND
+  has_database_privilege(oid, 'CONNECT')`. A requested name is checked with the same filter before a
+  session opens, and refused with `DatabaseConfigError` (400) otherwise.
+- **Each database is reached through `forCatalog(name)`**: an ordinary single-database provider,
+  opened on first use, inheriting everything but the database (tunnel, credentials, SSL, statement
+  timeout, read-only profile), owned and closed by this provider.
+- **At most 5 sessions, each with a `{ min: 0, max: 3 }` pool.** A sixth closes the idle one used
+  least recently; one holding a transaction, a statement or a borrowed client, or handed out in the
+  last 30 s, is never closed. All five busy answers `PoolExhaustedError` (503).
+- **The connection itself refuses** `query()`, `queryReadOnly()`, `beginTransaction()` and every
+  maintenance operation but `kill` until a database is named; the API names it in a `catalog`
+  field ([`API_DOCS.md`](../API_DOCS.md)). `cancelQuery()` finds the statement in whichever session
+  runs it.
 
 #### `sslmode` in a pasted URL
 
@@ -1350,6 +1380,9 @@ merged over `DEFAULT_POOL_CONFIG`:
 
 The statement timeout is **separate** from pool config: `ProviderOptions.queryTimeout` (default
 `DEFAULT_QUERY_TIMEOUT` = 60000 ms) is applied as the pool's `statement_timeout`.
+
+On a server-level connection that pool is the maintenance database's, and each database it reads
+has a small pool of its own ([§4.1.1](#411-server-level-connections-an-empty-database-1530)).
 
 `connect()` is idempotent (a second call while a pool exists is a no-op). `getPoolStats()` exposes
 live `{ total, max, idle, active, waiting }` counts: `total` is the clients open right now and `max` is the configured pool ceiling, which the Monitoring > Pool tab shows as its own number and uses as the utilization denominator. Every query acquires a client from the pool and
@@ -1770,7 +1803,7 @@ Five more methods answer the container-aware object model (#789) and are documen
 
 | Method | SQL const | Returns |
 |--------|-----------|---------|
-| `listContainers()` | `CONTAINERS_SQL` | the schemas, through the same exclusion set as the three above, with the session's own marked from `current_schema()` |
+| `listContainers()` | `CONTAINERS_SQL` | the schemas, through the same exclusion set as the three above, with the session's own marked from `current_schema()`; on a server-level connection the databases first, then one database's schemas ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
 | `countObjects(container)` | `COUNTS_SQL` | one `KindCount` per declared kind, seeded at `{ count: 0 }` |
 | `listObjects(container, kind)` | `LIST_RELATIONS_SQL[kind]`, `LIST_ROUTINES_SQL`, `LIST_TRIGGERS_SQL` | names, plus `reltuples` and size for relations |
 | `describeObject(path, kind)` | `OBJECT_DETAIL_SQL` | columns, indexes and foreign keys for one object; the KIND decides whether there is a relation to read, so nothing infers it from the name |
@@ -1797,6 +1830,10 @@ base) fans these out in parallel.
 
 `getTableStats()` / `getIndexStats()` accept an optional `{ schema }` filter; with none they cover
 all user schemas.
+
+**On a server-level connection every panel is one database's**: the monitoring routes take a
+`catalog` and read through that database's session. Read on the connection itself, as Test
+Connection does, they name its own database (`monitoredDatabase()`), never the empty string.
 
 **Every catalog name list is read as `text[]` (#1394).** node-postgres parses no array of
 `information_schema.sql_identifier` or of `name`, so `array_agg(kcu.column_name)` and
@@ -1876,6 +1913,10 @@ the client is not returned to the pool until commit/rollback. Surfaced via `POST
 
 The auto-rollback timer is the key safety mechanism: a client that opens a transaction and
 disconnects without committing would otherwise hold locks indefinitely.
+
+**On a server-level connection a transaction belongs to one database**: each database's session
+holds its own, and the route records the owner per connection and database. The editor runs in the
+active database, which is locked while a transaction is open.
 
 `supportsTransactions: true` ([§10](#10-capabilities--labels)) is what tells the editor toolbar to
 offer BEGIN/COMMIT/ROLLBACK and the auto-rolled-back SANDBOX toggle at all. It is declared rather
@@ -2149,8 +2190,9 @@ Overrides the SQL base defaults:
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` before connect; after it, the operations the server accepted plus `kill`: **measured, not declared** (see [§9.1](#91-what-the-connected-server-accepts-measured-at-connect)) |
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `5432` |
-| `containerLevels` | one level, `schema`: the connection pins one database and nothing can switch it ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
-| `containerPathShapes` | `exact`: only `[schema]` addresses a container, so a shorter or a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
+| `containerLevels` | one level, `schema`, on a connection that names a database: it pins that database and nothing can switch it; two, `catalog` (Database) above `schema`, on a server-level connection ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
+| `containerPathShapes` | `exact`: only `[schema]` addresses a container (`[database, schema]` on a server-level connection), so a shorter or a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
+| `catalogSessions` | `true` on a server-level connection only, absent otherwise: requests run in the database the caller names through `forCatalog` ([§4.1.1](#411-server-level-connections-an-empty-database-1530)) |
 | `objectKinds` | `table`, `view`, `materialized_view`, `sequence`, `function`, `procedure`, `trigger`. No `index` kind: `pg_index` is keyed by `indrelid`, so an index is a property of a relation and stays in `describeObject()` ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 
@@ -2294,6 +2336,9 @@ through `queryReadOnly()`, where the DATABASE — not a SQL parser — is the bo
 - Lifecycle: profiled providers idle out on the same 30-minute sweep, are removed alongside
   `removeProvider(connectionId)`, and share the connection's SSH tunnel (closed only once nothing
   serves the connection anymore).
+- **On a server-level connection a run reads one database** (#1530): `POST /api/agent/runs` takes a
+  required `catalog`, records it, and the run, its drives and its hand-over use the connection naming
+  that database.
 
 ### 12.2 Per-statement execution (`queryReadOnly`, [postgres.ts](../../src/lib/db/providers/sql/postgres.ts))
 
@@ -2496,7 +2541,9 @@ tables, cross-schema FK joins, null-column coercion), health (incl. the `pg_stat
 placeholder path), maintenance (all types, identifier quoting, kill validation), overview/uptime
 formatting, performance (incl. checkpoint fallback), slow queries (extension + `pg_stat_activity`
 fallback), active sessions,
-table/index/storage stats, pool stats, capabilities, and `pg_stat_activity` passthrough.
+table/index/storage stats, pool stats, capabilities, and `pg_stat_activity` passthrough, and the
+server-level connection (#1530), whose bounded session set is also unit-tested in
+`tests/unit/db/catalog-sessions.test.ts`.
 
 ### 13.3 Run it
 
@@ -2550,6 +2597,17 @@ const { details } = await provider.describeObjects(['app'], 'table');   // colum
 await provider.disconnect();
 ```
 
+A server-level connection names no database, and requests that run somewhere say where:
+
+```ts
+const server = await createDatabaseProvider({ id: 'pg-dev', name: 'Dev', type: 'postgres',
+  host: 'postgres.dev.internal', database: '', user: 'libredb', password: 'secret', createdAt: new Date() });
+await server.connect();                                    // opens `postgres` (or `template1`)
+const databases = await server.listContainers();           // [{ path: ['analytics'] }, { path: ['shop'] }, …]
+const res = await (await server.forCatalog('shop')).query('SELECT current_database()');
+await server.disconnect();                                 // closes every database's session too
+```
+
 ### 14.2 Over the API
 
 - `POST /api/db/query` — run SQL (see [`API_DOCS.md`](../API_DOCS.md#post-apidbquery)).
@@ -2557,6 +2615,8 @@ await provider.disconnect();
 - `POST /api/db/transaction` — begin/commit/rollback/query-in-tx.
 - `POST /api/db/cancel` — cancel a running query by id.
 - `POST /api/db/maintenance` — vacuum/analyze/reindex/kill (admin only).
+- On a server-level connection each of these takes a `catalog` naming the database, and the
+  inventory reads the `containers` of one database.
 
 ---
 
@@ -2575,6 +2635,9 @@ await provider.disconnect();
   answers three empty lists for every kind that is not resolved in `pg_class`.
 - **`blocked` on active sessions is always `false`** — lock-wait detection (`pg_locks`) is not yet
   wired in.
+- **Server-level connections are not measured on the PostgreSQL-wire relatives**, and each one can
+  hold its own pool plus 5 × 3 connections (size PgBouncer for that). The embedded shell has no
+  database picker, so there it runs nothing until a host names a database.
 - **Cloud SSL auto-detect does not verify the server certificate.** When SSL is enabled by host
   heuristic (`shouldEnableSSL()`), it uses `rejectUnauthorized: false` — the connection is encrypted
   but **not authenticated**, so it is exposed to man-in-the-middle attacks. For verified TLS, set an

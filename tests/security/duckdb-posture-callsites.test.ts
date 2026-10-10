@@ -110,6 +110,11 @@ const UNPOSTURED_ALLOWLIST: Record<string, { calls: number; reason: string }> = 
     reason:
       "a capability-only read: it builds the provider to read its capabilities for the run plan and never connects, so no handle opens",
   },
+  "app/api/agent/runs/route.ts": {
+    calls: 1,
+    reason:
+      "a capability-only read for the run's catalog field (#1530): it builds the provider to read its catalogSessions declaration before the run exists, and never connects, so no handle opens",
+  },
 };
 
 const UNPOSTURED = findUnposturedCalls(SRC_DIR);

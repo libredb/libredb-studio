@@ -104,6 +104,11 @@ On SQL Server the login must hold no fixed server role, neither `CONTROL SERVER`
 A seed entry cannot carry a separate agent credential, so the fix is the seed's own login.
 `inspect_schema` acquires its connection under the same read-only execution context as `run_read_query` (both verify the principal at open, not per statement), so the same least-privilege requirement applies there too: a superuser PostgreSQL role or a privileged SQL Server login refuses `inspect_schema` as well.
 
+A PostgreSQL seed with an empty `database` reaches every database its role can CONNECT to (#1530, [`docs/providers/postgres.md` §4.1.1](providers/postgres.md#411-server-level-connections-an-empty-database-1530)).
+On such a connection both `inspect_schema` and `run_read_query` take a `database` argument naming the one to read, and a call without it is answered, in Studio's words, with the databases it could name (at most fifty), rather than run in whichever came first.
+On every other connection `database` is refused, because the connection names its own.
+The answer echoes the `database` it read.
+
 ## Getting a token
 
 On a first start without `ADMIN_PASSWORD`, Studio generates an admin, `admin@libredb.org`, with a random password and prints both once: under npx in the terminal, under Docker in `docker logs`.

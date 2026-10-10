@@ -5,6 +5,7 @@ import { maintenanceControl } from "@/lib/db/types";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
+import { requestCatalog, scopeToCatalog } from "@/lib/db/catalog-scope";
 
 const ROUTE = "POST /api/db/maintenance/preview";
 
@@ -58,7 +59,8 @@ export async function POST(request: Request) {
 
     const requestedContainer: string | undefined = container || undefined;
 
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    const connected = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    const provider = await scopeToCatalog(connected, requestCatalog(body));
     const capabilities = provider.getCapabilities();
 
     if (!capabilities.supportsMaintenance) {

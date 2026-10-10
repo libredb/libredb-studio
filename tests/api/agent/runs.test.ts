@@ -17,6 +17,8 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import * as realAuth from "@/lib/auth";
 import * as realSeed from "@/lib/seed/resolve-connection";
 import * as realGate from "@/lib/agent/capability-gate";
+import * as realDb from "@/lib/db";
+import { DatabaseConfigError } from "@/lib/db/errors";
 import { AgentRunStoreError } from "@/lib/agent/run-store";
 import { agentPosture } from "@/lib/agent/posture";
 import { AGENT_WORKFLOW_SENDS_STATEMENTS, type AgentRunWorkflowType } from "@/lib/agent/types";
@@ -43,6 +45,13 @@ const mockResolveConnection = mock(async (body: { connectionId?: string }) => ({
   type: "postgres",
 }));
 
+const mockForCatalog = mock(async (_catalog: string) => ({}));
+const mockGetOrCreateProvider = mock(async () => ({
+  type: "postgres",
+  getCapabilities: () => ({ catalogSessions: true }),
+  forCatalog: mockForCatalog,
+}));
+
 // ─── The runtime: service and drive ─────────────────────────────────────────
 
 interface FakeRun {
@@ -56,6 +65,7 @@ interface FakeRun {
   actor: { sessionId: string; role: string };
   connectionId: string;
   connectionIdentity?: string;
+  catalog?: string;
   objective: string;
   events: unknown[];
   thread: { threadId: string; steps: { runId: string; objective: string }[]; text: string; declined?: string };
@@ -102,6 +112,7 @@ const mockStart = mock(
     actor: FakeRun["actor"];
     connectionId: string;
     connectionIdentity?: string;
+    catalog?: string;
     objective: string;
     thread?: { threadId: string; steps: { runId: string; objective: string }[]; text: string; declined?: string };
   }) => {
@@ -160,6 +171,8 @@ function installMocks(): void {
   // live probe call inside this suite.
   mock.module("@/lib/agent/capability-gate", () => ({ ...realGate, admitAgentModel: mockAdmitAgentModel }));
   mock.module("@/lib/seed/resolve-connection", () => ({ ...realSeed, resolveConnection: mockResolveConnection }));
+  // Opening a database's session connects; the suite answers it instead (#1530).
+  mock.module("@/lib/db", () => ({ ...realDb, getOrCreateProvider: mockGetOrCreateProvider }));
   mock.module("@/lib/agent/runtime", () => ({
     getAgentRunService: mock(async () => ({
       start: mockStart,
@@ -1316,5 +1329,47 @@ describe("GET /api/agent/runs/[runId]/stream", () => {
     const res = await STREAM(createMockRequest("/api/agent/runs/arun_1/stream"), params("arun_1"));
 
     expect(res.status).toBe(404);
+  });
+});
+
+// ─── Server-level connections (#1530) ───────────────────────────────────────
+describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
+  const SERVER = { id: "seed:sales", name: "Sales", type: "postgres", host: "db.internal", database: "" };
+  const defaultConnection = async (body: { connectionId?: string }) => ({
+    id: body.connectionId ?? "seed:sales",
+    name: "Sales",
+    type: "postgres",
+  });
+
+  beforeEach(() => {
+    mockResolveConnection.mockImplementation(async () => SERVER);
+    mockForCatalog.mockImplementation(async () => ({}));
+    mockStart.mockClear();
+  });
+
+  afterEach(() => {
+    mockResolveConnection.mockImplementation(defaultConnection);
+  });
+
+  test("a run reads the database it names, which is part of its identity and echoed back", async () => {
+    const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+    expect(res.status).toBe(202);
+    expect((await parseResponseJSON<{ catalog?: string }>(res)).catalog).toBe("shop");
+    const shop = mockStart.mock.calls.at(-1)?.[0];
+    expect(shop?.catalog).toBe("shop");
+    await POST(startRequest({ ...VALID_BODY, catalog: "analytics" }));
+    expect(mockStart.mock.calls.at(-1)?.[0].connectionIdentity).not.toBe(shop?.connectionIdentity);
+  });
+
+  test("no database, one the role cannot open, a malformed one, or one on a pinned connection is refused", async () => {
+    expect((await POST(startRequest(VALID_BODY))).status).toBe(400);
+    expect((await POST(startRequest({ ...VALID_BODY, catalog: 5 }))).status).toBe(400);
+    mockForCatalog.mockImplementation(async () => {
+      throw new DatabaseConfigError('"payroll" is not a database this PostgreSQL connection can open', "postgres");
+    });
+    expect((await POST(startRequest({ ...VALID_BODY, catalog: "payroll" }))).status).toBe(400);
+    mockResolveConnection.mockImplementation(async () => ({ ...SERVER, database: "sales" }));
+    expect((await POST(startRequest({ ...VALID_BODY, catalog: "shop" }))).status).toBe(400);
+    expect(mockStart).not.toHaveBeenCalled();
   });
 });

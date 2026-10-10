@@ -1672,3 +1672,63 @@ describe("POST /api/db/query: an oxia buffer", () => {
     expect((mockProvider.prepareQuery as ReturnType<typeof mock>).mock.calls[0][0]).toBe(atBound);
   });
 });
+
+// ─── Server-level connections (#1530) ───────────────────────────────────────
+describe("POST /api/db/query on a server-level connection (#1530)", () => {
+  const serverConnection = { ...validConnection, id: "server-1", database: "" };
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockClear();
+    mockCreateDatabaseProvider.mockClear();
+    (mockProvider.query as ReturnType<typeof mock>).mockClear();
+  });
+
+  test("runs the statement in the session of the database the request names", async () => {
+    const session = createMockProvider();
+    const capabilities = mockProvider.getCapabilities as ReturnType<typeof mock>;
+    const defaults = mockProvider.getCapabilities();
+    capabilities.mockImplementation(() => ({ ...defaults, catalogSessions: true }));
+    const server = mockProvider as typeof mockProvider & { forCatalog?: unknown };
+    const forCatalog = mock(async (_catalog: string) => session);
+    server.forCatalog = forCatalog;
+    try {
+      const res = await POST(
+        createMockRequest("/api/db/query", {
+          method: "POST",
+          body: { connection: serverConnection, sql: "SELECT current_database()", catalog: "shop" },
+        }) as never,
+      );
+      expect(res.status).toBe(200);
+      expect(forCatalog.mock.calls).toEqual([["shop"]]);
+      expect(session.query).toHaveBeenCalledTimes(1);
+      expect(mockProvider.query).not.toHaveBeenCalled();
+    } finally {
+      capabilities.mockImplementation(() => defaults);
+      delete server.forCatalog;
+    }
+  });
+
+  test("refuses a catalog on a connection pinned to its database", async () => {
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT 1", catalog: "shop" },
+      }) as never,
+    );
+    expect(res.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(res)).error).toContain('cannot run one in "shop"');
+    expect(mockProvider.query).not.toHaveBeenCalled();
+  });
+
+  test("refuses a catalog that is not a database name", async () => {
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: serverConnection, sql: "SELECT 1", catalog: 3 },
+      }) as never,
+    );
+    expect(res.status).toBe(400);
+    expect(mockProvider.query).not.toHaveBeenCalled();
+  });
+});

@@ -78,6 +78,8 @@ const PROVIDER_ROUTES_OUTSIDE_DB: Record<string, string> = {
     "resolves every item through resolveConnection before the factory sees it; the fleet health case below sends it a caller's connection",
   "agent/runs/[runId]/handover":
     "opens only the run's recorded connectionId, resolved as a seed id under the run's own actor; the request carries no connection (tests/api/agent/handover.test.ts)",
+  "agent/runs":
+    "reads the declaration of the connectionId it resolved through resolveConnection, and opens it only to admit the run's catalog (#1530); an inline connection is refused before that (tests/api/agent/runs.test.ts)",
 };
 
 /**

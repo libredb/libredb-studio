@@ -101,6 +101,17 @@ export function declaredLevels(capabilities: ProviderCapabilities): readonly Con
   return (capabilities.containerLevels ?? []).slice(0, containerDepth(capabilities));
 }
 
+/** Whether requests run in a catalog the caller names (#1530): `catalogSessions` and a `catalog` level. */
+export function declaresCatalogSessions(capabilities: ProviderCapabilities): boolean {
+  return capabilities.catalogSessions === true && declaredLevels(capabilities).some((level) => level.id === "catalog");
+}
+
+/** The catalog a path names on a connection that declares `catalogSessions`, else undefined. */
+export function catalogOfPath(capabilities: ProviderCapabilities, path: readonly string[]): string | undefined {
+  if (!declaresCatalogSessions(capabilities)) return undefined;
+  return path[declaredLevels(capabilities).findIndex((level) => level.id === "catalog")];
+}
+
 /**
  * Refuses a path no shape of this kind admits, naming every shape it does admit.
  *

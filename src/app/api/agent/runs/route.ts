@@ -28,11 +28,15 @@ import {
   type AgentThreadHeader,
 } from "@/lib/agent/types";
 import { createErrorResponse } from "@/lib/api/errors";
+import { editorExecutionContext } from "@/lib/api/execution-context";
+import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
+import { catalogSessionConnection, scopeToCatalog } from "@/lib/db/catalog-scope";
 import { resolveConfig } from "@/lib/llm/utils/config";
 import { guardRoute } from "@/lib/api/require-session";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { logger } from "@/lib/logger";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
+import type { DatabaseConnection } from "@/lib/types";
 
 /**
  * Opens an agent run (#329 T9).
@@ -192,6 +196,15 @@ export async function GET(req: Request) {
   }
 }
 
+/** Whether the connection reaches a whole server (#1530); a record that cannot be built declares nothing. */
+async function reachesWholeServer(connection: DatabaseConnection): Promise<boolean> {
+  try {
+    return (await createDatabaseProvider(connection)).getCapabilities().catalogSessions === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(req: Request) {
   const guard = await guardRoute({ route: ROUTE, bucket: "ai", request: req });
   if ("response" in guard) return guard.response;
@@ -213,6 +226,7 @@ export async function POST(req: Request) {
 
     const { mode, workflowType, workflowSource, workflowReading, autoExecute, objective, connectionId, previousRunId } =
       body;
+    const { catalog } = body;
     if (typeof mode !== "string" || !MODES.has(mode)) {
       return badRequest('mode must be "planning" or "agent"');
     }
@@ -292,6 +306,9 @@ export async function POST(req: Request) {
     if (previousRunId !== undefined && (typeof previousRunId !== "string" || previousRunId.trim().length === 0)) {
       return badRequest("previousRunId must be a non-empty string when provided");
     }
+    if (catalog !== undefined && (typeof catalog !== "string" || catalog.trim().length === 0)) {
+      return badRequest("catalog must be a non-empty string when provided");
+    }
 
     const connection = await resolveConnection({ connectionId }, guard.session);
 
@@ -363,6 +380,27 @@ export async function POST(req: Request) {
     }
 
     /*
+      ON A SERVER-LEVEL CONNECTION A RUN READS ONE DATABASE (#1530), named in `catalog` and
+      decided here, once: the connection itself names none, and a run that walked every
+      database on the server to ground itself would open a session in each. Required exactly
+      when the declaration says so, read without connecting the way provider-meta reads it,
+      and a database the role cannot open is refused before the run exists rather than after
+      its first drive fails to connect.
+    */
+    const serverLevel = await reachesWholeServer(connection);
+    if (serverLevel !== (catalog !== undefined)) {
+      return badRequest(
+        serverLevel
+          ? "This connection reaches every database on its server: name the database the run reads in catalog"
+          : "catalog names a database only on a connection that reaches a whole server, and this one names its own",
+      );
+    }
+    if (catalog !== undefined) {
+      const connected = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+      await scopeToCatalog(connected, catalog);
+    }
+
+    /*
       WHICH DATABASE this run reads, fingerprinted here because here is the only place
       that holds the resolved record: everything downstream holds an id. It is written
       onto the run, so a later follow-up can tell that the connection has been
@@ -370,7 +408,9 @@ export async function POST(req: Request) {
       read below for exactly that. The password is excluded by `connectionIdentity`
       itself, which is why this is that function and not a hash of the record.
     */
-    const connectionIdentityOfRun = connectionIdentity(connection);
+    const connectionIdentityOfRun = connectionIdentity(
+      catalog === undefined ? connection : catalogSessionConnection(connection, catalog),
+    );
 
     /*
       Before a run exists, not after one has failed. A model that cannot call tools
@@ -499,6 +539,7 @@ export async function POST(req: Request) {
       // predecessor's instead would keep declining, which is what the rail's copy used
       // to promise and the code never did (#512).
       connectionIdentity: connectionIdentityOfRun,
+      ...(catalog === undefined ? {} : { catalog }),
       objective,
     });
 
@@ -530,6 +571,7 @@ export async function POST(req: Request) {
         // asked for and did not happen. Echoed from the RECORD, so a run that started
         // its own conversation reports the thread of one the fold gave it.
         thread: record.thread,
+        ...(record.catalog === undefined ? {} : { catalog: record.catalog }),
       },
       { status: 202 },
     );

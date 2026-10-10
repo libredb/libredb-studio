@@ -119,6 +119,11 @@ export interface AgentRailProps {
    */
   readonly connectionId: AgentRunConnection | null;
   readonly connectionName: string | null;
+  /**
+   * The database a run reads on a server-level connection, the connection's active one (#1530).
+   * Undefined on every other connection, which names its own.
+   */
+  readonly catalog?: string;
   /** Below `md` only: whether the sheet presentation is open. */
   readonly sheetOpen?: boolean;
   readonly onSheetOpenChange?: (open: boolean) => void;
@@ -812,6 +817,7 @@ function ChangeWorkflowButton({
 export const AgentRail = React.memo(function AgentRail({
   connectionId: connection,
   connectionName,
+  catalog,
   connectionType = null,
   sheetOpen = false,
   onSheetOpenChange,
@@ -1265,6 +1271,7 @@ export const AgentRail = React.memo(function AgentRail({
       autoExecute: handover,
       objective: decided.objective,
       connectionId: decided.connection.id,
+      ...(catalog === undefined ? {} : { catalog }),
       // Sent only when this run genuinely continues the last one; the route refuses
       // anything else, and nothing later may change which run this one was told about.
       ...(previousRunId === undefined ? {} : { previousRunId }),

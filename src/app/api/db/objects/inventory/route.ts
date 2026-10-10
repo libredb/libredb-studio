@@ -15,6 +15,7 @@ import {
   type ObjectInventory,
 } from "@/lib/api/object-route";
 import { enumerateContainers } from "@/lib/db/container-walk";
+import { assertNotWholeServer } from "@/lib/db/catalog-scope";
 import type { DatabaseObject, ObjectDetail } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
@@ -80,6 +81,7 @@ export async function POST(req: NextRequest) {
     // The enumeration also answers which container the SESSION is in, off the same walk and at
     // no extra round trip. A body that NAMED its containers skips the walk, so there is no
     // default to report and none is invented (#789).
+    if (named === undefined) assertNotWholeServer(provider);
     const enumerated = named === undefined ? await enumerateContainers(provider) : { containers: named };
     const containers = dedupePaths(enumerated.containers);
     const listObjects = provider.listObjects.bind(provider);

@@ -11,6 +11,7 @@ import {
   type McpCallRecord,
   type McpToolAuditReason,
 } from "../audit";
+import { DATABASE_ARGUMENT_DESCRIPTION, McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
 import {
   MCP_CONNECTIONS_UNREADABLE,
   MCP_CONNECTIONS_UNREADABLE_TEXT,
@@ -48,6 +49,7 @@ import {
 
 export const InspectSchemaInputSchema = z.object({
   connection_id: z.string().min(1, "connection_id is required"),
+  database: z.string().min(1).optional().describe(DATABASE_ARGUMENT_DESCRIPTION),
   schema: z.string().optional(),
   table: z.string().optional(),
   limit: z.number().int().min(1).max(100).default(50),
@@ -79,6 +81,7 @@ const InspectedTableSchema = z.object({
 
 const InspectSchemaOutputSchema = z.object({
   connection_id: z.string(),
+  database: z.string().optional(),
   schema: z.string(),
   total_tables: z.number().int(),
   offset: z.number().int(),
@@ -190,6 +193,7 @@ function pageResult(
   const hasMore = cutByCap || args.offset + tables.length < total;
   return untrustedResult({
     connection_id: args.connection_id,
+    ...(args.database === undefined ? {} : { database: args.database }),
     schema: container?.name ?? "default",
     total_tables: total,
     offset: args.offset,
@@ -264,7 +268,11 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
     recordOrRefuse(() => recordMcpOutcome(resolved, Date.now() - startedAt, failure)) ?? result;
 
   try {
-    const provider = await call.context.acquire(connection, "agent-operations");
+    // In the database the call names, on a connection that reaches a whole server (#1530).
+    const provider = await providerInDatabase(
+      await call.context.acquire(connection, "agent-operations"),
+      args.database,
+    );
     if (call.signal.aborted) return finish(ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled");
     const { result, failure } = await readPage(provider, args, call.signal);
     return finish(result, failure);
@@ -274,7 +282,7 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
     // decision, not the engine's, so it reads in Studio's words - no untrusted-data
     // notice, no "The database refused or failed the call:" prefix - exactly as
     // run_read_query already answers an ExecutionProfileError.
-    if (error instanceof ExecutionProfileError) {
+    if (error instanceof ExecutionProfileError || error instanceof McpDatabaseChoiceError) {
       return finish(ownWordsError(error.message), "mcp_execution_failed");
     }
     return finish(engineError(MCP_ENGINE_ERROR_PREFIX, error), "mcp_execution_failed");

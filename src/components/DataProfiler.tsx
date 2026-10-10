@@ -15,7 +15,7 @@ import {
   type MaskingConfig,
   type MaskingPattern,
 } from "@/lib/data-masking";
-import { buildConnectionPayload } from "@/hooks/use-connection-payload";
+import { buildConnectionPayload, catalogField } from "@/hooks/use-connection-payload";
 import { dataProfileText, type ColumnProfile, type ProfileData } from "@/lib/export/data-profile";
 import { downloadText } from "@/lib/export/download";
 import { Button } from "./ui/button";
@@ -59,6 +59,8 @@ interface DataProfilerProps {
   tablePath: readonly string[];
   tableSchema: DetailedObject | null;
   connection: DatabaseConnection | null;
+  /** The object's database on a server-level connection (#1530), where its profile is read. */
+  catalog?: string;
   schemaContext?: string;
   databaseType?: string;
   /** Optional API adapter: when provided, bypasses the built-in /api/db/profile fetch. */
@@ -82,6 +84,7 @@ export function DataProfiler({
   tablePath,
   tableSchema,
   connection,
+  catalog,
   schemaContext,
   databaseType,
   onProfile,
@@ -225,7 +228,7 @@ export function DataProfiler({
           // The seed id for a managed connection: the browser's copy has had its
           // password and connection string stripped, so the object cannot be
           // resolved to a database from a cold provider cache.
-          body: JSON.stringify({ ...buildConnectionPayload(connection), tablePath, columns }),
+          body: JSON.stringify({ ...buildConnectionPayload(connection), ...catalogField(catalog), tablePath, columns }),
         });
 
         if (!response.ok) {

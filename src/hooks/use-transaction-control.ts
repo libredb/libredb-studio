@@ -4,13 +4,15 @@ import { appFetch } from "@/lib/config/base-path";
 import { useState, useCallback } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
-import { buildConnectionPayload } from "./use-connection-payload";
+import { buildConnectionPayload, catalogField } from "./use-connection-payload";
 
 interface UseTransactionControlParams {
   activeConnection: DatabaseConnection | null;
+  /** A server-level connection's active database (#1530), locked while a transaction is open. */
+  catalog?: string;
 }
 
-export function useTransactionControl({ activeConnection }: UseTransactionControlParams) {
+export function useTransactionControl({ activeConnection, catalog }: UseTransactionControlParams) {
   const [transactionActive, setTransactionActive] = useState(false);
   const [playgroundMode, setPlaygroundMode] = useState(false);
   // The server answered BEGIN without reporting any transaction state (`stateReported: false`
@@ -28,6 +30,7 @@ export function useTransactionControl({ activeConnection }: UseTransactionContro
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...buildConnectionPayload(activeConnection),
+            ...catalogField(catalog),
             action,
           }),
         });
@@ -75,7 +78,7 @@ export function useTransactionControl({ activeConnection }: UseTransactionContro
         toast({ title: "Transaction Error", description: msg, variant: "destructive" });
       }
     },
-    [activeConnection, toast, stateUnreported],
+    [activeConnection, toast, stateUnreported, catalog],
   );
 
   const resetTransactionState = useCallback(() => {

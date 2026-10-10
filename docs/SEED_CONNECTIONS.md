@@ -130,6 +130,16 @@ connections:
     # allowInsecureAuth: true # Db2 example - accept a password sent without TLS
     # saslMechanism: SCRAM-SHA-512  # Kafka only - PLAIN|SCRAM-SHA-256|SCRAM-SHA-512, a literal name
 
+  - id: "dev-pg-server"
+    name: "Shared dev PostgreSQL"
+    type: postgres
+    host: "${PG_DEV_HOST}"
+    port: 5432
+    database: ""              # Empty: every database this role can CONNECT to (providers/postgres.md 4.1.1)
+    user: "${PG_DEV_USER}"
+    password: "${PG_DEV_PASSWORD}"
+    roles: ["*"]
+
   - id: "dev-mysql"
     name: "Dev MySQL"
     type: mysql
@@ -285,7 +295,7 @@ connections:
 | `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd`, `neo4j`, `milvus`, `qdrant`, `influxdb`, `influxdb3`, `oxia`, `databend` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
-| `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**) |
+| `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**. PostgreSQL: empty reaches the whole server, every database the role can CONNECT to) |
 | `connections[].schema` | No | — | Trino session schema, used to resolve unqualified table names inside the configured catalog |
 | `connections[].skipObjectScan` | No | absent | `true` reads no catalog when the connection opens, so the editor is usable immediately and the object tree offers a load action instead of scanning. Useful for large catalogs, including managed connections whose settings cannot be edited in the UI |
 | `connections[].user` | No | — | Username |

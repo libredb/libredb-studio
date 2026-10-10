@@ -3,7 +3,7 @@
 import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { DatabaseConnection } from "@/lib/types";
-import { buildConnectionPayload } from "./use-connection-payload";
+import { buildConnectionPayload, catalogField } from "./use-connection-payload";
 import type { MaintenancePreview, MaintenanceResult, MonitoringData, MonitoringOptions } from "@/lib/db/types";
 import { toast } from "sonner";
 import { TimeSeriesBuffer, type TimeSeriesPoint } from "@/lib/time-series-buffer";
@@ -60,6 +60,8 @@ function maintenanceReportFrom(
 export function useMonitoringData(
   connection: DatabaseConnection | null,
   options?: MonitoringOptions,
+  /** The database to monitor on a server-level connection (#1530); its panels are that database's. */
+  catalog?: string,
 ): UseMonitoringDataReturn {
   const [dataState, setData] = useState<MonitoringData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -73,7 +75,9 @@ export function useMonitoringData(
   // rather than in an effect (react.dev, "You Might Not Need an Effect" -
   // adjusting some state when a prop changes) so that the very render which
   // switches connections already reports an empty history.
-  const connectionId = connection?.id ?? null;
+  // A selection is a connection AND, on a server-level one, a database (#1530): another database is
+  // another chart, exactly as another connection is.
+  const connectionId = connection === null ? null : JSON.stringify([connection.id, catalog ?? null]);
   const [selection, setSelection] = useState({ id: connectionId, seq: 0 });
   if (selection.id !== connectionId) {
     setSelection({ id: connectionId, seq: selection.seq + 1 });
@@ -101,6 +105,7 @@ export function useMonitoringData(
 
   // Use refs to store latest values without causing re-renders
   const connectionRef = useRef(connection);
+  const catalogRef = useRef(catalog);
   const optionsRef = useRef(options);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -159,6 +164,7 @@ export function useMonitoringData(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...buildConnectionPayload(currentConnection),
+          ...catalogField(catalogRef.current),
           options: optionsRef.current,
         }),
         signal: abortControllerRef.current.signal,
@@ -218,6 +224,9 @@ export function useMonitoringData(
     // that changed it.
     if (!connection) return;
 
+    // The database rides on a ref `fetchData` reads, set here so a switch refetches with it (#1530).
+    catalogRef.current = catalog;
+
     // Initial fetch
     fetchData();
 
@@ -227,7 +236,7 @@ export function useMonitoringData(
         abortControllerRef.current.abort();
       }
     };
-  }, [connection, fetchData]); // Only re-run when connection ID changes
+  }, [connection, catalog, fetchData]); // Only re-run when the connection or its database changes
 
   // Auto-refresh setup (separate effect)
   useEffect(() => {
@@ -265,6 +274,7 @@ export function useMonitoringData(
             type: "kill",
             target: String(pid),
             ...buildConnectionPayload(currentConnection),
+            ...catalogField(catalogRef.current),
           }),
         });
 
@@ -309,6 +319,7 @@ export function useMonitoringData(
             target,
             container,
             ...buildConnectionPayload(currentConnection),
+            ...catalogField(catalogRef.current),
           }),
         });
 
@@ -375,6 +386,7 @@ export function useMonitoringData(
           target,
           container,
           ...buildConnectionPayload(currentConnection),
+          ...catalogField(catalogRef.current),
         }),
       });
       const result = await res.json();

@@ -190,12 +190,16 @@ const mockGetConnections = mock(() => [
   },
 ]);
 
+// The database a server-level connection's studio chose last (#1530).
+let mockActiveCatalog: string | null = null;
+
 mock.module("@/lib/storage", () => ({
   storage: {
     getSchemaSnapshots: mockGetSchemaSnapshots,
     saveSchemaSnapshot: mockSaveSchemaSnapshot,
     deleteSchemaSnapshot: mockDeleteSchemaSnapshot,
     getConnections: mockGetConnections,
+    getActiveCatalog: () => mockActiveCatalog,
   },
 }));
 
@@ -4089,5 +4093,66 @@ describe("SchemaDiff", () => {
         restore();
       }
     });
+  });
+});
+
+/** A server-level connection's schema is one database's, never every database's (#1530). */
+describe("SchemaDiff on a server-level connection", () => {
+  function serverReads(listing: { ok: boolean; body: unknown }) {
+    const orig = globalThis.fetch;
+    const inventoryBodies: Record<string, unknown>[] = [];
+    globalThis.fetch = mock((url: string, init?: RequestInit) => {
+      const answer = (ok: boolean, body: unknown) => Promise.resolve({ ok, json: () => Promise.resolve(body) });
+      if (url.includes("provider-meta")) {
+        return answer(true, {
+          capabilities: {
+            catalogSessions: true,
+            containerLevels: [{ id: "catalog" }, { id: "schema" }],
+            objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+          },
+        });
+      }
+      if (url.includes("objects/containers")) {
+        const parent = (JSON.parse(String(init?.body)) as { parent?: string[] }).parent;
+        if (parent === undefined) return answer(listing.ok, listing.body);
+        return answer(true, [{ path: [...parent, "public"], name: "public" }]);
+      }
+      inventoryBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return answer(true, { objects: [], details: [] });
+    }) as unknown as typeof fetch;
+    return { inventoryBodies, restore: () => void (globalThis.fetch = orig) };
+  }
+
+  async function snapshot(listing: { ok: boolean; body: unknown }) {
+    const reads = serverReads(listing);
+    const view = renderDiff();
+    fireEvent.click(view.getByText("Snapshot"));
+    await act(async () => {
+      fireEvent.click(view.getByText("Save"));
+    });
+    reads.restore();
+    return { view, inventoryBodies: reads.inventoryBodies };
+  }
+
+  afterEach(() => {
+    cleanup();
+    mockActiveCatalog = null;
+  });
+
+  test("a snapshot reads the remembered database, else the first, and saves nothing without one", async () => {
+    const databases = { ok: true, body: [{ name: "analytics" }, { name: "shop" }] };
+    mockActiveCatalog = "shop";
+    expect((await snapshot(databases)).inventoryBodies[0].containers).toEqual([["shop", "public"]]);
+    cleanup();
+    mockActiveCatalog = null;
+    expect((await snapshot(databases)).inventoryBodies[0].containers).toEqual([["analytics", "public"]]);
+    cleanup();
+
+    mockSaveSchemaSnapshot.mockClear();
+    expect(snapshotBanner((await snapshot({ ok: true, body: [] })).view)).toContain("lists no database");
+    cleanup();
+    const refused = await snapshot({ ok: false, body: { error: "permission denied to list databases" } });
+    expect(snapshotBanner(refused.view)).toContain("permission denied to list databases");
+    expect(mockSaveSchemaSnapshot).not.toHaveBeenCalled();
   });
 });

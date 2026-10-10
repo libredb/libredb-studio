@@ -84,6 +84,8 @@ export interface AgentRunStartInput {
   readonly previousRunId?: string;
   readonly objective: string;
   readonly connectionId: string;
+  /** The database the run reads on a server-level connection (#1530); the server requires it there. */
+  readonly catalog?: string;
 }
 
 export interface AgentRunFollower {

@@ -160,6 +160,25 @@ describe("driveAgentRun", () => {
     expect(await (await getAgentRunService()).status("arun_neverwas")).toBeNull();
   });
 
+  test("a run on a server-level connection reads the one database it opened on (#1530)", async () => {
+    const service = await getAgentRunService();
+    await service.start({
+      mode: "agent",
+      actor: ACTOR,
+      connectionId: "seed:sales",
+      catalog: "shop",
+      objective: "why is checkout slow",
+      runId: "arun_catalog",
+    });
+    expect((await service.status("arun_catalog"))?.record.catalog).toBe("shop");
+
+    await driveAgentRun("arun_catalog");
+
+    // That database's session IS the connection naming it, so the run is a single-database run.
+    const { resources } = investigationCalls[investigationCalls.length - 1];
+    expect(resources.connection).toEqual({ ...CONNECTION, database: "shop" });
+  });
+
   test("resolves the connection as the run's persisted actor, not as the caller", async () => {
     await openRun("arun_actor");
 

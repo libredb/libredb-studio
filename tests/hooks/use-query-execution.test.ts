@@ -5864,3 +5864,43 @@ describe("the real influxdb row and the influxdb3 split", () => {
     expect(paths).toEqual(["/api/db/query"]);
   });
 });
+
+// =============================================================================
+// A server-level connection: every run names its database (#1530)
+// =============================================================================
+describe("useQueryExecution on a server-level connection (#1530)", () => {
+  function tabsOf(initial: QueryTab[]) {
+    const tabs = [...initial];
+    const setTabs = mock((fn: unknown) => {
+      if (typeof fn === "function") tabs.splice(0, tabs.length, ...(fn as (prev: QueryTab[]) => QueryTab[])(tabs));
+    });
+    return { tabs, setTabs };
+  }
+
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  test("a run goes to the active database, and a modal's statement to its object's", async () => {
+    const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+    const { tabs, setTabs } = tabsOf([createTab()]);
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs, activeCatalog: "shop" });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+    });
+    await act(async () => {
+      await result.current.executeQuery("SELECT 2", undefined, false, { catalog: "analytics" });
+    });
+
+    const bodies = fetchMock.mock.calls
+      .filter((call) => String(call[0]).includes("/api/db/query"))
+      .map((call) => JSON.parse(call[1]!.body as string) as { sql: string; catalog?: string; explain?: unknown })
+      .filter((body) => body.explain === undefined);
+    expect(bodies.map((body) => [body.sql, body.catalog])).toEqual([
+      ["SELECT 1", "shop"],
+      ["SELECT 2", "analytics"],
+    ]);
+  });
+});

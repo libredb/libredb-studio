@@ -589,7 +589,9 @@ export function useTreeNodes(
   readsColumns = false,
   query = "",
 ): TreeNodes {
-  const connectionId = connection.id;
+  // The database is part of the key: emptying a saved connection's database turns it into a
+  // server-level one whose tree starts at its databases (#1530), and the edit keeps the id.
+  const connectionId = `${connection.id}\u0000${connection.database ?? ""}`;
   const [stored, setStored] = useState<TreeCache>(() => emptyCache(connectionId));
   const connectionRef = useRef(connectionId);
   const inFlight = useRef(new Set<string>());

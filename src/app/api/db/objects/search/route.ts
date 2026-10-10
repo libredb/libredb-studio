@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { handleObjectRequest, optionalStringArray, requireString, resolveKinds } from "@/lib/api/object-route";
 import { enumerateContainers } from "@/lib/db/container-walk";
+import { assertNotWholeServer } from "@/lib/db/catalog-scope";
 import type { DatabaseObject } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +35,7 @@ export async function POST(req: NextRequest) {
     const term = requireString(body, "term").toLowerCase();
     const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
 
+    assertNotWholeServer(provider);
     const { containers } = await enumerateContainers(provider);
     const listObjects = provider.listObjects.bind(provider);
 

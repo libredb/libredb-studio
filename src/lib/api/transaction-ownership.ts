@@ -87,3 +87,8 @@ export function touchTransaction(connectionId: string): void {
 export function releaseTransaction(connectionId: string): void {
   owners.delete(connectionId);
 }
+
+/** A transaction's owner key: per database on a server-level connection, whose databases each hold one (#1530). */
+export function transactionKey(connectionId: string, catalog?: string): string {
+  return catalog === undefined ? connectionId : JSON.stringify([connectionId, catalog]);
+}

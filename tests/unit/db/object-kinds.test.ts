@@ -5,8 +5,10 @@ import {
   acceptedContainerShapes,
   assertContainerPathShape,
   type ContainerPathShapeEngine,
+  catalogOfPath,
   containerDepth,
   declaredKinds,
+  declaresCatalogSessions,
   enumerableKinds,
   findKind,
   keyBrowserKind,
@@ -800,5 +802,28 @@ describe("assertContainerPathShape (#1147)", () => {
     expect(refusal(() => assertContainerPathShape(declaration([], "prefixes"), [], withEmptyShapes)).message).toEndWith(
       "nothing: this declaration carries no container level, received []",
     );
+  });
+});
+
+/** A server-level connection (#1530): requests run in the catalog the caller names. */
+describe("declaresCatalogSessions and catalogOfPath", () => {
+  const serverLevel = { ...withKinds, catalogSessions: true } as ProviderCapabilities;
+
+  test("needs both the declaration and a catalog level to name the catalog by", () => {
+    expect(declaresCatalogSessions(serverLevel)).toBe(true);
+    expect(declaresCatalogSessions(withKinds)).toBe(false);
+    expect(
+      declaresCatalogSessions({
+        ...serverLevel,
+        containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      }),
+    ).toBe(false);
+  });
+
+  test("reads the catalog at the position the declaration gives it", () => {
+    expect(catalogOfPath(serverLevel, ["shop", "app", "orders"])).toBe("shop");
+    expect(catalogOfPath(serverLevel, [])).toBeUndefined();
+    // A connection pinned to its database has no catalog to name, whatever the path holds.
+    expect(catalogOfPath(withKinds, ["shop", "app", "orders"])).toBeUndefined();
   });
 });

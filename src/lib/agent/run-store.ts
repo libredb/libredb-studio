@@ -199,6 +199,8 @@ export type AgentLedgerEntry =
        * it read, and the fold must not turn that silence into an answer.
        */
       readonly connectionIdentity?: string;
+      /** The database a server-level connection's run reads (#1530); see `AgentRunRecord.catalog`. */
+      readonly catalog?: string;
       readonly objective: string;
     }
   | { readonly kind: "event"; readonly event: AgentRunEvent }
@@ -306,6 +308,8 @@ export interface AgentRunOpenInput {
   readonly connectionId: string;
   /** Which database that connection addresses; see `AgentRunRecord.connectionIdentity`. */
   readonly connectionIdentity?: string;
+  /** The database a server-level connection's run reads; see `AgentRunRecord.catalog`. */
+  readonly catalog?: string;
   readonly objective: string;
   /**
    * Supplied when the run's identity is minted elsewhere — the workflow run id, so
@@ -446,6 +450,7 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
       // missing one: an older header read some database this fold cannot name, and a
       // placeholder would be a claim about it.
       ...(header.connectionIdentity === undefined ? {} : { connectionIdentity: header.connectionIdentity }),
+      ...(header.catalog === undefined ? {} : { catalog: header.catalog }),
       objective: header.objective,
       createdAtMs: header.atMs,
       updatedAtMs: entryAtMs(lastEntry),
@@ -596,6 +601,8 @@ export class AgentRunStore {
       // opened before this field and one opened by a caller that cannot supply it are
       // the same bytes.
       ...(input.connectionIdentity === undefined ? {} : { connectionIdentity: input.connectionIdentity }),
+      // Only on a server-level connection (#1530), so every other run writes the same bytes as before.
+      ...(input.catalog === undefined ? {} : { catalog: input.catalog }),
       objective: input.objective,
     };
     if ((await this.read(runId)) !== null) {

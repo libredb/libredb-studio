@@ -14,6 +14,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
+import { requestCatalog, scopeToCatalog } from "@/lib/db/catalog-scope";
 import {
   jsonCommandAddress,
   objectSegment,
@@ -212,7 +213,8 @@ export async function POST(req: NextRequest) {
     // The LABEL, for the response alone: the profiler names its export after it.
     const tableName = objectSegment(path);
 
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    const connected = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    const provider = await scopeToCatalog(connected, requestCatalog(body));
 
     {
       const capabilities = provider.getCapabilities();

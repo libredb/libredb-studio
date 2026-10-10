@@ -1398,6 +1398,11 @@ export interface ProviderCapabilities {
    */
   containerPathShapes?: "exact" | "prefixes";
   /**
+   * The connection reaches a whole server and names no catalog (#1530): each request runs in the
+   * catalog the caller picks through `forCatalog()`. Absent means requests run where it points.
+   */
+  catalogSessions?: true;
+  /**
    * Every object kind this engine has, each declared in full by the provider that has
    * it (#789).
    *
@@ -2077,6 +2082,9 @@ export interface DatabaseProvider {
    * its rows carry no such key.
    */
   engineUser?(): string | undefined;
+
+  /** The provider for one catalog of a server-level connection, owned (and closed) by this one (#1530). */
+  forCatalog?(catalog: string): Promise<DatabaseProvider>;
 
   /**
    * Validate provider configuration

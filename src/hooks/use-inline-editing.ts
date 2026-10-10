@@ -27,6 +27,8 @@ interface UseInlineEditingParams {
    * the table" - a sentence that is false, about rows the user is looking at.
    */
   transactionActive?: boolean;
+  /** The database the edited rows were read from: a server-level connection's active one (#1530). */
+  activeCatalog?: string;
   /**
    * `useQueryExecution`'s `executeQuery`. `handleApplyChanges` awaits it between
    * rows and passes its execution options, so the signature carries both.
@@ -648,6 +650,8 @@ async function keyAddressesOneRow(
   inTransaction: boolean,
   /** What the result said this key column is — `undefined` where it said nothing. */
   declaredKeyType: string | undefined,
+  /** The database the edited rows were read from, on a server-level connection (#1530). */
+  catalog?: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   // The connection is already in hand — the same object line 433 reads its dialect from —
   // so the width a declared float means is read from the engine that declared it.
@@ -711,6 +715,7 @@ async function keyAddressesOneRow(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...buildConnectionPayload(connection),
+        ...(catalog === undefined ? {} : { catalog }),
         ...(inTransaction && { action: "query" }),
         sql,
         // A limit the answer cannot reach: one group per distinct key, and the keys are the
@@ -796,6 +801,7 @@ export function useInlineEditing({
   currentTab,
   executeQuery,
   transactionActive = false,
+  activeCatalog,
 }: UseInlineEditingParams) {
   const [editingEnabled, setEditingEnabled] = useState(false);
   const [pendingChanges, setPendingChanges] = useState<CellChange[]>([]);
@@ -1017,6 +1023,8 @@ export function useInlineEditing({
       // response that carried them. It is the only witness that survives the trip through
       // JSON, which is what turns a `Date` into a string indistinguishable from text.
       declaredTypeOf(currentTab.result, pkColumn),
+      // Read where the rows were read (#1530).
+      activeCatalog,
     );
     if (!uniqueness.ok) {
       toast({

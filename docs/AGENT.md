@@ -287,6 +287,10 @@ The middle case is why this is a comparison and not a bare "has a seed id". The 
 `seed:<id>` to its OWN descriptor, so a run started on a copy the user had since pointed at another
 database would investigate the seed and report on it as though it were the one on screen.
 
+**A server-level PostgreSQL connection reads one database per run** (#1530): the rail sends the
+active database as `catalog`, the route requires it there, and the run records it, so its drives and
+its hand-over read that database alone and its connection identity names it.
+
 ### The conversation a run belongs to
 
 **Every run belongs to a conversation**, and most belong to one of their own. A run opened on its own
