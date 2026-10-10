@@ -1803,6 +1803,31 @@ export interface S3StepRun {
   readonly summary: S3StepSummary;
   readonly context: S3SentenceContext;
   readonly sockets: number;
+  /** A refused step's cause chain, outermost first, unmasked: row A65 searches it; the captures never hold it. */
+  readonly causes?: readonly string[];
+}
+
+/** How deep a refusal's cause chain is followed, so a cause that points back at itself still ends. */
+const CAUSE_DEPTH = 8;
+
+function causeChain(error: unknown): string[] {
+  const causes: string[] = [];
+  let cause = error instanceof Error ? error.cause : undefined;
+  while (cause !== undefined && causes.length < CAUSE_DEPTH) {
+    causes.push(cause instanceof Error ? cause.message : String(cause));
+    cause = cause instanceof Error ? cause.cause : undefined;
+  }
+  return causes;
+}
+
+/** What row A65 searches in one step: its refusal, every message of that refusal's cause chain, and its answer. */
+export function s3SecretMaterial(stepRun: S3StepRun): string[] {
+  const { summary } = stepRun;
+  return [
+    ...(summary.refused === undefined ? [] : [summary.refused]),
+    ...(stepRun.causes ?? []),
+    ...(summary.ok === undefined ? [] : [JSON.stringify(summary.ok)]),
+  ];
 }
 
 interface SeenRequest {
@@ -1882,6 +1907,7 @@ async function step(
   const requests = wire.seen.length;
   const sockets = run.sockets();
   let summary: S3StepSummary;
+  let causes: string[] = [];
   try {
     const ok = await body();
     summary = { step: name, ok, exchanges: wire.seen.length - requests };
@@ -1891,8 +1917,19 @@ async function step(
       refused: normalizeMessage(error instanceof Error ? error.message : String(error)),
       exchanges: wire.seen.length - requests,
     };
+    causes = causeChain(error);
   }
-  return { summary, context, sockets: run.sockets() - sockets };
+  return { summary, context, sockets: run.sockets() - sockets, ...(causes.length === 0 ? {} : { causes }) };
+}
+
+/** One step on a wire of its own, outside any row. */
+export function runS3Step(
+  run: S3RunContext,
+  name: string,
+  context: S3SentenceContext,
+  body: () => Promise<S3Observed>,
+): Promise<S3StepRun> {
+  return step(run, observe(run.createTransport), name, context, body);
 }
 
 const connectionOf = (run: S3RunContext, plan: S3ConnectionPlan) =>

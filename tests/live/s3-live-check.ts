@@ -55,6 +55,7 @@ import {
   s3LiveConnection,
   s3Fingerprint,
   s3Recorder,
+  s3SecretMaterial,
 } from "./s3-live-support";
 
 const RUNTIME = typeof Bun === "undefined" ? `node ${process.versions.node}` : `bun ${Bun.version}`;
@@ -151,12 +152,10 @@ const nonLoopbackIPv4 =
     .flat()
     .find((address) => address !== undefined && address.family === "IPv4" && !address.internal)?.address ?? "";
 
-// Row A65's material: every message, cell and notice every row produced, searched before any masking.
+// Row A65's material: every message and cause chain, cell and notice every row produced, searched before any masking.
 const seen: string[] = [];
 function remember(stepRun: S3StepRun): void {
-  const { summary } = stepRun;
-  if (summary.refused !== undefined) seen.push(summary.refused);
-  if (summary.ok !== undefined) seen.push(JSON.stringify(summary.ok));
+  seen.push(...s3SecretMaterial(stepRun));
 }
 
 const production: S3TransportFactory = (transportOptions) => createNodeByteTransport(transportOptions);

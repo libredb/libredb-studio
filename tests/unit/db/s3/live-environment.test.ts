@@ -20,7 +20,12 @@ import { rfc3986Path, validateHost } from "@/lib/db/http/endpoint";
 import type { NodeByteTransportOptions, RequestSigner } from "@/lib/db/http/node-transport";
 import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
 import { SeedConfigSchema } from "@/lib/seed/types";
-import { S3_CAPTURES_MAX_BYTES, S3_EXCHANGE_BODY_MAX_BYTES, scrubCapture } from "../../../helpers/s3-evidence-scrub";
+import {
+  S3_CAPTURES_MAX_BYTES,
+  S3_EXCHANGE_BODY_MAX_BYTES,
+  scrubCapture,
+  secretHits,
+} from "../../../helpers/s3-evidence-scrub";
 import {
   captureFilesOnDisk,
   loadS3Capture,
@@ -44,6 +49,7 @@ import {
   readS3Principals,
   renderS3Acceptance,
   replayPrincipals,
+  runS3Step,
   S3_ACCEPTANCE,
   S3_ACCEPTANCE_GROUPS,
   S3_FIXTURE_BUCKETS,
@@ -53,6 +59,7 @@ import {
   s3LiveConnection,
   s3Recorder,
   type S3RunContext,
+  s3SecretMaterial,
   sentenceRefFinding,
   wireViolations,
 } from "../../../live/s3-live-support";
@@ -1550,6 +1557,35 @@ describe("the runners and the scenario list", () => {
     expect(levelPageDefect("b/dir/", 9, page(["b/dir/a.txt", "b/dir/a.txt"]))).toBe(
       'the level page holds "b/dir/a.txt" twice',
     );
+  });
+
+  test("row A65 searches every thrown error's cause chain, not only the refusal's message", async () => {
+    const secret = { label: "minio root secret", value: "a65-cause-secret-value" };
+    const run: S3RunContext = {
+      target: "minio",
+      principals: replayPrincipals("minio"),
+      createTransport: () => {
+        throw new Error("this step sends no request");
+      },
+      clockFor: () => () => new Date("2026-10-09T14:19:00.000Z"),
+      signerWrapper: (signer) => signer,
+      setStep: () => {},
+      sockets: () => 0,
+      recorded: () => [],
+    };
+    const context = { connection: s3LiveConnection("minio", run.principals, { role: "root" }) };
+    const thrown = (cause: unknown) => () => Promise.reject(new Error("x", { cause }));
+    const direct = await runS3Step(run, "direct", context, thrown(new Error(secret.value)));
+    expect(direct.summary).toEqual({ step: "direct", refused: "x", exchanges: 0 });
+    expect(secretHits(s3SecretMaterial(direct).join("\n"), [secret])).toHaveLength(1);
+    const nested = await runS3Step(run, "nested", context, thrown(new Error("y", { cause: secret.value })));
+    expect(secretHits(s3SecretMaterial(nested).join("\n"), [secret])).toHaveLength(1);
+    const looped = new Error("loop");
+    looped.cause = looped;
+    const cycle = await runS3Step(run, "cycle", context, thrown(looped));
+    expect(s3SecretMaterial(cycle).length).toBeLessThanOrEqual(1 + 8);
+    const answered = await runS3Step(run, "answered", context, () => Promise.resolve({ rows: 1 }));
+    expect(s3SecretMaterial(answered)).toEqual(['{"rows":1}']);
   });
 
   test("every capture target records the surface and the recorded rows; live-only rows are never recorded", () => {
