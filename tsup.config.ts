@@ -72,6 +72,9 @@ export default defineConfig({
     // cytoscape-host.ts; both are regular dependencies, exact-pinned.
     "cytoscape",
     "cytoscape-fcose",
+    // The S3 object preview's Parquet reader, loaded by a dynamic import in preview-parquet.ts; ESM only, resolved by the host.
+    "hyparquet",
+    "hyparquet-compressors",
     "@tanstack/react-table",
     "@tanstack/react-virtual",
     "react-resizable-panels",
