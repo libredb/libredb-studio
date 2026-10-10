@@ -18,6 +18,9 @@ import { parse as parseYaml } from "yaml";
 import { rfc3986Path, validateHost } from "@/lib/db/http/endpoint";
 import { S3_PREVIEW_LIMITS } from "@/lib/db/providers/objectstore/s3/constants";
 import { SeedConfigSchema } from "@/lib/seed/types";
+import { S3_CAPTURE_TARGETS } from "../../../helpers/s3-fixtures";
+import type { S3RecordedRequest } from "../../../helpers/s3-wire";
+import { S3_LIVE_ONLY_ROWS, scenariosFor } from "../../../live/s3-evidence-plan";
 import {
   checkS3Step,
   readS3Principals,
@@ -28,6 +31,7 @@ import {
   s3LiveConnection,
   sentenceRefFinding,
 } from "../../../live/s3-live-support";
+import { levelPageDefect, S3_RUNNERS, wireViolations } from "../../../live/s3-live-support";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 
@@ -1423,5 +1427,117 @@ describe("the acceptance matrix S3_ACCEPTANCE", () => {
     expect(
       checkS3Step({ kind: "not-applicable", why: "w" }, { step: "x", ok: {}, exchanges: 0 }, { connection }, 0),
     ).toContain("not applicable");
+  });
+});
+
+// -- tests/live/s3-live-support.ts: the runners, and tests/live/s3-evidence-plan.ts ---------------------------------
+
+/** Every applicable step of every cell has a runner, and every runner step is some cell's. */
+function runnerCoverageFindings(
+  rows: readonly (typeof S3_ACCEPTANCE)[number][],
+  runners: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+): string[] {
+  const findings: string[] = [];
+  const used = new Set<string>();
+  for (const row of rows)
+    for (const target of S3_TARGET_NAMES)
+      for (const { step, outcome } of row.expect[target]) {
+        if (outcome.kind === "not-applicable") continue;
+        used.add(`${row.id} ${step}`);
+        if (runners[row.id]?.[step] === undefined) findings.push(`${row.id} on ${target}: no runner for step ${step}`);
+      }
+  for (const [id, steps] of Object.entries(runners))
+    for (const step of Object.keys(steps))
+      if (!used.has(`${id} ${step}`)) findings.push(`${id} has a runner for step ${step}, which no cell runs`);
+  return findings;
+}
+
+function request(overrides: Partial<S3RecordedRequest>): S3RecordedRequest {
+  return {
+    method: "GET",
+    path: "/studio-demo",
+    query: "",
+    headers: { host: "127.0.0.1:9010", "x-amz-date": "20261009T141900Z", "x-amz-content-sha256": "e3b0" },
+    authorization: {
+      scheme: "AWS4-HMAC-SHA256",
+      credential: "libredb/20261009/us-east-1/s3/aws4_request",
+      signedHeaders: ["host", "x-amz-content-sha256", "x-amz-date"],
+    },
+    ...overrides,
+  };
+}
+
+describe("the runners and the scenario list", () => {
+  test("every applicable step of every cell has a runner, so no applicable cell drops out of the live check's total", () => {
+    expect(runnerCoverageFindings(S3_ACCEPTANCE, S3_RUNNERS)).toEqual([]);
+    const extra = {
+      ...S3_ACCEPTANCE[0],
+      expect: {
+        ...S3_ACCEPTANCE[0].expect,
+        silo: [{ step: "unrunnable", outcome: { kind: "ok", detail: "", check: { rows: 1 } } }],
+      },
+    } as unknown as (typeof S3_ACCEPTANCE)[number];
+    expect(runnerCoverageFindings([extra], S3_RUNNERS)).toContain("A1 on silo: no runner for step unrunnable");
+    expect(
+      runnerCoverageFindings(S3_ACCEPTANCE, { ...S3_RUNNERS, A1: { ...S3_RUNNERS.A1, dead: S3_RUNNERS.A1.test } }),
+    ).toContain("A1 has a runner for step dead, which no cell runs");
+  });
+
+  test("the wire rules each find the request that breaks them, and only that one", () => {
+    const clean = request({});
+    expect(wireViolations("A26", [clean, request({ query: "list-type=2&max-keys=0" })])).toEqual([
+      "GET /studio-demo?list-type=2&max-keys=0",
+    ]);
+    expect(
+      wireViolations("A26", [request({ query: "max-keys=1001" }), request({ query: "max-keys=1000" })]),
+    ).toHaveLength(1);
+    expect(wireViolations("A27", [request({ query: "list-type=2&start-after=a" })])).toHaveLength(1);
+    expect(wireViolations("A33", [request({ headers: { ...clean.headers, range: "bytes=0-1,4-5" } })])).toHaveLength(1);
+    expect(wireViolations("A45", [request({ query: "attributes=" })])).toHaveLength(1);
+    expect(wireViolations("A52", [request({ method: "PUT" as "GET" })])).toHaveLength(1);
+    expect(
+      wireViolations("A53", [request({ headers: { ...clean.headers, "x-amz-checksum-mode": "ENABLED" } })]),
+    ).toHaveLength(1);
+    expect(
+      wireViolations("A54", [request({ headers: { host: "127.0.0.1:9010", "x-amz-date": "20261009T141900Z" } })]),
+    ).toHaveLength(1);
+    for (const row of ["A26", "A27", "A33", "A45", "A52", "A53", "A54"] as const)
+      expect(wireViolations(row, [clean])).toEqual([]);
+  });
+
+  test("a Keys panel walk holds every level page to the keys route's checks and names the first defect", () => {
+    const page = (keys: string[], prefixes: string[] = []) => ({ keys, prefixes });
+    expect(levelPageDefect("b/dir/", 3, page(["b/dir/", "b/dir/a.txt"], ["b/dir/sub/"]))).toBeUndefined();
+    expect(levelPageDefect("b/dir/", 2, page(["b/dir/a.txt", "b/dir/b.txt"], ["b/dir/sub/"]))).toBe(
+      "the level page holds 3 entries, more than its count of 2",
+    );
+    expect(levelPageDefect("b/dir/", 9, page([], ["b/dir/sub/deeper/"]))).toBe(
+      'the level page holds the folder "b/dir/sub/deeper/", which is outside the level of "b/dir/"',
+    );
+    expect(levelPageDefect("b/dir/", 9, page([], ["b/other/"]))).toContain("outside the level");
+    expect(levelPageDefect("b/dir/", 9, page([], ["b/dir/sub/", "b/dir/sub/"]))).toBe(
+      'the level page holds "b/dir/sub/" twice',
+    );
+    expect(levelPageDefect("b/dir/", 9, page(["b/dir/sub/a.txt"]))).toBe(
+      'the level page holds the key "b/dir/sub/a.txt", which is outside the level of "b/dir/"',
+    );
+    expect(levelPageDefect("", 9, page([""]))).toContain("outside the level");
+    expect(levelPageDefect("b/dir/", 9, page(["b/dir/a.txt", "b/dir/a.txt"]))).toBe(
+      'the level page holds "b/dir/a.txt" twice',
+    );
+  });
+
+  test("every capture target records the surface and the recorded rows; live-only rows are never recorded", () => {
+    for (const target of S3_CAPTURE_TARGETS) {
+      const names = scenariosFor(target).map(({ scenario }) => scenario.name);
+      expect(names).toContain("surface");
+      expect(names).toContain("A21");
+      for (const row of S3_LIVE_ONLY_ROWS) expect(names).not.toContain(row);
+      expect(names.includes("A8-behind")).toBe(target === "garage");
+    }
+    const a37 = scenariosFor("silo").find(({ scenario }) => scenario.name === "A37");
+    expect(a37?.steps).toEqual(["csv", "tsv", "json"]);
+    const a23b = scenariosFor("garage").find(({ scenario }) => scenario.name === "A23b");
+    expect(a23b).toBeUndefined();
   });
 });

@@ -25,17 +25,23 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { QueryCancelledError } from "@/lib/db/errors";
 import { assertNotLinkLocalLiteral, assertPublicLiteralHost } from "@/lib/db/http/egress-policy";
 import { validateHost } from "@/lib/db/http/endpoint";
+import type { NodeByteTransportOptions, RequestSigner } from "@/lib/db/http/node-transport";
 import { buildS3ConnectionOptions, s3EndpointText } from "@/lib/db/providers/objectstore/s3/connection-options";
 import { parseS3Command } from "@/lib/db/providers/objectstore/s3/console/commands";
 import { S3_PREVIEW_DEFAULT_ROWS } from "@/lib/db/providers/objectstore/s3/constants";
 import { S3ServerError, toProviderError } from "@/lib/db/providers/objectstore/s3/errors";
+import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import { readS3KeyScanOptions } from "@/lib/db/providers/objectstore/s3/key-scan";
+import { joinVirtualKey } from "@/lib/db/providers/objectstore/s3/names";
 import { S3_PREVIEW_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-render";
-import type { KeyScanOptions } from "@/lib/db/types";
+import type { DatabaseProvider, KeyScanOptions, KeyScanPage } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
-import type { S3FixtureSecret } from "../helpers/s3-evidence-scrub";
+import type { ObjectSurfaceExpectation } from "../helpers/object-surface-conformance";
+import { normalizeMessage, type S3FixtureSecret } from "../helpers/s3-evidence-scrub";
+import type { S3RecordedRequest, S3TransportFactory } from "../helpers/s3-wire";
 
 export const ROOT: string =
   typeof import.meta.dir === "string" ? path.resolve(import.meta.dir, "../..") : process.cwd();
@@ -1744,4 +1750,910 @@ export function renderS3Acceptance(): string {
   }
   lines.push("`silo-tls` runs A1, A2, A14, A37 and A57, each as on Silo; A63 runs only in the SSH tunnel check.");
   return lines.join("\n");
+}
+
+// ============================================================================
+// The runners: one function per step of each row, shared by the live check, the harness and the replay
+// ============================================================================
+
+export interface S3RunContext {
+  readonly target: S3Target;
+  readonly principals: S3Principals;
+  /** The TLS fixture's CA as PEM text, for silo-tls. */
+  readonly ca?: string;
+  /** The factory every provider of the run is built with: the production one wrapped by a recorder, or a replay. */
+  readonly createTransport: S3TransportFactory;
+  /** The clock a provider of the run gets for a scenario offset; a replay ignores the offset, which its recording holds. */
+  readonly clockFor: (offsetMs: number) => () => Date;
+  readonly signerWrapper: (signer: RequestSigner) => RequestSigner;
+  /** Names the step the next requests belong to. */
+  readonly setStep: (step: string) => void;
+  /** Sockets opened so far; the replay answers 0. */
+  readonly sockets: () => number;
+  /** Every signed request of the run so far, as a capture records it (the wire rows read it). */
+  readonly recorded: () => readonly S3RecordedRequest[];
+  /** Live runs only: what rows A9, A56 and A65 need from the process. */
+  readonly live?: {
+    readonly nonLoopbackIPv4: string;
+    /** Sets every ambient AWS credential source and returns its undo. */
+    readonly setAmbientCredentials: () => () => void;
+    readonly canaryConnections: () => number;
+    readonly secretHits: () => number;
+  };
+  /** The tunnel check only: the bastion row A63 dials through. */
+  readonly tunnel?: {
+    readonly sshTunnel: NonNullable<DatabaseConnection["sshTunnel"]>;
+    readonly open: (connection: DatabaseConnection) => Promise<DatabaseProvider>;
+  };
+}
+
+export interface S3StepRun {
+  readonly summary: S3StepSummary;
+  readonly context: S3SentenceContext;
+  readonly sockets: number;
+}
+
+interface SeenRequest {
+  readonly method: string;
+  readonly path: string;
+  readonly query: string;
+  readonly headers: Readonly<Record<string, string>>;
+  status?: number;
+}
+
+/** The requests one row run sent, as the provider asked for them, with each answer's status. */
+interface Wire {
+  readonly createTransport: S3TransportFactory;
+  readonly seen: SeenRequest[];
+  signs: number;
+}
+
+function observe(factory: S3TransportFactory): Wire {
+  const wire: Wire = {
+    seen: [],
+    signs: 0,
+    createTransport: (options: NodeByteTransportOptions) => {
+      const inner = factory(options);
+      return {
+        async request(request) {
+          const entry: SeenRequest = {
+            method: request.method,
+            path: request.target.path,
+            query: request.target.query,
+            headers: { ...(request.headers ?? {}) },
+          };
+          wire.seen.push(entry);
+          const response = await inner.request(request);
+          entry.status = response.status;
+          return response;
+        },
+        close: () => inner.close(),
+      };
+    },
+  };
+  return wire;
+}
+
+type S3StepFunction = (run: S3RunContext, wire: Wire) => Promise<S3StepRun>;
+
+function provider(run: S3RunContext, wire: Wire, connection: DatabaseConnection, offsetMs = 0): S3Provider {
+  return new S3Provider(
+    connection,
+    {},
+    {},
+    {
+      createTransport: wire.createTransport,
+      clock: run.clockFor(offsetMs),
+      signerWrapper: (signer) => {
+        const wrapped = run.signerWrapper(signer);
+        return {
+          headerNames: wrapped.headerNames,
+          sign(input) {
+            wire.signs++;
+            return wrapped.sign(input);
+          },
+        };
+      },
+    },
+  );
+}
+
+/** Runs one step: its answer, or its refusal's message as a summary records it. */
+async function step(
+  run: S3RunContext,
+  wire: Wire,
+  name: string,
+  context: S3SentenceContext,
+  body: () => Promise<S3Observed>,
+): Promise<S3StepRun> {
+  run.setStep(name);
+  const requests = wire.seen.length;
+  const sockets = run.sockets();
+  let summary: S3StepSummary;
+  try {
+    const ok = await body();
+    summary = { step: name, ok, exchanges: wire.seen.length - requests };
+  } catch (error) {
+    summary = {
+      step: name,
+      refused: normalizeMessage(error instanceof Error ? error.message : String(error)),
+      exchanges: wire.seen.length - requests,
+    };
+  }
+  return { summary, context, sockets: run.sockets() - sockets };
+}
+
+const connectionOf = (run: S3RunContext, plan: S3ConnectionPlan) =>
+  s3LiveConnection(run.target, run.principals, plan, run.ca);
+
+async function withProvider<T>(p: S3Provider, body: (p: S3Provider) => Promise<T>): Promise<T> {
+  try {
+    await p.connect();
+    return await body(p);
+  } finally {
+    await p.disconnect();
+  }
+}
+
+/**
+ * Runs a step on a provider connected before the step's count starts, so a refusal the console or the Keys route
+ * gives before any request counts no exchange, while the session's own connect probe is not the step's. A connect
+ * that fails becomes the step's refusal.
+ */
+async function onConnected(
+  run: S3RunContext,
+  wire: Wire,
+  name: string,
+  context: S3SentenceContext,
+  body: (p: S3Provider) => Promise<S3Observed>,
+): Promise<S3StepRun> {
+  const p = provider(run, wire, context.connection);
+  run.setStep(name);
+  let failure: unknown;
+  try {
+    await p.connect();
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    return await step(run, wire, name, context, async () => {
+      if (failure !== undefined) throw failure;
+      return body(p);
+    });
+  } finally {
+    await p.disconnect();
+  }
+}
+
+/** POST /api/db/test-connection's calls (connect, then getHealth), then the bucket count the sidebar would show. */
+async function testConnection(p: S3Provider): Promise<S3Observed> {
+  return withProvider(p, async () => {
+    await p.getHealth();
+    return { rows: (await p.listObjects([], "bucket")).length };
+  });
+}
+
+async function bucketNames(p: S3Provider): Promise<S3Observed> {
+  return withProvider(p, async () => {
+    const names = (await p.listObjects([], "bucket")).map((object) => object.name);
+    return { rows: names.length, names };
+  });
+}
+
+/**
+ * The keys route's checks on one level page, which the route keeps private, so a page the route would answer with a
+ * 500 fails the live check and the replay too: keys and prefixes together fit in count, every prefix ends at the
+ * first "/" after the pattern, every key sits directly under the pattern and is not empty, nothing is listed twice.
+ */
+export function levelPageDefect(
+  pattern: string,
+  count: number,
+  page: Pick<KeyScanPage, "keys" | "prefixes">,
+): string | undefined {
+  const prefixes = page.prefixes ?? [];
+  const entries = prefixes.length + page.keys.length;
+  if (entries > count) return `the level page holds ${entries} entries, more than its count of ${count}`;
+  const seen = new Set<string>();
+  for (const prefix of prefixes) {
+    const first = prefix.indexOf("/", pattern.length);
+    if (!prefix.startsWith(pattern) || first === -1 || first !== prefix.length - 1)
+      return `the level page holds the folder ${JSON.stringify(prefix)}, which is outside the level of ${JSON.stringify(pattern)}`;
+    if (seen.has(prefix)) return `the level page holds ${JSON.stringify(prefix)} twice`;
+    seen.add(prefix);
+  }
+  for (const key of page.keys) {
+    if (key === "" || !key.startsWith(pattern) || key.slice(pattern.length).includes("/"))
+      return `the level page holds the key ${JSON.stringify(key)}, which is outside the level of ${JSON.stringify(pattern)}`;
+    if (seen.has(key)) return `the level page holds ${JSON.stringify(key)} twice`;
+    seen.add(key);
+  }
+  return undefined;
+}
+
+/** A Keys panel walk of one level, page after page, as the panel's Load more asks for it. */
+async function walk(
+  p: S3Provider,
+  pattern: string,
+  maxPages = 20,
+  count = 1000,
+): Promise<S3Observed & { cursor: string }> {
+  const names: string[] = [];
+  const pages: number[] = [];
+  const headers: Record<string, string> = {};
+  let cursor = "0";
+  do {
+    const page = await p.scanKeysPage!({ cursor, pattern, count, level: true });
+    const defect = levelPageDefect(pattern, count, page);
+    if (defect !== undefined) throw new Error(defect);
+    const entries = [...(page.prefixes ?? []), ...page.keys];
+    names.push(...entries);
+    pages.push(entries.length);
+    Object.assign(headers, page.types ?? {});
+    cursor = page.cursor;
+  } while (cursor !== "0" && pages.length < maxPages);
+  return { names, pages, repeats: names.length - new Set(names).size, headers, rows: names.length, cursor };
+}
+
+function valueText(value: unknown): string {
+  return value === null || value === undefined ? "" : typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
+/** A console command's answer: its rows, its columns or Field/Value grid, and its warnings. */
+async function consoleRun(p: S3Provider, command: string, queryId?: string): Promise<S3Observed> {
+  const result = await p.query(command, [], queryId);
+  const grid = result.fields.length === 2 && result.fields[0] === "Field" && result.fields[1] === "Value";
+  return {
+    rows: result.rowCount,
+    names: grid ? result.rows.map((row) => valueText(row.Field)) : result.fields,
+    ...(grid
+      ? { headers: Object.fromEntries(result.rows.map((row) => [valueText(row.Field), valueText(row.Value)])) }
+      : {}),
+    notices: (result.warnings ?? []).map((warning) => warning.message),
+  };
+}
+
+function flatten(json: Record<string, unknown>): Record<string, string> {
+  const flat: Record<string, string> = {};
+  for (const [name, value] of Object.entries(json)) {
+    if (name === "user_metadata" && value !== null && typeof value === "object")
+      for (const [meta, values] of Object.entries(value as Record<string, unknown>))
+        flat[`user_metadata.${meta}`] = Array.isArray(values) ? values.join(",") : valueText(values);
+    else if (name === "tags" && value !== null && typeof value === "object")
+      flat.tags = Object.entries(value as Record<string, string>)
+        .sort(([a], [b]) => (a < b ? -1 : 1))
+        .map(([tag, tagValue]) => `${tag}=${tagValue}`)
+        .join("&");
+    else flat[name] = value === null ? "null" : valueText(value);
+  }
+  return flat;
+}
+
+/** The Source tab of one object: the metadata part's fields, the preview part's form, the preview notes. */
+async function source(p: S3Provider, wire: Wire, bucket: string, key: string): Promise<S3Observed> {
+  return withProvider(p, async () => {
+    const before = wire.seen.length;
+    const document = await p.readObjectSource!([joinVirtualKey(bucket, key)], "object");
+    const part = (id: string) => document.parts.find((candidate) => candidate.id === id);
+    const metadata = part("metadata");
+    if (metadata === undefined || "unavailable" in metadata)
+      throw new Error(metadata === undefined ? "no metadata part" : metadata.unavailable);
+    const headers = flatten(JSON.parse(metadata.text) as Record<string, unknown>);
+    const preview = part("preview");
+    if (preview !== undefined) {
+      headers.preview = "unavailable" in preview ? "unavailable" : preview.text.trim().slice(0, 64);
+      if (!("unavailable" in preview)) {
+        headers["preview-origin"] = preview.origin;
+        headers["preview-language"] = preview.language;
+      }
+    }
+    const gets = wire.seen
+      .slice(before)
+      .filter((request) => request.method === "GET" && request.headers.range !== undefined);
+    const ranged = gets.find((request) => request.headers.range.startsWith("bytes=0-"));
+    const suffix = gets.find((request) => request.headers.range.startsWith("bytes=-"));
+    if (ranged?.status !== undefined) headers["range-status"] = String(ranged.status);
+    if (suffix?.status !== undefined) headers["suffix-status"] = String(suffix.status);
+    const notes = part("preview-notes");
+    return {
+      headers,
+      notices:
+        notes !== undefined && !("unavailable" in notes) ? notes.text.split("\n").filter((line) => line !== "") : [],
+    };
+  });
+}
+
+function queryValue(query: string, name: string): string | undefined {
+  const pair = query.split("&").find((candidate) => candidate === name || candidate.startsWith(`${name}=`));
+  return pair === undefined ? undefined : pair.slice(name.length + 1);
+}
+
+/** A step of a Test Connection on a plan. */
+const testStep =
+  (name: string, plan: S3ConnectionPlan, offsetMs = 0): S3StepFunction =>
+  (run, wire) => {
+    const connection = connectionOf(run, plan);
+    return step(run, wire, name, { connection }, () => testConnection(provider(run, wire, connection, offsetMs)));
+  };
+
+/** A step of one console command as root on studio-demo's connection. */
+const consoleStep =
+  (name: string, command: string, plan: S3ConnectionPlan = { role: "root" }): S3StepFunction =>
+  (run, wire) => {
+    const connection = connectionOf(run, plan);
+    return onConnected(run, wire, name, { connection, command }, (p) => consoleRun(p, command));
+  };
+
+const previewStep = (name: string, key: string): S3StepFunction => consoleStep(name, `preview s3://studio-demo/${key}`);
+
+/** A step of a Keys panel walk of one level as root. */
+const walkStep =
+  (name: string, pattern: string, plan: S3ConnectionPlan = { role: "root" }, maxPages = 20): S3StepFunction =>
+  (run, wire) => {
+    const connection = connectionOf(run, plan);
+    const scan = { cursor: "0", pattern, count: 1000, level: true } as const;
+    return step(run, wire, name, { connection, scan }, () =>
+      withProvider(provider(run, wire, connection), (p) => walk(p, pattern, maxPages)),
+    );
+  };
+
+const sourceStep =
+  (name: string, key: string): S3StepFunction =>
+  (run, wire) => {
+    const connection = connectionOf(run, { role: "root" });
+    return step(run, wire, name, { connection }, () =>
+      source(provider(run, wire, connection), wire, "studio-demo", key),
+    );
+  };
+
+/** The rows that are rules over every request a run sent, each answering the requests that break it. */
+export function wireViolations(
+  row: "A26" | "A27" | "A33" | "A45" | "A52" | "A53" | "A54",
+  requests: readonly S3RecordedRequest[],
+): string[] {
+  const at = (request: S3RecordedRequest) =>
+    `${request.method} ${request.path}${request.query === "" ? "" : `?${request.query}`}`;
+  return requests
+    .filter((request) => {
+      const names = request.query === "" ? [] : request.query.split("&").map((pair) => pair.split("=")[0]);
+      switch (row) {
+        case "A26": {
+          const maxKeys = queryValue(request.query, "max-keys");
+          return maxKeys !== undefined && (Number(maxKeys) < 1 || Number(maxKeys) > 1000);
+        }
+        case "A27":
+          return names.includes("start-after");
+        case "A33":
+          return (request.headers.range ?? "").includes(",");
+        case "A45":
+          return names.includes("attributes");
+        case "A52":
+          return request.method !== "GET" && request.method !== "HEAD";
+        case "A53":
+          return (
+            request.authorization !== null &&
+            Object.keys(request.headers).some(
+              (name) => name.startsWith("x-amz-") && !request.authorization?.signedHeaders.includes(name),
+            )
+          );
+        case "A54":
+          return request.authorization !== null && request.headers["x-amz-content-sha256"] === undefined;
+      }
+    })
+    .map(at);
+}
+
+const wireStep =
+  (row: Parameters<typeof wireViolations>[0]): S3StepFunction =>
+  (run, wire) => {
+    const connection = connectionOf(run, { role: "root" });
+    return step(run, wire, "run", { connection }, async () => ({ rows: wireViolations(row, run.recorded()).length }));
+  };
+
+const DOT_ENTRIES = new Set([
+  "studio-demo/sp/./",
+  "studio-demo/sp/double/",
+  "studio-demo/sp/x/",
+  ...[...DOT_KEYS].map((key) => `studio-demo/${key}`),
+]);
+
+/** The server's continuation token inside a Keys panel cursor, written s3c:1:<base64url JSON> with the token under "t". */
+function serverToken(cursor: string): string {
+  const payload = JSON.parse(Buffer.from(cursor.slice("s3c:1:".length), "base64url").toString("utf8")) as {
+    t?: string;
+  };
+  if (payload.t === undefined) throw new Error("the cursor holds no server token");
+  return payload.t;
+}
+
+function withEnv<T>(name: string, value: string | undefined, body: () => Promise<T>): Promise<T> {
+  const previous = process.env[name];
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+  return body().finally(() => {
+    if (previous === undefined) delete process.env[name];
+    else process.env[name] = previous;
+  });
+}
+
+const needsLive = (row: string) => {
+  throw new Error(`${row} runs only in tests/live/s3-live-check.ts, which gives the run its live context`);
+};
+
+function linkLocalSteps(): Record<string, S3StepFunction> {
+  const steps: Record<string, S3StepFunction> = {};
+  for (const host of LINK_LOCAL_HOSTS)
+    for (const setting of ["unset", "false"] as const)
+      steps[`${host} ${setting}`] = (run, wire) =>
+        withEnv("DB_HTTP_BLOCK_PRIVATE_HOSTS", setting === "unset" ? undefined : "false", () =>
+          testStep(`${host} ${setting}`, { role: "root", host })(run, wire),
+        );
+  for (const host of NUMERIC_HOSTS) steps[host] = testStep(host, { role: "root", host });
+  return steps;
+}
+
+function commandSteps(commands: Readonly<Record<string, string>>): Record<string, S3StepFunction> {
+  return Object.fromEntries(Object.entries(commands).map(([name, command]) => [name, consoleStep(name, command)]));
+}
+
+/** Every step of every row, by row id and step name. A row's steps run in the order its cell lists them. */
+export const S3_RUNNERS: Readonly<Record<string, Readonly<Record<string, S3StepFunction>>>> = {
+  A1: { test: testStep("test", { role: "root" }) },
+  A2: {
+    test: (run, wire) => {
+      const connection = connectionOf(run, { role: "root", pin: "studio-demo" });
+      return step(run, wire, "test", { connection }, async () => {
+        const before = wire.seen.length;
+        await testConnection(provider(run, wire, connection));
+        const sent = wire.seen.slice(before);
+        const first = sent[0];
+        const value = (name: string) => decodeURIComponent(queryValue(first?.query ?? "", name) ?? "");
+        return {
+          headers: {
+            requests: String(sent.length),
+            method: first?.method ?? "",
+            "max-keys": value("max-keys"),
+            delimiter: value("delimiter"),
+            "encoding-type": value("encoding-type"),
+          },
+        };
+      });
+    },
+  },
+  A3: { test: testStep("test", { role: "root", pin: "no-such-bucket" }) },
+  A4: { test: testStep("test", { role: "root", secret: "wrong-secret-for-row-a4" }) },
+  A4p: { test: testStep("test", { role: "root", pin: "studio-demo", secret: "wrong-secret-for-row-a4" }) },
+  A5: { test: testStep("test", { role: "root", accessKeyId: "GKffffffffffffffffffffffff" }) },
+  A6: { browse: walkStep("browse", "studio-demo/", { role: "root", region: "us-east-1" }, 1) },
+  A7: { browse: walkStep("browse", "studio-demo/", { role: "root", region: "not-a-region" }, 1) },
+  A8: {
+    ahead: testStep("ahead", { role: "root" }, 1_200_000),
+    behind: testStep("behind", { role: "root" }, -90_000_000),
+  },
+  A9: {
+    anonymous: (run, wire) => {
+      if (run.live === undefined) return needsLive("A9");
+      const undo = run.live.setAmbientCredentials();
+      return testStep("anonymous", { role: "root", anonymous: true })(run, wire).finally(undo);
+    },
+    unsigned: (run, wire) => {
+      if (run.live === undefined) return needsLive("A9");
+      const live = run.live;
+      const connection = connectionOf(run, { role: "root", anonymous: true });
+      return step(run, wire, "unsigned", { connection }, async () => ({
+        headers: {
+          authorization: wire.signs === 0 ? "absent" : "present",
+          "x-amz-headers": String(
+            wire.seen.reduce(
+              (count, request) =>
+                count + Object.keys(request.headers).filter((name) => name.startsWith("x-amz-")).length,
+              0,
+            ),
+          ),
+          canary: String(live.canaryConnections()),
+        },
+      }));
+    },
+  },
+  A10: {
+    "studio-demo": testStep("studio-demo", { role: "scoped", pin: "studio-demo" }),
+    "no-such-bucket": testStep("no-such-bucket", { role: "scoped", pin: "no-such-bucket" }),
+  },
+  A11: {
+    list: (run, wire) => {
+      const connection = connectionOf(run, { role: "getonly" });
+      return step(run, wire, "list", { connection }, () => bucketNames(provider(run, wire, connection)));
+    },
+    open: walkStep("open", "studio-demo/", { role: "getonly" }, 1),
+    head: consoleStep("head", "aws s3api head-object --bucket studio-demo --key data/table.csv", { role: "getonly" }),
+    pinned: testStep("pinned", { role: "getonly", pin: "studio-demo" }),
+  },
+  A12: {
+    scoped: (run, wire) => {
+      const connection = connectionOf(run, { role: "scoped" });
+      return step(run, wire, "scoped", { connection }, () => bucketNames(provider(run, wire, connection)));
+    },
+    none: (run, wire) => {
+      const connection = connectionOf(run, { role: "getonly" });
+      return step(run, wire, "none", { connection }, () => bucketNames(provider(run, wire, connection)));
+    },
+  },
+  A55: linkLocalSteps(),
+  A55b: {
+    blocked: (run, wire) =>
+      withEnv("DB_HTTP_BLOCK_PRIVATE_HOSTS", "true", () => testStep("blocked", { role: "root" })(run, wire)),
+  },
+  A63: {
+    plain: (run, wire) => tunnelStep(run, wire, "plain", "silo", 9000, false),
+    tls: (run, wire) => tunnelStep(run, wire, "tls", "silo-tls", 9000, true),
+    "link-local": (run, wire) => tunnelStep(run, wire, "link-local", "169.254.169.254", 9000, false),
+  },
+  A56: {
+    "no-consent": (run, wire) =>
+      run.live === undefined
+        ? needsLive("A56")
+        : testStep("no-consent", { role: "root", host: run.live.nonLoopbackIPv4 })(run, wire),
+    consent: (run, wire) =>
+      run.live === undefined
+        ? needsLive("A56")
+        : testStep("consent", { role: "root", host: run.live.nonLoopbackIPv4, allowInsecureAuth: true })(run, wire),
+  },
+  A13: {
+    list: (run, wire) => {
+      const connection = connectionOf(run, { role: "root" });
+      return step(run, wire, "list", { connection }, () => bucketNames(provider(run, wire, connection)));
+    },
+  },
+  A14: { level: walkStep("level", "studio-demo/") },
+  A15: { level: walkStep("level", "studio-demo/dir/") },
+  A16: { level: walkStep("level", "studio-demo/keys/dirmarker/"), open: sourceStep("open", "keys/dirmarker/") },
+  A17: {
+    list: walkStep("list", "studio-demo/sp/"),
+    open: (run, wire) => {
+      const connection = connectionOf(run, { role: "root" });
+      const keys = storedSpecialKeys(S3_TARGETS[run.target].server, "all").map((name) =>
+        name.slice("studio-demo/".length),
+      );
+      return step(run, wire, "open", { connection }, async () => {
+        for (const key of keys) await source(provider(run, wire, connection), wire, "studio-demo", key);
+        return { rows: keys.length };
+      });
+    },
+  },
+  A17b: {
+    keys: walkStep("keys", "studio-demo/sp/with space"),
+    console: (run, wire) => {
+      const command = "aws s3api list-objects-v2 --bucket studio-demo --prefix 'sp/*'";
+      const connection = connectionOf(run, { role: "root" });
+      return step(run, wire, "console", { connection, command }, async () => {
+        const before = wire.seen.length;
+        await withProvider(provider(run, wire, connection), (p) => consoleRun(p, command));
+        return { headers: { prefix: queryValue(wire.seen[before]?.query ?? "", "prefix") ?? "" } };
+      });
+    },
+  },
+  A18: {
+    tab: (run, wire) => {
+      const connection = connectionOf(run, { role: "root" });
+      return step(run, wire, "tab", { connection }, async () => {
+        const listed = await withProvider(provider(run, wire, connection), (p) => walk(p, "studio-demo/sp/"));
+        await source(provider(run, wire, connection), wire, "studio-demo", "sp/tab\tchar.txt");
+        return { names: listed.names };
+      });
+    },
+    control: (run, wire) => {
+      const connection = connectionOf(run, { role: "root" });
+      return step(run, wire, "control", { connection }, async () => {
+        const listed = await withProvider(provider(run, wire, connection), (p) => walk(p, "studio-demo/ctl/"));
+        await source(provider(run, wire, connection), wire, "studio-demo", "ctl/x\u0001y.txt");
+        return { names: listed.names };
+      });
+    },
+  },
+  A19: {
+    list: (run, wire) => {
+      const connection = connectionOf(run, { role: "root" });
+      return step(run, wire, "list", { connection }, async () => {
+        const listed = await withProvider(provider(run, wire, connection), (p) => walk(p, "studio-demo/sp/"));
+        return { rows: (listed.names ?? []).filter((name) => DOT_ENTRIES.has(name)).length };
+      });
+    },
+    open: (run, wire) => {
+      const connection = connectionOf(run, { role: "root" });
+      const keys = storedDotKeys(S3_TARGETS[run.target].server);
+      return step(run, wire, "open", { connection }, async () => {
+        for (const key of keys) await source(provider(run, wire, connection), wire, "studio-demo", key);
+        return { rows: keys.length };
+      });
+    },
+  },
+  A20: { head: consoleStep("head", "aws s3api head-object --bucket studio-demo --key /x") },
+  A21: { level: walkStep("level", "studio-bulk/many/") },
+  A22: { level: walkStep("level", "studio-bulk/folders/") },
+  A23: { level: walkStep("level", "studio-bulk/mixed/") },
+  A23b: {
+    level: walkStep("level", "studio-versions/ver/"),
+    deleted: (run, wire) => {
+      const connection = connectionOf(run, { role: "root" });
+      return step(run, wire, "deleted", { connection }, async () => {
+        const listed = await withProvider(provider(run, wire, connection), (p) => walk(p, "studio-versions/ver/"));
+        return { rows: (listed.names ?? []).filter((name) => name === "studio-versions/ver/deleted.txt").length };
+      });
+    },
+  },
+  A24: Object.fromEntries(
+    (
+      [
+        ["spelling", "s3c:2:abc"],
+        ["long", `s3c:1:${"A".repeat(16_385)}`],
+        ["shape", `s3c:1:${Buffer.from(JSON.stringify({ x: 1 })).toString("base64url")}`],
+      ] as const
+    ).map(([name, cursor]): [string, S3StepFunction] => [
+      name,
+      (run, wire) => {
+        const connection = connectionOf(run, { role: "root" });
+        const scan = { cursor, pattern: "studio-bulk/many/", count: 1000, level: true } as const;
+        return onConnected(run, wire, name, { connection, scan }, async (p) => ({
+          rows: (await p.scanKeysPage!(scan)).keys.length,
+        }));
+      },
+    ]),
+  ),
+  A24b: {
+    handover: (run, wire) => {
+      const connection = connectionOf(run, { role: "root" });
+      return step(run, wire, "handover", { connection }, async () => {
+        const first = await withProvider(provider(run, wire, connection), (p) =>
+          p.scanKeysPage!({ cursor: "0", pattern: "studio-bulk/folders/", count: 1000, level: true }),
+        );
+        const second = await withProvider(provider(run, wire, connection), (p) =>
+          p.scanKeysPage!({ cursor: first.cursor, pattern: "studio-bulk/folders/", count: 1000, level: true }),
+        );
+        const names = [...(first.prefixes ?? []), ...first.keys, ...(second.prefixes ?? []), ...second.keys];
+        return {
+          pages: [
+            (first.prefixes ?? []).length + first.keys.length,
+            (second.prefixes ?? []).length + second.keys.length,
+          ],
+          repeats: names.length - new Set(names).size,
+        };
+      });
+    },
+  },
+  A25: Object.fromEntries(
+    (
+      [
+        ["bucket", "studio-scoped/"],
+        ["prefix", "studio-demo/data/"],
+      ] as const
+    ).map(([name, pattern]): [string, S3StepFunction] => [
+      name,
+      async (run, wire) => {
+        const connection = connectionOf(run, { role: "root" });
+        const cursor = (await withProvider(provider(run, wire, connection), (p) => walk(p, "studio-demo/", 1, 1)))
+          .cursor;
+        const scan = { cursor, pattern, count: 1, level: true } as const;
+        return onConnected(run, wire, name, { connection, scan }, async (p) => ({
+          rows: (await p.scanKeysPage!(scan)).keys.length,
+        }));
+      },
+    ]),
+  ),
+  A26: { run: wireStep("A26") },
+  A27: { run: wireStep("A27") },
+  A28: { tagged: sourceStep("tagged", "meta/tagged.txt"), multipart: sourceStep("multipart", "data/multipart.bin") },
+  A29: {
+    run: (run, wire) => {
+      const connection = connectionOf(run, { role: "root" });
+      return step(run, wire, "run", { connection }, async () => {
+        const before = wire.seen.length;
+        await withProvider(provider(run, wire, connection), (p) => walk(p, "studio-demo/a/"));
+        return { rows: wire.seen.slice(before).filter((request) => request.method === "HEAD").length };
+      });
+    },
+  },
+  A30: { source: sourceStep("source", "data/one-mib.bin") },
+  A31: { source: sourceStep("source", "parquet/fx-zstd.parquet") },
+  A32: { source: sourceStep("source", "data/empty.txt") },
+  A33: { run: wireStep("A33") },
+  A35: { preview: previewStep("preview", "data/rows.ndjson.gz") },
+  A35b: {
+    preview: previewStep("preview", "data/bomb.ndjson.gz"),
+    gets: (run, wire) => {
+      const command = "preview s3://studio-demo/data/bomb.ndjson.gz";
+      const connection = connectionOf(run, { role: "root" });
+      return step(run, wire, "gets", { connection, command }, async () => {
+        const before = wire.seen.length;
+        await withProvider(provider(run, wire, connection), (p) => consoleRun(p, command));
+        return { rows: wire.seen.slice(before).filter((request) => request.method === "GET").length };
+      });
+    },
+  },
+  A36: { preview: previewStep("preview", "data/rows.ndjson") },
+  A37: {
+    csv: previewStep("csv", "data/table.csv"),
+    tsv: previewStep("tsv", "data/table.tsv"),
+    json: previewStep("json", "data/doc.json"),
+    "truncated-json": previewStep("truncated-json", "data/truncated.json"),
+    "partial-ndjson": previewStep("partial-ndjson", "data/rows-partial.ndjson"),
+    "utf8-boundary": previewStep("utf8-boundary", "data/utf8-boundary.txt"),
+  },
+  A38: {
+    ...Object.fromEntries(CODECS.map((codec) => [codec, previewStep(codec, `parquet/fx-${codec}.parquet`)])),
+    "two-groups": previewStep("two-groups", "parquet/fx-two-groups.parquet"),
+    empty: previewStep("empty", "parquet/fx-empty.parquet"),
+  },
+  A39: {
+    narrow: previewStep("narrow", "parquet/large/narrow-zstd.parquet"),
+    wide: previewStep("wide", "parquet/large/wide-zstd.parquet"),
+  },
+  A40: {
+    preview: previewStep("preview", "parquet/bigcells-zstd.parquet"),
+    wire: (run, wire) => {
+      const command = "preview s3://studio-demo/parquet/bigcells-zstd.parquet";
+      const connection = connectionOf(run, { role: "root" });
+      return step(run, wire, "wire", { connection, command }, async () => {
+        const before = wire.seen.length;
+        await withProvider(provider(run, wire, connection), (p) => consoleRun(p, command));
+        const large = wire.seen.slice(before).filter((request) => {
+          const range = /^bytes=(\d+)-(\d+)$/.exec(request.headers.range ?? "");
+          return range !== null && Number(range[2]) - Number(range[1]) + 1 >= 1_000_000;
+        });
+        return { rows: large.length };
+      });
+    },
+  },
+  A41: {
+    "not-parquet": previewStep("not-parquet", "parquet/not-parquet.parquet"),
+    truncated: previewStep("truncated", "parquet/truncated.parquet"),
+  },
+  A42: { source: sourceStep("source", "data/noext") },
+  A45: { run: wireStep("A45") },
+  A43: { console: consoleStep("console", "aws s3api list-object-versions --bucket studio-versions --prefix ver/") },
+  A46: { console: consoleStep("console", "aws s3api list-buckets") },
+  A47: {
+    top: consoleStep("top", "aws s3 ls s3://studio-demo/"),
+    recursive: consoleStep("recursive", "aws s3 ls s3://studio-demo/data/ --recursive"),
+    continued: consoleStep("continued", "aws s3 ls \\\n  s3://studio-demo/data/ --recursive"),
+  },
+  A48: { console: consoleStep("console", "aws s3api head-object --bucket studio-demo --key data/table.csv") },
+  A49: { csv: previewStep("csv", "data/table.csv"), parquet: previewStep("parquet", "parquet/fx-zstd.parquet") },
+  A50: commandSteps(A50_COMMANDS),
+  A51: commandSteps(A51_COMMANDS),
+  A58: {
+    console: consoleStep("console", "aws s3api list-objects-v2 --bucket studio-demo --prefix data/ --delimiter /"),
+  },
+  A59: { console: consoleStep("console", "aws s3api head-bucket --bucket studio-demo") },
+  A60: { console: consoleStep("console", "aws s3api get-object-tagging --bucket studio-demo --key meta/tagged.txt") },
+  A61: { console: consoleStep("console", "aws s3api get-bucket-location --bucket studio-demo") },
+  A62: { console: consoleStep("console", "aws s3api get-bucket-versioning --bucket studio-versions") },
+  A64: { console: consoleStep("console", "aws s3 ls s3://studio-demo/ --endpoint-url http://169.254.169.254/") },
+  A66: Object.fromEntries(
+    Object.entries(A66_TOKENS).map(([name, token]) => [
+      name,
+      consoleStep(name, `aws s3api list-objects-v2 --bucket studio-demo --starting-token ${token}`),
+    ]),
+  ),
+  A66b: {
+    foreign: async (run, wire) => {
+      const connection = connectionOf(run, { role: "root" });
+      const cursor = (await withProvider(provider(run, wire, connection), (p) => walk(p, "studio-bulk/folders/", 1)))
+        .cursor;
+      const token = Buffer.from(JSON.stringify({ ContinuationToken: serverToken(cursor) })).toString("base64");
+      const command = `aws s3api list-objects-v2 --bucket studio-demo --starting-token ${token}`;
+      return step(run, wire, "foreign", { connection, command }, async () => {
+        const before = wire.seen.length;
+        await withProvider(provider(run, wire, connection), (p) => consoleRun(p, command));
+        return { rows: wire.seen.length - before };
+      });
+    },
+  },
+  A52: {
+    wire: wireStep("A52"),
+    "readonly-off": consoleStep("readonly-off", "aws s3api list-buckets", { role: "root", readOnly: false }),
+  },
+  A53: { run: wireStep("A53") },
+  A54: { run: wireStep("A54") },
+  A65: {
+    run: (run, wire) => {
+      if (run.live === undefined) return needsLive("A65");
+      const live = run.live;
+      return step(run, wire, "run", { connection: connectionOf(run, { role: "root" }) }, async () => ({
+        rows: live.secretHits(),
+      }));
+    },
+  },
+  A57: {
+    cancel: (run, wire) => {
+      const command = "aws s3 ls s3://studio-bulk/many/ --recursive";
+      const connection = connectionOf(run, { role: "root" });
+      return step(run, wire, "cancel", { connection, command }, () =>
+        withProvider(provider(run, wire, connection), async (p) => {
+          const before = wire.seen.length;
+          const running = p.query(command, [], "row-a57");
+          const started = Date.now();
+          while (wire.seen.length === before && Date.now() - started < 5_000)
+            await new Promise((resolve) => setTimeout(resolve, 2));
+          const atCancel = wire.seen.length;
+          await (p as unknown as { cancelQuery(queryId: string): Promise<boolean> }).cancelQuery("row-a57");
+          const outcome = await running.then(
+            () => "finished",
+            (error: unknown) => (error instanceof QueryCancelledError ? "cancelled" : (error as Error).message),
+          );
+          if (outcome !== "cancelled") throw new Error(`the listing ${outcome} instead of ending cancelled`);
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return { rows: wire.seen.length - atCancel };
+        }),
+      );
+    },
+    again: walkStep("again", "studio-bulk/many/", { role: "root" }, 1),
+  },
+};
+
+/** A63's steps: built through the tunnel check's factory path, the only one that opens a tunnel. */
+async function tunnelStep(
+  run: S3RunContext,
+  wire: Wire,
+  name: string,
+  farEnd: string,
+  port: number,
+  tls: boolean,
+): Promise<S3StepRun> {
+  if (run.tunnel === undefined) throw new Error("A63 runs only in tests/live/s3-tunnel-check.ts");
+  const tunnel = run.tunnel;
+  const base = connectionOf(run, { role: "browse" });
+  const connection = {
+    ...base,
+    id: `s3-live-tunnel-${name}`,
+    host: farEnd,
+    port,
+    sshTunnel: tunnel.sshTunnel,
+    ...(tls ? { ssl: { mode: "verify-full" as const, caCert: run.ca } } : { ssl: undefined }),
+  } as DatabaseConnection;
+  return step(run, wire, name, { connection }, async () => {
+    const p = await tunnel.open(connection);
+    await p.getHealth();
+    return { rows: (await p.listObjects([], "bucket")).length };
+  });
+}
+
+/** Runs the given steps of one row in order, with one request recorder for the row. */
+export async function runS3Row(id: string, run: S3RunContext, steps: readonly string[]): Promise<readonly S3StepRun[]> {
+  const runners = S3_RUNNERS[id];
+  if (runners === undefined) throw new Error(`no runner for ${id}`);
+  const wire = observe(run.createTransport);
+  const runs: S3StepRun[] = [];
+  for (const name of steps) {
+    const runner = runners[name];
+    if (runner === undefined) throw new Error(`${id} has no step ${name}`);
+    runs.push(await runner(run, wire));
+  }
+  return runs;
+}
+
+/** The steps of a row that a target runs: every step of its cell that is not not-applicable. */
+export function applicableSteps(row: S3AcceptanceRow, target: S3Target): string[] {
+  return row.expect[target].filter(({ outcome }) => outcome.kind !== "not-applicable").map(({ step: name }) => name);
+}
+
+/** The object-surface contract the replay asserts: root, no pin, both kinds. */
+export const S3_CONFORMANCE: ObjectSurfaceExpectation = {
+  containers: [],
+  kinds: { bucket: 5 },
+  sampleObject: { path: ["studio-demo"], kind: "bucket" },
+  keyBrowserSample: { path: [joinVirtualKey("studio-demo", "data/table.csv")], kind: "object" },
+  noColumnKinds: true,
+};
+
+/** The `surface` scenario: the assertion is passed in, so this module loads under Node without the Bun-only helper. */
+export async function runS3Surface(
+  run: S3RunContext,
+  assertSurface: (provider: S3Provider) => Promise<void>,
+): Promise<readonly S3StepRun[]> {
+  const wire = observe(run.createTransport);
+  const connection = connectionOf(run, { role: "root" });
+  return [
+    await step(run, wire, "surface", { connection }, () =>
+      withProvider(provider(run, wire, connection), async (p) => (await assertSurface(p), {})),
+    ),
+  ];
 }
