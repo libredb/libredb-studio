@@ -1891,7 +1891,9 @@ describe("the complete engine lists outside the agent docs", () => {
     expect(zh).toContain("S3-compatible object storage 是最新的一个：");
     expect(zh).toContain("Databend 在 S3-compatible object storage 之前：");
     expect(zh).not.toContain("Databend 是最新的一个");
+    expect(zh).toContain("它在 MinIO、Silo、Garage 和 RustFS 上验证过，没有在任何托管服务上验证过。");
     const ko = read("README_ko.md");
+    expect(ko).toContain("MinIO, Silo, Garage, RustFS에서 검증되었으며 호스팅 서비스에서는 검증되지 않았습니다.");
     expect(ko).toContain("가장 최근에 추가된 엔진은 S3-compatible object storage입니다.");
     expect(ko).toContain("Databend는 S3-compatible object storage보다 먼저 추가된 엔진입니다.");
     expect(ko).not.toContain("가장 최근에 추가된 엔진은 Databend입니다");
