@@ -7,10 +7,10 @@
  * global options, never a refused one; a closed value set after its flag; and bucket names after `--bucket` or as an
  * `s3://` path, taken from the schema context the editor holds, so completion never sends a request and offers no
  * folder or key. An S3 connection's schema holds no bucket, because S3 declares no relation kind, so in the app no
- * bucket name is offered. Every inserted name is written by `quoteShellWord`, so it reads back as that name.
+ * bucket name is offered. Every inserted name is written by `quoteShellWord`, so it reads back as that name, and a
+ * name no command line spells is not offered.
  */
 import type * as Monaco from "monaco-editor";
-import { quoteShellWord } from "@/lib/db/console/shell-words";
 import {
   S3_ACCEPTED_GLOBAL_OPTIONS,
   S3_COMMAND_TABLE,
@@ -23,6 +23,7 @@ import {
   s3CommandShape,
   s3Words,
 } from "@/lib/db/providers/objectstore/s3/console/lexer";
+import { shellSpelling } from "@/lib/db/providers/objectstore/s3/names";
 import { S3_LANGUAGE_ID } from "./s3-language";
 
 /** The bucket names of the editor's schema context: each object's first path segment, else its name. */
@@ -90,18 +91,23 @@ export function s3CompletionContext(before: string): S3CompletionContext | undef
   const read = s3Words(head);
   if (!read.ok) return undefined;
   const { lead, words } = read;
-  if (typed.startsWith(S3_SCHEME))
-    return typed.slice(S3_SCHEME.length).includes("/") ? undefined : { kind: "bucket", asPath: true, start };
   const shape = s3CommandShape(words, head);
   const service = shape.serviceAt === undefined ? undefined : words[shape.serviceAt].text;
   const operation = operationOf(service, shape.operationAt === undefined ? undefined : words[shape.operationAt].text);
   const previous = words[words.length - 1];
-  if (
+  const afterValueOption =
     previous !== undefined &&
     isOptionWord(previous, head) &&
     !previous.text.includes("=") &&
-    takesValue(previous.text, operation)
-  ) {
+    takesValue(previous.text, operation);
+  // An s3:// word is a bucket path only where ls or preview reads a path, never as an option's value.
+  if (typed.startsWith(S3_SCHEME))
+    return afterValueOption ||
+      (operation !== "ls" && operation !== "preview") ||
+      typed.slice(S3_SCHEME.length).includes("/")
+      ? undefined
+      : { kind: "bucket", asPath: true, start };
+  if (afterValueOption) {
     const values = closedValues(previous.text, operation);
     if (values !== undefined) return { kind: "value", flag: previous.text, values, start };
     return previous.text === "--bucket" ? { kind: "bucket", asPath: false, start } : undefined;
@@ -128,15 +134,6 @@ export function s3CompletionContext(before: string): S3CompletionContext | undef
 
 type ItemKind = "keyword" | "flag" | "value" | "bucket";
 
-/** A name as an insert reads it back, or undefined when no command line spells it. */
-function quoted(name: string): string | undefined {
-  try {
-    return quoteShellWord(name);
-  } catch {
-    return undefined;
-  }
-}
-
 function itemsOf(
   context: S3CompletionContext,
   buckets: readonly string[],
@@ -160,7 +157,7 @@ function itemsOf(
     case "bucket":
       return buckets.flatMap((bucket) => {
         const label = context.asPath ? `${S3_SCHEME}${bucket}/` : bucket;
-        const insertText = quoted(label);
+        const insertText = shellSpelling(label);
         return insertText === undefined ? [] : [{ label, insertText, kind: "bucket" as const }];
       });
   }

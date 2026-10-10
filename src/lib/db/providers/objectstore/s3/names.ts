@@ -1,13 +1,15 @@
 /**
  * The virtual key space the Keys panel walks: one key space whose keys are `<bucket>/<key>`
  * and whose separator is `/`; which buckets and objects Studio addresses; the Source tab's sentence for each
- * refusal; how a name is shown inside a sentence; and how a listed name is decoded from `encoding-type=url`.
+ * refusal; how a name is shown inside a sentence; how a name is spelled as a command-line word; and how a listed
+ * name is decoded from `encoding-type=url`.
  *
  * The two checks return a verdict, a fixed word that carries no character of the name, and each surface words its
  * own sentence: the Source tab and `objectPath` through `sourceAddressSentence`, the Keys panel
  * through key-scan.ts, the console through its own sentences. The pinned-bucket check needs the connection, so it is
  * not here. Browser-safe: no Node built-in, no server module and no `Buffer`.
  */
+import { quoteShellWord } from "@/lib/db/console/shell-words";
 import { S3_BUCKET_PATTERN, S3_SHOWN_NAME_CHARS } from "./constants";
 
 /** Why Studio does not address a bucket or object; a fixed word that carries no character of the name. */
@@ -73,6 +75,29 @@ export function dotSegmentsLeaveBucket(key: string): boolean {
 export function shownName(name: string): string {
   const points = Array.from(name);
   return JSON.stringify(points.length > S3_SHOWN_NAME_CHARS ? points.slice(0, S3_SHOWN_NAME_CHARS).join("") : name);
+}
+
+/** Whether the text holds a UTF-16 surrogate with no partner. */
+function holdsLoneSurrogate(text: string): boolean {
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) return true;
+  }
+  return false;
+}
+
+/**
+ * The word `quoteShellWord` writes for a name, or undefined when the name holds a carriage return, a NUL or a lone
+ * surrogate, the three characters no command line spells. The check runs before the call, so any error the call
+ * still throws is a defect and reaches the caller.
+ */
+export function shellSpelling(name: string): string | undefined {
+  if (name.includes("\r") || name.includes("\u0000") || holdsLoneSurrogate(name)) return undefined;
+  return quoteShellWord(name);
 }
 
 /**

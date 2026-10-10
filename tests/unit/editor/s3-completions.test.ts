@@ -3,8 +3,9 @@
  * console's own lexer, and what is offered there. Completion never sends a request and offers no folder or key; the
  * bucket names come from the schema context the editor holds, which an S3 connection's own schema leaves empty.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
+import * as shellWords from "@/lib/db/console/shell-words";
 import { registerS3CompletionProvider, s3CompletionBucketsOf, s3CompletionContext } from "@/lib/editor/s3-completions";
 
 describe("s3CompletionBucketsOf", () => {
@@ -62,6 +63,11 @@ describe("s3CompletionContext", () => {
 
   test.each([
     ["aws s3 ls s3://sales/"],
+    ["aws ec2 s3://"],
+    ["aws --region s3://"],
+    ["aws s3api head-object --key s3://"],
+    ["aws s3api head-object --bucket s3://"],
+    ["aws s3api head-object s3://"],
     ["aws s3api head-object --key "],
     ["aws s3api head-object "],
     ["aws --region "],
@@ -165,6 +171,24 @@ describe("registerS3CompletionProvider", () => {
       ["s3://sales/", "s3://sales/"],
       ["s3://a b/", "'s3://a b/'"],
     ]);
+    expect(at(provider, "preview s3://").map((item) => item.label)).toEqual(["s3://sales/", "s3://a b/"]);
+  });
+
+  test("a bucket name holding a NUL or a lone surrogate is not offered either", () => {
+    const { provider } = register(["sales", "x\u0000y", "x\ud800"]);
+    expect(at(provider, "aws s3api head-bucket --bucket ").map((item) => item.label)).toEqual(["sales"]);
+  });
+
+  test("any other error from quoteShellWord is let through, not read as a name with no spelling", () => {
+    const { provider } = register(["sales"]);
+    const spy = spyOn(shellWords, "quoteShellWord").mockImplementation(() => {
+      throw new TypeError("quoting failed");
+    });
+    try {
+      expect(() => at(provider, "aws s3api head-bucket --bucket ")).toThrow(new TypeError("quoting failed"));
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("a suggestion replaces the word typed so far, and after aws the whole lead", () => {

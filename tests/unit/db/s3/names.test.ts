@@ -9,6 +9,7 @@ import {
   decodeListedName,
   joinVirtualKey,
   objectAddressRefusal,
+  shellSpelling,
   shownName,
   sourceAddressSentence,
   splitVirtualKey,
@@ -126,6 +127,17 @@ describe("sourceAddressSentence", () => {
   test("an outside-pin call without a pin is a type error and throws, never a sentence about an empty bucket", () => {
     // @ts-expect-error the outside-pin case requires the pin
     expect(() => sourceAddressSentence("outside-pin", { bucket: "other", key: "k" })).toThrow();
+  });
+});
+
+describe("shellSpelling", () => {
+  test("spells a name as quoteShellWord does, and gives undefined for a CR, a NUL or a lone surrogate", () => {
+    expect(shellSpelling("sales")).toBe("sales");
+    expect(shellSpelling("a b")).toBe("'a b'");
+    expect(shellSpelling("\ud83d\ude00")).toBe("\ud83d\ude00");
+    for (const name of ["a\rb", "a\u0000b", "x\ud800", "\ud800x", "x\udc00", "\ud83d"]) {
+      expect(shellSpelling(name)).toBeUndefined();
+    }
   });
 });
 

@@ -218,9 +218,13 @@ const CONSOLE_ALLOWED: readonly RegExp[] = [
 
 const EDITOR_MODULES = ["src/lib/editor/s3-language.ts", "src/lib/editor/s3-completions.ts"] as const;
 
-/** What an editor module may import by value: the console's browser-safe modules, the shared set, its sibling. */
+/**
+ * What an editor module may import by value: the console's browser-safe modules, the provider's names module (a
+ * row of BROWSER_MODULES), the shared set, its sibling.
+ */
 const EDITOR_ALLOWED: readonly RegExp[] = [
   new RegExp(`^@/lib/db/providers/objectstore/s3/console/(${CONSOLE_SET})$`),
+  /^@\/lib\/db\/providers\/objectstore\/s3\/names$/,
   /^@\/lib\/db\/console\/[a-z-]+$/,
   /^\.\/s3-language$/,
 ];

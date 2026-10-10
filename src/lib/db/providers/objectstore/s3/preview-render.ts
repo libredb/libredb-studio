@@ -3,11 +3,11 @@
  * only the provider's browser-safe modules, the shared console modules, the engine-neutral shared modules and types.
  * Every preview sentence is one literal here; the console's `--max-rows` refusal imports it.
  */
-import { quoteShellWord } from "@/lib/db/console/shell-words";
 import { applySourceBound, SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import type { ObjectSourcePart } from "@/lib/db/types";
 import type { QueryResult } from "@/lib/types";
 import { S3_PREVIEW_LIMITS, S3_SHOWN_NAME_CHARS } from "./constants";
+import { shellSpelling } from "./names";
 import type { ParquetSummary, S3Preview, S3PreviewCell, S3PreviewRows } from "./preview";
 import { hexDump, hexRows, textLines } from "./preview-text";
 
@@ -122,12 +122,8 @@ export function inMiB(bytes: number): string {
  * with "...", Oxia's shown-key rule; a name no command line can spell gets the fixed phrase instead.
  */
 export function spellName(name: string): string {
-  let spelled: string;
-  try {
-    spelled = quoteShellWord(name);
-  } catch {
-    return UNSPELLABLE_NAME;
-  }
+  const spelled = shellSpelling(name);
+  if (spelled === undefined) return UNSPELLABLE_NAME;
   const characters = Array.from(spelled);
   return characters.length > S3_SHOWN_NAME_CHARS ? `${characters.slice(0, S3_SHOWN_NAME_CHARS).join("")}...` : spelled;
 }
@@ -152,13 +148,8 @@ const HINT_MAX_CHARS = 4_096;
  * preview a different object.
  */
 export function previewHint(bucket: string, key: string): string | undefined {
-  let word: string;
-  try {
-    word = quoteShellWord(`s3://${bucket}/${key}`);
-  } catch {
-    return undefined;
-  }
-  return word.length > HINT_MAX_CHARS ? undefined : word;
+  const word = shellSpelling(`s3://${bucket}/${key}`);
+  return word === undefined || word.length > HINT_MAX_CHARS ? undefined : word;
 }
 
 type SourceParts = [ObjectSourcePart, ...ObjectSourcePart[]];

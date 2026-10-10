@@ -4,9 +4,10 @@
  * command line reads them, or by a fixed phrase when no command line can. Then the Source tab parts and the
  * console result built from a preview.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { isSourceDocumentShape } from "@/components/object-source/source-reader";
+import * as shellWords from "@/lib/db/console/shell-words";
 import { SOURCE_CHARACTER_LIMIT, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
 import { previewObject, type S3Preview } from "@/lib/db/providers/objectstore/s3/preview";
 import {
@@ -199,7 +200,23 @@ describe("previewHint", () => {
     expect(previewHint("sales", "a b")).toBe("'s3://sales/a b'");
     expect(previewHint("sales", "rows.csv")).toBe("s3://sales/rows.csv");
     expect(previewHint("sales", "a\rb")).toBeUndefined();
+    expect(previewHint("sales", "a\u0000b")).toBeUndefined();
+    expect(previewHint("sales", "a\udc00b")).toBeUndefined();
     expect(previewHint("sales", "a".repeat(5_000))).toBeUndefined();
+  });
+});
+
+describe("a failure of the quoting itself is not read as a name with no spelling", () => {
+  test("spellName and previewHint let any other error from quoteShellWord through", () => {
+    const spy = spyOn(shellWords, "quoteShellWord").mockImplementation(() => {
+      throw new TypeError("quoting failed");
+    });
+    try {
+      expect(() => spellName("amount")).toThrow(new TypeError("quoting failed"));
+      expect(() => previewHint("sales", "rows.csv")).toThrow(new TypeError("quoting failed"));
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
