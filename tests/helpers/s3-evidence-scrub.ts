@@ -12,8 +12,8 @@
  * - Continuation tokens are kept as sent and received, byte for byte: the replay must send them back exactly.
  * - An exchange body over 512 KiB is refused, so a scenario is designed to stay under it.
  * - Nothing is written while the file would hold a fixture secret raw, percent-encoded, form-encoded, in standard or
- *   URL-safe base64 with or without padding, or escaped in JSON; binary bodies are decoded before the search, since
- *   base64 of a longer body need not contain base64 of the secret.
+ *   URL-safe base64 with or without padding, escaped in JSON, or escaped in XML; binary bodies are decoded before the
+ *   search, since base64 of a longer body need not contain base64 of the secret.
  */
 import { S3_RESPONSE_HEADERS } from "@/lib/db/providers/objectstore/s3/headers";
 import { bodyBytes, type S3Capture, type S3Exchange } from "./s3-wire";
@@ -49,6 +49,15 @@ export function secretEncodings(value: string): readonly { readonly encoding: st
     { encoding: "base64 without padding", text: base64.replace(/=+$/, "") },
     { encoding: "base64url", text: base64url },
     { encoding: "JSON-escaped", text: JSON.stringify(value).slice(1, -1) },
+    {
+      encoding: "XML-escaped",
+      text: value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;"),
+    },
   ];
   const seen = new Set<string>();
   return spellings.filter(({ text }) => (seen.has(text) ? false : (seen.add(text), true)));

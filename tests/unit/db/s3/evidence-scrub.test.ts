@@ -138,7 +138,14 @@ describe("secretHits and normalizeMessage", () => {
     expect(secretHits("nothing here", SECRETS)).toEqual([]);
   });
 
-  test("normalizeMessage drops the request id clause and replaces a bare request id header value", () => {
+  test("secretHits finds a secret escaped in an XML body", () => {
+    expect(secretEncodings("a&b<c>\"d'").map((e) => e.encoding)).toContain("XML-escaped");
+    expect(
+      secretHits("<Message>a&amp;b&lt;c&gt;&quot;d&apos;</Message>", [{ label: "xml secret", value: "a&b<c>\"d'" }]),
+    ).toEqual(["xml secret XML-escaped"]);
+  });
+
+  test("normalizeMessage drops the request id clause and leaves a message without one unchanged", () => {
     expect(normalizeMessage("S3 answered 500 InternalError (request id 186C2A1F9B3E5D00).")).toBe(
       "S3 answered 500 InternalError.",
     );
