@@ -17,6 +17,11 @@ export const KUBERNETES_MAX_IN_FLIGHT = 4;
 export const KUBERNETES_PAGE_SIZE = 500;
 /** Rows one console statement may read. */
 export const KUBERNETES_MAX_STATEMENT_ROWS = 5_000;
+/**
+ * Pages of one list walk that may hold no object yet carry a continue token. A selector can leave a page empty, but a
+ * server that keeps answering such pages would hold the walk for ever, so past this many it stops.
+ */
+export const KUBERNETES_MAX_EMPTY_PAGES = 10;
 /** Objects the tree lists per kind and container; the folder still shows the true count. */
 export const KUBERNETES_TREE_OBJECT_CAP = 1_000;
 /** Bytes one response may hold. */

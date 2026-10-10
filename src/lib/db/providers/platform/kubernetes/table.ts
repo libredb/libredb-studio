@@ -8,7 +8,7 @@
  */
 import { QueryError } from "@/lib/db/errors";
 import { KubernetesRequestError, KubernetesResponseTooLargeError } from "./errors";
-import { KUBERNETES_MAX_RESPONSE_BYTES, KUBERNETES_TYPE } from "./limits";
+import { KUBERNETES_MAX_EMPTY_PAGES, KUBERNETES_MAX_RESPONSE_BYTES, KUBERNETES_TYPE } from "./limits";
 
 export interface TableColumn {
   readonly name: string;
@@ -66,29 +66,38 @@ function column(definition: unknown): TableColumn {
   };
 }
 
+/** An array, or no entries for the null or absent field an empty answer carries; anything else is not a list. */
+function entries(value: unknown): readonly unknown[] | undefined {
+  if (value === null || value === undefined) return [];
+  return Array.isArray(value) ? value : undefined;
+}
+
 /**
  * A Table answer, or a list answer read as a two-column Table (Name and Created), which is what a server that cannot
- * render a Table for a resource sends for the Accept's plain-JSON fallback.
+ * render a Table for a resource sends for the Accept's plain-JSON fallback. An empty answer may carry `rows: null`
+ * (the default Table convertor's) or `items: null`: both read as no rows.
  */
 export function parseTable(body: unknown): KubeTable {
   if (!isObject(body)) throw new QueryError(NOT_A_TABLE, KUBERNETES_TYPE);
-  if (body.kind === "Table" && Array.isArray(body.columnDefinitions) && Array.isArray(body.rows)) {
+  const rows = entries(body.rows);
+  if (body.kind === "Table" && Array.isArray(body.columnDefinitions) && rows !== undefined) {
     return {
       columns: body.columnDefinitions.map(column),
-      rows: body.rows.filter(isObject).map((row) => ({
+      rows: rows.filter(isObject).map((row) => ({
         cells: Array.isArray(row.cells) ? row.cells : [],
         ...(isObject(row.object) ? { object: row.object } : {}),
       })),
       ...listMeta(body),
     };
   }
-  if (Array.isArray(body.items)) {
+  const items = "items" in body ? entries(body.items) : undefined;
+  if (items !== undefined) {
     return {
       columns: [
         { name: "Name", type: "string", format: "name", priority: 0 },
         { name: "Created", type: "string", format: "date-time", priority: 0 },
       ],
-      rows: body.items.filter(isObject).map((item) => {
+      rows: items.filter(isObject).map((item) => {
         const metadata = isObject(item.metadata) ? item.metadata : {};
         return { cells: [metadata.name ?? null, metadata.creationTimestamp ?? null], object: item };
       }),
@@ -158,6 +167,13 @@ export interface TableScan {
   readonly resourceVersion?: string;
 }
 
+/** A continue token sent back unchanged: a server that does so would be asked for the same page for ever. */
+export const REPEATED_CONTINUE_SENTENCE =
+  "The API server answered a list page with the continue token Studio had just sent, so the list does not advance; Studio stops rather than read the same page again.";
+
+/** Too many pages with no object and a continue token: a fresh token each time is no progress either. */
+export const EMPTY_PAGES_SENTENCE = `The API server answered ${KUBERNETES_MAX_EMPTY_PAGES} pages of this list with no objects and a continue token, so the list does not advance; Studio stops rather than read on.`;
+
 function isExpired(error: unknown): boolean {
   return error instanceof KubernetesRequestError && error.status === 410;
 }
@@ -170,6 +186,7 @@ async function walk(read: TablePageReader, window: TableWindow, pageSize: number
   let resourceVersion: string | undefined;
   let token: string | undefined;
   let first = true;
+  let emptyPages = 0;
   for (;;) {
     // Never more rows than the window still needs: a walk one row past a cap asks for that one row, not a full page.
     const limit = Math.min(pageSize, wanted - seen);
@@ -183,6 +200,7 @@ async function walk(read: TablePageReader, window: TableWindow, pageSize: number
       if (seen >= window.offset && seen < wanted) kept.push(row);
       seen += 1;
     }
+    const sent = token;
     token = page.continueToken;
     if (seen >= wanted || token === undefined) {
       return {
@@ -191,6 +209,12 @@ async function walk(read: TablePageReader, window: TableWindow, pageSize: number
         more: seen > wanted || token !== undefined,
         ...(resourceVersion === undefined ? {} : { resourceVersion }),
       };
+    }
+    // A page with rows always advances the walk; only a page without them can repeat for ever.
+    if (token === sent) throw new QueryError(REPEATED_CONTINUE_SENTENCE, KUBERNETES_TYPE);
+    if (page.rows.length === 0) {
+      emptyPages += 1;
+      if (emptyPages >= KUBERNETES_MAX_EMPTY_PAGES) throw new QueryError(EMPTY_PAGES_SENTENCE, KUBERNETES_TYPE);
     }
   }
 }

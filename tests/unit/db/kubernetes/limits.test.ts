@@ -26,6 +26,7 @@ describe("kubernetes limits", () => {
       retryAfterDefaultMs: limits.KUBERNETES_RETRY_AFTER_DEFAULT_MS,
       retryJitterMs: limits.KUBERNETES_RETRY_JITTER_MS,
       kubeconfigBytes: limits.KUBERNETES_KUBECONFIG_MAX_BYTES,
+      emptyPages: limits.KUBERNETES_MAX_EMPTY_PAGES,
     }).toEqual({
       page: 500,
       statementRows: 5000,
@@ -49,6 +50,7 @@ describe("kubernetes limits", () => {
       retryAfterDefaultMs: 1000,
       retryJitterMs: 250,
       kubeconfigBytes: 1048576,
+      emptyPages: 10,
     });
   });
 

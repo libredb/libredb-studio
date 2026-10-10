@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
 import { KubernetesRequestError, KubernetesResponseTooLargeError } from "@/lib/db/providers/platform/kubernetes/errors";
+import { KUBERNETES_MAX_EMPTY_PAGES } from "@/lib/db/providers/platform/kubernetes/limits";
 import {
   cellOf,
   type KubeTable,
@@ -75,8 +76,39 @@ describe("parseTable", () => {
     expect(table.resourceVersion).toBe("9");
   });
 
+  test("an empty Table whose rows are null or absent reads as no rows, its columns and metadata kept", () => {
+    for (const rows of [{ rows: null }, {}]) {
+      const table = parseTable({
+        kind: "Table",
+        metadata: { resourceVersion: "41" },
+        columnDefinitions: [
+          { name: "Name", type: "string", format: "name", priority: 0 },
+          { name: "Created At", type: "date", format: "", priority: 0 },
+        ],
+        ...rows,
+      });
+      expect(table.columns.map((entry) => entry.name)).toEqual(["Name", "Created At"]);
+      expect(table.rows).toEqual([]);
+      expect(table.resourceVersion).toBe("41");
+    }
+  });
+
+  test("an empty list whose items are null reads as no rows", () => {
+    const table = parseTable({ kind: "WidgetList", metadata: { resourceVersion: "3" }, items: null });
+    expect(table.columns.map((entry) => entry.name)).toEqual(["Name", "Created"]);
+    expect(table.rows).toEqual([]);
+    expect(table.resourceVersion).toBe("3");
+  });
+
   test("anything else is refused with a sentence", () => {
-    for (const body of [null, "x", { kind: "Status" }, { kind: "Table", rows: [] }]) {
+    for (const body of [
+      null,
+      "x",
+      { kind: "Status" },
+      { kind: "Table", rows: [] },
+      { kind: "Table", columnDefinitions: [], rows: "x" },
+      { kind: "Status", items: "x" },
+    ]) {
       expect(() => parseTable(body)).toThrow(
         "The API server answered with neither a Table nor a list, so there is nothing to show.",
       );
@@ -231,5 +263,47 @@ describe("scanTable", () => {
       throw new QueryError("boom");
     };
     await expect(scanTable(failing, { offset: 0, limit: 1, pageSize: 1 })).rejects.toThrow("boom");
+  });
+});
+
+describe("scanTable: a list that does not advance", () => {
+  const COLUMNS = [{ name: "Name", type: "string", format: "name", priority: 0 }];
+
+  test("a continue token answered back unchanged is refused at once, not read again", async () => {
+    let reads = 0;
+    const read: TablePageReader = async () => {
+      reads += 1;
+      if (reads > 10) throw new Error("read past the guard");
+      return { columns: COLUMNS, rows: [], continueToken: "same" };
+    };
+    await expect(scanTable(read, { offset: 0, limit: 1_001, pageSize: 500 })).rejects.toThrow(
+      "The API server answered a list page with the continue token Studio had just sent, so the list does not advance; Studio stops rather than read the same page again.",
+    );
+    expect(reads).toBe(2);
+  });
+
+  test("pages with no rows and a fresh token every time are stopped by a count of empty pages", async () => {
+    let reads = 0;
+    const read: TablePageReader = async () => {
+      reads += 1;
+      if (reads > 100) throw new Error("read past the guard");
+      return { columns: COLUMNS, rows: [], continueToken: `t${reads}` };
+    };
+    await expect(scanTable(read, { offset: 0, limit: 1_001, pageSize: 500 })).rejects.toThrow(
+      `The API server answered ${KUBERNETES_MAX_EMPTY_PAGES} pages of this list with no objects and a continue token, so the list does not advance; Studio stops rather than read on.`,
+    );
+    expect(reads).toBe(KUBERNETES_MAX_EMPTY_PAGES);
+  });
+
+  test("a few empty pages with a fresh token, as a selector can answer, are read through", async () => {
+    let reads = 0;
+    const read: TablePageReader = async () => {
+      reads += 1;
+      if (reads < KUBERNETES_MAX_EMPTY_PAGES) return { columns: COLUMNS, rows: [], continueToken: `t${reads}` };
+      return { columns: COLUMNS, rows: [{ cells: ["last"] }] };
+    };
+    const scan = await scanTable(read, { offset: 0, limit: 5, pageSize: 5 });
+    expect(names(scan.rows)).toEqual(["last"]);
+    expect(scan.more).toBe(false);
   });
 });
