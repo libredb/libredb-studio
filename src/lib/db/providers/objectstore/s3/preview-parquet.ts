@@ -3,24 +3,26 @@
  * hyparquet-compressors, through a memoised dynamic import the first time a Parquet preview runs, so a server
  * that never previews Parquet never loads them. It reads the footer by a suffix range, guards its Thrift bytes and
  * walks its schema before hyparquet builds any tree, plans the first row group's leading columns inside the fetch,
- * decode, leaf and value budgets, then (Task 17) prefetches, pre-scans the page headers and decodes from memory.
+ * decode, leaf and value budgets, then prefetches, pre-scans the page headers and decodes from memory.
  */
 import type * as Hyparquet from "hyparquet";
-import type { ColumnChunk, ColumnMetaData, FileMetaData, ParquetParsers } from "hyparquet";
+import type { AsyncBuffer, ColumnChunk, ColumnMetaData, Compressors, FileMetaData, ParquetParsers } from "hyparquet";
 import { QueryError } from "@/lib/db/errors";
-import { S3_TYPE, type S3PreviewLimits } from "./constants";
+import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
+import { S3_PARQUET_DECODE_QUEUE, S3_PARQUET_DECODE_SLOTS, S3_TYPE, type S3PreviewLimits } from "./constants";
 import { type ParquetSchemaShape, walkParquetSchema } from "./parquet-schema";
-import { guardThriftStruct } from "./parquet-thrift-guard";
+import { guardThriftStruct, readPageHeader } from "./parquet-thrift-guard";
 import type {
   ParquetColumnSummary,
   ParquetSummary,
   S3ByteRange,
   S3ObjectHead,
+  S3Preview,
   S3PreviewCell,
   S3PreviewRequest,
 } from "./preview";
-import { cutText, renderCell } from "./preview-cells";
-import { FOOTER_BAD_BARE, inMiB, previewSentence, spellName } from "./preview-render";
+import { buildRows, cutText, renderCell } from "./preview-cells";
+import { FOOTER_BAD_BARE, inMiB, PreviewRefusal, previewSentence, spellName } from "./preview-render";
 
 /** The five codec functions the guarded compressors call. */
 export interface ParquetCodecs {
@@ -424,4 +426,290 @@ export function planParquet(
     }
   }
   return { kind: "rows", columns: chosen, rowsToRead: Math.min(rowsAsked, firstRows), rowsAsked, notices };
+}
+
+/** The guarded compressors' refusal; previewParquet reports it as R-PQ-DECODE. */
+export const DECODE_OVER_BUDGET = "The pages declare more decoded bytes than the preview decodes";
+
+/** The prefetch buffer's refusal of a slice it does not hold; previewParquet reports it as R-PQ-DECODE. */
+const OUTSIDE_PLAN = "The Parquet reader asked for bytes outside the planned ranges";
+
+/**
+ * The second line behind the pre-scan: each codec checks the declared output length against the budget
+ * left before it runs, then spends it. Snappy is hyparquet's own pure-JavaScript decoder, so hysnappy's shared WASM
+ * memory is never grown; zstd gets a buffer of the declared size, since fzstd otherwise sizes from the frame.
+ */
+export function guardedCompressors(budget: number, modules: ParquetModules): Compressors {
+  let left = budget;
+  const guard =
+    (codec: (input: Uint8Array, outputLength: number) => Uint8Array) =>
+    (input: Uint8Array, outputLength: number): Uint8Array => {
+      if (outputLength > left) throw new Error(DECODE_OVER_BUDGET);
+      const output = codec(input, outputLength);
+      left -= outputLength;
+      return output;
+    };
+  return {
+    SNAPPY: guard((input, outputLength) => {
+      const output = new Uint8Array(outputLength);
+      modules.snappyUncompress(input, output);
+      return output;
+    }),
+    GZIP: guard(modules.codecs.gzip),
+    BROTLI: guard(modules.codecs.brotli),
+    ZSTD: guard((input, outputLength) => modules.codecs.zstd(input, new Uint8Array(outputLength))),
+    LZ4: guard(modules.codecs.lz4),
+    LZ4_RAW: guard(modules.codecs.lz4Raw),
+  };
+}
+
+export interface PrescanTotals {
+  values: number;
+  decoded: number;
+}
+
+/**
+ * Walks one chunk's pages with the guarded header reader: the walk must end exactly at the
+ * chunk's end; a page may declare at most parquetMaxPageValues values; the data pages' values may not pass the
+ * footer's count or parquetMaxChunkValues; the values of every page of every chosen chunk, dictionary pages included,
+ * may not pass parquetMaxTotalValues; the declared decoded bytes may not pass the decode budget.
+ */
+export function prescanChunk(
+  bytes: Uint8Array,
+  footerValues: number,
+  name: string,
+  limits: S3PreviewLimits,
+  totals: PrescanTotals,
+): void {
+  const c = spellName(name);
+  let offset = 0;
+  let dataValues = 0;
+  while (offset < bytes.length) {
+    const facts = readPageHeader(bytes, offset, limits.thriftMaxDepth);
+    if (!("headerBytes" in facts)) throw new PreviewRefusal(previewSentence("R-PQ-PAGES", { c }));
+    if (facts.numValues > limits.parquetMaxPageValues)
+      throw new PreviewRefusal(previewSentence("R-PQ-PAGE-VALUES", { c, v: facts.numValues }));
+    if (facts.type === 0 || facts.type === 3) dataValues += facts.numValues;
+    totals.values += facts.numValues;
+    totals.decoded += facts.uncompressedPageSize;
+    if (totals.decoded > limits.parquetDecodeBudget) {
+      throw new PreviewRefusal(
+        previewSentence("R-PQ-PAGE-DECODE", {
+          d: inMiB(totals.decoded),
+          decodeBudget: inMiB(limits.parquetDecodeBudget),
+        }),
+      );
+    }
+    offset += facts.headerBytes + facts.compressedPageSize;
+  }
+  if (offset !== bytes.length) throw new PreviewRefusal(previewSentence("R-PQ-PAGES", { c }));
+  if (dataValues > footerValues || dataValues > limits.parquetMaxChunkValues) {
+    throw new PreviewRefusal(previewSentence("R-PQ-PAGE-VALUES", { c, v: dataValues }));
+  }
+  if (totals.values > limits.parquetMaxTotalValues) {
+    throw new PreviewRefusal(previewSentence("R-PQ-PAGE-VALUES", { c, v: totals.values }));
+  }
+}
+
+export interface DecodeSlots {
+  /** Resolves with the release function; rejects with R-PQ-BUSY when the queue is full, or with the abort. */
+  acquire(signal: AbortSignal): Promise<() => void>;
+}
+
+/**
+ * A first-in, first-out semaphore of `slots` decodes and `queue` waiters. Not the engine limiter: its
+ * permit admits one decode, not one wire call, and it names no engine. A waiter whose signal aborts leaves the queue;
+ * each release function frees its slot once, whatever path calls it.
+ */
+export function createDecodeSlots(slots: number, queue: number): DecodeSlots {
+  let running = 0;
+  const waiting: { readonly grant: () => void; readonly signal: AbortSignal; readonly onAbort: () => void }[] = [];
+  const release = (): void => {
+    const next = waiting.shift();
+    if (next === undefined) {
+      running -= 1;
+      return;
+    }
+    next.signal.removeEventListener("abort", next.onAbort);
+    next.grant();
+  };
+  const releaseOnce = (): (() => void) => {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      release();
+    };
+  };
+  return {
+    async acquire(signal) {
+      signal.throwIfAborted();
+      if (running < slots) {
+        running += 1;
+        return releaseOnce();
+      }
+      if (waiting.length >= queue) throw new PreviewRefusal(previewSentence("R-PQ-BUSY"));
+      return new Promise<() => void>((resolve, reject) => {
+        const entry = {
+          signal,
+          grant: () => resolve(releaseOnce()),
+          onAbort: () => {
+            waiting.splice(waiting.indexOf(entry), 1);
+            reject(signal.reason);
+          },
+        };
+        waiting.push(entry);
+        signal.addEventListener("abort", entry.onAbort, { once: true });
+      });
+    },
+  };
+}
+
+export interface ParquetDeps {
+  readonly modules: () => Promise<ParquetModules>;
+  readonly slots: DecodeSlots;
+}
+
+/** The process-wide decode slot: at most S3_PARQUET_DECODE_SLOTS decodes, S3_PARQUET_DECODE_QUEUE waiters. */
+export const PARQUET_DEPS: ParquetDeps = {
+  modules: loadParquetModules,
+  slots: createDecodeSlots(S3_PARQUET_DECODE_SLOTS, S3_PARQUET_DECODE_QUEUE),
+};
+
+export type ParquetOutcome = S3Preview | { readonly kind: "not-parquet"; readonly held?: Uint8Array };
+
+interface Span {
+  readonly start: number;
+  end: number;
+  bytes: Uint8Array;
+}
+
+/** A chunk's byte range as hyparquet plans it: the dictionary page if any (0 counts as none), else the first data page. */
+function chunkRange(chunk: ColumnChunk): { readonly start: number; readonly end: number } {
+  const meta = metaOf(chunk);
+  const start = Number(meta.dictionary_page_offset || meta.data_page_offset);
+  return { start, end: start + Number(meta.total_compressed_size) };
+}
+
+async function decodeRows(modules: ParquetModules, options: Parameters<ParquetModules["parquetReadObjects"]>[0]) {
+  try {
+    return await modules.parquetReadObjects(options);
+  } catch {
+    throw new PreviewRefusal(previewSentence("R-PQ-DECODE"));
+  }
+}
+
+/** Ranges, merge, prefetch, pre-scan, the slot, the guarded decode, the rows. */
+async function readPlannedRows(
+  input: ParquetPreviewInput,
+  footer: ParquetFooter,
+  plan: Extract<ParquetPlan, { kind: "rows" }>,
+  modules: ParquetModules,
+  slots: DecodeSlots,
+): Promise<{ readonly rows: ReturnType<typeof buildRows>["rows"]; readonly notices: readonly string[] }> {
+  const size = input.head.size;
+  const chunks = plan.columns.flatMap((column) =>
+    column.chunks.map((chunk) => ({ chunk, name: metaOf(chunk).path_in_schema.join("."), ...chunkRange(chunk) })),
+  );
+  for (const each of chunks) {
+    if (each.start < 4 || each.end > footer.footerStart || each.end < each.start) {
+      throw new PreviewRefusal(previewSentence("R-PQ-CHUNK-RANGE", { c: spellName(each.name) }));
+    }
+  }
+  const spans: Span[] = [];
+  for (const each of [...chunks].sort((a, b) => a.start - b.start)) {
+    const last = spans[spans.length - 1];
+    if (last !== undefined && last.end === each.start) last.end = each.end;
+    else spans.push({ start: each.start, end: each.end, bytes: new Uint8Array(0) });
+  }
+  for (const span of spans) {
+    // oxlint-disable-next-line no-await-in-loop -- the spans are read one after another, one GET in flight per preview.
+    span.bytes = await input.read({ kind: "span", start: span.start, end: span.end }, span.end - span.start);
+  }
+  const holding = (start: number, end: number): Span | undefined =>
+    spans.find((span) => span.start <= start && end <= span.end);
+  const totals: PrescanTotals = { values: 0, decoded: 0 };
+  for (const each of chunks) {
+    const span = holding(each.start, each.end) as Span;
+    prescanChunk(
+      span.bytes.subarray(each.start - span.start, each.end - span.start),
+      Number(metaOf(each.chunk).num_values),
+      each.name,
+      input.limits,
+      totals,
+    );
+  }
+  const held: readonly Span[] = [...spans, { start: footer.footerStart, end: size, bytes: footer.footerBytes }];
+  const file: AsyncBuffer = {
+    byteLength: size,
+    slice(start: number, end: number = size): ArrayBuffer {
+      const span = held.find((each) => each.start <= start && end <= each.end);
+      if (span === undefined) throw new Error(OUTSIDE_PLAN);
+      return span.bytes.slice(start - span.start, end - span.start).buffer;
+    },
+  };
+  input.signal.throwIfAborted();
+  const release = await slots.acquire(input.signal);
+  let objects: Record<string, unknown>[];
+  try {
+    input.signal.throwIfAborted();
+    objects = await decodeRows(modules, {
+      file,
+      metadata: footer.metadata,
+      columns: plan.columns.map((column) => column.name),
+      rowStart: 0,
+      rowEnd: plan.rowsToRead,
+      compressors: guardedCompressors(input.limits.parquetDecodeBudget, modules),
+      utf8: false,
+      parsers: PREVIEW_PARSERS,
+      useOffsetIndex: false,
+    });
+  } finally {
+    release();
+  }
+  const firstRows = Number(footer.metadata.row_groups[0].num_rows);
+  const totalRows = Number(footer.metadata.num_rows);
+  const built = buildRows(
+    {
+      names: uniqueFieldNames(plan.columns.map((column) => column.name)),
+      typing: plan.columns.map((column) => column.type),
+      rowCount: objects.length,
+      available: firstRows >= plan.rowsAsked && totalRows > plan.rowsAsked ? totalRows : objects.length,
+      valueAt: (row, column) => objects[row][plan.columns[column].name],
+    },
+    undefined,
+    plan.rowsToRead,
+    input.limits,
+  );
+  return { rows: built.rows, notices: built.notices };
+}
+
+/**
+ * A Parquet preview: the footer, the summary and the plan; then, when rows are planned, the reads and the
+ * decode. A refusal that is not a QueryError comes back as the `refused` arm; a file that is not Parquet comes back as
+ * `not-parquet`, with the bytes already read when they cover the whole object, for previewObject's hex dump.
+ */
+export async function previewParquet(
+  input: ParquetPreviewInput,
+  deps: ParquetDeps = PARQUET_DEPS,
+): Promise<ParquetOutcome> {
+  const modules = await deps.modules();
+  const outcome = await readParquetFooter(input, modules);
+  if (outcome.kind === "not-parquet") return outcome;
+  if (outcome.kind === "refused") return { kind: "refused", sentence: outcome.sentence, notices: [] };
+  const { summary, notices: summaryNotices } = summarizeParquet(outcome.footer, input.limits);
+  const plan = planParquet(outcome.footer, input.request, input.purpose, input.limits);
+  if (plan.kind === "summary") return { kind: "parquet", summary, notices: [...plan.notices, ...summaryNotices] };
+  try {
+    const read = await readPlannedRows(input, outcome.footer, plan, modules, deps.slots);
+    return {
+      kind: "parquet",
+      summary,
+      rows: read.rows,
+      notices: [...plan.notices, ...summaryNotices, ...read.notices],
+    };
+  } catch (error) {
+    if (error instanceof PreviewRefusal) return { kind: "refused", sentence: error.sentence, notices: [] };
+    throw error;
+  }
 }
