@@ -7,6 +7,7 @@
  * factory is wrapped to pair that record with the request's method, target and answer, in order. Every capture passes
  * tests/helpers/s3-evidence-scrub.ts before it is written. A step whose summary is not what S3_ACCEPTANCE expects stops
  * the run, and nothing is written; so does a change of the buckets' fingerprint between the first scenario and the last.
+ * Every line it prints has each fixture secret, in every spelling of the scrub, replaced by <secret> (maskSecrets).
  *
  *   bun tests/live/s3-evidence.ts --target <minio|minio-region|silo|garage|rustfs> [--garage-keys <dir>] [--only <a,b>]
  *
@@ -21,7 +22,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import path from "node:path";
 import { createNodeByteTransport } from "@/lib/db/http/node-transport";
 import { assertObjectSurface } from "../helpers/object-surface-conformance";
-import { scrubCapture } from "../helpers/s3-evidence-scrub";
+import { maskSecrets, scrubCapture } from "../helpers/s3-evidence-scrub";
 import {
   captureFilesOnDisk,
   captureSets,
@@ -95,7 +96,7 @@ const selected = only === undefined ? planned : planned.filter(({ scenario }) =>
 
 const principals = readS3Principals(target, options["garage-keys"]);
 const secrets = fixtureSecrets(target, principals);
-const redact = (text: string) => secrets.reduce((out, { value }) => out.split(value).join("<secret>"), text);
+const mask = (text: string) => maskSecrets(text, secrets);
 
 function image(): string {
   const { container, built } = VERSIONS[target as S3CaptureTarget];
@@ -180,7 +181,7 @@ try {
       exchanges: recording.exchanges.length,
       clockOffsetMs: scenario.clockOffsetMs,
     });
-    console.log(`recorded ${scenario.name} (${recording.exchanges.length} exchanges, ${ms} ms)`);
+    console.log(mask(`recorded ${scenario.name} (${recording.exchanges.length} exchanges, ${ms} ms)`));
   }
   const after = await s3Fingerprint(target, principals, production);
   if (JSON.stringify(before) !== JSON.stringify(after))
@@ -220,8 +221,8 @@ try {
   );
   if (readDigestTable(readFileSync(path.join(S3_CAPTURES_ROOT, "README.md"), "utf8")).length !== digests.length)
     throw new Error("the README's digest table did not read back");
-  console.log(`wrote ${writes.size} files to tests/fixtures/s3/captures/${set}`);
+  console.log(mask(`wrote ${writes.size} files to tests/fixtures/s3/captures/${set}`));
 } catch (error) {
-  console.error(redact(`s3-evidence.ts: ${error instanceof Error ? error.message : String(error)}`));
+  console.error(mask(`s3-evidence.ts: ${error instanceof Error ? error.message : String(error)}`));
   process.exit(1);
 }

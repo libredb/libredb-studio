@@ -25,7 +25,8 @@
  * minutes ahead and, on Garage, 25 hours behind. Before the first check and after the last it fingerprints every
  * fixture bucket, and any difference fails the run. Row A63 runs only in tests/live/s3-tunnel-check.ts.
  *
- * Every line it prints has each fixture secret replaced by <secret>; masking is never the check: row A65 searches
+ * Every line it prints has each fixture secret, in every spelling of the scrub, replaced by <secret> (maskSecrets);
+ * masking is never the check: row A65 searches
  * every message, cell and notice of every row, before masking, for every fixture secret in every encoding of the
  * scrub, and names the row and the encoding, never the value.
  *
@@ -38,7 +39,7 @@ import { networkInterfaces, tmpdir } from "node:os";
 import path from "node:path";
 import { createNodeByteTransport } from "@/lib/db/http/node-transport";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
-import { secretHits } from "../helpers/s3-evidence-scrub";
+import { maskSecrets, secretHits } from "../helpers/s3-evidence-scrub";
 import type { S3RecordedRequest, S3TransportFactory } from "../helpers/s3-wire";
 import {
   applicableSteps,
@@ -97,7 +98,7 @@ if (target === "garage" && options["garage-keys"] === undefined)
 const ca = options.ca === undefined ? undefined : readFileSync(options.ca, "utf8");
 const principals = readS3Principals(target, options["garage-keys"]);
 const secrets = fixtureSecrets(target, principals);
-const mask = (text: string) => secrets.reduce((out, { value }) => out.split(value).join("<secret>"), text);
+const mask = (text: string) => maskSecrets(text, secrets);
 
 // Every socket a check opens, counted where node:net opens it.
 let sockets = 0;

@@ -7,6 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { S3_RESPONSE_HEADERS } from "@/lib/db/providers/objectstore/s3/headers";
 import {
+  maskSecrets,
   normalizeMessage,
   REQUEST_ID_PLACEHOLDER,
   S3_EXCHANGE_BODY_MAX_BYTES,
@@ -145,10 +146,63 @@ describe("secretHits and normalizeMessage", () => {
     ).toEqual(["xml secret XML-escaped"]);
   });
 
+  test("secretHits finds a secret escaped with XML numeric references, as Go's encoding/xml writes it", () => {
+    const secret = { label: "quoted secret", value: "Fixture'Quote\"123" };
+    expect(secretHits("<Message>Fixture&#39;Quote&#34;123</Message>", [secret])).toEqual([
+      "quoted secret XML-escaped with numeric references",
+    ]);
+    expect(
+      secretHits("<Message>a&amp;b&lt;c&gt;&#34;d&#39;</Message>", [{ label: "xml secret", value: "a&b<c>\"d'" }]),
+    ).toEqual(["xml secret XML-escaped with numeric references"]);
+  });
+
+  test("secretHits finds the base64 and base64url of a secret at each of the three byte offsets inside a longer value", () => {
+    // A secret whose base64 at every offset holds + or /, so each base64url core is a spelling of its own.
+    const secret = { label: "offset secret", value: "Fixture?>~Pass?>~123" };
+    for (const [offset, prefix] of ["", "x", "xy"].entries()) {
+      const bytes = Buffer.from(`${prefix}${secret.value}~~`, "utf8");
+      for (const [encoding, text] of [
+        ["base64", bytes.toString("base64")],
+        ["base64url", bytes.toString("base64url")],
+      ] as const)
+        expect({ offset, encoding, hits: secretHits(`<Body>${text}</Body>`, [secret]) }).toEqual({
+          offset,
+          encoding,
+          hits: [`offset secret ${encoding} core at byte offset ${offset}`],
+        });
+    }
+  });
+
+  test("base64url of one byte and then a secret is found", () => {
+    expect(secretHits(Buffer.from(`x${SECRETS[0].value}`).toString("base64url"), SECRETS)).toEqual([
+      "root password base64 core at byte offset 1",
+    ]);
+  });
+
   test("normalizeMessage drops the request id clause and leaves a message without one unchanged", () => {
     expect(normalizeMessage("S3 answered 500 InternalError (request id 186C2A1F9B3E5D00).")).toBe(
       "S3 answered 500 InternalError.",
     );
     expect(normalizeMessage("no clause here")).toBe("no clause here");
+  });
+});
+
+describe("maskSecrets", () => {
+  test("a FAIL line holding the percent-encoded and the base64 spelling of a secret prints <secret> for both", () => {
+    const secret = SECRETS[0];
+    const percent = secretEncodings(secret.value).find((e) => e.encoding === "percent-encoded")?.text;
+    const base64 = Buffer.from(secret.value).toString("base64");
+    const line = `FAIL A65 list: sent ${percent} and answered ${base64}`;
+    expect(maskSecrets(line, SECRETS)).toBe("FAIL A65 list: sent <secret> and answered <secret>");
+  });
+
+  test("every spelling of every secret is masked, and a line without one is unchanged", () => {
+    for (const secret of SECRETS)
+      for (const { encoding, text } of secretEncodings(secret.value)) {
+        const masked = maskSecrets(`FAIL x: ${text}.`, SECRETS);
+        expect({ encoding, hits: secretHits(masked, SECRETS) }).toEqual({ encoding, hits: [] });
+        expect(masked).toContain("<secret>");
+      }
+    expect(maskSecrets("PASS A1 list (12 ms)", SECRETS)).toBe("PASS A1 list (12 ms)");
   });
 });

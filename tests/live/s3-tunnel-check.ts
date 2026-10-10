@@ -23,12 +23,21 @@
  *
  *   LIVE_SSH_PASSWORD=... bun tests/live/s3-tunnel-check.ts --ca <copy of the s3-certs volume>/ca.pem
  *
- * The password has no default, and neither does any credential here.
+ * The password has no default, and neither does any credential here. Every line it prints has the password and each
+ * Silo fixture secret, in every spelling of the scrub, replaced by <secret> (maskSecrets).
  */
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { getOrCreateProvider, removeProvider } from "@/lib/db/factory";
-import { checkS3Step, readS3Principals, runS3Row, S3_ACCEPTANCE, type S3RunContext } from "./s3-live-support";
+import { maskSecrets } from "../helpers/s3-evidence-scrub";
+import {
+  checkS3Step,
+  fixtureSecrets,
+  readS3Principals,
+  runS3Row,
+  S3_ACCEPTANCE,
+  type S3RunContext,
+} from "./s3-live-support";
 
 function usage(message: string): never {
   console.error(`s3-tunnel-check.ts: ${message}`);
@@ -42,6 +51,8 @@ const args = process.argv.slice(2);
 if (args.length !== 2 || args[0] !== "--ca") usage("pass --ca <copy of the s3-certs volume>/ca.pem");
 const ca = readFileSync(args[1], "utf8");
 const principals = readS3Principals("silo");
+const secrets = [...fixtureSecrets("silo", principals), { label: "SSH password", value: password }];
+const mask = (text: string) => maskSecrets(text, secrets);
 
 // The SSH bastion, named once for the tunnel config and for the spy that leaves its dial out.
 const BASTION = { host: "127.0.0.1", port: 12222 };
@@ -103,16 +114,14 @@ try {
     if (failure === undefined) passed++;
     else failed = true;
     console.log(
-      failure === undefined
-        ? `PASS A63 ${stepRun.summary.step}`
-        : `FAIL A63 ${stepRun.summary.step}: ${failure}`.split(password).join("<password>"),
+      mask(failure === undefined ? `PASS A63 ${stepRun.summary.step}` : `FAIL A63 ${stepRun.summary.step}: ${failure}`),
     );
   }
 } catch (error) {
   failed = true;
-  console.log(`FAIL A63: ${error instanceof Error ? error.message : String(error)}`.split(password).join("<password>"));
+  console.log(mask(`FAIL A63: ${error instanceof Error ? error.message : String(error)}`));
 } finally {
   for (const id of opened) await removeProvider(id);
 }
-console.log(`${passed} of ${steps.length} checks passed on silo through the tunnel (bun ${Bun.version})`);
+console.log(mask(`${passed} of ${steps.length} checks passed on silo through the tunnel (bun ${Bun.version})`));
 process.exit(failed ? 1 : 0);

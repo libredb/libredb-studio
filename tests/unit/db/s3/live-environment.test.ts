@@ -1926,6 +1926,32 @@ describe("the live check tests/live/s3-live-check.ts", () => {
   });
 });
 
+// A text pin stands in for a run, because each script talks to a real server as soon as it is imported.
+describe("the S3 live scripts mask what they print", () => {
+  test("the live check, the tunnel check and the evidence harness print every line through maskSecrets, and mask nothing by hand", () => {
+    for (const file of [LIVE_CHECK, "tests/live/s3-tunnel-check.ts", EVIDENCE]) {
+      const text = real.files[file] ?? "";
+      // usage() prints only the arguments, before any secret is read.
+      const printed = [
+        ...text
+          .replace(/function usage\([^)]*\): never \{[\s\S]*?\n\}/, "")
+          .matchAll(/console\.(?:log|error)\(\s*([^\n]*)/g),
+      ].map((match) => match[1]);
+      expect({ file, printed: printed.length > 0 }).toEqual({ file, printed: true });
+      expect({
+        file,
+        imports: /import \{[^}]*\bmaskSecrets\b[^}]*\} from "\.\.\/helpers\/s3-evidence-scrub";/.test(text),
+      }).toEqual({
+        file,
+        imports: true,
+      });
+      expect({ file, byHand: /\.split\((?:password|value)\)/.test(text) }).toEqual({ file, byHand: false });
+      for (const call of printed)
+        expect({ file, call, masked: call.startsWith("mask(") }).toEqual({ file, call, masked: true });
+    }
+  });
+});
+
 // -- tests/live/s3-tunnel-check.ts ----------------------------------------------------------------------------------
 
 const TUNNEL_CHECK = "tests/live/s3-tunnel-check.ts";
@@ -1950,6 +1976,13 @@ describe("the tunnel check tests/live/s3-tunnel-check.ts", () => {
   test("names no password, key or token literal", () => {
     const text = real.files[TUNNEL_CHECK] ?? "";
     expect(/password:\s*"[^"$]/.test(text)).toBe(false);
+  });
+
+  test("masks the SSH password and the Silo principals' secrets in every spelling through the shared mask", () => {
+    const text = real.files[TUNNEL_CHECK] ?? "";
+    expect(text).toContain('fixtureSecrets("silo", principals)');
+    expect(text).toContain('{ label: "SSH password", value: password }');
+    expect(text).not.toContain(".split(password)");
   });
 
   // A text pin stands in for a run, because the script dials a real bastion as soon as it is imported.

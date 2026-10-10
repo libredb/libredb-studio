@@ -12,8 +12,11 @@
  * - Continuation tokens are kept as sent and received, byte for byte: the replay must send them back exactly.
  * - An exchange body over 512 KiB is refused, so a scenario is designed to stay under it.
  * - Nothing is written while the file would hold a fixture secret raw, percent-encoded, form-encoded, in standard or
- *   URL-safe base64 with or without padding, escaped in JSON, or escaped in XML; binary bodies are decoded before the
- *   search, since base64 of a longer body need not contain base64 of the secret.
+ *   URL-safe base64 with or without padding, escaped in JSON, or escaped in XML with named or numeric references;
+ *   binary bodies are decoded before the search, since base64 of a longer body need not contain base64 of the secret.
+ *   A text body that holds base64 of a longer value is searched for the secret's base64 and base64url core at each of
+ *   the three byte offsets, the characters that depend on the neighbouring bytes dropped.
+ * - maskSecrets is the one mask every line the S3 live check, tunnel check and evidence harness print passes.
  */
 import { S3_RESPONSE_HEADERS } from "@/lib/db/providers/objectstore/s3/headers";
 import { bodyBytes, type S3Capture, type S3Exchange } from "./s3-wire";
@@ -27,6 +30,16 @@ export interface S3FixtureSecret {
   /** What a finding names, such as "root password"; the value is never printed. */
   readonly label: string;
   readonly value: string;
+}
+
+/**
+ * The base64 characters of `value` that do not depend on its neighbours when it starts `offset` bytes into a longer
+ * value: the first characters, which share bits with the bytes before it, and the last, which share bits with the
+ * bytes after it, are dropped.
+ */
+function base64Core(value: string, offset: 0 | 1 | 2): string {
+  const bytes = Buffer.concat([Buffer.alloc(offset), Buffer.from(value, "utf8")]);
+  return bytes.toString("base64").slice(Math.ceil((offset * 4) / 3), Math.floor((bytes.length * 4) / 3));
 }
 
 /** Every spelling of a secret a file could hold. */
@@ -58,6 +71,25 @@ export function secretEncodings(value: string): readonly { readonly encoding: st
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&apos;"),
     },
+    {
+      encoding: "XML-escaped with numeric references",
+      text: value
+        .replace(/&/g, "&amp;")
+        .replace(/'/g, "&#39;")
+        .replace(/"/g, "&#34;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;"),
+    },
+    ...([0, 1, 2] as const).flatMap((offset) => {
+      const core = base64Core(value, offset);
+      return [
+        { encoding: `base64 core at byte offset ${offset}`, text: core },
+        {
+          encoding: `base64url core at byte offset ${offset}`,
+          text: core.replace(/\+/g, "-").replace(/\//g, "_"),
+        },
+      ];
+    }),
   ];
   const seen = new Set<string>();
   return spellings.filter(({ text }) => (seen.has(text) ? false : (seen.add(text), true)));
@@ -71,6 +103,14 @@ export function secretHits(text: string, secrets: readonly S3FixtureSecret[]): s
     if (found !== undefined) hits.push(`${secret.label} ${found.encoding}`);
   }
   return hits;
+}
+
+/** `text` with every spelling of every secret replaced by <secret>, the longest spelling first. */
+export function maskSecrets(text: string, secrets: readonly S3FixtureSecret[]): string {
+  const spellings = secrets
+    .flatMap((secret) => secretEncodings(secret.value).map(({ text: spelling }) => spelling))
+    .sort((a, b) => b.length - a.length);
+  return spellings.reduce((out, spelling) => out.split(spelling).join("<secret>"), text);
 }
 
 /** A provider message as a summary records it: the request id clause of an unclassified failure dropped. */
