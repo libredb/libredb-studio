@@ -1889,3 +1889,37 @@ describe("the live check tests/live/s3-live-check.ts", () => {
     }
   });
 });
+
+// -- tests/live/s3-tunnel-check.ts ----------------------------------------------------------------------------------
+
+const TUNNEL_CHECK = "tests/live/s3-tunnel-check.ts";
+
+describe("the tunnel check tests/live/s3-tunnel-check.ts", () => {
+  test("has no default for any credential: without LIVE_SSH_PASSWORD or --ca it exits 2 before dialling", () => {
+    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== "LIVE_SSH_PASSWORD"));
+    const noPassword = Bun.spawnSync([process.execPath, path.join(ROOT, TUNNEL_CHECK), "--ca", "/nonexistent/ca.pem"], {
+      cwd: ROOT,
+      env,
+    });
+    expect(noPassword.exitCode).toBe(2);
+    expect(noPassword.stderr.toString()).toContain("Set LIVE_SSH_PASSWORD");
+    const noCa = Bun.spawnSync([process.execPath, path.join(ROOT, TUNNEL_CHECK)], {
+      cwd: ROOT,
+      env: { ...env, LIVE_SSH_PASSWORD: "x" },
+    });
+    expect(noCa.exitCode).toBe(2);
+    expect(noCa.stderr.toString()).toContain("--ca");
+  });
+
+  test("names no password, key or token literal", () => {
+    const text = real.files[TUNNEL_CHECK] ?? "";
+    expect(/password:\s*"[^"$]/.test(text)).toBe(false);
+  });
+
+  test("counts each step's sockets with a node:net connect spy, so the link-local refusal must come before any dial", () => {
+    const text = real.files[TUNNEL_CHECK] ?? "";
+    expect(text).toMatch(/net\.Socket\.prototype\.connect = function/);
+    expect(text).toContain("sockets: () => sockets,");
+    expect(text).toContain("checkS3Step(outcome, stepRun.summary, stepRun.context, stepRun.sockets)");
+  });
+});
