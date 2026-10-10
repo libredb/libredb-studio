@@ -82,6 +82,7 @@ const ENGINES = [
   "src/lib/db/providers/document/mongodb.ts",
   "src/lib/db/providers/embedded/libredb.ts",
   "src/lib/db/providers/keyvalue/redis.ts",
+  "src/lib/db/providers/platform/kubernetes/objects.ts",
   "src/lib/db/providers/sql/cassandra/objects.ts",
   "src/lib/db/providers/sql/clickhouse/objects.ts",
   "src/lib/db/providers/sql/databend/index.ts",

@@ -1,0 +1,115 @@
+import { describe, expect, test } from "bun:test";
+import { QueryError } from "@/lib/db/errors";
+import { kindsForContainerName } from "@/lib/db/providers/platform/kubernetes/kinds";
+import {
+  containerName,
+  listKubernetesContainers,
+  listNamespaces,
+} from "@/lib/db/providers/platform/kubernetes/objects";
+import { expectCalls } from "../../../helpers/call-log";
+import { fakeCluster, manyRows, testSurface } from "../../../helpers/kubernetes-cluster";
+import { discoveryList, GROUPS_DISCOVERY, resource } from "../../../helpers/kubernetes-discovery";
+
+const NAMESPACES = [{ name: "default" }, { name: "kube-system" }, { name: "shop" }];
+
+describe("listKubernetesContainers", () => {
+  test("Cluster first, then every namespace, each with its kinds, the default namespace the session's", async () => {
+    const { surface } = testSurface(fakeCluster({ lists: { "/api/v1/namespaces": NAMESPACES } }), { database: "shop" });
+    const containers = await listKubernetesContainers(surface);
+    expect(containers.map((container) => [container.path, container.isSessionDefault === true])).toEqual([
+      [["Cluster"], false],
+      [["default"], false],
+      [["kube-system"], false],
+      [["shop"], true],
+    ]);
+    expect(containers[0].kinds).toEqual(kindsForContainerName("Cluster"));
+    expect(containers[3].kinds).toEqual(kindsForContainerName("shop"));
+  });
+
+  test("reads the namespaces one row past the 1,000 cap and lists the first 1,000", async () => {
+    const { surface, transport } = testSurface(fakeCluster({ lists: { "/api/v1/namespaces": manyRows("ns", 1_200) } }));
+    const containers = await listKubernetesContainers(surface);
+    expect(containers).toHaveLength(1_001);
+    expect(containers.at(-1)?.name).toBe("ns-999");
+    expectCalls(transport, [
+      "GET /api",
+      "GET /apis",
+      "GET /api/v1/namespaces?limit=500&includeObject=None",
+      "GET /api/v1/namespaces?limit=500&continue=500&includeObject=None",
+      "GET /api/v1/namespaces?limit=1&continue=1000&includeObject=None",
+    ]);
+    expect((await listNamespaces(surface)).capped).toBe(true);
+    const exact = testSurface(fakeCluster({ lists: { "/api/v1/namespaces": manyRows("ns", 1_000) } }));
+    expect(await listNamespaces(exact.surface)).toEqual({
+      names: manyRows("ns", 1_000).map((row) => row.name),
+      forbidden: false,
+    });
+  });
+
+  test("with the Namespaces field, no namespace list call is made", async () => {
+    const { surface, transport } = testSurface(fakeCluster(), { namespaces: "shop web", database: "web" });
+    const containers = await listKubernetesContainers(surface);
+    expect(containers.map((container) => container.name)).toEqual(["Cluster", "shop", "web"]);
+    expect(containers[2].isSessionDefault).toBe(true);
+    expect(transport.calls).toEqual([]);
+  });
+
+  test("a 403 on the namespace list answers the Default namespace alone, once, and reports it", async () => {
+    const { surface, transport } = testSurface(fakeCluster({ forbidden: ["/api/v1/namespaces"] }), {
+      database: "shop",
+    });
+    expect((await listKubernetesContainers(surface)).map((container) => container.name)).toEqual(["Cluster", "shop"]);
+    expect(await listNamespaces(surface)).toEqual({ names: ["shop"], forbidden: true });
+    expect(transport.calls.filter((entry) => entry.method.startsWith("GET /api/v1/namespaces"))).toHaveLength(2);
+  });
+
+  test("on OpenShift a 403 on namespaces falls back to the projects the identity may list", async () => {
+    const groups = {
+      ...GROUPS_DISCOVERY,
+      items: [
+        ...(GROUPS_DISCOVERY.items as unknown[]),
+        ...(discoveryList([
+          {
+            name: "project.openshift.io",
+            versions: [
+              { version: "v1", resources: [resource("projects", "Project", "Cluster", { verbs: ["get", "list"] })] },
+            ],
+          },
+        ]).items as unknown[]),
+      ],
+    };
+    const { surface } = testSurface(
+      fakeCluster({
+        groups,
+        forbidden: ["/api/v1/namespaces"],
+        lists: { "/apis/project.openshift.io/v1/projects": [{ name: "team-a" }, { name: "team-b" }] },
+      }),
+      { database: "team-a" },
+    );
+    expect(await listNamespaces(surface)).toEqual({ names: ["team-a", "team-b"], forbidden: false });
+  });
+
+  test("an error other than 403 is raised, not hidden", async () => {
+    const { surface } = testSurface(() => {
+      throw new QueryError("down");
+    });
+    await expect(listKubernetesContainers(surface)).rejects.toThrow("down");
+  });
+
+  test("a container has no child containers", async () => {
+    const { surface } = testSurface(fakeCluster());
+    expect(await listKubernetesContainers(surface, ["shop"])).toEqual([]);
+  });
+});
+
+describe("containerName", () => {
+  test("Cluster and a namespace pass; a namespace named cluster is a namespace", () => {
+    expect(containerName(["Cluster"])).toBe("Cluster");
+    expect(containerName(["cluster"])).toBe("cluster");
+  });
+  test("a path of another depth, or a name that is neither, is refused", () => {
+    expect(() => containerName([])).toThrow("A Kubernetes container path is [namespace], received []");
+    expect(() => containerName(["a", "b"])).toThrow(QueryError);
+    expect(() => containerName(["Shop"])).toThrow('received "Shop"');
+  });
+});
