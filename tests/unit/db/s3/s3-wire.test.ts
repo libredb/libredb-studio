@@ -7,7 +7,10 @@
  * served for a request that differs. No case opens a socket: a spy on node:net counts connects.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import net from "node:net";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { httpOrigin } from "@/lib/db/http/endpoint";
 import type { NodeByteTransportOptions, RequestSigner, SigningInput } from "@/lib/db/http/node-transport";
 import {
@@ -21,6 +24,15 @@ import {
   type S3RecordedAnswer,
   scriptedS3Transport,
 } from "../../../helpers/s3-wire";
+import {
+  captureFilesOnDisk,
+  captureSets,
+  loadS3Capture,
+  parseSetName,
+  readDigestTable,
+  renderCapturesReadme,
+  type S3Manifest,
+} from "../../../helpers/s3-fixtures";
 
 let sockets = 0;
 const originalConnect = net.Socket.prototype.connect;
@@ -438,5 +450,57 @@ describe("the byte transport's own checks, replayed with no socket", () => {
         await expect(failure).rejects.not.toThrow(value);
       }
     }
+  });
+});
+
+describe("the capture loader tests/helpers/s3-fixtures.ts", () => {
+  test("a set name splits into target, date and version, the region target before the plain one", () => {
+    expect(parseSetName("minio-region-2026-10-12-RELEASE.2025-10-15T17-29-55Z")).toEqual({
+      name: "minio-region-2026-10-12-RELEASE.2025-10-15T17-29-55Z",
+      target: "minio-region",
+      date: "2026-10-12",
+      version: "RELEASE.2025-10-15T17-29-55Z",
+    });
+    expect(parseSetName("garage-2026-10-12-v2.4.1")?.target).toBe("garage");
+    expect(parseSetName("aws-2026-10-12-x")).toBeUndefined();
+    expect(parseSetName("silo-tls-2026-10-12-x")).toBeUndefined();
+  });
+
+  test("the README the harness renders reads back as the same digest table", () => {
+    const set = parseSetName("garage-2026-10-12-v2.4.1")!;
+    const manifest: S3Manifest = {
+      target: "garage",
+      commit: "0123456789abcdef0123456789abcdef01234567",
+      uncommitted: [],
+      image: "dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020",
+      version: "v2.4.1",
+      date: "2026-10-12",
+      scenarios: [{ name: "A1", ms: 12, exchanges: 2, clockOffsetMs: 0 }],
+    };
+    const digests = [
+      { file: "garage-2026-10-12-v2.4.1/A1.json", sha256: "a".repeat(64) },
+      { file: "garage-2026-10-12-v2.4.1/manifest.json", sha256: "b".repeat(64) },
+    ];
+    const readme = renderCapturesReadme([{ set, manifest }], digests, [
+      { name: "A1", shows: "Test Connection, root, no pin" },
+    ]);
+    expect(readDigestTable(readme)).toEqual(digests);
+    expect(readme).toContain("| `garage-2026-10-12-v2.4.1` | `garage` | `v2.4.1` |");
+    expect(readme).toContain("| `A1` | Test Connection, root, no pin |");
+  });
+
+  test("captures on disk are listed per set, and a capture loads with its own file name", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "s3-captures-"));
+    mkdirSync(path.join(root, "silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z"));
+    const file = "silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z/A1.json";
+    const written: S3Capture = { file, scenario: "A1", target: "silo", clockOffsetMs: 0, exchanges: [], result: [] };
+    writeFileSync(path.join(root, file), JSON.stringify(written));
+    writeFileSync(path.join(root, "silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z/manifest.json"), "{}");
+    writeFileSync(path.join(root, "README.md"), "# captures\n");
+    expect(captureFilesOnDisk(root)).toEqual([file, "silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z/manifest.json"]);
+    expect(captureSets(root).map((set) => set.target)).toEqual(["silo"]);
+    expect(loadS3Capture(file, root).scenario).toBe("A1");
+    writeFileSync(path.join(root, file), JSON.stringify({ ...written, file: "other/A1.json" }));
+    expect(() => loadS3Capture(file, root)).toThrow(`${file} names itself other/A1.json`);
   });
 });
