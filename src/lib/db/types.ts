@@ -846,6 +846,20 @@ export interface KeyScanPage {
   readonly prefixes?: readonly string[];
 }
 
+/**
+ * One action a row of a NON-RELATION kind offers, declared by the provider that writes its statement.
+ *
+ * The row menu offers it on every object of a kind named in `kinds`, and choosing it opens a new tab
+ * that runs what the dialect's `rowAction` generator writes for that object (`src/lib/query-generators.ts`).
+ * `id` is what the generator is asked for and stays stable; `label` is what the menu and the tab read.
+ */
+export interface KindRowAction {
+  readonly id: string;
+  readonly label: string;
+  /** The `ObjectKindSpec.id`s whose rows offer this action. */
+  readonly kinds: readonly string[];
+}
+
 export interface ProviderCapabilities {
   /**
    * The language this engine's statements are written in: what its editor tabs are typed and
@@ -1449,6 +1463,25 @@ export interface ProviderCapabilities {
    * reader behind it would draw a panel whose every gesture fails.
    */
   keyScan?: KeyScanCapability;
+  /**
+   * The row actions this engine offers on objects of named kinds, in menu order. See `KindRowAction`.
+   *
+   * Absent: no row offers one, which is every engine declared before this field existed. Read through
+   * `rowActionsForKind()` in `src/lib/db/object-kinds.ts`. Present implies the engine's query dialect
+   * writes each one through `DialectGenerators.rowAction`.
+   */
+  rowActions?: readonly KindRowAction[];
+  /**
+   * This engine's containers answer `Container.kinds`, the kinds each one holds.
+   *
+   * Read by the inventory route for the containers a body NAMES: only an engine that declares it pays
+   * one container listing per distinct parent to learn their kinds, and a named container that listing
+   * does not hold is refused, because the kinds it holds are unknown. Absent: named containers are read
+   * for every enumerable kind with no listing, which is every engine declared before this field
+   * existed. The object-surface conformance refuses a container answering `kinds` on an engine that
+   * does not declare it.
+   */
+  containersNameKinds?: true;
   schemaRefreshPattern: string;
 }
 
@@ -2633,6 +2666,15 @@ export interface ObjectKindSpec {
    * before, a refused count and all.
    */
   readonly countIsListing?: true;
+  /**
+   * The folder this kind is drawn in, between its container and its own folder: Workloads, Config.
+   *
+   * Absent: the kind's folder hangs directly under the container, as every kind did before this
+   * field existed. A group is drawn only where at least two of its kinds apply to the container; with
+   * one, that kind's folder sits directly under the container, and with none the group is not drawn.
+   * Kinds that share an `id` share the folder, which takes the `label` of the first of them.
+   */
+  readonly group?: { readonly id: string; readonly label: string };
 }
 
 /** One container level. Zero, one or two of these; the engine says which. */
@@ -2660,6 +2702,17 @@ export interface Container {
    * entry is their own.
    */
   readonly isSessionDefault?: boolean;
+  /**
+   * The ids of the enumerable kinds this container holds, when it does not hold all of them.
+   *
+   * Absent: every enumerable kind applies, which is every engine declared before this field existed.
+   * A cluster's cluster-scoped kinds and its namespaced kinds are the case it exists for. Read through
+   * `applicableKinds()` in `src/lib/db/object-kinds.ts`: the tree, the inventory and search routes and
+   * the agent's grounding walk ask a container only for these, and a provider answers a kind outside
+   * them with an error sentence rather than an empty list. An engine whose containers answer it
+   * declares `ProviderCapabilities.containersNameKinds`.
+   */
+  readonly kinds?: readonly string[];
 }
 
 /**

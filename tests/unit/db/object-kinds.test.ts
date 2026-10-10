@@ -27,7 +27,12 @@ import {
   kindAcceptsSourceEdits,
   requireEditableKind,
   renderContainerShapes,
+  applicableKinds,
+  kindGroup,
+  kindsForContainer,
+  rowActionsForKind,
 } from "@/lib/db/object-kinds";
+import type { KindRowAction } from "@/exports/types";
 
 const base = { queryLanguage: "sql" } as unknown as ProviderCapabilities;
 
@@ -800,5 +805,81 @@ describe("assertContainerPathShape (#1147)", () => {
     expect(refusal(() => assertContainerPathShape(declaration([], "prefixes"), [], withEmptyShapes)).message).toEndWith(
       "nothing: this declaration carries no container level, received []",
     );
+  });
+});
+
+/**
+ * Which kinds apply to one container, and which row actions a kind offers: both read a declaration a
+ * provider may leave out, and leaving it out keeps every engine exactly as it was.
+ */
+describe("kindsForContainer, applicableKinds and rowActionsForKind", () => {
+  const cluster = {
+    ...base,
+    containerLevels: [{ id: "schema", label: "Namespace", labelPlural: "Namespaces" }],
+    objectKinds: [
+      { id: "pods", role: "config", label: "Pod", labelPlural: "Pods" },
+      { id: "nodes", role: "config", label: "Node", labelPlural: "Nodes" },
+      { id: "key", role: "config", label: "Key", labelPlural: "Keys", enumeratedBy: "key-browser" },
+    ],
+    rowActions: [
+      { id: "describe", label: "Describe", kinds: ["pods", "nodes"] },
+      { id: "logs", label: "Logs", kinds: ["pods"] },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  test("a container that names no kinds holds every enumerable kind, in declaration order", () => {
+    expect(kindsForContainer(withKinds, undefined).map((kind) => kind.id)).toEqual(["table", "view", "procedure"]);
+    expect(kindsForContainer(cluster, undefined).map((kind) => kind.id)).toEqual(["pods", "nodes"]);
+  });
+
+  test("a container that names its kinds holds those, in declaration order and not in its own", () => {
+    expect(kindsForContainer(cluster, ["nodes", "pods"]).map((kind) => kind.id)).toEqual(["pods", "nodes"]);
+    expect(kindsForContainer(cluster, ["nodes"]).map((kind) => kind.id)).toEqual(["nodes"]);
+    expect(kindsForContainer(cluster, [])).toEqual([]);
+  });
+
+  test("an id the container names that the provider does not enumerate is not a kind of it", () => {
+    expect(kindsForContainer(cluster, ["key", "widgets", "pods"]).map((kind) => kind.id)).toEqual(["pods"]);
+  });
+
+  test("applicableKinds narrows a list the caller already holds, and hands it back whole when nothing is named", () => {
+    const requested = [declaredKinds(cluster)[1]];
+    expect(applicableKinds(requested, ["pods"])).toEqual([]);
+    expect(applicableKinds(requested, undefined)).toBe(requested);
+  });
+
+  test("a kind offers the row actions that name it, in declaration order, and none on an engine that declares none", () => {
+    const pods: readonly KindRowAction[] = rowActionsForKind(cluster, "pods");
+    expect(pods.map((action) => action.id)).toEqual(["describe", "logs"]);
+    expect(rowActionsForKind(cluster, "nodes").map((action) => action.id)).toEqual(["describe"]);
+    expect(rowActionsForKind(cluster, "key")).toEqual([]);
+    expect(rowActionsForKind(withKinds, "table")).toEqual([]);
+  });
+
+  test("a row action a host declares without a kinds list, an id or a label offers nothing, nor does a non-list", () => {
+    const hostile = {
+      ...cluster,
+      rowActions: [
+        { id: "describe", label: "Describe" },
+        null,
+        { id: 7, label: "Seven", kinds: ["pods"] },
+        { id: "logs", label: "Logs", kinds: ["pods"] },
+      ],
+    } as unknown as ProviderCapabilities;
+    expect(rowActionsForKind(hostile, "pods").map((action) => action.id)).toEqual(["logs"]);
+    const notAList = { ...cluster, rowActions: { id: "describe" } } as unknown as ProviderCapabilities;
+    expect(rowActionsForKind(notAList, "pods")).toEqual([]);
+  });
+
+  test("a group is read only when it is a record with a string id and label, so a host's malformed one is no group", () => {
+    const pods = { id: "pods", role: "config", label: "Pod", labelPlural: "Pods" } as ObjectKindSpec;
+    expect(kindGroup({ ...pods, group: { id: "workloads", label: "Workloads" } })).toEqual({
+      id: "workloads",
+      label: "Workloads",
+    });
+    expect(kindGroup(pods)).toBeUndefined();
+    for (const group of [null, 5, "workloads", { id: 5, label: "Workloads" }, { id: "workloads" }]) {
+      expect(kindGroup({ ...pods, group } as unknown as ObjectKindSpec)).toBeUndefined();
+    }
   });
 });

@@ -10,6 +10,7 @@ import type {
   ContainerLevelSpec,
   DatabaseType,
   KindCount,
+  KindRowAction,
   ObjectKindSpec,
   ObjectSourcePart,
   ProviderCapabilities,
@@ -59,6 +60,75 @@ export function findKind(capabilities: ProviderCapabilities, id: string): Object
  */
 export function enumerableKinds(capabilities: ProviderCapabilities): readonly ObjectKindSpec[] {
   return declaredKinds(capabilities).filter((kind) => kind.enumeratedBy === undefined);
+}
+
+/**
+ * The kinds that apply to one container: the given enumerable kinds, in their order, narrowed to the
+ * ids the container answered as `Container.kinds`.
+ *
+ * The one resolver every reader that walks a container's kinds calls, each over the kinds it already
+ * holds: the tree's folders, the tree filter's unread folders, the inventory and search routes (over
+ * the kinds a body asked for) and the agent's grounding walk.
+ *
+ * Absent `containerKinds` answers every kind given, which is every container of every engine declared
+ * before the field existed. An id the container names that is not among the kinds given is ignored
+ * here rather than raised, because the tree calls this inside its render; the object-surface
+ * conformance refuses such a declaration by name instead.
+ */
+export function applicableKinds(
+  kinds: readonly ObjectKindSpec[],
+  containerKinds: readonly string[] | undefined,
+): readonly ObjectKindSpec[] {
+  if (containerKinds === undefined) return kinds;
+  return kinds.filter((kind) => containerKinds.includes(kind.id));
+}
+
+/**
+ * The enumerable kinds of one container: `applicableKinds` over every kind the object surface
+ * enumerates, for a reader that holds no narrower list, which is the object-surface conformance.
+ */
+export function kindsForContainer(
+  capabilities: ProviderCapabilities,
+  containerKinds: readonly string[] | undefined,
+): readonly ObjectKindSpec[] {
+  return applicableKinds(enumerableKinds(capabilities), containerKinds);
+}
+
+/**
+ * A kind's group (`ObjectKindSpec.group`) when it is a well-formed one, and undefined otherwise.
+ *
+ * The one reader of the field. An embedded host's declaration is not type-checked at run time and the
+ * tree reads the group inside its render, so `group: null`, or a group without a string `id` and a
+ * string `label`, is read as no group, the way `registeredDialect` reads a host's dialect, rather than
+ * thrown on.
+ */
+export function kindGroup(spec: ObjectKindSpec): { readonly id: string; readonly label: string } | undefined {
+  const group: unknown = spec.group;
+  if (typeof group !== "object" || group === null) return undefined;
+  const { id, label } = group as { readonly id?: unknown; readonly label?: unknown };
+  return typeof id === "string" && typeof label === "string" ? { id, label } : undefined;
+}
+
+/**
+ * The row actions declared for one kind, in declaration order. Empty on every engine that declares none.
+ *
+ * The one reader of `ProviderCapabilities.rowActions`: the row menu offers these, and the tab manager
+ * refuses an action id that is not among them. Read defensively for the reason `kindGroup` gives: a
+ * declaration that is not a list, and an entry that is not a record with a string `id`, a string `label`
+ * and a `kinds` list, offer nothing.
+ */
+export function rowActionsForKind(capabilities: ProviderCapabilities, kindId: string): readonly KindRowAction[] {
+  const declared: unknown = capabilities.rowActions;
+  if (!Array.isArray(declared)) return [];
+  return declared.filter(
+    (action: unknown): action is KindRowAction =>
+      typeof action === "object" &&
+      action !== null &&
+      typeof (action as { id?: unknown }).id === "string" &&
+      typeof (action as { label?: unknown }).label === "string" &&
+      Array.isArray((action as { kinds?: unknown }).kinds) &&
+      (action as { kinds: unknown[] }).kinds.includes(kindId),
+  );
 }
 
 /**

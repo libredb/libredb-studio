@@ -64,6 +64,7 @@ export type {
   ObjectKindSpec,
   ContainerLevelSpec,
   Container,
+  KindRowAction,
   DatabaseObject,
   ObjectReadRange,
   KindCount,
