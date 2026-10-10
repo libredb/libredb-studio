@@ -29,6 +29,7 @@ import {
   enumerableKinds,
   isCountSampled,
   isCountUnavailable,
+  kindGroup,
 } from "@/lib/db/object-kinds";
 import type {
   Container,
@@ -620,6 +621,9 @@ export function useTreeNodes(
   // The kinds that draw a folder. A kind only the Keys panel enumerates is declared and draws
   // none, so no key name reaches the tree (#1089 3.4).
   const kinds = useMemo(() => enumerableKinds(capabilities), [capabilities]);
+  // The kind groups the filter opens so a match inside one shows; none on an engine that declares
+  // none, and none for a host's malformed group, which `kindGroup` reads as no group.
+  const groups = useMemo(() => [...new Set(kinds.flatMap((kind) => kindGroup(kind)?.id ?? []))], [kinds]);
   const depth = useMemo(() => containerDepth(capabilities), [capabilities]);
 
   // The cache is thrown away by DERIVING it rather than by resetting it in an effect: a connection
@@ -709,7 +713,7 @@ export function useTreeNodes(
     const searchRows = flattenTree({
       kinds,
       containers: cache.containers,
-      expanded: searchExpanded(cache.expanded, cache.containers, cache.objects),
+      expanded: searchExpanded(cache.expanded, cache.containers, cache.objects, groups),
       counts: cache.counts,
       objects: cache.objects,
       details: cache.details,
@@ -718,7 +722,7 @@ export function useTreeNodes(
     });
     const { rows: matched, matches } = filterRows(searchRows, needle);
     return { rows: collapseRows(matched, collapsed), matches };
-  }, [cache, collapsed, depth, kinds, needle, readsColumns]);
+  }, [cache, collapsed, depth, groups, kinds, needle, readsColumns]);
 
   const rows = filtered?.rows ?? treeRows;
 
@@ -799,10 +803,13 @@ export function useTreeNodes(
   const toggle = useCallback(
     (id: string) => {
       const opening = rows.find((row) => row.id === id);
-      // A container or folder in the FILTERED view is open because the filter opened it, so closing
-      // it is the filter's business: writing it to `expanded` would change the reader's tree behind
-      // the filter and fire reads for rows they never opened (D4).
-      if (filtered !== undefined && (opening?.kind === "container" || opening?.kind === "folder")) {
+      // A container, group or folder in the FILTERED view is open because the filter opened it, so
+      // closing it is the filter's business: writing it to `expanded` would change the reader's tree
+      // behind the filter and fire reads for rows they never opened (D4).
+      if (
+        filtered !== undefined &&
+        (opening?.kind === "container" || opening?.kind === "group" || opening?.kind === "folder")
+      ) {
         setCollapsedState({
           connectionId,
           needle,

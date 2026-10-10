@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { collapseRows, filterRows, normalizeQuery, searchExpanded } from "@/components/object-tree/filter";
-import type { TreeRowModel } from "@/components/object-tree/flatten";
+import { groupRowId, type TreeRowModel } from "@/components/object-tree/flatten";
 
 /**
  * The filter over what the tree has read (U25). Rows are built by hand rather than walked, because
@@ -96,6 +96,11 @@ describe("searchExpanded", () => {
       { "app/table": [] },
     );
     expect([...open].sort()).toEqual(["app", "app/orders/table", "app/table", "audit"]);
+  });
+
+  test("opens every declared kind group under the root and under every known container", () => {
+    const open = searchExpanded(new Set(), [{ path: ["shop"], name: "shop", level: 0 }], {}, ["workloads"]);
+    expect([...open].sort()).toEqual([groupRowId([], "workloads"), groupRowId(["shop"], "workloads"), "shop"].sort());
   });
 });
 

@@ -13,7 +13,7 @@
  * remaining half of U25.
  */
 import type { Container, DatabaseObject } from "@/lib/db/types";
-import { containerRowId, type TreeRowModel } from "./flatten";
+import { containerRowId, groupRowId, type TreeRowModel } from "./flatten";
 
 /**
  * Lower case with one letter folded by hand: U+0130 (the dotted capital I).
@@ -34,8 +34,13 @@ export function normalizeQuery(query: string): string {
 }
 
 /**
- * The expansion set the filtered walk uses: the reader's own, plus every known container and every
- * READ folder.
+ * The expansion set the filtered walk uses: the reader's own, plus every known container, every kind
+ * group of every container (`groups` are the declared `ObjectKindSpec.group` ids), and every READ
+ * folder.
+ *
+ * A group is opened wherever it could be drawn, the root included, because it reads nothing and
+ * `filterRows` drops every row with no match below it: opening one is what shows a match whose folder
+ * sits inside it, and an id no row carries opens nothing.
  *
  * A folder enters only once its objects are cached, which is what keeps this set from implying a
  * read: an open folder with no cached objects would draw nothing anyway, and the walk is never what
@@ -50,9 +55,13 @@ export function searchExpanded(
   expanded: ReadonlySet<string>,
   containers: readonly Container[],
   objects: Readonly<Record<string, readonly DatabaseObject[]>>,
+  groups: readonly string[] = [],
 ): ReadonlySet<string> {
   const open = new Set(expanded);
   for (const container of containers) open.add(containerRowId(container.path));
+  for (const path of [[], ...containers.map((container) => container.path)]) {
+    for (const group of groups) open.add(groupRowId(path, group));
+  }
   for (const folderId of Object.keys(objects)) open.add(folderId);
   return open;
 }

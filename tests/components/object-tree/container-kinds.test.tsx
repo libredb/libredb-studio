@@ -111,6 +111,44 @@ describe("a tree over containers that name their kinds", () => {
     expect(lists.sort()).toEqual(["Cluster/nodes", "shop/deployments", "shop/pods"]);
   });
 
+  test("the filter opens the group around a match, and asks for nothing on a keystroke", async () => {
+    const { source, asked } = clusterSource();
+    const hook = mount(source);
+    const group = groupRowId(["shop"], "workloads");
+    await waitFor(() => expect(hook.result.current.rows.some((row) => row.id === group)).toBe(true));
+    // Read the pods folder, then close it and its group, so the match sits behind two closed rows.
+    act(() => hook.result.current.toggle(group));
+    act(() => hook.result.current.toggle("shop/pods"));
+    await waitFor(() => expect(hook.result.current.rows.some((row) => row.label === "pod/web-1")).toBe(true));
+    act(() => hook.result.current.toggle("shop/pods"));
+    act(() => hook.result.current.toggle(group));
+    const before = asked.length;
+
+    hook.rerender({ query: "web-1" });
+
+    expect(hook.result.current.rows.map((row) => row.label)).toEqual(["shop", "Workloads", "Pods", "pod/web-1"]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(asked.length).toBe(before);
+  });
+
+  test("closing a group while filtering is the filter's own, and clearing restores the reader's tree", async () => {
+    const { source } = clusterSource();
+    const hook = mount(source);
+    const group = groupRowId(["shop"], "workloads");
+    await waitFor(() => expect(hook.result.current.rows.some((row) => row.id === group)).toBe(true));
+    act(() => hook.result.current.toggle(group));
+    act(() => hook.result.current.toggle("shop/pods"));
+    await waitFor(() => expect(hook.result.current.rows.some((row) => row.label === "pod/web-1")).toBe(true));
+    const unfiltered = hook.result.current.rows.map((row) => [row.id, row.expanded]);
+
+    hook.rerender({ query: "web" });
+    act(() => hook.result.current.toggle(group));
+    expect(hook.result.current.rows.map((row) => row.label)).toEqual(["shop", "Workloads"]);
+
+    hook.rerender({ query: "" });
+    expect(hook.result.current.rows.map((row) => [row.id, row.expanded])).toEqual(unfiltered);
+  });
+
   test("a host answering kinds that are not a list of strings is reported, not rendered", async () => {
     const { source } = clusterSource([{ path: ["shop"], name: "shop", level: 0, kinds: 5 }]);
     const hook = mount(source);
