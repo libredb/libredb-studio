@@ -1,8 +1,8 @@
-LibreDB Studio brings a full SQL IDE to Rancher-managed Kubernetes clusters: browse schemas and run queries across twenty-seven database engines with no desktop client. Where an engine cannot edit data, the controls are shown as unsupported instead of failing.
+LibreDB Studio brings a full SQL IDE to Rancher-managed Kubernetes clusters: browse schemas and run queries across twenty-eight engines with no desktop client. Where an engine cannot edit data, its controls show as unsupported instead of failing.
 
-The Helm chart installs from the Rancher Apps catalog with defaults: first-run admin credentials are generated and printed to the pod log, while production installs can supply their own secrets. LibreDB Studio runs on your own infrastructure and is developed and commercially supported by the LibreDB team.
+The Helm chart installs from the Rancher Apps catalog with defaults: first-run admin credentials are generated and printed to the pod log; production installs can supply their own secrets. It runs on your own infrastructure and is developed and commercially supported by the LibreDB team.
 <ul>
-<li>Twenty-seven engines: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia</li>
+<li>Twenty-eight engines: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage</li>
 <li>Optional AI, off by default (Gemini, OpenAI or a local model): plain-English query explanation from the EXPLAIN plan on PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino and Databend. A read-only agent on PostgreSQL, SQLite, DuckDB and SQL Server never writes</li>
 <li>Hardened chart defaults: non-root, read-only root filesystem, NetworkPolicy, PDB, HPA, Ingress/TLS</li>
 <li>Self-hosted and air-gap friendly: no external services required</li>
