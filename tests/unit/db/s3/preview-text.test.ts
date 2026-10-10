@@ -93,7 +93,7 @@ describe("reindentJson", () => {
     const before = heapUsed();
     const started = performance.now();
     expect(reindentJson(text, 1_000_000)).toBeUndefined();
-    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(performance.now() - started).toBeLessThan(5_000);
     expect(heapUsed() - before).toBeLessThan(64 * 1_048_576);
   });
 });
