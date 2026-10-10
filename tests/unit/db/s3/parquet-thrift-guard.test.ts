@@ -173,8 +173,28 @@ describe("readPageHeader", () => {
     });
     expect(readPageHeader(pageHeader([[1, { i32: 0 }]]), 0, 32)).toEqual({
       ok: false,
-      reason: "a page declares a negative size",
+      reason: "a page declares no size",
     });
+    expect(
+      readPageHeader(
+        pageHeader([
+          [1, { i32: 0 }],
+          [3, { i32: 1 }],
+        ]),
+        0,
+        32,
+      ),
+    ).toEqual({ ok: false, reason: "a page declares no size" });
+    expect(
+      readPageHeader(
+        pageHeader([
+          [1, { i32: 0 }],
+          [2, { i32: 1 }],
+        ]),
+        0,
+        32,
+      ),
+    ).toEqual({ ok: false, reason: "a page declares no size" });
     expect(readPageHeader(Uint8Array.of(0x1a, 0x00), 0, 32)).toEqual({
       ok: false,
       reason: "an unknown Thrift type 10",
@@ -515,6 +535,17 @@ describe("guardThriftStruct: the list element budget", () => {
     ]);
     expect(guardThriftStruct(twoLists, 0, 32, { maxListElements: 102 })).toMatchObject({ ok: true });
     expect(guardThriftStruct(twoLists, 0, 32, { maxListElements: 101 })).toMatchObject({ ok: false });
+  });
+
+  test("an error that is not the guard's own refusal is thrown, not returned as a reason", () => {
+    const bytes = thriftStruct([[1, { i32: 1 }]]);
+    expect(() =>
+      guardThriftStruct(bytes, 0, 32, {
+        onField: () => {
+          throw new TypeError("callback failed");
+        },
+      }),
+    ).toThrow(new TypeError("callback failed"));
   });
 
   test("onField reports each field outside any list with its path, its type and its integer or list size", () => {

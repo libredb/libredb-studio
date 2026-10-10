@@ -48,6 +48,11 @@ const count = (value: number): string => value.toLocaleString("en-US");
 const stop = (reason: string): never => {
   throw new GuardStop(reason);
 };
+/** The reason a GuardStop carries; any other error is a defect and is thrown on. */
+const reasonOf = (error: unknown): string => {
+  if (error instanceof GuardStop) return error.message;
+  throw error;
+};
 /** hyparquet's zigzag decode of a 32-bit varint (thrift.js readZigZag). */
 const unzigzag = (zigzag: number): number => (zigzag >>> 1) ^ -(zigzag & 1);
 
@@ -170,8 +175,8 @@ function run(walk: Walk): ThriftGuardResult {
     walkStruct(walk, 1, walk.onField === undefined ? undefined : []);
     return { ok: true, end: walk.offset };
   } catch (error) {
-    // Only GuardStop is thrown inside the walk: its depth is bounded, so no stack overflow can reach here.
-    return { ok: false, reason: (error as GuardStop).message };
+    // The walk's depth is bounded, so no stack overflow reaches here; an onField callback's own error is thrown on.
+    return { ok: false, reason: reasonOf(error) };
   }
 }
 
@@ -276,8 +281,8 @@ export function readPageHeader(
   };
   try {
     const type = integer("1");
-    const uncompressedPageSize = integer("2") ?? -1;
-    const compressedPageSize = integer("3") ?? -1;
+    const uncompressedPageSize = integer("2") ?? stop("a page declares no size");
+    const compressedPageSize = integer("3") ?? stop("a page declares no size");
     if (uncompressedPageSize < 0 || compressedPageSize < 0) stop("a page declares a negative size");
     if (type === undefined) return stop("a page declares no type");
     let numValues = 0;
@@ -304,6 +309,6 @@ export function readPageHeader(
     }
     return { type, uncompressedPageSize, compressedPageSize, numValues, headerBytes: result.end - offset };
   } catch (error) {
-    return { ok: false, reason: (error as GuardStop).message };
+    return { ok: false, reason: reasonOf(error) };
   }
 }
