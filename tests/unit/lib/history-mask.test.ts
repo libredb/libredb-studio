@@ -269,6 +269,34 @@ describe("maskStatementForHistory: a flag a paste from rich text hides", () => {
   });
 });
 
+describe("maskStatementForHistory: a word that a continuation joins from two flags", () => {
+  test.each([
+    [
+      "a flag the continuation joins to the flag before it",
+      `cli get pods --token\\\n--password ${SECRET}`,
+      "cli get pods --token\\ *** ***",
+    ],
+    [
+      "a CRLF continuation and a tab before the value",
+      `--password\\\r\n--password\t ${SECRET}`,
+      "--password\\ ***\t ***",
+    ],
+    [
+      "a joined flag after a comma and a value of its own",
+      `cli get pods x,--token=a\\\n--password ${SECRET}`,
+      "cli get pods x,--token *** ***",
+    ],
+    [
+      "a joined flag after a flag and its value",
+      `cli get pods --token=a\\\n--password ${SECRET}`,
+      "cli get pods --token=*** ***",
+    ],
+  ])("%s takes the next word as the last flag's value", (_name, text, masked) => {
+    expect(maskStatementForHistory(text, MASK)).toBe(masked);
+    expect(maskStatementForHistory(text, MASK)).not.toContain(SECRET);
+  });
+});
+
 describe("maskStatementForHistory: a flag with no value after it in its word", () => {
   test.each([
     ["an empty = value", `cli get pods --token= ${SECRET}`, "cli get pods --token= ***"],

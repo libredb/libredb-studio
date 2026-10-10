@@ -80,11 +80,11 @@ const INSIDE_NAME = /["'\\\p{Default_Ignorable_Code_Point}]/u;
  * Letter case is ignored: a console refuses `--TOKEN` as an unknown flag, and history still stores it.
  * `INSIDE_NAME` characters may stand between the name's characters, and at either end they part the flag from the
  * text around it, so `--to"ken"` and `--token""value` are both found; more hyphens may lead it, since a dash is
- * read as two.
+ * read as two. `after` narrows what may follow it.
  */
-function flagPattern(flags: readonly string[]): RegExp {
+function flagPattern(flags: readonly string[], after = "(?=$|[^A-Za-z0-9_-])"): RegExp {
   const names = flags.map((flag) => [...flag].map(escapeForPattern).join(`${INSIDE_NAME.source}*`));
-  return new RegExp(`(?<![A-Za-z0-9_-])-*(?:${names.join("|")})(?=$|[^A-Za-z0-9_-])`, "iu");
+  return new RegExp(`(?<![A-Za-z0-9_-])-*(?:${names.join("|")})${after}`, "iu");
 }
 
 /** A declared flag at the start of a word's text, followed by anything a flag name does not hold. */
@@ -95,8 +95,9 @@ function leadingFlagPattern(flags: readonly string[]): RegExp {
 const QUOTING = /["'\\]/;
 /** A dash a word processor or a keyboard put where a flag's hyphens stood, read as the two hyphens. */
 const DASH = /^[\p{Pd}\u2212]$/u;
-/** What a word may hold after a flag and still leave the flag's value to the next word. */
-const NO_VALUE = /^[=:\s"'\\\p{Default_Ignorable_Code_Point}]*$/u;
+/** A character a word may hold after a flag and still leave the flag's value to the next word. */
+const NO_VALUE_CHARACTER = /[=:\s"'\\\p{Default_Ignorable_Code_Point}]/u;
+const NO_VALUE = new RegExp(`^${NO_VALUE_CHARACTER.source}*$`, "u");
 
 /**
  * Where a source's first declared flag ends, past any quotes or backslashes that close it; undefined when the
@@ -157,6 +158,8 @@ function commentSpans(text: string, starts: readonly number[]): readonly { start
  * character no flag name holds (a no-break space, a colon, a quoted space), or when its source holds one further
  * on (after a continuation, a no-break space, a zero-width character, a comma or a quote); the rest of that word is
  * replaced. When nothing but `NO_VALUE` characters follow the flag in its word, the next word is replaced instead.
+ * A word that ends with a flag, or with one that only `NO_VALUE` characters follow, has the next word replaced too,
+ * though an earlier flag in the word, joined to it by a continuation, has a value of its own.
  */
 function maskWords(text: string, words: readonly ShellWord[], flags: readonly string[]): string {
   const starts = lineStarts(text);
@@ -172,9 +175,11 @@ function maskWords(text: string, words: readonly ShellWord[], flags: readonly st
   };
   const leading = leadingFlagPattern(flags);
   const anywhere = flagPattern(flags);
+  const ending = flagPattern(flags, `(?=${NO_VALUE_CHARACTER.source}*$)`);
   words.forEach((word, index) => {
     const start = offset(word.line, word.column);
     const end = offset(word.endLine, word.endColumn);
+    if (flagEndIn(text.slice(start, end), ending) !== undefined) maskWord(words[index + 1]);
     const flag = flags.find((candidate) => word.text === candidate || word.text.startsWith(`${candidate}=`));
     if (flag !== undefined) {
       if (NO_VALUE.test(word.text.slice(flag.length))) maskWord(words[index + 1]);
