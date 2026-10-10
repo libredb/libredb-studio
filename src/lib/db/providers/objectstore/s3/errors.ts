@@ -404,6 +404,10 @@ function serverFailure(error: S3ServerError, context: S3ClientContext): Error {
   const op = opWords(error.operation, error);
   const b = (): string => shownName(noted(error.bucket, "bucket", error.operation));
   const k = (): string => shownName(noted(error.key, "key", error.operation));
+  // A row that quotes a name applies only to a verb that carries it: the server chooses the code, so a code naming
+  // something the verb does not carry falls through to the rows that quote the code.
+  const verb = S3_VERBS[error.operation];
+  const objectVerb = verb.noun === "object";
   const { status, code, problem } = error;
   const message = error.serverMessage ?? "";
   const signing = context.region;
@@ -452,11 +456,12 @@ function serverFailure(error: S3ServerError, context: S3ClientContext): Error {
       S3_TYPE,
     );
   if (code === "AccessDenied" && ANONYMOUS.test(message)) return new AuthenticationError(sentence.anonymous, S3_TYPE);
-  if (code === "NoSuchBucket" || (status === 404 && error.operation === "HeadBucket"))
+  if (verb.named && (code === "NoSuchBucket" || (status === 404 && error.operation === "HeadBucket")))
     return new QueryError(sentence.noBucket(b()), S3_TYPE);
-  if (status === 404 && error.deleteMarker === true) return new QueryError(sentence.deleteMarker(k(), b()), S3_TYPE);
-  if (code === "NoSuchKey") return new QueryError(sentence.noKey(k(), b()), S3_TYPE);
-  if (status === 404 && error.operation === "HeadObject" && code === undefined)
+  if (objectVerb && status === 404 && error.deleteMarker === true)
+    return new QueryError(sentence.deleteMarker(k(), b()), S3_TYPE);
+  if (objectVerb && code === "NoSuchKey") return new QueryError(sentence.noKey(k(), b()), S3_TYPE);
+  if (objectVerb && status === 404 && error.operation === "HeadObject" && code === undefined)
     return new QueryError(sentence.headNotFound(k(), b()), S3_TYPE);
   if (problem?.kind === "not-s3" && status >= 200 && status < 300)
     return new QueryError(
@@ -482,7 +487,7 @@ function serverFailure(error: S3ServerError, context: S3ClientContext): Error {
   if (code === "XMinioInvalidObjectName") return new QueryError(sentence.objectName, S3_TYPE);
   if (code === "XMinioInvalidResourceName" || (code === "InvalidArgument" && hasDotSegment(error.key ?? error.prefix)))
     return new QueryError(sentence.dotSegment, S3_TYPE);
-  if (code === "InvalidObjectState") return new QueryError(sentence.archived(k()), S3_TYPE);
+  if (objectVerb && code === "InvalidObjectState") return new QueryError(sentence.archived(k()), S3_TYPE);
   if (code === "SlowDown" || status === 503)
     return new ConnectionError(sentence.overloaded(codeWords(code, status, context)), S3_TYPE);
   if (status >= 500 && status <= 599)

@@ -676,14 +676,16 @@ describe("a value the failed request must carry is a defect when it was never no
     );
   });
 
-  test("a row that quotes a key the bucket verb never carried", () => {
-    expect(() => mapped(server({ status: 404, code: "NoSuchKey" }))).toThrow(defect("ListObjectsV2", "key"));
+  test("NoSuchKey answering a bucket verb falls through to the row that quotes the server's code", () => {
+    expectRow(mapped(server({ status: 404, code: "NoSuchKey" })), QueryError, `The server refused ${LIST}: NoSuchKey`);
   });
 
-  test("a row that quotes a bucket the ListBuckets request never carried", () => {
-    expect(() =>
+  test("NoSuchBucket answering ListBuckets falls through to the row that quotes the server's code", () => {
+    expectRow(
       mapped(server({ status: 404, operation: "ListBuckets", bucket: undefined, code: "NoSuchBucket" }), "ListBuckets"),
-    ).toThrow(defect("ListBuckets", "bucket"));
+      QueryError,
+      "The server refused list buckets: NoSuchBucket",
+    );
   });
 });
 
