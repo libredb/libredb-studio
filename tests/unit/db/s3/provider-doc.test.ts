@@ -1741,3 +1741,53 @@ describe("docs/THIRD_PARTY_LICENSES.md", () => {
     );
   });
 });
+
+/** A capture set's directory name: target, UTC date, then the version the server reported. */
+const CAPTURE_SET = /^(minio-region|silo-tls|minio|silo|garage|rustfs)-(\d{4}-\d{2}-\d{2})-(.+)$/;
+const VERIFIED_TARGETS = ["minio", "silo", "garage", "rustfs"] as const;
+type VerifiedTarget = (typeof VERIFIED_TARGETS)[number];
+const SERVER_NAMES: Readonly<Record<VerifiedTarget, string>> = {
+  minio: "MinIO",
+  silo: "Silo",
+  garage: "Garage",
+  rustfs: "RustFS",
+};
+
+/** The one version each verified target reported in the capture sets; two versions of one target fail. */
+function capturedVersions(): Readonly<Record<VerifiedTarget, string>> {
+  const found = new Map<string, Set<string>>();
+  for (const entry of readdirSync(path.join(ROOT, "tests/fixtures/s3/captures"), { withFileTypes: true })) {
+    const match = entry.isDirectory() ? CAPTURE_SET.exec(entry.name) : null;
+    if (match === null) continue;
+    const versions = found.get(match[1]) ?? new Set<string>();
+    versions.add(match[3]);
+    found.set(match[1], versions);
+  }
+  const versions = {} as Record<VerifiedTarget, string>;
+  for (const target of VERIFIED_TARGETS) {
+    const seen = [...(found.get(target) ?? [])];
+    expect(seen, `${target} capture sets`).toHaveLength(1);
+    versions[target] = seen[0];
+  }
+  return versions;
+}
+
+describe("docs/providers/s3.md: the servers it was verified on", () => {
+  test("13. the header names each verified server with the version its capture set recorded", () => {
+    const v = capturedVersions();
+    expect(DOC).toContain(
+      `verified on MinIO ${v.minio}, Silo ${v.silo}, Garage ${v.garage} and RustFS ${v.rustfs}, and not on AWS S3 or any hosted service.`,
+    );
+  });
+
+  test("14. section 4.8 has one row per verified server, with that version", () => {
+    const versions = sectionOf(DOC, "### 4.8 Server versions");
+    const v = capturedVersions();
+    for (const target of VERIFIED_TARGETS) {
+      const row = rowOf(versions, SERVER_NAMES[target]);
+      expect(row, target).toBeDefined();
+      expect(row, target).toContain(`\`${v[target]}\``);
+    }
+    expect(versions).toContain("Node 24.14.0 and Bun 1.4.2");
+  });
+});
