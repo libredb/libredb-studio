@@ -129,7 +129,9 @@ export const S3_PREVIEW_LIMITS: S3PreviewLimits = Object.freeze({
   csvSniffRecords: 20,
 });
 
-/** At most two Parquet decodes run at once in one process, whatever the provider, connection or user. */
+/**
+ * At most two Parquet decodes or footer parses run at once in one process, whatever the provider, connection or user.
+ */
 export const S3_PARQUET_DECODE_SLOTS = 2;
 
 /** At most this many previews wait for a decode slot; equal to the provider's request bound. */

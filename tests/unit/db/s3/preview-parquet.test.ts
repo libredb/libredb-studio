@@ -50,7 +50,7 @@ import {
   withTail,
 } from "../../../helpers/parquet-synthetic";
 import { fakeReader, fixture, headOf } from "../../../helpers/s3-preview-reader";
-import { THRIFT, type ThriftValue, thriftStruct } from "../../../helpers/thrift-compact";
+import { THRIFT, type ThriftValue, thriftStruct, varint } from "../../../helpers/thrift-compact";
 
 const limits = (changes: Partial<typeof S3_PREVIEW_LIMITS> = {}) => ({ ...S3_PREVIEW_LIMITS, ...changes });
 
@@ -74,14 +74,21 @@ function inputFor(object: Uint8Array, key: string, changes: Partial<ParquetPrevi
   return { reader, input };
 }
 
+/** Decode slots of their own for a footer read, so no test waits on the process-wide slot. */
+const freeSlots = (): DecodeSlots => createDecodeSlots(2, 4);
+
 async function footerOf(object: Uint8Array, changes: Partial<ParquetPreviewInput> = {}): Promise<ParquetFooter> {
-  const outcome = await readParquetFooter(inputFor(object, "f.parquet", changes).input, await loadParquetModules());
+  const outcome = await readParquetFooter(
+    inputFor(object, "f.parquet", changes).input,
+    await loadParquetModules(),
+    freeSlots(),
+  );
   if (outcome.kind !== "footer") throw new Error(`expected a footer, got ${JSON.stringify(outcome)}`);
   return outcome.footer;
 }
 
 const footerOutcome = async (object: Uint8Array, changes: Partial<ParquetPreviewInput> = {}): Promise<FooterOutcome> =>
-  readParquetFooter(inputFor(object, "f.parquet", changes).input, await loadParquetModules());
+  readParquetFooter(inputFor(object, "f.parquet", changes).input, await loadParquetModules(), freeSlots());
 
 /** A one-page INT32 chunk of `values`, uncompressed unless a codec is named. */
 const int32Chunk = (
@@ -154,10 +161,10 @@ describe("readParquetFooter", () => {
   test("a tail longer than the footer needs one GET; a footer longer than the tail needs two", async () => {
     const object = fixture("fx-zstd.parquet");
     const one = inputFor(object, "fx-zstd.parquet");
-    expect((await readParquetFooter(one.input, await loadParquetModules())).kind).toBe("footer");
+    expect((await readParquetFooter(one.input, await loadParquetModules(), freeSlots())).kind).toBe("footer");
     expect(one.reader.calls).toEqual([{ range: { kind: "suffix", length: object.length }, maxBytes: object.length }]);
     const two = inputFor(object, "fx-zstd.parquet", { limits: limits({ parquetTailBytes: 64 }) });
-    const outcome = await readParquetFooter(two.input, await loadParquetModules());
+    const outcome = await readParquetFooter(two.input, await loadParquetModules(), freeSlots());
     expect(outcome.kind === "footer" && outcome.footer.metadata.num_rows).toBe(BigInt(200));
     expect(two.reader.calls).toHaveLength(2);
     expect(two.reader.calls[0]).toEqual({ range: { kind: "suffix", length: 64 }, maxBytes: 64 });
@@ -166,7 +173,9 @@ describe("readParquetFooter", () => {
 
   test("an object under 12 bytes is not Parquet and is never read", async () => {
     const small = inputFor(new Uint8Array(11), "f.parquet");
-    expect(await readParquetFooter(small.input, await loadParquetModules())).toEqual({ kind: "not-parquet" });
+    expect(await readParquetFooter(small.input, await loadParquetModules(), freeSlots())).toEqual({
+      kind: "not-parquet",
+    });
     expect(small.reader.calls).toEqual([]);
   });
 
@@ -951,14 +960,18 @@ describe("boundedZlib", () => {
 });
 
 describe("the process-wide decode slot", () => {
-  /** Real modules whose decode waits on a gate per call, while `gated` holds. */
+  /** Real modules whose decode waits on a gate per call, while `gated` holds; footer parses are counted. */
   async function gatedModules() {
     const real = await loadParquetModules();
     const started: number[] = [];
     const gates: (() => void)[] = [];
-    const state = { gated: true };
+    const state = { gated: true, footers: 0 };
     const modules: ParquetModules = {
       ...real,
+      parquetMetadata: (...args: Parameters<ParquetModules["parquetMetadata"]>) => {
+        state.footers += 1;
+        return real.parquetMetadata(...args);
+      },
       parquetReadObjects: (async (options: Parameters<ParquetModules["parquetReadObjects"]>[0]) => {
         const id = started.length;
         started.push(id);
@@ -979,7 +992,7 @@ describe("the process-wide decode slot", () => {
     const deps = depsOf(modules, slots);
     const object = fixture("fx-zstd.parquet");
     const runs = [0, 1, 2].map(() => previewParquet(inputFor(object, "f.parquet").input, deps));
-    await settle(() => started.length === 2 && asked.count === 3);
+    await settle(() => started.length === 2 && asked.count === 6);
     expect(started).toEqual([0, 1]);
     open(0);
     await settle(() => started.length === 3);
@@ -990,20 +1003,21 @@ describe("the process-wide decode slot", () => {
     expect((await Promise.all(runs)).map((each) => each.kind)).toEqual(["parquet", "parquet", "parquet"]);
   });
 
-  test("with two decodes running and four waiting, the next preview gets R-PQ-BUSY and sends no GET after its pre-scan", async () => {
+  test("with two decodes running and four waiting, the next preview gets R-PQ-BUSY at its footer parse and sends no GET after the tail", async () => {
     const { modules, started, open, state } = await gatedModules();
     const { slots, asked } = countingSlots(createDecodeSlots(2, 4));
     const deps = depsOf(modules, slots);
     const object = fixture("fx-zstd.parquet");
     const runs = Array.from({ length: 6 }, () => previewParquet(inputFor(object, "f.parquet").input, deps));
-    await settle(() => started.length === 2 && asked.count === 6);
+    await settle(() => started.length === 2 && asked.count === 12);
     const busy = inputFor(object, "f.parquet");
     expect(await previewParquet(busy.input, deps)).toEqual({
       kind: "refused",
       sentence: "The server is decoding other Parquet previews; preview this object again in a moment.",
       notices: [],
     });
-    expect(busy.reader.calls).toHaveLength(2);
+    expect(busy.reader.calls).toHaveLength(1);
+    expect(state.footers).toBe(6);
     state.gated = false;
     for (let id = 0; id < 6; id += 1) open(id);
     await Promise.all(runs);
@@ -1036,24 +1050,69 @@ describe("the process-wide decode slot", () => {
     );
   });
 
-  test("a preview aborted right after it acquires the slot releases it", async () => {
-    const inner = createDecodeSlots(1, 4);
-    const controller = new AbortController();
-    const slots = {
-      acquire: async (signal: AbortSignal) => {
-        const release = await inner.acquire(signal);
-        controller.abort();
-        return release;
+  for (const [when, at] of [
+    ["its footer parse", 1],
+    ["its decode", 2],
+  ] as const) {
+    test(`a preview aborted right after it acquires the slot for ${when} releases it`, async () => {
+      const inner = createDecodeSlots(1, 4);
+      const controller = new AbortController();
+      let acquired = 0;
+      const slots = {
+        acquire: async (signal: AbortSignal) => {
+          const release = await inner.acquire(signal);
+          acquired += 1;
+          if (acquired === at) controller.abort();
+          return release;
+        },
+      };
+      const { modules, calls } = await spiedModules();
+      const object = fixture("fx-zstd.parquet");
+      await expect(
+        previewParquet(inputFor(object, "f.parquet", { signal: controller.signal }).input, depsOf(modules, slots)),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(calls.metadata).toBe(at - 1);
+      expect(calls.read).toEqual([]);
+      const again = await inner.acquire(new AbortController().signal);
+      again();
+    });
+  }
+
+  test("a footer parse waits for a free slot while two decodes hold both", async () => {
+    const { modules, started, open, state } = await gatedModules();
+    const { slots, asked } = countingSlots(createDecodeSlots(2, 4));
+    const deps = depsOf(modules, slots);
+    const object = fixture("fx-zstd.parquet");
+    const runs = [0, 1].map(() => previewParquet(inputFor(object, "f.parquet").input, deps));
+    await settle(() => started.length === 2 && asked.count === 4);
+    expect(state.footers).toBe(2);
+    runs.push(previewParquet(inputFor(object, "f.parquet").input, deps));
+    await settle(() => asked.count === 5);
+    expect(state.footers).toBe(2);
+    state.gated = false;
+    open(0);
+    await settle(() => state.footers === 3);
+    open(1);
+    expect((await Promise.all(runs)).map((each) => each.kind)).toEqual(["parquet", "parquet", "parquet"]);
+  });
+
+  test("a footer parse that throws releases its slot", async () => {
+    const slots = createDecodeSlots(1, 0);
+    const { modules } = await spiedModules();
+    const failing: ParquetModules = {
+      ...modules,
+      parquetMetadata: () => {
+        throw new Error("boom");
       },
     };
-    const { modules, calls } = await spiedModules();
     const object = fixture("fx-zstd.parquet");
-    await expect(
-      previewParquet(inputFor(object, "f.parquet", { signal: controller.signal }).input, depsOf(modules, slots)),
-    ).rejects.toMatchObject({ name: "AbortError" });
-    expect(calls.read).toEqual([]);
-    const again = await inner.acquire(new AbortController().signal);
-    again();
+    expect(await previewParquet(inputFor(object, "f.parquet").input, depsOf(failing, slots))).toEqual({
+      kind: "refused",
+      sentence: "The Parquet footer could not be read.",
+      notices: [],
+    });
+    const next = await slots.acquire(new AbortController().signal);
+    next();
   });
 });
 
@@ -1362,6 +1421,143 @@ const headerWith = (extra: readonly number[]): Uint8Array => {
   return Uint8Array.from([...head.subarray(0, head.length - 1), ...extra, 0x00, 1, 2, 3, 4]);
 };
 
+/** An object that is the footer bytes given between the magic numbers, with no column data. */
+function footerOnly(footer: Uint8Array): Uint8Array {
+  const object = new Uint8Array(footer.length + 12);
+  object.set([0x50, 0x41, 0x52, 0x31]);
+  object.set(footer, 4);
+  new DataView(object.buffer).setUint32(4 + footer.length, footer.length, true);
+  object.set([0x50, 0x41, 0x52, 0x31], 8 + footer.length);
+  return object;
+}
+
+/**
+ * The footer shape that grows hyparquet's heap most per field: field 1 a list of 131,072 empty structs (the list
+ * budget at the default caps), then `structs` empty struct fields, so the footer declares `structs + 1` fields.
+ */
+function listAndStructs(structs: number): Uint8Array {
+  const elements = S3_PREVIEW_LIMITS.parquetMaxLeafColumns * 8 * 128;
+  const body: number[] = [0x19, 0xfc, ...varint(elements), ...new Array<number>(elements).fill(0)];
+  for (let field = 0; field < structs; field += 1) body.push(0x1c, 0x00);
+  body.push(0x00);
+  return footerOnly(Uint8Array.from(body));
+}
+
+/**
+ * One INT64 column chunk laid out field for field as pyarrow 21 writes one with its default statistics (read from a
+ * 60-column pyarrow footer): file_offset, then metadata with three encodings, the path, the codec, counts, sizes, page
+ * offsets, min, max and null count with exactness flags, two encoding stats and size statistics. It declares 29
+ * fields in about 113 bytes, the density of that footer's column chunks.
+ */
+const pyarrowChunk = (name: string): ThriftValue => {
+  const eight = (value: number) => ({ binary: new Uint8Array(new BigInt64Array([BigInt(value)]).buffer) });
+  const stat = (page: number, encoding: number, count: number): ThriftValue => ({
+    struct: [
+      [1, { i32: page }],
+      [2, { i32: encoding }],
+      [3, { i32: count }],
+    ],
+  });
+  return {
+    struct: [
+      [2, { i64: 0 }],
+      [
+        3,
+        {
+          struct: [
+            [1, { i32: PHYSICAL.INT64 }],
+            [2, { list: { type: THRIFT.I32, items: [{ i32: 0 }, { i32: 3 }, { i32: 8 }] } }],
+            [3, { list: { type: THRIFT.BINARY, items: [{ binary: name }] } }],
+            [4, { i32: CODEC.SNAPPY }],
+            [5, { i64: 200_000 }],
+            [6, { i64: 1_216_224 }],
+            [7, { i64: 828_855 }],
+            [9, { i64: 1_241_456 }],
+            [11, { i64: 828_841 }],
+            [
+              12,
+              {
+                struct: [
+                  [1, eight(99_999)],
+                  [2, eight(0)],
+                  [3, { i64: 0 }],
+                  [5, eight(99_999)],
+                  [6, eight(0)],
+                  [7, { bool: true }],
+                  [8, { bool: true }],
+                ],
+              },
+            ],
+            [13, { list: { type: THRIFT.STRUCT, items: [stat(2, 0, 1), stat(0, 8, 10)] } }],
+            [
+              16,
+              {
+                struct: [
+                  [2, { list: { type: THRIFT.I64, items: [] } }],
+                  [3, { list: { type: THRIFT.I64, items: [{ i64: 0 }, { i64: 200_000 }] } }],
+                ],
+              },
+            ],
+          ],
+        },
+      ],
+    ],
+  };
+};
+
+/**
+ * A file of `width` INT64 columns whose footer holds as many pyarrow-shaped row groups as fit in `bytes`, about
+ * 260,000 fields at 1,024,000 bytes. No column data is present; only the footer is read.
+ */
+function pyarrowDensityFooter(width: number, bytes: number): Uint8Array {
+  const names = Array.from({ length: width }, (_, index) => `c${String(index).padStart(2, "0")}`);
+  const rowGroup: ThriftValue = {
+    struct: [
+      [1, { list: { type: THRIFT.STRUCT, items: names.map(pyarrowChunk) } }],
+      [2, { i64: 72_973_440 }],
+      [3, { i64: 200_000 }],
+      [5, { i64: 4 }],
+      [6, { i64: 49_731_300 }],
+    ],
+  };
+  const footer = (groups: number): Uint8Array =>
+    thriftStruct([
+      [1, { i32: 2 }],
+      [
+        2,
+        {
+          list: {
+            type: THRIFT.STRUCT,
+            items: [
+              {
+                struct: [
+                  [4, { binary: "schema" }],
+                  [5, { i32: width }],
+                ],
+              },
+              ...names.map(
+                (name): ThriftValue => ({
+                  struct: [
+                    [1, { i32: PHYSICAL.INT64 }],
+                    [3, { i32: 1 }],
+                    [4, { binary: name }],
+                  ],
+                }),
+              ),
+            ],
+          },
+        },
+      ],
+      [3, { i64: groups * 200_000 }],
+      [4, { list: { type: THRIFT.STRUCT, items: new Array<ThriftValue>(groups).fill(rowGroup) } }],
+      [6, { binary: "parquet-cpp-arrow version 21.0.0" }],
+      [7, { list: { type: THRIFT.STRUCT, items: names.map((): ThriftValue => ({ struct: [[1, { struct: [] }]] })) } }],
+    ]);
+  const one = footer(1).length;
+  const perGroup = footer(2).length - one;
+  return footerOnly(footer(1 + Math.floor((bytes - one) / perGroup)));
+}
+
 describe("the page header and footer field budgets", () => {
   const heapNow = (): number => {
     Bun.gc(true);
@@ -1389,20 +1585,39 @@ describe("the page header and footer field budgets", () => {
     expect(() => prescanChunk(bytes, 1, "id", S3_PREVIEW_LIMITS, { values: 0, decoded: 0 })).toThrow(PreviewRefusal);
   });
 
-  test("a footer of 200,000 distinct boolean fields is refused with R-PQ-FOOTER-BAD before parquetMetadata runs", async () => {
+  test("a footer of 262,145 distinct boolean fields is refused with R-PQ-FOOTER-BAD before parquetMetadata runs", async () => {
     const { modules, calls } = await spiedModules();
-    const footer = new Uint8Array(200_001).fill(0x11);
-    footer[200_000] = 0;
-    const length = new Uint8Array(4);
-    new DataView(length.buffer).setUint32(0, footer.length, true);
-    const magic = [0x50, 0x41, 0x52, 0x31];
-    const object = Uint8Array.from([...magic, ...footer, ...length, ...magic]);
-    expect(await previewParquet(inputFor(object, "f.parquet").input, depsOf(modules))).toEqual({
+    const footer = new Uint8Array(262_146).fill(0x11);
+    footer[262_145] = 0;
+    expect(await previewParquet(inputFor(footerOnly(footer), "f.parquet").input, depsOf(modules))).toEqual({
       kind: "refused",
-      sentence: "The Parquet footer could not be read: the structs declare more than 131,072 fields in all.",
+      sentence: "The Parquet footer could not be read: the structs declare more than 262,144 fields in all.",
       notices: [],
     });
     expect(calls.metadata).toBe(0);
+  });
+
+  test("the costliest footer shape just above the field bound is refused before parquetMetadata runs; at the bound it is parsed", async () => {
+    const above = await spiedModules();
+    expect(await previewParquet(inputFor(listAndStructs(262_144), "f.parquet").input, depsOf(above.modules))).toEqual({
+      kind: "refused",
+      sentence: "The Parquet footer could not be read: the structs declare more than 262,144 fields in all.",
+      notices: [],
+    });
+    expect(above.calls.metadata).toBe(0);
+    const at = await spiedModules();
+    await previewParquet(inputFor(listAndStructs(262_143), "f.parquet").input, depsOf(at.modules));
+    expect(at.calls.metadata).toBe(1);
+  });
+
+  test("a footer of a real writer's density near the 1 MiB footer cap is admitted", async () => {
+    const outcome = await footerOutcome(pyarrowDensityFooter(60, 1_024_000));
+    expect(outcome.kind).toBe("footer");
+    if (outcome.kind !== "footer") return;
+    expect(outcome.footer.footerLength).toBeGreaterThan(1_000_000);
+    expect(outcome.footer.footerLength).toBeLessThanOrEqual(1_024_000);
+    expect(outcome.footer.shape.leaves).toHaveLength(60);
+    expect(outcome.footer.metadata.row_groups.length * 60 * 29).toBeGreaterThan(250_000);
   });
 });
 

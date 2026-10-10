@@ -143,20 +143,25 @@ const refused = (sentence: string): FooterOutcome => ({ kind: "refused", sentenc
 /**
  * The footer's list elements in all, per schema element the walk admits. hyparquet builds an object for each list
  * element before the schema walk runs, so the guard bounds them first: measured on Node 26.10.0, 131,072 empty column
- * chunks (this multiple at 128 leaf columns) hold 21 MiB after parquetMetadata, and a footer of 20,000 one-column row
- * groups holds 100,002 list elements.
+ * chunks (this multiple at 128 leaf columns) hold 21 MiB after parquetMetadata. Real writers declare few list elements
+ * per column chunk (pyarrow and DuckDB write five to seven: the encodings, the path, the encoding stats), so the field
+ * bound below is the one a real footer meets first.
  */
 const FOOTER_LIST_ELEMENTS_PER_SCHEMA_ELEMENT = 128;
 
 /**
  * The footer's fields in all, at every depth. hyparquet builds a property for each field, and a struct object for
  * each struct field, before the schema walk runs, and a 1 MiB footer can declare a million one-byte fields: measured
- * on Node 26.10.0 under a 128 MiB old-space limit, 1,000,000 distinct boolean fields grow the heap by 95 MiB in
- * parquetMetadata, while at this bound the worst shape measured (131,072 empty struct fields beside a list of 131,072
- * empty structs) grows it by 31 MiB in 66 ms. A DuckDB column chunk with statistics holds 18 fields, so this admits a
- * footer of about 7,000 such chunks.
+ * on Node 26.10.0, 1,000,000 distinct boolean fields grow the heap by 94 MiB in parquetMetadata, while at this bound
+ * the costliest shape (262,143 empty struct fields beside a list of 131,072 empty structs, the list budget) grows it by
+ * 55 MiB in 120 ms. The parse runs inside a decode slot, so that growth counts in the slots' shared budget.
+ * Real column chunks with statistics declare 18 to 22 fields in 47 to 111 bytes (DuckDB), 25 to 32 in 74 to 126
+ * bytes (pyarrow) and 18 in about 75 bytes (Polars): about 270,000 fields per MiB of row groups for DuckDB, 265,000
+ * to 296,000 for pyarrow and 245,000 for Polars. This bound admits a footer of 60-column pyarrow row groups up to about
+ * 1,030,000 bytes and a Polars footer up to the 1 MiB footer cap; denser mixes, DuckDB's and narrow pyarrow's, are
+ * admitted up to about 900 to 990 KiB.
  */
-const FOOTER_MAX_FIELDS = 131_072;
+const FOOTER_MAX_FIELDS = 262_144;
 
 /**
  * Parquet writes a row group's column chunks one per schema leaf, in schema order; the plan and the summary pair
@@ -203,8 +208,38 @@ function footerValuesHold(metadata: FileMetaData): boolean {
   });
 }
 
-/** The tail read, the footer length checks, the second read when needed, the guard, the parse, the walk. */
-export async function readParquetFooter(input: ParquetPreviewInput, modules: ParquetModules): Promise<FooterOutcome> {
+/**
+ * hyparquet's footer parse, or undefined when it throws. It runs inside a decode slot, released before planning, so
+ * its heap counts in the same budget as the decodes however many previews run at once.
+ */
+async function parseFooter(
+  input: ParquetPreviewInput,
+  footerBytes: Uint8Array<ArrayBuffer>,
+  modules: ParquetModules,
+  slots: DecodeSlots,
+): Promise<FileMetaData | undefined> {
+  const release = await slots.acquire(input.signal);
+  try {
+    input.signal.throwIfAborted();
+    try {
+      return modules.parquetMetadata(footerBytes.buffer, { geoparquet: false, parsers: PREVIEW_PARSERS });
+    } catch {
+      return undefined;
+    }
+  } finally {
+    release();
+  }
+}
+
+/**
+ * The tail read, the footer length checks, the second read when needed, the guard, the parse in a decode slot, the
+ * walk. A full slot queue rejects with R-PQ-BUSY.
+ */
+export async function readParquetFooter(
+  input: ParquetPreviewInput,
+  modules: ParquetModules,
+  slots: DecodeSlots,
+): Promise<FooterOutcome> {
   const { limits } = input;
   const size = input.head.size;
   if (size < 12) return { kind: "not-parquet" };
@@ -236,12 +271,8 @@ export async function readParquetFooter(input: ParquetPreviewInput, modules: Par
   });
   if (!guard.ok) return refused(previewSentence("R-PQ-FOOTER-BAD", { reason: guard.reason }));
   if (schemaElements > schemaBound) return refused(previewSentence("R-PQ-SCHEMA"));
-  let metadata: FileMetaData;
-  try {
-    metadata = modules.parquetMetadata(footerBytes.buffer, { geoparquet: false, parsers: PREVIEW_PARSERS });
-  } catch {
-    return refused(FOOTER_BAD_BARE);
-  }
+  const metadata = await parseFooter(input, footerBytes, modules, slots);
+  if (metadata === undefined) return refused(FOOTER_BAD_BARE);
   const shape = walkParquetSchema(metadata.schema, limits);
   if (!shape.ok) return refused(previewSentence("R-PQ-SCHEMA"));
   const first = metadata.row_groups[0];
@@ -1061,9 +1092,9 @@ export interface DecodeSlots {
 }
 
 /**
- * A first-in, first-out semaphore of `slots` decodes and `queue` waiters. Not the engine limiter: its
- * permit admits one decode, not one wire call, and it names no engine. A waiter whose signal aborts leaves the queue;
- * each release function frees its slot once, whatever path calls it.
+ * A first-in, first-out semaphore of `slots` decodes and `queue` waiters. Not the engine limiter: its permit admits
+ * one decode or one footer parse, not one wire call, and it names no engine. A waiter whose signal aborts leaves the
+ * queue; each release function frees its slot once, whatever path calls it.
  */
 export function createDecodeSlots(slots: number, queue: number): DecodeSlots {
   let running = 0;
@@ -1114,7 +1145,10 @@ export interface ParquetDeps {
   readonly slots: DecodeSlots;
 }
 
-/** The process-wide decode slot: at most S3_PARQUET_DECODE_SLOTS decodes, S3_PARQUET_DECODE_QUEUE waiters. */
+/**
+ * The process-wide decode slot: at most S3_PARQUET_DECODE_SLOTS decodes and footer parses at once,
+ * S3_PARQUET_DECODE_QUEUE waiters.
+ */
 export const PARQUET_DEPS: ParquetDeps = {
   modules: loadParquetModules,
   slots: createDecodeSlots(S3_PARQUET_DECODE_SLOTS, S3_PARQUET_DECODE_QUEUE),
@@ -1282,13 +1316,13 @@ export async function previewParquet(
   deps: ParquetDeps = PARQUET_DEPS,
 ): Promise<ParquetOutcome> {
   const modules = await deps.modules();
-  const outcome = await readParquetFooter(input, modules);
-  if (outcome.kind === "not-parquet") return outcome;
-  if (outcome.kind === "refused") return { kind: "refused", sentence: outcome.sentence, notices: [] };
-  const { summary, notices: summaryNotices } = summarizeParquet(outcome.footer, input.limits);
-  const plan = planParquet(outcome.footer, input.request, input.purpose, input.limits);
-  if (plan.kind === "summary") return { kind: "parquet", summary, notices: [...plan.notices, ...summaryNotices] };
   try {
+    const outcome = await readParquetFooter(input, modules, deps.slots);
+    if (outcome.kind === "not-parquet") return outcome;
+    if (outcome.kind === "refused") return { kind: "refused", sentence: outcome.sentence, notices: [] };
+    const { summary, notices: summaryNotices } = summarizeParquet(outcome.footer, input.limits);
+    const plan = planParquet(outcome.footer, input.request, input.purpose, input.limits);
+    if (plan.kind === "summary") return { kind: "parquet", summary, notices: [...plan.notices, ...summaryNotices] };
     const read = await readPlannedRows(input, outcome.footer, plan, modules, deps.slots);
     if (read.kind === "summary") return { kind: "parquet", summary, notices: [...read.notices, ...summaryNotices] };
     return {
