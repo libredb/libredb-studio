@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D276, U17 · 179
+- [Drivers and connections](#drivers-and-connections) — D1-D275, U17 · 178
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U110 · 101
@@ -2932,15 +2932,6 @@ A `disconnect()` that runs while the probe is in flight finds no stored session,
 Found 2026-10-10 by the review of the S3 provider; not reached by any shipped flow, which awaits `connect()` before it can call `disconnect()`.
 
 **Done when:** a `disconnect()` during `connect()`'s probe leaves the provider disconnected and the probe's transport closed once the probe settles, with a test that holds the probe, disconnects, releases it, and expects no stored session and one closed transport.
-
-### D276. A sessionless S3 health check racing connect replaces connect's session and leaks its transport
-
-`getHealth()` in `src/lib/db/providers/objectstore/s3/index.ts` opens a session of its own when none is stored and stores it when its read succeeds.
-When it runs while `connect()` is probing, both open a session; whichever finishes last overwrites `this.session`, and the transport of the other is never closed.
-
-Found 2026-10-10 by the review of the S3 provider.
-
-**Done when:** a health check that starts without a session and a `connect()` that overlaps it leave exactly one stored session and close every other transport they opened, with a test that runs the two concurrently in both finishing orders and counts the closed transports.
 
 ## Value interpolation
 

@@ -169,6 +169,62 @@ describe("health and the overview", () => {
     expect(fake.closed.count).toBe(1);
   });
 
+  /** A pinned provider whose first two requests wait, each on its own release, in the order they arrive. */
+  function heldProvider() {
+    const releases: (() => void)[] = [];
+    const { s3, fake } = provider(
+      () =>
+        releases.length >= 2
+          ? xmlAnswer(objectsXml({}))
+          : new Promise((resolve) => releases.push(() => resolve(xmlAnswer(objectsXml({}))))),
+      { database: "sales" },
+    );
+    const held = async (count: number): Promise<void> => {
+      // oxlint-disable-next-line no-await-in-loop -- polls until the held requests have arrived.
+      while (releases.length < count) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    return { s3, fake, releases, held };
+  }
+
+  test("two health checks that start without a session keep one session and close the other transport", async () => {
+    const { s3, fake, releases, held } = heldProvider();
+    const first = s3.getHealth();
+    const second = s3.getHealth();
+    await held(2);
+    for (const release of releases) release();
+    await Promise.all([first, second]);
+    expect(fake.built).toHaveLength(2);
+    expect(fake.closed.count).toBe(1);
+    expect(s3.isConnected()).toBe(true);
+    await s3.getHealth();
+    expect(fake.built).toHaveLength(2);
+    await s3.disconnect();
+    expect(fake.closed.count).toBe(2);
+  });
+
+  test.each([
+    ["connect finishes first", [0, 1]],
+    ["health finishes first", [1, 0]],
+  ])("a connect that overlaps a sessionless health check keeps one session when %s", async (_case, order) => {
+    const { s3, fake, releases, held } = heldProvider();
+    const connected = s3.connect();
+    await held(1);
+    const health = s3.getHealth();
+    await held(2);
+    for (const index of order) {
+      releases[index]?.();
+      // oxlint-disable-next-line no-await-in-loop -- each call settles before the next is released, to fix the finishing order.
+      await (index === 0 ? connected : health);
+    }
+    expect(fake.built).toHaveLength(2);
+    expect(fake.closed.count).toBe(1);
+    expect(s3.isConnected()).toBe(true);
+    await s3.getHealth();
+    expect(fake.built).toHaveLength(2);
+    await s3.disconnect();
+    expect(fake.closed.count).toBe(2);
+  });
+
   test("the overview runs the probe and answers no version, size or table", async () => {
     const { s3, fake } = provider(() => xmlAnswer(bucketsXml(["sales"])));
     await s3.connect();

@@ -133,6 +133,12 @@ interface S3Session {
   warnings: readonly QueryWarning[];
 }
 
+/** Ends a session's calls and closes its transport. */
+function closeSession(session: S3Session): void {
+  session.lifetime.abort();
+  session.transport.close();
+}
+
 export class S3Provider extends BaseDatabaseProvider {
   private session: S3Session | null = null;
   private readonly limiter: ProviderLimiter = s3Limiter();
@@ -366,22 +372,25 @@ export class S3Provider extends BaseDatabaseProvider {
   // Lifecycle
   // ==========================================================================
 
-  /** The options, the transport, and the probe; a session is kept only after its probe parsed as S3 XML. */
+  /**
+   * The options, the transport, and the probe; a session is kept only after its probe parsed as S3 XML. A session a
+   * sessionless health check stored while the probe ran is replaced and closed, so one session stays open.
+   */
   public async connect(): Promise<void> {
     if (this.session !== null) await this.disconnect();
     const session = this.openSession();
     await this.probe(session);
+    const replaced = this.session;
     this.session = session;
     this.setConnected(true);
+    if (replaced !== null) closeSession(replaced);
   }
 
   public async disconnect(): Promise<void> {
     const session = this.session;
     this.session = null;
     this.setConnected(false);
-    if (session === null) return;
-    session.lifetime.abort();
-    session.transport.close();
+    if (session !== null) closeSession(session);
   }
 
   /** The no-bucket notice of an unpinned probe that listed none; [] before a connect and after disconnect. */
@@ -437,8 +446,7 @@ export class S3Provider extends BaseDatabaseProvider {
     } catch (error) {
       // Worded before the lifetime ends, so a defect is never turned into the closed-connection sentence.
       const failure = surface.fail(error, probeOperation(session.options));
-      session.lifetime.abort();
-      session.transport.close();
+      closeSession(session);
       throw failure;
     }
   }
@@ -493,7 +501,8 @@ export class S3Provider extends BaseDatabaseProvider {
 
   /**
    * The probe under the health deadline. A provider with no session builds one without the connect probe, keeps it
-   * when health answers and closes it when health fails, Oxia's rule.
+   * when health answers and closes it when health fails, Oxia's rule; when another caller stored a session while this
+   * one read, that session stays and this one is closed.
    */
   public async getHealth(): Promise<HealthInfo> {
     const opened = this.session === null;
@@ -502,17 +511,14 @@ export class S3Provider extends BaseDatabaseProvider {
     const surface = this.surfaceFor(session, timeoutMs);
     try {
       const health = await s3Health(surface, this.callFor(session, timeoutMs));
-      if (opened) {
+      if (opened && this.session === null) {
         this.session = session;
         this.setConnected(true);
-      }
+      } else if (opened) closeSession(session);
       return health;
     } catch (error) {
       const failure = surface.fail(error, probeOperation(session.options));
-      if (opened) {
-        session.lifetime.abort();
-        session.transport.close();
-      }
+      if (opened) closeSession(session);
       throw failure;
     }
   }

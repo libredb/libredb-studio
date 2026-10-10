@@ -5,7 +5,8 @@
  * nothing else, so everything else is refused: any `<!` construct (DOCTYPE, ENTITY, comment, CDATA), any processing
  * instruction but one leading declaration, any entity but the five, any character outside XML 1.0 `Char`. Nothing
  * is resolved outside the document, and the work is bounded by the caller's response cap, the depth bound and the
- * element bound. Attributes are parsed for syntax and dropped; names lose any "prefix:".
+ * element bound. Attributes are parsed for syntax and dropped, and a name repeated on one element is refused as
+ * malformed, as is a raw `]]>` in character data, since neither is well-formed XML; names lose any "prefix:".
  *
  * Browser-safe: no Node built-in, no server module and no `Buffer`.
  */
@@ -146,6 +147,7 @@ class Parser {
     this.count += 1;
     if (this.count > S3_XML_MAX_ELEMENTS) throw new Refused("too-many");
     if (this.stack.length + 1 > S3_XML_MAX_DEPTH) throw new Refused("too-deep");
+    const attributes = new Set<string>();
     for (;;) {
       const spaced = this.space();
       if (this.text.startsWith("/>", this.pos)) {
@@ -158,13 +160,15 @@ class Parser {
         return undefined;
       }
       if (!spaced) throw new Refused("malformed");
-      this.attribute();
+      const attribute = this.attribute();
+      if (attributes.has(attribute)) throw new Refused("malformed");
+      attributes.add(attribute);
     }
   }
 
-  /** `name = "value"` or `name = 'value'`; read for syntax and dropped. */
-  private attribute(): void {
-    this.name();
+  /** `name = "value"` or `name = 'value'`; read for syntax, and only its name is answered. */
+  private attribute(): string {
+    const name = this.name();
     this.space();
     if (this.text[this.pos] !== "=") throw new Refused("malformed");
     this.pos += 1;
@@ -177,6 +181,7 @@ class Parser {
     if (value.includes("<")) throw new Refused("malformed");
     resolveReferences(value);
     this.pos = end + 1;
+    return name;
   }
 
   private close(): XmlElement | undefined {
@@ -205,7 +210,7 @@ class Parser {
     const raw = this.text.slice(this.pos, stop);
     this.pos = stop;
     const parent = this.stack[this.stack.length - 1];
-    if (parent === undefined) throw new Refused("malformed");
+    if (parent === undefined || raw.includes("]]>")) throw new Refused("malformed");
     parent.text += resolveReferences(raw);
   }
 

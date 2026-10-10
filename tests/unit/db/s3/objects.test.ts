@@ -314,7 +314,7 @@ describe("the object Source document", () => {
     expect(json(document.parts[0])).toMatchObject({
       tags: null,
       tags_unavailable:
-        'This server does not implement read the tags of object "a.csv": it answered 501 Not Implemented.',
+        'This server does not implement GetObjectTagging, so it cannot read the tags of object "a.csv": it answered 501 Not Implemented.',
     });
   });
 

@@ -52,6 +52,20 @@ describe("refusals", () => {
     expect(readXml(input)).toEqual({ ok: false, reason });
   });
 
+  test("a repeated attribute name is refused as malformed", () => {
+    expect(read('<R a="1" a="2"/>')).toEqual({ ok: false, reason: "malformed" });
+    expect(read('<R a="1" b="2"><N a="3" a=\'4\'></N></R>')).toEqual({ ok: false, reason: "malformed" });
+  });
+
+  test("the same attribute name on two elements is read", () => {
+    expect(read('<R a="1"><N a="2"/></R>').ok).toBe(true);
+  });
+
+  test("a raw ]]> in character data is refused as malformed", () => {
+    expect(read("<R><N>x]]>y</N></R>")).toEqual({ ok: false, reason: "malformed" });
+    expect(root("<R><N>x]]&gt;y</N></R>").children[0]?.text).toBe("x]]>y");
+  });
+
   test("a billion-laughs document is refused as doctype before any expansion", () => {
     const laughs = [
       '<?xml version="1.0"?>',

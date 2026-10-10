@@ -566,7 +566,7 @@ describe("E7b to E34: server answers", () => {
         "GetObjectTagging",
       ),
       QueryError,
-      'This server does not implement read the tags of object "a.csv": it answered 501 Not Implemented.',
+      'This server does not implement GetObjectTagging, so it cannot read the tags of object "a.csv": it answered 501 Not Implemented.',
     );
   });
 

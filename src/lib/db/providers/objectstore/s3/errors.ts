@@ -251,7 +251,8 @@ export const S3_ERROR_SENTENCES = Object.freeze({
     "The position of the next page is too long for a Keys panel cursor, so the Keys panel cannot page past this point: narrow the prefix.",
   tokenRefused: "The server refused this page's continuation token: list this folder again from its start.",
   noVersions: "This server does not keep object versions: it answered 501 Not Implemented to ListObjectVersions.",
-  notImplemented: (op: string): string => `This server does not implement ${op}: it answered 501 Not Implemented.`,
+  notImplemented: (operation: string, op: string): string =>
+    `This server does not implement ${operation}, so it cannot ${op}: it answered 501 Not Implemented.`,
   objectName: "The server refuses this object name: it holds characters or empty segments the server does not store.",
   dotSegment:
     "The server refuses a name with a . or .. segment or an empty segment, here in the key or the prefix: type it without such a segment.",
@@ -492,7 +493,7 @@ function serverFailure(error: S3ServerError, context: S3ClientContext): Error {
     return new QueryError(sentence.tokenRefused, S3_TYPE);
   if (code === "NotImplemented")
     return new QueryError(
-      error.operation === "ListObjectVersions" ? sentence.noVersions : sentence.notImplemented(op),
+      error.operation === "ListObjectVersions" ? sentence.noVersions : sentence.notImplemented(error.operation, op),
       S3_TYPE,
     );
   if (code === "XMinioInvalidObjectName") return new QueryError(sentence.objectName, S3_TYPE);
