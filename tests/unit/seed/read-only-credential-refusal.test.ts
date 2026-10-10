@@ -214,3 +214,19 @@ describe("resolution: what the references become", () => {
     expect(readOnlySeedRefusal(parsed.type, resolveConnectionCredentials(parsed))).toBeUndefined();
   });
 });
+
+describe("load: the S3 default pair", () => {
+  const s3 = { ...base, type: "s3", host: "minio.internal", port: 9000 } as const;
+  const MINIO_SENTENCE =
+    "Credential warning: This is the documented default root credential a MinIO server starts with when MINIO_ROOT_USER and MINIO_ROOT_PASSWORD are not set, so anyone who knows MinIO can sign in with it as the administrator. Set both on the server, or connect with an access key of your own.";
+
+  it("refuses a read-only S3 seed with minioadmin:minioadmin, naming the connection and the field", () => {
+    expect(issuesOf({ ...s3, user: "minioadmin", password: "minioadmin" })).toEqual([
+      ["password", refusedAtLoad(MINIO_SENTENCE)],
+    ]);
+  });
+
+  it("loads an S3 seed with the default pair that is not read-only; the dialog's warning is what tells its operator", () => {
+    expect(issuesOf({ ...s3, readOnly: undefined, user: "minioadmin", password: "minioadmin" })).toEqual([]);
+  });
+});
