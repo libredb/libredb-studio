@@ -3,7 +3,7 @@
  * choice, the 5-stream fan-out, the tails, the query each stream sends, and the time-ordered merge.
  */
 import { describe, expect, test } from "bun:test";
-import type { NodeRequest } from "@/lib/db/http/node-transport";
+import { type NodeRequest, TransportError } from "@/lib/db/http/node-transport";
 import {
   compareForLogging,
   readLogs,
@@ -281,6 +281,24 @@ describe("-l: every selected pod", () => {
     const grid = await readLogs(context, logs("logs -l app=web"));
     expect(grid.rows.map((row) => `${row.POD}:${row.LINE}`)).toEqual(["p2:no timestamp", "p2:a1", "p1:a2", "p1:b"]);
     expect(grid.warnings).toBeUndefined();
+  });
+
+  test("a page of pods past the byte cap is read again at half the page size, and the logs are still read", async () => {
+    const answer = routes({
+      "GET /api/v1/namespaces/shop/pods?limit=500&labelSelector=app%3Dweb": () => {
+        throw new TransportError("too-large", "x");
+      },
+      "GET /api/v1/namespaces/shop/pods?limit=250&labelSelector=app%3Dweb": listAnswer([pod({ name: "p1" })]),
+      [logLine("p1", "app", 10)]: textAnswer("2026-10-10T11:00:00Z a\n"),
+    });
+    const { context, transport } = consoleContext(answer);
+    const grid = await readLogs(context, logs("logs -l app=web"));
+    expect(grid.rows.map((row) => row.LINE)).toEqual(["a"]);
+    expect(sentLines(transport)).toEqual([
+      "GET /api/v1/namespaces/shop/pods?limit=500&labelSelector=app%3Dweb",
+      "GET /api/v1/namespaces/shop/pods?limit=250&labelSelector=app%3Dweb",
+      logLine("p1", "app", 10),
+    ]);
   });
 
   test("a selector matching more than five streams answers the sentence before any log is read", async () => {

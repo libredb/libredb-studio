@@ -187,6 +187,8 @@ async function selectedPods(
     offset: 0,
     limit: KUBERNETES_MAX_STATEMENT_ROWS + 1,
     pageSize: KUBERNETES_PAGE_SIZE,
+    // Whole pods are read, so a page of large ones may pass the byte cap.
+    halveOnTooLarge: true,
   });
   if (scan.rows.length > KUBERNETES_MAX_STATEMENT_ROWS)
     throw new QueryError(
