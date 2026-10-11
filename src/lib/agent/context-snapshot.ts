@@ -1441,9 +1441,14 @@ function renderTable(table: AgentInventoryObject, inventory: AgentInventory): st
   const hiddenIndexes = table.indexes.length - indexes.length;
   if (hiddenIndexes > 0) indexes.push(`+${hiddenIndexes} more`);
 
-  const columnText = shown.length === 0 ? "no columns derivable from the stored definition" : shown.join(", ");
+  const head = `${displayName(table)}${kindLabel(table, inventory)}${readMark(table)}`;
   const indexText = indexes.length === 0 ? "" : `; indexes: ${indexes.join(", ")}`;
-  return `${displayName(table)}${kindLabel(table, inventory)}${readMark(table)}: ${columnText}${indexText}`;
+  // The sentence about a stored definition is about a relation; an object of a kind that is not one, such as a
+  // Kubernetes resource or an etcd group, has no columns to derive, so its line says nothing about columns.
+  const role = (inventory.kinds ?? []).find((kind) => kind.id === table.kind)?.role;
+  if (shown.length === 0 && indexes.length === 0 && role !== undefined && role !== "relation") return head;
+  const columnText = shown.length === 0 ? "no columns derivable from the stored definition" : shown.join(", ");
+  return `${head}: ${columnText}${indexText}`;
 }
 
 /**

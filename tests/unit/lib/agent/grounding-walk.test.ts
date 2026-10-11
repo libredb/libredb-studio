@@ -325,3 +325,24 @@ describe("a scoped walk", () => {
     expect(snapshot.unreadContainers).toBeUndefined();
   });
 });
+
+describe("an object with no columns", () => {
+  const TABLE: ObjectKindSpec = { id: "tables", role: "relation", label: "Table", labelPlural: "Tables" };
+
+  test("a kind that is not a relation carries no column clause; a relation still says none was derivable", async () => {
+    const { snapshot } = await captured({
+      kinds: [POD, TABLE],
+      counts: () => ({ pods: { count: 1 }, tables: { count: 1 } }),
+      objects: (container, kind) =>
+        kind === "tables"
+          ? [{ path: [...container, "orders"], name: "orders", kind }]
+          : [{ path: [...container, "pod/web"], name: "pod/web", kind }],
+    });
+    // The task packer's lines: the operations packer lists names and indexes only, never columns.
+    const lines = packContextForTask(snapshot, "why do pods restart").split("\n");
+    expect(lines.find((line) => line.includes("pod/web"))).toMatch(/pod\/web \(Pod\)$/);
+    expect(lines.find((line) => line.includes("orders"))).toMatch(
+      /orders \(Table\): no columns derivable from the stored definition$/,
+    );
+  });
+});
