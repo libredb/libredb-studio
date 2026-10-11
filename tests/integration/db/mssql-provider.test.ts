@@ -201,7 +201,18 @@ class MockConnectionPool extends EventEmitter {
   /** How many times this pool was closed, which is how "the pool is ENDED" is observed. */
   public closeCount = 0;
 
+  public connectError: Error | null = null;
+  public mockTediousConnection: EventEmitter | null = null;
+
   async connect() {
+    const cfg = this._config as { beforeConnect?: (conn: any) => void };
+    if (typeof cfg?.beforeConnect === "function") {
+      this.mockTediousConnection = new EventEmitter();
+      cfg.beforeConnect(this.mockTediousConnection);
+    }
+    if (this.connectError) {
+      throw this.connectError;
+    }
     return this;
   }
 
@@ -714,6 +725,68 @@ describe("MSSQLProvider", () => {
       await provider.connect();
 
       expect(lastPool?.listenerCount("error")).toBe(1);
+    });
+
+    test("a login that fails with error 4060 then 18456 surfaces the 4060 database message", async () => {
+      const connectErr = new Error("Login failed for user 'sa'.");
+      const originalConnect = MockConnectionPool.prototype.connect;
+      MockConnectionPool.prototype.connect = async function (this: MockConnectionPool) {
+        const cfg = (this as unknown as { _config?: { beforeConnect?: (conn: unknown) => void } })._config;
+        if (typeof cfg?.beforeConnect === "function") {
+          const fakeTedious = new EventEmitter();
+          cfg.beforeConnect(fakeTedious);
+          fakeTedious.emit("errorMessage", {
+            number: 4060,
+            message: 'Cannot open database "nope_db" requested by the login. The login failed.',
+          });
+          fakeTedious.emit("errorMessage", {
+            number: 18456,
+            message: "Login failed for user 'sa'.",
+          });
+        }
+        throw connectErr;
+      };
+
+      try {
+        const failureProvider = new MSSQLProvider({
+          ...baseConfig,
+          database: "nope_db",
+        });
+        await expect(failureProvider.connect()).rejects.toThrow(
+          'Failed to connect to SQL Server: Cannot open database "nope_db" requested by the login. The login failed.',
+        );
+      } finally {
+        MockConnectionPool.prototype.connect = originalConnect;
+      }
+    });
+
+    test("a login that fails with plain 18456 keeps the original error message", async () => {
+      const connectErr = new Error("Login failed for user 'sa'.");
+      const originalConnect = MockConnectionPool.prototype.connect;
+      MockConnectionPool.prototype.connect = async function (this: MockConnectionPool) {
+        const cfg = (this as unknown as { _config?: { beforeConnect?: (conn: unknown) => void } })._config;
+        if (typeof cfg?.beforeConnect === "function") {
+          const fakeTedious = new EventEmitter();
+          cfg.beforeConnect(fakeTedious);
+          fakeTedious.emit("errorMessage", {
+            number: 18456,
+            message: "Login failed for user 'sa'.",
+          });
+        }
+        throw connectErr;
+      };
+
+      try {
+        const failureProvider = new MSSQLProvider({
+          ...baseConfig,
+          database: "master",
+        });
+        await expect(failureProvider.connect()).rejects.toThrow(
+          "Failed to connect to SQL Server: Login failed for user 'sa'.",
+        );
+      } finally {
+        MockConnectionPool.prototype.connect = originalConnect;
+      }
     });
   });
 

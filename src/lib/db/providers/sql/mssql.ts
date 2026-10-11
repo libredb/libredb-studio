@@ -1823,7 +1823,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       }
     }
 
-    const config: mssql.config = {
+    const config: mssql.config & { beforeConnect?: (tedious: any) => void } = {
       user: this.config.user,
       password: this.config.password,
       server: host,
@@ -1860,8 +1860,20 @@ export class MSSQLProvider extends SQLBaseProvider {
       return;
     }
 
+    const loginErrors: Array<{ number?: number; message?: string }> = [];
+
     try {
       const config = this.buildConfig();
+      config.beforeConnect = (tediousConn: { on?: (event: string, listener: (...args: any[]) => void) => void }) => {
+        if (typeof tediousConn?.on === "function") {
+          tediousConn.on("errorMessage", (token: { number?: number; message?: string }) => {
+            if (token && typeof token === "object") {
+              loginErrors.push(token);
+            }
+          });
+        }
+      };
+
       this.pool = new mssql.ConnectionPool(config);
 
       // `mssql`'s ConnectionPool is an EventEmitter that emits `error` for a background
@@ -1901,8 +1913,10 @@ export class MSSQLProvider extends SQLBaseProvider {
       if (error instanceof ExecutionProfileError) {
         throw error;
       }
+      const token4060 = loginErrors.find((t) => t.number === 4060);
+      const rawMessage = token4060?.message || (error instanceof Error ? error.message : String(error));
       throw new ConnectionError(
-        `Failed to connect to SQL Server: ${error instanceof Error ? error.message : error}`,
+        `Failed to connect to SQL Server: ${rawMessage}`,
         "mssql",
         this.config.host,
         this.config.port,
