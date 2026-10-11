@@ -412,6 +412,7 @@ Not measured: an etcd-backed managed cluster, Rancher's proxy, OpenShift (its pr
 - A Secret's values cannot be revealed (D281).
 - One common view for every kind: no kind-specific panels, no permission hints on expand, no namespace filter, and Test Connection's fixed sentence (U111).
 - No `-o jsonpath`, `-o custom-columns` or `--sort-by`, and no completion in the editor (U112).
+- A `logs` grid's LINE column is as wide as TIME, POD and CONTAINER, because a result cannot ask the grid for a wide column (U113).
 - No Helm releases (D282), no credential plugins in any mode (D283), no host allowlist for egress (D284), and no per-kind statistics (D285).
 - The deb and rpm wrapper, the Homebrew formula and the Windows launcher do not set the loopback flag for `kubectl proxy` (D286).
 - `get -w` takes no `-o name`, `-o json` or `-o yaml` (D288), and `auth can-i --list` shows the server's rules without kubectl's compaction (D289).
