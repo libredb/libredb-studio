@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
+import { UNAUTHORIZED_SENTENCE } from "@/lib/db/providers/platform/kubernetes/errors";
 import { kindsForContainerName } from "@/lib/db/providers/platform/kubernetes/kinds";
 import {
   containerName,
@@ -9,6 +10,7 @@ import {
 import { expectCalls } from "../../../helpers/call-log";
 import { fakeCluster, manyRows, testSurface } from "../../../helpers/kubernetes-cluster";
 import { discoveryList, GROUPS_DISCOVERY, resource } from "../../../helpers/kubernetes-discovery";
+import { statusAnswer } from "../../../helpers/kubernetes-transport";
 
 const NAMESPACES = [{ name: "default" }, { name: "kube-system" }, { name: "shop" }];
 
@@ -119,6 +121,17 @@ describe("listKubernetesContainers", () => {
         "The API server listed a namespace whose name is not a DNS-1123 label, which no namespace can have, so Studio does not list the namespaces; list the ones to show in the connection's Namespaces field.",
       );
     }
+  });
+
+  test("a 401 on the namespace list answers the expiry sentence after one request, never the Default namespace", async () => {
+    const cluster = fakeCluster();
+    const { surface, transport } = testSurface(
+      (request, line) =>
+        line.startsWith("GET /api/v1/namespaces?") ? statusAnswer(401, "Unauthorized") : cluster(request, line),
+      { database: "shop" },
+    );
+    await expect(listKubernetesContainers(surface)).rejects.toThrow(UNAUTHORIZED_SENTENCE);
+    expect(transport.calls.filter((entry) => entry.method.startsWith("GET /api/v1/namespaces"))).toHaveLength(1);
   });
 
   test("an error other than 403 is raised, not hidden", async () => {
