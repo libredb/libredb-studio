@@ -480,6 +480,7 @@ export function useTabManager({
           tab.origin.connectionId === activeConnection?.id &&
           pathKey(tab.origin.path) === key &&
           tab.origin.databaseOverride === databaseOverride &&
+          tab.origin.rowAction === undefined &&
           tab.query === tab.origin.query,
       );
       if (open !== undefined) {
@@ -606,9 +607,12 @@ export function useTabManager({
    * The action must be one the provider declared for the object's kind: the menu offers no other, so
    * any other id is a caller defect and raises rather than opening a tab nobody asked for. The tab is
    * named after the action and the object, and runs with the same preview bound a tree click uses.
+   *
+   * `activation` is set by `activateRowAction` alone, and records the gesture on the tab's `origin` so
+   * that a later activation can find it; a menu item's tab carries no origin and is never focused.
    */
-  const runRowAction = useCallback(
-    (object: DatabaseObject, actionId: string, executeQueryFn: RunTabStatement) => {
+  const openRowActionTab = useCallback(
+    (object: DatabaseObject, actionId: string, executeQueryFn: RunTabStatement, activation: boolean) => {
       const capabilities = metadata?.capabilities;
       if (capabilities === undefined) return;
       const action = rowActionsForKind(capabilities, object.kind).find((declared) => declared.id === actionId);
@@ -628,6 +632,16 @@ export function useTabManager({
           result: null,
           isExecuting: false,
           type: resolveTabType(capabilities),
+          ...(activation
+            ? {
+                origin: {
+                  path: object.path,
+                  ...(activeConnection === null ? {} : { connectionId: activeConnection.id }),
+                  query,
+                  rowAction: actionId,
+                },
+              }
+            : {}),
         },
       ]);
       setActiveTabId(id);
@@ -635,6 +649,46 @@ export function useTabManager({
       setTimeout(() => executeQueryFn(query, id, false, { limit: PREVIEW_PAGE_SIZE }), 100);
     },
     [activeConnection, generateRowAction, metadata],
+  );
+
+  /** The row menu's item: see `openRowActionTab`. */
+  const runRowAction = useCallback(
+    (object: DatabaseObject, actionId: string, executeQueryFn: RunTabStatement) =>
+      openRowActionTab(object, actionId, executeQueryFn, false),
+    [openRowActionTab],
+  );
+
+  /**
+   * A row ACTIVATION that runs a declared row action (`KindRowAction.activates`): a click, Enter or
+   * Space on a pod runs its Logs, the way activating a table previews its rows.
+   *
+   * It keeps the rule `handleTableClick` keeps, and not the menu item's: a tab this gesture opened for
+   * the same object and the same action, on this connection, still on the statement it was opened with,
+   * is FOCUSED rather than opened again, and run again in place only when its last run failed. A second
+   * press on one row is the reader going back to what they opened, and the menu item is still there to
+   * read the object afresh in a new tab.
+   */
+  const activateRowAction = useCallback(
+    (object: DatabaseObject, actionId: string, executeQueryFn: RunTabStatement) => {
+      const key = pathKey(object.path);
+      const open = tabs.find(
+        (tab) =>
+          tab.origin !== undefined &&
+          tab.origin.rowAction === actionId &&
+          tab.origin.connectionId === activeConnection?.id &&
+          pathKey(tab.origin.path) === key &&
+          tab.query === tab.origin.query,
+      );
+      if (open === undefined) {
+        openRowActionTab(object, actionId, executeQueryFn, true);
+        return;
+      }
+      setActiveTabId(open.id);
+      if (open.runError !== undefined) {
+        setTimeout(() => executeQueryFn(open.query, open.id, false, { limit: PREVIEW_PAGE_SIZE }), 100);
+      }
+    },
+    [activeConnection, openRowActionTab, tabs],
   );
 
   /**
@@ -765,6 +819,7 @@ export function useTabManager({
     handleGenerateSelect,
     handleGenerateCount,
     runRowAction,
+    activateRowAction,
     openSourceTab,
   };
 }

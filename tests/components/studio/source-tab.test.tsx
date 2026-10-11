@@ -1789,6 +1789,35 @@ describe("the new-tab shortcut cannot unmount an apply that is in flight", () =>
     await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
   });
 
+  test("a row whose kind declares an activating row action is refused in the same window", async () => {
+    /*
+     * The fifth door: activating such a row (a pod, whose click runs its Logs) opens and activates a tab
+     * exactly as the menu's row action does.
+     */
+    capabilitiesOverride = {
+      objectKinds: KINDS,
+      rowActions: [{ id: "logs", label: "Logs", kinds: ["sequence"], activates: true }],
+    };
+    buildMetadata();
+    applyAnswer = { status: 200, body: CONFLICT };
+    await confirmAndHold();
+
+    act(() => activate({ path: ["app", "order_seq"], name: "order_seq", kind: "sequence" }));
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(mockToast).toHaveBeenCalledWith({
+      title: "Waiting for the apply to answer",
+      description:
+        "Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.",
+    });
+
+    await act(async () => {
+      releaseApply?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+  });
+
   test("a key activated in the key browser is refused in the same window, and opens once the answer is on screen", async () => {
     /*
      * The third door into this window (spec 4.6). On an engine that declares a key kind, a key's

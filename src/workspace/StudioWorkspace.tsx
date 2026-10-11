@@ -13,7 +13,7 @@ import { StudioTabBar, QueryToolbar, BottomPanel } from "@/components/studio/ind
 import { StudioModals } from "@/components/studio/StudioModals";
 import { DEFAULT_MASKING_CONFIG, type MaskingConfig } from "@/lib/data-masking";
 import type { DatabaseObject } from "@/lib/db/types";
-import { findKind, kindHasSource, relationKindIds } from "@/lib/db/object-kinds";
+import { activationRowActionForKind, findKind, kindHasSource, relationKindIds } from "@/lib/db/object-kinds";
 import { objectPathLabel } from "@/lib/db/object-path";
 import { useToast } from "@/hooks/use-toast";
 import { useTabManager } from "@/hooks/use-tab-manager";
@@ -485,9 +485,20 @@ export function StudioWorkspace({
         return;
       }
       /*
+       * A NON-RELATION row whose kind declares an ACTIVATING row action runs it, ahead of its source,
+       * as `src/components/Studio.tsx` does: a Kubernetes pod runs its Logs. Refused on the same rule
+       * as the menu's row action, because it opens and activates a tab too.
+       */
+      const activation = activationRowActionForKind(capabilities, object.kind);
+      if (activation !== undefined) {
+        if (refuseWhileApplying()) return;
+        tabMgr.activateRowAction(object, activation.id, queryExec.executeQuery);
+        return;
+      }
+      /*
        * A NON-RELATION row whose kind declares source opens its Source tab (#789 Phase 2).
        *
-       * The same two-branch shape `src/components/Studio.tsx` writes, with ONE conjunct this
+       * The same arms `src/components/Studio.tsx` writes, with ONE conjunct this
        * shell adds: the host must have declared a source read. Without one the viewer would
        * fall through to its default, which is this application's own route, and this package
        * ships none - which is B76 exactly, an action that cannot succeed on any connection.
@@ -505,7 +516,7 @@ export function StudioWorkspace({
         tabMgr.openSourceTab(object);
       }
     },
-    [conn.metadata, conn.sourceReader, onTableClick, refuseWhileApplying, tabMgr],
+    [conn.metadata, conn.sourceReader, onTableClick, queryExec.executeQuery, refuseWhileApplying, tabMgr],
   );
 
   /**

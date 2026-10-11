@@ -875,6 +875,42 @@ describe("StudioWorkspace", () => {
     expect(mockHandleTableClick).not.toHaveBeenCalled();
   });
 
+  /**
+   * A kind that declares an ACTIVATING row action runs it on activation (a pod runs its Logs), ahead of
+   * its source, on the host's declaration; a relation keeps its data preview.
+   */
+  test("a row whose kind declares an activating row action runs it, and a relation keeps its preview", () => {
+    const mockActivateRowAction = mock((_object: DatabaseObject, _actionId: string, _run: unknown) => {});
+    const mockOpenSourceTab = mock((_object: DatabaseObject) => {});
+    tabMgrOverride = { activateRowAction: mockActivateRowAction, openSourceTab: mockOpenSourceTab };
+    connAdapterOverride = {
+      metadata: {
+        capabilities: {
+          queryLanguage: "sql",
+          objectKinds: [
+            { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+            { id: "pods", role: "config", label: "Pod", labelPlural: "Pods", hasSource: true },
+          ],
+          rowActions: [
+            { id: "logs", label: "Logs", kinds: ["pods"], activates: true },
+            { id: "peek", label: "Peek", kinds: ["table"], activates: true },
+          ],
+        },
+      },
+      sourceReader: async () => ({}),
+    };
+    renderWorkspace();
+    const click = capturedSidebarProps.onObjectClick as (o: DatabaseObject) => void;
+    const pod: DatabaseObject = { path: ["shop", "pod/web-1"], name: "pod/web-1", kind: "pods" };
+
+    act(() => click(pod));
+    act(() => click({ path: ["app", "users"], name: "users", kind: "table" }));
+
+    expect(mockActivateRowAction.mock.calls).toEqual([[pod, "logs", mockExecuteQuery]]);
+    expect(mockOpenSourceTab).not.toHaveBeenCalled();
+    expect(mockHandleTableClick).toHaveBeenCalledWith(["app", "users"], mockExecuteQuery);
+  });
+
   // A host that declares no kinds has declared no relations either, so a click cannot be
   // resolved and nothing is executed on a guess. `metadata` is null by default here.
   test("an object activated while the host has declared nothing runs nothing", () => {

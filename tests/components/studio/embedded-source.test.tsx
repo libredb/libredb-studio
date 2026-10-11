@@ -2196,6 +2196,44 @@ describe("the embedded shell refuses a tab-opening gesture while a host apply is
     await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
   });
 
+  test("a row whose kind declares an activating row action is refused too, and nothing runs", async () => {
+    /*
+     * THE SEVENTH DOOR: activating such a row (a pod, whose click runs its Logs) opens and activates a
+     * tab exactly as the menu's row action above does. The declaration makes the sequence kind's
+     * activation run an action, so the click on `order_id_seq` reaches the activation arm.
+     */
+    const executed: string[] = [];
+    const declared = {
+      ...capabilities,
+      rowActions: [{ id: "peek", label: "Peek", kinds: ["sequence"], activates: true }],
+    } as unknown as ProviderCapabilities;
+    const holdingHost = {
+      build: async () => BUILT,
+      apply: () => new Promise<ObjectEditOutcome>((resolve) => (releaseApply = resolve)),
+    } as unknown as HostEditor;
+    render(workspace({ reader: editingReader(holdingHost), executed, declared }));
+    await openSourceTab();
+    await click("object-source-edit");
+    await waitFor(() => expect(screen.getByTestId("object-source-preview")).toBeTruthy());
+    await click("object-source-preview");
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-confirm")).toBeTruthy());
+    await click("object-source-apply-confirm");
+    await waitFor(() =>
+      expect(screen.getByTestId("object-source-apply-dialog").textContent).toContain("Applying this definition"),
+    );
+
+    clickRowInDom("order_id_seq");
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("workspace-apply-refusal").textContent).toContain(
+      "Opening a tab would close this dialog before the apply reports",
+    );
+    expect(executed).toEqual([]);
+
+    await release(CONFLICT);
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+  });
+
   test("the refusal retires the moment the apply answers, rather than sitting on screen for ever", async () => {
     /*
      * The one thing that pins `if (!inFlight) setRefusedWhileApplying(false)` in the mirror.

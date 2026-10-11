@@ -851,6 +851,12 @@ export interface QueryTab {
     readonly path: readonly string[];
     readonly databaseOverride?: number;
     readonly query: string;
+    /**
+     * The row action this activation ran (`KindRowAction.activates`), when it ran one rather than
+     * opening the object's rows. Only an activation of the same action focuses such a tab, and a
+     * data activation of the same path never does.
+     */
+    readonly rowAction?: string;
   };
   /**
    * Present exactly on a Source tab (#789 Phase 2).

@@ -1031,6 +1031,69 @@ describe("Studio", () => {
   });
 
   /**
+   * A row whose kind declares an ACTIVATING row action runs it (a pod runs its Logs), even where the kind
+   * also declares source: one gesture, one behaviour per row, and the declaration decides which. A kind
+   * that declares source and no activating action keeps its Source tab, and a relation keeps its preview.
+   */
+  describe("a kind that declares an activating row action", () => {
+    const POD_KINDS = [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+      { id: "pods", role: "config", label: "Pod", labelPlural: "Pods", hasSource: true, sourceLanguage: "yaml" },
+      {
+        id: "deployments",
+        role: "config",
+        label: "Deployment",
+        labelPlural: "Deployments",
+        hasSource: true,
+        sourceLanguage: "yaml",
+      },
+      { id: "function", role: "routine", label: "Function", labelPlural: "Functions", hasSource: true },
+    ];
+    const ROW_ACTIONS = [
+      { id: "describe", label: "Describe", kinds: ["pods", "deployments", "table"] },
+      { id: "logs", label: "Logs", kinds: ["pods"], activates: true },
+      // Declared on a relation too, to pin that the data preview still wins.
+      { id: "peek", label: "Peek", kinds: ["table"], activates: true },
+    ];
+    const pod: DatabaseObject = { path: ["shop", "pod/web-1"], name: "pod/web-1", kind: "pods" };
+
+    function mountWithActivation() {
+      const mockActivateRowAction = mock((_object: DatabaseObject, _actionId: string, _run: unknown) => {});
+      const mockOpenSourceTab = mock((_object: DatabaseObject) => {});
+      tabMgrOverride = { activateRowAction: mockActivateRowAction, openSourceTab: mockOpenSourceTab };
+      capabilitiesOverride = { objectKinds: POD_KINDS, rowActions: ROW_ACTIONS };
+      render(<Studio />);
+      const fn = capturedSidebarProps.onObjectClick as (object: DatabaseObject) => void;
+      return { fn, mockActivateRowAction, mockOpenSourceTab };
+    }
+
+    test("a pod row runs its Logs row action through this shell's run, and opens no Source tab", () => {
+      const { fn, mockActivateRowAction, mockOpenSourceTab } = mountWithActivation();
+      act(() => fn(pod));
+      expect(mockActivateRowAction).toHaveBeenCalledWith(pod, "logs", mockExecuteQuery);
+      expect(mockOpenSourceTab).not.toHaveBeenCalled();
+      expect(mockHandleTableClick).not.toHaveBeenCalled();
+    });
+
+    test("a deployment row and a routine row still open their Source tabs", () => {
+      const { fn, mockActivateRowAction, mockOpenSourceTab } = mountWithActivation();
+      const deployment: DatabaseObject = { path: ["shop", "deployment/web"], name: "deployment/web", kind: "deployments" };
+      const routine: DatabaseObject = { path: ["app", "order_total(integer)"], name: "order_total", kind: "function" };
+      act(() => fn(deployment));
+      act(() => fn(routine));
+      expect(mockOpenSourceTab.mock.calls).toEqual([[deployment], [routine]]);
+      expect(mockActivateRowAction).not.toHaveBeenCalled();
+    });
+
+    test("a relation keeps its data preview even where an action on its kind activates", () => {
+      const { fn, mockActivateRowAction } = mountWithActivation();
+      act(() => fn({ path: ["app", "users"], name: "users", kind: "table" }));
+      expect(mockHandleTableClick).toHaveBeenCalledWith(["app", "users"], mockExecuteQuery);
+      expect(mockActivateRowAction).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
    * A key activated in the key browser.
    *
    * The TYPE arrives with the key, from the page that described it, so what this opens is a READ —

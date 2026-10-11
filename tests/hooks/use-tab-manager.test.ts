@@ -2822,4 +2822,137 @@ describe("runRowAction", () => {
     expect(result.current.tabs).toHaveLength(1);
     expect(written).toEqual([]);
   });
+
+  /**
+   * A row ACTIVATION (a click, Enter or Space on a row whose kind declares an activating action) runs the
+   * same statement as the menu item, but keeps the focus rule a table click keeps: a second activation of
+   * the same object focuses the tab the first one opened. The menu's items keep a new tab every time.
+   */
+  describe("activateRowAction", () => {
+    const settle = () => new Promise((r) => setTimeout(r, 150));
+
+    test("opens and runs the action's tab, recording the activation that opened it", async () => {
+      const executeFn = mock(() => {});
+      const { result } = mountWith(writer);
+
+      act(() => result.current.activateRowAction(webPod, "logs", executeFn));
+
+      const tab = result.current.tabs[1];
+      expect(tab).toMatchObject({ name: "Logs: pod/web-1", query: "logs pod/web-1", type: "kafka" });
+      expect(tab.origin).toEqual({
+        path: ["shop", "pod/web-1"],
+        connectionId: "conn-1",
+        query: "logs pod/web-1",
+        rowAction: "logs",
+      });
+      expect(result.current.activeTabId).toBe(tab.id);
+      await waitFor(() =>
+        expect(executeFn).toHaveBeenCalledWith("logs pod/web-1", tab.id, false, { limit: PREVIEW_PAGE_SIZE }),
+      );
+    });
+
+    test("a second activation of the same object focuses that tab and does not run it again", async () => {
+      const executeFn = mock(() => {});
+      const { result } = mountWith(writer);
+
+      act(() => result.current.activateRowAction(webPod, "logs", executeFn));
+      const opened = result.current.activeTabId;
+      act(() => result.current.setActiveTabId("default"));
+      act(() => result.current.activateRowAction(webPod, "logs", executeFn));
+      await settle();
+
+      expect(result.current.tabs.map((tab) => tab.name)).toEqual(["Query 1", "Logs: pod/web-1"]);
+      expect(result.current.activeTabId).toBe(opened);
+      expect(executeFn).toHaveBeenCalledTimes(1);
+    });
+
+    test("a focused tab whose last run failed is run again, in that tab", async () => {
+      const executeFn = mock(() => {});
+      const { result } = mountWith(writer);
+
+      act(() => result.current.activateRowAction(webPod, "logs", executeFn));
+      const opened = result.current.activeTabId;
+      await settle();
+      act(() => result.current.updateTabById(opened, { runError: "connection reset" }));
+      executeFn.mockClear();
+      act(() => result.current.activateRowAction(webPod, "logs", executeFn));
+      await settle();
+
+      expect(result.current.tabs).toHaveLength(2);
+      expect(executeFn).toHaveBeenCalledTimes(1);
+      expect(executeFn).toHaveBeenCalledWith("logs pod/web-1", opened, false, { limit: PREVIEW_PAGE_SIZE });
+    });
+
+    test("another object, another action, an edited tab and another connection each open their own tab", async () => {
+      const executeFn = mock(() => {});
+      const { result, rerender } = renderHook(
+        ({ connectionId }: { connectionId: string }) =>
+          useTabManager({
+            activeConnection: makeConnection({ id: connectionId }),
+            metadata: rowActionMetadata,
+            schema: [],
+            generateRowAction: writer,
+          }),
+        { initialProps: { connectionId: "conn-a" } },
+      );
+
+      act(() => result.current.activateRowAction(webPod, "logs", executeFn));
+      act(() => result.current.activateRowAction({ ...webPod, path: ["shop", "pod/web-2"] }, "logs", executeFn));
+      act(() => result.current.activateRowAction(webPod, "describe", executeFn));
+      expect(result.current.tabs).toHaveLength(4);
+
+      const edited = result.current.tabs[1].id;
+      act(() => result.current.updateTabById(edited, { query: "logs pod/web-1 --tail=5" }));
+      act(() => result.current.activateRowAction(webPod, "logs", executeFn));
+      expect(result.current.tabs).toHaveLength(5);
+      expect(result.current.activeTabId).not.toBe(edited);
+
+      rerender({ connectionId: "conn-b" });
+      act(() => result.current.activateRowAction(webPod, "logs", executeFn));
+      await settle();
+      expect(result.current.tabs).toHaveLength(6);
+      expect(executeFn).toHaveBeenCalledTimes(5);
+    });
+
+    test("the menu's item still opens a new tab beside an activation's, and is never the tab an activation focuses", async () => {
+      const executeFn = mock(() => {});
+      const { result } = mountWith(writer);
+
+      act(() => result.current.runRowAction(webPod, "logs", executeFn));
+      expect(result.current.tabs[1].origin).toBeUndefined();
+      act(() => result.current.activateRowAction(webPod, "logs", executeFn));
+      const activated = result.current.activeTabId;
+      act(() => result.current.runRowAction(webPod, "logs", executeFn));
+      act(() => result.current.activateRowAction(webPod, "logs", executeFn));
+      await settle();
+
+      expect(result.current.tabs).toHaveLength(4);
+      expect(result.current.activeTabId).toBe(activated);
+      expect(executeFn).toHaveBeenCalledTimes(3);
+    });
+
+    test("a table click on the same path never focuses a row action's tab", async () => {
+      const executeFn = mock(() => {});
+      const { result } = mountWith(writer);
+
+      act(() => result.current.activateRowAction(webPod, "logs", executeFn));
+      const activated = result.current.activeTabId;
+      act(() => result.current.handleTableClick(webPod.path, executeFn));
+      await settle();
+
+      expect(result.current.tabs).toHaveLength(3);
+      expect(result.current.activeTabId).not.toBe(activated);
+    });
+
+    test("raises for an action the provider did not declare on the object's kind", () => {
+      const { result } = mountWith(writer);
+      expect(() =>
+        result.current.activateRowAction(
+          webPod,
+          "exec",
+          mock(() => {}),
+        ),
+      ).toThrow('no row action "exec" is declared for the kind "pods"');
+    });
+  });
 });

@@ -22,7 +22,13 @@ import { StudioOverlays } from "@/components/studio/StudioOverlays";
 import { AgentRail } from "@/components/agent/AgentRail";
 import { DatabaseConnection, type ColumnSchema, SavedQuery } from "@/lib/types";
 import type { DatabaseObject } from "@/lib/db/types";
-import { findKind, keyBrowserKind, kindHasSource, relationKindIds } from "@/lib/db/object-kinds";
+import {
+  activationRowActionForKind,
+  findKind,
+  keyBrowserKind,
+  kindHasSource,
+  relationKindIds,
+} from "@/lib/db/object-kinds";
 import { httpSourceApplier, ObjectSourceView, type ObjectSourcePatch } from "@/components/object-source";
 import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
 import { lazyRetry } from "@/lib/lazy";
@@ -1025,6 +1031,19 @@ export default function Studio() {
     }
     tabMgr.runRowAction(object, actionId, queryExec.executeQuery);
   });
+
+  /**
+   * Run the row action an object's kind declares for activation (`KindRowAction.activates`), focusing
+   * the tab an earlier activation of it opened. Refused while an apply is in flight on the same rule
+   * and with the same words as the menu's row action above, because it opens and activates a tab too.
+   */
+  const activateRowAction = useStableCallback((object: DatabaseObject, actionId: string) => {
+    if (applyInFlight) {
+      refuseWhileApplying();
+      return;
+    }
+    tabMgr.activateRowAction(object, actionId, queryExec.executeQuery);
+  });
   const { handleGenerateSelect, handleGenerateCount } = tabMgr;
 
   /** Open and run the statement for one object, addressed by its PATH (#789). See `openTabFor`. */
@@ -1088,12 +1107,29 @@ export default function Studio() {
    * ruling 2), and the generator now takes segments, so an object outside the session
    * default container generates a QUALIFIED statement instead of a bare identifier the
    * server cannot resolve.
+   *
+   * THREE ARMS, in this order, each gated on a declaration: a relation kind previews its rows; else
+   * a kind with an activating row action runs it; else a kind with source opens its Source tab.
    */
   const onObjectClick = useCallback(
     (object: DatabaseObject) => {
       if (metadata === null) return;
       if (relationKindIds(metadata.capabilities).includes(object.kind)) {
         onTableClick(object.path);
+        return;
+      }
+      /*
+       * A NON-RELATION row whose kind declares an ACTIVATING row action runs it: a Kubernetes pod
+       * runs its Logs for the last 50 lines, the way a table previews 50 rows. It comes before the
+       * source arm below, so a pod, whose kind also declares source, does not open its YAML; that
+       * stays one menu item away as View Source.
+       *
+       * The gate is the DECLARATION (`KindRowAction.activates`) and never the kind id, exactly as
+       * the branch above and the one below are.
+       */
+      const activation = activationRowActionForKind(metadata.capabilities, object.kind);
+      if (activation !== undefined) {
+        activateRowAction(object, activation.id);
         return;
       }
       /*
@@ -1110,7 +1146,7 @@ export default function Studio() {
        */
       if (kindHasSource(metadata.capabilities, object.kind)) openSourceTab(object);
     },
-    [metadata, onTableClick, openSourceTab],
+    [activateRowAction, metadata, onTableClick, openSourceTab],
   );
 
   /**
