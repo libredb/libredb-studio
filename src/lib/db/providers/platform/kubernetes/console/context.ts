@@ -164,6 +164,11 @@ export function ageOf(context: Pick<KubectlContext, "now">, time: unknown): stri
   return Number.isNaN(at) ? "<unknown>" : humanDuration(context.now() - at);
 }
 
+/** Go's `sort.Strings` order: by UTF-16 code unit, never by locale, so a key order is the same on every machine. */
+export function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** A list as Go's `%v` prints a string slice: `[get list watch]`. */
 export function goList(values: readonly unknown[]): string {
   return `[${values.map((value) => String(value)).join(" ")}]`;

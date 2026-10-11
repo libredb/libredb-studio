@@ -28,7 +28,16 @@ import {
 } from "../limits";
 import { redactResponse } from "../redaction";
 import { type KubeTable, parseTable, scanTable } from "../table";
-import { inTurn, type KubectlContext, type KubectlGrid, objectOf, resolveType, stringOf, textGrid } from "./context";
+import {
+  byCodeUnit,
+  inTurn,
+  type KubectlContext,
+  type KubectlGrid,
+  objectOf,
+  resolveType,
+  stringOf,
+  textGrid,
+} from "./context";
 import type { KubectlStatement } from "./parse";
 
 type LogsStatement = Extract<KubectlStatement, { readonly command: "logs" }>;
@@ -123,7 +132,7 @@ export function selectorText(selector: Json): string {
   for (const key of Object.keys(labels)) terms.push({ key, text: `${key}=${String(labels[key])}` });
   for (const expression of array(selector.matchExpressions)) {
     const key = String(expression.key);
-    const values = (Array.isArray(expression.values) ? expression.values.map(String) : []).sort();
+    const values = (Array.isArray(expression.values) ? expression.values.map(String) : []).sort(byCodeUnit);
     if (expression.operator === "In") terms.push({ key, text: `${key} in (${values.join(",")})` });
     else if (expression.operator === "NotIn") terms.push({ key, text: `${key} notin (${values.join(",")})` });
     else if (expression.operator === "Exists") terms.push({ key, text: key });
@@ -143,7 +152,7 @@ function podSelectorOf(resource: IndexedResource, object: Json, label: string): 
   const text =
     plain !== undefined
       ? Object.keys(plain)
-          .sort()
+          .sort(byCodeUnit)
           .map((key) => `${key}=${String(plain[key])}`)
           .join(",")
       : selectorText(selector);

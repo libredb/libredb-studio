@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   ageOf,
+  byCodeUnit,
   ExplainCache,
   goList,
   humanDuration,
@@ -19,6 +20,13 @@ import {
   textGrid,
 } from "@/lib/db/providers/platform/kubernetes/console/context";
 import { consoleContext, routes } from "../../../../helpers/kubernetes-console";
+
+describe("byCodeUnit: kubectl's key order", () => {
+  test("orders by UTF-16 code unit, as Go's sort.Strings does, never by locale", () => {
+    const keys = ["b", "a", "B", "app.kubernetes.io/name", "_x", "\u00e9", "z", "a"];
+    expect([...keys].sort(byCodeUnit)).toEqual(["B", "_x", "a", "a", "app.kubernetes.io/name", "b", "z", "\u00e9"]);
+  });
+});
 
 describe("humanDuration: kubectl's age", () => {
   test.each([

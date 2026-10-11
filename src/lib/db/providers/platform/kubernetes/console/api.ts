@@ -8,12 +8,10 @@
  * client, since no kubectl runs, and the server's build in its fields.
  */
 import type { IndexedResource } from "../discovery";
-import { type KubectlContext, type KubectlGrid, goList, objectOf, stringOf, textGrid } from "./context";
+import { byCodeUnit, type KubectlContext, type KubectlGrid, goList, objectOf, stringOf, textGrid } from "./context";
 import type { KubectlStatement } from "./parse";
 
 type ApiResourcesStatement = Extract<KubectlStatement, { readonly command: "api-resources" }>;
-
-const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 const groupVersion = (resource: IndexedResource): string =>
   resource.group === "" ? resource.version : `${resource.group}/${resource.version}`;
@@ -26,7 +24,7 @@ export async function apiResources(context: KubectlContext, statement: ApiResour
     .filter((resource) => statement.namespaced === undefined || resource.namespaced === statement.namespaced)
     .filter((resource) => statement.verbs.every((verb) => resource.verbs.includes(verb)));
   // kubectl's stable sort: by group, and by name within a group.
-  const sorted = [...kept].sort((a, b) => compare(a.group, b.group) || compare(a.resource, b.resource));
+  const sorted = [...kept].sort((a, b) => byCodeUnit(a.group, b.group) || byCodeUnit(a.resource, b.resource));
   if (statement.output === "name")
     return textGrid(
       ["NAME"],
@@ -53,7 +51,7 @@ export async function apiVersions(context: KubectlContext): Promise<KubectlGrid>
   const index = await context.surface.discovery.refresh();
   return textGrid(
     ["APIVERSION"],
-    [...new Set(index.groupVersions)].sort(compare).map((version) => [version]),
+    [...new Set(index.groupVersions)].sort(byCodeUnit).map((version) => [version]),
   );
 }
 

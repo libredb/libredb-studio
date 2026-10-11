@@ -10,7 +10,7 @@
  */
 import type { QueryWarning } from "@/lib/types";
 import { resolveResource } from "../resolve";
-import { type KubectlContext, type KubectlGrid, goList, objectOf, stringOf, textGrid } from "./context";
+import { byCodeUnit, type KubectlContext, type KubectlGrid, goList, objectOf, stringOf, textGrid } from "./context";
 import type { KubectlStatement } from "./parse";
 
 type CanIStatement = Extract<KubectlStatement, { readonly command: "auth-can-i" }>;
@@ -143,6 +143,6 @@ export async function whoami(context: KubectlContext): Promise<KubectlGrid> {
   if (stringOf(user.uid) !== undefined && user.uid !== "") rows.push(["UID", user.uid]);
   rows.push(["Groups", goList(strings(user.groups))]);
   const extra = objectOf(user.extra) ?? {};
-  for (const key of Object.keys(extra).sort()) rows.push([`Extra: ${key}`, goList(strings(extra[key]))]);
+  for (const key of Object.keys(extra).sort(byCodeUnit)) rows.push([`Extra: ${key}`, goList(strings(extra[key]))]);
   return textGrid(["ATTRIBUTE", "VALUE"], rows);
 }

@@ -15,7 +15,15 @@ import type { IndexedResource } from "../discovery";
 import { KubernetesResponseTooLargeError } from "../errors";
 import { KUBERNETES_EXPLAIN_DOCUMENT_BYTES, KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_TYPE } from "../limits";
 import { resolveResource } from "../resolve";
-import { type KubectlContext, type KubectlGrid, objectOf, resolveType, stringOf, textGrid } from "./context";
+import {
+  byCodeUnit,
+  type KubectlContext,
+  type KubectlGrid,
+  objectOf,
+  resolveType,
+  stringOf,
+  textGrid,
+} from "./context";
 import type { KubectlStatement } from "./parse";
 
 type ExplainStatement = Extract<KubectlStatement, { readonly command: "explain" }>;
@@ -188,7 +196,7 @@ export async function explain(context: KubectlContext, statement: ExplainStateme
     const own = fieldsSchema(schemas, parent);
     const properties = objectOf(own.properties) ?? {};
     const requiredNames = Array.isArray(own.required) ? own.required : [];
-    for (const name of Object.keys(properties).sort()) {
+    for (const name of Object.keys(properties).sort(byCodeUnit)) {
       const child = objectOf(properties[name]) ?? {};
       const path = [...prefix, name];
       rows.push([

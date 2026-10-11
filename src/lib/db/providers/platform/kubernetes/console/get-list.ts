@@ -24,6 +24,7 @@ import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_PAGE_SIZE, KUBERNETES_TYPE } 
 import { redactResponse } from "../redaction";
 import { cellOf, type KubeTable, parseTable, scanTable, type TableColumn, type TableRow, tableGrid } from "../table";
 import {
+  byCodeUnit,
   inTurn,
   type KubectlContext,
   type KubectlGrid,
@@ -113,7 +114,7 @@ function metadataOf(row: TableRow): Readonly<Record<string, unknown>> {
 /** kubectl's LABELS cell: `key=value` pairs sorted by key, or `<none>`. */
 function labelsCell(row: TableRow): string {
   const labels = objectOf(metadataOf(row).labels) ?? {};
-  const keys = Object.keys(labels).sort();
+  const keys = Object.keys(labels).sort(byCodeUnit);
   return keys.length === 0 ? "<none>" : keys.map((key) => `${key}=${String(labels[key])}`).join(",");
 }
 

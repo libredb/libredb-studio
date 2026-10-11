@@ -15,6 +15,7 @@ import { redactResponse } from "../redaction";
 import { fieldSelectorValue } from "../request-policy";
 import { cellOf, type KubeTable, parseTable, scanTable } from "../table";
 import {
+  byCodeUnit,
   ageOf,
   type KubectlContext,
   type KubectlGrid,
@@ -34,7 +35,7 @@ const FIELDS = ["SECTION", "FIELD", "VALUE"] as const;
 /** `key=value` rows of a string map, or one `<none>` row, as kubectl prints an empty map. */
 function mapRows(section: string, field: string, value: unknown): unknown[][] {
   const map = objectOf(value) ?? {};
-  const keys = Object.keys(map).sort();
+  const keys = Object.keys(map).sort(byCodeUnit);
   if (keys.length === 0) return [[section, field, "<none>"]];
   return keys.map((key) => [section, field, `${key}=${String(map[key])}`]);
 }
