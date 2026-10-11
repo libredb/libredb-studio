@@ -517,7 +517,10 @@ describe("the defaulted container notice", () => {
   });
 
   test("-l says it once for pods that default alike; --all-pods says nothing, as kubectl prints nothing there", async () => {
-    const two = [pod({ name: "p1", containers: ["app", "sidecar"] }), pod({ name: "p2", containers: ["app", "sidecar"] })];
+    const two = [
+      pod({ name: "p1", containers: ["app", "sidecar"] }),
+      pod({ name: "p2", containers: ["app", "sidecar"] }),
+    ];
     const selected = consoleContext(
       routes({
         "GET /api/v1/namespaces/shop/pods?limit=500&labelSelector=app%3Dweb": listAnswer(two),
@@ -530,7 +533,9 @@ describe("the defaulted container notice", () => {
     ]);
     const all = consoleContext(
       routes({
-        "GET /apis/apps/v1/namespaces/shop/deployments/web": jsonAnswer({ spec: { selector: { matchLabels: { app: "web" } } } }),
+        "GET /apis/apps/v1/namespaces/shop/deployments/web": jsonAnswer({
+          spec: { selector: { matchLabels: { app: "web" } } },
+        }),
         "GET /api/v1/namespaces/shop/pods?limit=500&labelSelector=app%3Dweb": listAnswer(two),
         [logLine("p1", "app", 50)]: textAnswer(""),
         [logLine("p2", "app", 50)]: textAnswer(""),

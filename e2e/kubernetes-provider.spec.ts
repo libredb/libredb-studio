@@ -257,9 +257,9 @@ test.describe("Kubernetes against a replayed API server", () => {
     await expect(tab).toBeVisible({ timeout: 20_000 });
     await expectGridShows(page, READER_STATEMENT_FACTS[statement], before, "pod click");
     await expect.poll(() => queryText(page), { timeout: 20_000 }).toBe(statement);
-    expect(stub.requests.some((request) => request.includes("/pods/crasher/log?") && request.includes("tailLines=50&"))).toBe(
-      true,
-    );
+    expect(
+      stub.requests.some((request) => request.includes("/pods/crasher/log?") && request.includes("tailLines=50&")),
+    ).toBe(true);
     await expect(page.getByTestId("object-source-view")).toHaveCount(0);
 
     await page.getByRole("tab", { name: /Query 1/ }).click();

@@ -1077,7 +1077,11 @@ describe("Studio", () => {
 
     test("a deployment row and a routine row still open their Source tabs", () => {
       const { fn, mockActivateRowAction, mockOpenSourceTab } = mountWithActivation();
-      const deployment: DatabaseObject = { path: ["shop", "deployment/web"], name: "deployment/web", kind: "deployments" };
+      const deployment: DatabaseObject = {
+        path: ["shop", "deployment/web"],
+        name: "deployment/web",
+        kind: "deployments",
+      };
       const routine: DatabaseObject = { path: ["app", "order_total(integer)"], name: "order_total", kind: "function" };
       act(() => fn(deployment));
       act(() => fn(routine));

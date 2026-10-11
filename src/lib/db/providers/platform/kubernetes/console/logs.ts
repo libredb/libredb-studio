@@ -331,10 +331,15 @@ function timeKey(time: string | null): string {
 export async function readLogs(context: KubectlContext, statement: LogsStatement): Promise<KubectlGrid> {
   const namespace = statement.namespace ?? context.surface.endpoint.defaultNamespace;
   const pods = await podsOf(context, statement, namespace);
-  const chosen = pods.map((pod) => ({ pod: String(objectOf(pod.metadata)?.name), ...containersOf(statement, pod) }));
-  const streams = chosen.flatMap((entry) => entry.containers.map((container) => ({ pod: entry.pod, container })));
+  const chosen = pods.map((pod) => ({
+    pod: String(objectOf(pod.metadata)?.name),
+    choice: containersOf(statement, pod),
+  }));
+  const streams = chosen.flatMap((entry) =>
+    entry.choice.containers.map((container) => ({ pod: entry.pod, container })),
+  );
   // Pods that default alike print the same sentence; it is said once.
-  const notices = [...new Set(chosen.flatMap((entry) => entry.notices))];
+  const notices = [...new Set(chosen.flatMap((entry) => entry.choice.notices))];
   if (streams.length > KUBERNETES_MAX_LOG_STREAMS)
     throw new QueryError(
       `This statement would read ${streams.length} log streams, more than the 5 Studio reads at once: name one container with -c, or narrow the selector.`,
