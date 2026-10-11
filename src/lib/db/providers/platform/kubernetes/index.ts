@@ -200,6 +200,8 @@ export class KubernetesProvider extends BaseDatabaseProvider {
       throw error;
     }
     this.opening.delete(session);
+    // A health check may have kept a session while this one was opening: the connect's replaces it.
+    if (this.session !== null) closeSession(this.session);
     this.session = session;
     this.warnings = warnings;
     this.setConnected(true);
@@ -326,7 +328,8 @@ export class KubernetesProvider extends BaseDatabaseProvider {
 
   /**
    * Connects if needed, without the connect reads; a session opened here is kept when health answers, unless a
-   * disconnect or a connect closed it meanwhile.
+   * disconnect or a connect closed it meanwhile, or a connect or another health check kept one first, in which case
+   * this one is closed.
    */
   public async getHealth(): Promise<HealthInfo> {
     if (this.session !== null) return kubernetesHealth(this.session.surface);
@@ -336,8 +339,11 @@ export class KubernetesProvider extends BaseDatabaseProvider {
       const health = await kubernetesHealth(session.surface);
       requireOpen(session);
       this.opening.delete(session);
-      this.session = session;
-      this.setConnected(true);
+      if (this.session !== null) closeSession(session);
+      else {
+        this.session = session;
+        this.setConnected(true);
+      }
       return health;
     } catch (error) {
       this.opening.delete(session);

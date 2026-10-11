@@ -237,6 +237,57 @@ describe("a session being opened", () => {
   });
 });
 
+describe("health while a session is being opened", () => {
+  test("health answering while connect opens: connect keeps its session and closes the one health kept", async () => {
+    const held = gate(fakeCluster(SHOP), "GET /apis");
+    const { provider, transport } = providerWith(held.gated);
+    const connecting = provider.connect();
+    await held.reached;
+    await provider.getHealth();
+    held.release();
+    await connecting;
+    expect(provider.isConnected()).toBe(true);
+    expect(transport.built).toHaveLength(2);
+    expect(transport.closed()).toBe(1);
+    await provider.disconnect();
+    expect(transport.closed()).toBe(2);
+  });
+
+  test("health answering after connect kept a session closes its own and keeps connect's", async () => {
+    const health = gate(fakeCluster(SHOP), "GET /readyz");
+    const discovery = gate(health.gated, "GET /apis");
+    const { provider, transport } = providerWith(discovery.gated);
+    const connecting = provider.connect();
+    await discovery.reached;
+    const checking = provider.getHealth();
+    await health.reached;
+    discovery.release();
+    await connecting;
+    health.release();
+    await checking;
+    expect(provider.isConnected()).toBe(true);
+    expect(transport.built).toHaveLength(2);
+    expect(transport.closed()).toBe(1);
+    await provider.disconnect();
+    expect(transport.closed()).toBe(2);
+  });
+
+  test("two health checks opening at once keep one session and close the other", async () => {
+    const held = gate(fakeCluster(SHOP), "GET /readyz");
+    const { provider, transport } = providerWith(held.gated);
+    const first = provider.getHealth();
+    const second = provider.getHealth();
+    await held.reached;
+    held.release();
+    await Promise.all([first, second]);
+    expect(provider.isConnected()).toBe(true);
+    expect(transport.built).toHaveLength(2);
+    expect(transport.closed()).toBe(1);
+    await provider.disconnect();
+    expect(transport.closed()).toBe(2);
+  });
+});
+
 describe("the namespace walk Test Connection runs", () => {
   test("a server answering empty pages with a fresh continue token is stopped, and connect answers", async () => {
     let lists = 0;
