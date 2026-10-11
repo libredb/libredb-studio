@@ -2498,11 +2498,16 @@ function normalizeDeclaredSchema(context: AgentToolContext, schema: string): str
 function parseToolInput<T>(
   schema: z.ZodType<T>,
   input: unknown,
+  /**
+   * Tools whose own refusal this run would meet if it followed the order, so the order is not
+   * offered. See `TOOL_OWNING_FIELD` and the comment on the clause it changes.
+   */
+  wouldRefuse?: ReadonlySet<string>,
 ): { ok: true; value: T } | { ok: false; problems: string } {
   const parsed = schema.safeParse(input);
   return parsed.success
     ? { ok: true, value: parsed.data }
-    : { ok: false, problems: describeIssues(parsed.error.issues, input) };
+    : { ok: false, problems: describeIssues(parsed.error.issues, input, wouldRefuse) };
 }
 
 /**
@@ -2613,7 +2618,11 @@ const EVIDENCE_SIBLING_FIELD: Readonly<Record<string, string>> = Object.freeze({
   fingerprint: "correlationId",
 });
 
-function describeIssues(issues: readonly z.core.$ZodIssue[], input: unknown): string {
+function describeIssues(
+  issues: readonly z.core.$ZodIssue[],
+  input: unknown,
+  wouldRefuse: ReadonlySet<string> = new Set(),
+): string {
   const renames = renamesAmong(issues, input);
   const renamedTo = new Set(renames.values());
   // A citation under the wrong branch: the path of every evidence object that sent one branch's
@@ -2661,8 +2670,25 @@ function describeIssues(issues: readonly z.core.$ZodIssue[], input: unknown): st
             being told a field lives `somewhere` is not the same instruction as being told what
             to call.
           */
-          return owner === undefined
-            ? []
+          if (owner === undefined) return [];
+          /*
+            THE ORDER IS ONLY AN INSTRUCTION WHERE THE OTHER CALL CAN SUCCEED.
+
+            The sentence above was measured as a fix and shipped as one. It is now the single most
+            frequent refusal in the ledger - 382 deliveries, beside 188
+            `present_answer: ANSWER_NOT_A_DATA_READ`, and the two numbers are one loop. A run that
+            has drafted no read holds nothing presentable, so the tool it is sent to refuses it, and
+            it returns here with the same argument. `granite4:1b` analyze lost its one failing run
+            to FIFTY refusals on 2026-10-11 while its passing runs finished in under ninety seconds.
+
+            This tool does not need the field. Where the run could satisfy the other call the order
+            stands; where it could not, the only move that ends the loop is to drop the field, and
+            saying so is the difference between an instruction and a wall.
+          */
+          return wouldRefuse.has(owner)
+            ? [
+                `${key} is not an argument of this tool and this run has nothing ${owner} would accept — call this tool again without it`,
+              ]
             : [`${key} belongs to ${owner} — call ${owner} with it first, then call this tool again without it`];
         });
         // A key that belongs to the OTHER BRANCH of this union is not surplus either: the model
@@ -4944,6 +4970,10 @@ export function composeReportTool(
   const parsed = parseToolInput(
     reportSchema,
     readMisfiledEvidence(readSerializedClaims(input), run.events, context.workflowType),
+    // `present_answer` refuses a run holding no data read of its own - `ANSWER_NOT_A_DATA_READ`,
+    // 188 of them beside the 382 deliveries of the sentence that sends models there. Naming it as
+    // the destination for `presentation` is only an instruction where it could accept the call.
+    presentableArtifact(run.events) === undefined ? new Set(["present_answer"]) : undefined,
   );
   if (!parsed.ok) {
     return invalidEvidenceInput(
