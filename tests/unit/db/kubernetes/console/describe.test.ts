@@ -166,6 +166,7 @@ describe("describe", () => {
     const grid = await describeObject(context, describeOf("kubectl describe secret/db"));
     expect(grid.rows).toContainEqual({ SECTION: "Summary", FIELD: "Annotation", VALUE: "team=payments" });
     expect(JSON.stringify(grid)).not.toContain(SECRET_MARKER);
+    expect(JSON.stringify(grid)).not.toContain("last-applied-configuration");
   });
 
   test("an object whose Table has no row still answers its metadata rows", async () => {

@@ -80,6 +80,7 @@ describe("the list form", () => {
       const grid = await getDocuments(context, get(`kubectl get secrets -o ${format}`));
       expect(grid.rows).toHaveLength(1);
       expect(JSON.stringify(grid)).not.toContain(SECRET_MARKER);
+      expect(JSON.stringify(grid)).not.toContain("last-applied-configuration");
       expect(grid.rows[0].DOCUMENT as string).toContain("team");
     },
   );
