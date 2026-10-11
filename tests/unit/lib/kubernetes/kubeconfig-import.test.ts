@@ -532,7 +532,8 @@ describe("parser rules, and the marker token never leaves the text", () => {
     expect(new TextEncoder().encode(text).byteLength).toBeLessThan(KUBERNETES_KUBECONFIG_MAX_BYTES);
     const started = performance.now();
     expect(importKubeconfig(text)).toEqual({ contexts: [], refusals: [S.noContexts] });
-    expect(performance.now() - started).toBeLessThan(2_000);
+    // The quadratic check took 54.6 s; the bound leaves room for a loaded runner under coverage, about 0.5 s alone.
+    expect(performance.now() - started).toBeLessThan(15_000);
   });
 
   test("a sequence nested 6,000 deep is checked in time linear in its nodes, not in the square of its depth", () => {
