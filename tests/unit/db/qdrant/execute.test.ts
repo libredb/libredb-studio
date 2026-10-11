@@ -6,7 +6,8 @@
  */
 import { describe, expect, test } from "bun:test";
 import { RequestRefusal } from "@/lib/db/console/dialect";
-import { QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { ConnectionError, QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { TransportError } from "@/lib/db/http/node-transport";
 import type { QdrantAnswer, QdrantOp, QdrantRequest } from "@/lib/db/providers/vector/qdrant/client";
 import {
   executeQdrant,
@@ -309,6 +310,35 @@ describe("the deadline and timeout (QE15)", () => {
     expect(error).toBeInstanceOf(TimeoutError);
     expect((error as Error).message).toBe("The request did not finish within its 30 s deadline.");
     expectCalls(record.calls, ["get_collection"]);
+  });
+
+  test("a deadline that fires before the socket connected is the transport's unreachable failure, not the timeout", async () => {
+    const controller = new AbortController();
+    const unreachable = new TransportError(
+      "unreachable",
+      "No answer from 10.255.255.1:6333 after 30 seconds: check the address, the port and the network path.",
+    );
+    const failures: QdrantFailure[] = [];
+    const record = recording(
+      {
+        get_collection: () => {
+          controller.abort(new DOMException("timed out", "TimeoutError"));
+          return Promise.reject(unreachable);
+        },
+      },
+      {
+        deadline: () => controller.signal,
+        fail: (failure) => {
+          failures.push(failure);
+          return new ConnectionError(unreachable.message, "qdrant");
+        },
+      },
+    );
+    const error = await rejection(executeQdrant(QUERY, undefined, record.run));
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error).not.toBeInstanceOf(TimeoutError);
+    expect((error as Error).message).toBe(unreachable.message);
+    expect(failures).toEqual([{ kind: "thrown", op: "get_collection", error: unreachable }]);
   });
 });
 

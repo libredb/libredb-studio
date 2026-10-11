@@ -1,4 +1,5 @@
 import { QueryCancelledError, TimeoutError } from "@/lib/db/errors";
+import { TransportError } from "@/lib/db/http/node-transport";
 import type { ProviderLimiter, RunRegistry } from "@/lib/db/utils/bounded-limiter";
 import type { QueryResult } from "@/lib/types";
 import type { QdrantAnswer, QdrantOp, QdrantSend } from "./client";
@@ -96,7 +97,10 @@ export async function executeQdrant(
     try {
       answer = await run.send(request, handle.signal);
     } catch (error) {
-      if (handle.signal.aborted) throw stopped();
+      // A deadline that fired before the socket connected reached no server: the transport's own sentence names the
+      // host, the port and the wait, so it is worded by errors.ts rather than read as the request's deadline.
+      const unreachable = error instanceof TransportError && error.kind === "unreachable";
+      if (handle.signal.aborted && !unreachable) throw stopped();
       throw run.fail({
         kind: "thrown",
         op: request.op,
