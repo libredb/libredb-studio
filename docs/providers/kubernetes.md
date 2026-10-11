@@ -112,6 +112,12 @@ A context whose user signs in through a credential plugin, as every EKS, GKE and
 
 > This context's user signs in through a credential plugin (exec or auth-provider), which Studio does not run, so the Token is empty. Create a ServiceAccount token bound to the view or studio-reader ClusterRole and paste it under Token, as docs/providers/kubernetes.md shows; on your own machine, kubectl proxy is another way in.
 
+A context that yields neither a token nor a client certificate and key that Studio imports, such as one whose user is empty (`user: {}`), names no user, or holds only a file path or a user name and password, is imported with this notice, after the Not imported notice when there is one:
+
+> This context gives no token and no client certificate and key that Studio imports, so its requests would reach the API server as an anonymous user, which most clusters refuse. Create a ServiceAccount token bound to the view or studio-reader ClusterRole and paste it under Token, as the ServiceAccount token section of docs/providers/kubernetes.md shows.
+
+An `http://` context gives no such notice: that address is `kubectl proxy`, which signs every request in as your kubectl user.
+
 ### 4.5 A ServiceAccount token: view and studio-reader
 
 Bind a ServiceAccount to the built-in `view` ClusterRole for a token that reads the namespaced workloads and Namespaces, never Secrets:
@@ -208,6 +214,14 @@ Prefer `kubectl create token` with a `--duration` you renew, and delete the Secr
 An expired or revoked token is one request and this sentence, never a retry:
 
 > The API server rejected the token or certificate (401 Unauthorized); a ServiceAccount token may have expired. Create a new token and paste it in the connection's Token field.
+
+A connection over TLS that sends neither a token nor a client certificate reaches the API server as the anonymous user, so its 401 and 403 say so, the 403 naming the request:
+
+> The API server rejected an anonymous request (401 Unauthorized): this connection sends no token and no client certificate. Create a ServiceAccount token and paste it in the connection's Token field, as docs/providers/kubernetes.md shows.
+
+> The API server saw an anonymous request, which may not read the API's discovery at /api (403 Forbidden): this connection sends no token and no client certificate. Create a ServiceAccount token and paste it in the connection's Token field, as docs/providers/kubernetes.md shows.
+
+Studio knows this from the connection's own fields, never from the server's answer; over plain http the address is `kubectl proxy`, which signs in for you, so the identity sentences stand.
 
 ### 4.6 Rancher
 
@@ -330,13 +344,15 @@ No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this version reads 
 
 | Answer | What Studio says |
 | --- | --- |
-| 401 | The expiry sentence of section 4.5, after exactly one request |
-| 403 | Studio's sentence naming the verb, the kind and the namespace; a lock in the tree |
+| 401 | The expiry sentence of section 4.5, after exactly one request; the anonymous sentence of section 4.5 for a connection that sends no credential |
+| 403 | Studio's sentence naming the verb, the kind and the namespace; a lock in the tree; the anonymous sentence of section 4.5 for a connection that sends no credential |
 | 404 for a type | Discovery is read again once, then kubectl's "the server doesn't have a resource type" |
 | 404 for an object | Not found, with no discovery refresh |
 | 410 in a paged list | The walk restarts once from the beginning, then a sentence |
 | 429 | One wait of at most 5 s from `Retry-After` (1 s when absent), within the time the request has left, then a sentence |
 | 400, 422, 5xx | Studio's sentence with the answer's reason |
+
+A request outside the resource API is named by what it reads and where, such as "read the API's discovery at /api", "read the server's version at /version" or "read the server's readiness at /readyz".
 
 A server older than the floor is refused at connect:
 

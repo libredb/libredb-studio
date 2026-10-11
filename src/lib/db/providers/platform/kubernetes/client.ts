@@ -179,11 +179,12 @@ export function createKubernetesClient(
       }
       const jitter = Math.floor(seams.random() * KUBERNETES_RETRY_JITTER_MS);
       const pause = Math.min(wait + jitter, KUBERNETES_RETRY_AFTER_MAX_MS);
-      if (seams.now() + pause >= deadline) throw answerFailure(context, answer);
+      if (seams.now() + pause >= deadline) throw answerFailure(context, answer, endpoint.anonymous);
       await seams.sleep(pause, call.signal);
       answer = await once(request, { ...call, timeoutMs: Math.max(1, deadline - seams.now()) });
     }
-    if (answer.status < 200 || answer.status > 299) throw answerFailure(planRequest(request).context, answer);
+    if (answer.status < 200 || answer.status > 299)
+      throw answerFailure(planRequest(request).context, answer, endpoint.anonymous);
     return { status: answer.status, contentType: answer.contentType, text: answer.text };
   };
 

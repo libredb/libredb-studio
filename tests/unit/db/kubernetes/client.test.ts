@@ -10,7 +10,7 @@ import {
   retryAfterMs,
 } from "@/lib/db/providers/platform/kubernetes/client";
 import { readClusterEndpoint } from "@/lib/db/providers/platform/kubernetes/connection-options";
-import { UNAUTHORIZED_SENTENCE } from "@/lib/db/providers/platform/kubernetes/errors";
+import { ANONYMOUS_UNAUTHORIZED_SENTENCE, UNAUTHORIZED_SENTENCE } from "@/lib/db/providers/platform/kubernetes/errors";
 import type { ResourceRef } from "@/lib/db/providers/platform/kubernetes/request-policy";
 import { expectCalls } from "../../../helpers/call-log";
 import { kubernetesConnection, TEST_TOKEN } from "../../../helpers/kubernetes-connection";
@@ -134,6 +134,19 @@ describe("send", () => {
     expect(transport.calls).toHaveLength(1);
   });
 
+  test("a connection that sends no credential is told its 401 and 403 went out anonymous", async () => {
+    const anonymous = kubernetesConnection({ password: "" });
+    const unauthorized = clientWith(() => statusAnswer(401, "Unauthorized"), anonymous);
+    await expect(unauthorized.client.send({ op: "discovery", root: "api" }, call())).rejects.toThrow(
+      ANONYMOUS_UNAUTHORIZED_SENTENCE,
+    );
+    expect(unauthorized.transport.calls).toHaveLength(1);
+    const forbidden = clientWith(() => statusAnswer(403, "Forbidden"), anonymous);
+    await expect(forbidden.client.send({ op: "discovery", root: "api" }, call())).rejects.toThrow(
+      "The API server saw an anonymous request, which may not read the API's discovery at /api (403 Forbidden): this connection sends no token and no client certificate.",
+    );
+  });
+
   test("a 403 answers Studio's sentence, never the Status message", async () => {
     const { client } = clientWith(() => statusAnswer(403, "Forbidden"));
     const error = await client.send({ op: "list", target: PODS, namespace: "shop" }, call()).then(
@@ -175,7 +188,7 @@ describe("send", () => {
       text: "<html>",
     }));
     await expect(broken.client.json({ op: "version" }, call())).rejects.toThrow(
-      "The API server answered the request to get version in the cluster with a body that is not JSON.",
+      "The API server answered the request to read the server's version at /version with a body that is not JSON.",
     );
   });
 
@@ -189,7 +202,7 @@ describe("send", () => {
       text: answers.shift() as string,
     }));
     const sentence =
-      "The API server answered the request to get version in the cluster with JSON nested deeper than 1,000 levels, deeper than any Kubernetes object, so Studio shows nothing of it.";
+      "The API server answered the request to read the server's version at /version with JSON nested deeper than 1,000 levels, deeper than any Kubernetes object, so Studio shows nothing of it.";
     await expect(reader.client.json({ op: "version" }, call())).rejects.toThrow(sentence);
     await expect(reader.client.json({ op: "version" }, call())).rejects.toThrow(sentence);
     expect(await reader.client.json({ op: "version" }, call())).toBeDefined();
@@ -234,7 +247,7 @@ describe("429 and Retry-After", () => {
   test("an absent Retry-After waits 1 s; a second 429 answers the sentence", async () => {
     const { client, transport, seams } = clientWith(() => statusAnswer(429, "TooManyRequests"));
     await expect(client.send({ op: "version" }, call())).rejects.toThrow(
-      "The API server is limiting requests and did not get version in the cluster (HTTP 429, reason TooManyRequests); run it again in a few seconds.",
+      "The API server is limiting requests and did not read the server's version at /version (HTTP 429, reason TooManyRequests); run it again in a few seconds.",
     );
     expect(seams.sleeps).toEqual([1_000]);
     expect(transport.calls).toHaveLength(2);
@@ -243,7 +256,7 @@ describe("429 and Retry-After", () => {
   test("a Retry-After above 5 s answers the sentence at once, with no wait and no second request", async () => {
     const { client, transport, seams } = clientWith(() => statusAnswer(429, "TooManyRequests", "6"));
     await expect(client.send({ op: "version" }, call())).rejects.toThrow(
-      "The API server is limiting requests and asked Studio to wait 6 s before it would get version in the cluster, longer than the 5 s Studio waits; run it again later.",
+      "The API server is limiting requests and asked Studio to wait 6 s before it would read the server's version at /version, longer than the 5 s Studio waits; run it again later.",
     );
     expect(seams.sleeps).toEqual([]);
     expect(transport.calls).toHaveLength(1);
@@ -277,7 +290,7 @@ describe("429 and Retry-After", () => {
   test("the request sent again after a wait gets only the time the call has left", async () => {
     const { client, transport, sleeps } = clockedClient(400, "0");
     await expect(client.send({ op: "version" }, call({ timeoutMs: 500 }))).rejects.toThrow(
-      "The API server did not answer the request to get version in the cluster within 0.1 s.",
+      "The API server did not answer the request to read the server's version at /version within 0.1 s.",
     );
     expect(sleeps).toEqual([0]);
     expect(transport.calls).toHaveLength(2);
@@ -286,7 +299,7 @@ describe("429 and Retry-After", () => {
   test("a Retry-After the call has no time left for answers the 429 sentence after one request", async () => {
     const { client, transport, sleeps } = clockedClient(400, "2");
     await expect(client.send({ op: "version" }, call({ timeoutMs: 2_000 }))).rejects.toThrow(
-      "The API server is limiting requests and did not get version in the cluster (HTTP 429, reason TooManyRequests); run it again in a few seconds.",
+      "The API server is limiting requests and did not read the server's version at /version (HTTP 429, reason TooManyRequests); run it again in a few seconds.",
     );
     expect(sleeps).toEqual([]);
     expect(transport.calls).toHaveLength(1);

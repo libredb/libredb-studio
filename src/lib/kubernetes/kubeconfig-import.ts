@@ -14,7 +14,8 @@
  * What a context fills: the cluster's server split into host, port and API path, the TLS mode its scheme, CA and
  * `insecure-skip-tls-verify` call for, the TLS server name, the user's bearer token or client certificate pair, and
  * the context's namespace. A user that signs in through a credential plugin (`exec`, `auth-provider`) is imported
- * without a credential, and every setting Studio does not take (a file path, a proxy, an impersonation, a basic-auth
+ * without a credential, a context that yields no credential at all is told its requests would go out anonymous, and
+ * every setting Studio does not take (a file path, a proxy, an impersonation, a basic-auth
  * pair) is named in the context's notice. No sentence quotes a value of the text: a refused context is named by its
  * place in the list.
  */
@@ -46,6 +47,8 @@ export const KUBECONFIG_IMPORT_SENTENCES = Object.freeze({
     "The kubeconfig's current-context names no context it lists: choose one of the contexts below.",
   credentialPlugin:
     "This context's user signs in through a credential plugin (exec or auth-provider), which Studio does not run, so the Token is empty. Create a ServiceAccount token bound to the view or studio-reader ClusterRole and paste it under Token, as docs/providers/kubernetes.md shows; on your own machine, kubectl proxy is another way in.",
+  noCredential:
+    "This context gives no token and no client certificate and key that Studio imports, so its requests would reach the API server as an anonymous user, which most clusters refuse. Create a ServiceAccount token bound to the view or studio-reader ClusterRole and paste it under Token, as the ServiceAccount token section of docs/providers/kubernetes.md shows.",
   insecure:
     "This context sets insecure-skip-tls-verify, so SSL mode is require, which a Studio server refuses unless its operator sets KUBERNETES_ALLOW_INSECURE_TLS=true. Add the cluster's CA under SSL / TLS and choose verify-full instead.",
   plaintext:
@@ -435,6 +438,9 @@ function readContext(item: unknown, clusters: NamedEntries, users: NamedEntries)
   const refused = [...presentFields(cluster, REFUSED_CLUSTER_FIELDS), ...presentFields(user, REFUSED_USER_FIELDS)];
   if (refused.length > 0) notices.push(notImportedNotice(refused));
   if (plugin) notices.push(KUBECONFIG_IMPORT_SENTENCES.credentialPlugin);
+  // Over plain http the address is kubectl proxy on this machine, which signs every request in as the kubectl user.
+  else if (!server.plaintext && fields.password === undefined && ssl.clientCert === undefined)
+    notices.push(KUBECONFIG_IMPORT_SENTENCES.noCredential);
 
   return { context: { name: name.text, fields, ssl, notices } };
 }

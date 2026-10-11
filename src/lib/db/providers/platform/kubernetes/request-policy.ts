@@ -210,6 +210,11 @@ function pairs(entries: Readonly<Record<string, string | number | boolean | unde
     .map(([key, value]) => [key, String(value)]);
 }
 
+/** The context of a GET outside the resource API: what it reads, and the path it reads it at. */
+function nonResource(resource: string, what: string, path: string): KubernetesRequestContext {
+  return { verb: "get", resource, group: "", reads: `${what} at ${path}` };
+}
+
 function context(
   verb: KubernetesRequestContext["verb"],
   target: Pick<ResourceRef, "resource" | "group">,
@@ -233,30 +238,34 @@ export function planRequest(request: KubernetesRequest): PlannedRequest {
 }
 
 function build(request: KubernetesRequest): PlannedRequest {
-  const core = { resource: "", group: "" };
   switch (request.op) {
     case "discovery":
       return {
         method: "GET",
         path: `/${request.root}`,
         query: [],
-        context: context("get", { ...core, resource: request.root }),
+        context: nonResource(request.root, "the API's discovery", `/${request.root}`),
       };
     case "version":
-      return { method: "GET", path: "/version", query: [], context: context("get", { ...core, resource: "version" }) };
+      return {
+        method: "GET",
+        path: "/version",
+        query: [],
+        context: nonResource("version", "the server's version", "/version"),
+      };
     case "readyz":
       return {
         method: "GET",
         path: "/readyz",
         query: request.verbose === true ? [["verbose", "true"]] : [],
-        context: context("get", { ...core, resource: "readyz" }),
+        context: nonResource("readyz", "the server's readiness", "/readyz"),
       };
     case "openapi-index":
       return {
         method: "GET",
         path: "/openapi/v3",
         query: [],
-        context: context("get", { ...core, resource: "openapi" }),
+        context: nonResource("openapi", "the API's OpenAPI index", "/openapi/v3"),
       };
     case "openapi-group": {
       if (request.group !== "" && !DNS1123_SUBDOMAIN.test(request.group))
@@ -270,7 +279,7 @@ function build(request: KubernetesRequest): PlannedRequest {
         method: "GET",
         path,
         query: [["hash", request.hash]],
-        context: context("get", { ...core, resource: "openapi" }),
+        context: nonResource("openapi", "the API's OpenAPI schema", path),
       };
     }
     case "list": {

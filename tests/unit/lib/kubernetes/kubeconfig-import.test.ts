@@ -140,10 +140,10 @@ describe("a context fills the form", () => {
     expect(only(kubeconfig({ cluster })).ssl?.caCert).toBe(CA_PEM);
   });
 
-  test("a context with no user fills the server alone", () => {
+  test("a context with no user fills the server alone, and says its requests would go out anonymous", () => {
     const context = only(kubeconfig({ context: "cluster: probe" }));
     expect(context.fields).toEqual({ host: "api.example", port: "6443" });
-    expect(context.notices).toEqual([]);
+    expect(context.notices).toEqual([S.noCredential]);
   });
 
   test("an http server maps to SSL mode disable with its notice, port 80 by default, and names the client pair it drops", () => {
@@ -255,6 +255,66 @@ describe("partial imports and the settings Studio does not take", () => {
       ]),
     ]);
     expect(context.notices.join(" ")).not.toContain(MARKER);
+  });
+});
+
+describe("a user that gives no credential Studio imports", () => {
+  test("the notice says the requests would reach the server as an anonymous user and points to the token section", () => {
+    expect(S.noCredential).toBe(
+      "This context gives no token and no client certificate and key that Studio imports, so its requests would reach the API server as an anonymous user, which most clusters refuse. Create a ServiceAccount token bound to the view or studio-reader ClusterRole and paste it under Token, as the ServiceAccount token section of docs/providers/kubernetes.md shows.",
+    );
+  });
+
+  test("an empty user (user: {}), as the live kubeadm cluster's kubeconfig had, fills the server and namespace and gives the notice", () => {
+    const context = only(kubeconfig({ user: "{}" }));
+    expect(context.fields).toEqual({ host: "api.example", port: "6443", database: "shop" });
+    expect(context.ssl).toEqual({ mode: "verify-full", caCert: CA_PEM });
+    expect(context.notices).toEqual([S.noCredential]);
+  });
+
+  test.each([
+    ["tokenFile", `tokenFile: /var/${MARKER}`, ["tokenFile"]],
+    ["token-file", `token-file: /var/${MARKER}`, ["token-file"]],
+    ["username and password", `username: ${MARKER}\n      password: ${MARKER}`, ["username", "password"]],
+    [
+      "client certificate file paths",
+      `client-certificate: /home/${MARKER}\n      client-key: /home/${MARKER}`,
+      ["client-certificate", "client-key"],
+    ],
+  ])("a user whose only credential is %s gives the notice after the Not imported notice", (_name, user, refused) => {
+    const context = only(kubeconfig({ user }));
+    expect(context.fields.password).toBeUndefined();
+    expect(context.ssl?.clientCert).toBeUndefined();
+    expect(context.notices).toEqual([notImportedNotice(refused), S.noCredential]);
+    expect(context.notices.join(" ")).not.toContain(MARKER);
+  });
+
+  test("a token gives no notice", () => {
+    expect(only(kubeconfig({ user: `token: ${MARKER}` })).notices).toEqual([]);
+  });
+
+  test("client certificate data gives no notice", () => {
+    const user = `client-certificate-data: ${b64(CERT_PEM)}\n      client-key-data: ${b64(KEY_PEM)}`;
+    const context = only(kubeconfig({ user }));
+    expect(context.ssl).toMatchObject({ clientCert: CERT_PEM, clientKey: KEY_PEM });
+    expect(context.notices).toEqual([]);
+  });
+
+  test("a credential plugin gives its own sentence and not this one", () => {
+    const context = only(kubeconfig({ user: "exec:\n        command: cloud-login" }));
+    expect(context.notices).toEqual([notImportedNotice(["exec"]), S.credentialPlugin]);
+  });
+
+  test("a plain http server, which is kubectl proxy signing in for the user, gives no notice", () => {
+    const context = only(kubeconfig({ cluster: "server: http://127.0.0.1:8001", user: "{}" }));
+    expect(context.notices).toEqual([S.plaintext]);
+  });
+
+  test("on insecure-skip-tls-verify the notice follows the TLS notice", () => {
+    const context = only(
+      kubeconfig({ cluster: "server: https://api.example:6443\n      insecure-skip-tls-verify: true", user: "{}" }),
+    );
+    expect(context.notices).toEqual([S.insecure, S.noCredential]);
   });
 });
 
@@ -383,7 +443,12 @@ contexts:
 `;
     expect(importKubeconfig(text)).toEqual({
       contexts: [
-        { name: "probe", fields: { host: "api.example", port: "6443" }, ssl: { mode: "verify-system" }, notices: [] },
+        {
+          name: "probe",
+          fields: { host: "api.example", port: "6443" },
+          ssl: { mode: "verify-system" },
+          notices: [S.noCredential],
+        },
       ],
       refusals: [
         `Context 1 was not imported: ${C.shape}`,

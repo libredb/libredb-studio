@@ -19,6 +19,11 @@ export interface KubernetesRequestContext {
   readonly group: string;
   readonly namespace?: string;
   readonly name?: string;
+  /**
+   * A request to a path outside the resource API, as what it reads and where: `the API's discovery at /api`. When set,
+   * the request is worded as reading it, never as the verb on a resource named after the path.
+   */
+  readonly reads?: string;
 }
 
 /** The parts of an answer a sentence may read: the status, the content type and the body (for `reason` only). */
@@ -56,6 +61,13 @@ export class KubernetesResponseTooLargeError extends QueryError {
 export const UNAUTHORIZED_SENTENCE =
   "The API server rejected the token or certificate (401 Unauthorized); a ServiceAccount token may have expired. Create a new token and paste it in the connection's Token field.";
 
+/** What a 401 or 403 adds for a connection that sends neither a token nor a client certificate. */
+const NO_CREDENTIAL =
+  "this connection sends no token and no client certificate. Create a ServiceAccount token and paste it in the connection's Token field, as docs/providers/kubernetes.md shows.";
+
+/** The 401 sentence for a connection that sends no credential: the server refused an anonymous request. */
+export const ANONYMOUS_UNAUTHORIZED_SENTENCE = `The API server rejected an anonymous request (401 Unauthorized): ${NO_CREDENTIAL}`;
+
 const REASON = /^[A-Za-z]{1,64}$/;
 
 /** The answer's `reason` when it is a JSON Status whose reason is one CamelCase word; undefined otherwise. */
@@ -82,15 +94,28 @@ function scopeWords(context: KubernetesRequestContext): string {
   return context.namespace === undefined ? " in the cluster" : ` in the namespace ${context.namespace}`;
 }
 
-/** `list deployments.apps in the namespace shop`, `get pods web in the namespace shop`. */
+/**
+ * `list deployments.apps in the namespace shop`, `get pods web in the namespace shop`, and for a read outside the
+ * resource API `read the API's discovery at /api`.
+ */
 export function requestWords(context: KubernetesRequestContext): string {
+  if (context.reads !== undefined) return `read ${context.reads}`;
   const name = context.name === undefined ? "" : ` ${context.name}`;
   return `${context.verb} ${resourceName(context)}${name}${scopeWords(context)}`;
 }
 
-/** The sentence for an identity that may not make this request: the tree's lock and the agent's `unavailable`. */
-export function forbiddenSentence(context: KubernetesRequestContext): string {
+/**
+ * The sentence for an identity that may not make this request: the tree's lock and the agent's `unavailable`. With
+ * `anonymous`, the connection sends no credential, so the identity the server judged is the anonymous user.
+ */
+export function forbiddenSentence(context: KubernetesRequestContext, anonymous = false): string {
+  if (anonymous) return anonymousForbiddenSentence(context);
   return `This connection's identity may not ${requestWords(context)} (403 Forbidden).`;
+}
+
+/** The 403 sentence for a connection that sends no credential: the server saw an anonymous request. */
+export function anonymousForbiddenSentence(context: KubernetesRequestContext): string {
+  return `The API server saw an anonymous request, which may not ${requestWords(context)} (403 Forbidden): ${NO_CREDENTIAL}`;
 }
 
 /** The sentence for a type the server does not serve, as kubectl says it after one discovery refresh. */
@@ -106,14 +131,25 @@ export function notServedSentence(
   return `This server does not serve ${labelPlural}: discovery lists no ${resourceName(context)}.`;
 }
 
-/** A non-2xx answer as a provider error. A 2xx answer is the caller's to read, never handed here. */
-export function answerFailure(context: KubernetesRequestContext, answer: KubernetesAnswer): DatabaseError {
+/**
+ * A non-2xx answer as a provider error. A 2xx answer is the caller's to read, never handed here. `anonymous` is the
+ * connection's own fact, read from its fields (`ClusterEndpoint.anonymous`), never from the server's text.
+ */
+export function answerFailure(
+  context: KubernetesRequestContext,
+  answer: KubernetesAnswer,
+  anonymous = false,
+): DatabaseError {
   const { status } = answer;
-  if (status === 401) return new AuthenticationError(UNAUTHORIZED_SENTENCE, KUBERNETES_TYPE);
+  if (status === 401)
+    return new AuthenticationError(
+      anonymous ? ANONYMOUS_UNAUTHORIZED_SENTENCE : UNAUTHORIZED_SENTENCE,
+      KUBERNETES_TYPE,
+    );
   const reason = statusReason(answer);
   const because = reason === undefined ? `HTTP ${status}` : `HTTP ${status}, reason ${reason}`;
   const words = requestWords(context);
-  if (status === 403) return new KubernetesRequestError(forbiddenSentence(context), status, reason, false);
+  if (status === 403) return new KubernetesRequestError(forbiddenSentence(context, anonymous), status, reason, false);
   if (status === 404) {
     const plain = (answer.contentType ?? "").toLowerCase().startsWith("text/plain");
     if (plain) return new KubernetesRequestError(typeMissingSentence(resourceName(context)), status, reason, true);

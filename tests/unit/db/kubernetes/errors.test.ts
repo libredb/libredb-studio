@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { AuthenticationError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
+  ANONYMOUS_UNAUTHORIZED_SENTENCE,
   answerFailure,
+  anonymousForbiddenSentence,
   forbiddenSentence,
   type KubernetesRequestContext,
   KubernetesRequestError,
@@ -16,6 +18,7 @@ import {
   UNAUTHORIZED_SENTENCE,
   watchEventFailure,
 } from "@/lib/db/providers/platform/kubernetes/errors";
+import { type KubernetesRequest, planRequest } from "@/lib/db/providers/platform/kubernetes/request-policy";
 
 const LIST_DEPLOYMENTS: KubernetesRequestContext = {
   verb: "list",
@@ -50,6 +53,71 @@ describe("request words", () => {
     expect(requestWords(GET_POD)).toBe("get pods web-1 in the namespace shop");
     expect(requestWords(LIST_NODES)).toBe("list nodes in the cluster");
     expect(resourceName({ resource: "pods", group: "" })).toBe("pods");
+  });
+});
+
+describe("a read outside the resource API is worded as what it reads", () => {
+  const words = (request: KubernetesRequest) => requestWords(planRequest(request).context);
+
+  test("discovery is reading the API's discovery, not getting a resource named api", () => {
+    expect(words({ op: "discovery", root: "api" })).toBe("read the API's discovery at /api");
+    expect(words({ op: "discovery", root: "apis" })).toBe("read the API's discovery at /apis");
+  });
+
+  test("version, readiness and the OpenAPI documents name what they read and where", () => {
+    expect(words({ op: "version" })).toBe("read the server's version at /version");
+    expect(words({ op: "readyz" })).toBe("read the server's readiness at /readyz");
+    expect(words({ op: "readyz", verbose: true })).toBe("read the server's readiness at /readyz");
+    expect(words({ op: "openapi-index" })).toBe("read the API's OpenAPI index at /openapi/v3");
+    expect(words({ op: "openapi-group", group: "apps", version: "v1", hash: "abc" })).toBe(
+      "read the API's OpenAPI schema at /openapi/v3/apis/apps/v1",
+    );
+    expect(words({ op: "openapi-group", group: "", version: "v1", hash: "abc" })).toBe(
+      "read the API's OpenAPI schema at /openapi/v3/api/v1",
+    );
+  });
+
+  test("a 403 to a discovery read says the identity may not read the API's discovery", () => {
+    const discovery = planRequest({ op: "discovery", root: "api" }).context;
+    expect(answerFailure(discovery, json(403, "Forbidden")).message).toBe(
+      "This connection's identity may not read the API's discovery at /api (403 Forbidden).",
+    );
+  });
+});
+
+describe("a connection that sends no credential", () => {
+  const discovery = planRequest({ op: "discovery", root: "api" }).context;
+
+  test("a 401 says the server rejected an anonymous request and that the connection sends no credential", () => {
+    const error = answerFailure(GET_POD, json(401, "Unauthorized"), true);
+    expect(error).toBeInstanceOf(AuthenticationError);
+    expect(error.message).toBe(
+      "The API server rejected an anonymous request (401 Unauthorized): this connection sends no token and no client certificate. Create a ServiceAccount token and paste it in the connection's Token field, as docs/providers/kubernetes.md shows.",
+    );
+    expect(error.message).toBe(ANONYMOUS_UNAUTHORIZED_SENTENCE);
+  });
+
+  test("a 403 says the server saw an anonymous request, names the request, and says the connection sends no credential", () => {
+    const error = answerFailure(discovery, json(403, "Forbidden"), true) as KubernetesRequestError;
+    expect(error).toBeInstanceOf(KubernetesRequestError);
+    expect(error.message).toBe(
+      "The API server saw an anonymous request, which may not read the API's discovery at /api (403 Forbidden): this connection sends no token and no client certificate. Create a ServiceAccount token and paste it in the connection's Token field, as docs/providers/kubernetes.md shows.",
+    );
+    expect(error.message).toBe(anonymousForbiddenSentence(discovery));
+    expect(error.message).toBe(forbiddenSentence(discovery, true));
+    expect([error.status, error.reason, error.typeMissing]).toEqual([403, "Forbidden", false]);
+  });
+
+  test("with a credential, 401 and 403 keep the identity's sentences", () => {
+    expect(answerFailure(GET_POD, json(401), false).message).toBe(UNAUTHORIZED_SENTENCE);
+    expect(answerFailure(discovery, json(403), false).message).toBe(forbiddenSentence(discovery));
+    expect(forbiddenSentence(discovery, false)).toBe(forbiddenSentence(discovery));
+  });
+
+  test("every other status reads the same with or without a credential", () => {
+    for (const code of [400, 404, 409, 410, 422, 429, 500]) {
+      expect(answerFailure(LIST_NODES, json(code), true).message).toBe(answerFailure(LIST_NODES, json(code)).message);
+    }
   });
 });
 

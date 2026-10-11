@@ -19,7 +19,7 @@ describe("kubernetesHealth", () => {
   test("a failing /readyz fails health with its sentence", async () => {
     const { surface } = testSurface(fakeCluster({ readyzStatus: 503 }));
     await expect(kubernetesHealth(surface)).rejects.toThrow(
-      "The API server failed to get readyz in the cluster (HTTP 503).",
+      "The API server failed to read the server's readiness at /readyz (HTTP 503).",
     );
   });
 

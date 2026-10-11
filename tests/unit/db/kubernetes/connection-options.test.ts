@@ -103,6 +103,21 @@ describe("an accepted connection", () => {
 });
 
 describe("credentials", () => {
+  test("anonymous is true over TLS with neither a token nor a client certificate, read from the fields alone", () => {
+    const pem = (label: string) => `-----BEGIN ${label}-----\nMIIBtest\n-----END ${label}-----\n`;
+    const pair = { mode: "verify-full" as const, clientCert: pem("CERTIFICATE"), clientKey: pem("PRIVATE KEY") };
+    expect(readClusterEndpoint(kubernetesConnection(), CONTEXT).anonymous).toBe(false);
+    expect(readClusterEndpoint(kubernetesConnection({ password: "" }), CONTEXT).anonymous).toBe(true);
+    expect(readClusterEndpoint(kubernetesConnection({ password: undefined }), CONTEXT).anonymous).toBe(true);
+    expect(readClusterEndpoint(kubernetesConnection({ password: "", ssl: pair }), CONTEXT).anonymous).toBe(false);
+  });
+
+  test("plain HTTP is never anonymous: the address is kubectl proxy, which signs in as the kubectl user", () => {
+    process.env[KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT] = "true";
+    const proxy = kubernetesConnection({ host: "127.0.0.1", port: 8001, password: "", ssl: { mode: "disable" } });
+    expect(readClusterEndpoint(proxy, CONTEXT).anonymous).toBe(false);
+  });
+
   test("a user name is refused: basic authentication is never sent", () => {
     expect(refusal(kubernetesConnection({ user: "admin" })).message).toBe(S.userNotTaken);
   });

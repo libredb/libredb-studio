@@ -46,6 +46,11 @@ export interface ClusterEndpoint {
   readonly tls: NodeTlsMaterial | null;
   /** The headers set once per connection: `authorization` when a token is set, and `user-agent`. */
   readonly headers: Readonly<Record<string, string>>;
+  /**
+   * TLS with neither a token nor a client certificate: the API server reads every request as the anonymous user.
+   * False over plain HTTP, where the address is kubectl proxy on this machine, which signs in as the kubectl user.
+   */
+  readonly anonymous: boolean;
   /** The namespaces the tree lists, when the connection names them; undefined means the provider lists them. */
   readonly namespaces: readonly string[] | undefined;
   /** The session-default namespace: the Default namespace field, else `default`, as kubectl reads no context namespace. */
@@ -197,6 +202,7 @@ export function readClusterEndpoint(
       ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
       "user-agent": version === null ? "libredb-studio (kubernetes)" : `libredb-studio/${version} (kubernetes)`,
     },
+    anonymous: tls !== null && token === undefined && tls.cert === undefined,
     namespaces,
     defaultNamespace,
     maxSockets: KUBERNETES_MAX_IN_FLIGHT,

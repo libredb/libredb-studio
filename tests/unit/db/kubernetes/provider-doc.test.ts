@@ -19,9 +19,15 @@ import {
   NOT_READ_ONLY_COMMANDS,
 } from "@/lib/db/providers/platform/kubernetes/console/commands";
 import { DISCOVERY_FLOOR_SENTENCE, VERSION_FLOOR_SENTENCE } from "@/lib/db/providers/platform/kubernetes/discovery";
-import { UNAUTHORIZED_SENTENCE } from "@/lib/db/providers/platform/kubernetes/errors";
+import {
+  ANONYMOUS_UNAUTHORIZED_SENTENCE,
+  anonymousForbiddenSentence,
+  requestWords,
+  UNAUTHORIZED_SENTENCE,
+} from "@/lib/db/providers/platform/kubernetes/errors";
 import * as limits from "@/lib/db/providers/platform/kubernetes/limits";
 import { KUBERNETES_SAMPLED_FROM } from "@/lib/db/providers/platform/kubernetes/objects";
+import { planRequest } from "@/lib/db/providers/platform/kubernetes/request-policy";
 import { KUBECONFIG_IMPORT_SENTENCES } from "@/lib/kubernetes/kubeconfig-import";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -49,12 +55,21 @@ describe("the sentences the doc quotes are the code's", () => {
     ["the unchecked certificate refusal", KUBERNETES_CONNECTION_SENTENCES.insecureTlsOff],
     ["the namespace cap notice", NAMESPACE_CAP_NOTICE],
     ["the credential plugin notice", KUBECONFIG_IMPORT_SENTENCES.credentialPlugin],
+    ["the no credential notice", KUBECONFIG_IMPORT_SENTENCES.noCredential],
     ["the 401 sentence", UNAUTHORIZED_SENTENCE],
+    ["the anonymous 401 sentence", ANONYMOUS_UNAUTHORIZED_SENTENCE],
+    ["the anonymous 403 sentence", anonymousForbiddenSentence(planRequest({ op: "discovery", root: "api" }).context)],
     ["the follow refusal", KUBECTL_SENTENCES.follow],
     ["the version floor", VERSION_FLOOR_SENTENCE],
     ["the discovery floor", DISCOVERY_FLOOR_SENTENCE],
   ])("%s", (_name, sentence) => {
     expect(quoted(sentence)).toBe(true);
+  });
+
+  test("the error section's examples of a read outside the resource API are the code's words", () => {
+    const section = sectionOf("## 10. Error handling");
+    for (const request of [{ op: "discovery", root: "api" }, { op: "version" }, { op: "readyz" }] as const)
+      expect(section).toContain(`"${requestWords(planRequest(request).context)}"`);
   });
 
   test("the sampled count says what it was counted from", () => {
