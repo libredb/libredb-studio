@@ -540,8 +540,8 @@ its own with `supportsTestDataGeneration: true`. A view carries no such declarat
   collection is refused with *An existing index has the same name as the requested index*. So the
   catalog does not model an index as a first-class container-level object, which is the test
   standing ruling 4 sets. An index appears in `describeObject`'s output, where it is. The fixture
-  creates that duplicate name on purpose, so the reading stays refutable. (sqlite, Cassandra and
-  Couchbase are the three engines that do declare the kind, and each earns it the same way.)
+  creates that duplicate name on purpose, so the reading stays refutable. (Other engines, such as sqlite, Cassandra and
+  Couchbase, do declare the kind, and each earns it the same way.)
 - **No routine kind of any shape.** `$function`, `$accumulator`, `$where` and `system.js` are all
   deprecated as of MongoDB 8.0, `mapReduce` since 5.0, and `db.eval` was removed in 4.2. Atlas
   Triggers and Atlas Functions are an **Atlas control-plane** feature, not a server one: the wire
@@ -696,7 +696,7 @@ margin under the server's own ceiling.
    same role runs `listIndexes` on the same collection without complaint.
 
 So the index reads are **one per described object**, issued in parallel and bounded by the caller's
-`limit`. This is the one place in the seventeen providers where a per-object read survives, and it
+`limit`. This per-object read is one of several in Studio's providers, and it
 is still not the N+1 the inventory route removed: that was up to 5,000 **sequential** round trips
 over a whole listing. Measured over 200 collections:
 
@@ -1017,7 +1017,7 @@ reason licenses naming a figure:
 
 (`getHealth()`'s `slowQueries: [{ query: "Error fetching health info" }]` placeholder is the same
 class of fabrication one size down and is still there; it is tracked separately, because removing it
-needs `HealthInfo.slowQueries` to become optional across all 17 type-ids.)
+needs `HealthInfo.slowQueries` to become optional on the type every provider returns.)
 
 ### 7.3 A database size nobody published is absent, not `0 B`
 
@@ -1360,8 +1360,8 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
   required numbers on `DatabaseOverview`, so `getOverview()`'s catch has no absence to spell for
   them and a denied `serverStatus` reports two counts nobody took
   ([§7.3](#73-a-database-size-nobody-published-is-absent-not-0-b)). *Future:* the same change the
-  connection count and the byte figure got, which needs the two fields to become optional across all
-  17 type-ids.
+  connection count and the byte figure got, which needs the two fields to become optional on the
+  `DatabaseOverview` type every provider returns.
 - **`Binary` values are shown as a placeholder** (`<Binary: N bytes>`), not the raw bytes; a UUID
   (subtype 4) is the exception and is shown as its dashed hex ([§3.2](#32-bson-serialization-for-the-grid)).
 - **`findOne` silently ignores `sort`/`skip`/`limit`** (only `projection` is honoured), so it cannot
