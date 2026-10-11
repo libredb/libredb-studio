@@ -1,5 +1,5 @@
 /**
- * The MQTT provider's own surface (#1635 spec 10), every declaration and every refusal.
+ * The MQTT provider's own surface (`docs/providers/mqtt.md` sections 4 and 9), every declaration and refusal.
  *
  * EVERY SURFACE A BROKER DOES NOT HAVE IS ASSERTED BY NAME, not left to a default. A panel that drew an empty
  * table where there is no table, or offered maintenance against a connection that cannot write, would be
@@ -15,11 +15,7 @@ import { createServer, type Server } from "node:net";
 import path from "node:path";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import { MqttProvider } from "@/lib/db/providers/keyvalue/mqtt/index";
-import {
-  MQTT_CONNECT_TIMEOUT_MS,
-  MQTT_DEFAULT_PORT,
-  MQTT_IP_SERVER_NAME,
-} from "@/lib/db/providers/keyvalue/mqtt/constants";
+import { MQTT_CONNECT_TIMEOUT_MS, MQTT_DEFAULT_PORT } from "@/lib/db/providers/keyvalue/mqtt/constants";
 import {
   countMqttObjects,
   describeMqttObject,
@@ -30,7 +26,6 @@ import {
 } from "@/lib/db/providers/keyvalue/mqtt/objects";
 import { encodeString, encodeVariableByteInteger } from "@/lib/db/providers/keyvalue/mqtt/encoder";
 import {
-  tlsServerName,
   type MqttTopicRow,
   type MqttTransport,
   type MqttTransportFactory,
@@ -489,24 +484,42 @@ describe("the real transport, against a loopback server", () => {
   }, 20_000);
 
   /**
-   * NODE REFUSES AN IP LITERAL AS A SERVER NAME, and the first version passed the host straight through:
-   * measured against the lab's TLS brokers on 18883 and 11885, every TLS connection to `127.0.0.1` failed
-   * with "Setting the TLS ServerName to an IP address is not permitted", with and without certificate
-   * verification. TLS to an address rather than a hostname did not work at all, and no unit test saw it
-   * because none opened a real TLS socket.
+   * THE SERVER NAME AND THE IDENTITY ARE TWO DIFFERENT THINGS, and this provider conflated them.
+   *
+   * Node refuses an IP literal as `servername`, so the first version substituted the unresolvable
+   * `mqtt.invalid` - and Node then checked the CERTIFICATE against that name too, so every `verify-` mode
+   * failed with `ERR_TLS_CERT_ALTNAME_INVALID` against a broker addressed by IP, however correct its IP SAN.
+   * Verified TLS to an address did not work at all. The tests that stood here asserted that substitution,
+   * so they pinned the defect.
+   *
+   * The rule is now the one `tlsAgentOptions` gives: SNI only for a DNS name, and the certificate checked
+   * against the identity rather than against whatever `servername` happened to be.
    */
-  test("a broker addressed by IP is sent a name that cannot resolve, never the address", () => {
-    for (const address of ["127.0.0.1", "10.0.0.7", "::1", "fe80::1"]) {
-      expect(tlsServerName(address)).toBe(MQTT_IP_SERVER_NAME);
-    }
-    // What RFC 6761 reserves `.invalid` for: a name guaranteed not to resolve.
-    expect(MQTT_IP_SERVER_NAME.endsWith(".invalid")).toBe(true);
-  });
-
-  test("a hostname is sent as typed, because SNI and verification both read it", () => {
-    for (const host of ["broker.example.com", "localhost", "mqtt.internal"]) {
-      expect(tlsServerName(host)).toBe(host);
-    }
+  test("no server name is sent for a broker addressed by IP, and the identity is still the address", () => {
+    const source = readFileSync(
+      path.join(
+        import.meta.dir,
+        "..",
+        "..",
+        "..",
+        "..",
+        "src",
+        "lib",
+        "db",
+        "providers",
+        "keyvalue",
+        "mqtt",
+        "session.ts",
+      ),
+      "utf8",
+    );
+    expect(source).toContain("...(isIP(identity) === 0 ? { servername: identity } : {})");
+    expect(source).toContain("checkServerIdentity(identity, certificate)");
+    // The substitution is gone from the CODE, not merely unused. Comments are stripped first, because the
+    // docblock that explains the defect names it, and a test that failed on prose would fail on the fix.
+    const code = source.replaceAll(/\/\*[\s\S]*?\*\//g, "").replaceAll(/\/\/.*$/gm, "");
+    expect(code).not.toContain("mqtt.invalid");
+    expect(code).not.toContain("MQTT_IP_SERVER_NAME");
   });
 
   /**
@@ -674,5 +687,133 @@ describe("the TLS panel's certificate boxes", () => {
     expect(seen[0]?.caCert).toBeUndefined();
     expect(seen[0]?.clientCert).toBeUndefined();
     expect(seen[0]?.clientKey).toBeUndefined();
+  });
+});
+
+/**
+ * Refresh means a new read (`docs/providers/mqtt.md` section 5).
+ *
+ * IT DID NOT. `connect()` performed one read and every page was served from it for the life of the
+ * connection, so a topic retained after connect never appeared however many times the reader pressed
+ * refresh - while the panel's own sentence said "Reading again, or narrowing the topic filter, sees more".
+ * It read again and saw the same tree, which is the shape of silent failure this provider exists to avoid.
+ *
+ * The transport below answers a different broker on each dial, which is what a broker that gained a topic
+ * between two reads looks like from here.
+ */
+describe("a refreshed page", () => {
+  const CONNACK = Buffer.from([0x20, 0x03, 0x00, 0x00, 0x00]);
+  const SUBACK = Buffer.from([0x90, 0x04, 0x00, 0x01, 0x00, 0x00]);
+
+  /** One retained PUBLISH, hand-encoded. */
+  function publish(topic: string): Buffer {
+    const name = Buffer.from(topic, "utf8");
+    const body = Buffer.concat([
+      Buffer.from([(name.length >> 8) & 0xff, name.length & 0xff]),
+      name,
+      Buffer.from([0x00]),
+      Buffer.from("x", "utf8"),
+    ]);
+    return Buffer.concat([Buffer.from([0x31, body.length]), body]);
+  }
+
+  /** A transport whose answer changes between dials, and that counts them. */
+  function changing(scripts: readonly (readonly Buffer[])[]): { factory: MqttTransportFactory; dials: () => number } {
+    let dial = 0;
+    const factory: MqttTransportFactory = () => {
+      const chunks = scripts[Math.min(dial, scripts.length - 1)] ?? [];
+      dial += 1;
+      const handlers = new Map<string, ((value: never) => void)[]>();
+      const emit = (event: string, value?: unknown): void => {
+        for (const handler of handlers.get(event) ?? []) (handler as (v: unknown) => void)(value);
+      };
+      const transport: MqttTransport = {
+        write(): void {},
+        on(event: string, handler: (value: never) => void): void {
+          handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+        },
+        once(event: string, handler: () => void): void {
+          if (event !== "ready") return;
+          queueMicrotask(() => {
+            handler();
+            for (const chunk of chunks) emit("data", chunk);
+            emit("close");
+          });
+        },
+        destroy(): void {},
+      };
+      return { transport, readyEvent: "ready" };
+    };
+    return { factory, dials: () => dial };
+  }
+
+  /** The case Cevheri measured: a topic retained after connect has to appear on a refresh. */
+  test("lists a topic the broker retained after connect", async () => {
+    const before = [CONNACK, SUBACK, publish("fabrika/hat1/durum")];
+    const after = [...before, publish("fabrika/hat2/durum")];
+    const { factory, dials } = changing([before, after]);
+
+    const provider = new MqttProvider(connection({}), {}, factory);
+    await provider.connect();
+
+    // The first page is the connect read, so opening a connection still costs one read and not two.
+    const first = await provider.scanKeysPage!({ cursor: "0", count: 100 });
+    expect(first.keys).toEqual(["fabrika/hat1/durum"]);
+    expect(dials()).toBe(1);
+
+    // The refresh reads the broker again, and sees what it gained.
+    const refreshed = await provider.scanKeysPage!({ cursor: "0", count: 100 });
+    expect([...refreshed.keys].sort()).toEqual(["fabrika/hat1/durum", "fabrika/hat2/durum"]);
+    expect(dials()).toBe(2);
+  });
+
+  /** And a topic the broker no longer retains disappears, which the held read could never show. */
+  test("drops a topic the broker no longer has", async () => {
+    const before = [CONNACK, SUBACK, publish("gider/konu"), publish("kalir/konu")];
+    const after = [CONNACK, SUBACK, publish("kalir/konu")];
+    const { factory } = changing([before, after]);
+
+    const provider = new MqttProvider(connection({}), {}, factory);
+    await provider.connect();
+    await provider.scanKeysPage!({ cursor: "0", count: 100 });
+
+    const refreshed = await provider.scanKeysPage!({ cursor: "0", count: 100 });
+    expect(refreshed.keys).toEqual(["kalir/konu"]);
+  });
+
+  /**
+   * THE READ'S OWN ACCOUNT TRAVELS WITH IT. A refresh replaces the tree, so it has to replace the sentence
+   * about that tree too: a stale "the read reached its time budget" beside a fresh list would describe a read
+   * the reader is no longer looking at.
+   */
+  test("replaces the read's own account of itself, not only the list", async () => {
+    const full = [CONNACK, SUBACK, publish("a/b")];
+    const refused = [CONNACK, Buffer.from([0x90, 0x04, 0x00, 0x01, 0x00, 0x87])];
+    const { factory } = changing([full, refused]);
+
+    const provider = new MqttProvider(connection({}), {}, factory);
+    await provider.connect();
+    const first = await provider.scanKeysPage!({ cursor: "0", count: 100 });
+    expect(first.readOutcome?.endReason).not.toMatch(/refused the subscription/);
+
+    const refreshed = await provider.scanKeysPage!({ cursor: "0", count: 100 });
+    expect(refreshed.keys).toEqual([]);
+    expect(refreshed.readOutcome?.endReason).toMatch(/refused the subscription/);
+    expect(refreshed.readOutcome?.scope).toBe("incomplete");
+  });
+
+  /** Health reads the same stored read, so it moves with the refresh rather than reporting the first tree. */
+  test("is what Health reports afterwards", async () => {
+    const before = [CONNACK, SUBACK, publish("bir/konu")];
+    const after = [...before, publish("iki/konu")];
+    const { factory } = changing([before, after]);
+
+    const provider = new MqttProvider(connection({}), {}, factory);
+    await provider.connect();
+    await provider.scanKeysPage!({ cursor: "0", count: 100 });
+    expect((await provider.getHealth()).databaseSize).toBe("1 topics");
+
+    await provider.scanKeysPage!({ cursor: "0", count: 100 });
+    expect((await provider.getHealth()).databaseSize).toBe("2 topics");
   });
 });

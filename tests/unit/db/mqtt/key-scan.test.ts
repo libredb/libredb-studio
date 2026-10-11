@@ -1,5 +1,5 @@
 /**
- * The MQTT provider's discovery filter and its Keys panel page (#1635 spec 3.6, 5 and 6).
+ * The MQTT provider's discovery filter and its Keys panel page (`docs/providers/mqtt.md` sections 3.6 and 5).
  *
  * The filter refusals are checked BEFORE a SUBSCRIBE would be sent, because they cannot be detected
  * afterwards: every broker measured answers SUBACK Granted for a shared subscription and then simply delivers

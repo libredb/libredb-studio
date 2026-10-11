@@ -242,11 +242,13 @@ Three details are worth knowing:
 - **The panel's three certificate boxes are used.** A CA certificate, a client certificate and its private key
   are passed to the TLS dial as `ca`, `cert` and `key`. A broker signed by a private CA is reachable in
   `verify-ca` with the CA pasted in, and a broker that asks for a client certificate gets one.
-- **A broker addressed by an IP literal still connects.** Node refuses an IP address as a TLS server name, so a
-  connection to `10.0.0.5` would have had no server name at all. Studio sends `mqtt.invalid` instead, a name
-  that cannot resolve, which is the same answer Oxia's provider gives with `oxia.invalid` (RFC 6761 reserves
-  `.invalid` for exactly this). A hostname is sent as typed, which is what SNI and certificate verification
-  both read.
+- **A broker addressed by an IP literal verifies against its IP SAN.** The server name and the identity are
+  two different things. Node refuses an IP address as a TLS server name, so a connection to `10.0.0.5` sends
+  no server name at all, and the certificate is checked against `10.0.0.5` itself, which reads the
+  certificate's IP SAN. A hostname is sent as typed, because SNI reads it.
+- **Through an SSH tunnel the certificate is checked against the far end.** The socket dials the local
+  forward, and the certificate belongs to the broker the tunnel reaches, so the forward's address is not the
+  identity. This is the same rule `tlsAgentOptions` applies for every provider that speaks HTTP.
 - **A failed verification says so.** In a `verify-` mode a self-signed broker fails with the certificate error
   rather than a timeout, so the cause is on screen rather than inferred.
 
@@ -255,6 +257,9 @@ Three details are worth knowing:
 Offered, and it works as it does for every other engine: the tunnel carries the TCP connection and the broker
 sees a local client. It is also the remedy the password hint names for a broker with no TLS, because a tunnel
 encrypts the credential the broker cannot.
+
+With TLS on as well, the certificate is checked against the tunnel's far end rather than against the local
+forward, which is the second bullet in 4.5.
 
 ### 4.7 Server versions
 
@@ -273,6 +278,13 @@ these three had no test that could produce them until a mutation run found that 
 
 A read can also end because the broker ended it. The six end reasons and the sentence each produces are in
 section 10.
+
+**Refresh reads the broker again.** Opening a connection performs one read, and the Keys panel's first page is
+drawn from it, so opening costs one read rather than two. Every refresh after that performs a new read and
+replaces the tree, its row types and the sentence that explains it. This is what makes "Reading again, or
+narrowing the topic filter, sees more" true: a topic the broker retained after the connection opened appears
+on a refresh, and one it no longer retains disappears. There is no second page to ask for, by the choice in
+3.7, so the first page of a walk is the only request that can mean "read it again".
 
 The retain flag is not a stop signal because it cannot be one. Measured in the lab, against the broker
 versions named:
@@ -500,7 +512,6 @@ Each replay asserts the topics by name and the type of each, so a decoder that r
   - [MQTT-4.7.2-1], section 4.7.2: a wildcard never matches a topic beginning `$`
   - Section 3.1.4, Session Taken Over; section 4.3, the QoS acknowledgement flows; section 1.5.5, the
     Variable Byte Integer
-- RFC 6761, section 6.4: the `.invalid` top-level domain, used for the TLS server name in 4.5
 - Mosquitto's reference client, v2.1.2, `client/client_shared.c`: `mosquitto_sub -I` builds its id as
   `snprintf(cfg->id, ..., "%s%d", cfg->id_prefix, getpid())`. Cited in 4.2 by the code it contains rather
   than by a line number, which moves between releases.

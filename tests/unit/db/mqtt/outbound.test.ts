@@ -1,5 +1,5 @@
 /**
- * What this provider actually puts on the wire (#1635 spec 3.6, 4.2, 9 and the QoS requirement of 3.5).
+ * What this provider actually puts on the wire (`docs/providers/mqtt.md` sections 3.1, 3.2, 3.5 and 3.6).
  *
  * THESE TESTS WERE WRITTEN AFTER AN AUDIT FOUND THEM MISSING. Three broken implementations passed the whole
  * suite before this file existed: one with the valve deleted from the write path, one that ignored the

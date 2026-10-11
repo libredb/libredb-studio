@@ -1,5 +1,5 @@
 /**
- * The MQTT session's two decisions a reader sees directly (#1635 spec 3.4 and 3.3).
+ * The MQTT session's two decisions a reader sees directly (`docs/providers/mqtt.md` sections 4.2 and 10.1).
  *
  * The client id and the CONNACK sentence are both small and both load-bearing: a colliding id disconnects
  * another client, and a refused connection with a vague sentence sends a reader to the wrong place.
@@ -138,7 +138,7 @@ describe("the sentence for a refused connection", () => {
 });
 
 /**
- * The two budgets that end a read by size, and the invariant that keeps the tree small (#1635 spec 3.5).
+ * The two budgets that end a read by size, and the invariant that keeps the tree small (manual section 5).
  *
  * THESE THREE WERE WRITTEN AFTER A MUTATION RUN SURVIVED THEM. `budget-messages` and `budget-bytes` are two
  * of the six end reasons, and the suite tested only the SENTENCES they produce: deleting either budget from

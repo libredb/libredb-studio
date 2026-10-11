@@ -1,5 +1,5 @@
 /**
- * The MQTT provider's object kinds (#1635 spec 10.4).
+ * The MQTT provider's object kinds (`docs/providers/mqtt.md` section 6).
  *
  * ONE KIND, `topic`, ENUMERATED BY THE KEY BROWSER. Declaring it is what lets a topic's row open its payload in
  * a Source tab instead of a generated read, and it is also what keeps the kind out of the Objects tree, out of

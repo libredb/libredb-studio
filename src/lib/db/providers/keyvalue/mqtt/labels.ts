@@ -1,5 +1,5 @@
 /**
- * The MQTT provider's labels (#1635 spec 10).
+ * The MQTT provider's labels (`docs/providers/mqtt.md` section 9).
  *
  * Pure, and shipped to the browser: `getLabels()` answers before connect, through `POST /api/db/provider-meta`.
  * Every sentence that names what the panel cannot do says why in the same breath, because a disabled control

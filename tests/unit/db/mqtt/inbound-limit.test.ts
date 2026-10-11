@@ -1,5 +1,5 @@
 /**
- * The inbound size limit over a real byte stream (#1635 spec 4.4 and 5.5).
+ * The inbound size limit over a real byte stream (`docs/providers/mqtt.md` section 3.3).
  *
  * THESE TESTS EXIST BECAUSE THE FIRST IMPLEMENTATION PASSED EVERY OTHER TEST AND STILL BROKE. An oversized
  * packet is almost never in one chunk: a multi-megabyte body arrives over many `data` events, and the body of

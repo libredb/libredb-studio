@@ -1,5 +1,5 @@
 /**
- * The only MQTT packets this provider can write (#1635 spec 4.2).
+ * The only MQTT packets this provider can write (`docs/providers/mqtt.md` section 3.1).
  *
  * THE READ-ONLY GUARANTEE OF THIS PROVIDER IS THIS MODULE'S SHAPE, not a flag checked at run time. Five packets
  * are encodable here: CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and DISCONNECT. There is no function that writes

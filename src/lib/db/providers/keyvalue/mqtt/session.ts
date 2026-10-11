@@ -1,5 +1,5 @@
 /**
- * One MQTT connection and one read over it (#1635 spec 3, 4 and 5).
+ * One MQTT connection and one read over it (`docs/providers/mqtt.md` sections 4 and 5).
  *
  * THE READ IS A SAMPLE AND THE SESSION SAYS SO. MQTT has no command that lists topics: the tree is whatever a
  * subscription delivered before our own budget ended the read. Nothing here infers that a read was complete,
@@ -12,13 +12,12 @@
  * length as it arrives, so a limit applied after it would already have allocated the body.
  */
 import { connect as netConnect, isIP, type Socket } from "node:net";
-import { connect as tlsConnect } from "node:tls";
+import { checkServerIdentity, connect as tlsConnect, type PeerCertificate } from "node:tls";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import {
   MQTT_CLIENT_ID_PREFIX,
   MQTT_CLIENT_ID_RANDOM_BYTES,
   MQTT_CONNECT_TIMEOUT_MS,
-  MQTT_IP_SERVER_NAME,
   MQTT_KEEP_ALIVE_SECONDS,
   MQTT_MAX_STRING_BYTES,
   MQTT_NOTHING_CAME_BACK,
@@ -171,33 +170,43 @@ export interface MqttSessionOptions {
    * reasoned about. Without this seam each assertion cost ten seconds of CI.
    */
   readonly dialTimeoutMs?: number;
+  /**
+   * The name the broker's certificate is checked against, when it is not `host`.
+   *
+   * Through an SSH tunnel `host` is the local forward the socket dials, and the certificate belongs to the
+   * broker at the far end, so checking it against `127.0.0.1` would fail for every correctly issued
+   * certificate. `sessionOptions()` sets this to the far end's host when a tunnel carries the connection.
+   */
+  readonly tlsIdentity?: string;
 }
 
 /**
- * The name sent in the TLS handshake for a broker reached at `host`.
+ * The product's transport: a TCP socket, or a TLS one when the connection's SSL mode asks for it.
  *
- * NODE REFUSES AN IP LITERAL HERE: "Setting the TLS ServerName to an IP address is not permitted." Measured
- * against the lab's TLS brokers on 18883 and 11885, passing the host straight through made every TLS
- * connection to `127.0.0.1` fail with that message, with and without certificate verification, so TLS to an
- * address rather than a hostname did not work at all. A broker addressed by IP is therefore sent a name that
- * cannot resolve, which is what RFC 6761 reserves `.invalid` for, and a hostname is sent as typed, because
- * SNI and certificate verification both read it.
+ * THE SERVER NAME AND THE IDENTITY ARE TWO DIFFERENT THINGS, and conflating them broke verified TLS outright.
+ * Node refuses an IP literal as a server name ("Setting the TLS ServerName to an IP address is not
+ * permitted"), so this sent the unresolvable `mqtt.invalid` in its place - and then Node checked the
+ * certificate against THAT name, so every `verify-` mode failed with `ERR_TLS_CERT_ALTNAME_INVALID` against
+ * a broker addressed by IP, however correct its IP SAN. Through an SSH tunnel it was worse: the host is the
+ * local forward, so the certificate was checked against `127.0.0.1` rather than against the broker.
+ *
+ * The answer is the one `tlsAgentOptions` in `src/lib/db/http/node-transport.ts` already gives: send a server
+ * name only when the identity is a DNS name, and check the certificate against the IDENTITY, which through a
+ * tunnel is the far end and never the local forward. Node's own check reads an IP SAN for an IP identity.
  */
-export function tlsServerName(host: string): string {
-  return isIP(host) === 0 ? host : MQTT_IP_SERVER_NAME;
-}
-
-/** The product's transport: a TCP socket, or a TLS one when the connection's SSL mode asks for it. */
 const dialBroker: MqttTransportFactory = (options) => {
+  const identity = options.tlsIdentity ?? options.host;
   const socket: Socket = options.tls
     ? (tlsConnect({
         host: options.host,
         port: options.port,
-        // An IP literal is refused by Node as a server name, so a broker addressed by one is sent a name
-        // that cannot resolve instead. A hostname is sent as typed, which is what SNI and certificate
-        // verification both read.
-        servername: tlsServerName(options.host),
+        // SNI only for a DNS name; an IP literal is refused here and needs none.
+        ...(isIP(identity) === 0 ? { servername: identity } : {}),
         rejectUnauthorized: options.rejectUnauthorized ?? true,
+        // The identity, not the address dialled: through a tunnel those differ, and the certificate belongs
+        // to the broker at the far end.
+        checkServerIdentity: (_dialled: string, certificate: PeerCertificate) =>
+          checkServerIdentity(identity, certificate),
         // THE PANEL'S THREE BOXES WERE DRAWN AND DISCARDED. The SSL / TLS panel offers a CA certificate, a
         // client certificate and its key for every engine that has TLS, and none of the three reached this
         // call: a broker signed by a private CA was unreachable in `verify-ca` with the CA pasted in, and a

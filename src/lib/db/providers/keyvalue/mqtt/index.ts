@@ -37,7 +37,7 @@ import type {
   ActiveSessionDetails,
   ProviderOptions,
 } from "@/lib/db/types";
-import type { DatabaseConnection } from "@/lib/types";
+import { TUNNEL_FAR_END, type DatabaseConnection, type WithTunnelFarEnd } from "@/lib/types";
 import { MQTT_CONSENT_CLAUSE, MQTT_DEFAULT_PORT, MQTT_MAX_STRING_BYTES, MQTT_TYPE } from "./constants";
 import { MQTT_KEY_SCAN, mqttKeyScanPage, readMqttKeyScanOptions } from "./key-scan";
 import { MQTT_LABELS } from "./labels";
@@ -57,8 +57,23 @@ const NO_CATALOG =
   "to read. What this connection knows is what a subscription delivered.";
 
 export class MqttProvider extends BaseDatabaseProvider {
-  /** The last read, held for the life of the connection: the panel's tree and its rows both come from it. */
+  /** The last read. The panel's tree and its rows both come from it, and a refresh replaces it. */
   private last: MqttReadOutcome | undefined;
+
+  /**
+   * Whether `last` has already been handed to the panel as a first page.
+   *
+   * REFRESH HAS TO MEAN A NEW READ, and it did not. `connect()` performs one read and every page was served
+   * from it for the life of the connection, so a topic retained after connect never appeared however many
+   * times the reader pressed refresh - while the panel's own sentence said "Reading again, or narrowing the
+   * topic filter, sees more". It read again and saw the same tree.
+   *
+   * One flag is enough, because a walk's first page is the only request that can mean "start over": the
+   * cursor ends every walk at one page, so a first page after the connect read has been served is a refresh.
+   * Serving the connect read once rather than discarding it is what keeps opening a connection to one read
+   * instead of two, and a read costs the whole time budget.
+   */
+  private served = false;
 
   /**
    * Opens nothing: a provider built only for its declarations touches no socket.
@@ -124,7 +139,7 @@ export class MqttProvider extends BaseDatabaseProvider {
   // ==========================================================================
 
   private sessionOptions(): MqttSessionOptions {
-    const config = this.config;
+    const config = this.config as DatabaseConnection & WithTunnelFarEnd;
     const host = (config.host ?? "").trim();
     if (host === "") throw new DatabaseConfigError("An MQTT connection needs a broker address.", MQTT_TYPE);
     const port = Number(config.port ?? MQTT_DEFAULT_PORT);
@@ -149,6 +164,7 @@ export class MqttProvider extends BaseDatabaseProvider {
     // `ssl.mode` is the connection's own SSL / TLS panel; "disable" is the only value that means plain TCP.
     const mode = config.ssl?.mode;
     const tls = mode !== undefined && mode !== "disable";
+    const farEnd = config[TUNNEL_FAR_END];
     const user = config.user === undefined || config.user === "" ? undefined : config.user;
     const password = config.password === undefined || config.password === "" ? undefined : config.password;
 
@@ -175,6 +191,10 @@ export class MqttProvider extends BaseDatabaseProvider {
       // This passed nothing unless the reader set the flag, so `dialBroker`'s own default made `require`
       // verify - refusing the ordinary local TLS broker the hint under the selector says it accepts.
       ...(tls ? { rejectUnauthorized: config.ssl?.rejectUnauthorized ?? mode !== "require" } : {}),
+      // THE CERTIFICATE BELONGS TO THE BROKER, NOT TO THE FORWARD. Through an SSH tunnel `host` is the local
+      // end the socket dials, so checking the certificate against it fails for every correctly issued one.
+      // The identity is the far end, which is what `tlsAgentOptions` does for every HTTP provider.
+      ...(farEnd === undefined ? {} : { tlsIdentity: farEnd.host }),
       ...(config.ssl?.caCert === undefined || config.ssl.caCert === "" ? {} : { caCert: config.ssl.caCert }),
       ...(config.ssl?.clientCert === undefined || config.ssl.clientCert === ""
         ? {}
@@ -204,6 +224,25 @@ export class MqttProvider extends BaseDatabaseProvider {
   private requireRead(): MqttReadOutcome {
     if (this.last === undefined) throw new QueryError("This MQTT connection is not open.", MQTT_TYPE);
     return this.last;
+  }
+
+  /**
+   * The read a page is drawn from: the connect read the first time, and a new read on every refresh after.
+   *
+   * A broker has no cursor, so every walk is one page and a first page is the only request that can mean
+   * "read the broker again". `cursor` is `0` for a first page and nothing else ever asks for one, which is
+   * why the decision can be made here rather than through a separate action the panel would have to learn.
+   */
+  private async readForPage(cursor: string | undefined): Promise<MqttReadOutcome> {
+    const held = this.requireRead();
+    const first = cursor === undefined || cursor === "" || cursor === "0";
+    if (!first || !this.served) {
+      this.served = true;
+      return held;
+    }
+    const fresh = await readTopics(this.sessionOptions());
+    this.last = fresh;
+    return fresh;
   }
 
   // ==========================================================================
@@ -256,7 +295,7 @@ export class MqttProvider extends BaseDatabaseProvider {
   public async scanKeysPage(options: KeyScanOptions): Promise<KeyScanPage> {
     // Refused before the read is touched, so a refused page costs nothing.
     readMqttKeyScanOptions(options);
-    const read = this.requireRead();
+    const read = await this.readForPage(options.cursor);
     return mqttKeyScanPage(read.topics, options, {
       scope: read.scope,
       endReason: read.endReason,

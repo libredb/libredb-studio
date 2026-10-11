@@ -1,5 +1,6 @@
 /**
- * The one-way valve (#1635 spec 9): the last thing every byte passes on its way to the broker, and the first
+ * The one-way valve (`docs/providers/mqtt.md` section 3.2): the last thing every byte passes on its way to the
+ * broker, and the first
  * thing every byte passes on its way back.
  *
  * WHY IT EXISTS WHEN THE ENCODER ALREADY CANNOT WRITE A PUBLISH. The encoder is our code and the valve is about

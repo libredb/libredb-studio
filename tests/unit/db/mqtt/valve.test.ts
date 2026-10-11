@@ -1,5 +1,5 @@
 /**
- * The MQTT provider's one-way valve (#1635 spec 9), which is the whole read-only guarantee expressed in bytes.
+ * The MQTT provider's one-way valve (`docs/providers/mqtt.md` section 3.2), the read-only guarantee in bytes.
  *
  * THE TESTS ARE STRUCTURAL, NOT BEHAVIOURAL. A behavioural test would check that the provider happens not to
  * publish today; these check that a PUBLISH cannot reach the socket even when one is handed to the valve

@@ -26,17 +26,6 @@ export const MQTT_PROTOCOL_VERSION = 5;
 export const MQTT_PROTOCOL_NAME = "MQTT";
 
 /**
- * The TLS server name sent to a broker addressed by IP, a name that never resolves (RFC 6761).
- *
- * Node refuses `servername` set to an IP literal: "Setting the TLS ServerName to an IP address is not
- * permitted." Measured against the lab's TLS brokers on 18883 and 11885, every TLS connection to
- * `127.0.0.1` failed with that message before this existed, with and without certificate verification,
- * so TLS to an address rather than a hostname did not work at all. The same answer Oxia's client gives
- * (`OXIA_IP_SERVER_NAME`).
- */
-export const MQTT_IP_SERVER_NAME = "mqtt.invalid";
-
-/**
  * The prefix of the client id, before the random suffix.
  *
  * FIXED, NOT A SETTING. A comment here once called it configurable and the manual repeated that, which would

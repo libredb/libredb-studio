@@ -1,5 +1,5 @@
 /**
- * The Keys panel's page over an MQTT broker (#1635 spec 5 and 6).
+ * The Keys panel's page over an MQTT broker (`docs/providers/mqtt.md` sections 5 and 6).
  *
  * ONE READ RETURNS WHAT THE READ SAW, AND THERE IS NO PAGE TWO. The cursor is always `"0"`, which `types.ts:779`
  * defines as "this walk reached the end". That is a CHOICE and its cost is real: the panel's "Scan more" is
@@ -53,7 +53,7 @@ export function readMqttKeyScanOptions(options: KeyScanOptions): { readonly pref
 }
 
 /**
- * What the row's type cell carries for one topic (spec 7.2).
+ * What the row's type cell carries for one topic (`docs/providers/mqtt.md` section 6.3).
  *
  * The number is the server's own Message Expiry Interval and nothing is computed from it. A topic whose message
  * carried none is labelled retained, which is what it is, rather than given a time it never had. Age is never
