@@ -2332,6 +2332,27 @@ describe("MSSQLProvider zoneless value types (#1132)", () => {
     expect(result.rows[0].at0).toBe("2026-09-01 10:30:00");
   });
 
+  test("datetime reads with three millisecond digits and smalldatetime to the minute with zero seconds", async () => {
+    mockQueryFn = async () => ({
+      recordset: withColumns(
+        [
+          {
+            dt: new Date(Date.UTC(2026, 9, 4, 12, 34, 56, 123)),
+            sdt: new Date(Date.UTC(2026, 9, 4, 12, 34, 0)),
+          },
+        ],
+        { dt: { declaration: "datetime" }, sdt: { declaration: "smalldatetime" } },
+      ),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT dt, sdt FROM types");
+
+    expect(result.rows[0].dt).toBe("2026-10-04 12:34:56.123");
+    expect(result.rows[0].sdt).toBe("2026-10-04 12:34:00");
+  });
+
   test("datetimeoffset stays an instant, and neither a NULL nor any other declaration is touched", async () => {
     const instant = tediousDate(Date.UTC(2026, 8, 1, 10, 30, 0, 123), 0.0004567);
     mockQueryFn = async () => ({

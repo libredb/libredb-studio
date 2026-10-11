@@ -414,13 +414,13 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
   1234567890123456.7891234567 as the number 1234567890123456.8; `MONEY` 922337203685477.5807 as
   922337203685477.6; `NUMERIC(20,4)` and `INT` as numbers of their own value. Fetching the three
   that round as strings would preserve fidelity.
-- **`time`, `date` and `datetime2` read as the engine's OWN TEXT (#1132), because none of them
-  holds a moment.** `tedious` reads all three as a `Date` built in UTC - `time` as a time-of-day
-  on an invented 1970-01-01, `date` as UTC midnight, `datetime2` as a wall-clock reading mapped
+- **`time`, `date`, `datetime`, `smalldatetime` and `datetime2` read as the engine's OWN TEXT (#1132, #1452), because none of them
+  holds a moment.** `tedious` reads all five as a `Date` built in UTC - `time` as a time-of-day
+  on an invented 1970-01-01, `date` as UTC midnight, `datetime`, `smalldatetime` and `datetime2` as a wall-clock reading mapped
   through UTC - and a `time(7)` loses the four digits a `Date` cannot carry. Serialized as an
   ISO instant, `CAST('10:30:00.1234567' AS time(7))` arrived as `1970-01-01T10:30:00.123Z`: a
   moment it does not hold, and four digits short. `query()`, `queryReadOnly()` and
-  `queryInTransaction()` now rewrite the three declarations into the engine's text, keyed on
+  `queryInTransaction()` now rewrite the five declarations into the engine's text, keyed on
   the result's column metadata by the names in `fields` - the same map [§5.4](#54-declared-column-types) reads - and reconstruct
   the fraction from the remainder the driver keeps on the value (`nanosecondsDelta`), so
   `time(7)` keeps all seven digits. `datetimeoffset` is deliberately untouched: it IS an
@@ -433,6 +433,8 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
   | `TIME(3)` `10:30:00.123` | `10:30:00.123` | `1970-01-01T10:30:00.123Z` | `10:30:00.123` |
   | `TIME(0)` `10:30:00` | `10:30:00` | `1970-01-01T10:30:00.000Z` | `10:30:00` |
   | `DATE` `2026-09-01` | `2026-09-01` | `2026-09-01T00:00:00.000Z` | `2026-09-01` |
+  | `DATETIME` `2026-09-01 10:30:00.123` | `2026-09-01 10:30:00.123` | `2026-09-01T10:30:00.123Z` | `2026-09-01 10:30:00.123` |
+  | `SMALLDATETIME` `2026-09-01 10:30:00` | `2026-09-01 10:30:00` | `2026-09-01T10:30:00.000Z` | `2026-09-01 10:30:00` |
   | `DATETIME2(7)` `2026-09-01 10:30:00.1234567` | `2026-09-01 10:30:00.1234567` | `2026-09-01T10:30:00.123Z` | `2026-09-01 10:30:00.1234567` |
   | `DATETIME2(0)` `2026-09-01 10:30:00` | `2026-09-01 10:30:00` | `2026-09-01T10:30:00.000Z` | `2026-09-01 10:30:00` |
   | `DATETIMEOFFSET(7)` `… +05:30` | (an instant, unconverted) | `2026-09-01T05:00:00.123Z` | `2026-09-01T05:00:00.123Z` |
