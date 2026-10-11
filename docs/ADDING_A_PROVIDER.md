@@ -536,6 +536,7 @@ bun add <driver-package>
 # Elasticsearch / OpenSearch need no driver — SQL over _sql / _plugins/_sql (port 9200)
 # Trino needs no driver — SQL over its client protocol, POST /v1/statement (port 8080)
 # libSQL needs no driver — SQLite's dialect over the Hrana protocol, POST /v2/pipeline (port 8080)
+# Kubernetes needs no driver: the API server's REST API over the shared node transport (port 6443)
 # bun add cassandra-driver  (Apache Cassandra — a binary protocol over TCP, so a driver is not
 #                            optional; this one is pure JS, which is the next best thing)
 # bun add @duckdb/node-api  (DuckDB — an embedded engine, so there is no protocol at all and no

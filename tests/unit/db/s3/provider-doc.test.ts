@@ -1277,17 +1277,17 @@ describe("docs/SECURITY.md: the S3 rows and limits", () => {
         "A Parquet footer and its page headers are data the object supplies, so the preview checks them before its decoder reads them: a varint longer than its type allows or a long-form field id outside 1 to 32,767 is refused, so the check and the decoder read the same values, and a size, count or offset that is negative or above 2^53 - 1 is refused, so no value can lower a sum below its cap.",
         "A rendered cell is cut while its string is escaped, never escaped whole and cut afterwards, so a decoded string far past the cell bound costs no more memory than the cell.",
         "",
-        "## Known limits",
+        "",
       ].join("\n"),
     );
   });
 
   test("42. the Known limits name S3 where they list the engines, and state S3's own limits", () => {
     expect(knownLimit("**The HTTP destination guard is opt-in and address-based.**")).toContain(
-      "Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL) and S3-compatible object storage HTTP requests",
+      "Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), S3-compatible object storage and Kubernetes HTTP requests",
     );
     expect(knownLimit("**A statement the editor refuses is never sent and never written to history.**")).toContain(
-      "The Milvus, Qdrant, InfluxDB (InfluxQL), Oxia and S3 rows declare both (rows 3.11, 3.12, 3.15 and 3.18); no other shipped engine declares either.",
+      "The Milvus, Qdrant, InfluxDB (InfluxQL), Oxia, S3 and Kubernetes rows declare both (rows 3.11, 3.12, 3.15, 3.18 and 3.20); no other shipped engine declares either.",
     );
     const s3 = knownLimit("**S3-compatible object storage is reached over a REST client of Studio's own.**");
     expect(s3).toContain("14 minutes of skew were accepted and 20 refused on MinIO, Silo and RustFS");
@@ -1649,8 +1649,9 @@ describe("docs/providers/README.md", () => {
     const lines = index.split("\n");
     const influxdb3 = lines.findIndex((line) => line.startsWith("| InfluxDB 3 (SQL) | `influxdb3` |"));
     expect(lines[influxdb3 + 1]).toBe(PROVIDERS_INDEX_ROW);
-    expect(lines[influxdb3 + 2].startsWith("| LibreDB | `libredb` |")).toBe(true);
-    expect(index).toContain("Qdrant, InfluxDB, Oxia, Databend and S3 are)");
+    expect(lines[influxdb3 + 2].startsWith("| Kubernetes | `kubernetes` |")).toBe(true);
+    expect(lines[influxdb3 + 3].startsWith("| LibreDB | `libredb` |")).toBe(true);
+    expect(index).toContain("Qdrant, InfluxDB, Oxia, Databend, S3 and Kubernetes are)");
     for (const fixture of S3_FIXTURES) {
       const row = lines.find((line) =>
         line.startsWith(`| S3-compatible object storage, ${fixture.name} | \`${fixture.service}\` |`),
@@ -1708,7 +1709,7 @@ describe("the architecture, provider, editor and guide docs", () => {
     expect(providers).toContain(
       "- **S3-compatible object storage** (one AWS CLI read command, or Studio's own `preview`): [providers/s3.md](./providers/s3.md).",
     );
-    expect(flat(providers)).toContain("Qdrant, Oxia, Databend, S3-compatible object storage, or LibreDB.");
+    expect(flat(providers)).toContain("Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, or LibreDB.");
   });
 
   test("58. the editor and schema-diff docs name the S3 module, the non-SQL count and the pagination count", () => {

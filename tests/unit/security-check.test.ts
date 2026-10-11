@@ -68,9 +68,9 @@ describe("parseTables and findControlTable", () => {
     expect(table?.rows).toHaveLength(PROGRAMME_CONTROL_IDS.length);
   });
 
-  test("the programme ends with the S3 console control then the S3 signing and egress control", () => {
-    expect(PROGRAMME_CONTROL_IDS.slice(-6)).toEqual(["3.14", "3.15", "3.16", "3.17", "3.18", "3.19"]);
-    expect(PROGRAMME_CONTROL_IDS).toHaveLength(38);
+  test("the programme ends with the S3 controls then the Kubernetes request allowlist", () => {
+    expect(PROGRAMME_CONTROL_IDS.slice(-6)).toEqual(["3.15", "3.16", "3.17", "3.18", "3.19", "3.20"]);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(39);
   });
 
   test("ignores a table that is not the control table", () => {
