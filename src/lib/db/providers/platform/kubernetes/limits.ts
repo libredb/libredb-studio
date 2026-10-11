@@ -34,6 +34,12 @@ export const KUBERNETES_MAX_DOCUMENTS_BYTES = 16 * 1024 * 1024;
 export const KUBERNETES_MAX_DOCUMENT_OBJECTS = 500;
 /** Log lines read when `--tail` is absent. */
 export const KUBERNETES_LOG_TAIL_DEFAULT = 500;
+/**
+ * Log lines a pod's Logs row action reads, and so a click on a pod row: the 50 rows a click on a table previews
+ * (`PREVIEW_PAGE_SIZE` in `src/hooks/use-tab-manager.ts`), so one gesture reads a page of either. The statement says
+ * `--tail=50`, so the reader sees the bound and can raise it in the editor.
+ */
+export const KUBERNETES_LOG_ROW_TAIL = 50;
 /** The most log lines `--tail` may ask for. */
 export const KUBERNETES_LOG_TAIL_MAX = 5_000;
 /** Log lines per pod when `-l` selects the pods and `--tail` is absent, as kubectl reads them. */

@@ -18,7 +18,7 @@ It needs no driver and no Kubernetes library: requests go over Studio's shared `
 | Cluster-scoped kinds (nodes, namespaces, cluster roles) | The `Cluster` container |
 | A namespace | A container, one level deep |
 | A kind (`deployments`) | A folder, grouped as Workloads, Config, Network, Storage and Access Control |
-| An object (`deployment/web`) | A row named `web`, whose path carries its kind, opened as YAML |
+| An object (`deployment/web`) | A row named `web`, whose path carries its kind, opened as YAML; a pod's click shows its last 50 log lines |
 | A custom resource type | A row of the Custom Resources folder, whose List action runs `kubectl get` |
 | `kubectl get`, `describe`, `logs` and the rest | One statement per run in the editor |
 
@@ -298,8 +298,10 @@ The namespace list is the Namespaces field when set; otherwise the API's list; o
 | none | Events, Custom Resources | Nodes, Namespaces, Custom Resource Definitions, Custom Resources |
 
 A group with one kind in a container is not drawn, and its kind sits under the container.
-An object's row shows its name, and its path carries its kind, `deployment/web`, so two kinds' objects never collide; clicking it opens its YAML, with `managedFields` removed and a Secret's values gone.
-Describe is on every built-in object's row menu, Logs on a pod's, and List on a custom resource type's; each opens a new tab and runs.
+An object's row shows its name, and its path carries its kind, `deployment/web`, so two kinds' objects never collide.
+Clicking a pod's row (or Enter or Space on it) runs its Logs row action, `kubectl logs pod/NAME -n NAMESPACE --tail=50`, the way a click on a table previews 50 rows; a second click on the same pod returns to the tab the first opened, and the pod's YAML is View Source on its row menu.
+Clicking any other built-in object's row opens its YAML, with `managedFields` removed and a Secret's values gone.
+Describe is on every built-in object's row menu, Logs on a pod's, and List on a custom resource type's; each opens a new tab and runs, and the menu's Logs reads the same last 50 lines.
 A kind the identity may not list keeps its folder, locked with Studio's sentence; a kind the server does not serve says so.
 A folder lists the first 1,000 objects; past that its count is "1,000 or more", counted from the first 1,000 objects the tree lists; the console reads the rest.
 
@@ -374,6 +376,7 @@ A deploy tool may keep its own copy of the applied Secret in an annotation, so a
 | Bytes per `-o json` or `-o yaml` document | 1 MiB |
 | Objects per `-o json` or `-o yaml` statement | 500 |
 | Log lines without `--tail` | 500 |
+| Log lines a pod's click and its Logs row action read | 50 |
 | Log lines `--tail` may ask for | 5,000 |
 | Log lines per pod under `-l` without `--tail` | 10 |
 | Bytes per log stream | 1 MiB |

@@ -9,7 +9,7 @@
  * a folder holding any other name (`isRequestableName`).
  */
 import { CLUSTER_CONTAINER } from "./kinds";
-import { KUBERNETES_LOG_TAIL_DEFAULT } from "./limits";
+import { KUBERNETES_LOG_ROW_TAIL } from "./limits";
 
 /** The namespace flag of a path's container: ` -n shop`, or nothing under Cluster. */
 function namespaceFlag(path: readonly string[]): string {
@@ -27,11 +27,11 @@ export function kubectlGetQuery(path: readonly string[]): string {
   return `kubectl get ${segmentOf(path)}${namespaceFlag(path)}`;
 }
 
-/** The statement of a declared row action: Describe, Logs (the last 500 lines) or List. */
+/** The statement of a declared row action: Describe, Logs (the last 50 lines, also a pod row's click) or List. */
 export function kubectlRowActionQuery(path: readonly string[], actionId: string): string {
   if (actionId === "describe") return `kubectl describe ${segmentOf(path)}${namespaceFlag(path)}`;
   if (actionId === "logs")
-    return `kubectl logs ${segmentOf(path)}${namespaceFlag(path)} --tail=${KUBERNETES_LOG_TAIL_DEFAULT}`;
+    return `kubectl logs ${segmentOf(path)}${namespaceFlag(path)} --tail=${KUBERNETES_LOG_ROW_TAIL}`;
   if (actionId === "list") return kubectlGetQuery(path);
   throw new Error(`Kubernetes declares no row action "${actionId}"`);
 }

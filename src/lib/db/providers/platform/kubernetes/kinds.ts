@@ -291,14 +291,20 @@ export function kindsForContainerName(container: string): readonly string[] {
   ];
 }
 
-/** The declared row actions: Describe on every built-in kind, Logs on pods, List on a custom resource type. */
+/**
+ * The declared row actions: Describe on every built-in kind, Logs on pods, List on a custom resource type.
+ *
+ * Logs `activates`: a click, Enter or Space on a pod row runs it for the last 50 lines, the way a click on a table
+ * previews 50 rows, since a pod's recent log is what a reader usually wants from it; its YAML stays on the row menu
+ * as View Source. Every other kind keeps its YAML on click.
+ */
 export const KUBERNETES_ROW_ACTIONS: readonly KindRowAction[] = Object.freeze([
   Object.freeze({
     id: "describe",
     label: "Describe",
     kinds: Object.freeze(KUBERNETES_KIND_TABLE.map((entry) => entry.id)),
   }),
-  Object.freeze({ id: "logs", label: "Logs", kinds: Object.freeze(["pods"]) }),
+  Object.freeze({ id: "logs", label: "Logs", kinds: Object.freeze(["pods"]), activates: true as const }),
   Object.freeze({ id: "list", label: "List", kinds: Object.freeze([CUSTOM_RESOURCES_KIND]) }),
 ]);
 

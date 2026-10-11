@@ -7,9 +7,10 @@ import { type KubernetesStub, STUB_TOKENS, startKubernetesStub } from "./helpers
 /**
  * The Kubernetes provider in a browser, against a stub API server that replays the v1.35.5 captures of
  * tests/fixtures/kubernetes/ over https on a loopback port (e2e/helpers/kubernetes-stub.ts): import a kubeconfig, browse
- * the tree, open a YAML view, run Describe and Logs from a pod's row menu, run every console command once, see a
- * locked kind, and see a Secret with no value. It runs on the second server, as every spec that connects does, and
- * signs in as the admin for the reason e2e/neo4j-provider.spec.ts gives. The tokens are the stub's own stand-ins.
+ * the tree, open a YAML view, run Describe and Logs from a pod's row menu and Logs from a click on its row, run every
+ * console command once, see a locked kind, and see a Secret with no value. It runs on the second server, as every spec
+ * that connects does, and signs in as the admin for the reason e2e/neo4j-provider.spec.ts gives. The tokens are the
+ * stub's own stand-ins.
  */
 
 /**
@@ -152,6 +153,22 @@ async function sourceText(page: Page): Promise<string> {
   });
 }
 
+/** The query editor's text, never the YAML view's editor's. */
+async function queryText(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const monaco = (
+      window as unknown as {
+        monaco?: { editor: { getEditors(): { getValue(): string; getDomNode(): Element | null }[] } };
+      }
+    ).monaco;
+    if (!monaco) throw new Error("monaco global not found");
+    const query = monaco.editor
+      .getEditors()
+      .find((candidate) => candidate.getDomNode()?.closest('[data-testid="object-source-view"]') === null);
+    return query === undefined ? "" : query.getValue();
+  });
+}
+
 /** Types the statement into the query editor, never the YAML view's editor, and runs it. */
 async function runStatement(page: Page, statement: string) {
   await page.evaluate((text) => {
@@ -218,7 +235,7 @@ test.describe("Kubernetes against a replayed API server", () => {
     await open(page, "shop", "Workloads", "Pods");
     for (const [action, statement] of [
       ["Describe", "kubectl describe pod/crasher -n shop"],
-      ["Logs", "kubectl logs pod/crasher -n shop --tail=500"],
+      ["Logs", "kubectl logs pod/crasher -n shop --tail=50"],
     ] as const) {
       const before = await gridText(page);
       await row(page, "crasher").hover();
@@ -226,6 +243,29 @@ test.describe("Kubernetes against a replayed API server", () => {
       await page.getByRole("menuitem", { name: action }).click();
       await expectGridShows(page, READER_STATEMENT_FACTS[statement], before, action);
     }
+  });
+
+  test("a click on a pod's row runs its Logs for the last 50 lines, and a second click returns to that tab", async ({
+    page,
+  }) => {
+    const statement = "kubectl logs pod/crasher -n shop --tail=50";
+    await connectAs(page, "reader");
+    await open(page, "shop", "Workloads", "Pods");
+    const before = await gridText(page);
+    await row(page, "crasher").click();
+    const tab = page.getByRole("tab", { name: /Logs: crasher/ });
+    await expect(tab).toBeVisible({ timeout: 20_000 });
+    await expectGridShows(page, READER_STATEMENT_FACTS[statement], before, "pod click");
+    await expect.poll(() => queryText(page), { timeout: 20_000 }).toBe(statement);
+    expect(stub.requests.some((request) => request.includes("/pods/crasher/log?") && request.includes("tailLines=50&"))).toBe(
+      true,
+    );
+    await expect(page.getByTestId("object-source-view")).toHaveCount(0);
+
+    await page.getByRole("tab", { name: /Query 1/ }).click();
+    await row(page, "crasher").click();
+    await expect(tab).toHaveAttribute("aria-selected", "true", { timeout: 20_000 });
+    await expect(page.getByRole("tab", { name: /Logs: crasher/ })).toHaveCount(1);
   });
 
   test("every console command answers its grid", async ({ page }) => {

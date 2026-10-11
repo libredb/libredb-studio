@@ -62,10 +62,8 @@ describe("the row action statements", () => {
     );
   });
 
-  test("Logs reads the last 500 lines of a pod", () => {
-    expect(kubectlRowActionQuery(["shop", "pod/web-6f7d"], "logs")).toBe(
-      "kubectl logs pod/web-6f7d -n shop --tail=500",
-    );
+  test("Logs reads the last 50 lines of a pod, the rows a table's preview reads", () => {
+    expect(kubectlRowActionQuery(["shop", "pod/web-1"], "logs")).toBe("kubectl logs pod/web-1 -n shop --tail=50");
   });
 
   test("List gets a custom resource type's objects, in the namespace or across the cluster", () => {

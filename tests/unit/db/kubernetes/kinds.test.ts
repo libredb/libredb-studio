@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
+import { activationRowActionForKind } from "@/lib/db/object-kinds";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import {
   type BuiltInKind,
   BUILT_IN_API_GROUPS,
@@ -153,6 +155,15 @@ describe("row actions", () => {
     expect(KUBERNETES_ROW_ACTIONS[0].kinds).toEqual(KUBERNETES_KIND_TABLE.map((entry) => entry.id));
     expect(KUBERNETES_ROW_ACTIONS[1].kinds).toEqual(["pods"]);
     expect(KUBERNETES_ROW_ACTIONS[2].kinds).toEqual(["customresources"]);
+  });
+
+  test("exactly one action activates a row, Logs, and only on pods", () => {
+    const activating = KUBERNETES_ROW_ACTIONS.filter((action) => action.activates === true);
+    expect(activating.map((action) => [action.id, action.kinds])).toEqual([["logs", ["pods"]]]);
+    const capabilities = { rowActions: KUBERNETES_ROW_ACTIONS } as unknown as ProviderCapabilities;
+    expect(activationRowActionForKind(capabilities, "pods")?.id).toBe("logs");
+    for (const kind of ["deployments", "nodes", CUSTOM_RESOURCES_KIND])
+      expect(activationRowActionForKind(capabilities, kind)).toBeUndefined();
   });
 });
 

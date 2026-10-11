@@ -94,6 +94,7 @@ describe("the limits table is limits.ts", () => {
     ["Bytes per `-o json` or `-o yaml` document", mib(limits.KUBERNETES_MAX_DOCUMENT_BYTES)],
     ["Objects per `-o json` or `-o yaml` statement", count(limits.KUBERNETES_MAX_DOCUMENT_OBJECTS)],
     ["Log lines without `--tail`", count(limits.KUBERNETES_LOG_TAIL_DEFAULT)],
+    ["Log lines a pod's click and its Logs row action read", count(limits.KUBERNETES_LOG_ROW_TAIL)],
     ["Log lines `--tail` may ask for", count(limits.KUBERNETES_LOG_TAIL_MAX)],
     ["Log lines per pod under `-l` without `--tail`", count(limits.KUBERNETES_LOG_SELECTOR_TAIL)],
     ["Bytes per log stream", mib(limits.KUBERNETES_LOG_LIMIT_BYTES)],
