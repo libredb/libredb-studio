@@ -3,7 +3,7 @@
   "cluster": "k8s-probe",
   "image": "mirror.gcr.io/rancher/k3s:v1.35.5-k3s1",
   "serverVersion": "v1.35.5+k3s1",
-  "studioCommit": "90c10fb9a9ab1ad0e3522ac703740f140fcd5fd4",
+  "studioCommit": "2f72ceb3ecc931db29a32abb8bc57c3b0f05beff",
   "uncommitted": [],
   "date": "2026-10-11",
   "scenarios": [
