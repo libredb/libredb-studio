@@ -710,7 +710,7 @@ describe("the key-browser declaration", () => {
  * `WITHHELD_KINDS` is the committed expectation, one `<type-id>/<kind id>` per such kind, and the registration of
  * an engine that declares one moves it.
  */
-const WITHHELD_KINDS: readonly string[] = Object.freeze(["kubernetes/secrets"]);
+const WITHHELD_KINDS: readonly string[] = Object.freeze(["kubernetes/secrets", "kubernetes/namespaces"]);
 
 /** The breaches of the three preconditions above in one declaration, one sentence each. */
 function withheldNamesBreaches(
