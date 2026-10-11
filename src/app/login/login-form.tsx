@@ -205,14 +205,16 @@ export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
         <div className="absolute right-0 top-0 bottom-0 w-px bg-fill-strong" />
 
         {/*
-          Content. 40px above and below rather than the 48px at the sides: the column's height is
+          Content. 32px above and below rather than the 48px at the sides: the column's height is
           the hero's budget at 1366x768 and 1280x800 (#541, pinned by e2e/login.spec.ts). The
           twenty-second showcase entry (#786) wrapped the engine list into a fourth row at 1366x768
           and scrolled the page by 7px; no column gap that still separates the entries keeps it at
-          three rows with room for one more, so the 16px comes from the padding instead and both
-          sizes fit the four rows, with 9 and 25px to spare.
+          three rows with room for one more, so the 16px came from the padding instead (48 to 40).
+          The thirtieth entry (Kubernetes) wrapped it into a fifth row at 1366x768 and scrolled the
+          page to 781px, with the column gap already at its 6px floor (database-showcase.tsx), so
+          another 16px comes from the padding (40 to 32).
         */}
-        <div className="relative z-10 flex flex-col px-12 py-10 w-full overflow-y-auto">
+        <div className="relative z-10 flex flex-col px-12 py-8 w-full overflow-y-auto">
           {/* Top: Logo */}
           <a
             href="https://libredb.org"
