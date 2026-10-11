@@ -153,6 +153,40 @@ describe("one pod", () => {
   });
 });
 
+describe("the 5,000 rows of one statement", () => {
+  const five = pod({ name: "web", containers: ["a", "b", "c", "d", "e"] });
+
+  test("streams times --tail past 5,000 lines answer a sentence before any log is read", async () => {
+    const { context, transport } = consoleContext(routes({ "GET /api/v1/namespaces/shop/pods/web": jsonAnswer(five) }));
+    await expect(readLogs(context, logs("logs web --all-containers --tail=5000"))).rejects.toThrow(
+      "This statement would read up to 25,000 lines across 5 log streams, more than the 5,000 one statement shows: lower --tail, name one container with -c, or narrow the selector. No log was read.",
+    );
+    expect(sentLines(transport)).toEqual(["GET /api/v1/namespaces/shop/pods/web"]);
+  });
+
+  test("streams times --tail of exactly 5,000 lines are read", async () => {
+    const map: Record<string, ReturnType<typeof textAnswer>> = {};
+    const lines = (container: string) =>
+      Array.from({ length: 1_000 }, (_unused, index) => `2026-10-10T11:00:00Z ${container}${index}`).join("\n");
+    for (const container of ["a", "b", "c", "d", "e"])
+      map[logLine("web", container, 1_000)] = textAnswer(`${lines(container)}\n`);
+    const { context } = consoleContext(routes({ "GET /api/v1/namespaces/shop/pods/web": jsonAnswer(five), ...map }));
+    expect((await readLogs(context, logs("logs web --all-containers --tail=1000"))).rows).toHaveLength(5_000);
+  });
+
+  test("a stream answering more lines than it was asked for stops at 5,000 with a sentence", async () => {
+    const flood = Array.from({ length: 5_001 }, (_unused, index) => `line ${index}`).join("\n");
+    const answer = routes({
+      "GET /api/v1/namespaces/shop/pods/web": jsonAnswer(pod({ name: "web" })),
+      [logLine("web", "app", 10)]: textAnswer(flood),
+    });
+    const { context } = consoleContext(answer);
+    await expect(readLogs(context, logs("logs web --tail=10"))).rejects.toThrow(
+      "The log streams answered more than the 5,000 lines one statement shows: lower --tail, name one container with -c, or narrow the selector.",
+    );
+  });
+});
+
 describe("TYPE/NAME: kubectl's GetFirstPod", () => {
   const SELECTOR = "GET /api/v1/namespaces/shop/pods?limit=500&labelSelector=app%3Dweb%2Ctier+in+%28back%2Cfront%29";
 

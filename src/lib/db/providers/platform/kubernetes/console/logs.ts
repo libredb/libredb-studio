@@ -11,7 +11,8 @@
  * Bounds: at most 5 streams (kubectl's --max-log-requests default), past which a sentence asks for -c or a narrower
  * selector; each request asks `limitBytes` (1 MiB, or --limit-bytes) and `tailLines` (--tail, else 10 per pod under
  * -l as kubectl reads, else 500 with a warning that kubectl's default is every line). `timestamps=true` is always
- * requested; the RFC 3339 prefix of each line is its TIME and the rest its LINE. `follow` is never sent.
+ * requested; the RFC 3339 prefix of each line is its TIME and the rest its LINE. `follow` is never sent. The merged
+ * lines are the statement's rows, so streams times the tail past 5,000 answer a sentence before any log is read.
  */
 import { QueryError } from "@/lib/db/errors";
 import { ACCEPT_JSON } from "../client";
@@ -38,6 +39,9 @@ const DEFAULT_CONTAINER_ANNOTATION = "kubectl.kubernetes.io/default-container";
 
 const TAIL_WARNING =
   "kubectl reads every line when --tail is absent; Studio read the last 500 lines of each stream. Ask for up to 5,000 with --tail.";
+
+const LINES_CAP_SENTENCE =
+  "The log streams answered more than the 5,000 lines one statement shows: lower --tail, name one container with -c, or narrow the selector.";
 
 const READ_SELECTOR_KINDS =
   "a deployment, replica set, stateful set, daemon set, job, replication controller or service";
@@ -272,6 +276,13 @@ export async function readLogs(context: KubectlContext, statement: LogsStatement
     );
   const tail =
     statement.tail ?? (statement.target === undefined ? KUBERNETES_LOG_SELECTOR_TAIL : KUBERNETES_LOG_TAIL_DEFAULT);
+  // The merged lines are the statement's rows, so their bound holds before any log is read.
+  if (streams.length * tail > KUBERNETES_MAX_STATEMENT_ROWS)
+    throw new QueryError(
+      `This statement would read up to ${(streams.length * tail).toLocaleString("en-US")} lines across ${streams.length} log streams, more than the 5,000 one statement shows: lower --tail, name one container with -c, or narrow the selector. No log was read.`,
+      KUBERNETES_TYPE,
+    );
+  let read = 0;
   const lines = await inTurn(streams, async (stream) => {
     const answer = await context.surface.client.send(
       {
@@ -292,9 +303,13 @@ export async function readLogs(context: KubectlContext, statement: LogsStatement
     );
     const text = answer.text.endsWith("\n") ? answer.text.slice(0, -1) : answer.text;
     if (text === "") return [];
-    return text.split("\n").map((line) => {
-      const split = splitTimestamp(line);
-      return { pod: stream.pod, container: stream.container, time: split.time, text: split.text };
+    const split = text.split("\n");
+    // A server may answer more lines than tailLines asks for; the statement's bound holds all the same.
+    read += split.length;
+    if (read > KUBERNETES_MAX_STATEMENT_ROWS) throw new QueryError(LINES_CAP_SENTENCE, KUBERNETES_TYPE);
+    return split.map((line) => {
+      const parts = splitTimestamp(line);
+      return { pod: stream.pod, container: stream.container, time: parts.time, text: parts.text };
     });
   });
   // A stable sort: lines of one time keep their stream's order.
