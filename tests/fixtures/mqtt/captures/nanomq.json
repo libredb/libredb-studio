@@ -1,0 +1,12 @@
+{
+ "broker": "nanomq",
+ "filter": "#",
+ "sent": [
+  "ECAABE1RVFQFAgA8BREAAAAAAA5saWJyZWRiLXJlY29yZA==",
+  "ggcAAQAAASME"
+ ],
+ "received": [
+  "IBYAABMqASkBKAERAAAAACIEACcQAAAA",
+  "MRUADS9iYXN0YW4tc2xhc2gAbGlkZXKQBAABAAA="
+ ]
+}

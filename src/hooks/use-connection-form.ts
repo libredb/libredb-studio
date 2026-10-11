@@ -1432,6 +1432,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "databend",
     "s3",
     "kubernetes",
+    "mqtt",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

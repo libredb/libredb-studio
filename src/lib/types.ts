@@ -156,7 +156,15 @@ export type DatabaseType =
   // kubectl-subset console beside the databases. Read-only in this version whatever `readOnly` says. The connection's
   // Password field is a bearer token, Database the default namespace, and `apiPath`, `namespaces` and `tlsServerName`
   // are its own fields; a client certificate rides in the SSL panel.
-  | "kubernetes";
+  | "kubernetes"
+  // MQTT (#1635). A broker's topic tree, read only, over MQTT 5.0 on TCP or TLS by a client of this
+  // repository's own (`src/lib/db/providers/keyvalue/mqtt/`). MQTT has no command that lists topics, so the tree
+  // is built from what a subscription delivers and the provider never claims a read was complete; what it can
+  // prove it reports, and nothing else. The connection is one broker address plus TLS and an optional
+  // credential, with the discovery filter below naming what to subscribe to. Read-only is structural rather
+  // than a mode: the outbound path can encode only CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and DISCONNECT, so
+  // no PUBLISH and no Will exists to send.
+  | "mqtt";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -807,7 +815,8 @@ export interface QueryTab {
     | "influxql"
     | "oxia"
     | "s3"
-    | "kubectl";
+    | "kubectl"
+    | "mqtt";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

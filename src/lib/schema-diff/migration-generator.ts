@@ -259,6 +259,12 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     reason:
       "Kubernetes objects follow the schema their API version serves, and Studio writes none, so there is no column definition to change.",
   },
+  // Not a store at all (#1635): a broker holds messages on topics, and the columns a read shows are the fixed
+  // shape of a message. The sentence is the one `NO_TABLE_DDL` below prints when it declines the whole diff.
+  mqtt: {
+    label: "MQTT",
+    reason: "A broker keeps no schema and no catalog, so there is no column definition to change.",
+  },
 };
 
 /**
@@ -350,6 +356,8 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "databend",
   "s3",
   "kubernetes",
+  // No table DDL to wrap either (#1635): a broker keeps no schema.
+  "mqtt",
 ]);
 
 // These engines cannot apply a relational table diff through SQL. In particular,
@@ -374,6 +382,8 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "oxia",
   "s3",
   "kubernetes",
+  // No schema and no catalog (#1635), so no table DDL to decline.
+  "mqtt",
 ]);
 
 // IndexDiff carries column names/uniqueness, not ClickHouse's index expression,

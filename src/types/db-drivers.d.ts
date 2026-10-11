@@ -140,3 +140,32 @@ declare module "oracledb" {
   }
   export = oracledb;
 }
+
+/**
+ * `mqtt-packet`'s parser module, declared alone and on purpose.
+ *
+ * THE SPECIFIER IS THE GUARANTEE. The package root (`mqtt-packet`, whose `main` is `mqtt.js`) is three
+ * lines: `exports.parser`, `exports.generate` and `exports.writeToStream`. Importing the root puts the
+ * packet WRITER in the bundle, one call away from a PUBLISH. The subpath `mqtt-packet/parser.js` is
+ * `module.exports = Parser`, a class carrying the factory as a static, and it reaches `bl`, `debug`,
+ * `events`, `./packet` and `./constants` - never `./generate` or `./writeToStream`. Measured on the
+ * installed 9.0.2: the root yields a working `generate` that produced the PUBLISH `30060003612f6278`,
+ * and this subpath yields `undefined` for both writer exports under Node and under bun (2026-10-11).
+ *
+ * The package ships no declarations and there is no `@types/mqtt-packet`, so this file is the only
+ * thing that can check the call. It names exactly the surface this repo uses and nothing more, which
+ * is why a later `generate(...)` would not compile rather than quietly working.
+ */
+declare module "mqtt-packet/parser.js" {
+  /** What a parser instance does: fed bytes, it emits `packet` and `error`. */
+  interface MqttPacketParser {
+    /** Feeds a chunk in; returns how many bytes of it the parser still holds. */
+    parse(buffer: Buffer): number;
+    on(event: string, handler: (value: unknown) => void): void;
+  }
+  /** `module.exports` is the `Parser` class; `parser()` is its static factory. */
+  const Parser: {
+    parser(options: { protocolVersion: number }): MqttPacketParser;
+  };
+  export = Parser;
+}

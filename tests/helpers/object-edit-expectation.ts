@@ -56,6 +56,9 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   "kubernetes",
   "libredb",
   "libsql",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this provider has no code that can write to a
+  // broker at all, so object edit is not a decision it could reverse (#1635).
+  "mqtt",
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 writes no data (vector-family spec 5.7), which docs/providers/milvus.md names.
   "milvus",
   "mongodb",

@@ -23,10 +23,10 @@ metadata:
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.18.3
     createdAt: "2026-10-11T14:27:55Z"
-    description: Open-source web-based SQL IDE for twenty-nine engines - PostgreSQL,
+    description: Open-source web-based SQL IDE for thirty engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
       ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra,
-      libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB
+      libSQL, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB
       3, Oxia, Databend, S3-compatible object storage and Kubernetes - with AI-powered
       query assistance.
     olm.skipRange: '>=0.0.0 <0.18.3'
@@ -55,7 +55,7 @@ spec:
     LibreDB Studio is an open-source, web-based SQL IDE. Query PostgreSQL,
     MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
     ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache
-    Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB,
+    Cassandra, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, InfluxDB,
     InfluxDB 3, Oxia, Databend, S3-compatible object storage and Kubernetes from the browser,
     with AI-powered query assistance (natural-language-to-SQL, explain, fix),
     an ERD viewer, schema diff and a data profiler. No desktop client required.

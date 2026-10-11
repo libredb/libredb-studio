@@ -838,6 +838,28 @@ export interface KeyScanPage {
    */
   readonly skipped?: { readonly count: number; readonly reason: string };
   /**
+   * What the provider can and cannot establish about this read's completeness, for an engine where that is
+   * not a settled question (#1635).
+   *
+   * ABSENT IS THE ORDINARY CASE AND MEANS NOTHING IS CLAIMED EITHER WAY. An engine that walks a key space it
+   * can see the end of says nothing here, exactly as it always did; the panel draws no line for it.
+   *
+   * `scope` has two values and `complete` is not one of them. An engine declares `incomplete` only where it
+   * can PROVE the read is short - a refused subscription, a server that closed the connection, a message
+   * skipped for its size - and `unknown` everywhere else. A provider that inferred incompleteness from
+   * timing would be guessing: measured on MQTT, the quiet gap before a lossless read and before a lossy one
+   * do not separate and their ordering is inverted.
+   *
+   * `endReason` is why the read stopped, in the provider's own words, and is never empty. `provenLoss` lists
+   * what the provider can show was lost, each entry its own sentence; an empty list means nothing was proved
+   * lost, never that nothing was.
+   */
+  readonly readOutcome?: {
+    readonly scope: "incomplete" | "unknown";
+    readonly endReason: string;
+    readonly provenLoss?: readonly string[];
+  };
+  /**
    * The folder prefixes of a LEVEL page, each the full prefix ending in the separator, each one
    * separator deeper than the pattern asked about, none twice. Present only on an answer to `level`;
    * a folder is complete for its level, so a reader lists it by asking for its own level and never
@@ -942,7 +964,7 @@ export interface ProviderCapabilities {
    * and `DIALECT_GENERATORS` (`src/lib/query-generators.ts`), and every other reader of this field and of
    * `queryLanguage` is held to a closed list by `tests/unit/lib/dialect-reader-allowlist.test.ts`.
    */
-  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant" | "oxia" | "s3" | "kubectl";
+  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant" | "oxia" | "s3" | "mqtt" | "kubectl";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).

@@ -201,6 +201,8 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
     "namespaces/yaml",
     "customresourcedefinitions/yaml",
   ],
+  // The one kind: a topic's payload opens in its Source tab, rendered as JSON.
+  mqtt: ["topic/json"],
   libredb: [],
 });
 
@@ -292,7 +294,7 @@ describe("the fleet census of object source declarations", () => {
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // EXTERNAL_DATABASE_TYPES.length (29 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend, s3 and
     // kubernetes) plus the embedded store.
-    expect(CENSUS_TYPES).toHaveLength(30);
+    expect(CENSUS_TYPES).toHaveLength(31);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -310,14 +312,14 @@ describe("the fleet census of object source declarations", () => {
     // `hasSource` moves between the two halves, so both halves must be pinned or the total alone
     // would still be satisfied. Neither half may be edited to match a build: if this fails, the
     // DECLARATION is wrong or the design's table is, and the repair is one of those two.
-    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(124);
-    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(124);
+    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(125);
+    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(125);
     // neo4j added four kinds, none source-bearing, db2 five source-bearing kinds and four others, milvus and
     // qdrant one source-bearing kind each, influxdb and influxdb3 one kind each, neither source-bearing, oxia
     // two source-bearing kinds, databend four source-bearing kinds, s3 two source-bearing kinds, and kubernetes 37
     // source-bearing kinds and its Custom Resources kind.
     expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(34);
-    expect(rows).toHaveLength(158);
+    expect(rows).toHaveLength(159);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -346,7 +348,7 @@ describe("the fleet census of object source declarations", () => {
     // 126 on a MariaDB connection against 124 unconnected: the design states both numbers because
     // criterion 2's evidence method reads an unconnected provider and would otherwise
     // structurally exclude the two riskiest declarations in the phase.
-    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(126);
+    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(127);
   });
 
   /*
@@ -433,7 +435,7 @@ describe("the fleet census of object source declarations", () => {
       }
     }
     // 158 unconnected kinds plus the MariaDB branch's eight.
-    expect(rows).toHaveLength(166);
+    expect(rows).toHaveLength(167);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)
@@ -469,7 +471,7 @@ describe("the fleet census of object source declarations", () => {
  * registration of an engine that declares one moves it. etcd's `key` (#1089 4.1), Oxia's `key` (SB2-7.1) and S3's
  * `object` are the three such kinds, and the planted declarations are what show each rule refuses what it names.
  */
-const KEY_BROWSER_KINDS: readonly string[] = Object.freeze(["etcd/key", "oxia/key", "s3/object"]);
+const KEY_BROWSER_KINDS: readonly string[] = Object.freeze(["etcd/key", "oxia/key", "s3/object", "mqtt/topic"]);
 
 /** The breaches of the three conditions above in one declaration, one sentence each. */
 function keyBrowserBreaches(type: string, capabilities: ProviderCapabilities): readonly string[] {

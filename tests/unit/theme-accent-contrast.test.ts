@@ -223,7 +223,7 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
 ];
 
 /**
- * The fourteen hues where two engines share a hue and are held apart only by step, so
+ * The fifteen hues where two engines share a hue and are held apart only by step, so
  * the `-alt` is a distinct IDENTITY and has to join the separation set. Pinned by
  * `tests/unit/lib/db-ui-config.test.ts`, which asserts every engine colour differs.
  * `fuchsia` joined with Neo4j: of the hues with no identity `-alt` yet, only
@@ -249,6 +249,11 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
  * green-alt) and left the dark one where it was.
  * `amber` joined with Kubernetes: `hue-amber` is MySQL's, and of the hues with no identity `-alt` left (amber, pink,
  * cyan), `amber-alt` cleared every test below.
+ * `pink` joined with MQTT (#1635): `hue-pink` is Prometheus's, and of the two hues with no identity `-alt` left
+ * (pink, cyan), `pink-alt` was tried first and cleared every test below. It leaves both closest pairs exactly where
+ * `amber-alt` left them - 0.0205 in light (orange vs amber-alt) against 0.0160 in dark (rose-alt vs red-alt) - so the
+ * "pink-alt made the light set tighter than the dark one" reading recorded for Databend above no longer holds: that
+ * was measured before Kubernetes's `amber-alt` moved the light minimum.
  */
 const IDENTITY_ALTS = [
   "blue",
@@ -265,6 +270,7 @@ const IDENTITY_ALTS = [
   "red",
   "green",
   "amber",
+  "pink",
 ] as const;
 
 /**

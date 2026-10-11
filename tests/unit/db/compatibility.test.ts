@@ -402,12 +402,12 @@ describe("wire-compatibility registry", () => {
     expect(READ_ONLY_ENFORCED.qdrant).toBe(true);
     expect(MCP_EXPOSABLE.qdrant).toBe(true);
     // The counts of vector-family spec 10.2, from the sets they count, with Milvus, both InfluxDB types, Oxia, Databend,
-    // S3 and Kubernetes shipped too: each adds one external engine, and Databend also retires its MySQL-wire relative
-    // row.
+    // S3, Kubernetes and MQTT shipped too: each adds one external engine, and Databend also retires its MySQL-wire
+    // relative row.
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      30, 29, 27,
+      31, 30, 27,
     ]);
-    expect(connectableProductCount()).toBe(56);
+    expect(connectableProductCount()).toBe(57);
   });
 
   test("milvus ships as an external engine that keeps the read-only mode and is offered to MCP (vector-family spec 5.7, 10.2)", () => {
@@ -419,9 +419,9 @@ describe("wire-compatibility registry", () => {
     expect(READ_ONLY_ENFORCED.milvus).toBe(true);
     expect(MCP_EXPOSABLE.milvus).toBe(true);
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      30, 29, 27,
+      31, 30, 27,
     ]);
-    expect(connectableProductCount()).toBe(56);
+    expect(connectableProductCount()).toBe(57);
   });
 
   test("influxdb and influxdb3 ship as external engines that keep the read-only mode and are offered to MCP (InfluxDB spec I2, I8, I13)", () => {
@@ -434,12 +434,12 @@ describe("wire-compatibility registry", () => {
       expect(READ_ONLY_ENFORCED[type]).toBe(true);
       expect(MCP_EXPOSABLE[type]).toBe(true);
     }
-    // The union's 24 members plus the two, Oxia, Databend, S3 and Kubernetes, less libredb; the relatives lose Databend's
-    // row.
+    // The union's 24 members plus the two, Oxia, Databend, S3, Kubernetes and MQTT, less libredb; the relatives lose
+    // Databend's row.
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      30, 29, 27,
+      31, 30, 27,
     ]);
-    expect(connectableProductCount()).toBe(56);
+    expect(connectableProductCount()).toBe(57);
   });
 
   test("oxia ships as an external engine that keeps the read-only mode and is not offered to MCP (SB3-1.2)", () => {
@@ -450,9 +450,9 @@ describe("wire-compatibility registry", () => {
     expect(READ_ONLY_ENFORCED.oxia).toBe(true);
     expect(MCP_EXPOSABLE.oxia).toBe(false);
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      30, 29, 27,
+      31, 30, 27,
     ]);
-    expect(connectableProductCount()).toBe(56);
+    expect(connectableProductCount()).toBe(57);
   });
 
   test("databend ships as an external engine, offered to MCP, with no read-only promise and no relatives", () => {
@@ -472,9 +472,9 @@ describe("wire-compatibility registry", () => {
     expect(compatibleEnginesFor("mysql").map((engine) => engine.name)).not.toContain("Databend");
     expect(Object.keys(COMPOSE_SERVICE_BY_ENGINE)).not.toContain("Databend");
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      30, 29, 27,
+      31, 30, 27,
     ]);
-    expect(connectableProductCount()).toBe(56);
+    expect(connectableProductCount()).toBe(57);
   });
 
   test("s3 ships as an external engine that keeps the read-only mode, is not offered to MCP, and has no relatives", () => {
@@ -492,9 +492,9 @@ describe("wire-compatibility registry", () => {
     const relatives = WIRE_COMPATIBLE_ENGINES.map((engine) => engine.name);
     for (const server of ["MinIO", "Silo", "Garage", "RustFS"]) expect(relatives).not.toContain(server);
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      30, 29, 27,
+      31, 30, 27,
     ]);
-    expect(connectableProductCount()).toBe(56);
+    expect(connectableProductCount()).toBe(57);
   });
 
   test("kubernetes ships as an external engine that keeps the read-only mode, is not offered to MCP and has no relatives", () => {
@@ -508,9 +508,9 @@ describe("wire-compatibility registry", () => {
     expect(CONNECTION_FORM_URI_MODE.kubernetes).toBe(false);
     expect(CONNECTION_STRING_ACCEPTED.kubernetes).toBe(false);
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      30, 29, 27,
+      31, 30, 27,
     ]);
-    expect(connectableProductCount()).toBe(56);
+    expect(connectableProductCount()).toBe(57);
   });
 
   test("duckdb ships as a driver and is a relative of nothing", () => {
@@ -624,13 +624,14 @@ describe("MCP_EXPOSABLE (#1089)", () => {
     expect(Object.isFrozen(MCP_EXPOSABLE)).toBe(true);
   });
 
-  test("offers MCP for every shipped engine but etcd, oxia, s3 and kubernetes", () => {
+  test("offers MCP for every shipped engine but etcd, oxia, s3, kubernetes and mqtt", () => {
     // An engine MCP is not offered for answers false with its registration, and is named here then.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type] !== true)).toEqual([
       "etcd",
       "oxia",
       "s3",
       "kubernetes",
+      "mqtt",
     ]);
   });
 });

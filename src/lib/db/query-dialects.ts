@@ -112,6 +112,17 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
   }),
   // Kubernetes: one statement of a read-only kubectl subset. Its grids are the API server's own columns, so no
   // profile, model or count statement of its grammar applies, and neither SQL export format applies.
+
+  // MQTT (#1635). The provider has no query console: its surface is the Keys panel, and a broker has no
+  // query language to write in. The entry exists so a connection does not fall through to MongoDB's tab,
+  // which is the exact fault `queryDialect` was added for (#427): a provider declaring `queryLanguage: "json"`
+  // while speaking neither MongoDB JSON nor SQL, and silently receiving MongoDB commands.
+  mqtt: Object.freeze({
+    tabType: "mqtt",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+  }),
   kubectl: Object.freeze({
     tabType: "kubectl",
     offersColumnProfiling: false,

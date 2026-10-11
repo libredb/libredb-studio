@@ -236,6 +236,7 @@
     "lucide-react": "^1.41.0",
     "monaco-editor": "^0.57.0",
     "mongodb": "^7.6.0",
+    "mqtt-packet": "9.0.2",
     "mssql": "^12.7.0",
     "mysql2": "^3.24.3",
     "neo4j-driver-lite": "6.2.0",

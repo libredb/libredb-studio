@@ -96,6 +96,7 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // No generator calls `quoteLiteral` for Kubernetes: a kubectl statement names objects by their own names, which need
   // no quoting; the row is the inert answer Oxia's is.
   kubernetes: "standard",
+  mqtt: "standard",
   // Default `sql_mode`. A server running with NO_BACKSLASH_ESCAPES reads the
   // doubled backslash as two characters, which is why binding the value beats
   // quoting it wherever a bind form exists.

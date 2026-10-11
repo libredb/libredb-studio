@@ -579,6 +579,7 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
   s3: NOTHING_STANDS_ALONE,
   // Kubernetes has no statement form for an export.
   kubernetes: NOTHING_STANDS_ALONE,
+  mqtt: NOTHING_STANDS_ALONE,
   // Measured by M08a and M08c on the pinned image: each was created and read back unbounded (`String`, `Timestamp`
   // with microseconds, `Binary`). Every other bare name is re-spelled from its family (design 7.2, X01).
   databend: ["varchar", "timestamp", "binary"],
@@ -779,6 +780,7 @@ const BINARY_LITERAL: Record<DatabaseType, BinaryLiteral> = {
   s3: "standard-hex",
   // Kubernetes has no statement language for a value either; the inert default, as Oxia's.
   kubernetes: "standard-hex",
+  mqtt: "standard-hex",
   // Measured on SQL Server 2022: `SELECT CONVERT(varchar(64), 0x0102deadbeef, 2)`
   // answers `0102DEADBEEF`, `DATALENGTH(0x)` answers 0 — so the empty case is spelled
   // — and `SELECT X'0102'` is `Msg 207 … Invalid column name 'X'`.

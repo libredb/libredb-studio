@@ -48,6 +48,7 @@ const COLUMN_GRAMMAR: Record<DatabaseType, [string, string] | null> = {
   databend: ["ADD COLUMN `extra` integer;", "DROP COLUMN `old`;"],
   s3: null,
   kubernetes: null,
+  mqtt: null,
 };
 
 describe("migration dialect regressions (#284)", () => {

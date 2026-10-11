@@ -132,6 +132,7 @@ const EXPECTED_COLUMN_KINDS: Readonly<Record<DatabaseType, readonly string[]>> =
   s3: [],
   // Every Kubernetes kind is config with a YAML source and no columns: a click opens the YAML.
   kubernetes: [],
+  mqtt: [],
   libredb: ["table", "collection", "keyspace"],
 });
 
@@ -217,14 +218,14 @@ describe("the fleet census of object column declarations", () => {
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // EXTERNAL_DATABASE_TYPES.length (29 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend, s3 and
     // kubernetes) plus the embedded store.
-    expect(CENSUS_TYPES).toHaveLength(30);
+    expect(CENSUS_TYPES).toHaveLength(31);
     expect(Object.keys(EXPECTED_COLUMN_KINDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // A row naming nothing would make its type-id's census pass on the empty set, so the design's
     // table has three such rows, and they are named here: every engine but Oxia, S3 and Kubernetes has at least one
     // kind with columns; Oxia's shard and key and S3's bucket and object declare none (consistency ruling 24), and
     // every Kubernetes kind opens its YAML instead.
     const empty = CENSUS_TYPES.filter((type) => EXPECTED_COLUMN_KINDS[type].length === 0);
-    expect(empty).toEqual(["oxia", "s3", "kubernetes"]);
+    expect(empty).toEqual(["oxia", "s3", "kubernetes", "mqtt"]);
   });
 
   test("every kind id the expectation names is a kind its provider actually declares", async () => {

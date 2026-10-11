@@ -28,6 +28,7 @@ import {
   OxiaIcon,
   DatabendIcon,
   S3Icon,
+  MqttIcon,
   KubernetesIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -871,6 +872,36 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
       label: "Import kubeconfig",
       load: () => import("@/lib/kubernetes/kubeconfig-import").then((module) => module.importKubeconfig),
     },
+  },
+  mqtt: {
+    // A mark drawn for Studio, never a product's logo: a node with the arcs of a broadcast.
+    icon: MqttIcon,
+    // Every identity `-alt` theme.css declared was taken again, so `pink` joined IDENTITY_ALTS with this entry:
+    // of the two hues with none left (pink, cyan), `pink-alt` was tried first and cleared every test - it leaves
+    // both closest pairs exactly where Kubernetes's `amber-alt` left them, 0.0205 in light against 0.0160 in dark
+    // (tests/unit/theme-accent-contrast.test.ts). It is also the step nearest MQTT's own magenta mark.
+    color: "text-hue-pink-alt",
+    label: "MQTT",
+    // The IANA-assigned port for MQTT. 8883 is the TLS port, which the SSL mode selects.
+    defaultPort: "1883",
+    // Host and Port hold the broker. A `mqtt://` URI adds nothing the two fields do not say.
+    showConnectionStringToggle: false,
+    connectionFields: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+    // `database` carries the discovery filter, as Oxia's carries a namespace: one connection reads one filter.
+    fieldLabels: { database: "Topic filter" },
+    fieldPlaceholders: { database: "#" },
+    fieldHints: {
+      host: "A name or address only. If Studio runs in a container, localhost is that container: use host.docker.internal.",
+      user: "A broker username, if the broker checks one; empty for a broker that does not.",
+      password:
+        "The password for that username. A password needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection.",
+      database:
+        "What to subscribe to. Empty means #, every topic except the broker's own $SYS tree, which no # filter reaches. A narrower filter reads less and finishes sooner. $share/, $queue/ and $exclusive/ are refused: each one takes messages away from the devices that need them, and no broker reports that it happened.",
+      allowInsecureAuth:
+        "With no SSL mode the username and password cross the network in cleartext. A password sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the broker offers one.",
+    },
+    readOnlyHint:
+      "MQTT connections are read-only whether or not this is ticked, and not by a setting: this provider has no code that can write a PUBLISH, and its CONNECT carries no Will.",
   },
   libredb: {
     icon: LibreDBIcon,

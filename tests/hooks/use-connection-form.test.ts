@@ -69,6 +69,10 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   // No User: basic authentication is refused; the token is the password, the default namespace the database, and the
   // namespace list, the API path and the TLS server name are fields of Kubernetes' own.
   kubernetes: ["host", "port", "password", "database", "namespaces", "apiPath", "tlsServerName"],
+  // The broker address, an optional credential, the discovery filter in the Database field, and the consent to
+  // send that credential without TLS. No namespaces, no API path, no TLS server name: those are Kubernetes'
+  // fields, and this row was a copy of its neighbour until an audit read it.
+  mqtt: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -1971,6 +1975,7 @@ describe("useConnectionForm", () => {
     databend: true,
     s3: true,
     kubernetes: true,
+    mqtt: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

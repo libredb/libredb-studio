@@ -119,11 +119,11 @@ npx @libredb/studio
 
 ## <span dir="rtl">بنیادی صلاحیتیں</span>
 
-### <span dir="rtl">انتیس engines، ایک interface</span>
+### <span dir="rtl">تیس engines، ایک interface</span>
 
 </div>
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT
 
 <div dir="rtl" align="right">
 
@@ -161,6 +161,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 | **Oxia** | <span dir="rtl">`@grpc/grpc-js` (pure JavaScript، gRPC، port 6648)</span> | <span dir="rtl">Read-only `oxia client` commands (`get`، `list`، `range-scan`)، tree میں shards اور Keys panel میں ہر key</span> |
 | **S3-compatible object storage** | <span dir="rtl">none، HTTP (S3 REST API، path style، Studio کے اپنے SigV4 code سے signed؛ Parquet preview کے لیے `hyparquet`)</span> | <span dir="rtl">Read-only AWS CLI read commands (`aws s3 ls`، `aws s3api list-buckets`، `aws s3api head-object`، `aws s3api list-object-versions`) اور Studio کا اپنا `preview`؛ tree میں buckets اور Keys panel میں folders، ایک وقت میں ایک level؛ object کا metadata اور text، JSON، CSV اور Parquet کا capped preview۔ MinIO، Silo، Garage اور RustFS پر verified؛ AWS S3 اور hosted services پر verified نہیں</span> |
 | **Kubernetes** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (API server کا REST API، port 6443)</span> | <span dir="rtl">Read-only: editor میں kubectl کا subset (`get`، `describe`، `logs`، `top`، `events`، `explain`، `auth can-i`)، tree میں namespaces اور ان کے kinds، ہر object کے YAML view کے ساتھ، اور connection dialog میں kubeconfig import۔ Secret values کبھی نہیں دکھائی جاتیں</span> |
+| **MQTT** | <span dir="rtl">`mqtt-packet` (صرف اس کا پارسر؛ Studio جو پانچ پیکٹ بھیجتا ہے، کنکشن مینیجر اور یک طرفہ والو Studio کا اپنا کوڈ ہیں)</span> | <span dir="rtl">ساخت ہی سے صرف پڑھنے کے لیے: باہر جانے والا راستہ صرف CONNECT، SUBSCRIBE، UNSUBSCRIBE، PINGREQ اور DISCONNECT لکھ سکتا ہے، PUBLISH لکھنے والا کوئی فنکشن موجود نہیں، اور CONNECT کوئی Will نہیں رکھتا۔ Keys پینل ایک ہی سبسکرپشن سے ٹاپک ٹری بناتا ہے اور ہر قطار کے ساتھ سرور کی بتائی ہوئی باقی مدت دکھاتا ہے؛ ٹاپک کھولنے پر اس کا پے لوڈ اور میٹا ڈیٹا نظر آتا ہے۔ MQTT میں ٹاپکس کی فہرست دینے والا کوئی کمانڈ نہیں، اس لیے کوئی بھی پڑھائی خود کو مکمل نہیں کہتی: ہر پڑھائی بتاتی ہے کہ اس نے کیا دیکھا، کیوں رکی، اور کس نقصان کو ثابت کر سکتی ہے۔ `$share/`، `$queue/` اور `$exclusive/` فلٹرز SUBSCRIBE بھیجنے سے پہلے ہی رد کر دیے جاتے ہیں، کیونکہ ان میں سے ہر ایک Studio کے ساتھ سبسکرائب کیے ہوئے آلات سے پیغام چھین لیتا ہے۔ Mosquitto، EMQX، HiveMQ CE، NanoMQ اور RabbitMQ 4 پر تصدیق شدہ</span> |
 | **Redis** | `ioredis` | <span dir="rtl">command editor، keys explorer، INFO پر مبنی monitoring</span> |
 
 <div dir="rtl" align="right">

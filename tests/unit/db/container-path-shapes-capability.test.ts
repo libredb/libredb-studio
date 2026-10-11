@@ -50,6 +50,7 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   // No container level at all: buckets are object rows, so no path shape is declared.
   s3: "absent",
   kubernetes: "exact",
+  mqtt: "absent",
   libredb: "exact",
   duckdb: "prefixes",
   mssql: "prefixes",

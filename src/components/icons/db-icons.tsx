@@ -741,3 +741,25 @@ export const KubernetesIcon: React.FC<IconProps> = ({ className, ...props }) => 
     <path d="M10.48 12.88 L7.24 14.75" />
   </svg>
 );
+
+/**
+ * MQTT: a mark drawn for Studio, never a product's logo: a node with the arcs of a broadcast rising from it,
+ * which is what a broker does in the plainest terms. Stroked on the house 24-unit grid like the others.
+ */
+export const MqttIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="6" cy="18" r="1.5" />
+    <path d="M6 13.5a4.5 4.5 0 0 1 4.5 4.5" />
+    <path d="M6 9a9 9 0 0 1 9 9" />
+    <path d="M6 4.5A13.5 13.5 0 0 1 19.5 18" />
+  </svg>
+);

@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting twenty-nine engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage and Kubernetes
+description: Web-based SQL IDE for cloud-native teams supporting thirty engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage and Kubernetes
 type: application
-version: 0.1.85
+version: 0.1.86
 appVersion: "0.18.3"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -90,6 +90,9 @@ keywords:
   # One keyword, like databend above: `kubernetes` is the type-id and the word an evaluator looking
   # for a cluster browser types.
   - kubernetes
+  # One keyword, like kubernetes above: `mqtt` is the type-id and the protocol an evaluator looking
+  # for a broker browser types; no product name to catch, because every broker speaks the same standard.
+  - mqtt
   - web-ide
 maintainers:
   - name: cevheri

@@ -119,6 +119,7 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // A ```kubernetes block holds one statement of the kubectl subset the editor runs as it is. The `kubectl` alias below
   // spells the command, and it still names this engine. No `yaml` or `sh` tag is registered: neither names an engine.
   kubernetes: true,
+  mqtt: true,
 });
 
 /**

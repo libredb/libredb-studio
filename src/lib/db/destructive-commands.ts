@@ -510,6 +510,11 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
   // namespaces and objects, so none is posted for an AI analysis. What the console's parser refuses (a write, exec or
   // a tunnel, a connection flag, a flag outside v1) the editor refuses before anything is sent, past the dialect's
   // own byte bound.
+
+  // MQTT (#1635): there is no console and no statement, so nothing is ever read for a destructive verb. The row
+  // exists because the record is exhaustive over every engine whose text is not SQL, and its operations list is
+  // empty by construction: this provider has no code that can write to a broker.
+  mqtt: { operations: new Set<string>(), read: () => [], decidesAlone: true, safetyAnalysis: false },
   kubernetes: {
     operations: KUBERNETES_DESTRUCTIVE_OPERATIONS,
     read: readKubernetesOperations,

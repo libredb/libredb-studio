@@ -1788,6 +1788,133 @@ describe("a panel in a declared shape", () => {
     });
   });
 
+  /**
+   * WHAT A READ COULD AND COULD NOT ESTABLISH (#1635), drawn only for an engine that answers it.
+   *
+   * The line exists because one engine, MQTT, cannot establish whether a read was complete: it has no command
+   * that lists topics, so a tree is whatever a subscription delivered. For every other engine the field is
+   * absent and the panel draws nothing, which is the behaviour these tests pin in both directions.
+   */
+  test("draws the engine's own completeness sentence when the page carries one", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": prefixRoute(["/app/a"], {
+        readOutcome: { scope: "unknown", endReason: "the read reached its time budget." },
+      }).handler,
+    });
+    renderBrowser(ETCD_SCAN);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("key-browser-read-outcome").textContent).toBe(
+        "This list is what the read saw. Whether it is everything cannot be established on this engine: the read reached its time budget.",
+      );
+    });
+  });
+
+  test("says the list is incomplete, in those words, when the engine can prove it", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": prefixRoute(["/app/a"], {
+        readOutcome: { scope: "incomplete", endReason: "the broker refused the subscription." },
+      }).handler,
+    });
+    renderBrowser(ETCD_SCAN);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("key-browser-read-outcome").textContent).toBe(
+        "This list is incomplete, and the engine can show why: the broker refused the subscription.",
+      );
+    });
+  });
+
+  /**
+   * THE SENTENCE WAS SHIPPED IN INVISIBLE INK. The first version used `text-muted`, which is a SURFACE token
+   * (`#27272a` dark, `#f5f5f5` light), not a text token: measured in a browser it rendered at 1.34:1 contrast
+   * on the dark ground and 1.09:1 on the light one, at 10px. The panel's other nineteen text lines all use
+   * `text-muted-foreground`. A reader was shown a tree and told nothing about its completeness, which is the
+   * exact failure the sentence exists to prevent, so the class is pinned here rather than left to review.
+   */
+  test("the completeness line uses the panel's readable text colour, not a surface colour", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": prefixRoute(["/app/a"], {
+        readOutcome: { scope: "unknown", endReason: "the read reached its time budget." },
+      }).handler,
+    });
+    renderBrowser(ETCD_SCAN);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("key-browser-read-outcome")).toBeDefined();
+    });
+    const block = screen.getByTestId("key-browser-read-outcome");
+    expect(block.className).toContain("text-muted-foreground");
+    // `text-muted` alone paints text in the colour of a panel's background.
+    expect(block.className.split(/\s+/)).not.toContain("text-muted");
+  });
+
+  test("draws each proven loss on its own line, beside the sentence", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": prefixRoute(["/app/a"], {
+        readOutcome: {
+          scope: "incomplete",
+          endReason: "the read ended.",
+          provenLoss: ['The message on "big/one" is 9,000,000 bytes and was skipped.', "A second loss."],
+        },
+      }).handler,
+    });
+    renderBrowser(ETCD_SCAN);
+
+    await waitFor(() => {
+      const block = screen.getByTestId("key-browser-read-outcome");
+      expect(block.textContent).toContain('The message on "big/one" is 9,000,000 bytes and was skipped.');
+      expect(block.textContent).toContain("A second loss.");
+      // One paragraph for the sentence, one per loss.
+      expect(block.querySelectorAll("p")).toHaveLength(3);
+    });
+  });
+
+  /**
+   * The regression this pins is for every OTHER engine. The field never clears itself on a page that omits
+   * it, by design, so without `reset()` clearing it a Redis or etcd panel would keep standing an MQTT
+   * sentence about a read it never performed.
+   */
+  test("an engine that answers nothing draws no line at all", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(["/app/a"]).handler });
+    renderBrowser(ETCD_SCAN);
+
+    await waitFor(() => {
+      expect(rows().length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByTestId("key-browser-read-outcome")).toBeNull();
+  });
+
+  /**
+   * THE REGRESSION THIS PINS BELONGS TO EVERY OTHER ENGINE, and the test above does not pin it: a fresh panel
+   * starts with no outcome, so it passes whether or not `reset()` clears one. An audit deleted
+   * `setReadOutcome(null)` from `reset()` and all 1,495 panel and hook tests still passed.
+   *
+   * The field never clears itself on a page that omits it, by design: a page that says nothing about
+   * completeness has not withdrawn what an earlier one established. So the clearing has to happen on reset,
+   * or a reader who switches from an MQTT connection to a Redis one keeps MQTT's sentence standing over
+   * Redis's keys, about a read Redis never performed.
+   */
+  test("switching connection clears the previous engine's completeness sentence", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": prefixRoute(["/app/a"], {
+        readOutcome: { scope: "incomplete", endReason: "the broker refused the subscription." },
+      }).handler,
+    });
+    const view = render(<KeyBrowser connection={CONNECTION} capability={ETCD_SCAN} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("key-browser-read-outcome")).toBeDefined();
+    });
+
+    // The same panel, a different connection, and an engine whose page carries no outcome at all.
+    mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(["/other/a"]).handler });
+    view.rerender(<KeyBrowser connection={{ ...CONNECTION, id: "another-connection" }} capability={ETCD_SCAN} />);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("key-browser-read-outcome")).toBeNull();
+    });
+  });
+
   test("reads a row's type by the key's full name in the declared separator", async () => {
     // etcd describes no types, but the panel's contract is the engine's: a page's type map is keyed by
     // the key's full name, and a row looks its own up by the same join its activation hands over.

@@ -315,6 +315,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
     exhausted,
     stoppedBy,
     skipped,
+    readOutcome,
     error,
     nodeCursors,
     nodeLoading,
@@ -738,7 +739,15 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
           <button
             type="button"
             onClick={() => (scanningAll ? stop() : void scanAll())}
-            disabled={(busy && !scanningAll) || heldFull}
+            /*
+             * `exhausted` joins the guard, as it already does on `Scan more` above. Without it the control
+             * stays enabled on an engine whose walk is over and does nothing when pressed: measured on an
+             * MQTT connection, a press fired zero requests while the panel's own sentence advised reading
+             * again, so the screen recommended an action its only enabled button could not perform. For every
+             * other engine `exhausted` is true exactly when the cursor says the walk ended, which is when
+             * `Scan all` has nothing left to ask for either.
+             */
+            disabled={(busy && !scanningAll) || exhausted || heldFull}
             className="rounded px-2 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
           >
             {scanningAll ? "Stop" : levels ? "List all of this level" : "Scan all"}
@@ -839,6 +848,30 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         <p className="px-1 pb-2 text-[10px] leading-relaxed text-warning" data-testid="key-browser-skipped">
           {`${skipped.count.toLocaleString("en-US")} key${skipped.count === 1 ? "" : "s"} left out of this walk: ${skipped.reason}`}
         </p>
+      )}
+
+      {/* WHAT THIS READ COULD AND COULD NOT ESTABLISH, for an engine where that is not settled (#1635).
+          A PLAIN INFORMATION LINE RATHER THAN A WARNING. It appears on every ordinary read of such an
+          engine, and a warning that appears every time is ignored within a week; HTTP's `Warning` header
+          was removed from the standard by RFC 9111 for that reason. It also never says a read was
+          complete, because on an engine that declares this, completeness cannot be established. */}
+      {readOutcome !== undefined && readOutcome !== null && (
+        <div
+          className="px-1 pb-2 text-[10px] leading-relaxed text-muted-foreground"
+          data-testid="key-browser-read-outcome"
+        >
+          <p>
+            {readOutcome.scope === "incomplete"
+              ? `This list is incomplete, and the engine can show why: ${readOutcome.endReason}`
+              : `This list is what the read saw. Whether it is everything cannot be established on this engine: ${readOutcome.endReason}`}
+          </p>
+          {(readOutcome.provenLoss ?? []).map((sentence, index) => (
+            // oxlint-disable-next-line react/no-array-index-key -- two losses of the same size on the same topic read the same; the list is read-only and rebuilt whole on every read.
+            <p key={index} className="text-warning">
+              {sentence}
+            </p>
+          ))}
+        </div>
       )}
 
       {/* Suppressed by an error because it is a claim about the DATABASE, and a read that failed is

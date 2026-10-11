@@ -99,5 +99,6 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   // No field beyond UNCONNECTED: the constructor validates nothing and opens nothing; the fields are read at connect,
   // which no census reaches.
   kubernetes: unconnected("kubernetes"),
+  mqtt: unconnected("mqtt"),
   libredb: unconnected("libredb"),
 });

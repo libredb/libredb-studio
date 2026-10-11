@@ -798,7 +798,7 @@ describe("createDatabaseProvider", () => {
   test("the factory error lists milvus among the supported types, before qdrant and the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bneo4j, milvus, qdrant, s3, kubernetes, libredb$/,
+      /Supported types: .*\bneo4j, milvus, qdrant, s3, mqtt, kubernetes, libredb$/,
     );
   });
 
@@ -841,7 +841,9 @@ describe("createDatabaseProvider", () => {
 
   test("the factory error lists s3 between qdrant and kubernetes, kubernetes before the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\bqdrant, s3, kubernetes, libredb$/);
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(
+      /Supported types: .*\bqdrant, s3, mqtt, kubernetes, libredb$/,
+    );
   });
 
   test('creates provider for type "libredb"', async () => {
@@ -952,6 +954,8 @@ describe("createDatabaseProvider", () => {
       "libredb",
       "libsql",
       "mongodb",
+      // No cancel: a read is one subscription with its own budget, and there is no statement to stop.
+      "mqtt",
       "opensearch",
       "redis",
     ]);

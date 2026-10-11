@@ -37,6 +37,7 @@ describe("QUERY_DIALECTS", () => {
       "kubectl",
       "libredb",
       "milvus",
+      "mqtt",
       "oxia",
       "qdrant",
       "redis",
@@ -105,6 +106,13 @@ describe("QUERY_DIALECTS", () => {
             "--docker-password",
           ],
         },
+      },
+      // MQTT has no query console at all, so it offers none of the three.
+      mqtt: {
+        tabType: "mqtt",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
       },
     });
   });

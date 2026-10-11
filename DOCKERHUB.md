@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, Apache Cassandra, Prometheus, InfluxDB, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes** from your browser, with AI query assistance, RBAC and OIDC SSO.
+Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, Apache Cassandra, Prometheus, InfluxDB, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes** from your browser, with AI query assistance, RBAC and OIDC SSO.
 
 ---
 
@@ -36,7 +36,7 @@ docker run \
 
 Open <http://localhost:3000>. No password is set above, so the first start generates one and prints it with `docker logs libredb-studio`. To choose your own instead, add `-e ADMIN_PASSWORD=...` and `-e JWT_SECRET=...` — the secret has to be at least 32 characters.
 
-> **None of these auth variables are mandatory.** With the local provider, `ADMIN_PASSWORD` and `JWT_SECRET` are required only when you opt into strict mode (`AUTH_BOOTSTRAP=off`); otherwise both are generated on first start and the admin password is printed once to the container log. `USER_EMAIL` / `USER_PASSWORD` are always optional — omit them to run admin-only, since no default user password is ever assumed. None of them are used when `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
+> **None of these auth variables are mandatory.** With the local provider, `ADMIN_PASSWORD` and `JWT_SECRET` are required only when you opt into strict mode (`AUTH_BOOTSTRAP=off`); otherwise both are generated on first start. `USER_EMAIL` / `USER_PASSWORD` are always optional — omit them to run admin-only, since no default user password is ever assumed. None of them are used when `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
 
 > **Enable AI:** add `-e LLM_PROVIDER=gemini -e LLM_API_KEY=your_key -e LLM_MODEL=gemini-2.5-flash`. That also brings the read-only agent, whose availability is derived from having a model configured; add `-v libredb-data:/app/data` if its run history should survive a container recreate, or `-e LIBREDB_AGENT_ENABLED=false` to keep the AI features and decline the agent.
 
@@ -109,8 +109,8 @@ Every one of those tags is published on three bases, and the suffix is appended 
 
 ## Supported databases
 
-Twenty-nine external engines share one interface.
-The thirtieth row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
+Thirty external engines share one interface.
+The thirty-first row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -120,16 +120,16 @@ The thirtieth row is the embedded LibreDB store: it ships inside the image, not 
 | **Db2 LUW** | `db2-node` | `FETCH FIRST` paging, RUNSTATS and REORG; TLS required |
 | **SQL Server** | `mssql` | `OFFSET FETCH`, `sys.dm_*` DMVs, `DBCC CHECKDB`, Azure SQL auto-detect |
 | **SQLite** | `bun:sqlite` / `node:sqlite` | File-based or in-memory databases; the driver follows the runtime, with a `LIBREDB_SQLITE_DRIVER` override |
-| **libSQL** | none — HTTP | Full SQL IDE over the Hrana protocol against a libSQL server or Turso Cloud; SQLite's dialect across a network, with real per-table bytes from `dbstat` and an auth token instead of a password |
+| **libSQL** | none, HTTP | Full SQL IDE over the Hrana protocol against a libSQL server or Turso Cloud; SQLite's dialect across a network, with real per-table bytes from `dbstat` and an auth token instead of a password |
 | **DuckDB** | `@duckdb/node-api` (a native N-API addon) | Full SQL IDE on a DuckDB file or `:memory:` on the server this image runs on: `EXPLAIN (FORMAT JSON)` plans, `duckdb_*` introspection, real per-table bytes, cancellation through `interrupt()`. No slow-query or session panel, because DuckDB publishes neither. One process may hold the file |
 | **MongoDB** | `mongodb` | JSON query editor, find/aggregate/insert/update/delete |
 | **Redis** | `ioredis` | Command editor, non-blocking `SCAN` key browser, `INFO` monitoring, per-type command generation |
-| **Couchbase** | none — HTTP | SQL++ query editor, bucket/scope/collection browser, cluster health |
-| **ClickHouse** | none — HTTP | Full SQL IDE over the HTTP interface, part/compression sizes, `system.*` monitoring |
-| **Apache Druid** | none — HTTP | Read-only SQL IDE over the SQL endpoint, datasource and segment browser |
-| **Elasticsearch** | none — HTTP | Read-only SQL IDE over `_sql`, mapping-driven index/field explorer, cluster health with per-index document counts and store sizes |
-| **OpenSearch** | none — HTTP | The same read-only IDE over `_plugins/_sql`, from the same provider module; `LIMIT … OFFSET` paging works here |
-| **Trino** | none — HTTP | Full SQL IDE over the client protocol, every configured catalog in one tree, `EXPLAIN (FORMAT JSON)` plans, `system.runtime` monitoring and query cancellation |
+| **Couchbase** | none, HTTP | SQL++ query editor, bucket/scope/collection browser, cluster health |
+| **ClickHouse** | none, HTTP | Full SQL IDE over the HTTP interface, part/compression sizes, `system.*` monitoring |
+| **Apache Druid** | none, HTTP | Read-only SQL IDE over the SQL endpoint, datasource and segment browser |
+| **Elasticsearch** | none, HTTP | Read-only SQL IDE over `_sql`, mapping-driven index/field explorer, cluster health with per-index document counts and store sizes |
+| **OpenSearch** | none, HTTP | The same read-only IDE over `_plugins/_sql`, from the same provider module; `LIMIT … OFFSET` paging works here |
+| **Trino** | none, HTTP | Full SQL IDE over the client protocol, every configured catalog in one tree, `EXPLAIN (FORMAT JSON)` plans, `system.runtime` monitoring and query cancellation |
 | **Databend** | none, HTTP | SQL IDE over its own query API, self-hosted or a Databend Cloud warehouse; `system.*` monitoring and `KILL QUERY`. No keys, so no inline row edits |
 | **Apache Cassandra** | `cassandra-driver` (pure JS) | CQL editor over the native protocol, keyspace browser with partition and clustering keys marked, `system_views` monitoring. No row counts or sizes: Cassandra publishes only partition estimates and whole mebibytes, so neither is shown rather than shown wrong |
 | **Prometheus** | none, HTTP | PromQL editor, metric, rule and target browser |
@@ -143,6 +143,7 @@ The thirtieth row is the embedded LibreDB store: it ships inside the image, not 
 | **Oxia** | `@grpc/grpc-js` | Read-only oxia client commands, shard map, key browser |
 | **S3-compatible object storage** | none, HTTP | Read-only AWS CLI commands, bucket and folder browser, object preview |
 | **Kubernetes** | none, HTTP | Read-only kubectl subset |
+| **MQTT** | `mqtt-packet` (parser only) | Read-only topic tree and message browser |
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
 **Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing when used.
@@ -150,7 +151,7 @@ Prometheus, InfluxDB, Apache Kafka, Oxia, S3-compatible object storage and Kuber
 
 ### Engines with no provider of their own
 
-Twenty-seven further engines speak the wire protocol of one of the twenty-nine drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much worked is recorded per engine.
+Twenty-seven further engines speak the wire protocol of one of the thirty drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |

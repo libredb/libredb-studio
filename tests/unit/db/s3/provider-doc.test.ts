@@ -293,6 +293,32 @@ function word(count: number): string {
   return unit === 0 ? TENS[Math.floor(count / 10)] : `${TENS[Math.floor(count / 10)]}-${UNITS[unit]}`;
 }
 
+/**
+ * The ordinal of a count, in words.
+ *
+ * Written out rather than patched onto `word` with suffix rules, because English ordinals are not a suffix
+ * rule: the chain this replaced turned twenty-nine into twenty-ninth and thirty into thirtieth correctly, and
+ * left thirty-one as "thirty-one", which is how a page published to Docker Hub came to read "The thirty-one
+ * row is the embedded LibreDB store".
+ */
+function ordinal(count: number): string {
+  const IRREGULAR: Readonly<Record<string, string>> = {
+    one: "first",
+    two: "second",
+    three: "third",
+    five: "fifth",
+    eight: "eighth",
+    nine: "ninth",
+    twelve: "twelfth",
+  };
+  const spelled = word(count);
+  const whole = (part: string): string =>
+    part.endsWith("y") ? `${part.slice(0, -1)}ieth` : (IRREGULAR[part] ?? `${part}th`);
+  if (!spelled.includes("-")) return whole(spelled);
+  const [tens, unit] = spelled.split("-") as [string, string];
+  return `${tens}-${whole(unit)}`;
+}
+
 /** The same numeral at the start of a sentence. */
 const Word = (count: number): string => `${word(count).charAt(0).toUpperCase()}${word(count).slice(1)}`;
 
@@ -1439,11 +1465,7 @@ describe("DOCKERHUB.md", () => {
     expect(hub).toContain(`${Word(EXTERNAL_DATABASE_TYPES.length)} external engines share one interface.`);
     // The ordinal counts the table's rows: every external engine, then the embedded store.
     expect(SHIPPED_DATABASE_TYPES).toHaveLength(EXTERNAL_DATABASE_TYPES.length + 1);
-    expect(hub).toContain(
-      `The ${word(SHIPPED_DATABASE_TYPES.length)
-        .replace(/-nine$/, "-ninth")
-        .replace(/ty$/, "tieth")} row is the embedded LibreDB store`,
-    );
+    expect(hub).toContain(`The ${ordinal(SHIPPED_DATABASE_TYPES.length)} row is the embedded LibreDB store`);
     expect(hub).toContain(
       "Prometheus, InfluxDB, Apache Kafka, Oxia, S3-compatible object storage and Kubernetes are read-only too",
     );
@@ -1453,7 +1475,7 @@ describe("DOCKERHUB.md", () => {
 
 /** The chart description, exactly. */
 const CHART_DESCRIPTION =
-  "Web-based SQL IDE for cloud-native teams supporting twenty-nine engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage and Kubernetes";
+  "Web-based SQL IDE for cloud-native teams supporting thirty engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage and Kubernetes";
 
 describe("the chart and the operator name S3 where an evaluator searches", () => {
   test("50. the description, the three keywords, the mirror and both CSV descriptions", () => {
@@ -1731,7 +1753,7 @@ describe("the architecture, provider, editor and guide docs", () => {
     );
     expect(optimization).toContain(`holds exactly those ${word(nonSql)},`);
     expect(provider.getCapabilities().supportsResultPagination).toBe(false);
-    expect(optimization).toContain("Fourteen providers cannot serve page two.");
+    expect(optimization).toContain("Fifteen providers cannot serve page two.");
     expect(optimization).toContain("Qdrant, Oxia and S3-compatible object storage answer it with page one.");
     expect(optimization).toContain("The S3 row names no operation and, like the Oxia row, is the gate's whole answer:");
     expect(optimization).toContain(
@@ -1921,7 +1943,7 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
     expect(flow).toContain(
       "- On S3-compatible object storage the grounding carries bucket names only, never an object key, a prefix, a size or any object content (objects are listed by the Keys panel, not by the object walk).",
     );
-    expect(flow).toContain("On the twenty-two engines that declare no foreign keys at all");
+    expect(flow).toContain("On the twenty-three engines that declare no foreign keys at all");
     expect(flow).toContain(
       "Qdrant, Oxia, Databend, S3-compatible object storage and Kubernetes) this block carries no relations",
     );
@@ -1949,19 +1971,27 @@ describe("the complete engine lists outside the agent docs", () => {
     expect(read("README_ko.md")).toContain(
       "InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes에 연결할 수 있으며",
     );
-    // The newest-engine history names Kubernetes as the newest, S3 one step back and Databend before S3, in every README
-    // that carries it.
-    expect(readme).toContain("Kubernetes is the newest: kubectl read commands");
+    // The newest-engine history names MQTT as the newest, Kubernetes one step back, S3 before that and Databend
+    // before S3, in every README that carries it. The chain is a claim about ORDER, so each link is pinned at both
+    // ends: an engine added without moving the head leaves the previous head claiming a title it no longer holds,
+    // which is exactly what this change did to Kubernetes until the `not` assertions below were added.
+    expect(readme).toContain("MQTT is the newest: one subscription reads");
+    expect(readme).not.toContain("Kubernetes is the newest");
+    expect(readme).toContain("Kubernetes came before MQTT: kubectl read commands");
     expect(readme).toContain("S3-compatible object storage came before Kubernetes: AWS CLI read commands");
     expect(readme).toContain("Databend came before S3-compatible object storage: ");
-    expect(zh).toContain("Kubernetes 是最新的一个：");
+    expect(zh).toContain("MQTT 是最新的一个：");
+    expect(zh).not.toContain("Kubernetes 是最新的一个");
+    expect(zh).toContain("Kubernetes 在 MQTT 之前：");
     expect(zh).toContain("S3-compatible object storage 在 Kubernetes 之前：");
     expect(zh).toContain("Databend 在 S3-compatible object storage 之前：");
     expect(zh).not.toContain("Databend 是最新的一个");
     expect(zh).toContain("它在 MinIO、Silo、Garage 和 RustFS 上验证过，没有在任何托管服务上验证过。");
     const ko = read("README_ko.md");
     expect(ko).toContain("MinIO, Silo, Garage, RustFS에서 검증되었으며 호스팅 서비스에서는 검증되지 않았습니다.");
-    expect(ko).toContain("가장 최근에 추가된 엔진은 Kubernetes입니다.");
+    expect(ko).toContain("가장 최근에 추가된 엔진은 MQTT입니다.");
+    expect(ko).not.toContain("가장 최근에 추가된 엔진은 Kubernetes입니다.");
+    expect(ko).toContain("MQTT 이전에 추가된 엔진은 Kubernetes입니다.");
     expect(ko).toContain("S3-compatible object storage는 Kubernetes보다 먼저 추가된 엔진입니다.");
     expect(ko).toContain("Databend는 S3-compatible object storage보다 먼저 추가된 엔진입니다.");
     expect(ko).not.toContain("가장 최근에 추가된 엔진은 Databend입니다");

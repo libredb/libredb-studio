@@ -347,6 +347,18 @@
   "selectQuery": "kubectl get Order\"Items -n c0",
   "countQuery": null
  },
+ "mqtt": {
+  "queryLanguage": "json",
+  "queryDialect": "mqtt",
+  "tabType": "mqtt",
+  "monacoLanguage": "json",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "// MQTT has no query console. Order\"Items opens in its Source tab from the Keys panel.",
+  "selectQuery": "// MQTT has no query console. Order\"Items opens in its Source tab from the Keys panel.",
+  "countQuery": null
+ },
  "libredb": {
   "queryLanguage": "json",
   "queryDialect": "libredb",

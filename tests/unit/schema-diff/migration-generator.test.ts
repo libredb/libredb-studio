@@ -1111,6 +1111,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     databend: "engine-has-no-foreign-key",
     s3: "engine-has-no-foreign-key",
     kubernetes: "engine-has-no-foreign-key",
+    mqtt: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1248,6 +1249,12 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   // Not a table store: an object is bytes under a key, and the columns a listing shows are its fixed shape.
   s3: { label: "S3-compatible object storage", reason: "with no schema, so there is no column definition to change" },
   kubernetes: { label: "Kubernetes", reason: "and Studio writes none, so there is no column definition to change" },
+  // Not a store at all (#1635): a broker holds messages on topics, and the columns a read shows are the fixed
+  // shape of a message.
+  mqtt: {
+    label: "MQTT",
+    reason: "A broker keeps no schema and no catalog, so there is no column definition to change.",
+  },
 };
 
 /**
@@ -1529,6 +1536,7 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "oxia",
           "s3",
           "kubernetes",
+          "mqtt",
         ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
@@ -1571,10 +1579,10 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   sqlite: false, // runs its own transaction (module docstring)
   libsql: false, // SQLite fork, same reasoning, plus its own Hrana-stream note (module docstring)
   cassandra: false, // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
-  // The remaining sixteen each have a recorded reason for having no `BEGIN;` to emit, in this
+  // The remaining twenty-two each have a recorded reason for having no `BEGIN;` to emit, in this
   // same module (`NO_COLUMN_MODIFICATION`), in `src/lib/sql/grammar.ts` (`NON_SQL_DIALECTS`)
   // or in the provider doc named on the line — this table applies those established facts to
-  // the wrapper fallback rather than asserting fresh ones, so none of the sixteen needs a new
+  // the wrapper fallback rather than asserting fresh ones, so none of the twenty-two needs a new
   // live probe. What none of them means is "the wrapper bracketed nothing": see the
   // added-table fixture below.
   mongodb: false, // not SQL text at all (`NON_SQL_DIALECTS`); wrapping non-SQL in SQL statements is wrong regardless of Mongo's own transaction API
@@ -1598,6 +1606,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   databend: false, // a DDL statement commits the open transaction, so BEGIN; brackets nothing, the Oracle reason (module docstring)
   s3: false, // one AWS CLI subset command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   kubernetes: false, // one kubectl statement, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  mqtt: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1635,6 +1644,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "oxia",
             "s3",
             "kubernetes",
+            "mqtt",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);

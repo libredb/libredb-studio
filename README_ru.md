@@ -110,9 +110,9 @@ LibreDB Studio устроен наоборот: **инструмент прих�
 
 ## Основные возможности
 
-### Двадцать девять СУБД, один интерфейс
+### Тридцать СУБД, один интерфейс
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT
 
 Для всех SQL-СУБД доступен одинаковый набор инструментов: дерево объектов базы (схемы, таблицы, столбцы), ER-диаграммы, сравнение схем и панели мониторинга. MongoDB и Redis работают не на SQL, поэтому ER-диаграмм и сравнения схем для них нет.
 
@@ -150,6 +150,7 @@ ER-диаграмма для Elasticsearch и OpenSearch показывает и
 | **Oxia** | `@grpc/grpc-js` (чистый JavaScript, gRPC, порт 6648) | Команды `oxia client` только для чтения (`get`, `list`, `range-scan`), шарды в дереве и каждый ключ в панели ключей |
 | **S3-compatible object storage** | нет, HTTP (S3 REST API, адресация по пути, подпись собственным кодом SigV4 Studio; `hyparquet` для предпросмотра Parquet) | Команды чтения AWS CLI, только для чтения (`aws s3 ls`, `aws s3api list-buckets`, `aws s3api head-object`, `aws s3api list-object-versions`), и собственная команда Studio `preview`; бакеты в дереве и папки в панели ключей, по одному уровню; метаданные объекта и ограниченный предпросмотр текста, JSON, CSV и Parquet. Проверено на MinIO, Silo, Garage и RustFS; на AWS S3 и облачных сервисах не проверялось |
 | **Kubernetes** | Без драйвера, по HTTP (REST API сервера API, порт 6443) | Только чтение: подмножество kubectl в редакторе (`get`, `describe`, `logs`, `top`, `events`, `explain`, `auth can-i`), пространства имён и их типы в дереве с YAML-представлением каждого объекта и импорт kubeconfig в диалоге подключения. Значения Secret никогда не показываются |
+| **MQTT** | `mqtt-packet` (только парсер; пять пакетов, которые отправляет Studio, менеджер соединения и односторонний клапан написаны в самом Studio) | Только чтение по построению: исходящий путь кодирует только CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ и DISCONNECT, функции, записывающей PUBLISH, не существует, а CONNECT не несёт Will. Панель ключей строит дерево топиков по одной подписке и показывает рядом с каждой строкой остаток времени жизни, сообщённый самим сервером; топик открывается с полезной нагрузкой и метаданными. В MQTT нет команды, перечисляющей топики, поэтому ни одно чтение не объявляет себя полным: каждое сообщает, что увидело, почему остановилось и какую потерю может доказать. Фильтры `$share/`, `$queue/` и `$exclusive/` отклоняются до отправки SUBSCRIBE, потому что каждый из них отбирает сообщения у устройств, подписанных рядом со Studio. Проверено на Mosquitto, EMQX, HiveMQ CE, NanoMQ и RabbitMQ 4 |
 | **Redis** | `ioredis` | Редактор команд, просмотр ключей, мониторинг на основе INFO |
 
 > **Защита соединения настраивается одинаково для всех СУБД.** SSH-туннель открывается до подключения к базе, поэтому он работает с любой СУБД, если подключение задано хостом и портом. Исключение — Kafka: её клиент подключается к каждому брокеру по отдельному адресу, и туннель до одного адреса здесь не поможет. Если подключение задано строкой подключения (так можно для MongoDB, Couchbase, ClickHouse и libSQL), туннель не используется. У SQLite и DuckDB сетевого соединения нет вообще. Настройки SSL/TLS доступны для всех СУБД, кроме файловых. Для Trino TLS обязателен: без него координатор не принимает пароль.

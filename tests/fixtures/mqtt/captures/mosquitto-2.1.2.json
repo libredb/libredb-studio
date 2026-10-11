@@ -1,0 +1,13 @@
+{
+ "broker": "mosquitto-2.1.2",
+ "filter": "fabrika/#",
+ "sent": [
+  "ECAABE1RVFQFAgA8BREAAAAAAA5saWJyZWRiLXJlY29yZA==",
+  "gg8AAQAACWZhYnJpa2EvIwQ="
+ ],
+ "received": [
+  "IA4AAAsiAAonAB6EgCEAFA==",
+  "kAQAAQAA",
+  "MRwAEmZhYnJpa2EvaGF0MS9kdXJ1bQBPRkZMSU5F"
+ ]
+}

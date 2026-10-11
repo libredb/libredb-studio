@@ -35,6 +35,7 @@ describe("DIALECT_EDITORS", () => {
       "libredb",
       "milvus",
       "mongodb",
+      "mqtt",
       "oxia",
       "promql",
       "qdrant",
@@ -51,6 +52,7 @@ describe("DIALECT_EDITORS", () => {
     expect(monacoIds).toEqual({
       sql: "sql",
       mongodb: "json",
+      mqtt: "json",
       libredb: "libredb",
       redis: "redis",
       promql: "promql",
@@ -66,12 +68,12 @@ describe("DIALECT_EDITORS", () => {
     });
   });
 
-  test("only the SQL tab, the two JSON tabs and the Milvus and Qdrant consoles have a formatter", () => {
+  test("only the SQL tab, the three JSON tabs and the Milvus and Qdrant consoles have a formatter", () => {
     const formatted = Object.entries(DIALECT_EDITORS)
       .filter(([, editor]) => editor.format !== undefined)
       .map(([type]) => type)
       .sort();
-    expect(formatted).toEqual(["kafka", "milvus", "mongodb", "qdrant", "sql"]);
+    expect(formatted).toEqual(["kafka", "milvus", "mongodb", "mqtt", "qdrant", "sql"]);
   });
 
   test("tab types that render in one Monaco language share one formatter, or all have none", () => {

@@ -43,6 +43,8 @@ const PAGED_STATEMENT: Readonly<Partial<Record<DatabaseType, string>>> = Object.
  *   does below: a read request carries its own limit and no offset can page it.
  * - `false` for `etcd` (#1089), whose own `prepareQuery` pins the command it is given: a command
  *   carries its own `--limit`, and no offset can page it.
+ * - `false` for `mqtt` (#1635), whose own `prepareQuery` hands the statement on with `wasLimited: false`: one
+ *   subscribe returns the messages it saw while it ran, and no offset can ask the broker for the ones it did not.
  * - `false` for `neo4j`, whose `prepareQuery` (`GraphBaseProvider`) hands the statement on untouched:
  *   the provider bounds a read by the rows it takes from the server, and no offset can page it.
  * - `false` for `influxdb` (InfluxDB spec I19), whose `prepareQuery` hands the InfluxQL text on untouched: the
@@ -94,6 +96,9 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   s3: false,
   // The list form of a single-type get, through the provider's own paging line (console/paging.ts).
   kubernetes: true,
+  // One subscribe returns what it saw, and the cursor of `MQTT_KEY_SCAN` says there is no page two; its own
+  // `prepareQuery` hands every statement on with `wasLimited: false` (#1635).
+  mqtt: false,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];

@@ -109,9 +109,9 @@ LibreDB Studioは逆向きです。**データをツールのところへ持っ�
 
 ## 主な機能
 
-### 29のエンジン、1つのインターフェース
+### 30のエンジン、1つのインターフェース
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT
 
 スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。Druid、Elasticsearch、OpenSearch、TrinoはこのビルドがパースできるURI形式を持たないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。検索クラスタのER図は箱だけで線がありません。インデックスは外部キーを宣言せず、エンジンのモデルにも宣言できる外部キーが存在しないためです。
 
@@ -145,6 +145,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 | **Oxia** | `@grpc/grpc-js`（純粋なJavaScript、gRPC、6648） | 読み取り専用の`oxia client`コマンド（`get`、`list`、`range-scan`）。ツリーにはシャード、キーパネルにはすべてのキー |
 | **S3-compatible object storage** | なし、HTTP（S3 REST API、パス形式、Studio独自のSigV4コードで署名。Parquetのプレビューには`hyparquet`） | 読み取り専用のAWS CLI読み取りコマンド（`aws s3 ls`、`aws s3api list-buckets`、`aws s3api head-object`、`aws s3api list-object-versions`）とStudio独自の`preview`。ツリーにはバケット、キーパネルにはフォルダを1階層ずつ表示し、オブジェクトのメタデータとテキスト、JSON、CSV、Parquetの上限付きプレビューを表示します。MinIO、Silo、Garage、RustFSで検証済みで、AWS S3やホスト型サービスでは検証していません |
 | **Kubernetes** | ドライバなし、HTTPのみ（APIサーバーのREST API、6443） | 読み取り専用：エディタでkubectlのサブセット（`get`、`describe`、`logs`、`top`、`events`、`explain`、`auth can-i`）。ツリーには名前空間とその種類、各オブジェクトのYAMLビュー。接続ダイアログでkubeconfigをインポートできます。Secretの値は表示しません |
+| **MQTT** | `mqtt-packet`（パーサーのみ。Studioが送る5種類のパケット、接続マネージャー、一方向バルブはStudio独自のコード） | 構造上の読み取り専用。送信経路はCONNECT、SUBSCRIBE、UNSUBSCRIBE、PINGREQ、DISCONNECTのみをエンコードでき、PUBLISHを書く関数は存在せず、CONNECTはWillを持ちません。キーパネルは1回のサブスクリプションからトピックツリーを構築し、各行の横にサーバー自身が報告した残り有効期間を表示します。トピックを開くとペイロードとメタデータが見られます。MQTTにはトピックを一覧する命令がないため、どの読み取りも完全であると主張しません。各読み取りは、何を見たか、なぜ停止したか、何を失ったと証明できるかを報告します。`$share/`、`$queue/`、`$exclusive/`のフィルターはSUBSCRIBEを送る前に拒否されます。いずれもStudioと並んでサブスクライブしている機器からメッセージを奪うためです。Mosquitto、EMQX、HiveMQ CE、NanoMQ、RabbitMQ 4で検証済み |
 | **Redis** | `ioredis` | コマンドエディタ、キーブラウザ、INFOベースの監視 |
 
 > **トランスポート層のセキュリティはエンジンごとではなく横断的な機能です。** SSHトンネルはproviderが接続する前に張られ、接続先はローカルのエンドポイントに書き換えられます。つまりエンジンに依存せず、hostとportが設定された接続であれば適用されます。ただしKafkaの接続はトンネルを拒否します。Kafkaクライアントは各brokerにそのbrokerが広告するアドレスで接続し、1つのアドレスだけを転送するトンネルはそのアドレスを運べないためです。接続文字列で入力した接続（MongoDB、Couchbase、ClickHouseで選択できます）はhostもportも持たないためトンネルされません。SQLiteとDuckDBも同様です。SSL/TLSパネルが実際に効くのはPostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Prometheus、Apache Kafkaです。Trinoでは任意ではなく必須に近い意味を持ちます。コーディネータが平文HTTP上のパスワードを拒否するためです。Oracle、MongoDB、Redisはこの設定を無視するため、この3つで暗号化されるかどうかはダイアログの選択ではなく接続文字列の内容次第になります。

@@ -1,0 +1,13 @@
+{
+ "broker": "mosquitto-rap",
+ "filter": "rap/#",
+ "sent": [
+  "ECAABE1RVFQFAgA8BREAAAAAAA5saWJyZWRiLXJlY29yZA==",
+  "ggsAAQAABXJhcC8jBA=="
+ ],
+ "received": [
+  "IA4AAAsiAAonAB6EgCEAFA==",
+  "kAQAAQAA",
+  "MRgAC3JhcC90dXR1bGFuAGVza2ktZGVnZXIxJQARcmFwL2NhbmxpLXJldGFpbjEAY2FubGktYW1hLXJldGFpbjE="
+ ]
+}

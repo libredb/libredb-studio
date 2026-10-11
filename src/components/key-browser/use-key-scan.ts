@@ -126,6 +126,13 @@ export interface KeyScanResult {
    * adds nothing to `scanned`: its pages overlap the global walk's.
    */
   readonly skipped: { readonly count: number; readonly reason: string } | null;
+  /**
+   * What the engine said about this read's completeness, or null where it said nothing (#1635).
+   *
+   * The latest page's answer, not an accumulation: an engine that answers it answers it on every page, and
+   * the current read's own words are what a reader needs rather than a history of earlier ones.
+   */
+  readonly readOutcome: KeyScanPage["readOutcome"] | null;
   /** True while one page is in flight. */
   readonly busy: boolean;
   /** True while a `Scan all` is running, so the panel can offer `Stop` rather than a second press. */
@@ -252,6 +259,7 @@ export function useKeyScan(options: {
   const [nodeAdded, setNodeAdded] = useState<ReadonlyMap<string, number>>(new Map());
   const [types, setTypes] = useState<ReadonlyMap<string, string>>(new Map());
   const [skipped, setSkipped] = useState<{ readonly count: number; readonly reason: string } | null>(null);
+  const [readOutcome, setReadOutcome] = useState<KeyScanPage["readOutcome"] | null>(null);
 
   /*
    * Refs, not state, and the reason is the loop rather than performance. `scanAll` takes several
@@ -398,6 +406,9 @@ export function useKeyScan(options: {
         skipped: body.skipped,
         // A level page's folders, absent on every other page (Keys panel levels, spec 3.5).
         prefixes: body.prefixes,
+        // Absent stays absent: an engine that says nothing about completeness draws no line, and a panel
+        // that invented one would be making a claim the provider declined to make (#1635).
+        readOutcome: body.readOutcome,
       };
     },
     [connection, database, levels],
@@ -505,6 +516,9 @@ export function useKeyScan(options: {
        * nothing out, with no `skipped` or with a count of 0, changes nothing, so the panel draws no
        * line for it.
        */
+      // Absent leaves the previous answer alone rather than clearing it: a page that says nothing about
+      // completeness has not withdrawn what an earlier one established.
+      if (page.readOutcome !== undefined) setReadOutcome(page.readOutcome);
       if (page.skipped !== undefined && page.skipped.count > 0) {
         skippedKeys.current = {
           count: (skippedKeys.current?.count ?? 0) + page.skipped.count,
@@ -755,6 +769,10 @@ export function useKeyScan(options: {
     setFolders({ question: null, list: [] });
     setScanned(0);
     setSkipped(null);
+    // Cleared with the rest, and that is the whole point: a completeness sentence belongs to the read that
+    // produced it. Left standing, an engine that declares nothing inherits the previous engine's line, so a
+    // Redis or etcd panel would carry an MQTT sentence about a read it never performed.
+    setReadOutcome(null);
     setTotal(null);
     setClustered(undefined);
     setExhausted(false);
@@ -773,6 +791,7 @@ export function useKeyScan(options: {
     total,
     clustered,
     skipped,
+    readOutcome,
     types,
     busy,
     scanningAll,

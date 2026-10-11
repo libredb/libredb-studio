@@ -77,6 +77,7 @@ const SeedDatabaseType = z.enum([
   "databend",
   "s3",
   "kubernetes",
+  "mqtt",
 ]);
 
 export const SeedDefaultsSchema = z.object({

@@ -86,6 +86,7 @@ const ALL_TYPES: DatabaseType[] = [
   "databend",
   "s3",
   "kubernetes",
+  "mqtt",
 ];
 
 describe("db-ui-config", () => {
@@ -932,14 +933,14 @@ describe("declared connection-field copy (#1085)", () => {
     // The consent box draws the type's own sentence, with no fallback, so a type that takes the field and declares no
     // hint would draw an empty paragraph under the box (InfluxDB spec R4).
     const taking = ALL_TYPES.filter((type) => takesConnectionField(type, "allowInsecureAuth"));
-    expect(taking).toEqual(["db2", "influxdb", "influxdb3", "oxia", "databend", "s3"]);
+    expect(taking).toEqual(["db2", "influxdb", "influxdb3", "oxia", "databend", "s3", "mqtt"]);
     for (const type of taking) {
       const hint = connectionFieldHint(getDBConfig(type), "allowInsecureAuth");
       expect({ type, hint: typeof hint, empty: hint?.length === 0 }).toEqual({ type, hint: "string", empty: false });
     }
   });
 
-  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, s3 and kubernetes declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, s3, kubernetes and mqtt declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
@@ -958,6 +959,7 @@ describe("declared connection-field copy (#1085)", () => {
       "databend",
       "s3",
       "kubernetes",
+      "mqtt",
     ]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
@@ -1360,6 +1362,10 @@ describe("db-showcase", () => {
         // Behind S3 and ahead of libSQL: the platform a cloud-native team runs its databases on, met beside the
         // databases rather than as one of them, and the newest name on this page.
         "kubernetes",
+        // Behind Kubernetes and ahead of libSQL (#1635): the broker a team runs beside its databases, met beside
+        // them rather than as one of them, and the newest name on this page, so only libSQL and the embedded store
+        // move (the Milvus, Qdrant, Oxia, Databend, S3 and Kubernetes precedent).
+        "mqtt",
         "libsql",
         "libredb",
       ]);

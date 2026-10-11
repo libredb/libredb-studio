@@ -350,7 +350,7 @@ describe("the installed editor's language ids", () => {
     // whose shard and key each declare `json`, 83 before Databend, whose four kinds each declare `sql`, 87 before
     // S3, whose bucket and object each declare `json`, and 89 before Kubernetes, whose 37 built-in kinds each declare
     // `yaml`.
-    expect(declared).toHaveLength(126);
+    expect(declared).toHaveLength(127);
 
     const unregistered = declared.filter((entry) => !registered.has(entry.language));
     // Named, so a failure says which kind on which engine declared what, rather than false. This

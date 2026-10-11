@@ -32,7 +32,7 @@ LibreDB Studio provides a RESTful API for database management operations. The AP
 ### Key Features
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
-- **Multi-Database Support** - Twenty-nine engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes
+- **Multi-Database Support** - Thirty engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes
 - **AI-Powered Insights** - EXPLAIN explanations, query-safety analysis and schema docs, streamed
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
@@ -2144,7 +2144,7 @@ The object is one shape on the wire. Fields the server reads from a request body
 change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
 `host`, `port`, `user`, `password`, `database`, `schema`, `connectionString`), plus `ssl`,
 `sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
-`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3), `dataServers` (Oxia), `warehouse` (Databend), `region` (S3), `apiPath`, `namespaces` and `tlsServerName` (Kubernetes), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
+`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3, MQTT), `dataServers` (Oxia), `warehouse` (Databend), `region` (S3), `apiPath`, `namespaces` and `tlsServerName` (Kubernetes), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
 (Elasticsearch, #708), and `readOnly` (#1089). `color`, `environment`, `group`,
 `managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
 
@@ -2172,7 +2172,7 @@ interface DatabaseConnection {
   localDataCenter?: string; // Cassandra only, and REQUIRED there: the driver refuses to connect without it (`datacenter1` on a stock single node)
   authSource?: string; // MongoDB only: the database the credentials live in (`?authSource=admin`). Not the database being opened - without it the driver checks the user against that one, which fails as a credentials error
   saslMechanism?: 'PLAIN' | 'SCRAM-SHA-256' | 'SCRAM-SHA-512'; // Kafka only: the SASL mechanism that checks user and password, absent meaning none. A user or password with no mechanism is refused, and every mechanism requires TLS
-  allowInsecureAuth?: boolean; // Db2, both InfluxDB types, Oxia, Databend and S3 (#786): connect with no TLS although the password (Db2, Databend), the password or token (InfluxDB) or the token (Oxia) then crosses the network in cleartext; without it the Db2 provider refuses a connection that has no TLS, both InfluxDB providers one that sends its secret with no TLS to a host that is not loopback, the Oxia provider one that sends a token with no TLS to a host that is not this machine (docs/providers/oxia.md section 4.6), and the Databend provider one that sends its password with no TLS to a host that is not loopback, and the S3 provider one that connects over plain HTTP to a host that is not loopback, signed or not
+  allowInsecureAuth?: boolean; // Db2, both InfluxDB types, Oxia, Databend, S3 and MQTT (#786): connect with no TLS although the password (Db2, Databend), the password or token (InfluxDB) or the token (Oxia) then crosses the network in cleartext; without it the Db2 provider refuses a connection that has no TLS, both InfluxDB providers one that sends its secret with no TLS to a host that is not loopback, the Oxia provider one that sends a token with no TLS to a host that is not this machine (docs/providers/oxia.md section 4.6), and the Databend provider one that sends its password with no TLS to a host that is not loopback, and the S3 provider one that connects over plain HTTP to a host that is not loopback, signed or not; and the MQTT provider one that sends its password with no TLS to a host that is not this machine and is not carried by an SSH tunnel, because an MQTT connection carries its username and password in the CONNECT packet, which crosses the network in cleartext when the SSL mode is disable
   dataServers?: string; // Oxia only: a cluster's data-server addresses, host:port entries separated by commas or whitespace, at most 64; see docs/providers/oxia.md section 4.4
   warehouse?: string;   // Databend only: the warehouse every statement runs on, sent as the X-DATABEND-WAREHOUSE header; Databend Cloud requires one (the warehouse= value of its DSN) and resumes a suspended one on the first statement, billing while it runs. Not a secret
   region?: string;      // S3-compatible object storage only: the region every request is signed for (the SigV4 credential scope); absent or empty means us-east-1. Garage refuses any region but its s3_region; a MinIO or Silo started with a site region refuses bucket and object reads signed for another. Not a secret
@@ -2189,7 +2189,7 @@ interface DatabaseConnection {
   apiKeySecret?: string;   // the pair's secret half; either alone (after trim) falls back to user/password rather than sending a key built from an empty half
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3' | 'kubernetes';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3' | 'kubernetes' | 'mqtt';
 type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 ```
 

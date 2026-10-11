@@ -1,0 +1,13 @@
+{
+ "broker": "hivemq-ce",
+ "filter": "yuk/bolge0/cihaz0/#",
+ "sent": [
+  "ECAABE1RVFQFAgA8BREAAAAAAA5saWJyZWRiLXJlY29yZA==",
+  "ghkAAQAAE3l1ay9ib2xnZTAvY2loYXowLyME"
+ ],
+ "received": [
+  "IAkAAAYhAAoiAAU=",
+  "kAQAAQAA",
+  "MRsAF3l1ay9ib2xnZTAvY2loYXowL29sY3VtADA="
+ ]
+}

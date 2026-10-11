@@ -98,6 +98,7 @@ const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.fre
   s3: null,
   // One kubectl statement: the dialect's record withholds the action, and a Kubernetes kind has no row count.
   kubernetes: null,
+  mqtt: null,
 });
 
 async function censusCapabilities(type: DatabaseType): Promise<ProviderCapabilities> {

@@ -346,6 +346,14 @@ export async function createDatabaseProvider(
       return new S3Provider(connection, options, execution);
     }
 
+    // MQTT: a key-value provider, placed here beside the platforms because its Keys panel is the whole
+    // surface and it has no query console of its own.
+    case "mqtt": {
+      // The explicit /index specifier keeps this dynamic import statically analysable.
+      const { MqttProvider } = await import("./providers/keyvalue/mqtt/index");
+      return new MqttProvider(connection, options);
+    }
+
     // Platforms - dynamically imported
     case "kubernetes": {
       // The explicit /index specifier keeps this dynamic import statically analysable. Read-only whatever the flag
@@ -365,7 +373,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, s3, kubernetes, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, s3, mqtt, kubernetes, libredb`,
         connection.type,
       );
   }
