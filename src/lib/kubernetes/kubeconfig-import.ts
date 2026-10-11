@@ -400,8 +400,10 @@ function readContext(item: unknown, clusters: NamedEntries, users: NamedEntries)
   let clientPair = false;
   if (!plugin && user !== undefined) {
     const token = valueOf(user, "token");
-    if (token.kind === "text") fields.password = token.text;
-    else if (token.kind !== "absent") return { refusal: notTextRefusal("token") };
+    // An empty token is no token: the connection would send none, so it is left out and the notice below is given.
+    if (token.kind === "text") {
+      if (token.text !== "") fields.password = token.text;
+    } else if (token.kind !== "absent") return { refusal: notTextRefusal("token") };
     const certificate = pemOf(user, "client-certificate-data");
     if ("refusal" in certificate) return certificate;
     const key = pemOf(user, "client-key-data");

@@ -293,6 +293,12 @@ describe("a user that gives no credential Studio imports", () => {
     expect(only(kubeconfig({ user: `token: ${MARKER}` })).notices).toEqual([]);
   });
 
+  test('an empty token (token: "") is no credential: the token is not filled and the notice is given', () => {
+    const context = only(kubeconfig({ user: 'token: ""' }));
+    expect(context.fields).toEqual({ host: "api.example", port: "6443", database: "shop" });
+    expect(context.notices).toEqual([S.noCredential]);
+  });
+
   test("client certificate data gives no notice", () => {
     const user = `client-certificate-data: ${b64(CERT_PEM)}\n      client-key-data: ${b64(KEY_PEM)}`;
     const context = only(kubeconfig({ user }));

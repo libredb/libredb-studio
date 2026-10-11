@@ -112,7 +112,7 @@ A context whose user signs in through a credential plugin, as every EKS, GKE and
 
 > This context's user signs in through a credential plugin (exec or auth-provider), which Studio does not run, so the Token is empty. Create a ServiceAccount token bound to the view or studio-reader ClusterRole and paste it under Token, as docs/providers/kubernetes.md shows; on your own machine, kubectl proxy is another way in.
 
-A context that yields neither a token nor a client certificate and key that Studio imports, such as one whose user is empty (`user: {}`), names no user, or holds only a file path or a user name and password, is imported with this notice, after the Not imported notice when there is one:
+A context that yields neither a token nor a client certificate and key that Studio imports, such as one whose user is empty (`user: {}`) or holds an empty token (`token: ""`), names no user, or holds only a file path or a user name and password, is imported with this notice, after the Not imported notice when there is one:
 
 > This context gives no token and no client certificate and key that Studio imports, so its requests would reach the API server as an anonymous user, which most clusters refuse. Create a ServiceAccount token bound to the view or studio-reader ClusterRole and paste it under Token, as the ServiceAccount token section of docs/providers/kubernetes.md shows.
 
