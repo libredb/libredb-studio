@@ -132,6 +132,27 @@ export function rowActionsForKind(capabilities: ProviderCapabilities, kindId: st
 }
 
 /**
+ * The row action an activation of this kind's rows runs (`KindRowAction.activates`), or undefined when none declares it.
+ *
+ * Read through `rowActionsForKind`, so a malformed entry activates nothing, and only a literal `true` activates. Two
+ * actions that both activate one kind are a declaration error and raise here, at the first activation of such a row,
+ * rather than one of them being picked by its place in the list.
+ */
+export function activationRowActionForKind(
+  capabilities: ProviderCapabilities,
+  kindId: string,
+): KindRowAction | undefined {
+  const activating = rowActionsForKind(capabilities, kindId).filter(
+    (action) => (action as { activates?: unknown }).activates === true,
+  );
+  if (activating.length > 1)
+    throw new Error(
+      `the kind "${kindId}" declares more than one activating row action: ${activating.map((action) => action.id).join(", ")}`,
+    );
+  return activating[0];
+}
+
+/**
  * The one kind only the Keys panel enumerates, or undefined on every engine that declares none
  * (#1089 3.4, 4.6).
  *

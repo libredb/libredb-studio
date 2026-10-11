@@ -31,6 +31,7 @@ import {
   applicableKinds,
   kindGroup,
   kindsForContainer,
+  activationRowActionForKind,
   rowActionsForKind,
 } from "@/lib/db/object-kinds";
 import type { KindRowAction } from "@/exports/types";
@@ -900,6 +901,44 @@ describe("kindsForContainer, applicableKinds and rowActionsForKind", () => {
     expect(rowActionsForKind(hostile, "pods").map((action) => action.id)).toEqual(["logs"]);
     const notAList = { ...cluster, rowActions: { id: "describe" } } as unknown as ProviderCapabilities;
     expect(rowActionsForKind(notAList, "pods")).toEqual([]);
+  });
+
+  test("a kind's activation action is the one row action that declares activates, and none where none does", () => {
+    const activating = {
+      ...cluster,
+      rowActions: [
+        { id: "describe", label: "Describe", kinds: ["pods", "nodes"] },
+        { id: "logs", label: "Logs", kinds: ["pods"], activates: true },
+      ],
+    } as unknown as ProviderCapabilities;
+    expect(activationRowActionForKind(activating, "pods")?.id).toBe("logs");
+    expect(activationRowActionForKind(activating, "nodes")).toBeUndefined();
+    expect(activationRowActionForKind(activating, "widgets")).toBeUndefined();
+    expect(activationRowActionForKind(cluster, "pods")).toBeUndefined();
+    expect(activationRowActionForKind(withKinds, "table")).toBeUndefined();
+  });
+
+  test("only a literal true activates, so a host's truthy stand-in is read as no activation", () => {
+    const loose = {
+      ...cluster,
+      rowActions: [{ id: "logs", label: "Logs", kinds: ["pods"], activates: "yes" }],
+    } as unknown as ProviderCapabilities;
+    expect(activationRowActionForKind(loose, "pods")).toBeUndefined();
+  });
+
+  test("two actions that both activate one kind are a declaration error, raised with both ids", () => {
+    const twice = {
+      ...cluster,
+      rowActions: [
+        { id: "describe", label: "Describe", kinds: ["pods", "nodes"], activates: true },
+        { id: "logs", label: "Logs", kinds: ["pods"], activates: true },
+      ],
+    } as unknown as ProviderCapabilities;
+    expect(() => activationRowActionForKind(twice, "pods")).toThrow(
+      'the kind "pods" declares more than one activating row action: describe, logs',
+    );
+    // The rule is per kind: a kind only one of them names is still answered.
+    expect(activationRowActionForKind(twice, "nodes")?.id).toBe("describe");
   });
 
   test("a group is read only when it is a record with a string id and label, so a host's malformed one is no group", () => {

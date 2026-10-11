@@ -862,6 +862,15 @@ export interface KindRowAction {
   readonly label: string;
   /** The `ObjectKindSpec.id`s whose rows offer this action. */
   readonly kinds: readonly string[];
+  /**
+   * Activating a row of these kinds (a click, Enter or Space in the object tree) runs this action
+   * instead of opening the kind's source, the way activating a relation previews its rows.
+   *
+   * At most one action may declare it for a kind: one gesture has one behaviour per row, so a second
+   * is a declaration error that `activationRowActionForKind` raises. A relation kind's data preview
+   * still wins over it. Absent means the action runs from the row menu only.
+   */
+  readonly activates?: true;
 }
 
 export interface ProviderCapabilities {
