@@ -109,7 +109,7 @@ defaults:                    # Optional — merges managed/environment/ssl only
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus|kafka|etcd|neo4j|milvus|qdrant|influxdb|influxdb3|oxia|databend|s3
+    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus|kafka|etcd|neo4j|milvus|qdrant|influxdb|influxdb3|oxia|databend|s3|kubernetes
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -282,7 +282,7 @@ connections:
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd`, `neo4j`, `milvus`, `qdrant`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3` |
+| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd`, `neo4j`, `milvus`, `qdrant`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3`, `kubernetes` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**. S3: the optional pinned bucket) |
@@ -298,7 +298,7 @@ connections:
 | `connections[].connectionString` | No | - | Full connection string (use `${ENV_VAR}`). Read only by postgres, mysql, sqlite (as the database file path), libsql, oracle, db2, clickhouse, mongodb and couchbase; every other type, mssql included, refuses it when the file loads, naming the connection and the type ([The connection string refusal](#the-connection-string-refusal)) |
 | `connections[].roles` | Yes | — | Access control: `["*"]`, `["admin"]`, `["user"]`, `["admin", "user"]` |
 | `connections[].managed` | No | from defaults | `true` = admin-controlled: not editable in the UI, its secrets stay on the server; `false` = an editable copy for the user |
-| `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia and S3-compatible object storage); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
+| `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage and Kubernetes); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
 | `connections[].environment` | No | from defaults | Environment badge |
 | `connections[].group` | No | — | Group label |
 | `connections[].color` | No | — | Hex color for badge (e.g., `#10B981`) |
@@ -315,7 +315,7 @@ connections:
 | `connections[].apiPath` | No | absent | Kubernetes only: a path every request goes under, such as Rancher's `/k8s/clusters/<cluster id>`; no segment may be `api`, `apis`, `proxy`, `namespaces`, `nodes`, `services`, `pods`, `openapi` or `version`. |
 | `connections[].tlsServerName` | No | absent | Kubernetes only: the name the API server's certificate is checked against and sent as SNI, a kubeconfig's `tls-server-name`. |
 | `connections[].authSource` | No | — | MongoDB: the database its credentials live in (`admin` in the ordinary deployment). Without it the driver checks the user against the database being opened, which reports a credentials error |
-| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An etcd, Oxia or S3 connection refuses `mcp: true` when the file loads: MCP is not offered for it |
+| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An etcd, Oxia, S3 or Kubernetes connection refuses `mcp: true` when the file loads: MCP is not offered for it |
 
 ### MCP opt-in
 
@@ -328,7 +328,7 @@ With no seed file, or with no entry that opts in for the token's role, `list_con
 ### A read-only cluster for everyone
 
 `readOnly: true` makes a connection refuse every write, value edit and maintenance operation before any request, on an engine whose provider keeps the mode.
-etcd's, Neo4j's, Milvus's, Qdrant's, both InfluxDB types', Oxia's and S3's do today ([providers/etcd.md](providers/etcd.md), section 3.4, the Neo4j recipe below, [providers/milvus.md](providers/milvus.md) and [providers/qdrant.md](providers/qdrant.md), section 3.4 of each, the InfluxDB recipes above, [providers/oxia.md](providers/oxia.md), section 3.5, and [providers/s3.md](providers/s3.md), section 3.5), and on every other engine the file is refused at load, with a sentence naming the type and the field.
+etcd's, Neo4j's, Milvus's, Qdrant's, both InfluxDB types', Oxia's, S3's and Kubernetes's do today ([providers/etcd.md](providers/etcd.md), section 3.4, the Neo4j recipe below, [providers/milvus.md](providers/milvus.md) and [providers/qdrant.md](providers/qdrant.md), section 3.4 of each, the InfluxDB recipes above, [providers/oxia.md](providers/oxia.md), section 3.5, [providers/s3.md](providers/s3.md), section 3.5, and [providers/kubernetes.md](providers/kubernetes.md), section 9), and on every other engine the file is refused at load, with a sentence naming the type and the field.
 The recipe is two seeds of one cluster: one every role reaches, read-only, and one for the people who may write.
 
 ```yaml
@@ -431,7 +431,7 @@ connections:
 4. A literal password is used as written and logs a warning once per connection.
 5. With `SEED_LITERAL_VALUES=true`, steps 2 to 4 do not happen: every value is used as written (see [Literal values written by a platform](#literal-values-written-by-a-platform))
 
-**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiKeyId`, `apiKeySecret`, and the TLS material under `ssl`: `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey`.
+**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`, `apiKeySecret`, and the TLS material under `ssl`: `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey`.
 
 ### Literal values written by a platform
 
@@ -468,7 +468,7 @@ The part before `#` is the KV v2 path (`<mount>/data/<name>`) and the part after
 
 **Quote the value.** YAML reads an unquoted `#` as the start of a comment, so `password: ${vault:secret/data/prod/postgres#password}` sets the password to the literal text `${vault:secret/data/prod/postgres` and drops the key. The quotes above are not optional.
 
-Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiKeyId`, `apiKeySecret`, `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey`).
+Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`, `apiKeySecret`, `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey`).
 A reference with no `#key` fails when the connection is opened.
 
 A Vault reference is read lazily, one connection at a time:
@@ -1011,7 +1011,7 @@ Pages that use the lighter connection list (the admin Overview and Operations ta
 | `mcp` that is not a boolean, or `mcp` in `defaults` | The whole file fails like any invalid config; every MCP tool answers that the connection configuration could not be read |
 | `readOnly: true` on a connection whose type does not enforce it, on a connection whose effective `managed` is false, or `readOnly` in `defaults` | The whole file fails like any invalid config, and the error names the connection, the field and the reason |
 | `readOnly: true` on a connection whose literal credential matches a default its type declares, or with no password where its type declares it accepts none | The whole file fails like any invalid config, and the error names the connection and `password`, never the value; a `${ENV}` or `${vault:...}` reference is checked once it resolves, and the connection is refused before anything is dialled |
-| `mcp: true` on an etcd, Oxia or S3 connection | The whole file fails like any invalid config, and the error names `mcp` and the type, `etcd`, `oxia` or `s3` |
+| `mcp: true` on an etcd, Oxia, S3 or Kubernetes connection | The whole file fails like any invalid config, and the error names `mcp` and the type, `etcd`, `oxia`, `s3` or `kubernetes` |
 | Unrecognized `version` | Endpoint returns 500. Future versions require code update. |
 | `${ENV_VAR}` not defined | That connection is **skipped**. Others work normally. Error logged, and the Seed sources card lists the skip with the variable; the endpoint's record also names the field. |
 | `${vault:...}` reference, Vault unreachable / path or key missing / token refused | The connection fails with an explicit error **when it is opened**. Listing connections is unaffected, and so is every other connection. |

@@ -109,9 +109,9 @@ LibreDB Studioは逆向きです。**データをツールのところへ持っ�
 
 ## 主な機能
 
-### 28のエンジン、1つのインターフェース
+### 29のエンジン、1つのインターフェース
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes
 
 スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。Druid、Elasticsearch、OpenSearch、TrinoはこのビルドがパースできるURI形式を持たないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。検索クラスタのER図は箱だけで線がありません。インデックスは外部キーを宣言せず、エンジンのモデルにも宣言できる外部キーが存在しないためです。
 
@@ -144,6 +144,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 | **InfluxDB 3 (SQL)** | なし、HTTP（InfluxDB 3のSQL API、8181） | エディタで読み取り専用のSQL。InfluxDB 3 CoreとEnterpriseが対象。ツリーには接続先データベースのテーブルとその列。接続の設定にかかわらず読み取り専用：ルート表は書き込み、トークン、キャッシュ、プラグインのエンドポイントに届かず、設定のエンドポイントで届くのはデータベース一覧のGETだけで、読み取りキーワードで始まらない文はリクエストの前に拒否し、さらにサーバーのプランナーがあらゆる書き込みを拒否します。トークンのみでユーザー名なし。ループバックでもトンネル経由でもないホストへ平文HTTPで送るトークンは、接続が同意しない限り拒否。1.xや2.xのサーバーに向けるとInfluxDB (InfluxQL)を選ぶよう案内します |
 | **Oxia** | `@grpc/grpc-js`（純粋なJavaScript、gRPC、6648） | 読み取り専用の`oxia client`コマンド（`get`、`list`、`range-scan`）。ツリーにはシャード、キーパネルにはすべてのキー |
 | **S3-compatible object storage** | なし、HTTP（S3 REST API、パス形式、Studio独自のSigV4コードで署名。Parquetのプレビューには`hyparquet`） | 読み取り専用のAWS CLI読み取りコマンド（`aws s3 ls`、`aws s3api list-buckets`、`aws s3api head-object`、`aws s3api list-object-versions`）とStudio独自の`preview`。ツリーにはバケット、キーパネルにはフォルダを1階層ずつ表示し、オブジェクトのメタデータとテキスト、JSON、CSV、Parquetの上限付きプレビューを表示します。MinIO、Silo、Garage、RustFSで検証済みで、AWS S3やホスト型サービスでは検証していません |
+| **Kubernetes** | ドライバなし、HTTPのみ（APIサーバーのREST API、6443） | 読み取り専用：エディタでkubectlのサブセット（`get`、`describe`、`logs`、`top`、`events`、`explain`、`auth can-i`）。ツリーには名前空間とその種類、各オブジェクトのYAMLビュー。接続ダイアログでkubeconfigをインポートできます。Secretの値は表示しません |
 | **Redis** | `ioredis` | コマンドエディタ、キーブラウザ、INFOベースの監視 |
 
 > **トランスポート層のセキュリティはエンジンごとではなく横断的な機能です。** SSHトンネルはproviderが接続する前に張られ、接続先はローカルのエンドポイントに書き換えられます。つまりエンジンに依存せず、hostとportが設定された接続であれば適用されます。ただしKafkaの接続はトンネルを拒否します。Kafkaクライアントは各brokerにそのbrokerが広告するアドレスで接続し、1つのアドレスだけを転送するトンネルはそのアドレスを運べないためです。接続文字列で入力した接続（MongoDB、Couchbase、ClickHouseで選択できます）はhostもportも持たないためトンネルされません。SQLiteとDuckDBも同様です。SSL/TLSパネルが実際に効くのはPostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Prometheus、Apache Kafkaです。Trinoでは任意ではなく必須に近い意味を持ちます。コーディネータが平文HTTP上のパスワードを拒否するためです。Oracle、MongoDB、Redisはこの設定を無視するため、この3つで暗号化されるかどうかはダイアログの選択ではなく接続文字列の内容次第になります。

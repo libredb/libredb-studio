@@ -1316,7 +1316,7 @@ describe("packaging and listing copy no count gate reads", () => {
       "packaging/flatpak/org.libredb.Studio.desktop",
       "packaging/flatpark/org.libredb.Studio.desktop",
     ]) {
-      expect(read(file), file).toContain(";Qdrant;Oxia;S3;ObjectStorage;MinIO;IDE;");
+      expect(read(file), file).toContain(";Qdrant;Oxia;S3;ObjectStorage;MinIO;Kubernetes;IDE;");
     }
   });
 
@@ -1365,7 +1365,7 @@ function fixtureCell(fixture: (typeof S3_FIXTURES)[number]): string {
 
 /** The README line inserted above Databend's, exactly. */
 const README_S3_LINE =
-  "S3-compatible object storage is the newest: AWS CLI read commands typed in the editor, such as `aws s3api list-buckets`, `aws s3 ls`, `aws s3api head-object` and `aws s3api list-object-versions`, and Studio's own `preview` read buckets and objects over the S3 REST API with no SDK, signed by Studio's own code with only the keys typed into the connection; the tree shows buckets, the Keys panel walks folders one level at a time, and an object opens with its metadata and a capped preview of text, JSON, CSV or Parquet, read-only by construction, because Studio sends only GET and HEAD requests; it is verified on MinIO, Silo, Garage and RustFS, and not on AWS S3 or any hosted service.";
+  "S3-compatible object storage came before Kubernetes: AWS CLI read commands typed in the editor, such as `aws s3api list-buckets`, `aws s3 ls`, `aws s3api head-object` and `aws s3api list-object-versions`, and Studio's own `preview` read buckets and objects over the S3 REST API with no SDK, signed by Studio's own code with only the keys typed into the connection; the tree shows buckets, the Keys panel walks folders one level at a time, and an object opens with its metadata and a capped preview of text, JSON, CSV or Parquet, read-only by construction, because Studio sends only GET and HEAD requests; it is verified on MinIO, Silo, Garage and RustFS, and not on AWS S3 or any hosted service.";
 
 /** The README engine-table row, exactly. */
 const README_S3_ROW =
@@ -1435,15 +1435,17 @@ describe("DOCKERHUB.md", () => {
     expect(lines[oxia + 1]).toBe(
       "| **S3-compatible object storage** | none, HTTP | Read-only AWS CLI commands, bucket and folder browser, object preview |",
     );
-    expect(hub).toContain("Qdrant, Oxia and S3-compatible object storage** from your browser");
+    expect(hub).toContain("Qdrant, Oxia, S3-compatible object storage and Kubernetes** from your browser");
     expect(hub).toContain(`${Word(EXTERNAL_DATABASE_TYPES.length)} external engines share one interface.`);
     // The ordinal counts the table's rows: every external engine, then the embedded store.
     expect(SHIPPED_DATABASE_TYPES).toHaveLength(EXTERNAL_DATABASE_TYPES.length + 1);
     expect(hub).toContain(
-      `The ${word(SHIPPED_DATABASE_TYPES.length).replace(/-nine$/, "-ninth")} row is the embedded LibreDB store`,
+      `The ${word(SHIPPED_DATABASE_TYPES.length)
+        .replace(/-nine$/, "-ninth")
+        .replace(/ty$/, "tieth")} row is the embedded LibreDB store`,
     );
     expect(hub).toContain(
-      "Prometheus, InfluxDB, Apache Kafka, Oxia and S3-compatible object storage are read-only too",
+      "Prometheus, InfluxDB, Apache Kafka, Oxia, S3-compatible object storage and Kubernetes are read-only too",
     );
     expect(hub).toContain(`of one of the ${word(EXTERNAL_DATABASE_TYPES.length)} drivers above`);
   });
@@ -1451,7 +1453,7 @@ describe("DOCKERHUB.md", () => {
 
 /** The chart description, exactly. */
 const CHART_DESCRIPTION =
-  "Web-based SQL IDE for cloud-native teams supporting twenty-eight engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend and S3-compatible object storage";
+  "Web-based SQL IDE for cloud-native teams supporting twenty-nine engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage and Kubernetes";
 
 describe("the chart and the operator name S3 where an evaluator searches", () => {
   test("50. the description, the three keywords, the mirror and both CSV descriptions", () => {
@@ -1466,7 +1468,7 @@ describe("the chart and the operator name S3 where an evaluator searches", () =>
     expect(chart.keywords.slice(databend + 1, databend + 4)).toEqual(["s3", "object-storage", "minio"]);
     const readme = read("charts/libredb-studio/README.md");
     expect(readme).toContain(`supporting ${word(EXTERNAL_DATABASE_TYPES.length)} engines - `);
-    expect(readme).toContain("InfluxDB 3, Oxia, Databend and S3-compatible object storage.");
+    expect(readme).toContain("InfluxDB 3, Oxia, Databend, S3-compatible object storage and Kubernetes.");
     expect(readme).toContain(`--version ${chart.version} \\`);
     expect(read("operator/helm-charts/libredb-studio/Chart.yaml")).toBe(read("charts/libredb-studio/Chart.yaml"));
     const csv = parseYaml(
@@ -1477,9 +1479,11 @@ describe("the chart and the operator name S3 where an evaluator searches", () =>
     };
     expect(csv.metadata.annotations.description).toContain(`for ${word(EXTERNAL_DATABASE_TYPES.length)} engines - `);
     expect(csv.metadata.annotations.description).toContain(
-      "Oxia, Databend and S3-compatible object storage - with AI-powered query assistance.",
+      "Oxia, Databend, S3-compatible object storage and Kubernetes - with AI-powered query assistance.",
     );
-    expect(flat(csv.spec.description)).toContain("Oxia, Databend and S3-compatible object storage from the browser");
+    expect(flat(csv.spec.description)).toContain(
+      "Oxia, Databend, S3-compatible object storage and Kubernetes from the browser",
+    );
   });
 });
 
@@ -1511,7 +1515,7 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
       expect(FEATURES_GROUP, words).toContain(words === "fd00:ec2::254" ? "AWS's IPv6 metadata address" : words);
     }
     expect(flat(features)).toContain(
-      "Milvus, Qdrant, Oxia and S3-compatible object storage have no count grammar here",
+      "Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes have no count grammar here",
     );
   });
 
@@ -1523,7 +1527,7 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
     expect(brand).toContain(`- **Proof:** ${word(engines)} providers, each with its own reference document`);
     expect(brand).toContain(`| ${Word(engines)} database engines | One reference document per engine:`);
     expect(brand).toContain(
-      "Qdrant, Oxia, S3-compatible object storage. A twenty-ninth, `libredb.md`, is the embedded provider",
+      "Qdrant, Oxia, S3-compatible object storage, Kubernetes. A thirtieth, `libredb.md`, is the embedded provider",
     );
     expect(brand).toContain(`against ${word(engines)} here.`);
     expect(brand).toContain(`"${Word(engines)} engines" beats "extensive database support".`);
@@ -1538,10 +1542,10 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
     const api = read("docs/API_DOCS.md");
     const capabilities = provider.getCapabilities();
     const keyScan = capabilities.keyScan;
-    expect(api).toContain("Milvus, Qdrant, Oxia, Databend and S3-compatible object storage.");
+    expect(api).toContain("Milvus, Qdrant, Oxia, Databend, S3-compatible object storage and Kubernetes.");
     expect(api).toMatch(
       new RegExp(
-        `- \\*\\*Multi-Database Support\\*\\* - ${Word(engines)} engines: .*, Databend, S3-compatible object storage$`,
+        `- \\*\\*Multi-Database Support\\*\\* - ${Word(engines)} engines: .*, Databend, S3-compatible object storage, Kubernetes$`,
         "m",
       ),
     );
@@ -1556,7 +1560,7 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
     );
     expect(consoleTextByteLimit("s3")).toBe(S3_MAX_TEXT_BYTES);
     expect(api).toContain(
-      `InfluxDB (InfluxQL), Oxia and S3-compatible object storage one of ${n(S3_MAX_TEXT_BYTES)} bytes each`,
+      `InfluxDB (InfluxQL), Oxia, S3-compatible object storage and Kubernetes one of ${n(S3_MAX_TEXT_BYTES)} bytes each`,
     );
     expect(api).toContain(
       `S3-compatible object storage declares \`{ "defaultCount": ${keyScan?.defaultCount}, "maxCount": ${keyScan?.maxCount} }\` ([providers/s3.md](./providers/s3.md), section 6.4).`,
@@ -1564,7 +1568,9 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
     expect(api).toContain(
       `S3-compatible object storage declares \`"${keyScan?.separator}"\`, \`"${keyScan?.cursor}"\`, \`"${keyScan?.pattern}"\` and \`"${keyScan?.totalScope}"\` too, with \`levels.rootKind\` \`"${keyScan?.levels?.rootKind}"\`: one folder level at a time, a cursor only it can read, a literal prefix, and no count.`,
     );
-    expect(api).toContain("Cassandra: the KEYSPACE; S3: the optional pinned bucket)");
+    expect(api).toContain(
+      "Cassandra: the KEYSPACE; S3: the optional pinned bucket; Kubernetes: the Default namespace)",
+    );
     const union = /^type DatabaseType = (.+);$/m.exec(api)?.[1] ?? "";
     expect(
       union
@@ -1583,23 +1589,23 @@ describe("docs/SEED_CONNECTIONS.md and the seed schema agree on s3", () => {
   const seed = read("docs/SEED_CONNECTIONS.md");
 
   test("54. every place that lists the types or the fields names s3 and region", () => {
-    expect(seed).toContain("|influxdb|influxdb3|oxia|databend|s3\n");
-    expect(seed).toContain("`oxia`, `databend`, `s3` |");
+    expect(seed).toContain("|influxdb|influxdb3|oxia|databend|s3|kubernetes\n");
+    expect(seed).toContain("`oxia`, `databend`, `s3`, `kubernetes` |");
     expect(rowOf(seed, "`connections[].region`")).toBe(SEED_REGION_ROW);
     expect(rowOf(seed, "`connections[].database`")).toContain("S3: the optional pinned bucket");
     expect(rowOf(seed, "`connections[].user`")).toContain("S3: the access key ID");
     expect(rowOf(seed, "`connections[].password`")).toContain("S3: the secret access key");
     expect(rowOf(seed, "`connections[].readOnly`")).toContain(
-      "InfluxDB 3 (SQL), Oxia and S3-compatible object storage)",
+      "InfluxDB 3 (SQL), Oxia, S3-compatible object storage and Kubernetes)",
     );
-    expect(seed).toContain("both InfluxDB types', Oxia's and S3's do today");
+    expect(seed).toContain("both InfluxDB types', Oxia's, S3's and Kubernetes's do today");
     expect(rowOf(seed, "`connections[].mcp`")).toContain(
-      "An etcd, Oxia or S3 connection refuses `mcp: true` when the file loads",
+      "An etcd, Oxia, S3 or Kubernetes connection refuses `mcp: true` when the file loads",
     );
     expect(seed).toContain(
-      "| `mcp: true` on an etcd, Oxia or S3 connection | The whole file fails like any invalid config, and the error names `mcp` and the type, `etcd`, `oxia` or `s3` |",
+      "| `mcp: true` on an etcd, Oxia, S3 or Kubernetes connection | The whole file fails like any invalid config, and the error names `mcp` and the type, `etcd`, `oxia`, `s3` or `kubernetes` |",
     );
-    expect(seed.split("`dataServers`, `warehouse`, `region`, `apiKeyId`")).toHaveLength(3);
+    expect(seed.split("`dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`")).toHaveLength(3);
   });
 
   test("55. a seed written from the s3 rows loads and resolves, and mcp: true on it is refused", () => {
@@ -1687,15 +1693,17 @@ describe("the architecture, provider, editor and guide docs", () => {
     expect(claude).toContain(
       `${word(EXTERNAL_DATABASE_TYPES.length)} external engines, plus the embedded LibreDB store`,
     );
-    expect(claude).toContain("`oxia`, `milvus`, `qdrant`, `s3`, `libredb`) extend `BaseDatabaseProvider` directly");
+    expect(claude).toContain(
+      "`oxia`, `milvus`, `qdrant`, `s3`, `kubernetes`, `libredb`) extend `BaseDatabaseProvider` directly",
+    );
     const architecture = read("docs/ARCHITECTURE.md");
     expect(architecture).toContain(`It supports **${ids} database backends**`);
-    expect(architecture).toContain("Milvus, Qdrant, Oxia, S3-compatible object storage, LibreDB.");
+    expect(architecture).toContain("Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, LibreDB.");
     expect(architecture).toContain("        DBFactory --> ObjectStore[Object Storage Providers]");
     expect(architecture).toContain("        ObjectStore --> S3[(S3-compatible object storage)]");
     expect(architecture).toContain("    BaseDatabaseProvider <|-- S3Provider");
     expect(architecture).toContain("│   │   ├── objectstore/ # s3/");
-    expect(architecture).toContain("the LibreDB, Redis, etcd, Oxia and S3 command languages");
+    expect(architecture).toContain("the LibreDB, Redis, etcd, Oxia, S3 and kubectl command languages");
     const providers = read("docs/DATABASE_PROVIDERS.md");
     // Two pairs of type-ids share one module each: elasticsearch and opensearch, influxdb and influxdb3.
     expect(providers).toContain(`${Word(ids)} type-ids are supported by ${word(ids - 2)} provider modules:`);
@@ -1714,12 +1722,12 @@ describe("the architecture, provider, editor and guide docs", () => {
 
   test("58. the editor and schema-diff docs name the S3 module, the non-SQL count and the pagination count", () => {
     expect(read("docs/editor/README.md")).toContain(
-      "`src/lib/editor/oxia-language.ts`, `src/lib/editor/s3-language.ts` |",
+      "`src/lib/editor/oxia-language.ts`, `src/lib/editor/s3-language.ts`, `src/lib/editor/kubectl-language.ts` |",
     );
     const nonSql = SHIPPED_DATABASE_TYPES.filter((type) => !readsSqlText(type)).length;
     const optimization = read("docs/editor/query-optimization.md");
     expect(optimization).toContain(
-      `Qdrant, Oxia and S3-compatible object storage are the ${word(nonSql)} types whose query text is not SQL at all**`,
+      `Qdrant, Oxia, S3-compatible object storage and Kubernetes are the ${word(nonSql)} types whose query text is not SQL at all**`,
     );
     expect(optimization).toContain(`holds exactly those ${word(nonSql)},`);
     expect(provider.getCapabilities().supportsResultPagination).toBe(false);
@@ -1727,10 +1735,10 @@ describe("the architecture, provider, editor and guide docs", () => {
     expect(optimization).toContain("Qdrant, Oxia and S3-compatible object storage answer it with page one.");
     expect(optimization).toContain("The S3 row names no operation and, like the Oxia row, is the gate's whole answer:");
     expect(optimization).toContain(
-      "a Qdrant request, an `oxia client` read command or an AWS CLI read command is not judged by a SQL reader",
+      "a Qdrant request, an `oxia client` read command, an AWS CLI read command or a kubectl statement is not judged by a SQL reader",
     );
     expect(flat(read("docs/SCHEMA_DIFF.md"))).toContain(
-      "Qdrant, Oxia and S3-compatible object storage receive an explanatory",
+      "Qdrant, Oxia, S3-compatible object storage and Kubernetes receive an explanatory",
     );
   });
 
@@ -1748,10 +1756,11 @@ describe("the architecture, provider, editor and guide docs", () => {
     expect(guide).toContain(
       "is a library, and that is usually where the no-dependency promise ends. S3 shows it need not",
     );
-    // The thirteen HTTP-only and built-in ids the paragraph names, plus s3, which reaches its server over node:https.
-    expect(flat(guide)).toContain("Fourteen shipped type-ids need no driver:");
+    // The thirteen HTTP-only and built-in ids the paragraph names, plus s3 and kubernetes, which reach their servers over
+    // node:https.
+    expect(flat(guide)).toContain("Fifteen shipped type-ids need no driver:");
     expect(flat(guide)).toContain(
-      "and S3-compatible object storage over the S3 REST API, signed by Studio's own SigV4 code ([s3.md](./providers/s3.md)).",
+      "S3-compatible object storage over the S3 REST API, signed by Studio's own SigV4 code ([s3.md](./providers/s3.md)), and Kubernetes over the API server's REST API ([kubernetes.md](./providers/kubernetes.md)).",
     );
   });
 });
@@ -1879,22 +1888,26 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
   test("62. AGENT_GUIDE and AGENT_DATA_FLOW", () => {
     const guide = flat(read("docs/AGENT_GUIDE.md"));
     expect(guide).toContain(`which is the other ${word(provided)} (MySQL,`);
-    expect(guide).toContain("Qdrant, Oxia, Databend, S3-compatible object storage and the bundled LibreDB store)");
+    expect(guide).toContain(
+      "Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes and the bundled LibreDB store)",
+    );
     expect(guide).toContain(`so it reaches all ${word(ids)} engines.`);
     expect(guide).toContain(
       "On S3-compatible object storage that is one AWS CLI read command, or Studio's own `preview`, in a block tagged `s3`, which the run never executes.",
     );
     expect(guide).toContain(`So on the other ${word(refused)} ids in the \`DatabaseType\` union`);
-    expect(guide).toContain("Qdrant, Oxia, Databend, S3-compatible object storage and LibreDB. That");
+    expect(guide).toContain("Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes and LibreDB. That");
     expect(guide).toContain(`no longer takes this path at all on the other ${word(provided)}:`);
     expect(guide).toContain(`on the other ${word(noStatistics)} the plan is told that this engine holds none`);
     const flow = flat(read("docs/AGENT_DATA_FLOW.md"));
     expect(flow).toContain(`and the other ${word(provided)} by asking the connection's own provider`);
     expect(flow).toContain(
-      "Never an etcd, Milvus, Qdrant, InfluxDB (InfluxQL), Oxia or S3-compatible object storage statement",
+      "Never an etcd, Milvus, Qdrant, InfluxDB (InfluxQL), Oxia, S3-compatible object storage or Kubernetes statement",
     );
-    expect(flow).toContain("which those six do");
-    expect(flow).toContain("and an S3 command names buckets and object keys");
+    expect(flow).toContain("which those seven do");
+    expect(flow).toContain(
+      "an S3 command names buckets and object keys, and a kubectl statement names namespaces and objects",
+    );
     expect(flow).toContain(
       `a server-side enum with ${word(ids)} members, so what it discloses is which of ${word(ids)} engines this`,
     );
@@ -1908,11 +1921,13 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
     expect(flow).toContain(
       "- On S3-compatible object storage the grounding carries bucket names only, never an object key, a prefix, a size or any object content (objects are listed by the Keys panel, not by the object walk).",
     );
-    expect(flow).toContain("On the twenty-one engines that declare no foreign keys at all");
-    expect(flow).toContain("Qdrant, Oxia, Databend and S3-compatible object storage) this block carries no relations");
+    expect(flow).toContain("On the twenty-two engines that declare no foreign keys at all");
+    expect(flow).toContain(
+      "Qdrant, Oxia, Databend, S3-compatible object storage and Kubernetes) this block carries no relations",
+    );
     expect(flow).toContain(`replaces them on the other ${word(provided)}.`);
     expect(flow).toContain(
-      "nothing at all for an etcd, Milvus, Qdrant, InfluxDB (InfluxQL), Oxia or S3-compatible object storage statement",
+      "nothing at all for an etcd, Milvus, Qdrant, InfluxDB (InfluxQL), Oxia, S3-compatible object storage or Kubernetes statement",
     );
   });
 });
@@ -1921,25 +1936,33 @@ describe("the complete engine lists outside the agent docs", () => {
   test("63. every list that names Databend and claims to be complete names S3 too", () => {
     const readme = read("README.md");
     expect(readme).toContain(
-      "InfluxDB 3 (SQL), Oxia or S3-compatible object storage with SSL/TLS and SSH Tunnel support",
+      "InfluxDB 3 (SQL), Oxia, S3-compatible object storage or Kubernetes with SSL/TLS and SSH Tunnel support",
     );
-    expect(readme).toContain("InfluxDB 3 (SQL), Oxia, S3-compatible object storage | Web, Mobile |");
-    expect(readme).toContain("InfluxDB 3 (SQL), Oxia, or S3-compatible object storage)");
+    expect(readme).toContain("InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes | Web, Mobile |");
+    expect(readme).toContain("InfluxDB 3 (SQL), Oxia, S3-compatible object storage, or Kubernetes)");
     const zh = read("README_zh.md");
-    expect(zh).toContain("InfluxDB 3 (SQL)、Oxia 或 S3-compatible object storage，支持 SSL/TLS 与 SSH 隧道");
-    expect(zh).toContain("InfluxDB 3 (SQL)、Oxia、S3-compatible object storage | Web、移动端 |");
-    expect(zh).toContain("InfluxDB 3 (SQL)、Oxia 或 S3-compatible object storage）");
-    expect(read("README_ko.md")).toContain("InfluxDB 3 (SQL), Oxia, S3-compatible object storage에 연결할 수 있으며");
-    // The newest-engine history names S3 as the newest and moves Databend one step back, in every README that carries it.
-    expect(readme).toContain("S3-compatible object storage is the newest: AWS CLI read commands");
+    expect(zh).toContain(
+      "InfluxDB 3 (SQL)、Oxia、S3-compatible object storage 或 Kubernetes，支持 SSL/TLS 与 SSH 隧道",
+    );
+    expect(zh).toContain("InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes | Web、移动端 |");
+    expect(zh).toContain("InfluxDB 3 (SQL)、Oxia、S3-compatible object storage 或 Kubernetes）");
+    expect(read("README_ko.md")).toContain(
+      "InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes에 연결할 수 있으며",
+    );
+    // The newest-engine history names Kubernetes as the newest, S3 one step back and Databend before S3, in every README
+    // that carries it.
+    expect(readme).toContain("Kubernetes is the newest: kubectl read commands");
+    expect(readme).toContain("S3-compatible object storage came before Kubernetes: AWS CLI read commands");
     expect(readme).toContain("Databend came before S3-compatible object storage: ");
-    expect(zh).toContain("S3-compatible object storage 是最新的一个：");
+    expect(zh).toContain("Kubernetes 是最新的一个：");
+    expect(zh).toContain("S3-compatible object storage 在 Kubernetes 之前：");
     expect(zh).toContain("Databend 在 S3-compatible object storage 之前：");
     expect(zh).not.toContain("Databend 是最新的一个");
     expect(zh).toContain("它在 MinIO、Silo、Garage 和 RustFS 上验证过，没有在任何托管服务上验证过。");
     const ko = read("README_ko.md");
     expect(ko).toContain("MinIO, Silo, Garage, RustFS에서 검증되었으며 호스팅 서비스에서는 검증되지 않았습니다.");
-    expect(ko).toContain("가장 최근에 추가된 엔진은 S3-compatible object storage입니다.");
+    expect(ko).toContain("가장 최근에 추가된 엔진은 Kubernetes입니다.");
+    expect(ko).toContain("S3-compatible object storage는 Kubernetes보다 먼저 추가된 엔진입니다.");
     expect(ko).toContain("Databend는 S3-compatible object storage보다 먼저 추가된 엔진입니다.");
     expect(ko).not.toContain("가장 최근에 추가된 엔진은 Databend입니다");
     // The seed table's type list is the union's members, so every README that carries it names s3.
@@ -1952,18 +1975,18 @@ describe("the complete engine lists outside the agent docs", () => {
         .find((line) => line.startsWith("| `connections[].type` |"));
       const listed = (row?.match(/`[a-z0-9]+`/g) ?? []).map((cell) => cell.slice(1, -1)).sort();
       expect(listed, file).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-      expect(row, file).toContain(`\`oxia\`${separator}\`s3\`${separator}\`libredb\``);
+      expect(row, file).toContain(`\`oxia\`${separator}\`s3\`${separator}\`kubernetes\`${separator}\`libredb\``);
     }
     expect(read("docs/BRAND_MESSAGING.md")).toContain(
-      "Milvus, Qdrant, Oxia and S3-compatible object storage, with SSO and audit",
+      "Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes, with SSO and audit",
     );
     expect(read("docs/FEATURES.md")).toContain(
-      "Qdrant, Oxia, Databend, S3-compatible object storage and LibreDB show no editing control at all",
+      "Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes and LibreDB show no editing control at all",
     );
     expect(provider.getCapabilities().supportsInlineRowEdit).toBe(false);
     const guide = read("docs/ADDING_A_PROVIDER.md");
-    expect(guide).toContain("'oxia' | 'databend' | 's3';");
-    expect(guide).toContain("'oxia' | 'databend' | 's3' | 'cockroachdb';");
-    expect(guide).toContain("· oxia · databend · s3 · libredb");
+    expect(guide).toContain("'oxia' | 'databend' | 's3' | 'kubernetes';");
+    expect(guide).toContain("'oxia' | 'databend' | 's3' | 'kubernetes' | 'cockroachdb';");
+    expect(guide).toContain("· oxia · databend · s3 · kubernetes · libredb");
   });
 });

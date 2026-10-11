@@ -119,11 +119,11 @@ npx @libredb/studio
 
 ## <span dir="rtl">بنیادی صلاحیتیں</span>
 
-### <span dir="rtl">اٹھائیس engines، ایک interface</span>
+### <span dir="rtl">انتیس engines، ایک interface</span>
 
 </div>
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes
 
 <div dir="rtl" align="right">
 
@@ -160,6 +160,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 | **InfluxDB 3 (SQL)** | <span dir="rtl">کوئی نہیں، HTTP (InfluxDB 3 کا SQL API، port 8181)</span> | <span dir="rtl">Editor میں read-only SQL، InfluxDB 3 Core اور Enterprise کے لیے؛ tree میں connection کے database کی tables، ان کے columns کے ساتھ۔ Connection میں کچھ بھی لکھا ہو، read-only: route table کسی write، token، cache یا plugin endpoint تک نہیں پہنچتی، اور configure endpoints میں سے صرف database listing تک، ایک GET، جو statement read keyword سے شروع نہیں ہوتا وہ کسی بھی request سے پہلے refuse ہوتا ہے، اور اس کے اوپر server کا planner ہر write refuse کرتا ہے۔ ایک token، کوئی user نام نہیں؛ plain HTTP پر ایسے host کو token، جو نہ loopback ہے نہ tunnel سے، تب تک refuse ہوتا ہے جب تک connection رضامندی نہ دے؛ 1.x یا 2.x server پر لگانے سے InfluxDB (InfluxQL) چننے کو کہتا ہے</span> |
 | **Oxia** | <span dir="rtl">`@grpc/grpc-js` (pure JavaScript، gRPC، port 6648)</span> | <span dir="rtl">Read-only `oxia client` commands (`get`، `list`، `range-scan`)، tree میں shards اور Keys panel میں ہر key</span> |
 | **S3-compatible object storage** | <span dir="rtl">none، HTTP (S3 REST API، path style، Studio کے اپنے SigV4 code سے signed؛ Parquet preview کے لیے `hyparquet`)</span> | <span dir="rtl">Read-only AWS CLI read commands (`aws s3 ls`، `aws s3api list-buckets`، `aws s3api head-object`، `aws s3api list-object-versions`) اور Studio کا اپنا `preview`؛ tree میں buckets اور Keys panel میں folders، ایک وقت میں ایک level؛ object کا metadata اور text، JSON، CSV اور Parquet کا capped preview۔ MinIO، Silo، Garage اور RustFS پر verified؛ AWS S3 اور hosted services پر verified نہیں</span> |
+| **Kubernetes** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (API server کا REST API، port 6443)</span> | <span dir="rtl">Read-only: editor میں kubectl کا subset (`get`، `describe`، `logs`، `top`، `events`، `explain`، `auth can-i`)، tree میں namespaces اور ان کے kinds، ہر object کے YAML view کے ساتھ، اور connection dialog میں kubeconfig import۔ Secret values کبھی نہیں دکھائی جاتیں</span> |
 | **Redis** | `ioredis` | <span dir="rtl">command editor، keys explorer، INFO پر مبنی monitoring</span> |
 
 <div dir="rtl" align="right">

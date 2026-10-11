@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting twenty-eight engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend and S3-compatible object storage
+description: Web-based SQL IDE for cloud-native teams supporting twenty-nine engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage and Kubernetes
 type: application
-version: 0.1.83
+version: 0.1.84
 appVersion: "0.18.2"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -87,6 +87,9 @@ keywords:
   - s3
   - object-storage
   - minio
+  # One keyword, like databend above: `kubernetes` is the type-id and the word an evaluator looking
+  # for a cluster browser types.
+  - kubernetes
   - web-ide
 maintainers:
   - name: cevheri
@@ -229,7 +232,9 @@ annotations:
   # to true. An install with create=false that logs in to Vault through the pod's account
   # sets the value to true, or projects a token through extraVolumes and extraVolumeMounts
   # and points VAULT_K8S_TOKEN_PATH at it.
-  artifacthub.io/containsSecurityUpdates: "true"
+  # False: 0.1.84 changes chart metadata only, naming Kubernetes in the description, the
+  # keywords and the README; no template, value or default moves.
+  artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
       image: ghcr.io/libredb/libredb-studio:0.18.2
@@ -244,7 +249,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Security: the pod spec carries serviceAccount.automountServiceAccountToken (default false), so with serviceAccount.create=false the pod no longer mounts the API token of the account it runs as, usually the namespace's default one. Studio reads that token only for Vault Kubernetes auth: an install with serviceAccount.create=false that sets VAULT_ROLE sets the value to true, or projects a token through extraVolumes and points VAULT_K8S_TOKEN_PATH at it"
+    - "Name Kubernetes, the read-only cluster browser, in the description and the keywords"
 dependencies:
   - name: postgresql
     version: "16.x.x"
