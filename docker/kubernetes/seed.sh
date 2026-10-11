@@ -2,7 +2,8 @@
 # Seeds a cluster made by create-cluster.sh with the sample data and writes one kubeconfig per persona
 # (docker/kubernetes/README.md). Usage:
 #   K8S_ENV_DIR=/abs/dir/outside/the/repo docker/kubernetes/seed.sh <name>
-# Every kubectl call names the cluster's own admin kubeconfig and context, so the default kubeconfig is never read.
+# Every kubectl call names the cluster's own admin kubeconfig and context, so the default kubeconfig is never read;
+# it reads no kuberc preferences and keeps its discovery cache under K8S_ENV_DIR/<name>/, never under ~/.kube.
 # The persona tokens last 72 hours; run it again for fresh ones, which re-applies the sample data unchanged.
 set -euo pipefail
 
@@ -17,7 +18,7 @@ DIR="$K8S_ENV_DIR/$NAME"
 ADMIN="$DIR/admin.yaml"
 [ -f "$ADMIN" ] || { echo "no admin kubeconfig at $ADMIN: run create-cluster.sh first" >&2; exit 2; }
 
-k() { kubectl --kubeconfig="$ADMIN" --context="k3d-$NAME" "$@"; }
+k() { KUBECTL_KUBERC=false kubectl --kubeconfig="$ADMIN" --context="k3d-$NAME" --cache-dir="$DIR/.kube-cache" "$@"; }
 
 k apply -f "$HERE/sample.yaml"
 k wait --for=condition=Established crd/widgets.probe.libredb.dev --timeout=120s

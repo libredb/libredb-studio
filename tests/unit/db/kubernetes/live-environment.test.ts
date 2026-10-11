@@ -47,9 +47,11 @@ describe("create-cluster.sh", () => {
 describe("seed.sh", () => {
   const script = read("seed.sh");
 
-  test("every kubectl call goes through k(), which names the cluster's own kubeconfig and context", () => {
+  test("every kubectl call goes through k(), which names the cluster's own kubeconfig, context and cache, no kuberc", () => {
     const calls = script.split("\n").filter((line) => !line.startsWith("#") && /(^|[\s;(])kubectl\b/.test(line));
-    expect(calls).toEqual(['k() { kubectl --kubeconfig="$ADMIN" --context="k3d-$NAME" "$@"; }']);
+    expect(calls).toEqual([
+      'k() { KUBECTL_KUBERC=false kubectl --kubeconfig="$ADMIN" --context="k3d-$NAME" --cache-dir="$DIR/.kube-cache" "$@"; }',
+    ]);
   });
 
   test("writes the four token personas, each into the namespace shop", () => {

@@ -31,6 +31,7 @@ docker/kubernetes/seed.sh k8s-best-effort
 `create-cluster.sh` never updates or switches the default kubeconfig, binds the API server to 127.0.0.1 alone, writes the cluster's admin kubeconfig to `$K8S_ENV_DIR/<name>/admin.yaml`, and refuses a cluster that already exists.
 `seed.sh` applies `sample.yaml`, `widgets.yaml` and `studio-reader.yaml` with that admin kubeconfig, waits for the workloads, and writes one kubeconfig per persona beside it.
 Every kubectl call in both scripts names the cluster's own kubeconfig and context, so a kubeconfig of your own is never read.
+`seed.sh` also turns off kuberc (`KUBECTL_KUBERC=false`) and keeps kubectl's discovery cache under `$K8S_ENV_DIR/<name>/`, so neither your `~/.kube/kuberc` preferences nor its default cache are read or written.
 Docker Hub images are pulled through `mirror.gcr.io` (`registries.yaml`).
 
 ## The personas
