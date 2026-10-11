@@ -7,8 +7,8 @@
  * it false.
  *
  * ONE READ FILLS THE PANEL. A session subscribes once, collects what the broker delivers until one of our own
- * budgets ends it, and leaves. The result is held for the life of the connection, so opening a folder issues no
- * second request and two reads are never merged into one tree.
+ * budgets ends it, and leaves. The panel's tree is drawn from that read; a refresh replaces it with a new one,
+ * and two reads are never merged into one tree.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
@@ -51,29 +51,19 @@ import {
 } from "./objects";
 import { readTopics, type MqttReadOutcome, type MqttSessionOptions, type MqttTransportFactory } from "./session";
 
-/** The sentence every surface a broker cannot answer gives, so a disabled control is never unexplained. */
-const NO_CATALOG =
-  "A broker keeps no catalog: it has no tables, no indexes, no sessions a client can list and no statistics " +
-  "to read. What this connection knows is what a subscription delivered.";
-
 export class MqttProvider extends BaseDatabaseProvider {
   /** The last read. The panel's tree and its rows both come from it, and a refresh replaces it. */
   private last: MqttReadOutcome | undefined;
 
   /**
-   * Whether `last` has already been handed to the panel as a first page.
+   * The pattern of the last first page served from `last`, or undefined before the connect read was served.
    *
-   * REFRESH HAS TO MEAN A NEW READ, and it did not. `connect()` performs one read and every page was served
-   * from it for the life of the connection, so a topic retained after connect never appeared however many
-   * times the reader pressed refresh - while the panel's own sentence said "Reading again, or narrowing the
-   * topic filter, sees more". It read again and saw the same tree.
-   *
-   * One flag is enough, because a walk's first page is the only request that can mean "start over": the
-   * cursor ends every walk at one page, so a first page after the connect read has been served is a refresh.
-   * Serving the connect read once rather than discarding it is what keeps opening a connection to one read
-   * instead of two, and a read costs the whole time budget.
+   * A REFRESH IS THE SAME QUESTION ASKED AGAIN. The panel asks for a first page when it opens, when its
+   * refresh button is pressed, and on every change of its pattern box. Only the second means "read the broker
+   * again": a changed pattern narrows the read already held, so typing a prefix opens no connection, and the
+   * first page after connect is the connect read itself, so opening a connection costs one read and not two.
    */
-  private served = false;
+  private servedPattern: string | undefined;
 
   /**
    * Opens nothing: a provider built only for its declarations touches no socket.
@@ -140,6 +130,8 @@ export class MqttProvider extends BaseDatabaseProvider {
 
   private sessionOptions(): MqttSessionOptions {
     const config = this.config as DatabaseConnection & WithTunnelFarEnd;
+    // The typed filter is trimmed here, where it is read; a topic name passed to `readTopics` is not.
+    const filter = (config.database ?? "").trim();
     const host = (config.host ?? "").trim();
     if (host === "") throw new DatabaseConfigError("An MQTT connection needs a broker address.", MQTT_TYPE);
     const port = Number(config.port ?? MQTT_DEFAULT_PORT);
@@ -205,7 +197,7 @@ export class MqttProvider extends BaseDatabaseProvider {
       ...(user === undefined ? {} : { user }),
       ...(password === undefined ? {} : { password }),
       // The connection's Database field carries the discovery filter, as Oxia's carries a namespace.
-      ...(config.database === undefined || config.database === "" ? {} : { filter: config.database }),
+      ...(filter === "" ? {} : { filter }),
       ...(this.openTransport === undefined ? {} : { openTransport: this.openTransport }),
     };
   }
@@ -218,6 +210,7 @@ export class MqttProvider extends BaseDatabaseProvider {
 
   public async disconnect(): Promise<void> {
     this.last = undefined;
+    this.servedPattern = undefined;
     this.setConnected(false);
   }
 
@@ -233,11 +226,13 @@ export class MqttProvider extends BaseDatabaseProvider {
    * "read the broker again". `cursor` is `0` for a first page and nothing else ever asks for one, which is
    * why the decision can be made here rather than through a separate action the panel would have to learn.
    */
-  private async readForPage(cursor: string | undefined): Promise<MqttReadOutcome> {
+  private async readForPage(options: KeyScanOptions): Promise<MqttReadOutcome> {
     const held = this.requireRead();
-    const first = cursor === undefined || cursor === "" || cursor === "0";
-    if (!first || !this.served) {
-      this.served = true;
+    const first = options.cursor === undefined || options.cursor === "" || options.cursor === "0";
+    if (!first) return held;
+    const pattern = options.pattern ?? "";
+    if (this.servedPattern !== pattern) {
+      this.servedPattern = pattern;
       return held;
     }
     const fresh = await readTopics(this.sessionOptions());
@@ -287,6 +282,8 @@ export class MqttProvider extends BaseDatabaseProvider {
    */
   public async readObjectSource(path: readonly string[], kind: string): Promise<ObjectSourceDocument> {
     const topic = path[path.length - 1] ?? "";
+    // MQTT 5.0 section 4.7.3: a topic name is at least one character, and an empty filter here would read `#`.
+    if (topic === "") throw new DatabaseConfigError("A topic name is at least one character long.", MQTT_TYPE);
     // A second read, subscribed to that one topic, which is the only read that keeps a payload.
     const read = await readTopics({ ...this.sessionOptions(), filter: topic, keepPayloadFor: topic });
     return mqttSourceDocument(path, kind, read.topics.get(topic));
@@ -295,11 +292,12 @@ export class MqttProvider extends BaseDatabaseProvider {
   public async scanKeysPage(options: KeyScanOptions): Promise<KeyScanPage> {
     // Refused before the read is touched, so a refused page costs nothing.
     readMqttKeyScanOptions(options);
-    const read = await this.readForPage(options.cursor);
+    const read = await this.readForPage(options);
     return mqttKeyScanPage(read.topics, options, {
       scope: read.scope,
       endReason: read.endReason,
       provenLoss: read.provenLoss,
+      ...(read.endCode === undefined ? {} : { endCode: read.endCode }),
     });
   }
 
@@ -310,7 +308,10 @@ export class MqttProvider extends BaseDatabaseProvider {
   public async getHealth(): Promise<HealthInfo> {
     const read = this.last;
     return {
-      databaseSize: read === undefined ? "unknown" : `${read.topics.size.toLocaleString("en-US")} topics`,
+      databaseSize:
+        read === undefined
+          ? "unknown"
+          : `${read.topics.size.toLocaleString("en-US")} ${read.topics.size === 1 ? "topic" : "topics"}`,
       // A broker has no cache a client can read, and saying "unknown" is the honest value.
       cacheHitRatio: "unknown",
       slowQueries: [],

@@ -147,7 +147,7 @@ The thirty-first row is the embedded LibreDB store: it ships inside the image, n
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
 **Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing when used.
-Prometheus, InfluxDB, Apache Kafka, Oxia, S3-compatible object storage and Kubernetes are read-only too: Studio calls only read APIs.
+Prometheus, InfluxDB, Apache Kafka, MQTT, Oxia, S3-compatible object storage and Kubernetes are read-only too: Studio calls only read APIs.
 
 ### Engines with no provider of their own
 

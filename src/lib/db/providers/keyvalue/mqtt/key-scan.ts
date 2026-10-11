@@ -104,7 +104,7 @@ function subackRefusalSentence(code: number | undefined): string {
   };
   const sentence = named[code ?? -1];
   return sentence === undefined
-    ? `the broker refused the subscription, so nothing could be read under this filter${tail}`
+    ? `the broker refused the subscription, so nothing could be read under this filter${tail}.`
     : `${sentence}${tail}.`;
 }
 

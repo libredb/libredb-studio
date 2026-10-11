@@ -9,8 +9,8 @@
  * inbound size limit can live, because no MQTT package we measured lets us set one that is applied before the
  * body is buffered.
  *
- * It is not an optimisation and it is not optional. Section 4.4 of the spec records that of twenty six packages
- * none exposes an inbound bound of our own, so this layer is required whichever library is chosen.
+ * It is not an optimisation and it is not optional. `docs/providers/mqtt.md` section 3.3 records that of twenty
+ * six packages none exposes an inbound bound of our own, so this layer is required whichever library is chosen.
  */
 import { MQTT_MAX_INBOUND_BYTES, MQTT_TYPE } from "./constants";
 import {

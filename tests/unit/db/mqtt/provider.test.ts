@@ -811,9 +811,129 @@ describe("a refreshed page", () => {
     const provider = new MqttProvider(connection({}), {}, factory);
     await provider.connect();
     await provider.scanKeysPage!({ cursor: "0", count: 100 });
-    expect((await provider.getHealth()).databaseSize).toBe("1 topics");
+    expect((await provider.getHealth()).databaseSize).toBe("1 topic");
 
     await provider.scanKeysPage!({ cursor: "0", count: 100 });
     expect((await provider.getHealth()).databaseSize).toBe("2 topics");
+  });
+  /**
+   * TYPING IS NOT A REFRESH. The panel restarts its walk on every change of the pattern box, so a first page
+   * with a new pattern narrows the read already held; only the same question asked again reads the broker.
+   */
+  test("a changed pattern filters the held read and opens no connection", async () => {
+    const before = [CONNACK, SUBACK, publish("fabrika/hat1/durum"), publish("depo/raf1")];
+    const after = [...before, publish("fabrika/hat2/durum")];
+    const { factory, dials } = changing([before, after]);
+
+    const provider = new MqttProvider(connection({}), {}, factory);
+    await provider.connect();
+    await provider.scanKeysPage!({ cursor: "0", count: 100 });
+    for (const pattern of ["f", "fa", "fab", "fabrika/"]) {
+      // oxlint-disable-next-line no-await-in-loop -- keystrokes arrive one after another, so each page lands first.
+      const page = await provider.scanKeysPage!({ cursor: "0", count: 100, pattern });
+      expect(page.keys).toEqual(["fabrika/hat1/durum"]);
+    }
+    expect(dials()).toBe(1);
+
+    // The same pattern again is the refresh button, and it reads the broker.
+    const refreshed = await provider.scanKeysPage!({ cursor: "0", count: 100, pattern: "fabrika/" });
+    expect(refreshed.keys).toEqual(["fabrika/hat1/durum", "fabrika/hat2/durum"]);
+    expect(dials()).toBe(2);
+  });
+
+  test("a reconnect costs one read, not two", async () => {
+    const script = [CONNACK, SUBACK, publish("bir/konu")];
+    const { factory, dials } = changing([script]);
+
+    const provider = new MqttProvider(connection({}), {}, factory);
+    await provider.connect();
+    await provider.scanKeysPage!({ cursor: "0", count: 100 });
+    await provider.disconnect();
+    await provider.connect();
+    await provider.scanKeysPage!({ cursor: "0", count: 100 });
+    expect(dials()).toBe(2);
+  });
+
+  /** The broker's own refusal code reaches the panel, so the remedy is the code's and not a generic one. */
+  test("a refused subscription carries the broker's code and that code's remedy to the panel", async () => {
+    const refused = [CONNACK, Buffer.from([0x90, 0x04, 0x00, 0x01, 0x00, 0x87])];
+    const { factory } = changing([refused]);
+
+    const provider = new MqttProvider(connection({}), {}, factory);
+    await provider.connect();
+    const page = await provider.scanKeysPage!({ cursor: "0", count: 100 });
+    expect(page.readOutcome?.endReason).toMatch(/0x87/);
+    expect(page.readOutcome?.endReason).toMatch(/sensors\/#/);
+  });
+  /** A topic's Source tab subscribes to that topic byte for byte, and an empty name is not a topic. */
+  test("the Source tab subscribes to the exact topic, spaces included, and refuses an empty one", async () => {
+    const subscribed: string[] = [];
+    const factory: MqttTransportFactory = () => {
+      const handlers = new Map<string, ((value: never) => void)[]>();
+      const emit = (event: string, value?: unknown): void => {
+        for (const handler of handlers.get(event) ?? []) (handler as (v: unknown) => void)(value);
+      };
+      const transport: MqttTransport = {
+        write(bytes: Buffer): void {
+          // SUBSCRIBE: fixed header, a one-byte length here, packet id, empty properties, then the filter.
+          if ((bytes[0] as number) >> 4 !== 8) return;
+          const at = 2 + 2 + 1;
+          const length = ((bytes[at] as number) << 8) | (bytes[at + 1] as number);
+          subscribed.push(bytes.subarray(at + 2, at + 2 + length).toString("utf8"));
+        },
+        on(event: string, handler: (value: never) => void): void {
+          handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+        },
+        once(event: string, handler: () => void): void {
+          if (event !== "ready") return;
+          queueMicrotask(() => {
+            handler();
+            for (const chunk of [CONNACK, SUBACK, publish(" padded ")]) emit("data", chunk);
+            emit("close");
+          });
+        },
+        destroy(): void {},
+      };
+      return { transport, readyEvent: "ready" };
+    };
+
+    const provider = new MqttProvider(connection({}), {}, factory);
+    await provider.connect();
+    const source = await provider.readObjectSource!([" padded "], "topic");
+    expect(subscribed.at(-1)).toBe(" padded ");
+    expect(JSON.stringify(source)).toContain('"origin":"stored"');
+    await expect(provider.readObjectSource!([""], "topic")).rejects.toThrow(DatabaseConfigError);
+  });
+
+  /** The connection's typed filter is trimmed where it is read, so a stray space is not a different filter. */
+  test("the connection's own filter field is trimmed before it is subscribed to", async () => {
+    const subscribed: string[] = [];
+    const factory: MqttTransportFactory = () => {
+      const handlers = new Map<string, ((value: never) => void)[]>();
+      const transport: MqttTransport = {
+        write(bytes: Buffer): void {
+          if ((bytes[0] as number) >> 4 !== 8) return;
+          const length = ((bytes[5] as number) << 8) | (bytes[6] as number);
+          subscribed.push(bytes.subarray(7, 7 + length).toString("utf8"));
+        },
+        on(event: string, handler: (value: never) => void): void {
+          handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+        },
+        once(event: string, handler: () => void): void {
+          if (event !== "ready") return;
+          queueMicrotask(() => {
+            handler();
+            for (const listener of handlers.get("data") ?? []) (listener as (v: unknown) => void)(CONNACK);
+            for (const listener of handlers.get("data") ?? []) (listener as (v: unknown) => void)(SUBACK);
+            for (const listener of handlers.get("close") ?? []) (listener as () => void)();
+          });
+        },
+        destroy(): void {},
+      };
+      return { transport, readyEvent: "ready" };
+    };
+    const provider = new MqttProvider(connection({ database: "  sensors/#  " }), {}, factory);
+    await provider.connect();
+    expect(subscribed).toEqual(["sensors/#"]);
   });
 });

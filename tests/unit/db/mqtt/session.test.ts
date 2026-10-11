@@ -544,3 +544,83 @@ describe("the guards the audits put in, exercised", () => {
     ).rejects.toThrow(/accepted the connection and did not finish the TLS handshake/);
   });
 });
+
+/** A broker that answers out of order, and a caller that hands the session a field no encoder can write. */
+describe("a session the broker drives out of order", () => {
+  const CONNACK = Buffer.from([0x20, 0x03, 0x00, 0x00, 0x00]);
+  const SUBACK = Buffer.from([0x90, 0x04, 0x00, 0x01, 0x00, 0x00]);
+
+  /** A transport that replays `chunks`, records the packet type of every frame written, and reports a throw. */
+  function recording(chunks: readonly Buffer[]): {
+    factory: MqttTransportFactory;
+    written: number[];
+    escaped: () => unknown;
+  } {
+    const written: number[] = [];
+    let escaped: unknown;
+    const factory: MqttTransportFactory = () => {
+      const handlers = new Map<string, ((value: never) => void)[]>();
+      const emit = (event: string, value?: unknown): void => {
+        for (const handler of handlers.get(event) ?? []) (handler as (v: unknown) => void)(value);
+      };
+      const transport: MqttTransport = {
+        write(bytes: Buffer): void {
+          written.push(((bytes[0] as number) >> 4) & 0x0f);
+        },
+        on(event: string, handler: (value: never) => void): void {
+          handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+        },
+        once(event: string, handler: () => void): void {
+          if (event !== "ready") return;
+          queueMicrotask(() => {
+            try {
+              handler();
+              for (const chunk of chunks) emit("data", chunk);
+              emit("close");
+            } catch (error) {
+              escaped = error;
+            }
+          });
+        },
+        destroy(): void {},
+      };
+      return { transport, readyEvent: "ready" };
+    };
+    return { factory, written, escaped: () => escaped };
+  }
+
+  const BASE = { host: "127.0.0.1", port: 1883, tls: false, filter: "#" } as const;
+
+  /**
+   * The encoder refuses a string over 65,535 bytes by throwing. Called directly, `readTopics` must turn that
+   * into a rejected read: a throw out of the ready listener is an uncaught exception under Node.
+   */
+  test("a username no CONNECT can carry rejects the read and throws nothing out of the listener", async () => {
+    const { factory, escaped } = recording([]);
+    const attempt = readTopics({ ...BASE, user: "u".repeat(MQTT_MAX_STRING_BYTES + 1), openTransport: factory });
+    await expect(attempt).rejects.toThrow(DatabaseConfigError);
+    expect(escaped()).toBeUndefined();
+  });
+
+  test("a DISCONNECT before the CONNACK is reported with the broker's own reason code", async () => {
+    const disconnect = Buffer.from([0xe0, 0x02, 0x87, 0x00]);
+    const { factory } = recording([disconnect]);
+    await expect(readTopics({ ...BASE, openTransport: factory })).rejects.toThrow(/0x87/);
+  });
+
+  test("a second CONNACK is a protocol error, and no second SUBSCRIBE is written", async () => {
+    const { factory, written } = recording([CONNACK, CONNACK, SUBACK]);
+    await expect(readTopics({ ...BASE, openTransport: factory })).rejects.toThrow(/second CONNACK/);
+    expect(written.filter((type) => type === 8)).toHaveLength(1);
+  });
+
+  test("a PUBLISH with no topic name is a proven loss, so the read says it is incomplete", async () => {
+    const name = Buffer.alloc(2);
+    const nameless = Buffer.concat([Buffer.from([0x31, 0x04]), name, Buffer.from([0x00, 0x78])]);
+    const { factory } = recording([CONNACK, SUBACK, nameless]);
+    const outcome = await readTopics({ ...BASE, openTransport: factory });
+    expect(outcome.topics.size).toBe(0);
+    expect(outcome.scope).toBe("incomplete");
+    expect(outcome.provenLoss.join(" ")).toMatch(/no topic name/);
+  });
+});

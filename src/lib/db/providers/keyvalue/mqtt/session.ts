@@ -225,7 +225,7 @@ const dialBroker: MqttTransportFactory = (options) => {
 };
 
 /**
- * A client id of a configurable prefix and a mandatory random suffix.
+ * A client id of a fixed prefix and a mandatory random suffix.
  *
  * THE SUFFIX IS RANDOM RATHER THAN A PROCESS ID. MQTT ends the older session when a second connection arrives
  * with the same id (Session Taken Over, 0x8E, section 3.1.4), so a colliding id disconnects whoever was there
@@ -245,7 +245,9 @@ export function newClientId(): string {
  * comparison is case sensitive because `$SHARE/...` in uppercase is an ordinary topic carrying real data.
  */
 export function readFilter(filter: string | undefined): string {
-  const wanted = filter === undefined || filter.trim() === "" ? MQTT_WILDCARD_FILTER : filter.trim();
+  // Taken exactly as given: a topic may begin or end with a space, and the Source tab subscribes to the name it
+  // was handed. The connection's typed field is trimmed where it is read, in `sessionOptions()`.
+  const wanted = filter === undefined || filter === "" ? MQTT_WILDCARD_FILTER : filter;
   // BOUNDED HERE, BEFORE A SOCKET EXISTS. An MQTT string holds at most 65,535 bytes, and `encodeString`
   // refuses a longer one - but it refused it inside a socket listener, where the throw was an uncaught
   // exception that ended the Node process. Refusing it here makes it what it always was: a config error,
@@ -404,6 +406,8 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
   return new Promise<MqttReadOutcome>((resolve, reject) => {
     let settled = false;
     let messages = 0;
+    /** PUBLISH packets that carried no topic name, reported as a loss when the read ends. */
+    let nameless = 0;
     let bytes = 0;
     let connected = false;
     /**
@@ -441,12 +445,12 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
      *
      * It was reachable from ordinary input, because `encodeString` refuses a string over 65,535 bytes and
      * nothing upstream capped one. `sessionOptions()` and `readFilter()` now bound all three fields, so this
-     * is the second line of defence rather than the first; it exists because the first being right today is
-     * no reason for the second to be absent.
+     * is the second line of defence rather than the first. It takes the packet as a function so the
+     * encoding runs inside the `try` too: an encoder throw is the case this guard is for.
      */
-    const write = (packet: Uint8Array): void => {
+    const write = (build: () => Uint8Array): void => {
       try {
-        writeToTransport(socket, packet);
+        writeToTransport(socket, build());
       } catch (error) {
         fail(error instanceof Error ? error : new QueryError(String(error), MQTT_TYPE));
       }
@@ -459,7 +463,7 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
      * gets dropped by a broker that thinks the client is gone.
      */
     const keepAlive = (): void => {
-      if (connected && !settled) write(encodePingReq());
+      if (connected && !settled) write(encodePingReq);
     };
 
     const finish = (endReason: MqttEndReason): void => {
@@ -496,12 +500,15 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
       if (ping !== undefined) clearInterval(ping);
       if (budget !== undefined) clearTimeout(budget);
       if (dial !== undefined) clearTimeout(dial);
-      try {
-        if (connected) write(encodeDisconnect());
-      } catch {
-        // A refused DISCONNECT is not worth failing a read that already has its answer.
-      }
+      write(encodeDisconnect);
       socket.destroy();
+      if (nameless > 0) {
+        scope = "incomplete";
+        provenLoss.push(
+          `${nameless.toLocaleString("en-US")} ${nameless === 1 ? "message" : "messages"} arrived with no topic name ` +
+            "(a Topic Alias this connection never offered), so the branch each belongs to cannot be named.",
+        );
+      }
       resolve({
         topics,
         scope,
@@ -526,6 +533,13 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
     parser.on("packet", (value) => {
       const packet = value as ParsedPacket;
       if (packet.cmd === "connack") {
+        // One CONNACK per connection (MQTT 5.0 section 3.2). A second would otherwise send a second SUBSCRIBE.
+        if (connected) {
+          fail(
+            new QueryError("The broker sent a second CONNACK on one connection, which MQTT 5.0 forbids.", MQTT_TYPE),
+          );
+          return;
+        }
         const code = packet.reasonCode ?? 0;
         if (code !== 0) {
           fail(new QueryError(connackSentence(code), MQTT_TYPE));
@@ -533,7 +547,7 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
         }
         connected = true;
         if (dial !== undefined) clearTimeout(dial);
-        write(encodeSubscribe(1, [filter]));
+        write(() => encodeSubscribe(1, [filter]));
         return;
       }
       if (packet.cmd === "suback") {
@@ -553,7 +567,10 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
         // `""` is not a topic. A broker using Topic Alias sends the name once and omits it afterwards; we
         // advertise no Topic Alias Maximum, so a conforming broker never does, but a row keyed on the empty
         // string would re-read the whole broker when clicked, because an empty filter means `#`.
-        if (topic === undefined || topic === "") return;
+        if (topic === undefined || topic === "") {
+          nameless += 1;
+          return;
+        }
         messages += 1;
         const body = packet.payload;
         const bodyBytes = body instanceof Uint8Array ? body : undefined;
@@ -571,6 +588,18 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
         return;
       }
       if (packet.cmd === "disconnect") {
+        // Before the CONNACK there is no read to report, only a refusal, and its code is the broker's reason.
+        if (!connected) {
+          const code = packet.reasonCode ?? 0;
+          fail(
+            new QueryError(
+              `The broker ended the connection before answering the handshake, with reason code ${code} ` +
+                `(0x${code.toString(16)}). Nothing was read.`,
+              MQTT_TYPE,
+            ),
+          );
+          return;
+        }
         // The broker ended it. Whatever its reason code, the read stopped before our budget did, so what we
         // hold is provably short of what the filter matched.
         scope = "incomplete";
@@ -642,7 +671,7 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
 
     const onReady = (): void => {
       tcpOpen = true;
-      write(
+      write(() =>
         encodeConnect({
           clientId: newClientId(),
           keepAliveSeconds: MQTT_KEEP_ALIVE_SECONDS,
@@ -650,6 +679,8 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
           ...(options.password === undefined ? {} : { password: options.password }),
         }),
       );
+      // A CONNECT that could not be written has already failed the read, and starts no timer.
+      if (settled) return;
       // NO SEPARATE CONNACK TIMER HERE, and an audit proved why one would be dead: it was set to
       // `MQTT_CONNECT_TIMEOUT_MS` (10s) while `budget` below is `MQTT_READ_BUDGET_MS` (3s), so the budget
       // always fired first and `finish()` turned it into the no-CONNACK failure. Measured against a socket

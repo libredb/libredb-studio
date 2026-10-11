@@ -21,11 +21,16 @@ const row = (over: Partial<MqttTopicRow> = {}): MqttTopicRow => ({ retained: tru
 
 describe("the discovery filter", () => {
   test("an empty filter means every topic, which is `#`", () => {
-    for (const given of [undefined, "", "   "]) expect(readFilter(given)).toBe("#");
+    for (const given of [undefined, ""]) expect(readFilter(given)).toBe("#");
   });
 
-  test("a filter is taken as typed, with its surrounding space removed", () => {
-    expect(readFilter("  sensors/+/temperature  ")).toBe("sensors/+/temperature");
+  /**
+   * A topic name may begin or end with a space, and the Source tab subscribes to the exact name it was given.
+   * The connection's typed field is trimmed where it is read (`sessionOptions()`), not here.
+   */
+  test("a filter is taken exactly as given, spaces included", () => {
+    expect(readFilter("  sensors/+/temperature  ")).toBe("  sensors/+/temperature  ");
+    expect(readFilter(" ")).toBe(" ");
   });
 
   /**

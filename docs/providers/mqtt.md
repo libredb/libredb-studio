@@ -67,8 +67,9 @@ query console in this version.
 
 ### 2.3 Registration & lifecycle
 
-`connect()` performs the read. The result is held for the life of the connection, so opening a folder in the
-tree issues no further request and two reads are never merged into one tree.
+`connect()` performs the read, and the Keys panel's first page is drawn from it. Opening a folder or typing a
+prefix narrows the read already held and issues no request; the refresh button performs a new read that
+replaces the tree (section 5). Two reads are never merged into one tree.
 
 ### 2.4 The decoder, and why
 
@@ -280,11 +281,12 @@ A read can also end because the broker ended it. The six end reasons and the sen
 section 10.
 
 **Refresh reads the broker again.** Opening a connection performs one read, and the Keys panel's first page is
-drawn from it, so opening costs one read rather than two. Every refresh after that performs a new read and
-replaces the tree, its row types and the sentence that explains it. This is what makes "Reading again, or
-narrowing the topic filter, sees more" true: a topic the broker retained after the connection opened appears
-on a refresh, and one it no longer retains disappears. There is no second page to ask for, by the choice in
-3.7, so the first page of a walk is the only request that can mean "read it again".
+drawn from it, so opening costs one read rather than two. A refresh, which asks for the same first page
+again, performs a new read and replaces the tree, its row types and the sentence that explains it. A first
+page with a different pattern is the panel narrowing what it shows, and is answered from the read already
+held: typing a prefix opens no connection. This is what makes "Reading again, or narrowing the topic filter,
+sees more" true: a topic the broker retained after the connection opened appears on a refresh, and one it no
+longer retains disappears. There is no second page to ask for, by the choice in 3.7.
 
 The retain flag is not a stop signal because it cannot be one. Measured in the lab, against the broker
 versions named:
@@ -433,12 +435,22 @@ it as the tail of a longer sentence, which is why each begins in lower case.
 | `budget-messages` | the read reached its message budget. A narrower topic filter sees more of what matters. |
 | `budget-bytes` | the read reached its byte budget. A narrower topic filter sees more of what matters. |
 | `server-disconnect` | the broker closed the connection before the budget ran out, so the list is short of what the filter matched. |
-| `subscription-refused` | the broker refused the subscription, so nothing could be read under this filter. Brokers commonly refuse the widest filters and grant narrower ones: try a branch, such as sensors/# instead of #. |
+| `subscription-refused` | The sentence for the broker's own reason code, in the table below. |
 | `transport-closed` | the connection closed before the budget ran out, so the list is short of what the filter matched. |
 
-`subscription-refused` is the one branch whose remedy is both known and decisive, which is why it does not
-stop at the diagnosis: a stock EMQX refuses `#` and grants `sensors/#` in the same breath, and a reader told
-only that the subscription was refused concludes the tool cannot read the broker at all.
+`subscription-refused` names the remedy that fits the broker's reason code, because the remedies differ: a
+stock EMQX refuses `#` and grants `sensors/#` in the same breath, while a broker with no wildcard support
+refuses every narrower wildcard too. Each sentence ends with the code in both bases.
+
+| Code | The sentence |
+|---|---|
+| 0x87 | the broker refused the subscription, so nothing could be read under this filter. Brokers commonly refuse the widest filters and grant narrower ones: try a branch, such as sensors/# instead of # |
+| 0x83 | the broker refused the subscription with an error of its own that it does not describe further |
+| 0x8f | the broker read the topic filter as invalid. A filter is levels separated by /, with + for one level and # only as the last level: check the filter rather than narrowing it |
+| 0x97 | the broker's subscription quota is full, so it accepted no new subscription. This is a limit on the broker rather than anything about the filter |
+| 0x9e | the broker does not support shared subscriptions |
+| 0xa2 | the broker does not support wildcard subscriptions at all, so no filter carrying + or # can be used on it, however narrow. Typing one exact topic name reads that topic |
+| Any other | the broker refused the subscription, so nothing could be read under this filter |
 
 ### 10.3 A handshake that never finishes
 
@@ -447,8 +459,10 @@ Three separate clocks make it impossible here: the dial itself is timed, the rea
 a read that reaches the end with no CONNACK fails rather than resolving an empty tree. An empty tree would be
 the wrong answer, not an empty one.
 
-A broker that hangs up before answering says so in its own words, and names the usual cause: a broker
-listening for TLS on this port closes a plain connection exactly that way.
+A broker that hangs up before answering is reported as having closed the connection without answering the
+handshake, and one that sends a DISCONNECT first has its reason code named. No cause is guessed: a TLS-only
+port does not close a plain connection this way, because its TLS alert arrives as bytes and the read ends in
+the decoder instead.
 
 ## 11. Testing
 
