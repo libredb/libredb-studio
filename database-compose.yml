@@ -3424,6 +3424,9 @@ services:
           memory: 1536M
     memswap_limit: 1536M
 
+  # Kubernetes has no service here: a cluster is not a compose service. docker/kubernetes/README.md makes the
+  # throwaway k3s clusters its fixtures and its live pass use, and docs/providers/kubernetes.md connects to them.
+
 volumes:
   # Named volumes for Druid, for the certificates of kafka-auth and the etcd auth fixtures, and
   # for the vector fixtures. Druid is the one service here whose processes must share state

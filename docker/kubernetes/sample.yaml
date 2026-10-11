@@ -1,0 +1,325 @@
+# Sample data for the Kubernetes provider's throwaway clusters (docker/kubernetes/README.md). Fake values only.
+# Every value and key holding k8s-marker- is a planted marker: tests/helpers/kubernetes-markers.ts names each one, the
+# fixture scrub keeps them in the namespaces shop and restricted, and the tests assert that none reaches a surface it
+# must not: a Secret value on any surface, and a value, a key, a label, an annotation, an env value or a Secret name on
+# a machine surface.
+apiVersion: v1
+kind: Namespace
+metadata: {name: shop, labels: {env: probe, team: commerce}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: analytics, labels: {env: probe, team: data}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: restricted, labels: {env: probe, team: security}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: probe-auth, labels: {env: probe}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: shop
+  labels: {app: web, tier: frontend, libredb.dev/k8s-marker-label-name-2c6d: k8s-marker-label-value}
+  annotations: {libredb.dev/k8s-marker-annotation-name-8e0b: k8s-marker-annotation-value-c8e1}
+spec:
+  replicas: 3
+  selector: {matchLabels: {app: web}}
+  template:
+    metadata: {labels: {app: web, tier: frontend}}
+    spec:
+      containers:
+        - name: web
+          image: registry.k8s.io/pause:3.10
+          env: [{name: MARKER_ENV, value: k8s-marker-env-value-0b52}]
+          resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {cpu: 50m, memory: 32Mi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: logger, namespace: shop, labels: {app: logger}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: logger}}
+  template:
+    metadata: {labels: {app: logger}}
+    spec:
+      containers:
+        - name: logger
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          args: ["logs-generator", "--log-lines-total", "200000", "--run-duration", "48h"]
+        - name: sidecar
+          image: docker.io/library/busybox:1.37
+          command: ["sh", "-c", "i=0; while true; do i=$((i+1)); echo \"sidecar tick $i\"; sleep 5; done"]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: db, namespace: shop, labels: {app: db}}
+spec:
+  serviceName: db
+  replicas: 1
+  selector: {matchLabels: {app: db}}
+  template:
+    metadata: {labels: {app: db}}
+    spec:
+      containers:
+        - name: db
+          image: registry.k8s.io/pause:3.10
+          volumeMounts: [{name: data, mountPath: /data}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 64Mi}}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: node-agent, namespace: shop, labels: {app: node-agent}}
+spec:
+  selector: {matchLabels: {app: node-agent}}
+  template:
+    metadata: {labels: {app: node-agent}}
+    spec:
+      containers:
+        - name: agent
+          image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Service
+metadata: {name: web, namespace: shop}
+spec:
+  selector: {app: web}
+  ports: [{name: http, port: 80, targetPort: 8080}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: db, namespace: shop}
+spec:
+  clusterIP: None
+  selector: {app: db}
+  ports: [{name: pg, port: 5432}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: shop-config, namespace: shop}
+data:
+  FEATURE_FLAGS: "checkout-v2,search-beta"
+  k8s-marker-cm-entry-9a4f: k8s-marker-configmap-value-71c4
+  app.properties: |
+    currency=EUR
+    page.size=25
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: k8s-marker-secret-name
+  namespace: shop
+  labels: {libredb.dev/k8s-marker-label-name-2c6d: k8s-marker-label-value}
+  annotations: {libredb.dev/k8s-marker-annotation-name-8e0b: k8s-marker-annotation-value-c8e1}
+type: Opaque
+# The key names no password or token, so the secret scan does not take this fake value for a credential.
+stringData:
+  k8s-marker-secret-entry-5e21: k8s-marker-secret-value-3d9a
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: web, namespace: shop}
+spec:
+  rules:
+    - host: shop.probe.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: {service: {name: web, port: {number: 80}}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: deny-all-ingress, namespace: shop}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: web-pdb, namespace: shop}
+spec:
+  minAvailable: 2
+  selector: {matchLabels: {app: web}}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: web-hpa, namespace: shop}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: web}
+  minReplicas: 3
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource: {name: cpu, target: {type: Utilization, averageUtilization: 80}}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: report, namespace: shop}
+spec:
+  schedule: "0 0 1 1 *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: report
+              image: docker.io/library/busybox:1.37
+              command: ["sh", "-c", "echo report"]
+---
+apiVersion: batch/v1
+kind: Job
+metadata: {name: migrate, namespace: shop}
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: docker.io/library/busybox:1.37
+          command: ["sh", "-c", "echo migrating schema; echo migrated 42 tables; exit 0"]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: crasher, namespace: shop, labels: {app: crasher}}
+spec:
+  restartPolicy: Always
+  containers:
+    - name: crasher
+      image: docker.io/library/busybox:1.37
+      command: ["sh", "-c", "echo starting crasher; echo fatal: probe crash >&2; sleep 3; exit 1"]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: stuck, namespace: shop, labels: {app: stuck}}
+spec:
+  nodeSelector: {disktype: nonexistent}
+  containers:
+    - name: stuck
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: etl, namespace: analytics, labels: {app: etl}}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: etl}}
+  template:
+    metadata: {labels: {app: etl}}
+    spec:
+      containers:
+        - name: etl
+          image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: etl-config, namespace: analytics}
+data: {schedule: "hourly", sink: "warehouse"}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: {name: analytics-quota, namespace: analytics}
+spec:
+  hard: {pods: "20", requests.cpu: "2", requests.memory: 2Gi}
+---
+apiVersion: v1
+kind: LimitRange
+metadata: {name: analytics-limits, namespace: analytics}
+spec:
+  limits:
+    - type: Container
+      default: {cpu: 100m, memory: 64Mi}
+      defaultRequest: {cpu: 10m, memory: 16Mi}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: top-secret, namespace: restricted}
+type: Opaque
+stringData: {k8s-marker-secret-entry-5e21: k8s-marker-secret-value-3d9a}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: restricted-config, namespace: restricted}
+data: {mode: "locked"}
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata: {name: probe-high}
+value: 100000
+globalDefault: false
+description: "Probe priority class"
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata: {name: widgets.probe.libredb.dev}
+spec:
+  group: probe.libredb.dev
+  scope: Namespaced
+  names: {plural: widgets, singular: widget, kind: Widget, shortNames: [wd], categories: [all]}
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - {name: Color, type: string, jsonPath: .spec.color}
+        - {name: Size, type: integer, jsonPath: .spec.size}
+        - {name: Age, type: date, jsonPath: .metadata.creationTimestamp}
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                color: {type: string}
+                size: {type: integer}
+---
+# Personas: service accounts whose tokens back the persona kubeconfigs.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: viewer, namespace: probe-auth}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: shop-only, namespace: probe-auth}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: reader, namespace: probe-auth}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: probe-viewer}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view}
+subjects: [{kind: ServiceAccount, name: viewer, namespace: probe-auth}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: probe-shop-only, namespace: shop}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view}
+subjects: [{kind: ServiceAccount, name: shop-only, namespace: probe-auth}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: probe-read-all}
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - nonResourceURLs: ["/api", "/api/*", "/apis", "/apis/*", "/version", "/healthz", "/livez", "/readyz", "/openapi", "/openapi/*"]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: probe-reader}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: probe-read-all}
+subjects: [{kind: ServiceAccount, name: reader, namespace: probe-auth}]

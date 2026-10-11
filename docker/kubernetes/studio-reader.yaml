@@ -1,0 +1,53 @@
+# The studio-reader identity of docs/providers/kubernetes.md: a ServiceAccount bound to the built-in view
+# ClusterRole, plus get and list on the cluster-scoped kinds view leaves out. Never Secrets.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: libredb-studio
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: studio-reader
+  namespace: libredb-studio
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: studio-reader
+rules:
+  - apiGroups: [""]
+    resources: [nodes, namespaces, persistentvolumes]
+    verbs: [get, list]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: studio-reader-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: studio-reader
+    namespace: libredb-studio
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: studio-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: studio-reader
+subjects:
+  - kind: ServiceAccount
+    name: studio-reader
+    namespace: libredb-studio

@@ -1,0 +1,4 @@
+mirrors:
+  "docker.io":
+    endpoint:
+      - "https://mirror.gcr.io"

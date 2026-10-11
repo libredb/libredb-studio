@@ -1,0 +1,10 @@
+# Two objects of the sample custom resource type widgets.probe.libredb.dev (sample.yaml defines it).
+apiVersion: probe.libredb.dev/v1
+kind: Widget
+metadata: {name: widget-a, namespace: shop, labels: {app: web}}
+spec: {color: blue, size: 3}
+---
+apiVersion: probe.libredb.dev/v1
+kind: Widget
+metadata: {name: widget-b, namespace: shop}
+spec: {color: red, size: 7}
