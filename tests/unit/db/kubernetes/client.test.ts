@@ -112,6 +112,20 @@ describe("send", () => {
     expect(transport.calls).toEqual([]);
   });
 
+  test("the client's own gate refuses a final path and a query value before the transport", async () => {
+    const transport = recordingKubernetesTransport(() => jsonAnswer({}));
+    const endpoint = readClusterEndpoint(kubernetesConnection(), { queryTimeout: 30_000, appVersion: "0.18.2" });
+    const escaping = createKubernetesClient({ ...endpoint, apiPath: "/k8s/.." }, testSeams(transport));
+    await expect(escaping.send({ op: "version" }, call())).rejects.toThrow(
+      "The request path holds a character or a segment Studio never sends. Nothing was sent.",
+    );
+    const client = createKubernetesClient(endpoint, testSeams(transport));
+    await expect(
+      client.send({ op: "logs", namespace: "shop", pod: "web", query: { container: "App" } }, call()),
+    ).rejects.toThrow("The value of the query key container is outside what Studio sends. Nothing was sent.");
+    expect(transport.calls).toEqual([]);
+  });
+
   test("a 401 sends exactly one request and answers the expiry sentence", async () => {
     const { client, transport } = clientWith(() => statusAnswer(401, "Unauthorized"));
     const failure = client.send({ op: "discovery", root: "api" }, call());
