@@ -1537,31 +1537,20 @@ export function ConnectionModal({
               }
               className="w-full md:w-auto min-w-0 md:min-w-[140px] bg-brand-solid hover:bg-brand-solid-hover text-white font-medium text-xs h-10 shadow-lg shadow-blue-900/20 group relative overflow-hidden"
             >
-              <AnimatePresence mode="wait">
-                {isTesting ? (
-                  <motion.div
-                    key="testing"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="flex items-center gap-2"
-                  >
-                    {/* Inside a solid blue button — white is right on either ground. */}
-                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Connecting...
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="connect"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="flex items-center gap-2"
-                  >
-                    {isEditMode ? "Save Changes" : "Establish Connection"}
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              {/*
+                The label follows isTesting in the same render, never through an exit animation: AnimatePresence
+                in "wait" mode kept "Connecting..." on this button until its fade-out ended, after the answer was
+                already on screen (measured 2026-10-11 against a host that drops the packets).
+              */}
+              {isTesting ? (
+                <div className="flex items-center gap-2">
+                  {/* Inside a solid blue button: white is right on either ground. */}
+                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Connecting...
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">{isEditMode ? "Save Changes" : "Establish Connection"}</div>
+              )}
             </Button>
           </div>
         </div>
