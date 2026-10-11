@@ -4,7 +4,8 @@
  * kubectl's NAMESPACE column with -A, LABELS with --show-labels and one column per -L key; `-o name` is one column of
  * `kind.group/name`.
  *
- * `includeObject=None` unless a column needs the object's metadata (-A for its namespace, --show-labels, -L); then
+ * `includeObject=None` unless a column needs the object's metadata (-A for its namespace, --show-labels, -L, or
+ * `-o name` of a kind whose Name cell holds more than the name); then
  * `includeObject=Metadata`, and every page is redacted before a cell is written, so a Secret's last-applied
  * annotation never reaches a label or a cell. A page with metadata that meets the 16 MiB cap is read again once with
  * half the page size.
@@ -18,6 +19,7 @@ import type { QueryWarning } from "@/lib/types";
 import { ACCEPT_TABLE } from "../client";
 import type { IndexedResource } from "../discovery";
 import { KubernetesRequestError } from "../errors";
+import { builtInKind } from "../kinds";
 import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_PAGE_SIZE, KUBERNETES_TYPE } from "../limits";
 import { redactResponse } from "../redaction";
 import { cellOf, type KubeTable, parseTable, scanTable, type TableColumn, type TableRow, tableGrid } from "../table";
@@ -49,9 +51,23 @@ const BOUNDED_WARNING: QueryWarning = {
     "The list holds more than 5,000 objects; Studio shows the first 5,000, the most one statement reads. Narrow it with -l or --field-selector.",
 };
 
+/** Whether the kind's Table printer writes more than the name in the Name cell (a StorageClass's ` (default)`). */
+function decoratedName(resource: Pick<IndexedResource, "resource" | "group">): boolean {
+  const entry = builtInKind(resource.resource);
+  return entry?.decoratedName === true && entry.group === resource.group;
+}
+
 /** Whether a column of the statement needs each object's metadata. */
-export function needsMetadata(statement: GetStatement, resource: Pick<IndexedResource, "namespaced">): boolean {
-  return (statement.allNamespaces && resource.namespaced) || statement.showLabels || statement.labelColumns.length > 0;
+export function needsMetadata(
+  statement: GetStatement,
+  resource: Pick<IndexedResource, "namespaced" | "resource" | "group">,
+): boolean {
+  return (
+    (statement.allNamespaces && resource.namespaced) ||
+    statement.showLabels ||
+    statement.labelColumns.length > 0 ||
+    (statement.output === "name" && decoratedName(resource))
+  );
 }
 
 /** The deadline of each request: the time the statement has left, or --request-timeout's when that is sooner. */
@@ -122,7 +138,7 @@ export function gridOf(
   if (statement.output === "name") {
     return {
       fields: ["name"],
-      rows: rows.map((row) => ({ name: qualifiedName(resource, cellOf(table, row, "Name")) })),
+      rows: rows.map((row) => ({ name: qualifiedName(resource, metadataOf(row).name ?? cellOf(table, row, "Name")) })),
       columnTypes: { name: "string" },
     };
   }

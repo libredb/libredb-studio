@@ -111,6 +111,34 @@ describe("the list form", () => {
     ]);
   });
 
+  test("-o name prints a StorageClass's object name, not its printer's decorated Name cell", async () => {
+    const defaultClass = {
+      cells: ["local-path (default)"],
+      object: { kind: "PartialObjectMetadata", metadata: { name: "local-path" } },
+    };
+    const answer = routes({
+      "GET /apis/storage.k8s.io/v1/storageclasses?limit=5&includeObject=Metadata": tableAnswer(
+        [{ name: "Name" }],
+        [defaultClass],
+      ),
+      "GET /apis/storage.k8s.io/v1/storageclasses/local-path?includeObject=Metadata": tableAnswer(
+        [{ name: "Name" }],
+        [defaultClass],
+      ),
+    });
+    const { context, transport } = consoleContext(answer);
+    expect((await getList(context, get("kubectl get storageclasses -o name"), { offset: 0, limit: 5 })).rows).toEqual([
+      { name: "storageclass.storage.k8s.io/local-path" },
+    ]);
+    expect((await getNamed(context, get("kubectl get sc local-path -o name"))).rows).toEqual([
+      { name: "storageclass.storage.k8s.io/local-path" },
+    ]);
+    expect(sentLines(transport)).toEqual([
+      "GET /apis/storage.k8s.io/v1/storageclasses?limit=5&includeObject=Metadata",
+      "GET /apis/storage.k8s.io/v1/storageclasses/local-path?includeObject=Metadata",
+    ]);
+  });
+
   test("a cluster-scoped type is read without a namespace, whatever -n says", async () => {
     const answer = routes({
       "GET /api/v1/nodes?limit=5&includeObject=None": tableAnswer([{ name: "Name" }], [{ cells: ["n1"] }]),
