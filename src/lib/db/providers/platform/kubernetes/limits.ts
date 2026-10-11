@@ -28,6 +28,8 @@ export const KUBERNETES_TREE_OBJECT_CAP = 1_000;
 export const KUBERNETES_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 /** Bytes one `-o json|yaml` document cell may hold. */
 export const KUBERNETES_MAX_DOCUMENT_BYTES = 1024 * 1024;
+/** Bytes the documents of one `-o json|yaml` statement may hold together. */
+export const KUBERNETES_MAX_DOCUMENTS_BYTES = 16 * 1024 * 1024;
 /** Objects one `-o json|yaml` statement may show. */
 export const KUBERNETES_MAX_DOCUMENT_OBJECTS = 500;
 /** Log lines read when `--tail` is absent. */

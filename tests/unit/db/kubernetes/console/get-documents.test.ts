@@ -4,6 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { parse as parseYaml } from "yaml";
+import { TransportError } from "@/lib/db/http/node-transport";
 import { getDocuments } from "@/lib/db/providers/platform/kubernetes/console/get-documents";
 import { type KubectlStatement, parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
 import {
@@ -137,6 +138,58 @@ describe("the list form", () => {
     const grid = await getDocuments(context, get("get cm -o json"));
     expect(new TextEncoder().encode(grid.rows[0].DOCUMENT as string).length).toBe(1024 * 1024);
     expect(grid.warnings).toBeUndefined();
+  });
+});
+
+describe("the statement's 16 MiB of documents", () => {
+  const BUDGET =
+    "The documents of this statement pass 16 MiB together, the most one -o json or -o yaml statement shows: narrow it with -l, --field-selector or fewer names, or read it as a table without -o.";
+  const large = (name: string) => configMap(name, { data: { key: "z".repeat(1_000_000) } });
+
+  test("listed documents past 16 MiB together answer the sentence, never a partial grid", async () => {
+    const over = Array.from({ length: 17 }, (_unused, index) => large(`c${index}`));
+    const { context } = consoleContext(
+      routes({ "GET /api/v1/namespaces/shop/configmaps?limit=500": listAnswer(over) }),
+    );
+    await expect(getDocuments(context, get("get cm -o json"))).rejects.toThrow(BUDGET);
+    const fits = consoleContext(
+      routes({ "GET /api/v1/namespaces/shop/configmaps?limit=500": listAnswer(over.slice(0, 16)) }),
+    );
+    expect((await getDocuments(fits.context, get("get cm -o json"))).rows).toHaveLength(16);
+  });
+
+  test("named documents past 16 MiB answer the sentence and read no further name", async () => {
+    const names = Array.from({ length: 18 }, (_unused, index) => `c${index}`);
+    const map: Record<string, ReturnType<typeof jsonAnswer>> = {};
+    for (const name of names) map[`GET /api/v1/namespaces/shop/configmaps/${name}`] = jsonAnswer(large(name));
+    const { context, transport } = consoleContext(routes(map));
+    await expect(getDocuments(context, get(`get cm ${names.join(" ")} -o yaml`))).rejects.toThrow(BUDGET);
+    expect(sentLines(transport)).toHaveLength(17);
+  });
+
+  test("a named read is capped at 2 MiB, and one past it becomes the oversized cell for that name", async () => {
+    const answer = routes({
+      "GET /api/v1/namespaces/shop/configmaps/huge": () => {
+        throw new TransportError("too-large", "x");
+      },
+      "GET /api/v1/namespaces/shop/configmaps/small": jsonAnswer(configMap("small")),
+    });
+    const { context, transport } = consoleContext(answer);
+    const grid = await getDocuments(context, get("get cm huge small -o json"));
+    expect(transport.requests.slice(-2).map((request) => request.maxResponseBytes)).toEqual([
+      2 * 1024 * 1024,
+      2 * 1024 * 1024,
+    ]);
+    expect(grid.rows[0]).toEqual({
+      NAMESPACE: "shop",
+      NAME: "huge",
+      DOCUMENT:
+        "This document is larger than 1 MiB, the most one cell holds, so it is not shown; read the object with kubectl describe, or narrow -o json to fewer objects.",
+    });
+    expect(grid.rows[1].NAME).toBe("small");
+    expect(grid.warnings).toEqual([
+      { message: "1 document is larger than 1 MiB and not shown; each such cell says so." },
+    ]);
   });
 });
 

@@ -5,16 +5,19 @@
  * before anything is written, and written by Studio, so a Secret's document never holds its values or its
  * last-applied annotation and no document holds `managedFields`. A list item carries no `apiVersion` or `kind`, so
  * each document gets the resource's, as kubectl prints them. A statement shows at most 500 objects, and a list
- * holding more answers a sentence to narrow it; a document over 1 MiB is replaced by a sentence and a warning.
+ * holding more answers a sentence to narrow it; a document over 1 MiB is replaced by a sentence and a warning, and a
+ * named read is capped at 2 MiB, past which its cell is that sentence too. The documents of one statement hold at
+ * most 16 MiB together, past which the statement answers a sentence to narrow it and shows no partial grid.
  */
 import { stringify } from "yaml";
 import { QueryError } from "@/lib/db/errors";
 import { ACCEPT_JSON } from "../client";
 import type { IndexedResource } from "../discovery";
-import { KubernetesRequestError } from "../errors";
+import { KubernetesRequestError, KubernetesResponseTooLargeError } from "../errors";
 import {
   KUBERNETES_MAX_DOCUMENT_BYTES,
   KUBERNETES_MAX_DOCUMENT_OBJECTS,
+  KUBERNETES_MAX_DOCUMENTS_BYTES,
   KUBERNETES_PAGE_SIZE,
   KUBERNETES_TYPE,
 } from "../limits";
@@ -24,6 +27,9 @@ import { inTurn, type KubectlContext, type KubectlGrid, namespaceFor, objectOf, 
 import { callOf, type GetStatement } from "./get-list";
 
 const TOO_MANY = `The list holds more than ${KUBERNETES_MAX_DOCUMENT_OBJECTS} objects, the most -o json and -o yaml show: narrow it with -l, --field-selector or -n, or read it as a table without -o.`;
+
+const BUDGET_SENTENCE =
+  "The documents of this statement pass 16 MiB together, the most one -o json or -o yaml statement shows: narrow it with -l, --field-selector or fewer names, or read it as a table without -o.";
 
 const oversized = (format: string): string =>
   `This document is larger than 1 MiB, the most one cell holds, so it is not shown; read the object with kubectl describe, or narrow -o ${format} to fewer objects.`;
@@ -80,57 +86,87 @@ async function listedObjects(
   return scan.rows.map((row) => row.object ?? {});
 }
 
-/** The objects of the named form, one read each; a missing one is skipped with --ignore-not-found. */
-async function namedObjects(
+type DocumentRow = { readonly NAMESPACE: unknown; readonly NAME: unknown; readonly DOCUMENT: string };
+
+/** The rows of one statement, each cell counted against the statement's bytes as it is written. */
+class DocumentRows {
+  readonly rows: DocumentRow[] = [];
+  replaced = 0;
+  private bytes = 0;
+
+  constructor(
+    private readonly resource: IndexedResource,
+    private readonly format: "json" | "yaml",
+  ) {}
+
+  /** One object's row: its document, or the oversized sentence when the document passes 1 MiB. */
+  object(object: Readonly<Record<string, unknown>>): void {
+    const metadata = objectOf(object.metadata) ?? {};
+    const text = documentText(object, this.resource, this.format);
+    const length = utf8Length(text);
+    if (length > KUBERNETES_MAX_DOCUMENT_BYTES) this.oversized(metadata.namespace ?? null, metadata.name ?? null);
+    else this.push({ NAMESPACE: metadata.namespace ?? null, NAME: metadata.name ?? null, DOCUMENT: text }, length);
+  }
+
+  oversized(namespace: unknown, name: unknown): void {
+    const text = oversized(this.format);
+    this.replaced += 1;
+    this.push({ NAMESPACE: namespace, NAME: name, DOCUMENT: text }, utf8Length(text));
+  }
+
+  private push(row: DocumentRow, length: number): void {
+    this.bytes += length;
+    if (this.bytes > KUBERNETES_MAX_DOCUMENTS_BYTES) throw new QueryError(BUDGET_SENTENCE, KUBERNETES_TYPE);
+    this.rows.push(row);
+  }
+}
+
+/**
+ * The rows of the named form, one read each, each written as it is read so the statement's bytes stop the reads; a
+ * missing one is skipped with --ignore-not-found, and one past 2 MiB is the oversized cell.
+ */
+async function namedRows(
   context: KubectlContext,
   statement: GetStatement,
   resource: IndexedResource,
-): Promise<readonly Readonly<Record<string, unknown>>[]> {
+  rows: DocumentRows,
+): Promise<void> {
   const namespace = namespaceFor(context, resource, statement);
-  const objects = await inTurn(statement.names, async (name) => {
+  await inTurn(statement.names, async (name) => {
+    let body: unknown;
     try {
-      const body = await context.surface.client.json(
+      body = await context.surface.client.json(
         { op: "get", target: resource, ...(namespace === undefined ? {} : { namespace }), name },
-        { ...callOf(context, statement), accept: ACCEPT_JSON },
+        // Twice the cell's bytes: the answer's JSON is compact, and the document is written indented.
+        { ...callOf(context, statement), accept: ACCEPT_JSON, maxResponseBytes: 2 * KUBERNETES_MAX_DOCUMENT_BYTES },
       );
-      return objectOf(redactResponse(resource, body)) ?? {};
     } catch (error) {
+      if (error instanceof KubernetesResponseTooLargeError) return rows.oversized(namespace ?? null, name);
       if (
         statement.ignoreNotFound &&
         error instanceof KubernetesRequestError &&
         error.status === 404 &&
         !error.typeMissing
       )
-        return undefined;
+        return;
       throw error;
     }
+    rows.object(objectOf(redactResponse(resource, body)) ?? {});
   });
-  return objects.filter((object): object is Readonly<Record<string, unknown>> => object !== undefined);
 }
 
 /** `-o json` or `-o yaml`: one row per object, a document cell each. */
 export async function getDocuments(context: KubectlContext, statement: GetStatement): Promise<KubectlGrid> {
   const format = statement.output === "json" ? "json" : "yaml";
   const resource = await resolveType(context, statement.type);
-  const objects =
-    statement.names.length === 0
-      ? await listedObjects(context, statement, resource)
-      : await namedObjects(context, statement, resource);
-  let replaced = 0;
-  const rows = objects.map((object) => {
-    const metadata = objectOf(object.metadata) ?? {};
-    const text = documentText(object, resource, format);
-    const fits = utf8Length(text) <= KUBERNETES_MAX_DOCUMENT_BYTES;
-    if (!fits) replaced += 1;
-    return {
-      NAMESPACE: metadata.namespace ?? null,
-      NAME: metadata.name ?? null,
-      DOCUMENT: fits ? text : oversized(format),
-    };
-  });
+  const rows = new DocumentRows(resource, format);
+  if (statement.names.length === 0) {
+    for (const object of await listedObjects(context, statement, resource)) rows.object(object);
+  } else await namedRows(context, statement, resource, rows);
+  const { replaced } = rows;
   return {
     fields: ["NAMESPACE", "NAME", "DOCUMENT"],
-    rows,
+    rows: rows.rows,
     columnTypes: { NAMESPACE: "string", NAME: "string", DOCUMENT: "string" },
     ...(replaced === 0
       ? {}
