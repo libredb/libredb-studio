@@ -452,7 +452,8 @@ function parseGet(scanned: Scanned): KubectlStatement {
   if (split !== undefined) {
     const others = rest.map((word) => typeName(word));
     if (others.some((entry) => entry === undefined)) refuse("bad-arguments", S.typeNameMixed);
-    if (others.some((entry) => entry?.type !== split.type)) refuse("one-type", S.oneType);
+    // Two spellings may name one resource (po and pods), which only discovery tells, so the spelling is compared.
+    if (others.some((entry) => entry?.type !== split.type)) refuse("one-type", S.typeSpelling);
     type = oneType(split.type);
     names = [split.name, ...others.map((entry) => (entry as { readonly name: string }).name)];
   } else {

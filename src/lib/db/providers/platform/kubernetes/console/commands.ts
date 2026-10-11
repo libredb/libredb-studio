@@ -256,6 +256,7 @@ export const KUBECTL_SENTENCES = Object.freeze({
   noCommand: `The statement holds flags but no command: write one of ${V1_COMMANDS_WORDS}. ${NOTHING_SENT}`,
   follow: "follow is not available in v1; remove -f to read the latest lines, and run again to refresh.",
   oneType: `kubectl get reads one type per statement in v1: name one resource type, and run one statement per type (get all and TYPE,TYPE are not in v1). ${NOTHING_SENT}`,
+  typeSpelling: `Write each resource/name argument with the same type spelling, such as pods/web pods/api: kubectl get reads one type per statement in v1. ${NOTHING_SENT}`,
   outputFormat: `The output format given to -o is not in v1 of this console: -o takes wide, name, json or yaml. ${NOTHING_SENT}`,
   watchListOnly: `get -w watches the list form only: remove the names, or drop -w. ${NOTHING_SENT}`,
   watchOutput: `get -w shows the table, or -o wide; -o name, json and yaml with -w are not in v1. ${NOTHING_SENT}`,

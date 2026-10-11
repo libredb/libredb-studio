@@ -167,9 +167,17 @@ describe("get", () => {
   });
 
   test("one type per statement: get all, TYPE,TYPE and two TYPE/NAME types", () => {
-    for (const text of ["get all -n shop", "get ALL", "get pods,services", "get pod/web svc/web"]) {
+    for (const text of ["get all -n shop", "get ALL", "get pods,services"]) {
       expect(refusal(text)).toEqual({ code: "one-type", message: S.oneType });
     }
+  });
+
+  test("TYPE/NAME arguments spelling their type two ways answer their own sentence", () => {
+    for (const text of ["get po/web pods/api", "get pod/web svc/web"])
+      expect(refusal(text)).toEqual({ code: "one-type", message: S.typeSpelling });
+    expect(S.typeSpelling).toBe(
+      "Write each resource/name argument with the same type spelling, such as pods/web pods/api: kubectl get reads one type per statement in v1. Nothing was sent.",
+    );
   });
 
   test("the argument shapes kubectl refuses", () => {
