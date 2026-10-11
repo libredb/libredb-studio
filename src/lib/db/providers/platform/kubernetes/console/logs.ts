@@ -260,9 +260,15 @@ function containersOf(statement: LogsStatement, pod: Json): readonly string[] {
   return [regular[0]];
 }
 
-/** One log line's time and text: the RFC 3339 prefix `timestamps=true` writes, and the rest. */
+/**
+ * One log line's time and text: the RFC 3339 prefix `timestamps=true` writes, and the rest. Only a full
+ * `HH:MM:SS[.fraction]` time is a prefix, so every time it accepts is one `timeKey` reads.
+ */
 export function splitTimestamp(line: string): { readonly time: string | null; readonly text: string } {
-  const match = /^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+(?:Z|[+-][0-9]{2}:[0-9]{2})) ([\s\S]*)$/.exec(line);
+  const match =
+    /^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})) ([\s\S]*)$/.exec(
+      line,
+    );
   return match === null ? { time: null, text: line } : { time: match[1], text: match[2] };
 }
 

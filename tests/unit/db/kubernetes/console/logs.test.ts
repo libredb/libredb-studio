@@ -407,6 +407,17 @@ describe("the pieces", () => {
     expect(splitTimestamp("plain")).toEqual({ time: null, text: "plain" });
   });
 
+  test("a prefix without two-digit hour, minute and second is text, so the merge never meets a short time", async () => {
+    expect(splitTimestamp("2026-10-10T1:00:00Z x")).toEqual({ time: null, text: "2026-10-10T1:00:00Z x" });
+    const answer = routes({
+      "GET /api/v1/namespaces/shop/pods/web": jsonAnswer(pod({ name: "web" })),
+      [logLine("web", "app")]: textAnswer("2026-10-10T1:00:00Z first\n2026-10-10T1:00:01Z second\n"),
+    });
+    const { context } = consoleContext(answer);
+    const grid = await readLogs(context, logs("kubectl logs web"));
+    expect(grid.rows.map((row) => row.LINE)).toEqual(["2026-10-10T1:00:00Z first", "2026-10-10T1:00:01Z second"]);
+  });
+
   test("more than 5,000 selected pods answer a sentence before any log is read", async () => {
     const pods = (request: NodeRequest) => {
       const search = new URL(request.url).searchParams;
