@@ -71,10 +71,14 @@ contexts:
 }
 
 /**
- * Whether the persona's identity holds a right the credential warning names: the reader may list the Secrets of shop
- * (the Secret test reads one), so its first Establish Connection shows the warning and a second one saves.
+ * The warning the persona's first Establish Connection shows, after which a second one saves: the reader may list the
+ * Secrets of shop (the Secret test reads one), and shop-only may not list namespaces, so its tree shows shop alone.
  */
-const WARNED: Readonly<Record<keyof typeof STUB_TOKENS, boolean>> = Object.freeze({ reader: true, viewer: false });
+const WARNED: Readonly<Record<keyof typeof STUB_TOKENS, RegExp | undefined>> = Object.freeze({
+  reader: /read every Secret value in the namespace shop/,
+  viewer: undefined,
+  shopOnly: /may not list namespaces, so the tree shows the Default namespace \(shop\) alone/,
+});
 
 /** Imports the persona's kubeconfig into a new connection and connects. */
 async function connectAs(page: Page, persona: keyof typeof STUB_TOKENS) {
@@ -85,8 +89,9 @@ async function connectAs(page: Page, persona: keyof typeof STUB_TOKENS) {
   await dialog.getByTestId("connection-import-context").first().click();
   const establish = dialog.getByRole("button", { name: "Establish Connection" });
   await establish.click();
-  if (WARNED[persona]) {
-    await expect(dialog.getByText(/read every Secret value in the namespace shop/)).toBeVisible({ timeout: 20_000 });
+  const warning = WARNED[persona];
+  if (warning !== undefined) {
+    await expect(dialog.getByText(warning)).toBeVisible({ timeout: 20_000 });
     await establish.click();
   }
   await expect(dialog).not.toBeVisible({ timeout: 20_000 });
@@ -163,6 +168,23 @@ async function runStatement(page: Page, statement: string) {
     query.setValue(text);
   }, statement);
   await page.getByRole("button", { name: "RUN" }).click();
+}
+
+/** Waits until the stub has answered no new request for a second, so a count taken next is not still moving. */
+async function requestsSettled(): Promise<number> {
+  let last = -1;
+  await expect
+    .poll(
+      async () => {
+        const seen = last;
+        last = stub.requests.length;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        return stub.requests.length === seen;
+      },
+      { timeout: 30_000, intervals: [0] },
+    )
+    .toBe(true);
+  return stub.requests.length;
 }
 
 test.describe.configure({ mode: "serial" });
@@ -247,6 +269,56 @@ test.describe("Kubernetes against a replayed API server", () => {
       forbiddenSentence({ verb: "list", resource: "secrets", group: "", namespace: "shop" }),
       { timeout: 20_000 },
     );
+  });
+
+  test("a refused statement shows its sentence, and the stub receives no request for it", async ({ page }) => {
+    await connectAs(page, "reader");
+    await expect(page.locator(".monaco-editor").first()).toBeVisible({ timeout: 15_000 });
+    const before = await requestsSettled();
+    await runStatement(page, "kubectl exec -it pod/x -- sh");
+    await expect(
+      page
+        .getByText(
+          "kubectl exec is refused: it is not read-only, and this console only reads the cluster. Nothing was sent.",
+        )
+        .first(),
+    ).toBeVisible({ timeout: 20_000 });
+    expect(await requestsSettled()).toBe(before);
+  });
+
+  test("an identity bound to shop alone sees Cluster and shop, and the console reads shop", async ({ page }) => {
+    await connectAs(page, "shopOnly");
+    await expect(row(page, "shop")).toBeVisible({ timeout: 20_000 });
+    for (const label of ["analytics", "restricted", "kube-system"])
+      await expect(row(page, label), label).toHaveCount(0);
+    await expect(page.locator(".monaco-editor").first()).toBeVisible({ timeout: 15_000 });
+    const before = await gridText(page);
+    await runStatement(page, "kubectl get pods");
+    await expectGridShows(page, { cell: "crasher" }, before, "kubectl get pods");
+  });
+
+  test("a kubeconfig that cannot be read shows the parse sentence, and its token appears nowhere", async ({ page }) => {
+    const pasted = "e2e-pasted-token-never-shown";
+    const messages: string[] = [];
+    page.on("console", (message) => messages.push(message.text()));
+    const dialog = await signInAndOpenDialog(page);
+    await dialog.getByTestId("connection-import-open").click();
+    const text = kubeconfig(pasted, "e2e-broken").replace(
+      `      token: ${pasted}\n`,
+      `      token: ${pasted}\n      token: ${pasted}\n`,
+    );
+    expect(text.split(pasted)).toHaveLength(3);
+    await dialog.getByTestId("connection-import-text").fill(text);
+    await dialog.getByTestId("connection-import-read").click();
+    await expect(dialog.getByText("The kubeconfig could not be read: DUPLICATE_KEY at line 13, column 7.")).toBeVisible(
+      {
+        timeout: 10_000,
+      },
+    );
+    await expect(dialog.getByTestId("connection-import-context")).toHaveCount(0);
+    await expect(page.locator("body")).not.toContainText(pasted);
+    await expect(dialog.getByTestId("connection-import-text")).toHaveValue("");
+    expect(messages.filter((message) => message.includes(pasted))).toEqual([]);
   });
 
   test("every read the browser made was one the capture holds", () => {
