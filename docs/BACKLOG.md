@@ -6454,7 +6454,7 @@ Found 2026-10-09 while designing the S3 provider.
 
 ### B105. Kubernetes has no agent execution and no MCP surface
 
-`MCP_EXPOSABLE.kubernetes` is false and the provider implements no `queryReadOnly`, so agent execution and MCP `run_read_query` refuse it; plan mode works, walking the session's namespace and `Cluster`, with Secret names withheld (`docs/providers/kubernetes.md` section 9).
+`MCP_EXPOSABLE.kubernetes` is false and the provider implements no `queryReadOnly`, so agent execution and MCP `run_read_query` refuse it; plan mode works, walking the session's namespace and `Cluster`, with Secret and Namespace names withheld (`docs/providers/kubernetes.md` section 9).
 
 Found 2026-10-10 while designing the Kubernetes provider.
 

@@ -268,8 +268,9 @@ export const KUBERNETES_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze(
         // A kind a least-privilege identity may be refused: one 403 answers `unavailable` without a listing.
         countIsListing: true,
         ...(entry.studioGroup === undefined ? {} : { group: entry.studioGroup }),
-        // Secret names reach the user, never a machine surface.
-        ...(entry.id === "secrets" ? { machineNames: "withheld" as const } : {}),
+        // Secret names reach the user, never a machine surface. So do namespace names: the `Cluster` walk lists every
+        // namespace, and plan mode is told only how many namespaces it did not read.
+        ...(entry.id === "secrets" || entry.id === "namespaces" ? { machineNames: "withheld" as const } : {}),
       }),
   ),
   Object.freeze({

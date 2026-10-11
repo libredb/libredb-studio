@@ -321,6 +321,7 @@ No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this version reads 
 - `enforcesReadOnly`; the read-only box changes nothing, because nothing writes.
 - Plan mode sees the namespaces it walked, the kinds, their counts and object names; it walks the Default namespace and `Cluster` only and is told how many other namespaces it did not read.
 - Secret names are withheld from plan mode: the Secrets kind appears with its count.
+- Namespace names listed by the `Cluster` walk are withheld the same way: the Namespaces kind appears with its count, so no name of a namespace plan mode did not read reaches the model.
 - No value, label, annotation, env value, ConfigMap key or Secret key reaches the model, and the AI panels receive no Kubernetes name.
 - MCP is not offered for Kubernetes, and agent execution refuses it (B105).
 

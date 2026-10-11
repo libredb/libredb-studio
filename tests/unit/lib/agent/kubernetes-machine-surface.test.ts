@@ -106,7 +106,12 @@ function tablePage(name: string, kind: string): NodeResponse {
   });
 }
 
-const fallback = fakeCluster({ lists: { "/api/v1/namespaces": [{ name: "default" }, { name: NAMESPACE }] } });
+/** A namespace the walk does not read: its name stays off every machine surface, as the namespace count says. */
+const UNREAD_NAMESPACE = "tenant-unread-marker";
+
+const fallback = fakeCluster({
+  lists: { "/api/v1/namespaces": [{ name: "default" }, { name: NAMESPACE }, { name: UNREAD_NAMESPACE }] },
+});
 
 function plantedServer(request: Parameters<typeof fallback>[0], line: string): NodeResponse | Promise<NodeResponse> {
   const path = new URL(request.url).pathname;
@@ -159,6 +164,7 @@ const FORBIDDEN = [
   ["a Secret key", M.secretKey],
   ["a label key", M.labelKey],
   ["an annotation key", M.annotationKey],
+  ["the name of a namespace the walk did not read", UNREAD_NAMESPACE],
 ] as const;
 
 const SURFACES = ["snapshot", "the task packer", "the operations packer"] as const;
@@ -168,7 +174,10 @@ beforeAll(async () => {
   const snapshot = await capture();
   surfaces = {
     snapshot: JSON.stringify(snapshot),
-    "the task packer": packContextForTask(snapshot, "Which deployments run in shop?"),
+    "the task packer": packContextForTask(
+      snapshot,
+      `Which deployments run in shop, and is there a ${UNREAD_NAMESPACE}?`,
+    ),
     "the operations packer": packOperationsInventory(snapshot),
   };
 });

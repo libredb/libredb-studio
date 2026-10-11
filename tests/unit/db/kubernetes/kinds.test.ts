@@ -99,9 +99,10 @@ describe("the kind table", () => {
     });
   });
 
-  test("only Secrets withhold their names from machine surfaces", () => {
+  test("only Namespaces and Secrets withhold their names from machine surfaces", () => {
     expect(KUBERNETES_OBJECT_KINDS.filter((spec) => spec.machineNames === "withheld").map((spec) => spec.id)).toEqual([
       "secrets",
+      "namespaces",
     ]);
   });
 

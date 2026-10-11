@@ -379,7 +379,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // that lists buckets but never an object key is designed yet (BACKLOG B104).
   s3: false,
   // Outside this version, as etcd's and Oxia's: the provider implements no read-only query path, and plan mode alone
-  // receives Kubernetes object names, Secret names withheld (no MCP surface is designed for them yet).
+  // receives Kubernetes object names, Secret and Namespace names withheld (no MCP surface is designed for them yet).
   kubernetes: false,
   libredb: true,
 });
