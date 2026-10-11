@@ -264,6 +264,7 @@ What each answers:
 - `describe` answers section, field and value rows: the summary, one row per condition, one row per event.
 - `logs` reads the pod kubectl would choose for `TYPE/NAME`, and the default container its annotation names, else the first; without `--tail` it reads the last 500 lines and says that kubectl's default is every line.
 - `events` sorts by time as `kubectl events` does and shows the newest 1,000.
+- `events --types` with a single value also sends it to the server as a `type=` field selector, so the server narrows the events the 5,000 read limit counts; with both values no type selector is sent.
 - `explain` reads the server's OpenAPI v3 documents, cached per immutable URL.
 
 Refused, each with a sentence and nothing sent:

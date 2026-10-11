@@ -6,7 +6,8 @@
  * with more than 5,000 answers a sentence to narrow it, because a time order of a part would be wrong.
  *
  * `--for TYPE/NAME` selects by the involved object's kind, API version and name, as kubectl's selector does; each
- * value is escaped. `--types` filters after the read, as kubectl filters.
+ * value is escaped. A single `--types` value is also sent as a `type=` field selector, so the server narrows the set the
+ * 5,000 cap counts; `--types` still filters after the read without case, as kubectl filters.
  */
 import { QueryError } from "@/lib/db/errors";
 import { ACCEPT_JSON } from "../client";
@@ -69,16 +70,19 @@ export async function listEvents(context: KubectlContext, statement: EventsState
   const index = await context.surface.discovery.get();
   const events = index.resources.find((entry) => entry.group === "" && entry.resource === "events");
   if (events === undefined) throw new QueryError("This server does not serve core events.", KUBERNETES_TYPE);
-  let fieldSelector: string | undefined;
+  const selectorParts: string[] = [];
   if (statement.forObject !== undefined) {
     const target = await resolveType(context, statement.forObject.type);
     const apiVersion = target.group === "" ? target.version : `${target.group}/${target.version}`;
-    fieldSelector = [
+    selectorParts.push(
       `involvedObject.kind=${fieldSelectorValue(target.kind)}`,
       `involvedObject.apiVersion=${fieldSelectorValue(apiVersion)}`,
       `involvedObject.name=${fieldSelectorValue(statement.forObject.name)}`,
-    ].join(",");
+    );
   }
+  // The server matches the type with case; the parser has already written it as Normal or Warning.
+  if (statement.types.length === 1) selectorParts.push(`type=${fieldSelectorValue(statement.types[0])}`);
+  const fieldSelector = selectorParts.length === 0 ? undefined : selectorParts.join(",");
   const namespace = statement.allNamespaces
     ? undefined
     : (statement.namespace ?? context.surface.endpoint.defaultNamespace);

@@ -73,7 +73,7 @@ describe("events", () => {
 
   test("-A reads every namespace and adds NAMESPACE first; --types filters without case", async () => {
     const answer = routes({
-      "GET /api/v1/events?limit=500": listAnswer([
+      "GET /api/v1/events?limit=500&fieldSelector=type%3DWarning": listAnswer([
         event("a", "2026-10-10T11:50:00Z"),
         event("b", "2026-10-10T11:51:00Z", { type: "Warning" }),
       ]),
@@ -93,6 +93,33 @@ describe("events", () => {
     const { context, transport } = consoleContext(answer);
     expect((await listEvents(context, events("events --for 'deploy/web,v=2'"))).rows).toEqual([]);
     expect(sentLines(transport)).toEqual([`GET /api/v1/namespaces/shop/events?limit=500&fieldSelector=${selector}`]);
+  });
+
+  test("one --types value is sent as a field selector, so the server narrows the counted set", async () => {
+    const answer = routes({
+      "GET /api/v1/namespaces/shop/events?limit=500&fieldSelector=type%3DWarning": listAnswer([
+        event("w", "2026-10-10T11:50:00Z", { type: "Warning" }),
+      ]),
+    });
+    const { context, transport } = consoleContext(answer);
+    const grid = await listEvents(context, events("events --types=Warning"));
+    expect(sentLines(transport)).toEqual(["GET /api/v1/namespaces/shop/events?limit=500&fieldSelector=type%3DWarning"]);
+    expect(grid.rows.map((row) => row.OBJECT)).toEqual(["pod/w"]);
+  });
+
+  test("--for and one --types value join in one selector; both types send no type selector", async () => {
+    const selector = "involvedObject.kind%3DPod%2CinvolvedObject.apiVersion%3Dv1%2CinvolvedObject.name%3Dweb";
+    const answer = routes({
+      [`GET /api/v1/namespaces/shop/events?limit=500&fieldSelector=${selector}%2Ctype%3DWarning`]: listAnswer([]),
+      [`GET /api/v1/namespaces/shop/events?limit=500&fieldSelector=${selector}`]: listAnswer([]),
+    });
+    const { context, transport } = consoleContext(answer);
+    await listEvents(context, events("events --for pod/web --types=Warning"));
+    await listEvents(context, events("events --for pod/web --types=Warning,Normal"));
+    expect(sentLines(transport).filter((line) => line.includes("/events?"))).toEqual([
+      `GET /api/v1/namespaces/shop/events?limit=500&fieldSelector=${selector}%2Ctype%3DWarning`,
+      `GET /api/v1/namespaces/shop/events?limit=500&fieldSelector=${selector}`,
+    ]);
   });
 
   test("past 1,000 events the newest 1,000 are shown with a warning", async () => {
