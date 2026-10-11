@@ -18,6 +18,7 @@ import {
   CONNECTION_FLAGS,
   commandSpec,
   connectionFlagSentence,
+  KUBECTL_MAX_LABEL_COLUMNS,
   KUBECTL_MAX_TEXT_BYTES,
   KUBECTL_SENTENCES as S,
   type KubectlCommandName,
@@ -474,8 +475,10 @@ function parseGet(scanned: Scanned): KubectlStatement {
   // and -o yaml show, else one page of the list form.
   const namesCap = output === "json" || output === "yaml" ? KUBERNETES_MAX_DOCUMENT_OBJECTS : KUBERNETES_PAGE_SIZE;
   if (names.length > namesCap) refuse("bad-arguments", tooManyNamesSentence(namesCap));
-  const labelColumns = flags.list("label-columns").filter((key) => key !== "");
+  // Repeats add no column, as kubectl's do not; past the bound each row would carry too many cells.
+  const labelColumns = [...new Set(flags.list("label-columns").filter((key) => key !== ""))];
   if (labelColumns.some((key) => !LABEL_KEY.test(key))) refuse("bad-value", S.labelColumns);
+  if (labelColumns.length > KUBECTL_MAX_LABEL_COLUMNS) refuse("bad-value", S.labelColumnsCount);
   const showLabels = flags.bool("show-labels");
   if ((showLabels || labelColumns.length > 0) && (output === "name" || output === "json" || output === "yaml"))
     refuse("bad-arguments", S.labelColumnsOutput);

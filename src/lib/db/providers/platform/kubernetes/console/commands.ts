@@ -10,6 +10,9 @@
 /** The longest text a statement may hold, in UTF-8 bytes: the bound the Oxia and Milvus consoles declare. */
 export const KUBECTL_MAX_TEXT_BYTES = 65_536;
 
+/** The distinct -L label keys one statement may add as columns: each adds a cell to every row. */
+export const KUBECTL_MAX_LABEL_COLUMNS = 16;
+
 /** A flag of a command's v1 column, by its long name. */
 export type KubectlFlagName =
   | "namespace"
@@ -281,6 +284,7 @@ export const KUBECTL_SENTENCES = Object.freeze({
   requestTimeout: `--request-timeout takes a positive duration, such as 10s or 1m, or a number of seconds. ${NOTHING_SENT}`,
   watchWindow: `--request-timeout with -w sets the watch window and takes whole seconds, at least 1, such as 5s or 30. ${NOTHING_SENT}`,
   labelColumns: `-L takes label keys, such as app or app.kubernetes.io/name, separated by commas. ${NOTHING_SENT}`,
+  labelColumnsCount: `-L takes at most ${KUBECTL_MAX_LABEL_COLUMNS} label keys in one statement. ${NOTHING_SENT}`,
   selector: `A selector flag needs a selector, such as app=web. ${NOTHING_SENT}`,
   topArguments: `kubectl top pod and top node list every object they read in v1: narrow them with -l, not with a name. ${NOTHING_SENT}`,
   topSortBy: `--sort-by takes cpu or memory. ${NOTHING_SENT}`,

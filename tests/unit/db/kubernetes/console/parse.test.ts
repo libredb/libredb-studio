@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import {
   CREDENTIAL_FLAGS,
   KUBECTL_COMMAND_TABLE,
+  KUBECTL_MAX_LABEL_COLUMNS,
   KUBECTL_MAX_TEXT_BYTES,
   KUBECTL_SENTENCES as S,
   commandSpec,
@@ -214,6 +215,15 @@ describe("get", () => {
     expect(refusal("get pods --show-labels -o name")).toEqual({ code: "bad-arguments", message: S.labelColumnsOutput });
     expect(refusal("get pods -L app -o json").code).toBe("bad-arguments");
     expect(refusal("get pods -L 'a b'")).toEqual({ code: "bad-value", message: S.labelColumns });
+  });
+
+  test("-L keys are deduplicated in order, and more than 16 distinct keys are refused", () => {
+    const keys = (count: number) => Array.from({ length: count }, (_unused, index) => `k${index}`);
+    expect(KUBECTL_MAX_LABEL_COLUMNS).toBe(16);
+    expect(parsed(`get pods -L ${keys(16).join(",")} -L k0,k15 -L k3`)).toMatchObject({ labelColumns: keys(16) });
+    expect(parsed("get pods -L app,tier,app")).toMatchObject({ labelColumns: ["app", "tier"] });
+    expect(refusal(`get pods -L ${keys(17).join(",")}`)).toEqual({ code: "bad-value", message: S.labelColumnsCount });
+    expect(refusal(`get pods -L ${keys(16).join(",")} -L extra`).message).toBe(S.labelColumnsCount);
   });
 
   test("with -w, --request-timeout is the watch window and takes whole seconds, at least 1", () => {

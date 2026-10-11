@@ -87,6 +87,10 @@ describe("everyday kubectl lines outside v1, pasted as they are", () => {
       `kubectl get pods ${Array.from({ length: 501 }, (_unused, index) => `p${index}`).join(" ")}`,
       tooManyNamesSentence(500),
     ],
+    [
+      `kubectl get pods -L ${Array.from({ length: 17 }, (_unused, index) => `k${index}`).join(",")}`,
+      S.labelColumnsCount,
+    ],
     ["kubectl get pods | grep web", undefined],
     ["kubectl get pods; kubectl get svc", undefined],
   ])("%j", async (text, sentence) => {
