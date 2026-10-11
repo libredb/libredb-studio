@@ -18,7 +18,7 @@
  * pair) is named in the context's notice. No sentence quotes a value of the text: a refused context is named by its
  * place in the list.
  */
-import { type Document, isMap, isScalar, isSeq, parseDocument, visit, type YAMLMap } from "yaml";
+import { type Document, isMap, isScalar, isSeq, LineCounter, parseDocument, visit, type YAMLMap } from "yaml";
 import type { ConnectionImportResult, ImportedContext, ImportedField, ImportedSsl } from "@/lib/connection-import";
 import { KUBERNETES_KUBECONFIG_MAX_BYTES } from "@/lib/db/providers/platform/kubernetes/limits";
 
@@ -127,18 +127,47 @@ const SERVER_REWRITTEN = /[\\\s\u0000-\u001f\u007f]/;
 /** A refusal of the whole text, or the document to read. */
 type Checked = { readonly refusal: string } | { readonly root: YAMLMap };
 
+/**
+ * The parse failure for the first mapping key repeated within its mapping, told as the parser's `uniqueKeys` tells it:
+ * scalar keys by `===` on their values (so `1` and `"1"` differ, and NaN never repeats), other keys never.
+ */
+function duplicateKey(document: Document.Parsed, lineCounter: LineCounter): string | undefined {
+  let refusal: string | undefined;
+  visit(document, {
+    Map(_key, map) {
+      const seen = new Set<unknown>();
+      for (const pair of map.items) {
+        if (!isScalar(pair.key) || Number.isNaN(pair.key.value)) continue;
+        if (seen.has(pair.key.value)) {
+          const position = lineCounter.linePos(pair.key.range?.[0] ?? 0);
+          refusal = parseFailureSentence("DUPLICATE_KEY", position.line, position.col);
+          return visit.BREAK;
+        }
+        seen.add(pair.key.value);
+      }
+      return undefined;
+    },
+  });
+  return refusal;
+}
+
 /** The document's top level, after every rule of the text as a whole: size, parse, directive, tags, aliases. */
 function checkText(text: unknown): Checked {
   if (typeof text !== "string") return { refusal: KUBECONFIG_IMPORT_SENTENCES.notText };
   if (new TextEncoder().encode(text).byteLength > KUBERNETES_KUBECONFIG_MAX_BYTES) {
     return { refusal: KUBECONFIG_IMPORT_SENTENCES.tooLarge };
   }
-  const document: Document.Parsed = parseDocument(text, { logLevel: "error", uniqueKeys: true });
+  // The parser's own duplicate check scans a mapping's keys once per key, so a flat mapping near the cap would hold
+  // the browser's main thread for tens of seconds; duplicateKey below is the same rule in one pass.
+  const lineCounter = new LineCounter();
+  const document: Document.Parsed = parseDocument(text, { logLevel: "error", uniqueKeys: false, lineCounter });
   const problem = document.errors[0] ?? document.warnings[0];
   if (problem !== undefined) {
     const position = problem.linePos?.[0];
     return { refusal: parseFailureSentence(problem.code, position?.line ?? 1, position?.col ?? 1) };
   }
+  const duplicate = duplicateKey(document, lineCounter);
+  if (duplicate !== undefined) return { refusal: duplicate };
   if (document.directives.yaml.explicit) return { refusal: KUBECONFIG_IMPORT_SENTENCES.directive };
   // A tag the core schema does not know, a local `!name` or a verbatim one, is already a warning above; what is
   // left is a %TAG directive, which could point a handle, `!!` included, at another tag prefix.

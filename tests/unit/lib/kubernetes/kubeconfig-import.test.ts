@@ -527,6 +527,23 @@ describe("parser rules, and the marker token never leaves the text", () => {
     expect(consoleCalls).toEqual([]);
   });
 
+  test("a flat mapping of 100,000 keys just under the cap is read in linear time, not stalled on the duplicate check", () => {
+    const text = Array.from({ length: 100_000 }, (_, i) => `k${i}: 1`).join("\n");
+    expect(new TextEncoder().encode(text).byteLength).toBeLessThan(KUBERNETES_KUBECONFIG_MAX_BYTES);
+    const started = performance.now();
+    expect(importKubeconfig(text)).toEqual({ contexts: [], refusals: [S.noContexts] });
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  test("a duplicate key is told as the parser tells it: 1 and '1' are two keys, so are two NaN, a repeated null is one", () => {
+    expect(importKubeconfig(`${kubeconfig()}x:\n  1: a\n  "1": b\n`).contexts).toHaveLength(1);
+    expect(importKubeconfig(`${kubeconfig()}x:\n  .nan: a\n  .NaN: b\n`).contexts).toHaveLength(1);
+    expect(importKubeconfig(`${kubeconfig()}x:\n  ~: a\n  null: b\n`)).toEqual({
+      contexts: [],
+      refusals: [parseFailureSentence("DUPLICATE_KEY", 21, 3)],
+    });
+  });
+
   test("never throws, whatever the text", () => {
     const hostile = [
       "[".repeat(100_000),
