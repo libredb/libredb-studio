@@ -535,6 +535,22 @@ describe("parser rules, and the marker token never leaves the text", () => {
     expect(performance.now() - started).toBeLessThan(2_000);
   });
 
+  test("a sequence nested 6,000 deep is checked in time linear in its nodes, not in the square of its depth", () => {
+    const nest = `${"- ".repeat(6_000)}x\n`;
+    for (const items of [1, 5]) {
+      const started = performance.now();
+      expect(importKubeconfig(`contexts:\n${nest.repeat(items)}`)).toEqual({
+        contexts: [],
+        refusals: [
+          ...Array.from({ length: items }, (_unused, at) => `Context ${at + 1} was not imported: ${C.shape}`),
+          S.noCurrentContext,
+        ],
+      });
+      // The depth-squared walk took about 7.7 s for one nest and 38 s for five; the linear one takes tens of ms.
+      expect(performance.now() - started).toBeLessThan(3_000);
+    }
+  });
+
   test("a duplicate key is told as the parser tells it: 1 and '1' are two keys, so are two NaN, a repeated null is one", () => {
     expect(importKubeconfig(`${kubeconfig()}x:\n  1: a\n  "1": b\n`).contexts).toHaveLength(1);
     expect(importKubeconfig(`${kubeconfig()}x:\n  .nan: a\n  .NaN: b\n`).contexts).toHaveLength(1);
