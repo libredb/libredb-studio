@@ -47,7 +47,7 @@ const NOT_JSON = "The watch answered a line that is not JSON, so the window cann
 /** The window in seconds: --request-timeout, else 10 s, never closer than 5 s to the query timeout. */
 function windowSeconds(context: KubectlContext, statement: GetStatement): number {
   if (statement.requestTimeoutSeconds !== undefined)
-    return requestTimeoutMs(context, statement.requestTimeoutSeconds) / 1000;
+    return Math.floor(requestTimeoutMs(context, statement.requestTimeoutSeconds) / 1000);
   const most = Math.floor((context.queryTimeoutMs - KUBERNETES_WINDOW_MARGIN_MS) / 1000);
   if (most < 1)
     throw new QueryError(

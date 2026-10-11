@@ -207,6 +207,18 @@ describe("get", () => {
     expect(refusal("get pods -L 'a b'")).toEqual({ code: "bad-value", message: S.labelColumns });
   });
 
+  test("with -w, --request-timeout is the watch window and takes whole seconds, at least 1", () => {
+    expect(parsed("get pods -w --request-timeout=5s")).toMatchObject({ watch: true, requestTimeoutSeconds: 5 });
+    expect(parsed("get pods -w --request-timeout 30")).toMatchObject({ requestTimeoutSeconds: 30 });
+    expect(parsed("get pods -w --request-timeout=2000ms")).toMatchObject({ requestTimeoutSeconds: 2 });
+    for (const timeout of ["2.5s", "1500ms", "500ms"])
+      expect(refusal(`get pods -w --request-timeout=${timeout}`)).toEqual({
+        code: "bad-value",
+        message: S.watchWindow,
+      });
+    expect(parsed("get pods --request-timeout=2.5s")).toMatchObject({ watch: false, requestTimeoutSeconds: 2.5 });
+  });
+
   test("values outside their rule are refused without the value", () => {
     expect(refusal(`get pods -n ${MARKER.toUpperCase()}`)).toEqual({ code: "bad-value", message: S.namespace });
     expect(refusal("get pods -l ''")).toEqual({ code: "bad-value", message: S.selector });

@@ -461,6 +461,8 @@ function parseGet(scanned: Scanned): KubectlStatement {
   const timeoutText = flags.text("request-timeout");
   const timeout = timeoutText === undefined ? undefined : requestTimeoutSeconds(timeoutText);
   if (timeoutText !== undefined && (timeout === undefined || timeout <= 0)) refuse("bad-value", S.requestTimeout);
+  // The window is sent as the watch's timeoutSeconds, which the API server reads as whole seconds.
+  if (watch && timeout !== undefined && (!Number.isInteger(timeout) || timeout < 1)) refuse("bad-value", S.watchWindow);
   return {
     command: "get",
     type,

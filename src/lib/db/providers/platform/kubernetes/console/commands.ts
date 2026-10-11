@@ -278,6 +278,7 @@ export const KUBECTL_SENTENCES = Object.freeze({
   container: `-c takes a container name: a DNS-1123 label of lower-case letters, digits and hyphens. ${NOTHING_SENT}`,
   namespace: `-n takes a namespace name: a DNS-1123 label of at most 63 lower-case letters, digits and hyphens. ${NOTHING_SENT}`,
   requestTimeout: `--request-timeout takes a positive duration, such as 10s or 1m, or a number of seconds. ${NOTHING_SENT}`,
+  watchWindow: `--request-timeout with -w sets the watch window and takes whole seconds, at least 1, such as 5s or 30. ${NOTHING_SENT}`,
   labelColumns: `-L takes label keys, such as app or app.kubernetes.io/name, separated by commas. ${NOTHING_SENT}`,
   selector: `A selector flag needs a selector, such as app=web. ${NOTHING_SENT}`,
   topArguments: `kubectl top pod and top node list every object they read in v1: narrow them with -l, not with a name. ${NOTHING_SENT}`,

@@ -145,6 +145,18 @@ describe("the window", () => {
     expect(sentLines(refused.transport)).toEqual([]);
   });
 
+  test("a window of a fraction of a second is sent as whole seconds", async () => {
+    const answer = routes({
+      [LIST]: tableAnswer(COLUMNS, []),
+      "GET /api/v1/namespaces/shop/pods?watch=1&allowWatchBookmarks=true&resourceVersion=100&timeoutSeconds=2&includeObject=None":
+        textAnswer(""),
+    });
+    const { context, transport } = consoleContext(answer);
+    const statement = { ...get("get pods -w"), requestTimeoutSeconds: 2.5 };
+    expect((await getWatch(context, statement)).rows).toEqual([]);
+    expect(sentLines(transport)).toHaveLength(2);
+  });
+
   test("a list read that used the statement's time shortens the window to the time left less 5 s", async () => {
     let clock = CONSOLE_NOW;
     const answer = routes({
