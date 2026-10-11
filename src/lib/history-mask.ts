@@ -45,7 +45,11 @@ const MASK = "***";
  * Unknown capabilities, the window before a connection's metadata has loaded, take every dialect's flags at once:
  * which dialect the statement is in is not known yet, and a credential stored in that window would stay in
  * history. The cost is that a statement of another engine run in that window, holding a declared flag followed by
- * a value, is stored with that value masked too; history then holds less than was typed, never a credential.
+ * a value, is stored masked as a command line is: the value is replaced, a quoted word holding the flag is stored
+ * without its quotes, and a text that does not read as one command line is cut from the flag to the end of its
+ * line, or to the end of the text when a quote stays open. History then holds less than was typed, a statement
+ * that may no longer parse, never a credential: masking only the value in place would need a second reader that
+ * every spelling the command-line reader finds would have to pass again.
  * A declared language with no registered dialect, which is every SQL engine, has no mask.
  */
 export function historyMaskOf(

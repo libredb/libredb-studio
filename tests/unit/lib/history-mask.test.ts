@@ -412,6 +412,19 @@ describe("historyMaskOf", () => {
     expect(historyMaskOf(caps({ queryLanguage: "sql" }), declaring)).toBeUndefined();
   });
 
+  test("unknown capabilities mask another engine's statement as a command line: altered, never the value", () => {
+    const unknown = historyMaskOf(undefined);
+    expect(maskStatementForHistory(`SELECT '--password ${SECRET}' AS note`, unknown)).toBe(
+      "SELECT --password *** AS note",
+    );
+    expect(
+      maskStatementForHistory(`SELECT *\nFROM t\nWHERE x = '--token ${SECRET}' AND y = 1;\nSELECT 2;`, unknown),
+    ).toBe("SELECT *\nFROM t\nWHERE x = '--token ***");
+    expect(maskStatementForHistory("SELECT * FROM t -- password reset", unknown)).toBe(
+      "SELECT * FROM t -- password reset",
+    );
+  });
+
   test("unknown capabilities take every declared flag once, since the dialect is not known yet", () => {
     expect(historyMaskOf(undefined, declaring)).toEqual({ credentialFlags: ["--token", "--password"] });
   });
