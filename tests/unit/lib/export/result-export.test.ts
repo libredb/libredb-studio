@@ -1293,6 +1293,40 @@ describe("buildResultExport - Oracle date and timestamp literals", () => {
   // A zoned column still reaches the export as the driver's `Date` in-process, but over
   // HTTP the row has been through JSON, so the same cell arrives as the text
   // `Date#toISOString` wrote. Quoted, Oracle refuses it on replay with ORA-01843 (#1224).
+  describe("a BC year (#1498)", () => {
+    // The sign goes before the zeros and the mask takes it as SYYYY, as the provider's own text does.
+    const bcZoned = (iso: string) => new Date(iso);
+
+    test("writes a zoned BC instant with its sign and SYYYY", () => {
+      expect(oracle({ at: "TIMESTAMP WITH TIME ZONE" }, bcZoned("-000044-03-15T10:30:00.000Z"))).toContain(
+        `VALUES (FROM_TZ(TO_TIMESTAMP('-0044-03-15 10:30:00.000', 'SYYYY-MM-DD HH24:MI:SS.FF3'), 'UTC'));`,
+      );
+      expect(oracle({ at: "TIMESTAMP WITH LOCAL TIME ZONE" }, bcZoned("-000001-12-31T23:00:00.000Z"))).toContain(
+        `VALUES (FROM_TZ(TO_TIMESTAMP('-0001-12-31 23:00:00.000', 'SYYYY-MM-DD HH24:MI:SS.FF3'), 'UTC'));`,
+      );
+    });
+
+    test("writes a naive BC Date from its local fields, as TO_TIMESTAMP and as TO_DATE", () => {
+      const local = new Date(2026, 2, 15, 10, 30, 0, 5);
+      local.setFullYear(-44);
+      expect(oracle({ at: "TIMESTAMP" }, local)).toContain(
+        `VALUES (TO_TIMESTAMP('-0044-03-15 10:30:00.005', 'SYYYY-MM-DD HH24:MI:SS.FF3'));`,
+      );
+      expect(oracle({ at: "DATE" }, local)).toContain(
+        `VALUES (TO_DATE('-0044-03-15 10:30:00', 'SYYYY-MM-DD HH24:MI:SS'));`,
+      );
+      expect(oracle(undefined, local)).toContain(`'SYYYY-MM-DD HH24:MI:SS.FF3'`);
+    });
+
+    test("a four-digit year keeps YYYY and no sign, and a year before 1000 is only padded", () => {
+      expect(oracle({ at: "TIMESTAMP WITH TIME ZONE" }, bcZoned("0099-01-02T03:04:05.006Z"))).toContain(
+        `VALUES (FROM_TZ(TO_TIMESTAMP('0099-01-02 03:04:05.006', 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC'));`,
+      );
+      expect(oracle({ at: "TIMESTAMP WITH TIME ZONE" }, bcZoned("9999-12-31T23:59:59.999Z"))).toContain(
+        `'9999-12-31 23:59:59.999', 'YYYY-MM-DD HH24:MI:SS.FF3'`,
+      );
+    });
+  });
   describe("a zoned timestamp's ISO text, as it arrives over HTTP (#1224)", () => {
     const fromTz = `VALUES (FROM_TZ(TO_TIMESTAMP('2026-08-24 17:11:12.345', 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC'));`;
 

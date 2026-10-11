@@ -947,6 +947,13 @@ about which fields of the `Date` are the value:
   - A value not in that form, a `DATE` text with a fraction included.
 
   So the naive `Date` rows above now apply only to a host that builds its rows itself.
+- **A BC year (#1498).** A `Date` whose year is negative, such as a zoned `Date` the driver reads for
+  `-0044-03-15 10:30:00 +00:00` or a naive one a host built, is written with the sign in front of the
+  zeros and the signed mask: `FROM_TZ(TO_TIMESTAMP('-0044-03-15 10:30:00.000', 'SYYYY-MM-DD HH24:MI:SS.FF3'), 'UTC')`,
+  and `TO_DATE('-0044-03-15 10:30:00', 'SYYYY-MM-DD HH24:MI:SS')` for a `DATE`. Before, the year was
+  padded as `0-44`, which Oracle refused (`ORA-01843`, `ORA-01850`). A year of 0 to 9999 keeps `YYYY` and
+  no sign. #1498 measured the signed literals on Oracle AI Database 26ai Free 23.26.3: replayed into a
+  copy of the source table, the server compares the rows equal.
 - **A zoned column's ISO text, over HTTP (#1224).** The provider leaves `TIMESTAMP WITH TIME ZONE` and
   `WITH LOCAL TIME ZONE` as the driver's `Date`, so in-process the export gets the zoned `Date` row
   above. Over HTTP the row has been through JSON (`POST /api/db/query`), and the cell is that `Date`'s
@@ -964,11 +971,9 @@ about which fields of the `Date` are the value:
     one, a space in place of `T`, and text that has the form but is not what `toISOString` writes for
     any instant, such as `2026-02-30T00:00:00.000Z` or `T24:00:00.000Z`.
   - A year outside 0000–9999, which `toISOString` writes with a sign and six digits
-    (`-000044-03-15T10:30:00.000Z`, `+012026-…`). Oracle has no year after 9999, and a BC instant does
-    not replay through the `Date` path either: measured, its literal is
-    `FROM_TZ(TO_TIMESTAMP('0-44-03-15 10:30:00.000', …), 'UTC')`, refused with `ORA-01843`. So that
-    text stays quoted, and Oracle still refuses it (`ORA-01847`), rather than take a literal the `Date`
-    of the same instant does not get.
+    (`-000044-03-15T10:30:00.000Z`, `+012026-…`). Oracle has no year after 9999, and the BC text is left
+    for a separate change, so it stays quoted and Oracle still refuses it (`ORA-01847`). The `Date` of a BC
+    instant is written with its sign (above), so only this text form is affected.
 - **Local fields for a naive column**, because that is the inverse of what the driver did: it built
   the `Date` by reading the stored wall clock in the *Node process's* zone. Measured above, a `DATE`
   holding `2026-08-24 10:11:12` arrives as `2026-08-24T07:11:12.000Z` from a process at `+03:00`, so
