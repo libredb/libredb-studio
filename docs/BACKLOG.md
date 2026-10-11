@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D289, U17 · 192
+- [Drivers and connections](#drivers-and-connections) — D1-D290, U17 · 193
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U112 · 103
@@ -3050,6 +3050,15 @@ kubectl merges and splits the rules of a `SelfSubjectRulesReview` before printin
 Found 2026-10-10 while planning the Kubernetes provider.
 
 **Done when:** the rows are compacted as kubectl compacts them, with tests from kubectl's own cases.
+
+### D290. The composed-SQL agent test can outrun bun's five-second hook timeout
+
+The file-level `beforeAll` in `tests/unit/lib/agent/composed-sql.test.ts` loads the DuckDB native addon, creates a database file and its fixture tables, and passes no timeout, so bun's default of 5000 ms bounds the whole setup.
+In one full coverage run on 2026-10-11, on the Kubernetes provider's branch, which does not touch that file, the hook timed out and the file failed with no test run.
+The file passed alone and alone with coverage three times that day, and 16 parallel coverage runs of it passed the same day, so it needs more load than that to fail again.
+It is the same shape as D153.
+
+**Done when:** the hook carries a timeout sized for a busy runner (bun's `beforeAll` takes one as its second argument), and the file passes repeated runs at the CI job's concurrency.
 
 ## Value interpolation
 
