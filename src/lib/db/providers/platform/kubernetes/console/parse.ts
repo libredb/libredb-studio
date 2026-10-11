@@ -38,7 +38,7 @@ import {
   unknownCommandSentence,
 } from "./commands";
 import { KUBERNETES_MAX_DOCUMENT_OBJECTS, KUBERNETES_PAGE_SIZE } from "../limits";
-import { commandWordIndex, isKubectlFlagText, kubectlWords } from "./lexer";
+import { commandWordIndex, isKubectlFlagText, KUBECTL_VALUE_GLOBAL_FLAGS, kubectlWords } from "./lexer";
 
 export type GetOutput = "table" | "wide" | "name" | "json" | "yaml";
 
@@ -207,12 +207,37 @@ function refuse(code: KubectlRefusalCode, message: string): never {
 
 const isFlagText = isKubectlFlagText;
 
-/** The first word after `from` that does not start with a dash: a subcommand's word. */
-function nextPlainWord(words: readonly ShellWord[], from: number): number | undefined {
-  for (let index = from + 1; index < words.length; index++) {
-    if (!isFlagText(words[index].text)) return index;
-  }
-  return undefined;
+/** The flags whose value may stand before the subcommand of `top`, `auth` or `rollout`: the global ones and theirs. */
+const SUBCOMMAND_VALUE_FLAGS: ReadonlySet<string> = new Set([
+  ...KUBECTL_VALUE_GLOBAL_FLAGS,
+  "-l",
+  "--selector",
+  "--sort-by",
+  "--subresource",
+]);
+
+/** The subcommand words a refusal may name; any other word is never echoed, as it may be a value. */
+const KNOWN_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "can-i",
+  "whoami",
+  "reconcile",
+  "status",
+  "history",
+  "restart",
+  "undo",
+  "pause",
+  "resume",
+  ...TOP_RESOURCE_WORDS["top pod"],
+  ...TOP_RESOURCE_WORDS["top node"],
+]);
+
+/** The subcommand's word after the command at `at`: flags and the values they take are skipped. */
+function subcommandIndex(words: readonly ShellWord[], at: number): number | undefined {
+  const offset = commandWordIndex(
+    words.slice(at + 1).map((word) => word.text),
+    SUBCOMMAND_VALUE_FLAGS,
+  );
+  return offset === undefined ? undefined : at + 1 + offset;
 }
 
 /** The command a statement names and the indices of its words, or a refusal of the command itself. */
@@ -220,10 +245,9 @@ function classify(words: readonly ShellWord[]): { readonly name: KubectlCommandN
   const at = commandWordIndex(words.map((word) => word.text));
   if (at === undefined) refuse("no-command", S.noCommand);
   const word = words[at].text;
-  const sub = nextPlainWord(words, at);
+  const sub = subcommandIndex(words, at);
   const subText = sub === undefined ? undefined : words[sub].text;
-  const subName =
-    subText === undefined ? "" : ` ${/^[a-z][a-z-]{0,30}$/.test(subText) ? subText : "with this subcommand"}`;
+  const subName = subText === undefined ? "" : ` ${KNOWN_SUBCOMMANDS.has(subText) ? subText : "with this subcommand"}`;
   if (NOT_READ_ONLY_COMMANDS.has(word)) refuse("not-read-only", notReadOnlySentence(word));
   if (word === "rollout") {
     if (subText !== undefined && READ_ONLY_ROLLOUT_SUBCOMMANDS.has(subText))

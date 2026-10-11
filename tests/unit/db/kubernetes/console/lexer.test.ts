@@ -106,6 +106,8 @@ describe("tokenizeKubectlLine: the role of each token", () => {
     expect(commandWordIndex(["-n", undefined, "get"])).toBe(2);
     expect(commandWordIndex([undefined, "get"])).toBeUndefined();
     expect(commandWordIndex(["-n"])).toBeUndefined();
+    expect(commandWordIndex(["-l", "app=web", "pod"])).toBe(1);
+    expect(commandWordIndex(["-l", "app=web", "pod"], new Set(["-l"]))).toBe(2);
     expect(isKubectlFlagText("-n")).toBe(true);
     expect(isKubectlFlagText("-")).toBe(false);
   });

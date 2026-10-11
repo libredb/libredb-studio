@@ -342,7 +342,7 @@ describe("top, events, api-resources, api-versions, explain, auth and version", 
     });
     expect(refusal("top pod --sort-by=name")).toEqual({ code: "bad-value", message: S.topSortBy });
     expect(refusal("top pod web")).toEqual({ code: "bad-arguments", message: S.topArguments });
-    expect(refusal("top service").message).toBe(notInV1CommandSentence("top service"));
+    expect(refusal("top service").message).toBe(notInV1CommandSentence("top with this subcommand"));
     expect(refusal("top").message).toBe(notInV1CommandSentence("top"));
   });
 
@@ -456,8 +456,42 @@ describe("refused commands", () => {
     expect(refusal("rollout restart deploy/web").message).toBe(notReadOnlySentence("rollout restart"));
     expect(refusal("rollout").message).toBe(notReadOnlySentence("rollout"));
     expect(refusal("auth reconcile -f x").message).toBe(notReadOnlySentence("auth reconcile"));
-    expect(refusal("auth login").message).toBe(notInV1CommandSentence("auth login"));
+    expect(refusal("auth login").message).toBe(notInV1CommandSentence("auth with this subcommand"));
     expect(refusal("auth 'Weird Sub'").message).toBe(notInV1CommandSentence("auth with this subcommand"));
+  });
+
+  test("a flag and its value before the subcommand of top, auth or rollout are skipped, and never echoed", () => {
+    expect(parsed("kubectl top -n kube-system pod")).toEqual({
+      command: "top",
+      resource: "pod",
+      namespace: "kube-system",
+      allNamespaces: false,
+    });
+    expect(parsed("kubectl top -l app=web --sort-by cpu no")).toMatchObject({ resource: "node", sortBy: "cpu" });
+    expect(parsed("kubectl top -nshop pods")).toMatchObject({ resource: "pod", namespace: "shop" });
+    expect(parsed("kubectl auth -n shop can-i list pods")).toEqual({
+      command: "auth-can-i",
+      check: { verb: "list", type: "pods" },
+      namespace: "shop",
+      allNamespaces: false,
+    });
+    expect(parsed("kubectl auth --subresource=log -n shop can-i get pods")).toMatchObject({ subresource: "log" });
+    expect(refusal("kubectl rollout -n acme-corp status deploy/web")).toEqual({
+      code: "not-in-v1",
+      message: notInV1CommandSentence("rollout status"),
+    });
+    expect(refusal("kubectl rollout --selector app=web restart")).toEqual({
+      code: "not-read-only",
+      message: notReadOnlySentence("rollout restart"),
+    });
+    for (const text of [
+      "kubectl top -n customer-acme service",
+      "kubectl top customer-acme",
+      "kubectl auth -n customer-acme login",
+      "kubectl rollout -n customer-acme",
+      "kubectl rollout customer-acme",
+    ])
+      expect(refusal(text).message).not.toContain("customer-acme");
   });
 
   test.each(["config view", "cluster-info", "wait --for=condition=Ready pod/web", "diff -f x.yaml", "kustomize ."])(

@@ -78,9 +78,13 @@ export function isKubectlFlagText(text: string): boolean {
 /**
  * The index of the command among the words after the lead, from each word's text as the shell passes it: the first
  * word that is neither a flag nor the value a global flag takes, or the word after `--`. A word whose text is not
- * known (undefined) ends the search unless it is a flag's value. The parser and the editor both call this.
+ * known (undefined) ends the search unless it is a flag's value. The parser and the editor both call this; the
+ * parser also finds a subcommand with it, passing the flags whose value may come before that subcommand.
  */
-export function commandWordIndex(texts: readonly (string | undefined)[]): number | undefined {
+export function commandWordIndex(
+  texts: readonly (string | undefined)[],
+  valueFlags: ReadonlySet<string> = KUBECTL_VALUE_GLOBAL_FLAGS,
+): number | undefined {
   let valueNext = false;
   for (let index = 0; index < texts.length; index++) {
     const text = texts[index];
@@ -91,7 +95,7 @@ export function commandWordIndex(texts: readonly (string | undefined)[]): number
     if (text === undefined) return undefined;
     if (text === "--") return texts[index + 1] === undefined ? undefined : index + 1;
     if (!isKubectlFlagText(text)) return index;
-    valueNext = !text.includes("=") && KUBECTL_VALUE_GLOBAL_FLAGS.has(text);
+    valueNext = !text.includes("=") && valueFlags.has(text);
   }
   return undefined;
 }
