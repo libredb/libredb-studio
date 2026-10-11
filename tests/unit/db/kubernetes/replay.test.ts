@@ -7,6 +7,7 @@ import type { KubernetesExchange } from "../../../helpers/kubernetes-evidence-sc
 import {
   readCapture,
   recordingTransport,
+  NOT_ACCEPTABLE_ANSWER,
   replayAnswer,
   replayTransport,
   requestKey,
@@ -68,6 +69,31 @@ describe("replayAnswer", () => {
     expect(replay("POST", "/reviews", '{"verb":"get"}').text).toBe("get");
   });
 
+  test("a request whose Accept differs from the recorded one answers a 406, not the recorded answer", () => {
+    const replay = replayAnswer([
+      {
+        request: {
+          method: "GET",
+          path: "/api/v1/namespaces/shop/pods/web/log?container=web",
+          accept: "application/json",
+        },
+        response: { ...answer("line\n"), contentType: "text/plain" },
+      },
+      recorded("GET", "/version", "{}"),
+    ]);
+    const refused = replay("GET", "/api/v1/namespaces/shop/pods/web/log?container=web", undefined, "text/plain");
+    expect(refused).toBe(NOT_ACCEPTABLE_ANSWER);
+    expect(refused.status).toBe(406);
+    expect(JSON.parse(refused.text)).toMatchObject({ kind: "Status", reason: "NotAcceptable", code: 406 });
+    expect(replay("GET", "/api/v1/namespaces/shop/pods/web/log?container=web", undefined, undefined)).toBe(
+      NOT_ACCEPTABLE_ANSWER,
+    );
+    expect(
+      replay("GET", "/api/v1/namespaces/shop/pods/web/log?container=web", undefined, "application/json").text,
+    ).toBe("line\n");
+    expect(replay("GET", "/version", undefined, "text/plain").text).toBe("{}");
+  });
+
   test("a request nobody recorded answers a text/plain 404", () => {
     expect(replayAnswer([])("GET", "/apis/unknown")).toBe(UNRECORDED_ANSWER);
     expect(UNRECORDED_ANSWER.status).toBe(404);
@@ -84,6 +110,25 @@ describe("replayTransport", () => {
     transport.close();
     expect(replay.asked).toEqual(["GET /api/v1/namespaces?limit=500", "GET /apis"]);
     expect(replay.missed).toEqual(["GET /apis"]);
+  });
+
+  test("a request whose Accept differs from the recording is missed, with the Accept it sent", async () => {
+    const replay = replayTransport([
+      { request: { method: "GET", path: "/api/v1/pods", accept: "application/json" }, response: answer("{}") },
+    ]);
+    const transport = replay.factory({} as never);
+    const sent = await transport.request(
+      request("https://127.0.0.1:6443/api/v1/pods", "GET", { headers: { accept: "text/plain" } }),
+    );
+    expect(sent.status).toBe(406);
+    expect(
+      (
+        await transport.request(
+          request("https://127.0.0.1:6443/api/v1/pods", "GET", { headers: { accept: "application/json" } }),
+        )
+      ).text,
+    ).toBe("{}");
+    expect(replay.missed).toEqual(["GET /api/v1/pods accept: text/plain"]);
   });
 });
 

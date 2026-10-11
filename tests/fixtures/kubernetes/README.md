@@ -24,6 +24,7 @@ No other header is recorded, so no `Authorization` and no `Audit-Id` is in any f
 
 A request is matched by its key: the method, the path, the query with its pairs sorted, and for a POST its body (`requestKey` in `tests/helpers/kubernetes-replay.ts`).
 A key recorded more than once answers in recorded order and then repeats its last answer; a request nobody recorded answers `404` with `text/plain`, as an API server answers a path it does not serve.
+The `Accept` must match too: a request that asks for another `Accept` than the recording did answers a `406` NotAcceptable and counts as missed, so a change in what the provider asks for is never answered from a recording of the old ask.
 
 ## The scrub
 

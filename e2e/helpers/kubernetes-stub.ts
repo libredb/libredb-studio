@@ -2,15 +2,21 @@
  * A stub Kubernetes API server for e2e/kubernetes-provider.spec.ts: https on a loopback port the system picks, with the
  * throwaway certificate of tests/fixtures/tls/ (for localhost, 127.0.0.1 and ::1), answering every request from the
  * v1.35.5 captures of tests/fixtures/kubernetes/ through the replay the integration test uses. The bearer token picks
- * the persona's capture; a request nobody recorded answers a `text/plain` 404 and is kept in `unrecorded`, so the
- * spec can say which read the capture plan still lacks.
+ * the persona's capture; a request nobody recorded answers a `text/plain` 404, and one whose Accept differs from the
+ * recorded one a 406, and both are kept in `unrecorded`, so the spec can say which read the capture plan still lacks.
  */
 import { createPrivateKey, type webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:https";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { readCapture, replayAnswer, requestKey, UNRECORDED_ANSWER } from "../../tests/helpers/kubernetes-replay";
+import {
+  NOT_ACCEPTABLE_ANSWER,
+  readCapture,
+  replayAnswer,
+  requestKey,
+  UNRECORDED_ANSWER,
+} from "../../tests/helpers/kubernetes-replay";
 
 /** The tokens the end-to-end test signs in with, each the key of one persona's capture. */
 export const STUB_TOKENS = Object.freeze({ reader: "e2e-reader-token", viewer: "e2e-viewer-token" });
@@ -55,8 +61,11 @@ export async function startKubernetesStub(): Promise<KubernetesStub> {
       }
       const method = request.method ?? "GET";
       const url = request.url ?? "/";
-      const replayed = answer(method, url, body);
+      const accept = request.headers.accept;
+      const replayed = answer(method, url, body, accept);
       if (replayed === UNRECORDED_ANSWER) unrecorded.push(requestKey(method, url, body));
+      if (replayed === NOT_ACCEPTABLE_ANSWER)
+        unrecorded.push(`${requestKey(method, url, body)} accept: ${accept ?? "(none)"}`);
       response.writeHead(replayed.status, {
         "content-type": replayed.contentType ?? "application/json",
         ...(replayed.retryAfter === null ? {} : { "retry-after": replayed.retryAfter }),

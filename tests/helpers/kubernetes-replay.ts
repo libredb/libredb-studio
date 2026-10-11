@@ -7,7 +7,9 @@
  * one connect share a path and are sent at once. One key may have been recorded more than once (discovery read again,
  * a list read by two scenarios); its answers are given in the order they were recorded, and the last is repeated once
  * they run out. A request nobody recorded answers `404` with `text/plain`, as an API server answers a path it does not
- * serve, so a replay never invents an answer.
+ * serve, so a replay never invents an answer. The `Accept` is not part of the key but must match too: where the
+ * recording holds one, a request that asks for another answers `406`, as the log endpoint answers an Accept it does
+ * not serve, so a change in what the provider asks for is never answered from a recording of the old ask.
  *
  * `recordingTransport` is the other half: it wraps a real transport factory and keeps each exchange in the shape a
  * fixture holds, for the capture script. It imports nothing at run time, so the Playwright process can load it too.
@@ -28,6 +30,22 @@ export const UNRECORDED_ANSWER: NodeResponse = Object.freeze({
   contentType: "text/plain; charset=utf-8",
   retryAfter: null,
   text: "404 page not found\n",
+});
+
+/** The answer to a recorded request that asks for another `Accept` than the recording did. */
+export const NOT_ACCEPTABLE_ANSWER: NodeResponse = Object.freeze({
+  status: 406,
+  contentType: "application/json",
+  retryAfter: null,
+  text: JSON.stringify({
+    kind: "Status",
+    apiVersion: "v1",
+    metadata: {},
+    status: "Failure",
+    message: "the Accept of the request differs from the recorded one",
+    reason: "NotAcceptable",
+    code: 406,
+  }),
 });
 
 /**
@@ -54,23 +72,28 @@ export function readCapture(file: string): KubernetesCapture {
   return JSON.parse(readFileSync(file, "utf8")) as KubernetesCapture;
 }
 
-/** An answer function over recorded exchanges, by request key, in recorded order, the last one repeated. */
+/**
+ * An answer function over recorded exchanges, by request key, in recorded order, the last one repeated; a request
+ * whose Accept differs from the one recorded for that answer gets `NOT_ACCEPTABLE_ANSWER` and uses up no answer.
+ */
 export function replayAnswer(
   exchanges: readonly KubernetesExchange[],
-): (method: string, pathAndQuery: string, body?: string) => NodeResponse {
-  const queues = new Map<string, NodeResponse[]>();
+): (method: string, pathAndQuery: string, body?: string, accept?: string) => NodeResponse {
+  const queues = new Map<string, KubernetesExchange[]>();
   for (const exchange of exchanges) {
     const key = requestKey(exchange.request.method, exchange.request.path, exchange.request.body);
-    queues.set(key, [...(queues.get(key) ?? []), exchange.response]);
+    queues.set(key, [...(queues.get(key) ?? []), exchange]);
   }
   const served = new Map<string, number>();
-  return (method, pathAndQuery, body) => {
+  return (method, pathAndQuery, body, accept) => {
     const key = requestKey(method, pathAndQuery, body);
     const queue = queues.get(key);
     if (queue === undefined) return UNRECORDED_ANSWER;
     const index = served.get(key) ?? 0;
+    const exchange = queue[Math.min(index, queue.length - 1)];
+    if (exchange.request.accept !== undefined && exchange.request.accept !== accept) return NOT_ACCEPTABLE_ANSWER;
     served.set(key, index + 1);
-    return queue[Math.min(index, queue.length - 1)];
+    return exchange.response;
   };
 }
 
@@ -81,7 +104,11 @@ export interface ReplayTransport {
   readonly missed: string[];
 }
 
-/** A transport factory that answers every request from the exchanges, through the same key the stub server uses. */
+/**
+ * A transport factory that answers every request from the exchanges, through the same key the stub server uses; a
+ * request answered neither by a recording nor with its recorded Accept is kept in `missed`, the latter with the
+ * Accept it sent.
+ */
 export function replayTransport(exchanges: readonly KubernetesExchange[]): ReplayTransport {
   const answer = replayAnswer(exchanges);
   const asked: string[] = [];
@@ -92,8 +119,10 @@ export function replayTransport(exchanges: readonly KubernetesExchange[]): Repla
       const pathAndQuery = `${url.pathname}${url.search}`;
       const key = requestKey(request.method, pathAndQuery, request.body);
       asked.push(key);
-      const response = answer(request.method, pathAndQuery, request.body);
+      const accept = request.headers?.accept;
+      const response = answer(request.method, pathAndQuery, request.body, accept);
       if (response === UNRECORDED_ANSWER) missed.push(key);
+      if (response === NOT_ACCEPTABLE_ANSWER) missed.push(`${key} accept: ${accept ?? "(none)"}`);
       return response;
     },
     close() {},
