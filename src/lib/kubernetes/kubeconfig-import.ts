@@ -60,6 +60,7 @@ export const KUBECONFIG_CONTEXT_REFUSALS = Object.freeze({
   userinfo: "its server carries a user name or a password, which Studio does not take.",
   queryOrFragment: "its server carries a query or a fragment, which Studio does not take.",
   host: "its server names no valid host and port.",
+  serverPath: "its server's path is not a plain path such as /k8s/clusters/c-1.",
   clientPair: "its user gives a client certificate without its key, or a key without its certificate.",
   namespace: "its namespace is not a DNS-1123 label of at most 63 lower-case letters, digits or hyphens.",
   insecureFlag: "its insecure-skip-tls-verify is not true or false.",
@@ -120,6 +121,8 @@ const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$
 /** The YAML core schema's own tags, which the `!!` handle names. */
 const STANDARD_TAG_PREFIX = "tag:yaml.org,2002:";
 const SERVER_SCHEME = /^(https?):\/\//i;
+/** What a URL parser would drop, decode or read as a separator, so a server holding one is refused, never rewritten. */
+const SERVER_REWRITTEN = /[\\\s\u0000-\u001f\u007f]/;
 
 /** A refusal of the whole text, or the document to read. */
 type Checked = { readonly refusal: string } | { readonly root: YAMLMap };
@@ -234,6 +237,23 @@ function serverOf(
   const scheme = SERVER_SCHEME.exec(value.text);
   if (scheme === null) return { refusal: KUBECONFIG_CONTEXT_REFUSALS.scheme };
   if (/[?#]/.test(value.text)) return { refusal: KUBECONFIG_CONTEXT_REFUSALS.queryOrFragment };
+  // The text is checked as written: a URL parser resolves `.` and `..` segments, `%2e` among them, drops tabs and
+  // reads a backslash as a slash, so what it hands back can name another host or path than the file does.
+  const rest = value.text.slice(scheme[0].length);
+  const slash = rest.indexOf("/");
+  const authority = slash === -1 ? rest : rest.slice(0, slash);
+  const rawPath = slash === -1 ? "" : rest.slice(slash);
+  if (SERVER_REWRITTEN.test(authority)) return { refusal: KUBECONFIG_CONTEXT_REFUSALS.host };
+  if (rawPath !== "" && rawPath !== "/") {
+    const segments = (rawPath.endsWith("/") ? rawPath.slice(1, -1) : rawPath.slice(1)).split("/");
+    if (
+      SERVER_REWRITTEN.test(rawPath) ||
+      rawPath.includes("%") ||
+      segments.some((segment) => segment === "" || segment === "." || segment === "..")
+    ) {
+      return { refusal: KUBECONFIG_CONTEXT_REFUSALS.serverPath };
+    }
+  }
   if (!URL.canParse(value.text)) return { refusal: KUBECONFIG_CONTEXT_REFUSALS.host };
   const url = new URL(value.text);
   if (url.username !== "" || url.password !== "") return { refusal: KUBECONFIG_CONTEXT_REFUSALS.userinfo };

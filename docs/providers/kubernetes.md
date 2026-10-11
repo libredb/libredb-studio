@@ -100,6 +100,7 @@ The paste is read in the browser, at most 1 MiB, and is never sent to the server
 The parser is strict on purpose: a duplicate key, a YAML alias, a merge key, a `%YAML` or `%TAG` directive, or a tag outside the standard `!!` tags fails the import, with the parser's code and position and never its message, which could quote a token.
 
 Each context offers its cluster's server, split into Host, Port and API path, its CA, its TLS server name, the user's token or client certificate and key, and the context's namespace.
+The server is split as written and never normalized: one that holds a backslash, whitespace or a control character, or whose path holds `%`, `//`, or a `.` or `..` segment, is refused rather than rewritten.
 An `http://` server maps to SSL mode `disable`, and `insecure-skip-tls-verify: true` to SSL mode `require`, each with a notice of the flag the operator must set.
 These settings are named in the import's notice and never imported: `exec`, `auth-provider`, every file path (`certificate-authority`, `client-certificate`, `client-key`, `tokenFile`, `token-file`), `proxy-url`, `username`, `password`, `as`, `as-uid`, `as-groups` and `as-user-extra`; `disable-compression` and `extensions` are ignored.
 Studio reads no local file, runs no program and impersonates no one, so none of them can mean what the file says.
