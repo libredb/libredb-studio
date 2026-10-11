@@ -1361,10 +1361,12 @@ function inventoryNotes(inventory: AgentInventory, shown: readonly AgentInventor
   }
   if (unreadContainers !== undefined) {
     const { count, label, labelPlural, read } = unreadContainers;
-    // The containers read are named here, not left to the entries: a read that lists nothing names none.
+    // The containers read are named here, not left to the entries: a read that lists nothing names none. They are
+    // not counted under the level's label, because a container the provider names (Kubernetes' `Cluster`) may not
+    // be one of what the label calls the others.
     const names = read.map((path) => JSON.stringify(path)).join(", ");
     notes.push(
-      `Not read: ${count} other ${count === 1 ? label : labelPlural}. This inventory covers only the ${read.length} ${read.length === 1 ? label : labelPlural} it read (${names}), so an object in any other one is not listed below. Do not read its absence as an absence in the database.`,
+      `Not read: ${count} other ${count === 1 ? label : labelPlural}. This inventory covers only what it read in (${names}), so an object in any other ${label} is not listed below. Do not read its absence as an absence in the database.`,
     );
   }
   // Each kind note says "the X BELOW are", so it is gated on the kind being in what was

@@ -264,7 +264,7 @@ describe("a scoped walk", () => {
     });
     for (const packed of packings(snapshot)) {
       expect(packed).toContain(
-        'Not read: 2 other Namespaces. This inventory covers only the 2 Namespaces it read ("Cluster", "default"),',
+        'Not read: 2 other Namespaces. This inventory covers only what it read in ("Cluster", "default"), so an object in any other Namespace is not listed below.',
       );
     }
   });
@@ -279,12 +279,12 @@ describe("a scoped walk", () => {
     expect(snapshot.objects).toEqual([]);
     for (const packed of packings(snapshot)) {
       expect(packed).toContain(
-        'Not read: 1 other Namespace. This inventory covers only the 2 Namespaces it read ("Cluster", "default"),',
+        'Not read: 1 other Namespace. This inventory covers only what it read in ("Cluster", "default"),',
       );
     }
   });
 
-  test("one container read is named in the singular", async () => {
+  test("the containers read are named, not counted under the level's label, since a named one may not be of it", async () => {
     const { snapshot } = await captured({
       kinds: [POD],
       containers: containers.slice(1, 3),
@@ -292,7 +292,8 @@ describe("a scoped walk", () => {
     });
 
     for (const packed of packings(snapshot)) {
-      expect(packed).toContain('This inventory covers only the 1 Namespace it read ("default"),');
+      expect(packed).toContain('This inventory covers only what it read in ("default"),');
+      expect(packed).not.toContain("Namespace it read");
     }
   });
 
