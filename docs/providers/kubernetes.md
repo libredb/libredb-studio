@@ -331,7 +331,7 @@ No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this version reads 
 | 404 for a type | Discovery is read again once, then kubectl's "the server doesn't have a resource type" |
 | 404 for an object | Not found, with no discovery refresh |
 | 410 in a paged list | The walk restarts once from the beginning, then a sentence |
-| 429 | One wait of at most 5 s from `Retry-After` (1 s when absent), then a sentence |
+| 429 | One wait of at most 5 s from `Retry-After` (1 s when absent), within the time the request has left, then a sentence |
 | 400, 422, 5xx | Studio's sentence with the answer's reason |
 
 A server older than the floor is refused at connect:

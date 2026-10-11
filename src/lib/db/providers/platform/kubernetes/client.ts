@@ -152,6 +152,8 @@ export function createKubernetesClient(
   };
 
   const send = async (request: KubernetesRequest, call: KubernetesCall): Promise<KubernetesResponse> => {
+    // The call's deadline covers the wait and the second request, so a 429 never extends it.
+    const deadline = seams.now() + call.timeoutMs;
     let answer = await once(request, call);
     if (answer.status === 429) {
       const wait = retryAfterMs(answer.retryAfter, seams.now());
@@ -163,8 +165,10 @@ export function createKubernetesClient(
         );
       }
       const jitter = Math.floor(seams.random() * KUBERNETES_RETRY_JITTER_MS);
-      await seams.sleep(Math.min(wait + jitter, KUBERNETES_RETRY_AFTER_MAX_MS), call.signal);
-      answer = await once(request, call);
+      const pause = Math.min(wait + jitter, KUBERNETES_RETRY_AFTER_MAX_MS);
+      if (seams.now() + pause >= deadline) throw answerFailure(context, answer);
+      await seams.sleep(pause, call.signal);
+      answer = await once(request, { ...call, timeoutMs: Math.max(1, deadline - seams.now()) });
     }
     if (answer.status < 200 || answer.status > 299) throw answerFailure(planRequest(request).context, answer);
     return { status: answer.status, contentType: answer.contentType, text: answer.text };

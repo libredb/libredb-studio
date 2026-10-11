@@ -219,6 +219,49 @@ describe("429 and Retry-After", () => {
     expect(transport.calls).toHaveLength(1);
   });
 
+  /** A client over a clock that the first answer and every wait move forward. */
+  function clockedClient(firstTakesMs: number, retryAfter: string) {
+    let clock = NOW;
+    let first = true;
+    const transport = recordingKubernetesTransport(() => {
+      if (first) {
+        first = false;
+        clock += firstTakesMs;
+        return statusAnswer(429, "TooManyRequests", retryAfter);
+      }
+      throw new TransportError("timeout", "x");
+    });
+    const sleeps: number[] = [];
+    const seams = {
+      ...testSeams(transport, { now: NOW }),
+      now: () => clock,
+      sleep: async (ms: number) => {
+        sleeps.push(ms);
+        clock += ms;
+      },
+    };
+    const endpoint = readClusterEndpoint(kubernetesConnection(), { queryTimeout: 30_000, appVersion: "0.18.2" });
+    return { client: createKubernetesClient(endpoint, seams), transport, sleeps };
+  }
+
+  test("the request sent again after a wait gets only the time the call has left", async () => {
+    const { client, transport, sleeps } = clockedClient(400, "0");
+    await expect(client.send({ op: "version" }, call({ timeoutMs: 500 }))).rejects.toThrow(
+      "The API server did not answer the request to get version in the cluster within 0.1 s.",
+    );
+    expect(sleeps).toEqual([0]);
+    expect(transport.calls).toHaveLength(2);
+  });
+
+  test("a Retry-After the call has no time left for answers the 429 sentence after one request", async () => {
+    const { client, transport, sleeps } = clockedClient(400, "2");
+    await expect(client.send({ op: "version" }, call({ timeoutMs: 2_000 }))).rejects.toThrow(
+      "The API server is limiting requests and did not get version in the cluster (HTTP 429, reason TooManyRequests); run it again in a few seconds.",
+    );
+    expect(sleeps).toEqual([]);
+    expect(transport.calls).toHaveLength(1);
+  });
+
   test("the wait with jitter never passes 5 s", async () => {
     let first = true;
     const { client, seams } = clientWith(
@@ -230,7 +273,7 @@ describe("429 and Retry-After", () => {
       kubernetesConnection(),
       0.99,
     );
-    await client.send({ op: "version" }, call());
+    await client.send({ op: "version" }, call({ timeoutMs: 30_000 }));
     expect(seams.sleeps).toEqual([5_000]);
   });
 
