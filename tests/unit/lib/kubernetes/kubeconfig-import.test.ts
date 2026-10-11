@@ -264,6 +264,7 @@ describe("a context that cannot be imported is refused by its place, never by a 
     ["a server with no scheme", `server: ${MARKER}.example:6443`, C.scheme],
     ["an ftp server", `server: ftp://${MARKER}.example`, C.scheme],
     ["userinfo", `server: https://${MARKER}:x@api.example:6443`, C.userinfo],
+    ["userinfo without a name", `server: https://:${MARKER}@api.example:6443`, C.userinfo],
     ["a query", `server: https://api.example:6443/?${MARKER}=1`, C.queryOrFragment],
     ["a fragment", `server: https://api.example:6443/#${MARKER}`, C.queryOrFragment],
     ["an invalid host", "server: https://api exa mple:6443", C.host],
