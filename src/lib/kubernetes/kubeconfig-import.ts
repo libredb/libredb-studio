@@ -20,13 +20,18 @@
  */
 import { type Document, isAlias, isMap, isPair, isScalar, isSeq, LineCounter, parseDocument, type YAMLMap } from "yaml";
 import type { ConnectionImportResult, ImportedContext, ImportedField, ImportedSsl } from "@/lib/connection-import";
-import { KUBERNETES_KUBECONFIG_MAX_BYTES } from "@/lib/db/providers/platform/kubernetes/limits";
+import {
+  KUBERNETES_KUBECONFIG_MAX_BYTES,
+  KUBERNETES_KUBECONFIG_MAX_DEPTH,
+} from "@/lib/db/providers/platform/kubernetes/limits";
 
 /** Every fixed sentence of the import, so the dialog's tests and the provider doc can be held to the same words. */
 export const KUBECONFIG_IMPORT_SENTENCES = Object.freeze({
   notText: "The import reads text: paste the contents of the kubeconfig file.",
   tooLarge:
     "The pasted kubeconfig is larger than 1 MiB, the most Studio reads: paste the part that holds your cluster.",
+  tooDeep:
+    "The pasted kubeconfig nests deeper than 100 levels, the most Studio reads: a kubeconfig kubectl writes nests fewer than 20.",
   notAConfig: "The text is not a kubeconfig: its top level is not a mapping of clusters, users and contexts.",
   directive:
     "The kubeconfig starts with a %YAML directive, which Studio does not read: remove the directive line and paste it again.",
@@ -167,12 +172,43 @@ function walkNodes(document: Document.Parsed, lineCounter: LineCounter): NodeFin
   return aliasOrMerge === undefined ? {} : { aliasOrMerge };
 }
 
+/**
+ * Whether the text nests deeper than the cap, in one pass and before the parser, which recurses once per level.
+ * A line's depth is its indentation in spaces, plus the run of `-`, `?` and `:` indicators that opens it, plus the
+ * flow brackets still open. That never undercounts: a bracket inside a quoted value or after a `#` counts as well,
+ * and only a line that is all comment is skipped.
+ */
+function nestsTooDeep(text: string): boolean {
+  let flow = 0;
+  for (const line of text.split("\n")) {
+    let at = 0;
+    while (line[at] === " ") at += 1;
+    if (line[at] === "#") continue;
+    let depth = at;
+    while ((line[at] === "-" || line[at] === "?" || line[at] === ":") && (line[at + 1] ?? " ").trim() === "") {
+      depth += 1;
+      at += 1;
+      while (line[at] === " ") at += 1;
+    }
+    if (depth + flow > KUBERNETES_KUBECONFIG_MAX_DEPTH) return true;
+    for (; at < line.length; at += 1) {
+      const char = line[at];
+      if (char === "[" || char === "{") {
+        flow += 1;
+        if (depth + flow > KUBERNETES_KUBECONFIG_MAX_DEPTH) return true;
+      } else if ((char === "]" || char === "}") && flow > 0) flow -= 1;
+    }
+  }
+  return false;
+}
+
 /** The document's top level, after every rule of the text as a whole: size, parse, directive, tags, aliases. */
 function checkText(text: unknown): Checked {
   if (typeof text !== "string") return { refusal: KUBECONFIG_IMPORT_SENTENCES.notText };
   if (new TextEncoder().encode(text).byteLength > KUBERNETES_KUBECONFIG_MAX_BYTES) {
     return { refusal: KUBECONFIG_IMPORT_SENTENCES.tooLarge };
   }
+  if (nestsTooDeep(text)) return { refusal: KUBECONFIG_IMPORT_SENTENCES.tooDeep };
   // The parser's own duplicate check scans a mapping's keys once per key, so a flat mapping near the cap would hold
   // the browser's main thread for tens of seconds; walkNodes below is the same rule in one pass.
   const lineCounter = new LineCounter();

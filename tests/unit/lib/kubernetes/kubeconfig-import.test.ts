@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { KUBERNETES_KUBECONFIG_MAX_BYTES } from "@/lib/db/providers/platform/kubernetes/limits";
+import {
+  KUBERNETES_KUBECONFIG_MAX_BYTES,
+  KUBERNETES_KUBECONFIG_MAX_DEPTH,
+} from "@/lib/db/providers/platform/kubernetes/limits";
 import {
   importKubeconfig,
   KUBECONFIG_CONTEXT_REFUSALS as C,
@@ -537,20 +540,45 @@ describe("parser rules, and the marker token never leaves the text", () => {
     expect(performance.now() - started).toBeLessThan(15_000);
   });
 
-  test("a sequence nested 6,000 deep is checked in time linear in its nodes, not in the square of its depth", () => {
-    const nest = `${"- ".repeat(6_000)}x\n`;
+  test("a paste nested deeper than the cap is refused before the parser reads it, and never throws", () => {
+    const deep = (depth: number) => `${"- ".repeat(depth)}x\n`;
+    const refused = { contexts: [], refusals: [S.tooDeep] };
     for (const items of [1, 5]) {
       const started = performance.now();
-      expect(importKubeconfig(`contexts:\n${nest.repeat(items)}`)).toEqual({
-        contexts: [],
-        refusals: [
-          ...Array.from({ length: items }, (_unused, at) => `Context ${at + 1} was not imported: ${C.shape}`),
-          S.noCurrentContext,
-        ],
-      });
-      // The depth-squared walk took about 7.7 s for one nest and 38 s for five; the linear one takes tens of ms.
+      expect(() => importKubeconfig(`contexts:\n${deep(6_000).repeat(items)}`)).not.toThrow();
+      expect(importKubeconfig(`contexts:\n${deep(6_000).repeat(items)}`)).toEqual(refused);
+      // The parser itself overflowed its stack on these under coverage; the scan is one pass over the text.
       expect(performance.now() - started).toBeLessThan(3_000);
     }
+    expect(importKubeconfig(`contexts:\n${deep(KUBERNETES_KUBECONFIG_MAX_DEPTH + 1)}`)).toEqual(refused);
+    expect(importKubeconfig(`${" ".repeat(KUBERNETES_KUBECONFIG_MAX_DEPTH + 1)}x: 1\na: 1\n`)).toEqual(refused);
+    expect(importKubeconfig(`${"[".repeat(KUBERNETES_KUBECONFIG_MAX_DEPTH + 1)}\n`)).toEqual(refused);
+    expect(importKubeconfig(`a:\n  - [${"{a: [".repeat(50)}\n`)).toEqual(refused);
+  });
+
+  test("a paste nested to the cap is read, and a comment line adds no depth", () => {
+    const depth = KUBERNETES_KUBECONFIG_MAX_DEPTH;
+    expect(importKubeconfig(`contexts:\n${"- ".repeat(depth)}x\n`)).toEqual({
+      contexts: [],
+      refusals: [`Context 1 was not imported: ${C.shape}`, S.noCurrentContext],
+    });
+    expect(importKubeconfig(`${"[".repeat(depth)}${"]".repeat(depth)}\n`)).toEqual({
+      contexts: [],
+      refusals: [S.notAConfig],
+    });
+    const commented = `${kubeconfig()}${`#${" ".repeat(depth)}[[[[\n`.repeat(30)}`;
+    expect(importKubeconfig(commented).contexts).toHaveLength(1);
+  });
+
+  test("a 1 MiB paste of nests just under the cap is checked in time linear in its nodes", () => {
+    const nest = `${"- ".repeat(KUBERNETES_KUBECONFIG_MAX_DEPTH - 1)}x\n`;
+    const items = Math.floor((KUBERNETES_KUBECONFIG_MAX_BYTES - 10) / nest.length);
+    const started = performance.now();
+    const result = importKubeconfig(`contexts:\n${nest.repeat(items)}`);
+    expect(result.contexts).toEqual([]);
+    expect(result.refusals).toHaveLength(items + 1);
+    // A walk in the square of the depth took about 7.7 s for one 6,000-deep nest; this one is about a second alone.
+    expect(performance.now() - started).toBeLessThan(15_000);
   });
 
   test("a duplicate key is told as the parser tells it: 1 and '1' are two keys, so are two NaN, a repeated null is one", () => {

@@ -98,7 +98,7 @@ The API lists namespaces in name order, so when the Default namespace sorts past
 ### 4.4 Import a kubeconfig
 
 For a new connection the dialog offers Import kubeconfig.
-The paste is read in the browser, at most 1 MiB, and is never sent to the server, logged or stored; the text is dropped once the form is filled.
+The paste is read in the browser, at most 1 MiB and 100 levels of nesting, and is never sent to the server, logged or stored; the text is dropped once the form is filled.
 The parser is strict on purpose: a duplicate key, a YAML alias, a merge key, a `%YAML` or `%TAG` directive, or a tag outside the standard `!!` tags fails the import, with the parser's code and position and never its message, which could quote a token.
 
 Each context offers its cluster's server, split into Host, Port and API path, its CA, its TLS server name, the user's token or client certificate and key, and the context's namespace.
@@ -382,6 +382,7 @@ A deploy tool may keep its own copy of the applied Secret in an annotation, so a
 | Discovery kept per connection | 10 minutes |
 | Longest wait on a 429 | 5 s |
 | Bytes of a pasted kubeconfig | 1 MiB |
+| Nesting of a pasted kubeconfig | 100 levels |
 
 A value above a limit is refused with a sentence naming the limit, never clamped.
 Kubernetes 1.30 and later is supported; 1.28 and 1.29 are read on a best-effort basis; 1.27 and earlier are refused.

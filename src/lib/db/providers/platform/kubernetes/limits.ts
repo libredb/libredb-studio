@@ -70,3 +70,9 @@ export const KUBERNETES_RETRY_AFTER_DEFAULT_MS = 1_000;
 export const KUBERNETES_RETRY_JITTER_MS = 250;
 /** Bytes a pasted kubeconfig may hold. */
 export const KUBERNETES_KUBECONFIG_MAX_BYTES = 1024 * 1024;
+/**
+ * How deep a pasted kubeconfig may nest, counted per line as its indentation in spaces, the `-`, `?` and `:` indicators
+ * that open it and the flow brackets still open. kubectl writes fewer than 20; the YAML parser recurses per level and
+ * overflowed its stack on a 60 KB paste nested 6,000 deep.
+ */
+export const KUBERNETES_KUBECONFIG_MAX_DEPTH = 100;

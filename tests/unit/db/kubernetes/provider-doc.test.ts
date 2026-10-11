@@ -106,6 +106,7 @@ describe("the limits table is limits.ts", () => {
     ["Discovery kept per connection", `${limits.KUBERNETES_DISCOVERY_TTL_MS / 60_000} minutes`],
     ["Longest wait on a 429", `${limits.KUBERNETES_RETRY_AFTER_MAX_MS / 1000} s`],
     ["Bytes of a pasted kubeconfig", mib(limits.KUBERNETES_KUBECONFIG_MAX_BYTES)],
+    ["Nesting of a pasted kubeconfig", `${count(limits.KUBERNETES_KUBECONFIG_MAX_DEPTH)} levels`],
   ])("%s", (label, value) => {
     expect(DOC).toContain(`| ${label} | ${value} |`);
   });
