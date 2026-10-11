@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createLLMProvider } from "@/lib/llm";
+import { MAX_SCHEMA_CONTEXT_CHARS } from "@/lib/llm/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
 
@@ -10,8 +11,14 @@ export async function POST(req: NextRequest) {
   try {
     const { schemaContext, databaseType, mode } = await req.json();
 
-    if (!schemaContext) {
-      return NextResponse.json({ error: "Schema context required" }, { status: 400 });
+    if (typeof schemaContext !== "string" || !schemaContext) {
+      return NextResponse.json({ error: "Schema context is required and must be a string." }, { status: 400 });
+    }
+    if (databaseType !== undefined && (typeof databaseType !== "string" || databaseType.length > 64)) {
+      return NextResponse.json({ error: "Database type must be a string of at most 64 characters." }, { status: 400 });
+    }
+    if (schemaContext.length > MAX_SCHEMA_CONTEXT_CHARS) {
+      return NextResponse.json({ error: "The schema context is too large for AI documentation." }, { status: 413 });
     }
 
     const provider = await createLLMProvider();

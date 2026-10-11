@@ -184,8 +184,23 @@ export function isRetryableError(error: unknown): boolean {
     return false;
   }
 
+  // Context length exceeded errors are not retryable
+  if (isContextLengthError(error)) {
+    return false;
+  }
+
   // Rate limit and stream errors may be retryable
   return true;
+}
+
+/** Maximum character budget for schema context in AI documentation */
+export const MAX_SCHEMA_CONTEXT_CHARS = 30_000;
+
+/** Whether an error indicates the prompt exceeded the model's available context window */
+export function isContextLengthError(error: unknown): boolean {
+  if (!error) return false;
+  const msg = error instanceof Error ? error.message : String(error);
+  return msg.includes("exceeds the available context size");
 }
 
 /**

@@ -309,6 +309,13 @@ export class TrinoProvider extends SQLBaseProvider {
   private transport: TrinoTransport | null = null;
 
   /**
+   * What `connect()` learned beyond the probe: the pinned catalog's absence is the
+   * one case this provider can see at connect time that a green probe hides, and
+   * `connectWarnings()` hands it to the test-connection route as a caution.
+   */
+  private connectCaution: QueryWarning | null = null;
+
+  /**
    * The coordinator's id for each statement this provider started, keyed by the
    * CLIENT's own tracking token.
    *
@@ -611,12 +618,16 @@ export class TrinoProvider extends SQLBaseProvider {
 
   public async connect(): Promise<void> {
     let transport: TrinoTransport;
+    let caution: QueryWarning | null = null;
     try {
       // Constructed inside the guard because the constructor itself refuses one
       // configuration: a password over plain HTTP, which the coordinator rejects
       // with HTTP 401 even when authentication is switched off.
       transport = new TrinoHttpTransport(this.dialect, this.config);
       await transport.query(CONNECT_PROBE_SQL);
+      // AFTER the probe, never instead of it: the probe is what proves the
+      // coordinator answers, and this check only says more when it did.
+      caution = await this.probePinnedCatalog(transport);
     } catch (error) {
       const failure = this.describeConnectFailure(error);
       this.setError(failure);
@@ -624,7 +635,52 @@ export class TrinoProvider extends SQLBaseProvider {
     }
 
     this.transport = transport;
+    this.connectCaution = caution;
     this.setConnected(true);
+  }
+
+  /**
+   * What the last successful `connect()` cautioned, in the shape the test-connection
+   * route reads: the pinned catalog's absence from the cluster, named.
+   *
+   * `SELECT 1` needs no catalog, which is deliberate (§2.4 of the provider doc), so a
+   * connection may pin a catalog the cluster does not have and every later tree read
+   * answers "Catalog 'x' not found" without the form ever having said so. This is the
+   * form saying so: success, carrying the name.
+   */
+  public connectWarnings(): QueryWarning[] {
+    return this.connectCaution ? [this.connectCaution] : [];
+  }
+
+  /**
+   * The pinned catalog's absence, or null when there is nothing to say.
+   *
+   * Null in three cases, each deliberate: no catalog is pinned, the cluster lists the
+   * pinned one, or the listing itself was refused - the connect is proven either way,
+   * so a cluster that withholds `system.metadata` keeps the behaviour it had rather
+   * than gaining a new refusal. The comparison ignores case because the catalog header
+   * is an identifier the coordinator folds before resolving it, so a connection pinned
+   * `TPCH` reaches the cluster as `tpch`.
+   */
+  private async probePinnedCatalog(transport: TrinoTransport): Promise<QueryWarning | null> {
+    const pinned = this.config.database;
+    if (!pinned) return null;
+
+    let rows: TrinoRow[];
+    try {
+      rows = (await transport.query(TRINO_CATALOG_LIST_SQL)).rows;
+    } catch {
+      return null;
+    }
+
+    const present = rows.some((row) => {
+      const name = readObjectIdentifier(row.catalogName);
+      return name !== null && name.toLowerCase() === pinned.toLowerCase();
+    });
+    if (present) return null;
+    return {
+      message: `Catalog "${pinned}" does not exist on this cluster: the connection works, but the schema reads and queries that rely on the pinned catalog will fail.`,
+    };
   }
 
   public async disconnect(): Promise<void> {

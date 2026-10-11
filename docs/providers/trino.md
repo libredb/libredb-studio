@@ -126,8 +126,12 @@ trip over on its own, the trailing semicolon ([§3.13](#313-a-trailing-semicolon
 
 `connect()` constructs a `TrinoHttpTransport` and sends `SELECT 1` — a statement that needs no
 catalog, deliberately, so a connection that pins a catalog the cluster does not have still connects
-and fails later with a precise message rather than being refused at the form. `disconnect()` closes
-the transport and forgets every recorded query id.
+rather than being refused at the form. What the form could not say was the word about that catalog:
+after the probe, `connect()` checks the pinned catalog against `system.metadata.catalogs`, and one
+the cluster does not have is carried to the test-connection answer as a warning naming it
+(`connectWarnings()`; `POST /api/db/test-connection` reads that channel). The check never refuses
+the connect — `SELECT 1` already proved it — and a cluster that withholds the listing keeps the
+behaviour it had. `disconnect()` closes the transport and forgets every recorded query id.
 
 ---
 

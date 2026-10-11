@@ -135,9 +135,15 @@ case 'couchbase': {
 
 `connect()` ([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)) proves
 reachability *and* credentials with one `GET /pools/default` — the cheapest call that needs no RBAC
-role beyond cluster read — then keeps the transport. `disconnect()` clears the transport's cached
-endpoint discovery; there are no sockets to close. API routes use `getOrCreateProvider()`, which
-caches the connected provider per `connection.id` and evicts it after 30 minutes idle.
+role beyond cluster read — then `assertBucketExists()` asks the bucket's own path
+(`GET /pools/default/buckets/<bucket>`): a 404 there is the cluster itself saying the configured
+bucket is not on it, and the connect is refused with the bucket named rather than saved to a
+connection that shows the cluster's real buckets in the tree and never says the configured one is
+wrong. Only a 404 refuses; a read that fails for any other reason — a role that may read the cluster
+but not its bucket settings — leaves the connect the pools read already proved. `disconnect()` clears
+the transport's cached endpoint discovery; there are no sockets to close. API routes use
+`getOrCreateProvider()`, which caches the connected provider per `connection.id` and evicts it after
+30 minutes idle.
 
 ---
 

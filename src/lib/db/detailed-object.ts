@@ -200,7 +200,8 @@ export function sampledMark(column: Pick<ColumnSchema, "provenance">): string {
  * The ranges are the connection's own grants, and a piece can be a single key, so they are the
  * one part of a schema entry that may name a key. They travel with the entry for the two
  * generators alone, and this string is what the query editor's completions, the docs, the safety
- * review, the profiler and the explain view read, the last two posting it to the model whole.
+ * review and the explain view read, the explain view posting it to the model whole. The profiler
+ * posts only the object it profiled, run through this function on its own.
  *
  * A REPLACER rather than a projection, and the choice is what keeps every other engine's context
  * byte for byte the `JSON.stringify(schema)` it has always been: the replacer answers every other
