@@ -263,6 +263,8 @@ What each answers:
 - `get -w` lists, then watches for a bounded window (10 s, or `--request-timeout`), with an EVENT column for the window's changes; it is not live, and running it again reads again.
 - `describe` answers section, field and value rows: the summary, one row per condition, one row per event.
 - `logs` reads the pod kubectl would choose for `TYPE/NAME`, and the default container its annotation names, else the first; without `--tail` it reads the last 500 lines and says that kubectl's default is every line.
+  When no container is named and the annotation names none, the result carries kubectl's own notice, `Defaulted container "app" out of: app, sidecar, setup (init)`, wherever the pod has more than one container or any init or ephemeral container (ephemeral ones read `(ephem)`), unless `--all-pods` reads every pod; an annotation naming no container of the pod adds `Default container name "X" not found in pod NAME`, as kubectl does.
+  Each LINE has its terminal escape sequences removed (colors, OSC hyperlinks and other `ESC` sequences), since the grid cannot draw what a terminal would; every other character, tabs included, stays as the server sent it.
 - `events` sorts by time as `kubectl events` does and shows the newest 1,000.
 - `events --types` with a single value also sends it to the server as a `type=` field selector, so the server narrows the events the 5,000 read limit counts; with both values no type selector is sent.
 - `explain` reads the server's OpenAPI v3 documents, cached per immutable URL.

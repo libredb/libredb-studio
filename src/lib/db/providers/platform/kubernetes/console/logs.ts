@@ -6,13 +6,14 @@
  * or a Service reads its selector's pods and takes the one `GetFirstPod` takes, sorted by `podutils.ByLogging`, unless
  * --all-pods asks for every one; -l reads every pod it selects. Which containers: -c, else every container with
  * --all-containers (init, then regular, then ephemeral), else the `kubectl.kubernetes.io/default-container`
- * annotation when it names one of the pod's containers, else the first container.
+ * annotation when it names one of the pod's containers, else the first container, with kubectl's notice saying so.
  *
  * Bounds: at most 5 streams (kubectl's --max-log-requests default), past which a sentence asks for -c or a narrower
  * selector; each request asks `limitBytes` (1 MiB, or --limit-bytes) and `tailLines` (--tail, else 10 per pod under
  * -l as kubectl reads, else 500 with a warning that kubectl's default is every line). `timestamps=true` is always
- * requested; the RFC 3339 prefix of each line is its TIME and the rest its LINE. `follow` is never sent. The merged
- * lines are the statement's rows, so streams times the tail past 5,000 answer a sentence before any log is read.
+ * requested; the RFC 3339 prefix of each line is its TIME and the rest its LINE, with its terminal escape sequences
+ * removed. `follow` is never sent. The merged lines are the statement's rows, so streams times the tail past 5,000
+ * answer a sentence before any log is read.
  */
 import { QueryError } from "@/lib/db/errors";
 import { ACCEPT_JSON } from "../client";
@@ -241,8 +242,32 @@ async function podsOf(context: KubectlContext, statement: LogsStatement, namespa
   return statement.allPods ? sorted : [sorted[0]];
 }
 
-/** The containers of one pod the statement reads. */
-function containersOf(statement: LogsStatement, pod: Json): readonly string[] {
+/**
+ * kubectl's `AllContainerNames` (`pkg/cmd/util/podcmd/podcmd.go`): the containers, then the ephemeral containers marked
+ * `(ephem)`, then the init containers marked `(init)`, joined by a comma and a space.
+ */
+function allContainerNames(spec: Json): string {
+  const names = (key: string): string[] => array(spec[key]).map((container) => String(container.name));
+  return [
+    ...names("containers"),
+    ...names("ephemeralContainers").map((name) => `${name} (ephem)`),
+    ...names("initContainers").map((name) => `${name} (init)`),
+  ].join(", ");
+}
+
+/**
+ * The containers of one pod the statement reads, and what kubectl prints to stderr while it chooses them.
+ *
+ * The notices follow `logsForObjectWithClient` in kubectl's `pkg/polymorphichelpers/logsforobject.go`, read at
+ * kubernetes/kubectl commit 89b48c420f2fbbad20a982f1e96817aef81f3d88: when no container is named, an annotation naming
+ * none of the pod's containers prints `Default container name "X" not found in pod NAME`; then, when the annotation
+ * chose none, the first container is taken, and if the pod has more than one container, or any init or ephemeral
+ * container, `Defaulted container "X" out of: ...` is printed, unless --all-pods reads every pod.
+ */
+function containersOf(
+  statement: LogsStatement,
+  pod: Json,
+): { readonly containers: readonly string[]; readonly notices: readonly string[] } {
   const spec = objectOf(pod.spec) ?? {};
   const names = (key: string): string[] => array(spec[key]).map((container) => String(container.name));
   const regular = names("containers");
@@ -251,13 +276,36 @@ function containersOf(statement: LogsStatement, pod: Json): readonly string[] {
   if (statement.container !== undefined) {
     if (!every.includes(statement.container))
       throw new QueryError(`The container named by -c is not a container of pod ${podName}.`, KUBERNETES_TYPE);
-    return [statement.container];
+    return { containers: [statement.container], notices: [] };
   }
-  if (statement.allContainers) return every;
+  if (statement.allContainers) return { containers: every, notices: [] };
   const annotated = stringOf(objectOf(objectOf(pod.metadata)?.annotations)?.[DEFAULT_CONTAINER_ANNOTATION]);
-  if (annotated !== undefined && every.includes(annotated)) return [annotated];
+  if (annotated !== undefined && every.includes(annotated)) return { containers: [annotated], notices: [] };
   if (regular.length === 0) throw new QueryError(`Pod ${podName} lists no container.`, KUBERNETES_TYPE);
-  return [regular[0]];
+  const notices: string[] = [];
+  if (annotated !== undefined && annotated !== "")
+    notices.push(`Default container name ${JSON.stringify(annotated)} not found in pod ${podName}`);
+  if (!statement.allPods && every.length > 1)
+    notices.push(`Defaulted container ${JSON.stringify(regular[0])} out of: ${allContainerNames(spec)}`);
+  return { containers: [regular[0]], notices };
+}
+
+/**
+ * The terminal escape sequences of a log line: CSI (`ESC [`, parameter bytes, intermediate bytes, a final byte), OSC
+ * (`ESC ]` up to BEL or `ESC \`), and every other two-byte `ESC` sequence. Each alternative starts at an ESC and its
+ * runs are character classes that hold no ESC, so a match attempt stops at the next ESC and the scan stays linear in
+ * the line's length; an unfinished sequence matches nothing and stays.
+ */
+// oxlint-disable-next-line no-control-regex -- control characters are exactly what a terminal sequence is made of
+const TERMINAL_ESCAPE = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[0-Z\\^-~])/g;
+
+/**
+ * A log line without its terminal escape sequences. kubectl writes the bytes to a terminal, which draws the colors;
+ * the grid cannot, so the sequences would show as a box glyph and `[1;34m`. Every other character, tabs included,
+ * stays as the server sent it.
+ */
+export function stripTerminalEscapes(line: string): string {
+  return line.replace(TERMINAL_ESCAPE, "");
 }
 
 /**
@@ -283,9 +331,10 @@ function timeKey(time: string | null): string {
 export async function readLogs(context: KubectlContext, statement: LogsStatement): Promise<KubectlGrid> {
   const namespace = statement.namespace ?? context.surface.endpoint.defaultNamespace;
   const pods = await podsOf(context, statement, namespace);
-  const streams = pods.flatMap((pod) =>
-    containersOf(statement, pod).map((container) => ({ pod: String(objectOf(pod.metadata)?.name), container })),
-  );
+  const chosen = pods.map((pod) => ({ pod: String(objectOf(pod.metadata)?.name), ...containersOf(statement, pod) }));
+  const streams = chosen.flatMap((entry) => entry.containers.map((container) => ({ pod: entry.pod, container })));
+  // Pods that default alike print the same sentence; it is said once.
+  const notices = [...new Set(chosen.flatMap((entry) => entry.notices))];
   if (streams.length > KUBERNETES_MAX_LOG_STREAMS)
     throw new QueryError(
       `This statement would read ${streams.length} log streams, more than the 5 Studio reads at once: name one container with -c, or narrow the selector.`,
@@ -327,7 +376,7 @@ export async function readLogs(context: KubectlContext, statement: LogsStatement
     if (read > KUBERNETES_MAX_STATEMENT_ROWS) throw new QueryError(LINES_CAP_SENTENCE, KUBERNETES_TYPE);
     return split.map((line) => {
       const parts = splitTimestamp(line);
-      return { pod: stream.pod, container: stream.container, time: parts.time, text: parts.text };
+      return { pod: stream.pod, container: stream.container, time: parts.time, text: stripTerminalEscapes(parts.text) };
     });
   });
   // A stable sort: lines of one time keep their stream's order.
@@ -339,5 +388,6 @@ export async function readLogs(context: KubectlContext, statement: LogsStatement
     merged.map((line) => [line.time, line.pod, line.container, line.text]),
   );
   const warned = statement.tail === undefined && statement.target !== undefined;
-  return warned ? { ...grid, warnings: [{ message: TAIL_WARNING }] } : grid;
+  const warnings = [...notices, ...(warned ? [TAIL_WARNING] : [])].map((message) => ({ message }));
+  return warnings.length === 0 ? grid : { ...grid, warnings };
 }

@@ -9,6 +9,7 @@ import {
   readLogs,
   selectorText,
   splitTimestamp,
+  stripTerminalEscapes,
 } from "@/lib/db/providers/platform/kubernetes/console/logs";
 import { type KubectlStatement, parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
 import { consoleContext, listAnswer, routes, sentLines, textAnswer } from "../../../../helpers/kubernetes-console";
@@ -63,7 +64,7 @@ const logLine = (pod: string, container: string, tail = 500) =>
   `GET /api/v1/namespaces/shop/pods/${pod}/log?container=${container}&tailLines=${tail}&limitBytes=1048576&timestamps=true`;
 
 describe("one pod", () => {
-  test("a pod name reads the pod, then its first container's last 500 lines, with the tail warning", async () => {
+  test("a pod name reads the pod, then its first container's last 500 lines, with the notice and the tail warning", async () => {
     const answer = routes({
       "GET /api/v1/namespaces/shop/pods/web": jsonAnswer(pod({ name: "web", containers: ["app", "sidecar"] })),
       [logLine("web", "app")]: textAnswer(
@@ -79,6 +80,7 @@ describe("one pod", () => {
       { TIME: "2026-10-10T11:59:59.000000001Z", POD: "web", CONTAINER: "app", LINE: "serving on :8080" },
     ]);
     expect(grid.warnings).toEqual([
+      { message: 'Defaulted container "app" out of: app, sidecar' },
       {
         message:
           "kubectl reads every line when --tail is absent; Studio read the last 500 lines of each stream. Ask for up to 5,000 with --tail.",
@@ -435,5 +437,168 @@ describe("the pieces", () => {
       "More than 5,000 pods match the selector: narrow it before reading their logs.",
     );
     expect(sentLines(transport).every((line) => !line.includes("/log?"))).toBe(true);
+  });
+});
+
+/**
+ * kubectl's notice when it defaults the container (`logsForObjectWithClient` in `pkg/polymorphichelpers/logsforobject.go`
+ * and `AllContainerNames` in `pkg/cmd/util/podcmd/podcmd.go`): printed when no container is named, the annotation names
+ * none of the pod's, and the pod has more than one container, or any init or ephemeral container.
+ */
+describe("the defaulted container notice", () => {
+  const JENKINS = pod({
+    name: "jenkins-0",
+    containers: ["jenkins", "config-reload", "kube-app-server", "ci-utility-proxy", "config-reload-jobs"],
+    init: ["init"],
+  });
+
+  async function warningsOf(shape: ReturnType<typeof pod>, statement: string, container: string) {
+    const name = shape.metadata.name;
+    const { context, transport } = consoleContext(
+      routes({
+        [`GET /api/v1/namespaces/shop/pods/${name}`]: jsonAnswer(shape),
+        [logLine(name, container, 50)]: textAnswer("2026-10-10T11:00:00Z x\n"),
+      }),
+    );
+    const grid = await readLogs(context, logs(statement));
+    expect(sentLines(transport).at(-1)).toBe(logLine(name, container, 50));
+    return grid.warnings;
+  }
+
+  test("several containers and no -c: kubectl's sentence, the measured jenkins-0 case", async () => {
+    expect(await warningsOf(JENKINS, "kubectl logs pod/jenkins-0 -n shop --tail=50", "jenkins")).toEqual([
+      {
+        message:
+          'Defaulted container "jenkins" out of: jenkins, config-reload, kube-app-server, ci-utility-proxy, config-reload-jobs, init (init)',
+      },
+    ]);
+  });
+
+  test("-c, --all-containers, an annotation naming a container of the pod, and one plain container say nothing", async () => {
+    expect(await warningsOf(JENKINS, "logs jenkins-0 -c config-reload --tail=50", "config-reload")).toBeUndefined();
+    const annotated = pod({ name: "web", containers: ["app", "sidecar"], defaultContainer: "sidecar" });
+    expect(await warningsOf(annotated, "logs web --tail=50", "sidecar")).toBeUndefined();
+    expect(await warningsOf(pod({ name: "web" }), "logs web --tail=50", "app")).toBeUndefined();
+    const two = pod({ name: "web", containers: ["app", "sidecar"] });
+    const { context } = consoleContext(
+      routes({
+        "GET /api/v1/namespaces/shop/pods/web": jsonAnswer(two),
+        [logLine("web", "app", 50)]: textAnswer(""),
+        [logLine("web", "sidecar", 50)]: textAnswer(""),
+      }),
+    );
+    expect((await readLogs(context, logs("logs web --all-containers --tail=50"))).warnings).toBeUndefined();
+  });
+
+  test("one container and an init container alone is enough, and the init container reads (init)", async () => {
+    const shape = pod({ name: "web", containers: ["app"], init: ["setup"] });
+    expect(await warningsOf(shape, "logs web --tail=50", "app")).toEqual([
+      { message: 'Defaulted container "app" out of: app, setup (init)' },
+    ]);
+  });
+
+  test("containers, then ephemeral containers with (ephem), then init containers with (init)", async () => {
+    const shape = pod({ name: "web", containers: ["app"], init: ["setup", "migrate"], ephemeral: ["debug"] });
+    expect(await warningsOf(shape, "logs web --tail=50", "app")).toEqual([
+      { message: 'Defaulted container "app" out of: app, debug (ephem), setup (init), migrate (init)' },
+    ]);
+  });
+
+  test("an annotation naming no container of the pod is said, and the first container is defaulted with the notice", async () => {
+    const shape = pod({ name: "web", containers: ["app", "sidecar"], defaultContainer: "gone" });
+    expect(await warningsOf(shape, "logs web --tail=50", "app")).toEqual([
+      { message: 'Default container name "gone" not found in pod web' },
+      { message: 'Defaulted container "app" out of: app, sidecar' },
+    ]);
+    const single = pod({ name: "web", containers: ["app"], defaultContainer: "gone" });
+    expect(await warningsOf(single, "logs web --tail=50", "app")).toEqual([
+      { message: 'Default container name "gone" not found in pod web' },
+    ]);
+  });
+
+  test("-l says it once for pods that default alike; --all-pods says nothing, as kubectl prints nothing there", async () => {
+    const two = [pod({ name: "p1", containers: ["app", "sidecar"] }), pod({ name: "p2", containers: ["app", "sidecar"] })];
+    const selected = consoleContext(
+      routes({
+        "GET /api/v1/namespaces/shop/pods?limit=500&labelSelector=app%3Dweb": listAnswer(two),
+        [logLine("p1", "app", 10)]: textAnswer(""),
+        [logLine("p2", "app", 10)]: textAnswer(""),
+      }),
+    );
+    expect((await readLogs(selected.context, logs("logs -l app=web"))).warnings).toEqual([
+      { message: 'Defaulted container "app" out of: app, sidecar' },
+    ]);
+    const all = consoleContext(
+      routes({
+        "GET /apis/apps/v1/namespaces/shop/deployments/web": jsonAnswer({ spec: { selector: { matchLabels: { app: "web" } } } }),
+        "GET /api/v1/namespaces/shop/pods?limit=500&labelSelector=app%3Dweb": listAnswer(two),
+        [logLine("p1", "app", 50)]: textAnswer(""),
+        [logLine("p2", "app", 50)]: textAnswer(""),
+      }),
+    );
+    expect((await readLogs(all.context, logs("logs deploy/web --all-pods --tail=50"))).warnings).toBeUndefined();
+  });
+});
+
+/**
+ * Terminal escape sequences in a log line: kubectl writes the bytes to a terminal, which draws the colors; the grid
+ * cannot, so the sequences are removed and every other character stays as the server sent it.
+ */
+describe("terminal escape sequences", () => {
+  const ESC = "\u001b";
+
+  test("the measured frp line loses its SGR codes and keeps its text", () => {
+    expect(
+      stripTerminalEscapes(
+        `2026/10/11 10:21:12 ${ESC}[1;34m[I] [service.go:304] [f366ca8bcfd892f8] login to server success, get run id [f366ca8bcfd892f8], server udp port [0]${ESC}[0m`,
+      ),
+    ).toBe(
+      "2026/10/11 10:21:12 [I] [service.go:304] [f366ca8bcfd892f8] login to server success, get run id [f366ca8bcfd892f8], server udp port [0]",
+    );
+  });
+
+  test("256-color and truecolor SGR, and a CSI with intermediates", () => {
+    expect(stripTerminalEscapes(`${ESC}[38;5;196mred${ESC}[0m`)).toBe("red");
+    expect(stripTerminalEscapes(`${ESC}[38;2;255;128;0morange${ESC}[m`)).toBe("orange");
+    expect(stripTerminalEscapes(`a${ESC}[2 qb${ESC}[?25lc`)).toBe("abc");
+  });
+
+  test("an OSC 8 hyperlink, ended by ST or by BEL, keeps only its text", () => {
+    expect(stripTerminalEscapes(`see ${ESC}]8;;https://example.com/x${ESC}\\docs${ESC}]8;;${ESC}\\ here`)).toBe(
+      "see docs here",
+    );
+    expect(stripTerminalEscapes(`${ESC}]0;title\u0007text`)).toBe("text");
+  });
+
+  test("the other two-byte sequences are removed", () => {
+    expect(stripTerminalEscapes(`${ESC}7saved${ESC}8 ${ESC}Mup ${ESC}=keypad`)).toBe("saved up keypad");
+  });
+
+  test("a line with no escape is unchanged, tabs and spaces included, and an unfinished sequence stays", () => {
+    expect(stripTerminalEscapes("a\tb  c [0m")).toBe("a\tb  c [0m");
+    expect(stripTerminalEscapes(`done${ESC}`)).toBe(`done${ESC}`);
+    expect(stripTerminalEscapes(`${ESC}]8;;https://example.com no end`)).toBe(`${ESC}]8;;https://example.com no end`);
+  });
+
+  test("100,000 characters of ESC [ and digits with no final byte finish in well under a second", () => {
+    const one = `${ESC}[${"1".repeat(99_998)}`;
+    const many = `${ESC}[1`.repeat(33_334).slice(0, 100_000);
+    for (const line of [one, many]) {
+      expect(line.length).toBe(100_000);
+      const started = performance.now();
+      expect(stripTerminalEscapes(line)).toBe(line);
+      expect(performance.now() - started).toBeLessThan(250);
+    }
+  });
+
+  test("readLogs removes them from each LINE, after the timestamp is split off", async () => {
+    const { context } = consoleContext(
+      routes({
+        "GET /api/v1/namespaces/shop/pods/frps": jsonAnswer(pod({ name: "frps" })),
+        [logLine("frps", "app", 50)]: textAnswer(`2026-10-11T10:21:12Z ${ESC}[1;34m[I] login\tok${ESC}[0m\n`),
+      }),
+    );
+    const grid = await readLogs(context, logs("logs frps --tail=50"));
+    expect(grid.rows).toEqual([{ TIME: "2026-10-11T10:21:12Z", POD: "frps", CONTAINER: "app", LINE: "[I] login\tok" }]);
   });
 });
