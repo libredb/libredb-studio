@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { KUBECTL_COMMAND_TABLE } from "@/lib/db/providers/platform/kubernetes/console/commands";
 import { parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
-import { connectionOf, runArguments } from "../../../live/kubernetes-evidence";
+import { connectionOf, insideDirectory, runArguments } from "../../../live/kubernetes-evidence";
 import {
   EVIDENCE_TARGETS,
   type EvidenceSet,
@@ -79,6 +79,24 @@ describe("gridShows", () => {
     expect(gridShows(rows, { cell: "4" })).toBe(true);
     expect(gridShows([{ notice: "Kubernetes refused this read." }], { cell: "crasher" })).toBe(false);
     expect(gridShows([], { within: "crasher" })).toBe(false);
+  });
+});
+
+describe("insideDirectory", () => {
+  test.each([
+    [path.posix, "/repo", "/repo", true],
+    [path.posix, "/repo", "/repo/tmp-env", true],
+    [path.posix, "/repo", "/repo/a/../tmp-env", true],
+    [path.posix, "/repo", "/repo-sibling", false],
+    [path.posix, "/repo", "/repo/../elsewhere", false],
+    [path.posix, "/repo", "/var/tmp/k8s-env", false],
+    [path.win32, "D:\\a\\repo", "D:\\a\\repo", true],
+    [path.win32, "D:\\a\\repo", "D:\\a\\repo\\tmp-env", true],
+    [path.win32, "D:\\a\\repo", "d:\\A\\Repo\\tmp-env", true],
+    [path.win32, "D:\\a\\repo", "D:\\a\\repo-sibling", false],
+    [path.win32, "D:\\a\\repo", "C:\\a\\repo\\tmp-env", false],
+  ])("case %#: a directory inside the root, by the platform's own path rules", (paths, root, dir, inside) => {
+    expect(insideDirectory(root, dir, paths)).toBe(inside);
   });
 });
 

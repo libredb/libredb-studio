@@ -55,6 +55,14 @@ const HARNESS_PATHS = [
   "tests/live/kubernetes-evidence.ts",
 ];
 
+/** Whether `dir` is `root` or below it, by `paths`' rules: its separator, and on Windows its drive and case. */
+export function insideDirectory(root: string, dir: string, paths: typeof path.posix = path): boolean {
+  const relative = paths.relative(paths.resolve(root), paths.resolve(dir));
+  return (
+    relative === "" || (relative !== ".." && !relative.startsWith(`..${paths.sep}`) && !paths.isAbsolute(relative))
+  );
+}
+
 /** The command line: `--set <set> --env <dir>`, or the sentence it is refused with. */
 export function runArguments(argv: readonly string[]): { readonly set: EvidenceSet; readonly envDir: string } {
   const value = (flag: string): string | undefined => {
@@ -69,7 +77,7 @@ export function runArguments(argv: readonly string[]): { readonly set: EvidenceS
   if (envDir === undefined || !path.isAbsolute(envDir)) {
     throw new Error("--env takes the absolute K8S_ENV_DIR that docker/kubernetes/seed.sh wrote");
   }
-  if (`${path.resolve(envDir)}/`.startsWith(`${ROOT}/`)) {
+  if (insideDirectory(ROOT, envDir)) {
     throw new Error("--env must be outside the repository: it holds tokens and a client key");
   }
   return { set: set as EvidenceSet, envDir };
