@@ -10,6 +10,7 @@ import {
   milliValue,
   parseQuantity,
   readTop,
+  sumQuantities,
   wholeValue,
 } from "@/lib/db/providers/platform/kubernetes/console/top";
 import { consoleContext, listAnswer, routes, sentLines } from "../../../../helpers/kubernetes-console";
@@ -78,6 +79,18 @@ describe("top pod", () => {
     const { context, transport } = consoleContext(answer);
     await expect(readTop(context, top("top pod"))).rejects.toThrow(METRICS_ABSENT_SENTENCE);
     expect(sentLines(transport)).toEqual([]);
+  });
+
+  test("a usage past the quantity bounds answers the unreadable-quantity sentence at once", async () => {
+    const answer = routes({
+      "GET /apis/metrics.k8s.io/v1beta1/namespaces/shop/pods?limit=500": listAnswer([
+        podMetrics("web", "shop", [["1e999999999", "1Mi"]]),
+      ]),
+    });
+    const { context } = consoleContext(answer);
+    await expect(readTop(context, top("top pod"))).rejects.toThrow(
+      "The metrics answer for pod web holds a quantity Studio cannot read.",
+    );
   });
 
   test("an unreadable quantity answers a sentence", async () => {
@@ -271,5 +284,36 @@ describe("quantities", () => {
 
   test("text that is not a quantity", () => {
     for (const text of ["", "x", "1.2.3", "1Ki2", "1 Mi"]) expect(parseQuantity(text)).toBeUndefined();
+  });
+
+  test("a quantity past the bounds Studio reads is not one: a long mantissa or a large exponent", () => {
+    const digits = (count: number) => "1".repeat(count);
+    for (const text of [
+      "1e999999999",
+      "1e31",
+      "1e-31",
+      "1e100",
+      digits(41),
+      `0.${digits(41)}`,
+      `.${digits(41)}`,
+      `${digits(41)}Mi`,
+    ])
+      expect(parseQuantity(text)).toBeUndefined();
+    for (const text of ["1e30", "1e-30", "1E+2", digits(40), `${digits(40)}.${digits(40)}`, `.${digits(40)}`])
+      expect(parseQuantity(text)).toBeDefined();
+  });
+
+  test("a sum keeps the smallest common denominator, so many fractions stay small", () => {
+    const fraction = parseQuantity(`0.${"1".repeat(40)}`);
+    if (fraction === undefined) throw new Error("expected a quantity");
+    const total = sumQuantities(Array.from({ length: 1_000 }, () => fraction));
+    expect(String(total.denominator)).toBe(`1${"0".repeat(40)}`);
+    expect(String(total.numerator)).toBe(`${"1".repeat(40)}000`);
+    const mixed = sumQuantities([
+      parseQuantity("1.5") as never,
+      parseQuantity("250m") as never,
+      parseQuantity("1Ki") as never,
+    ]);
+    expect(String(milliValue(mixed))).toBe("1025750");
   });
 });

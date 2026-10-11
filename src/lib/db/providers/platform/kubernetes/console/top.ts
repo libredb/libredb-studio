@@ -51,13 +51,22 @@ interface Fraction {
   readonly denominator: bigint;
 }
 
-/** A Kubernetes quantity as an exact fraction, or undefined when the text is not one. */
+/** The largest exponent a quantity may carry, `1e30` or `1e-30`: no metric a cluster reports comes near it. */
+const MAX_EXPONENT = 30;
+
+/**
+ * A Kubernetes quantity as an exact fraction, or undefined when the text is not one. The answer comes from the API
+ * server, so the digits (at most 40 on each side of the point) and the exponent are bounded before any BigInt work:
+ * an unbounded exponent would hold the event loop for seconds, and such a value reads as unreadable.
+ */
 export function parseQuantity(text: string): Fraction | undefined {
-  const match = /^([+-]?)([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:([eE][+-]?[0-9]+)|(Ki|Mi|Gi|Ti|Pi|Ei|[numkMGTPE])?)$/.exec(
-    text,
-  );
+  const match =
+    /^([+-]?)([0-9]{1,40}(?:\.[0-9]{0,40})?|\.[0-9]{1,40})(?:([eE][+-]?[0-9]{1,2})|(Ki|Mi|Gi|Ti|Pi|Ei|[numkMGTPE])?)$/.exec(
+      text,
+    );
   if (match === null) return undefined;
   const [, sign, digits, exponent, suffix = ""] = match;
+  if (exponent !== undefined && Math.abs(Number(exponent.slice(1))) > MAX_EXPONENT) return undefined;
   const [whole, fraction = ""] = digits.split(".");
   let numerator = BigInt(`${whole}${fraction}` === "" ? "0" : `${whole}${fraction}`);
   let denominator = TEN_N ** BigInt(fraction.length);
@@ -98,14 +107,24 @@ function quantityOf(text: unknown, where: string): Fraction {
   return value;
 }
 
-function sum(values: readonly Fraction[]): Fraction {
-  return values.reduce(
-    (total, value) => ({
-      numerator: total.numerator * value.denominator + value.numerator * total.denominator,
-      denominator: total.denominator * value.denominator,
-    }),
-    ZERO,
-  );
+function gcd(a: bigint, b: bigint): bigint {
+  let [x, y] = [a, b];
+  while (y !== ZERO_N) [x, y] = [y, x % y];
+  return x;
+}
+
+/**
+ * The sum of fractions over their least common denominator, so a pod of many containers keeps its denominator as
+ * small as its largest one rather than their product.
+ */
+export function sumQuantities(values: readonly Fraction[]): Fraction {
+  return values.reduce((total, value) => {
+    const common = (total.denominator / gcd(total.denominator, value.denominator)) * value.denominator;
+    return {
+      numerator: total.numerator * (common / total.denominator) + value.numerator * (common / value.denominator),
+      denominator: common,
+    };
+  }, ZERO);
 }
 
 const cpuText = (value: Fraction): string => `${milliValue(value)}m`;
@@ -190,7 +209,9 @@ async function topPods(
     const name = stringOf(metadata.name) ?? "";
     const containers = Array.isArray(item.containers) ? item.containers.map((entry) => objectOf(entry) ?? {}) : [];
     const usage = (resource: "cpu" | "memory") =>
-      sum(containers.map((container) => quantityOf(objectOf(container.usage)?.[resource] ?? "0", `pod ${name}`)));
+      sumQuantities(
+        containers.map((container) => quantityOf(objectOf(container.usage)?.[resource] ?? "0", `pod ${name}`)),
+      );
     return { namespace: stringOf(metadata.namespace) ?? "", name, cpu: usage("cpu"), memory: usage("memory") };
   });
   const fields = [...(statement.allNamespaces ? ["NAMESPACE"] : []), "NAME", "CPU(cores)", "MEMORY(bytes)"];
