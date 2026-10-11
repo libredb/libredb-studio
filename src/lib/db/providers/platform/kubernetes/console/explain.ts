@@ -7,7 +7,8 @@
  * The grid is FIELD, TYPE and DESCRIPTION: the explained resource or field first, then its fields (their names), or
  * with --recursive every field below it by its full dotted path. Types read as kubectl prints them: `<string>`,
  * `<[]Container>`, `<map[string]string>`, `<Object>`, with `-required-` where the schema requires the field. A
- * schema that refers back to itself is not descended into again.
+ * schema that refers back to itself is not descended into again, and a type defined through itself, by array items or
+ * map values, answers a sentence.
  */
 import { QueryError } from "@/lib/db/errors";
 import type { IndexedResource } from "../discovery";
@@ -97,30 +98,47 @@ function resolved(schemas: Schema, schema: Schema): Schema {
   };
 }
 
+/** The sentence for a schema whose array items or map values lead back to it, which would never end. */
+const EXPLAIN_SELF_TYPE_SENTENCE =
+  "The server's OpenAPI document defines a type through itself, so explain cannot print it.";
+
+/**
+ * The schema a reference names, the reference's name recorded in `seen`: a chase through array items or map values
+ * that meets a name it already followed refers back to itself without end, so it is refused.
+ */
+function chased(schemas: Schema, schema: Schema, seen: Set<string>): Schema {
+  const name = refName(schema);
+  if (name !== undefined) {
+    if (seen.has(name)) refuse(EXPLAIN_SELF_TYPE_SENTENCE);
+    seen.add(name);
+  }
+  return resolved(schemas, schema);
+}
+
 /** The type kubectl prints for a schema, without its angle brackets. */
-function typeName(schemas: Schema, schema: Schema): string {
-  const target = resolved(schemas, schema);
+function typeName(schemas: Schema, schema: Schema, chase = new Set<string>()): string {
+  const target = chased(schemas, schema, chase);
   if (target["x-kubernetes-int-or-string"] === true) return "IntOrString";
   const type = stringOf(target.type);
-  if (type === "array") return `[]${typeName(schemas, objectOf(target.items) ?? {})}`;
+  if (type === "array") return `[]${typeName(schemas, objectOf(target.items) ?? {}, chase)}`;
   if (type === "object" && target.properties === undefined && objectOf(target.additionalProperties) !== undefined)
-    return `map[string]${typeName(schemas, objectOf(target.additionalProperties) ?? {})}`;
+    return `map[string]${typeName(schemas, objectOf(target.additionalProperties) ?? {}, chase)}`;
   if (type !== undefined && type !== "object") return type;
   const name = refName(schema);
   return name === undefined ? "Object" : (name.split(".").pop() as string);
 }
 
 /** The schema a field's own fields come from: through a reference and through an array's items. */
-function fieldsSchema(schemas: Schema, schema: Schema): Schema {
-  const target = resolved(schemas, schema);
-  return stringOf(target.type) === "array" ? fieldsSchema(schemas, objectOf(target.items) ?? {}) : target;
+function fieldsSchema(schemas: Schema, schema: Schema, chase = new Set<string>()): Schema {
+  const target = chased(schemas, schema, chase);
+  return stringOf(target.type) === "array" ? fieldsSchema(schemas, objectOf(target.items) ?? {}, chase) : target;
 }
 
 /** The refs a schema stands on, so a recursive walk stops where a schema would repeat. */
-function refsOf(schemas: Schema, schema: Schema): readonly string[] {
-  const target = resolved(schemas, schema);
+function refsOf(schemas: Schema, schema: Schema, chase = new Set<string>()): readonly string[] {
+  const target = chased(schemas, schema, chase);
   const own = refName(schema);
-  const items = stringOf(target.type) === "array" ? refsOf(schemas, objectOf(target.items) ?? {}) : [];
+  const items = stringOf(target.type) === "array" ? refsOf(schemas, objectOf(target.items) ?? {}, chase) : [];
   return own === undefined ? items : [own, ...items];
 }
 

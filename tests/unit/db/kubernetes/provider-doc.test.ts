@@ -90,6 +90,7 @@ describe("the limits table is limits.ts", () => {
     ["Rows one statement reads", count(limits.KUBERNETES_MAX_STATEMENT_ROWS)],
     ["Objects the tree lists per kind and container", count(limits.KUBERNETES_TREE_OBJECT_CAP)],
     ["Bytes per response", mib(limits.KUBERNETES_MAX_RESPONSE_BYTES)],
+    ["Nesting of an answer's objects and arrays", `${count(limits.KUBERNETES_MAX_JSON_DEPTH)} levels`],
     ["Bytes per `-o json` or `-o yaml` document", mib(limits.KUBERNETES_MAX_DOCUMENT_BYTES)],
     ["Objects per `-o json` or `-o yaml` statement", count(limits.KUBERNETES_MAX_DOCUMENT_OBJECTS)],
     ["Log lines without `--tail`", count(limits.KUBERNETES_LOG_TAIL_DEFAULT)],

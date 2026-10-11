@@ -165,6 +165,22 @@ describe("send", () => {
     );
   });
 
+  test("json refuses a body nested deeper than 1,000 levels, so no renderer meets one, and reads one at 1,000", async () => {
+    const nested = (levels: number) => `${'{"a":'.repeat(levels - 1)}[]${"}".repeat(levels - 1)}`;
+    const answers = [nested(10_000), `[${nested(1_000)}]`, nested(1_000)];
+    const reader = clientWith(() => ({
+      status: 200,
+      contentType: "application/json",
+      retryAfter: null,
+      text: answers.shift() as string,
+    }));
+    const sentence =
+      "The API server answered the request to get version in the cluster with JSON nested deeper than 1,000 levels, deeper than any Kubernetes object, so Studio shows nothing of it.";
+    await expect(reader.client.json({ op: "version" }, call())).rejects.toThrow(sentence);
+    await expect(reader.client.json({ op: "version" }, call())).rejects.toThrow(sentence);
+    expect(await reader.client.json({ op: "version" }, call())).toBeDefined();
+  });
+
   test("the discovery Accept asks for v2, then v2beta1, then plain JSON", () => {
     expect(ACCEPT_DISCOVERY).toBe(
       "application/json;g=apidiscovery.k8s.io;v=v2;as=APIGroupDiscoveryList,application/json;g=apidiscovery.k8s.io;v=v2beta1;as=APIGroupDiscoveryList,application/json",

@@ -192,6 +192,32 @@ describe("explain", () => {
     ]);
   });
 
+  test("a type defined through itself, by array items or map values, answers a sentence, not a stack overflow", async () => {
+    const sentence = "The server's OpenAPI document defines a type through itself, so explain cannot print it.";
+    for (const loop of [
+      { type: "array", items: ref("dev.libredb.probe.v1.Loop") },
+      { type: "object", additionalProperties: ref("dev.libredb.probe.v1.Loop") },
+    ]) {
+      const document = {
+        components: {
+          schemas: {
+            "dev.libredb.probe.v1.Widget": {
+              type: "object",
+              properties: { spec: ref("dev.libredb.probe.v1.Loop") },
+              "x-kubernetes-group-version-kind": [{ group: "probe.libredb.dev", kind: "Widget", version: "v1" }],
+            },
+            "dev.libredb.probe.v1.Loop": loop,
+          },
+        },
+      };
+      const { context } = consoleContext(
+        cluster({ "GET /openapi/v3/apis/probe.libredb.dev/v1?hash=BEEF": jsonAnswer(document) }),
+      );
+      for (const text of ["explain widgets", "explain widgets.spec", "explain widgets --recursive"])
+        await expect(explain(context, explainOf(text))).rejects.toThrow(sentence);
+    }
+  });
+
   test("the group document is cached by its hashed URL: a second explain reads only the index", async () => {
     const { context, transport } = consoleContext(cluster());
     await explain(context, explainOf("explain pods"));

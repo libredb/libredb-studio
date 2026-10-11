@@ -52,6 +52,12 @@ export const KUBERNETES_WINDOW_MARGIN_MS = 5_000;
 export const KUBERNETES_EVENTS_READ_MAX = 5_000;
 /** Events `events` shows, the newest. */
 export const KUBERNETES_EVENTS_SHOWN = 1_000;
+/**
+ * How deep a parsed answer may nest its objects and arrays. The captured k3s answers nest at most 17 levels and a
+ * custom resource definition's schema a few dozen; a hostile answer nested thousands deep would overflow the YAML and
+ * JSON renderers' recursion.
+ */
+export const KUBERNETES_MAX_JSON_DEPTH = 1_000;
 /** Bytes one OpenAPI group document for `explain` may hold. */
 export const KUBERNETES_EXPLAIN_DOCUMENT_BYTES = 4 * 1024 * 1024;
 /** How long one connection keeps its discovery index. */

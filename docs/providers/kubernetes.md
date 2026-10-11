@@ -366,6 +366,7 @@ A deploy tool may keep its own copy of the applied Secret in an annotation, so a
 | Rows one statement reads | 5,000 |
 | Objects the tree lists per kind and container | 1,000 |
 | Bytes per response | 16 MiB |
+| Nesting of an answer's objects and arrays | 1,000 levels |
 | Bytes per `-o json` or `-o yaml` document | 1 MiB |
 | Objects per `-o json` or `-o yaml` statement | 500 |
 | Log lines without `--tail` | 500 |

@@ -22,6 +22,7 @@ import {
 import type { ClusterEndpoint } from "./connection-options";
 import { answerFailure, requestWords, transportFailure } from "./errors";
 import {
+  KUBERNETES_MAX_JSON_DEPTH,
   KUBERNETES_MAX_RESPONSE_BYTES,
   KUBERNETES_RETRY_AFTER_DEFAULT_MS,
   KUBERNETES_RETRY_AFTER_MAX_MS,
@@ -110,6 +111,17 @@ export function retryAfterMs(value: string | null, now: number): number {
   return Math.max(0, date - now);
 }
 
+/** Whether a parsed value nests objects and arrays past the cap, read with an explicit stack that no depth overflows. */
+function nestsTooDeep(value: unknown): boolean {
+  const pending: { readonly value: unknown; readonly depth: number }[] = [{ value, depth: 1 }];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (typeof next.value !== "object" || next.value === null) continue;
+    if (next.depth > KUBERNETES_MAX_JSON_DEPTH) return true;
+    for (const child of Object.values(next.value)) pending.push({ value: child, depth: next.depth + 1 });
+  }
+  return false;
+}
+
 export function createKubernetesClient(
   endpoint: ClusterEndpoint,
   seams: KubernetesSeams = DEFAULT_KUBERNETES_SEAMS,
@@ -178,14 +190,21 @@ export function createKubernetesClient(
     send,
     async json(request: KubernetesRequest, call: KubernetesCall): Promise<unknown> {
       const answer = await send(request, call);
+      let body: unknown;
       try {
-        return JSON.parse(answer.text);
+        body = JSON.parse(answer.text);
       } catch {
         throw new QueryError(
           `The API server answered the request to ${requestWords(planRequest(request).context)} with a body that is not JSON.`,
           KUBERNETES_TYPE,
         );
       }
+      if (nestsTooDeep(body))
+        throw new QueryError(
+          `The API server answered the request to ${requestWords(planRequest(request).context)} with JSON nested deeper than ${KUBERNETES_MAX_JSON_DEPTH.toLocaleString("en-US")} levels, deeper than any Kubernetes object, so Studio shows nothing of it.`,
+          KUBERNETES_TYPE,
+        );
+      return body;
     },
     close(): void {
       transport.close();
