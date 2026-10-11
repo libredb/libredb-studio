@@ -17,6 +17,7 @@ import {
   notReadOnlySentence,
   tooManyNamesSentence,
 } from "@/lib/db/providers/platform/kubernetes/console/commands";
+import { KUBERNETES_LOG_LIMIT_BYTES, KUBERNETES_LOG_TAIL_MAX } from "@/lib/db/providers/platform/kubernetes/limits";
 import {
   goDurationMs,
   isPageable,
@@ -295,6 +296,18 @@ describe("logs", () => {
     expect(S.follow).toBe(
       "follow is not available in v1; remove -f to read the latest lines, and run again to refresh.",
     );
+  });
+
+  test("--tail and --limit-bytes take their caps from limits.ts, at the cap and one past it", () => {
+    expect(parsed(`logs web --tail=${KUBERNETES_LOG_TAIL_MAX}`)).toMatchObject({ tail: KUBERNETES_LOG_TAIL_MAX });
+    expect(refusal(`logs web --tail=${KUBERNETES_LOG_TAIL_MAX + 1}`)).toEqual({ code: "bad-value", message: S.tail });
+    expect(parsed(`logs web --limit-bytes=${KUBERNETES_LOG_LIMIT_BYTES}`)).toMatchObject({
+      limitBytes: KUBERNETES_LOG_LIMIT_BYTES,
+    });
+    expect(refusal(`logs web --limit-bytes=${KUBERNETES_LOG_LIMIT_BYTES + 1}`)).toEqual({
+      code: "bad-value",
+      message: S.limitBytes,
+    });
   });
 
   test("values above a cap, zero and kubectl's -1 are refused, never clamped", () => {

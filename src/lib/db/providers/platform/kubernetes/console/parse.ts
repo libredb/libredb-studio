@@ -37,7 +37,12 @@ import {
   tooManyNamesSentence,
   unknownCommandSentence,
 } from "./commands";
-import { KUBERNETES_MAX_DOCUMENT_OBJECTS, KUBERNETES_PAGE_SIZE } from "../limits";
+import {
+  KUBERNETES_LOG_LIMIT_BYTES,
+  KUBERNETES_LOG_TAIL_MAX,
+  KUBERNETES_MAX_DOCUMENT_OBJECTS,
+  KUBERNETES_PAGE_SIZE,
+} from "../limits";
 import { commandWordIndex, isKubectlFlagText, KUBECTL_VALUE_GLOBAL_FLAGS, kubectlWords } from "./lexer";
 
 export type GetOutput = "table" | "wide" | "name" | "json" | "yaml";
@@ -537,12 +542,15 @@ function parseLogs(scanned: Scanned): KubectlStatement {
   const allContainers = flags.bool("all-containers");
   if (container !== undefined && allContainers) refuse("bad-arguments", S.logsContainerAndAll);
   const tailText = flags.text("tail");
-  if (tailText !== undefined && (!SIGNED_INTEGER.test(tailText) || Number(tailText) < 1 || Number(tailText) > 5_000))
+  if (
+    tailText !== undefined &&
+    (!SIGNED_INTEGER.test(tailText) || Number(tailText) < 1 || Number(tailText) > KUBERNETES_LOG_TAIL_MAX)
+  )
     refuse("bad-value", S.tail);
   const limitText = flags.text("limit-bytes");
   if (
     limitText !== undefined &&
-    (!SIGNED_INTEGER.test(limitText) || Number(limitText) < 1 || Number(limitText) > 1024 * 1024)
+    (!SIGNED_INTEGER.test(limitText) || Number(limitText) < 1 || Number(limitText) > KUBERNETES_LOG_LIMIT_BYTES)
   )
     refuse("bad-value", S.limitBytes);
   const sinceText = flags.text("since");
