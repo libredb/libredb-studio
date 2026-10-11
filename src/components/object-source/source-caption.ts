@@ -40,11 +40,20 @@ import type { ObjectSourceForm, ObjectSourceOrigin } from "@/lib/db/types";
  * AND it was cut, and a reader owed only one of those is owed the wrong one.
  */
 
+/**
+ * The name a rendered definition's sentence gives the language the part is shown in, keyed by its Monaco language id:
+ * Kubernetes renders an object as YAML, every other rendering producer as JSON. A rendered part in a language without a
+ * name here, a binary value shown as plain text, keeps the JSON sentence it had until backlog entry D223 gives such a
+ * part a caption of its own.
+ */
+const RENDERED_LANGUAGE_NAME: Readonly<Record<string, string>> = Object.freeze({ json: "JSON", yaml: "YAML" });
+
 /** Where the bytes came from. One sentence per arm of `ObjectSourceOrigin`, all three used. */
-const ORIGIN_SENTENCE: Readonly<Record<ObjectSourceOrigin, string>> = Object.freeze({
-  stored: "Stored by the engine as it was submitted.",
-  regenerated: "Rebuilt by the engine from its catalog.",
-  rendered: "A structured definition, rendered here as JSON.",
+const ORIGIN_SENTENCE: Readonly<Record<ObjectSourceOrigin, (language: string) => string>> = Object.freeze({
+  stored: () => "Stored by the engine as it was submitted.",
+  regenerated: () => "Rebuilt by the engine from its catalog.",
+  rendered: (language: string) =>
+    `A structured definition, rendered here as ${RENDERED_LANGUAGE_NAME[language] ?? "JSON"}.`,
 });
 
 /** Whether the bytes run as given. One clause per arm of `ObjectSourceForm`, both used. */
@@ -63,7 +72,15 @@ const TRUNCATED_CLAUSE: Readonly<Record<ObjectSourceForm, string>> = Object.free
   partial: "The body only, and shortened when it was read.",
 });
 
-/** The caption for one part, composed origin first and the form-or-truncation clause second. */
-export function sourceCaption(form: ObjectSourceForm, origin: ObjectSourceOrigin, truncated: boolean): string {
-  return `${ORIGIN_SENTENCE[origin]} ${truncated ? TRUNCATED_CLAUSE[form] : FORM_CLAUSE[form]}`;
+/**
+ * The caption for one part, composed origin first and the form-or-truncation clause second; `language` is the part's
+ * Monaco language id, which only the rendered origin's sentence reads.
+ */
+export function sourceCaption(
+  form: ObjectSourceForm,
+  origin: ObjectSourceOrigin,
+  truncated: boolean,
+  language: string,
+): string {
+  return `${ORIGIN_SENTENCE[origin](language)} ${truncated ? TRUNCATED_CLAUSE[form] : FORM_CLAUSE[form]}`;
 }

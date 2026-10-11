@@ -2455,7 +2455,7 @@ Found 2026-10-04 by the review of that change.
 
 ### D223. A binary value's hex dump is captioned as rendered JSON
 
-The shared Source tab captions a part from its `origin` alone (`sourceCaption` in `src/components/object-source/source-caption.ts`), and a hex dump of a binary value has no origin of its own, so it is captioned "A structured definition, rendered here as JSON."
+The shared Source tab captions a part from its `origin` (`sourceCaption` in `src/components/object-source/source-caption.ts`), naming the language only for JSON and YAML, and a hex dump of a binary value has no origin of its own, so it is captioned "A structured definition, rendered here as JSON."
 Oxia's hex dump and etcd's base64 view of a binary value both carry that caption, though neither is JSON.
 The S3 object preview's hex dump carries the same caption (src/lib/db/providers/objectstore/s3/preview-render.ts).
 

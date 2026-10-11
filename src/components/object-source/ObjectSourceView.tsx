@@ -1588,7 +1588,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
             ) : (
               <>
                 <p className="px-3 py-1.5 text-[11px] text-muted-foreground" data-testid="object-source-caption">
-                  {sourceCaption(part.form, part.origin, part.truncated !== undefined)}
+                  {sourceCaption(part.form, part.origin, part.truncated !== undefined, part.language)}
                 </p>
                 {part.truncated !== undefined && (
                   <div

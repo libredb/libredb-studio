@@ -2969,7 +2969,8 @@ export type ObjectSourceForm = "complete" | "partial";
  * (SQL Server modules, SQLite's `sqlite_schema.sql`); `regenerated` is the engine rebuilding
  * from its catalog, which PostgreSQL documents as "a decompiled reconstruction, not the
  * original text of the command"; `rendered` is a structured definition this product prints as
- * JSON (a MongoDB view, a search pipeline or template).
+ * JSON (a MongoDB view, a search pipeline or template) or as YAML (a Kubernetes object), and the
+ * caption names the part's language.
  */
 export type ObjectSourceOrigin = "stored" | "regenerated" | "rendered";
 

@@ -29,7 +29,46 @@ describe("sourceCaption", () => {
       "A structured definition, rendered here as JSON. This is the body only, not a complete statement.",
     ],
   ] as const)("%s %s", (form, origin, expected) => {
-    expect(sourceCaption(form, origin, false)).toBe(expected);
+    expect(sourceCaption(form, origin, false, "json")).toBe(expected);
+  });
+
+  /**
+   * A rendered definition names the language it is shown in: Kubernetes renders an object as YAML, and a caption that
+   * said JSON over a YAML document told the reader something false about the text under it.
+   */
+  test.each([
+    ["json", "complete", false, "A structured definition, rendered here as JSON. Complete as shown."],
+    ["yaml", "complete", false, "A structured definition, rendered here as YAML. Complete as shown."],
+    [
+      "yaml",
+      "partial",
+      false,
+      "A structured definition, rendered here as YAML. This is the body only, not a complete statement.",
+    ],
+    [
+      "yaml",
+      "partial",
+      true,
+      "A structured definition, rendered here as YAML. The body only, and shortened when it was read.",
+    ],
+  ] as const)("a rendered %s part, %s, truncated %p", (language, form, truncated, expected) => {
+    expect(sourceCaption(form, "rendered", truncated, language)).toBe(expected);
+  });
+
+  test("the language changes only the rendered origin's sentence", () => {
+    for (const origin of ["stored", "regenerated"] as const) {
+      expect(sourceCaption("complete", origin, false, "yaml")).toBe(sourceCaption("complete", origin, false, "json"));
+    }
+  });
+
+  /**
+   * A rendered part in a language with no name here keeps the JSON sentence it had: a binary dump shown as plain text is
+   * backlog entry D223, whose fix says what such a part is for every engine.
+   */
+  test("a rendered part in another language keeps its caption unchanged", () => {
+    expect(sourceCaption("complete", "rendered", false, "plaintext")).toBe(
+      "A structured definition, rendered here as JSON. Complete as shown.",
+    );
   });
 
   /**
@@ -43,16 +82,16 @@ describe("sourceCaption", () => {
    * says the text is whole is exactly the sentence a bounded read cannot support.
    */
   test("a truncated part NEVER claims completeness, in any wording", () => {
-    expect(sourceCaption("complete", "regenerated", true)).toBe(
+    expect(sourceCaption("complete", "regenerated", true, "sql")).toBe(
       "Rebuilt by the engine from its catalog. Shortened when it was read, so this is not the whole definition.",
     );
-    expect(sourceCaption("partial", "stored", true)).toBe(
+    expect(sourceCaption("partial", "stored", true, "sql")).toBe(
       "Stored by the engine as it was submitted. The body only, and shortened when it was read.",
     );
     let checked = 0;
     for (const origin of ["stored", "regenerated", "rendered"] as const) {
       for (const form of ["complete", "partial"] as const) {
-        expect(sourceCaption(form, origin, true)).not.toContain("Complete as shown");
+        expect(sourceCaption(form, origin, true, "json")).not.toContain("Complete as shown");
         checked += 1;
       }
     }
@@ -61,10 +100,10 @@ describe("sourceCaption", () => {
   });
 
   test("an untruncated part is exactly what it was", () => {
-    expect(sourceCaption("complete", "regenerated", false)).toBe(
+    expect(sourceCaption("complete", "regenerated", false, "sql")).toBe(
       "Rebuilt by the engine from its catalog. Complete as shown.",
     );
-    expect(sourceCaption("partial", "stored", false)).toBe(
+    expect(sourceCaption("partial", "stored", false, "sql")).toBe(
       "Stored by the engine as it was submitted. This is the body only, not a complete statement.",
     );
   });
@@ -81,9 +120,9 @@ describe("sourceCaption", () => {
     const forms = ["complete", "partial"] as const;
     let checked = 0;
     for (const origin of origins) {
-      const complete = sourceCaption("complete", origin, false);
+      const complete = sourceCaption("complete", origin, false, "json");
       for (const form of forms) {
-        const caption = sourceCaption(form, origin, false);
+        const caption = sourceCaption(form, origin, false, "json");
         // Same leading sentence whatever the form: the origin half cannot depend on the form.
         expect(caption.startsWith(complete.slice(0, complete.indexOf(". ") + 1))).toBe(true);
         checked += 1;
