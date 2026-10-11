@@ -5,8 +5,8 @@
  * events, under one first column that names the event (empty for a listed row); the columns are the list's Table.
  *
  * A `BOOKMARK` event is never printed. An in-band `ERROR` event ends the window with a sentence from its code and
- * reason alone, and nothing is sent again. A window past 8 MiB, and a list cut by the 5,000 cap, answer sentences to
- * narrow the statement. Every event is redacted on the request before a cell is written.
+ * reason alone, and nothing is sent again. A window past 8 MiB, a list cut by the 5,000 cap, and listed rows and
+ * events together past 5,000 rows answer sentences to narrow the statement. Every event is redacted on the request before a cell is written.
  */
 import { QueryError } from "@/lib/db/errors";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
@@ -38,6 +38,9 @@ export const WATCH_LIST_CAP_SENTENCE =
 
 export const WATCH_BYTES_SENTENCE =
   "The watch window received more than 8 MiB of events: narrow it with -l or --field-selector, or shorten it with --request-timeout.";
+
+export const WATCH_ROWS_SENTENCE =
+  "The listed rows and the watch window's events pass the 5,000 rows one statement reads: narrow it with -l or --field-selector, or shorten it with --request-timeout.";
 
 const NO_RESOURCE_VERSION =
   "The API server listed no resourceVersion, so get -w cannot start its window where the list ended.";
@@ -141,6 +144,8 @@ export async function getWatch(context: KubectlContext, statement: GetStatement)
     if (type === "ERROR") throw watchEventFailure(request, objectOf(event.object) ?? {});
     const redacted = redactResponse(resource, { type, object: event.object });
     for (const row of eventRows(redacted.object, scan.columns)) events.push({ type, row });
+    if (scan.rows.length + events.length > KUBERNETES_MAX_STATEMENT_ROWS)
+      throw new QueryError(WATCH_ROWS_SENTENCE, KUBERNETES_TYPE);
   }
   const listed = gridOf(statement, resource, scan, scan.rows);
   const watched = gridOf(

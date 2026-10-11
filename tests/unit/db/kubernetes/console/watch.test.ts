@@ -10,6 +10,7 @@ import {
   getWatch,
   WATCH_BYTES_SENTENCE,
   WATCH_LIST_CAP_SENTENCE,
+  WATCH_ROWS_SENTENCE,
 } from "@/lib/db/providers/platform/kubernetes/console/watch";
 import { STATEMENT_DEADLINE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/context";
 import {
@@ -231,6 +232,16 @@ describe("what ends a window with a sentence", () => {
     });
     const { context } = consoleContext(answer);
     await expect(getWatch(context, get("get pods -w"))).rejects.toThrow(WATCH_BYTES_SENTENCE);
+  });
+
+  test("listed rows and window events past 5,000 rows answer the sentence to narrow", async () => {
+    const events = Array.from({ length: 5_000 }, (_unused, index) =>
+      tableEvent("ADDED", `p${index}`, "Running", index === 0),
+    );
+    const { context } = consoleContext(watching(events));
+    await expect(getWatch(context, get("get pods -w"))).rejects.toThrow(WATCH_ROWS_SENTENCE);
+    const fits = consoleContext(watching(events.slice(0, 4_999)));
+    expect((await getWatch(fits.context, get("get pods -w"))).rows).toHaveLength(5_000);
   });
 
   test("another failure of the watch passes as it was raised", async () => {
