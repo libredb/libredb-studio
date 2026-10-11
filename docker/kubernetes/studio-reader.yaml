@@ -17,7 +17,7 @@ metadata:
   name: studio-reader
 rules:
   - apiGroups: [""]
-    resources: [nodes, namespaces, persistentvolumes]
+    resources: [nodes, persistentvolumes]
     verbs: [get, list]
   - apiGroups: [apiextensions.k8s.io]
     resources: [customresourcedefinitions]

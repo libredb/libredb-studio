@@ -111,7 +111,7 @@ A context whose user signs in through a credential plugin, as every EKS, GKE and
 
 ### 4.5 A ServiceAccount token: view and studio-reader
 
-Bind a ServiceAccount to the built-in `view` ClusterRole for a token that reads everything but Secrets:
+Bind a ServiceAccount to the built-in `view` ClusterRole for a token that reads the namespaced workloads and Namespaces, never Secrets:
 
 ```bash
 kubectl create namespace libredb-studio
@@ -120,8 +120,9 @@ kubectl create clusterrolebinding studio-reader-view --clusterrole=view --servic
 kubectl -n libredb-studio create token studio-reader --duration=720h
 ```
 
-Under plain `view`, nodes, namespaces, custom resource definitions, storage classes, persistent volumes and the RBAC kinds are locked in the tree.
-The `studio-reader` ClusterRole adds `get` and `list` on the first five, and never Secrets; apply it as it stands in [`docker/kubernetes/studio-reader.yaml`](../../docker/kubernetes/studio-reader.yaml):
+Measured on k3s v1.35.5 with a token bound to plain `view`, the tree locks Secrets, Leases, Roles and Role Bindings in a namespace.
+Under Cluster it locks every kind but Namespaces: Nodes, Persistent Volumes, Storage Classes, Custom Resource Definitions, Priority Classes, Runtime Classes, Ingress Classes, both webhook configuration kinds, Cluster Roles and Cluster Role Bindings.
+The `studio-reader` ClusterRole adds `get` and `list` on Nodes, Persistent Volumes, Custom Resource Definitions and Storage Classes, and never Secrets; apply it as it stands in [`docker/kubernetes/studio-reader.yaml`](../../docker/kubernetes/studio-reader.yaml):
 
 ```yaml
 apiVersion: v1
@@ -141,7 +142,7 @@ metadata:
   name: studio-reader
 rules:
   - apiGroups: [""]
-    resources: [nodes, namespaces, persistentvolumes]
+    resources: [nodes, persistentvolumes]
     verbs: [get, list]
   - apiGroups: [apiextensions.k8s.io]
     resources: [customresourcedefinitions]
