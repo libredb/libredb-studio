@@ -241,7 +241,10 @@ export interface NamespaceList {
 const NAMESPACE_NAME_SENTENCE =
   "The API server listed a namespace whose name is not a DNS-1123 label, which no namespace can have, so Studio does not list the namespaces; list the ones to show in the connection's Namespaces field.";
 
-/** The namespaces from the API, the first 1,000 read one past the cap, or `forbidden` when the list is refused. */
+/**
+ * The namespaces from the API, the first 1,000 read one past the cap (the last of them the Default namespace when it
+ * sorts past them), or `forbidden` when the list is refused.
+ */
 async function namespacesFromApi(surface: KubernetesSurface, index: ResourceIndex): Promise<NamespaceList> {
   const sources: readonly (readonly [group: string, resource: string])[] = [
     ["", "namespaces"],
@@ -261,8 +264,14 @@ async function namespacesFromApi(surface: KubernetesSurface, index: ResourceInde
       const names = scan.rows.map((row) => rowName(scan, row, "namespaces"));
       // Every name becomes a container path, so one no namespace can have (Cluster, a/b) is refused, not drawn.
       if (names.some((name) => !DNS1123_LABEL.test(name))) refuse(NAMESPACE_NAME_SENTENCE);
-      if (names.length > KUBERNETES_TREE_OBJECT_CAP)
-        return { names: names.slice(0, KUBERNETES_TREE_OBJECT_CAP), forbidden: false, capped: true };
+      if (names.length > KUBERNETES_TREE_OBJECT_CAP) {
+        const kept = names.slice(0, KUBERNETES_TREE_OBJECT_CAP);
+        const own = surface.endpoint.defaultNamespace;
+        // The API lists namespaces in name order, so a Default namespace that sorts after the last one kept may be one
+        // the cap dropped: it stays a container, so the tree opens it and plan mode's walk reads it.
+        if (own > (kept.at(-1) as string)) kept.splice(KUBERNETES_TREE_OBJECT_CAP - 1, 1, own);
+        return { names: kept, forbidden: false, capped: true };
+      }
       return { names, forbidden: false };
     } catch (error) {
       if (!(error instanceof KubernetesRequestError) || error.status !== 403) throw error;

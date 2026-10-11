@@ -46,6 +46,27 @@ describe("listKubernetesContainers", () => {
     });
   });
 
+  test("a capped list that sorts past the Default namespace keeps it as the 1,000th, the session's", async () => {
+    // The API lists namespaces in name order, as ns-0000 to ns-1199 sort.
+    const padded = Array.from({ length: 1_200 }, (_unused, index) => ({
+      name: `ns-${String(index).padStart(4, "0")}`,
+    }));
+    const { surface } = testSurface(fakeCluster({ lists: { "/api/v1/namespaces": padded } }), { database: "ns-1100" });
+    const listed = await listNamespaces(surface);
+    expect(listed.capped).toBe(true);
+    expect(listed.names).toHaveLength(1_000);
+    expect(listed.names.slice(-2)).toEqual(["ns-0998", "ns-1100"]);
+    const containers = await listKubernetesContainers(surface);
+    expect(containers.filter((container) => container.isSessionDefault).map((container) => container.name)).toEqual([
+      "ns-1100",
+    ]);
+    const first1000 = padded.slice(0, 1_000).map((row) => row.name);
+    for (const database of ["ns-0005", "a-missing"]) {
+      const other = testSurface(fakeCluster({ lists: { "/api/v1/namespaces": padded } }), { database });
+      expect((await listNamespaces(other.surface)).names).toEqual(first1000);
+    }
+  });
+
   test("with the Namespaces field, no namespace list call is made", async () => {
     const { surface, transport } = testSurface(fakeCluster(), { namespaces: "shop web", database: "web" });
     const containers = await listKubernetesContainers(surface);
