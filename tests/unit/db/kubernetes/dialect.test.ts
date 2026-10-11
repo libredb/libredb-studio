@@ -33,7 +33,16 @@ describe("the kubectl dialect's records", () => {
       offersCodeGeneration: false,
       offersCountQuery: false,
       offersSqlExport: false,
-      historyMask: { credentialFlags: ["--token", "--password", "--client-key", "--client-certificate"] },
+      historyMask: {
+        credentialFlags: [
+          "--token",
+          "--password",
+          "--client-key",
+          "--client-certificate",
+          "--from-literal",
+          "--docker-password",
+        ],
+      },
     });
   });
 
