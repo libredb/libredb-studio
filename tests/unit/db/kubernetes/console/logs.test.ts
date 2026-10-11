@@ -86,6 +86,21 @@ describe("one pod", () => {
     ]);
   });
 
+  test("a log is asked for with the JSON Accept, since an API server answers Accept text/plain with a 406", async () => {
+    // Measured on k3s 1.29, 1.30 and 1.35: the log endpoint refuses text/plain and answers the log as text/plain.
+    const answer = routes({
+      "GET /api/v1/namespaces/shop/pods/web": jsonAnswer(pod({ name: "web" })),
+      [logLine("web", "app")]: (request) =>
+        request.headers?.accept === "application/json"
+          ? textAnswer("2026-10-10T11:59:58.5Z started\n")
+          : jsonAnswer({ kind: "Status", status: "Failure", reason: "NotAcceptable", code: 406 }, 406),
+    });
+    const { context, transport } = consoleContext(answer);
+    const grid = await readLogs(context, logs("kubectl logs web --tail=500"));
+    expect(transport.requests.at(-1)?.headers?.accept).toBe("application/json");
+    expect(grid.rows).toEqual([{ TIME: "2026-10-10T11:59:58.5Z", POD: "web", CONTAINER: "app", LINE: "started" }]);
+  });
+
   test("the default-container annotation picks the container when it names one; -c always does", async () => {
     const annotated = pod({ name: "web", containers: ["app", "sidecar"], defaultContainer: "sidecar" });
     const answer = routes({

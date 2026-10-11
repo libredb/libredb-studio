@@ -301,7 +301,8 @@ export async function readLogs(context: KubectlContext, statement: LogsStatement
           timestamps: true,
         },
       },
-      { ...context.call(), accept: "text/plain" },
+      // The log endpoint answers text/plain but refuses an Accept of text/plain with a 406, so the JSON Accept stays.
+      context.call(),
     );
     const text = answer.text.endsWith("\n") ? answer.text.slice(0, -1) : answer.text;
     if (text === "") return [];
