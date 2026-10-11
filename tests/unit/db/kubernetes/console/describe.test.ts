@@ -139,6 +139,22 @@ describe("describe", () => {
     });
   });
 
+  test("a connection that sends no credential reads the anonymous sentence when it may not list events", async () => {
+    const answer = routes({
+      "GET /api/v1/namespaces/shop/pods/web?includeObject=None": tableAnswer([{ name: "Name" }], [{ cells: ["web"] }]),
+      "GET /api/v1/namespaces/shop/pods/web": jsonAnswer(POD),
+      [`GET /api/v1/namespaces/shop/events?limit=500&fieldSelector=${POD_SELECTOR}`]: statusAnswer(403, "Forbidden"),
+    });
+    const { context } = consoleContext(answer, { connection: { password: "" } });
+    const grid = await describeObject(context, describeOf("describe pod/web"));
+    expect(grid.rows.at(-1)).toEqual({
+      SECTION: "Events",
+      FIELD: "Events",
+      VALUE:
+        "The API server saw an anonymous request, which may not list events in the namespace shop (403 Forbidden): this connection sends no token and no client certificate. Create a ServiceAccount token and paste it in the connection's Token field, as docs/providers/kubernetes.md shows.",
+    });
+  });
+
   test("a missing object answers the 404 sentence and reads nothing more", async () => {
     const answer = routes({
       "GET /api/v1/namespaces/shop/pods/gone?includeObject=None": statusAnswer(404, "NotFound"),

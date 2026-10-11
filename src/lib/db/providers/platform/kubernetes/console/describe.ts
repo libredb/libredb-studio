@@ -5,11 +5,12 @@
  * each value escaped. Summary rows are the Table's cells, then the namespace, the creation time, each label,
  * annotation, owner and finalizer; one Conditions row per condition; one Events row per event, oldest first, as
  * kubectl orders them. Both object reads are redacted on the request, so a Secret's values and its last-applied
- * annotation never reach a row; an identity that may not list events sees one row that says so.
+ * annotation never reach a row; an identity that may not list events sees one row that says so, the anonymous
+ * sentence when the connection sends no credential.
  */
 import { ACCEPT_JSON, ACCEPT_TABLE } from "../client";
 import type { IndexedResource } from "../discovery";
-import { forbiddenSentence, KubernetesRequestError } from "../errors";
+import { KubernetesRequestError } from "../errors";
 import { KUBERNETES_EVENTS_READ_MAX, KUBERNETES_PAGE_SIZE } from "../limits";
 import { redactResponse } from "../redaction";
 import { fieldSelectorValue } from "../request-policy";
@@ -91,13 +92,8 @@ async function eventRows(
     more = scan.more;
   } catch (error) {
     if (!(error instanceof KubernetesRequestError) || error.status !== 403) throw error;
-    const words = forbiddenSentence({
-      verb: "list",
-      resource: "events",
-      group: "",
-      ...(namespace === undefined ? {} : { namespace }),
-    });
-    return [["Events", "Events", words]];
+    // The client's own sentence: it names the list and, for a connection that sends no credential, the anonymous request.
+    return [["Events", "Events", error.message]];
   }
   if (items.length === 0) return [["Events", "Events", "<none>"]];
   const sorted = [...items].sort((a, b) => eventTime(a) - eventTime(b));
