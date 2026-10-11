@@ -597,12 +597,13 @@ export function useTabManager({
   );
 
   /**
-   * Run one row action the provider declared on this object's kind, in a NEW tab, every time.
+   * Open a new tab for one row action the provider declared on this object's kind, and run it.
    *
-   * Never the focus-or-reuse rule `handleTableClick` keeps for a data tab: that rule keys on the path
-   * alone, so Logs after Describe on one pod would focus the Describe tab and never run, and a second
-   * Describe would show the first answer again rather than read the object as it is now. So every
-   * gesture is its own tab and its own run, and running the tab again re-reads.
+   * The row menu's item (`runRowAction`) calls it every time: a new tab and a new run per press, never
+   * the focus-or-reuse rule `handleTableClick` keeps for a data tab. That rule keys on the path alone,
+   * so Logs after Describe on one pod would focus the Describe tab and never run, and a second Describe
+   * would show the first answer again rather than read the object as it is now. Running the tab again
+   * re-reads.
    *
    * The action must be one the provider declared for the object's kind: the menu offers no other, so
    * any other id is a caller defect and raises rather than opening a tab nobody asked for. The tab is

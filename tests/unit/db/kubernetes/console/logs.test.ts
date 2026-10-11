@@ -516,6 +516,13 @@ describe("the defaulted container notice", () => {
     ]);
   });
 
+  test("an empty annotation is no choice: only the first container is defaulted, as kubectl checks a non-empty name", async () => {
+    const shape = pod({ name: "web", containers: ["app", "sidecar"], defaultContainer: "" });
+    expect(await warningsOf(shape, "logs web --tail=50", "app")).toEqual([
+      { message: 'Defaulted container "app" out of: app, sidecar' },
+    ]);
+  });
+
   test("-l says it once for pods that default alike; --all-pods says nothing, as kubectl prints nothing there", async () => {
     const two = [
       pod({ name: "p1", containers: ["app", "sidecar"] }),
@@ -577,6 +584,12 @@ describe("terminal escape sequences", () => {
 
   test("the other two-byte sequences are removed", () => {
     expect(stripTerminalEscapes(`${ESC}7saved${ESC}8 ${ESC}Mup ${ESC}=keypad`)).toBe("saved up keypad");
+  });
+
+  test("nF sequences such as the ESC ( B that tput sgr0 writes before ESC [ m are removed", () => {
+    expect(stripTerminalEscapes(`${ESC}[1mbold${ESC}(B${ESC}[m rest`)).toBe("bold rest");
+    expect(stripTerminalEscapes(`a${ESC})0b`)).toBe("ab");
+    expect(stripTerminalEscapes(`a${ESC}%Gb${ESC}$(Bc`)).toBe("abc");
   });
 
   test("a line with no escape is unchanged, tabs and spaces included, and an unfinished sequence stays", () => {

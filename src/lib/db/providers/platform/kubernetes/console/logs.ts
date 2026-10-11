@@ -246,13 +246,10 @@ async function podsOf(context: KubectlContext, statement: LogsStatement, namespa
  * kubectl's `AllContainerNames` (`pkg/cmd/util/podcmd/podcmd.go`): the containers, then the ephemeral containers marked
  * `(ephem)`, then the init containers marked `(init)`, joined by a comma and a space.
  */
-function allContainerNames(spec: Json): string {
-  const names = (key: string): string[] => array(spec[key]).map((container) => String(container.name));
-  return [
-    ...names("containers"),
-    ...names("ephemeralContainers").map((name) => `${name} (ephem)`),
-    ...names("initContainers").map((name) => `${name} (init)`),
-  ].join(", ");
+function allContainerNames(regular: readonly string[], ephemeral: readonly string[], init: readonly string[]): string {
+  return [...regular, ...ephemeral.map((name) => `${name} (ephem)`), ...init.map((name) => `${name} (init)`)].join(
+    ", ",
+  );
 }
 
 /**
@@ -271,7 +268,9 @@ function containersOf(
   const spec = objectOf(pod.spec) ?? {};
   const names = (key: string): string[] => array(spec[key]).map((container) => String(container.name));
   const regular = names("containers");
-  const every = [...names("initContainers"), ...regular, ...names("ephemeralContainers")];
+  const init = names("initContainers");
+  const ephemeral = names("ephemeralContainers");
+  const every = [...init, ...regular, ...ephemeral];
   const podName = String(objectOf(pod.metadata)?.name);
   if (statement.container !== undefined) {
     if (!every.includes(statement.container))
@@ -286,18 +285,21 @@ function containersOf(
   if (annotated !== undefined && annotated !== "")
     notices.push(`Default container name ${JSON.stringify(annotated)} not found in pod ${podName}`);
   if (!statement.allPods && every.length > 1)
-    notices.push(`Defaulted container ${JSON.stringify(regular[0])} out of: ${allContainerNames(spec)}`);
+    notices.push(
+      `Defaulted container ${JSON.stringify(regular[0])} out of: ${allContainerNames(regular, ephemeral, init)}`,
+    );
   return { containers: [regular[0]], notices };
 }
 
 /**
  * The terminal escape sequences of a log line: CSI (`ESC [`, parameter bytes, intermediate bytes, a final byte), OSC
- * (`ESC ]` up to BEL or `ESC \`), and every other two-byte `ESC` sequence. Each alternative starts at an ESC and its
+ * (`ESC ]` up to BEL or `ESC \`), nF sequences (intermediate bytes, then a final byte, such as the `ESC ( B` that
+ * `tput sgr0` writes), and every other two-byte `ESC` sequence. Each alternative starts at an ESC and its
  * runs are character classes that hold no ESC, so a match attempt stops at the next ESC and the scan stays linear in
  * the line's length; an unfinished sequence matches nothing and stays.
  */
 // oxlint-disable-next-line no-control-regex -- control characters are exactly what a terminal sequence is made of
-const TERMINAL_ESCAPE = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[0-Z\\^-~])/g;
+const TERMINAL_ESCAPE = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[ -/]+[0-~]|[0-Z\\^-~])/g;
 
 /**
  * A log line without its terminal escape sequences. kubectl writes the bytes to a terminal, which draws the colors;
