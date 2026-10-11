@@ -278,7 +278,7 @@ Refused, each with a sentence and nothing sent:
 The grid pages the list form of a single-type `get` with a paging line of Studio's own, `# libredb:page offset=<n> limit=<n>`, never a kubectl flag; every other statement answers one page.
 A statement reads at most 5,000 rows; a page at or past that answers a sentence to narrow the list with `-l` or `--field-selector`.
 
-Query history masks the values of `--token`, `--password`, `--client-key` and `--client-certificate` in every spelling, though the console refuses them; a tab keeps what was typed, a saved query keeps what was saved, and the embedded workspace writes no history.
+Query history masks the values of `--token`, `--password`, `--client-key`, `--client-certificate`, `--from-literal` and `--docker-password` in every spelling, though the console refuses every line that carries them; a tab keeps what was typed, a saved query keeps what was saved, and the embedded workspace writes no history.
 
 ## 6. Schema: the tree
 

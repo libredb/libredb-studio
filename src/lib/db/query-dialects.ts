@@ -118,10 +118,18 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersCodeGeneration: false,
     offersCountQuery: false,
     offersSqlExport: false,
-    // A line pasted from a shell may carry kubectl's credential flags, which the console refuses; query history keeps
-    // none of their values. Written here rather than imported, so this registry imports nothing from a provider.
+    // A line pasted from a shell may carry kubectl's credential flags or a Secret's values, which the console refuses;
+    // query history keeps none of their values. Written here rather than imported, so this registry imports nothing
+    // from a provider.
     historyMask: Object.freeze({
-      credentialFlags: Object.freeze(["--token", "--password", "--client-key", "--client-certificate"]),
+      credentialFlags: Object.freeze([
+        "--token",
+        "--password",
+        "--client-key",
+        "--client-certificate",
+        "--from-literal",
+        "--docker-password",
+      ]),
     }),
   }),
 });

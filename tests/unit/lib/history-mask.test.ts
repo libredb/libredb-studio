@@ -416,8 +416,17 @@ describe("historyMaskOf", () => {
     expect(historyMaskOf(undefined, declaring)).toEqual({ credentialFlags: ["--token", "--password"] });
   });
 
-  test("the shipped registry: kubectl declares its four credential flags, and no other dialect declares a mask", () => {
-    const kubectl = { credentialFlags: ["--token", "--password", "--client-key", "--client-certificate"] };
+  test("the shipped registry: kubectl declares its six credential flags, and no other dialect declares a mask", () => {
+    const kubectl = {
+      credentialFlags: [
+        "--token",
+        "--password",
+        "--client-key",
+        "--client-certificate",
+        "--from-literal",
+        "--docker-password",
+      ],
+    };
     expect(historyMaskOf(undefined)).toEqual(kubectl);
     for (const dialect of Object.keys(QUERY_DIALECTS) as QueryDialect[]) {
       expect(historyMaskOf(caps({ queryDialect: dialect }))).toEqual(dialect === "kubectl" ? kubectl : undefined);

@@ -576,8 +576,15 @@ describe("the connection's flags", () => {
     expect(refusal(`kubectl --token ${MARKER} get pods`).message).toBe(connectionFlagSentence("--token"));
   });
 
-  test("the four credential flags are the ones history masks", () => {
-    expect(CREDENTIAL_FLAGS).toEqual(["--token", "--password", "--client-key", "--client-certificate"]);
+  test("the six credential flags are the ones history masks", () => {
+    expect(CREDENTIAL_FLAGS).toEqual([
+      "--token",
+      "--password",
+      "--client-key",
+      "--client-certificate",
+      "--from-literal",
+      "--docker-password",
+    ]);
   });
 });
 

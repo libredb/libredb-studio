@@ -218,12 +218,17 @@ export const CONNECTION_FLAGS: ReadonlySet<string> = new Set([
   "--v",
 ]);
 
-/** The connection flags whose values are credentials: query history keeps none of their values. */
+/**
+ * The flags whose values are credentials, the connection's and a Secret-creating command's, all refused: query history
+ * keeps none of their values.
+ */
 export const CREDENTIAL_FLAGS: readonly string[] = Object.freeze([
   "--token",
   "--password",
   "--client-key",
   "--client-certificate",
+  "--from-literal",
+  "--docker-password",
 ]);
 
 /** The `-o` formats kubectl has and this console does not, named in their refusal. */
