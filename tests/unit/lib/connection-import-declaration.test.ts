@@ -7,7 +7,7 @@ import { declareConnectionImport } from "../../helpers/synthetic-connection-impo
  * Which shipped entries declare a connection import. A declaration puts a paste box for credentials in the dialog,
  * so the list is written out here, and an entry that gains or loses one changes this test in the same commit.
  */
-const DECLARING: readonly DatabaseType[] = [];
+const DECLARING: readonly DatabaseType[] = ["kubernetes"];
 
 const restores: (() => void)[] = [];
 afterEach(() => {

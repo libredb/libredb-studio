@@ -866,6 +866,11 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     readOnlyHint:
       "Kubernetes connections are read-only in this version, whether or not this is ticked: Studio sends the cluster no write.",
     hostAcceptsUri: ["https", "http"],
+    // The dialog loads the importer, and the yaml parser it reads with, only when the import opens.
+    connectionImport: {
+      label: "Import kubeconfig",
+      load: () => import("@/lib/kubernetes/kubeconfig-import").then((module) => module.importKubeconfig),
+    },
   },
   libredb: {
     icon: LibreDBIcon,

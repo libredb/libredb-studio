@@ -32,12 +32,14 @@ function dist(files: Record<string, string>): string {
 const GOOD = {
   "components.js": "'use strict';\nvar a = require('./chunk-a.js');\nrequire(\"./chunk-b.js\");\n",
   "chunk-a.js": "function ConnectionModal({ isOpen }) {}\nfunction useConnectionForm({ isOpen }) {}\n",
-  "chunk-b.js": `const frame = "${CREDENTIAL_WARNING_FRAME}";\nconst action = "${CONNECTION_IMPORT_ACTION_ID}";\n`,
+  "chunk-b.js": `const frame = "${CREDENTIAL_WARNING_FRAME}";\nconst action = "${CONNECTION_IMPORT_ACTION_ID}";\nconst load = () => import('./chunk-k.js');\n`,
+  "chunk-k.js": 'const yaml = require("yaml");\nfunction importKubeconfig(text) {}\n',
   "workspace.js": "'use strict';\nrequire('./chunk-c.js');\n",
   "chunk-c.js": "function StudioWorkspace() {}\n",
   "components.mjs": "import { ConnectionModal } from './chunk-a.mjs';\nimport \"./chunk-b.mjs\";\n",
   "chunk-a.mjs": "function ConnectionModal({ isOpen }) {}\nfunction useConnectionForm({ isOpen }) {}\n",
-  "chunk-b.mjs": `const frame = "${CREDENTIAL_WARNING_FRAME}";\nconst action = "${CONNECTION_IMPORT_ACTION_ID}";\n`,
+  "chunk-b.mjs": `const frame = "${CREDENTIAL_WARNING_FRAME}";\nconst action = "${CONNECTION_IMPORT_ACTION_ID}";\nconst load = () => import('./chunk-k.mjs');\n`,
+  "chunk-k.mjs": 'import { parseDocument } from "yaml";\nfunction importKubeconfig(text) {}\n',
   "workspace.mjs": "import { StudioWorkspace } from './chunk-c.mjs';\n",
   "chunk-c.mjs": "function StudioWorkspace() {}\n",
 };
@@ -63,7 +65,12 @@ describe("CONNECTION_IMPORT_ACTION_ID", () => {
 
 describe("moduleClosure", () => {
   test("follows every relative require, in either quote, once each", () => {
-    expect(moduleClosure(dist(GOOD), "components.js")).toEqual(["chunk-a.js", "chunk-b.js", "components.js"]);
+    expect(moduleClosure(dist(GOOD), "components.js")).toEqual([
+      "chunk-a.js",
+      "chunk-b.js",
+      "chunk-k.js",
+      "components.js",
+    ]);
   });
 
   test("follows every relative import: a named one, a bare one and a dynamic one", () => {
@@ -103,6 +110,22 @@ describe("checkLibClosure", () => {
     const root = dist({ ...GOOD, "chunk-b.mjs": `const frame = "${CREDENTIAL_WARNING_FRAME}";\n` });
     expect(checkLibClosure(root)).toEqual([
       `dist/components.mjs: its import closure does not hold the import action "${CONNECTION_IMPORT_ACTION_ID}", so a host mounting ConnectionModal would offer no declared import.`,
+      "dist/components.mjs: its import closure holds no kubeconfig importer behind a dynamic import, so the eager check would prove nothing.",
+    ]);
+  });
+
+  test("reports a kubeconfig importer, or the yaml package, that the components entry loads eagerly", () => {
+    const root = dist({
+      ...GOOD,
+      "components.mjs":
+        "import { ConnectionModal } from './chunk-a.mjs';\nimport \"./chunk-b.mjs\";\nimport './chunk-k.mjs';\n",
+      "components.js":
+        "'use strict';\nvar a = require('./chunk-a.js');\nrequire(\"./chunk-b.js\");\nconst y = require('yaml');\n",
+    });
+    expect(checkLibClosure(root)).toEqual([
+      "dist/components.js: its eager require closure loads the yaml package, which only the kubeconfig importer needs.",
+      "dist/components.mjs: its eager import closure holds the kubeconfig importer, which must load only when the import opens.",
+      "dist/components.mjs: its eager import closure loads the yaml package, which only the kubeconfig importer needs.",
     ]);
   });
 
@@ -118,6 +141,7 @@ describe("checkLibClosure", () => {
       `dist/components.js: its require closure does not hold the credential warning frame "${CREDENTIAL_WARNING_FRAME}", so a host mounting ConnectionModal would draw no warning.`,
       `dist/components.js: its require closure does not hold the import action "${CONNECTION_IMPORT_ACTION_ID}", so a host mounting ConnectionModal would offer no declared import.`,
       "dist/components.js: its require closure holds no ConnectionModal function, so the workspace check would prove nothing.",
+      "dist/components.js: its require closure holds no kubeconfig importer behind a dynamic import, so the eager check would prove nothing.",
       "dist/workspace.js: its require closure holds the ConnectionModal module.",
       "dist/workspace.js: its require closure holds the useConnectionForm module.",
     ]);

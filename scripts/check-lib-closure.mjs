@@ -13,7 +13,10 @@
  * - the same closures hold the test id of the dialog's import action, so a host that mounts the exported
  *   `ConnectionModal` offers the import a type declares;
  * - the closure of `dist/workspace.js` and of `dist/workspace.mjs` holds neither the `ConnectionModal` nor the
- *   `useConnectionForm` module, so `StudioWorkspace`, which mounts no connection dialog, shows none.
+ *   `useConnectionForm` module, so `StudioWorkspace`, which mounts no connection dialog, shows none;
+ * - the eager closure of `dist/components.js` and of `dist/components.mjs`, its static requires and imports alone,
+ *   holds neither the kubeconfig importer nor a load of the `yaml` package, while the whole closure, dynamic imports
+ *   included, holds the importer: the dialog's import loads both only when it opens.
  *
  * Run after `bun run build:lib`: `bun run lib:closure`.
  */
@@ -26,6 +29,9 @@ import { fileURLToPath } from "node:url";
  * `require(...)`, an `import ... from`, a bare `import`, and a dynamic `import(...)`.
  */
 const RELATIVE_SPECIFIER = /(?:\brequire\(|\bimport\(|\bfrom\s*|\bimport\s*)(["'])(\.\/[^"']+)\1/g;
+
+/** The static forms of {@link RELATIVE_SPECIFIER} alone: what a host loads with the entry, before any dynamic import. */
+const STATIC_SPECIFIER = /(?:\brequire\(|\bfrom\s*|\bimport\s*)(["'])(\.\/[^"']+)\1/g;
 
 /** The two entry pairs a host can load, with the word for how each reaches its chunks. */
 const ENTRY_PAIRS = [
@@ -41,6 +47,10 @@ export const CONNECTION_IMPORT_ACTION_ID = "connection-import-open";
 
 const CONNECTION_MODAL = /\bfunction ConnectionModal\(/;
 const USE_CONNECTION_FORM = /\bfunction useConnectionForm\(/;
+/** The kubeconfig importer's entry (src/lib/kubernetes/kubeconfig-import.ts), which only a dynamic import may reach. */
+const KUBECONFIG_IMPORTER = /\bfunction importKubeconfig\(/;
+/** A static load of the `yaml` package, which only the kubeconfig importer needs in the components entry. */
+const YAML_PACKAGE = /(?:\brequire\(|\bfrom\s*|\bimport\s*)(["'])yaml\1/;
 
 /**
  * Every dist file the entry requires or imports, directly or through another, the entry included, sorted.
@@ -48,7 +58,7 @@ const USE_CONNECTION_FORM = /\bfunction useConnectionForm\(/;
  * @param {string} entry
  * @returns {string[]}
  */
-export function moduleClosure(distDir, entry) {
+export function moduleClosure(distDir, entry, specifier = RELATIVE_SPECIFIER) {
   const seen = new Set();
   const pending = [entry];
   while (pending.length > 0) {
@@ -56,13 +66,13 @@ export function moduleClosure(distDir, entry) {
     if (seen.has(file)) continue;
     seen.add(file);
     const text = fs.readFileSync(path.join(distDir, file), "utf8");
-    for (const match of text.matchAll(RELATIVE_SPECIFIER)) pending.push(path.posix.normalize(match[2]));
+    for (const match of text.matchAll(specifier)) pending.push(path.posix.normalize(match[2]));
   }
   return [...seen].sort();
 }
 
-function closureText(distDir, entry) {
-  return moduleClosure(distDir, entry)
+function closureText(distDir, entry, specifier = RELATIVE_SPECIFIER) {
+  return moduleClosure(distDir, entry, specifier)
     .map((file) => fs.readFileSync(path.join(distDir, file), "utf8"))
     .join("\n");
 }
@@ -91,6 +101,22 @@ export function checkLibClosure(distDir) {
         `dist/${pair.components}: its ${pair.closure} closure holds no ConnectionModal function, so the workspace check would prove nothing.`,
       );
     }
+    const eager = closureText(distDir, pair.components, STATIC_SPECIFIER);
+    if (KUBECONFIG_IMPORTER.test(eager)) {
+      failures.push(
+        `dist/${pair.components}: its eager ${pair.closure} closure holds the kubeconfig importer, which must load only when the import opens.`,
+      );
+    }
+    if (YAML_PACKAGE.test(eager)) {
+      failures.push(
+        `dist/${pair.components}: its eager ${pair.closure} closure loads the yaml package, which only the kubeconfig importer needs.`,
+      );
+    }
+    if (!KUBECONFIG_IMPORTER.test(components)) {
+      failures.push(
+        `dist/${pair.components}: its ${pair.closure} closure holds no kubeconfig importer behind a dynamic import, so the eager check would prove nothing.`,
+      );
+    }
     const workspace = closureText(distDir, pair.workspace);
     if (CONNECTION_MODAL.test(workspace)) {
       failures.push(`dist/${pair.workspace}: its ${pair.closure} closure holds the ConnectionModal module.`);
@@ -109,7 +135,7 @@ function main(argv) {
   for (const failure of failures) console.error(failure);
   if (failures.length === 0) {
     console.log(
-      "lib closure: components carries the credential warning and the import action; workspace carries no connection dialog.",
+      "lib closure: components carries the credential warning and the import action, and loads the kubeconfig importer lazily; workspace carries no connection dialog.",
     );
   }
   process.exit(failures.length === 0 ? 0 : 1);

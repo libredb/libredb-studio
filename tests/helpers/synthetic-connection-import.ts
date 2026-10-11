@@ -4,8 +4,8 @@ import type { DatabaseType } from "@/lib/types";
 
 /**
  * Declares `connectionImport` on one real `DB_UI_CONFIG` entry for one test and returns the undo, which the test runs
- * in `afterEach`, as `declareHostUri` does for `hostAcceptsUri`. No shipped entry declares an import yet, so the
- * dialog's import is proven on an entry that does not.
+ * in `afterEach`, as `declareHostUri` does for `hostAcceptsUri`, so the dialog's import is proven with a stub parser
+ * on an entry that declares none.
  */
 export function declareConnectionImport(type: DatabaseType, declaration: ConnectionImportDeclaration): () => void {
   const entry = DB_UI_CONFIG[type];
