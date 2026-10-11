@@ -70,7 +70,7 @@ import type { ObjectSourcePart } from "@/lib/db/types";
  *
  * THE ARM BOUNDARY, stated because it is not obvious from the ids. A withheld affordance whose
  * `reason` is absent, not a string, or blank is answered `not-offered` and not
- * `provider-refused`, so its reader is told this database offers no route where in fact the
+ * `provider-refused`, so its reader is told the connection offers no route where in fact the
  * provider had one and withheld it without saying why. That is the lesser of the two wrongs:
  * the alternative is a refusal headline drawn over a blank line, the empty-versus-unreadable
  * collapse this design exists to prevent. The population is real and is not a test double:
@@ -103,7 +103,7 @@ export const BOUNDED_SENTENCE =
   "This text was shortened when it was read, so it is not the whole definition and cannot be replaced.";
 export const BODY_ONLY_SENTENCE =
   "This is the body only and not a complete statement, so it cannot be replaced from here.";
-export const NOT_OFFERED_SENTENCE = "This database offers no way to replace this definition in place.";
+export const NOT_OFFERED_SENTENCE = "This connection offers no way to replace this definition in place.";
 
 export function partEditability(part: SourceEditablePart): SourceEditability {
   if (part.truncated !== undefined) return { editable: false, refusal: "bounded", sentence: BOUNDED_SENTENCE };

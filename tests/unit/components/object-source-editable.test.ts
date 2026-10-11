@@ -98,6 +98,11 @@ describe("partEditability", () => {
     });
   });
 
+  test("the not-offered sentence names the connection, not a database, so it fits every engine", () => {
+    // A Kubernetes object's YAML and an Oxia key's value show it too, and neither is a database.
+    expect(NOT_OFFERED_SENTENCE).toBe("This connection offers no way to replace this definition in place.");
+  });
+
   test("an absent affordance is OUR sentence, and it is a different arm from a provider refusal", () => {
     expect(partEditability(READABLE)).toEqual({
       editable: false,

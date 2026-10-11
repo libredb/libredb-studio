@@ -7959,7 +7959,7 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
 
     test("a kind that declares no edit carries NO affordance at all", async () => {
       // Absent and not `{ offered: false }`: a decorative false is forbidden, and absence is what the
-      // client predicate reads as "this database offers no way to replace this definition in place".
+      // client predicate reads as "this connection offers no way to replace this definition in place".
       const provider = await connected();
       mockQueryFn = async () => ({ rows: [{ definition: "SELECT 1" }] });
       const document = await provider.readObjectSource(["app", "order_summary"], "view");

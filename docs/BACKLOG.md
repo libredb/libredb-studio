@@ -4344,7 +4344,7 @@ Not fixed there: the label is shared by every type that takes the field, and the
 
 ### U83. A read-only engine's Source tab calls a key's value a definition it cannot replace
 
-An Oxia key's Value and Metadata tabs in the Source view say "This database offers no way to replace this definition in place.", which is `NOT_OFFERED_SENTENCE` in `src/components/object-source/source-editable.ts`, the sentence `partEditability` gives any part whose provider offers no edit.
+An Oxia key's Value and Metadata tabs in the Source view said "This database offers no way to replace this definition in place." (since 2026-10-11 "This connection offers no way to replace this definition in place."), which is `NOT_OFFERED_SENTENCE` in `src/components/object-source/source-editable.ts`, the sentence `partEditability` gives any part whose provider offers no edit.
 A key's value is not a definition, and the sentence reads as a limit of the engine, when what blocks the edit is that the connection is read-only.
 Seen 2026-10-04 in the final browser pass of the Oxia provider (#1310), on `/pk/tenant-a/2` and on `/values/over-cap`.
 
