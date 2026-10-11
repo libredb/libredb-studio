@@ -295,7 +295,7 @@ const TABLE_STATS_SQL = `
         SELECT
           s.name AS schema_name,
           t.name AS table_name,
-          SUM(p.rows) AS row_count,
+          ISNULL(p.row_count, 0) AS row_count,
           SUM(a.total_pages) * 8 * 1024 AS total_size_bytes,
           SUM(a.used_pages) * 8 * 1024 AS used_size_bytes,
           SUM(CASE WHEN i.type IN (0, 1) THEN a.total_pages ELSE 0 END) * 8 * 1024 AS table_size_bytes,
@@ -303,11 +303,17 @@ const TABLE_STATS_SQL = `
           STATS_DATE(t.object_id, 1) AS last_stats_update
         FROM sys.tables t
         JOIN sys.schemas s ON t.schema_id = s.schema_id
+        LEFT JOIN (
+          SELECT object_id, SUM(rows) AS row_count
+          FROM sys.partitions
+          WHERE index_id IN (0, 1)
+          GROUP BY object_id
+        ) p ON t.object_id = p.object_id
         JOIN sys.indexes i ON t.object_id = i.object_id
-        JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-        JOIN sys.allocation_units a ON p.partition_id = a.container_id
+        JOIN sys.partitions p_all ON i.object_id = p_all.object_id AND i.index_id = p_all.index_id
+        JOIN sys.allocation_units a ON p_all.partition_id = a.container_id
         WHERE t.type = 'U'
-        GROUP BY s.name, t.name, t.object_id
+        GROUP BY s.name, t.name, t.object_id, p.row_count
         ORDER BY SUM(a.total_pages) DESC
       `;
 
