@@ -87,6 +87,32 @@ describe("createErrorResponse", () => {
     expect(body.retryable).toBe(true);
   });
 
+  test("a TimeoutError on any route but the connection test keeps the query sentence", async () => {
+    const res = createErrorResponse(new TimeoutError("query took too long", "postgres", 30000), {
+      route: "api/db/query",
+    });
+    expect((await res.json()).error).toBe("Query timed out. Please try a simpler query or increase timeout.");
+  });
+
+  test("a TimeoutError on the connection test names the seconds waited and never a query", async () => {
+    const err = new TimeoutError("The API server did not answer within 10 s.", "kubernetes", 10000);
+    const res = createErrorResponse(err, { route: "api/db/test-connection" });
+    expect(res.status).toBe(408);
+    const body = await res.json();
+    expect(body.error).toBe(
+      "The connection test got no answer within 10 seconds: check the address, the port and the network path, and that the server is running.",
+    );
+    expect(body.code).toBe("TIMEOUT_ERROR");
+    expect(body.retryable).toBe(true);
+  });
+
+  test("a TimeoutError on the connection test without its limit names no seconds", async () => {
+    const res = createErrorResponse(new TimeoutError("timed out", "couchbase"), { route: "api/db/test-connection" });
+    expect((await res.json()).error).toBe(
+      "The connection test got no answer in time: check the address, the port and the network path, and that the server is running.",
+    );
+  });
+
   test("ConnectionError returns 503 with code CONNECTION_ERROR", async () => {
     const err = new ConnectionError("ECONNREFUSED", "postgres", "localhost", 5432);
     const res = createErrorResponse(err);

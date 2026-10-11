@@ -1,7 +1,8 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
-import { DatabaseConfigError } from "@/lib/db/errors";
+import { DatabaseConfigError, TimeoutError } from "@/lib/db/errors";
+import { TransportError } from "@/lib/db/http/node-transport";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
@@ -281,6 +282,40 @@ describe("POST /api/db/test-connection", () => {
     expect(res.status).toBe(500);
     expect(data.error).toBe("ECONNREFUSED");
     expect(data.code).toBe("INTERNAL_ERROR");
+  });
+
+  describe("a server that never answers", () => {
+    const post = async () => {
+      const res = await POST(
+        createMockRequest("/api/db/test-connection", { method: "POST", body: validConnection }) as never,
+      );
+      return { res, data: await parseResponseJSON<{ error: string; code: string; retryable?: boolean }>(res) };
+    };
+
+    test("a connect that never completed answers 503 with the host, port and seconds, never a query", async () => {
+      const sentence =
+        "No answer from 10.255.255.1:6443 within 10 seconds: check the address, the port and the network path.";
+      (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw new TransportError("unreachable", sentence);
+      });
+      const { res, data } = await post();
+      expect(res.status).toBe(503);
+      expect(data.error).toBe(sentence);
+      expect(data.code).toBe("CONNECTION_ERROR");
+    });
+
+    test("a deadline once connected answers the connection test's own sentence, never a query", async () => {
+      (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw new TimeoutError("The API server did not answer the request within 10 s.", "kubernetes", 10000);
+      });
+      const { res, data } = await post();
+      expect(res.status).toBe(408);
+      expect(data.error).toBe(
+        "The connection test got no answer within 10 seconds: check the address, the port and the network path, and that the server is running.",
+      );
+      expect(data.error.toLowerCase()).not.toContain("query");
+      expect(data.code).toBe("TIMEOUT_ERROR");
+    });
   });
 
   /*
