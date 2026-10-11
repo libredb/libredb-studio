@@ -1,0 +1,36 @@
+{
+  "set": "v1.35.5",
+  "cluster": "k8s-probe",
+  "image": "mirror.gcr.io/rancher/k3s:v1.35.5-k3s1",
+  "serverVersion": "v1.35.5+k3s1",
+  "studioCommit": "90c10fb9a9ab1ad0e3522ac703740f140fcd5fd4",
+  "uncommitted": [],
+  "date": "2026-10-11",
+  "scenarios": [
+    {
+      "persona": "admin",
+      "steps": 7,
+      "exchanges": 29
+    },
+    {
+      "persona": "reader",
+      "steps": 40,
+      "exchanges": 170
+    },
+    {
+      "persona": "viewer",
+      "steps": 12,
+      "exchanges": 60
+    },
+    {
+      "persona": "shop-only",
+      "steps": 6,
+      "exchanges": 38
+    },
+    {
+      "persona": "studio-reader",
+      "steps": 4,
+      "exchanges": 47
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "set": "v1.29.15",
+  "cluster": "k8s-best-effort",
+  "image": "mirror.gcr.io/rancher/k3s:v1.29.15-k3s1",
+  "serverVersion": "v1.29.15+k3s1",
+  "studioCommit": "90c10fb9a9ab1ad0e3522ac703740f140fcd5fd4",
+  "uncommitted": [],
+  "date": "2026-10-11",
+  "scenarios": [
+    {
+      "persona": "reader",
+      "steps": 5,
+      "exchanges": 14
+    }
+  ]
+}
