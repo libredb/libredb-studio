@@ -9,6 +9,7 @@ import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { renderInline } from "@/components/rich-text";
 import { downloadText } from "@/lib/export/download";
+import { MAX_SCHEMA_CONTEXT_CHARS } from "@/lib/llm/types";
 
 interface DatabaseDocsProps {
   schema: readonly DetailedObject[];
@@ -57,20 +58,44 @@ export function DatabaseDocs({ schema, schemaContext, databaseType, capabilities
       let filteredSchemaStr = "";
       if (schemaContext) {
         try {
-          const tables = JSON.parse(schemaContext);
-          filteredSchemaStr = tables
-            .slice(0, 50)
-            .map((t: ParsedSchemaTable) => {
-              const cols =
-                t.columns
-                  ?.map(
-                    (c) =>
-                      `${c.name} (${c.type}${c.isPrimary ? ", PK" : ""}${c.isNullable === false ? ", NOT NULL" : ""})`,
-                  )
-                  .join(", ") || "";
-              return `Table: ${t.name} (${t.rowCount || 0} rows)\nColumns: ${cols}`;
-            })
-            .join("\n\n");
+          const tables = JSON.parse(schemaContext) as ParsedSchemaTable[];
+          const TRUNCATION_NOTE = "\n\n[Note: Schema was truncated to fit model context limit]";
+          const budget = MAX_SCHEMA_CONTEXT_CHARS - TRUNCATION_NOTE.length;
+          let currentChars = 0;
+          const tableEntries: string[] = [];
+          let truncated = false;
+
+          for (const t of tables.slice(0, 50)) {
+            const allCols =
+              t.columns
+                ?.map(
+                  (c) =>
+                    `${c.name} (${c.type}${c.isPrimary ? ", PK" : ""}${c.isNullable === false ? ", NOT NULL" : ""})`,
+                )
+                .join(", ") || "";
+            const fullTableText = `Table: ${t.name} (${t.rowCount || 0} rows)\nColumns: ${allCols}`;
+            const separatorLen = tableEntries.length > 0 ? 2 : 0;
+
+            if (currentChars + separatorLen + fullTableText.length <= budget) {
+              tableEntries.push(fullTableText);
+              currentChars += separatorLen + fullTableText.length;
+            } else {
+              truncated = true;
+              const colCount = t.columns?.length || 0;
+              const summaryText = `Table: ${t.name} (${t.rowCount || 0} rows) - [${colCount} columns omitted for length]`;
+              if (currentChars + separatorLen + summaryText.length <= budget) {
+                tableEntries.push(summaryText);
+                currentChars += separatorLen + summaryText.length;
+              } else {
+                break;
+              }
+            }
+          }
+
+          filteredSchemaStr = tableEntries.join("\n\n");
+          if (truncated) {
+            filteredSchemaStr += TRUNCATION_NOTE;
+          }
         } catch {
           filteredSchemaStr = schemaContext.substring(0, 5000);
         }

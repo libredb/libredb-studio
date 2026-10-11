@@ -10,6 +10,7 @@ import { DatabaseDocs } from "@/components/DatabaseDocs";
 import { schemaContextOf, type DetailedObject } from "@/lib/db/detailed-object";
 import { SAMPLED_MARKER, sampledSchema } from "../fixtures/sampled-schema";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import { MAX_SCHEMA_CONTEXT_CHARS } from "@/lib/llm/types";
 
 const schema: DetailedObject[] = [
   {
@@ -435,6 +436,47 @@ describe("DatabaseDocs", () => {
     const { queryByText } = render(<DatabaseDocs schema={schema} schemaContext="[]" />);
     expect(queryByText("AI Describe")).not.toBeNull();
     expect(queryByText("Export MD")).not.toBeNull();
+  });
+
+  test("wide schema produces bounded schemaContext that names truncation", async () => {
+    const user = userEvent.setup();
+    let capturedBody = "";
+    globalThis.fetch = mock((_url, init) => {
+      capturedBody = (init?.body as string) || "";
+      return Promise.resolve({
+        ok: true,
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("Doc"));
+            controller.close();
+          },
+        }),
+      });
+    }) as unknown as typeof fetch;
+
+    // Build a large schema with 50 tables of 50 columns each
+    const largeSchema = Array.from({ length: 50 }, (_, i) => ({
+      name: `wide_table_${i}`,
+      rowCount: 100,
+      columns: Array.from({ length: 50 }, (_, j) => ({
+        name: `col_${j}_with_a_very_long_descriptive_name`,
+        type: "VARCHAR(255)",
+      })),
+    }));
+
+    const { queryByText } = render(
+      <DatabaseDocs schema={[]} schemaContext={JSON.stringify(largeSchema)} databaseType="postgres" />,
+    );
+
+    await user.click(queryByText("AI Describe")!);
+
+    await waitFor(() => {
+      expect(capturedBody).not.toBe("");
+    });
+
+    const parsed = JSON.parse(capturedBody);
+    expect(parsed.schemaContext).toContain("[Note: Schema was truncated to fit model context limit]");
+    expect(parsed.schemaContext.length).toBeLessThanOrEqual(MAX_SCHEMA_CONTEXT_CHARS);
   });
 });
 

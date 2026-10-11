@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, readStreamResponse, parseResponseJSON } from "../../helpers/mock-next";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { MAX_SCHEMA_CONTEXT_CHARS } from "@/lib/llm/types";
 
 // ─── Mock helpers ───────────────────────────────────────────────────────────
 
@@ -74,6 +75,14 @@ mock.module("@/lib/llm/types", () => ({
   LLMRateLimitError: MockLLMRateLimitError,
   LLMSafetyError: MockLLMSafetyError,
   LLMStreamError: MockLLMStreamError,
+  /*
+    Same whole-module mock requirement: `errors.ts` imports `isContextLengthError`
+    and route handlers import `MAX_SCHEMA_CONTEXT_CHARS`.
+  */
+  isContextLengthError: (error: unknown): boolean =>
+    (error instanceof MockLLMStreamError || error instanceof Error) &&
+    error.message.includes("exceeds the available context size"),
+  MAX_SCHEMA_CONTEXT_CHARS: 30_000,
 }));
 
 const mockGetSession = mock(
@@ -297,5 +306,62 @@ describe("POST /api/ai/describe-schema", () => {
       messages: Array<{ role: string; content: string }>;
     };
     expect(callArgs.messages[0].content).toContain("Database type: SQL");
+  });
+
+  test("refuses over-budget schemaContext with 413 without calling provider", async () => {
+    const hugeContext = "a".repeat(MAX_SCHEMA_CONTEXT_CHARS + 1);
+    const req = createMockRequest("/api/ai/describe-schema", {
+      method: "POST",
+      body: { schemaContext: hugeContext },
+    });
+
+    const res = await POST(req as never);
+    expect(res.status).toBe(413);
+
+    const data = await parseResponseJSON<{ error: string }>(res);
+    expect(data.error).toBe("The schema context is too large for AI documentation.");
+    expect(mockCreateLLMProvider).not.toHaveBeenCalled();
+  });
+
+  test("returns 400 when schemaContext is not a string without calling provider", async () => {
+    const req = createMockRequest("/api/ai/describe-schema", {
+      method: "POST",
+      body: { schemaContext: ["x".repeat(200_000)] },
+    });
+
+    const res = await POST(req as never);
+    expect(res.status).toBe(400);
+
+    const data = await parseResponseJSON<{ error: string }>(res);
+    expect(data.error).toBeDefined();
+    expect(mockCreateLLMProvider).not.toHaveBeenCalled();
+  });
+
+  test("returns 400 when databaseType is oversized without calling provider", async () => {
+    const req = createMockRequest("/api/ai/describe-schema", {
+      method: "POST",
+      body: {
+        schemaContext: "users(id, name)",
+        databaseType: "x".repeat(200_000),
+      },
+    });
+
+    const res = await POST(req as never);
+    expect(res.status).toBe(400);
+
+    const data = await parseResponseJSON<{ error: string }>(res);
+    expect(data.error).toBeDefined();
+    expect(mockCreateLLMProvider).not.toHaveBeenCalled();
+  });
+
+  test("accepts schemaContext within the budget", async () => {
+    const validContext = "a".repeat(MAX_SCHEMA_CONTEXT_CHARS);
+    const req = createMockRequest("/api/ai/describe-schema", {
+      method: "POST",
+      body: { schemaContext: validContext },
+    });
+
+    const res = await POST(req as never);
+    expect(res.status).toBe(200);
   });
 });

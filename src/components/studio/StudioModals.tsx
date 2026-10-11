@@ -164,7 +164,6 @@ export function StudioModals({
           tablePath={profilerPath ?? []}
           tableSchema={objectAtPath(schema, profilerPath)}
           connection={activeConnection}
-          schemaContext={schemaContext}
           databaseType={databaseType}
           maskingConfig={profilerMasking.config}
           maskingEnabled={profilerMasking.enabled}

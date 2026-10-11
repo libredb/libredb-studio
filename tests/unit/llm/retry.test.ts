@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { withRetry, makeRetryable } from "@/lib/llm/utils/retry";
-import { LLMConfigError, LLMRateLimitError } from "@/lib/llm/types";
+import { LLMConfigError, LLMRateLimitError, LLMStreamError } from "@/lib/llm/types";
 
 // Suppress console.error output during retry tests
 let originalConsoleError: typeof console.error;
@@ -87,6 +87,30 @@ describe("withRetry", () => {
       // Non-retryable errors should cause immediate throw
       expect(fn).toHaveBeenCalledTimes(1);
     }
+  });
+
+  test("context-length error is not retried and fails immediately", async () => {
+    let attempts = 0;
+    const fn = mock(async () => {
+      attempts++;
+      throw new LLMStreamError("request exceeds the available context size (32768 tokens)", "openai");
+    });
+
+    await expect(withRetry(fn, { maxAttempts: 3, initialDelay: 1, maxDelay: 5 })).rejects.toThrow(
+      /exceeds the available context size/,
+    );
+    expect(attempts).toBe(1);
+  });
+
+  test("standard stream error is retried up to maxAttempts", async () => {
+    let attempts = 0;
+    const fn = mock(async () => {
+      attempts++;
+      throw new LLMStreamError("stream interrupted", "openai");
+    });
+
+    await expect(withRetry(fn, { maxAttempts: 3, initialDelay: 1, maxDelay: 5 })).rejects.toThrow(/stream interrupted/);
+    expect(attempts).toBe(3);
   });
 
   test("maxAttempts=1 means no retry", async () => {

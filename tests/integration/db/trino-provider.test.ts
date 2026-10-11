@@ -699,6 +699,56 @@ describe("TrinoProvider lifecycle", () => {
     expect(provider.isConnected()).toBe(true);
   });
 
+  test("connect carries a warning naming a pinned catalog the cluster does not have", async () => {
+    // SELECT 1 proves the coordinator answers and needs no catalog, so this check is
+    // the only place the connection form can learn the pinned one is not on the cluster.
+    const provider = new TrinoProvider(makeConnection({ database: "nosuchcat" }));
+    await provider.connect();
+
+    const warnings = provider.connectWarnings();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.message).toContain("nosuchcat");
+    await provider.disconnect();
+  });
+
+  test("connect is silent when the pinned catalog is on the cluster", async () => {
+    const provider = await connectProvider();
+
+    expect(provider.connectWarnings()).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("connect judges the pinned catalog case-insensitively, as the coordinator folds it", async () => {
+    // The catalog header is an identifier, so the coordinator folds TPCH to tpch
+    // before resolving it; a warning that did not would name a catalog that is there.
+    const provider = await connectProvider({ database: "TPCH" });
+
+    expect(provider.connectWarnings()).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test.each([undefined, ""])("reads no catalogs when the connection pins none (%s)", async (database) => {
+    const provider = await connectProvider({ database });
+
+    expect(sentSql.some((sql) => sql === TRINO_CATALOG_LIST_SQL)).toBe(false);
+    expect(provider.connectWarnings()).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("a catalog read the cluster refuses does not refuse the connect", async () => {
+    // The connect is proven by SELECT 1; a cluster that withholds system.metadata
+    // keeps the behaviour it had rather than turning the check into a new refusal.
+    serveInstead(
+      TRINO_CATALOG_LIST_SQL,
+      refusal({ type: "PERMISSION_DENIED", message: "Access Denied: Cannot read system.metadata" }),
+    );
+    const provider = await connectProvider();
+
+    expect(provider.isConnected()).toBe(true);
+    expect(provider.connectWarnings()).toEqual([]);
+    await provider.disconnect();
+  });
+
   test("disconnect closes the transport and forgets what was running", async () => {
     // The tail of a successful connect and the whole of `disconnect()`: the provider is
     // connected after `connect()` resolves, and afterwards it holds no transport, reports
@@ -780,10 +830,11 @@ describe("TrinoProvider query", () => {
 
   test("follows the link even on a page that already says FINISHED", async () => {
     const provider = await connectProvider();
+    const beforeStatement = sentMethods.length;
     await provider.query("SELECT nationkey, name FROM tpch.tiny.nation");
 
     // Two requests per statement: the submission and the one page it links to.
-    const forThisStatement = sentMethods.slice(2);
+    const forThisStatement = sentMethods.slice(beforeStatement);
     expect(forThisStatement.map((call) => call.method)).toEqual(["POST", "GET"]);
   });
 
@@ -954,7 +1005,9 @@ describe("TrinoProvider cancellation", () => {
     expect(await cancelled).toBe(true);
     const deletes = sentMethods.filter((call) => call.method === "DELETE");
     expect(deletes).toHaveLength(1);
-    expect(deletes[0]?.url).toContain("/v1/query/20260820_000000_00002_libre");
+    // The third statement this test's connect sent: the probe, the pinned-catalog
+    // check, then this one -- so the harness minted it id 3.
+    expect(deletes[0]?.url).toContain("/v1/query/20260820_000000_00003_libre");
   });
 
   test("answers false for a token it never recorded, rather than cancelling something else", async () => {
@@ -1358,7 +1411,9 @@ describe("TrinoProvider maintenance", () => {
 
     await expect(provider.runMaintenance("vacuum")).rejects.toThrow("owns no storage");
     await expect(provider.runMaintenance("analyze")).rejects.toThrow("computes no statistics of its own");
-    expect(sentSql).toEqual(["SELECT 1"]);
+    // Exactly what connect sent -- the probe and the pinned-catalog check -- and not
+    // one statement more: the two refusals reached the engine with nothing.
+    expect(sentSql).toEqual(["SELECT 1", TRINO_CATALOG_LIST_SQL]);
   });
 });
 
