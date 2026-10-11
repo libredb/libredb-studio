@@ -55,6 +55,8 @@
  *
  * `createNodeTransport` takes two of these on request, the 101 refusal as `refusesUpgrade` and the link-local
  * refusal as `refusesLinkLocal`, both off when absent, so a provider that does not ask keeps the behaviour it had.
+ * It also takes `reportsUnreachable`, off when absent, which the byte transport does not: a deadline that fires
+ * before the socket connected is then kind "unreachable", naming host, port and the seconds waited.
  *
  * `nodeTlsMaterial` is the TLS mapping D37 counts, shared here so that a new REST provider takes it instead of
  * writing another copy.
@@ -121,6 +123,12 @@ export interface NodeTransportOptions {
    * the byte transport does, rather than leave the request waiting for its deadline.
    */
   readonly refusesUpgrade?: boolean;
+  /**
+   * Text transport only, off when absent: a deadline that fires while the request's socket is still connecting fails
+   * as kind "unreachable", a ConnectionError naming host, port and the seconds waited, rather than as "timeout". A
+   * provider whose own deadlines read "timeout" for their retries leaves it off and keeps the behaviour it had.
+   */
+  readonly reportsUnreachable?: boolean;
 }
 
 export interface NodeRequest {
@@ -174,7 +182,7 @@ export class TransportError extends ConnectionError {
   declare readonly redirect?: RedirectDetail;
 
   constructor(
-    readonly kind: "timeout" | "aborted" | "too-large" | "redirect" | "encoding" | "tls" | "network",
+    readonly kind: "timeout" | "unreachable" | "aborted" | "too-large" | "redirect" | "encoding" | "tls" | "network",
     message: string,
     options?: { readonly truncated?: boolean; readonly redirect?: RedirectDetail },
   ) {
@@ -230,7 +238,8 @@ export interface RequestSigner {
 }
 
 /** The byte transport always refuses link-local addresses and a 101 answer, so it takes neither option. */
-export interface NodeByteTransportOptions extends Omit<NodeTransportOptions, "refusesLinkLocal" | "refusesUpgrade"> {
+export interface NodeByteTransportOptions
+  extends Omit<NodeTransportOptions, "refusesLinkLocal" | "refusesUpgrade" | "reportsUnreachable"> {
   /** Absent: no response header is returned and `headers` is []. */
   readonly responseHeaders?: ResponseHeaderSelection;
   /** Absent: the request is sent unsigned, with no Authorization header, which the connection headers never carry. */
@@ -488,12 +497,30 @@ function errorCode(error: unknown): string | undefined {
   return ownCode(error) ?? (error instanceof Error ? ownCode(error.cause) : undefined);
 }
 
+/** Whether the signal stopped on its deadline, an AbortSignal.timeout(), rather than on a cancel. */
+function deadlineFired(signal: AbortSignal): boolean {
+  const reason: unknown = signal.reason;
+  return reason instanceof DOMException && reason.name === "TimeoutError";
+}
+
 /** A deadline when an AbortSignal.timeout() fired, a cancellation for any other reason. */
 function abortFailure(signal: AbortSignal): TransportError {
-  const reason: unknown = signal.reason;
-  return reason instanceof DOMException && reason.name === "TimeoutError"
+  return deadlineFired(signal)
     ? new TransportError("timeout", "The request did not finish within its time limit")
     : new TransportError("aborted", "The request was cancelled");
+}
+
+/**
+ * A deadline that fired while the request's socket was still connecting: the lookup or the TCP connect never
+ * completed, so no server was reached, and the sentence says so instead of reading as a slow answer. Whole seconds
+ * from 10 s up, tenths below.
+ */
+function unreachableFailure(endpoint: string, waitedMs: number): TransportError {
+  const seconds = waitedMs < 10_000 ? Math.round(waitedMs / 100) / 10 : Math.round(waitedMs / 1000);
+  return new TransportError(
+    "unreachable",
+    `No answer from ${endpoint} within ${seconds} seconds: check the address, the port and the network path.`,
+  );
 }
 
 /**
@@ -501,11 +528,17 @@ function abortFailure(signal: AbortSignal): TransportError {
  * callback has run and until the body ends: a network failure then is the server ending the answer early, by a FIN or
  * an RST, whichever object emits it (R20), and is never read as the answer it cut short. A TLS code stays kind "tls".
  */
-function failureFrom(error: unknown, signal: AbortSignal, overTls: boolean, responded: boolean): Error {
+function failureFrom(
+  error: unknown,
+  signal: AbortSignal,
+  stopped: () => TransportError,
+  overTls: boolean,
+  responded: boolean,
+): Error {
   // The egress guard's refusal from the Agent's lookup: already worded, and naming no address.
   if (error instanceof DatabaseConfigError) return error;
   // Whatever the runtime threw once the signal fired, the signal says which kind of stop it was.
-  if (signal.aborted) return abortFailure(signal);
+  if (signal.aborted) return stopped();
   const code = errorCode(error);
   // A TLS failure stays a failure: nothing is retried over plain HTTP or with weaker verification.
   if (code !== undefined && isTlsCode(code, overTls)) {
@@ -978,6 +1011,11 @@ interface CoreSettings {
   readonly idleSocketMs: number | undefined;
   /** The guard's lookup, the byte transport's link-local lookup, or undefined for the runtime's own. */
   readonly lookup: LookupFunction | undefined;
+  /**
+   * host:port as the connection names it, the port always written, when a deadline before the socket connected is
+   * reported as "unreachable" naming it; null when it stays "timeout".
+   */
+  readonly unreachableEndpoint: string | null;
 }
 
 /** What both factories share: the connection's Agent, its socket queue, close() and the failure mapping. */
@@ -995,7 +1033,7 @@ interface TransportCore {
  * request opens the first socket.
  */
 function transportCore(settings: CoreSettings): TransportCore {
-  const { tls, maxSockets, lookup } = settings;
+  const { tls, maxSockets, lookup, unreachableEndpoint } = settings;
   const shared: AgentOptions = {
     keepAlive: true,
     timeout: settings.idleSocketMs ?? IDLE_SOCKET_MS,
@@ -1043,6 +1081,8 @@ function transportCore(settings: CoreSettings): TransportCore {
 
   const queue = <T>(signal: AbortSignal, begin: (pending: Exchange<T>) => void): Promise<T> =>
     new Promise<T>((resolve, reject) => {
+      // When the caller handed the request over: a deadline counts the wait for a slot as well.
+      const queuedAt = Date.now();
       let outgoing: ClientRequest | undefined;
       let incoming: IncomingMessage | undefined;
       let settled = false;
@@ -1068,8 +1108,22 @@ function transportCore(settings: CoreSettings): TransportCore {
         outgoing?.destroy();
         reject(failure);
       };
-      const failWith = (error: unknown): void => fail(failureFrom(error, signal, tls !== null, responded));
-      const onAbort = (): void => fail(abortFailure(signal));
+      /*
+        How a stop by the signal is reported. A deadline on a request whose socket is still connecting (the lookup or
+        the TCP connect never completed, as for a host whose packets are dropped) reached no server, so it is
+        "unreachable", a ConnectionError naming the endpoint, when the transport was asked for it; on a connected
+        socket, or on a request still waiting for a slot, it stays "timeout". Both runtimes set `connecting` from the connect() call until the TCP connect
+        completes (measured on Node 24 and Bun 1.4.2); a TLS handshake that stalls after it is a timeout.
+      */
+      const stopped = (): TransportError => {
+        const socket = outgoing?.socket;
+        const connecting = outgoing !== undefined && (socket === null || socket === undefined || socket.connecting);
+        return unreachableEndpoint !== null && connecting && deadlineFired(signal)
+          ? unreachableFailure(unreachableEndpoint, Date.now() - queuedAt)
+          : abortFailure(signal);
+      };
+      const failWith = (error: unknown): void => fail(failureFrom(error, signal, stopped, tls !== null, responded));
+      const onAbort = (): void => fail(stopped());
       const pending: Exchange<T> = {
         sent: (request) => {
           outgoing = request;
@@ -1128,6 +1182,8 @@ interface Connection<A> {
 }
 
 interface ConnectionRules {
+  /** A deadline before the socket connected is kind "unreachable"; the text factory sets it when its caller asks. */
+  readonly reportsUnreachable: boolean;
   /**
    * A link-local or metadata literal is refused, and every socket is opened through a lookup that checks the address
    * it dials. The byte factory always sets it; the text factory sets it when its caller asks, and otherwise
@@ -1148,7 +1204,7 @@ interface ConnectionRules {
 function connectionOf<A>(
   options: NodeTransportOptions,
   address: (origin: HttpOrigin) => A,
-  { refusesLinkLocal, headersOf }: ConnectionRules,
+  { refusesLinkLocal, reportsUnreachable, headersOf }: ConnectionRules,
 ): Connection<A> {
   const { origin, tls, maxSockets } = options;
   if (!isPositiveInteger(maxSockets)) throw new DatabaseConfigError(INVALID_MAX_SOCKETS);
@@ -1168,7 +1224,11 @@ function connectionOf<A>(
   const addressed = address(origin);
   const connectionHeaders = headersOf(options.headers);
   const requestHeaderNames = requestHeaderNamesOf(options.requestHeaderNames, connectionHeaders);
-  const coreSettings = { tls, maxSockets, idleSocketMs: options.idleSocketMs, lookup };
+  // The URL's hostname keeps an IPv6 literal's brackets; the port is written even when it is the scheme's default.
+  const unreachableEndpoint = reportsUnreachable
+    ? `${new URL(endpointUrl(origin, "/")).hostname}:${origin.port}`
+    : null;
+  const coreSettings = { tls, maxSockets, idleSocketMs: options.idleSocketMs, lookup, unreachableEndpoint };
   return { address: addressed, connectionHeaders, requestHeaderNames, coreSettings };
 }
 
@@ -1250,6 +1310,7 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
   // Read once and checked before anything else, so a refused value builds nothing.
   const refusesLinkLocal = optedIn(options.refusesLinkLocal, "refusesLinkLocal");
   const refusesUpgrade = optedIn(options.refusesUpgrade, "refusesUpgrade");
+  const reportsUnreachable = optedIn(options.reportsUnreachable, "reportsUnreachable");
   const {
     address: connectionOrigin,
     connectionHeaders,
@@ -1257,6 +1318,7 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
     coreSettings,
   } = connectionOf(options, (origin) => new URL(endpointUrl(origin, "/")).origin, {
     refusesLinkLocal,
+    reportsUnreachable,
     headersOf: lowerCased,
   });
   const core = transportCore(coreSettings);
@@ -1379,7 +1441,7 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
       // Set by the transport on every request, so the Host a signer signs is the Host on the wire (byte transport design 3.3).
       host: originHost(origin),
     }),
-    { refusesLinkLocal: true, headersOf: checkedConnectionHeaders },
+    { refusesLinkLocal: true, reportsUnreachable: false, headersOf: checkedConnectionHeaders },
   );
   // Checked against the connection's headers and the request's names, so it follows connectionOf, and before the
   // core, so a refused signer builds no Agent.
