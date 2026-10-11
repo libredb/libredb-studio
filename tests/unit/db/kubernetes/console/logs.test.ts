@@ -602,7 +602,7 @@ describe("terminal escape sequences", () => {
     const one = `${ESC}[${"1".repeat(99_998)}`;
     const many = `${ESC}[1`.repeat(33_334).slice(0, 100_000);
     for (const line of [one, many]) {
-      expect(line.length).toBe(100_000);
+      expect(line).toHaveLength(100_000);
       const started = performance.now();
       expect(stripTerminalEscapes(line)).toBe(line);
       expect(performance.now() - started).toBeLessThan(250);

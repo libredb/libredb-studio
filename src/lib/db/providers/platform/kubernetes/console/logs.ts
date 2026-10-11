@@ -297,9 +297,17 @@ function containersOf(
  * `tput sgr0` writes), and every other two-byte `ESC` sequence. Each alternative starts at an ESC and its
  * runs are character classes that hold no ESC, so a match attempt stops at the next ESC and the scan stays linear in
  * the line's length; an unfinished sequence matches nothing and stays.
+ *
+ * It is built from a string that takes ESC and BEL from `String.fromCharCode`: the two control characters are the
+ * point of the pattern, and a regex literal could only spell them as control escapes, which the linters flag as a
+ * likely mistake.
  */
-// oxlint-disable-next-line no-control-regex -- control characters are exactly what a terminal sequence is made of
-const TERMINAL_ESCAPE = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[ -/]+[0-~]|[0-Z\\^-~])/g;
+const ESC = String.fromCharCode(0x1b);
+const BEL = String.fromCharCode(0x07);
+const TERMINAL_ESCAPE = new RegExp(
+  `${ESC}(?:\\[[0-?]*[ -/]*[@-~]|\\][^${BEL}${ESC}]*(?:${BEL}|${ESC}\\\\)|[ -/]+[0-~]|[0-Z\\\\^-~])`,
+  "g",
+);
 
 /**
  * A log line without its terminal escape sequences. kubectl writes the bytes to a terminal, which draws the colors;
