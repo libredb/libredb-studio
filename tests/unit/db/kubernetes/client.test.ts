@@ -241,9 +241,9 @@ describe("429 and Retry-After", () => {
   });
 
   test("a Retry-After above 5 s answers the sentence at once, with no wait and no second request", async () => {
-    const { client, transport, seams } = clientWith(() => statusAnswer(429, "TooManyRequests", "30"));
+    const { client, transport, seams } = clientWith(() => statusAnswer(429, "TooManyRequests", "6"));
     await expect(client.send({ op: "version" }, call())).rejects.toThrow(
-      "The API server is limiting requests and asked Studio to wait 30 s before it would get version in the cluster, longer than the 5 s Studio waits; run it again later.",
+      "The API server is limiting requests and asked Studio to wait 6 s before it would get version in the cluster, longer than the 5 s Studio waits; run it again later.",
     );
     expect(seams.sleeps).toEqual([]);
     expect(transport.calls).toHaveLength(1);
