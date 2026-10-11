@@ -446,7 +446,9 @@ export function transportFailure(
     case "tls":
       return new DatabendError("tls", sentences.tls(error.message), { cause: error });
     default:
-      return new DatabendError(error.kind, error.message, { cause: error });
+      // Databend's transport is built without reportsUnreachable, so "unreachable" never arrives here; were it to,
+      // a connect that never completed is a network failure, never a category of its own.
+      return new DatabendError(error.kind === "unreachable" ? "network" : error.kind, error.message, { cause: error });
   }
 }
 

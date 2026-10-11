@@ -90,6 +90,8 @@ export function createInfluxClient<Id extends string>(
     tls: options.tls,
     maxSockets: options.maxSockets,
     headers: options.headers,
+    // A connect that never completes names the host, the port and the seconds waited, as a ConnectionError.
+    reportsUnreachable: true,
   });
 
   function refuse(message: string): never {

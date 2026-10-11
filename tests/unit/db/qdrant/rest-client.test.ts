@@ -70,6 +70,7 @@ describe("what the client hands the transport", () => {
         tls: null,
         maxSockets: 4,
         headers: { "api-key": TEST_PASSWORD },
+        reportsUnreachable: true,
       },
     ]);
   });

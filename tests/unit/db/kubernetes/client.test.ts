@@ -52,6 +52,7 @@ describe("the transport the client builds", () => {
     const [options] = transport.built;
     expect(options.refusesLinkLocal).toBe(true);
     expect(options.refusesUpgrade).toBe(true);
+    expect(options.reportsUnreachable).toBe(true);
     expect(options.requestHeaderNames).toEqual(["accept"]);
     expect(options.headers).toEqual({
       authorization: `Bearer ${TEST_TOKEN}`,

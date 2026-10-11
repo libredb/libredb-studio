@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AuthenticationError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { AuthenticationError, ConnectionError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   answerFailure,
@@ -144,6 +144,15 @@ describe("transportFailure", () => {
     const error = transportFailure(LIST_NODES, new TransportError("timeout", "x"), caps) as TimeoutError;
     expect(error).toBeInstanceOf(TimeoutError);
     expect(error.message).toBe("The API server did not answer the request to list nodes in the cluster within 30 s.");
+  });
+  test("a deadline before the socket connected passes as raised: a ConnectionError naming host, port and seconds", () => {
+    const unreachable = new TransportError(
+      "unreachable",
+      "No answer from ctrl-lb.example:6443 within 10 seconds: check the address, the port and the network path.",
+    );
+    const error = transportFailure(LIST_NODES, unreachable, caps);
+    expect(error).toBe(unreachable);
+    expect(error).toBeInstanceOf(ConnectionError);
   });
   test("every other failure passes as raised", () => {
     const tls = new TransportError("tls", "certificate rejected");

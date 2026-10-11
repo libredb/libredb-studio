@@ -453,6 +453,7 @@ None: no Admin > Operations card and no tree control is offered, because InfluxD
 | A line that names a column twice | InfluxDB 3 answered with more than one column named [column], and its answer cannot say which value belongs to which column, so nothing was shown; give one of them an alias with AS. |
 | Over the response cap | The result is larger than 16 MiB, the most Studio reads for one answer; add a LIMIT or a narrower time range. |
 | The deadline | InfluxDB did not answer within [milliseconds] ms, so Studio stopped waiting and closed the connection, which stops the query on the server. |
+| No connect within the deadline | No answer from [host]:[port] within [seconds] seconds: check the address, the port and the network path. |
 | Stop | The query was cancelled. |
 | TLS | The TLS connection to InfluxDB at [endpoint] failed: check the SSL mode and the CA under SSL / TLS. [code] |
 | Unreachable | No complete answer arrived from InfluxDB at [endpoint], and the request was not sent again. [code] |

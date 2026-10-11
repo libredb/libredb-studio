@@ -511,6 +511,9 @@ function transportError(error: TransportError, context: InfluxErrorContext): Err
   switch (error.kind) {
     case "timeout":
       return new TimeoutError(S.timeout(String(context.timeoutMs)), context.type, context.timeoutMs);
+    case "unreachable":
+      // The transport's own sentence names the host, the port and the seconds waited; no server was reached.
+      return connectionError(context, code);
     case "aborted":
       return new QueryCancelledError(S.cancelled, context.type);
     case "too-large":

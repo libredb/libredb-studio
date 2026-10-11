@@ -549,6 +549,7 @@ In the table, [text] is the server's words and [endpoint] is the host and port a
 | the answer ended after the server accepted the query | InfluxDB failed while running this query after accepting it, so its reason did not reach Studio; it is in the server log. Common causes: a division by zero, a failed cast. |
 | an answer over the cap | The result is larger than 16 MiB, the most Studio reads for one answer; add a LIMIT or a narrower time range. |
 | the deadline | InfluxDB did not answer within [ms] ms, so Studio stopped waiting and closed the connection, which stops the query on the server. |
+| no connect within the deadline | No answer from [host]:[port] within [seconds] seconds: check the address, the port and the network path. |
 | cancel | The query was cancelled. |
 | TLS | The TLS connection to InfluxDB at [endpoint] failed: check the SSL mode and the CA under SSL / TLS. [code] |
 | unreachable | No complete answer arrived from InfluxDB at [endpoint], and the request was not sent again. [code] |

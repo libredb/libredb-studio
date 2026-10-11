@@ -135,6 +135,9 @@ export function createKubernetesClient(
     requestHeaderNames: ["accept"],
     refusesLinkLocal: true,
     refusesUpgrade: true,
+    // An API server whose address drops the packets never completes the connect: that is reported as the host,
+    // the port and the seconds waited, a ConnectionError, never as a slow answer.
+    reportsUnreachable: true,
   });
 
   const once = async (request: KubernetesRequest, call: KubernetesCall): Promise<NodeResponse> => {

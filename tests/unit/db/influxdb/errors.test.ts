@@ -651,6 +651,12 @@ describe("transport failures", () => {
     );
   });
 
+  test("a deadline before the socket connected is a connection error in the transport's words, never a timeout", () => {
+    const sentence =
+      "No answer from influx.example:8086 within 10 seconds: check the address, the port and the network path.";
+    expectError(mapped(failure("unreachable", sentence), V1), ConnectionError, sentence);
+  });
+
   test("aborted", () => {
     expectError(mapped(failure("aborted"), V1), QueryCancelledError, "The query was cancelled.");
   });

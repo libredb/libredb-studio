@@ -406,6 +406,7 @@ A collection is labelled "Collection"; the password field "API key or JWT"; the 
 | 400 strict mode | Studio's sentence, then the server's text verbatim; "Exact search disabled" adds the hint `"exact": false` |
 | 429 | Qdrant rate-limited the request, with the wait it asked for when it gave one; never retried |
 | a timeout | the timeout sentence, without the server's elapsed figure; on an exact count, the limit of section 5.8 |
+| no connect within the deadline | No answer from [host]:[port] within [seconds] seconds: check the address, the port and the network path. A connection error, never the timeout sentence |
 
 Every server text is shown after Studio's sentence, and a text that holds any form of the key or the JWT is withheld whole.
 Neither the key, the JWT nor any of its three parts reaches an error, a result, a log line, an audit row or a notice.

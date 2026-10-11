@@ -384,6 +384,15 @@ describe("toProviderError: a request that never completed (6.10, QE3)", () => {
     );
   });
 
+  test("a deadline before the socket connected is a connection error in the transport's words, never a timeout", () => {
+    const sentence =
+      "No answer from qdrant.test:6333 within 10 seconds: check the address, the port and the network path.";
+    const error = transport("unreachable", sentence);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error).not.toBeInstanceOf(TimeoutError);
+    expect(error.message).toBe(sentence);
+  });
+
   test("a cancel is a cancellation", () => {
     const error = transport("aborted", "The request was cancelled");
     expect(error).toBeInstanceOf(QueryCancelledError);

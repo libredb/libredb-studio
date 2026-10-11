@@ -223,6 +223,9 @@ function transportError(error: TransportError, context: QdrantErrorContext): Err
         PROVIDER,
         context.timeoutMs,
       );
+    case "unreachable":
+      // The transport's own sentence names the host, the port and the seconds waited; no server was reached.
+      return connection(error.message);
     case "aborted":
       return new QueryCancelledError("The request to Qdrant was cancelled.", PROVIDER);
     case "too-large":

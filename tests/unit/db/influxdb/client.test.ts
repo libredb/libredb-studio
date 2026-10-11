@@ -113,6 +113,7 @@ describe("what the client hands the transport", () => {
         tls: null,
         maxSockets: INFLUX_MAX_IN_FLIGHT,
         headers: { authorization: `Basic ${Buffer.from(`${TEST_USER}:${TEST_PASSWORD}`).toString("base64")}` },
+        reportsUnreachable: true,
       },
     ]);
     expect(wire.built[0].headers).toBe(INFLUXQL.headers);
