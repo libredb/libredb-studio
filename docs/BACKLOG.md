@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D290, U17 · 193
+- [Drivers and connections](#drivers-and-connections) — D1-D291, U17 · 194
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U113 · 104
@@ -3059,6 +3059,14 @@ The file passed alone and alone with coverage three times that day, and 16 paral
 It is the same shape as D153.
 
 **Done when:** the hook carries a timeout sized for a busy runner (bun's `beforeAll` takes one as its second argument), and the file passes repeated runs at the CI job's concurrency.
+
+### D291. `kubectl logs TYPE/NAME` reads one of several pods without kubectl's "Found N pods" notice
+
+When `kubectl logs deploy/web` resolves to several pods and reads one, kubectl says so on stderr, as in `Found 3 pods, using pod/web-7764779776-6cmd9`.
+The console reads the same pod (`podsOf` in `src/lib/db/providers/platform/kubernetes/console/logs.ts` returns the first of the sorted pods unless `--all-pods` is given) and says nothing, so the reader does not learn that the other pods exist.
+Found 2026-10-11 in the adversarial review of the pod-logs change (#1667); it is older than that change.
+
+**Done when:** a `kubectl logs TYPE/NAME` that resolves to more than one pod without `--all-pods` carries the notice as a result warning in kubectl's wording, with tests in `tests/unit/db/kubernetes/console/logs.test.ts` and the `logs` bullet of `docs/providers/kubernetes.md` updated.
 
 ## Value interpolation
 
