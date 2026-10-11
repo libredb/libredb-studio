@@ -337,7 +337,7 @@ No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this version reads 
 | 410 in a paged list | The walk restarts once from the beginning, then a sentence |
 | 429 | One wait of at most 5 s from `Retry-After` (1 s when absent), within the time the request has left, then a sentence |
 | 400, 422, 5xx | Studio's sentence with the answer's reason |
-| No connect within the deadline | No answer from [host]:[port] within [seconds] seconds: check the address, the port and the network path. |
+| No connect within the deadline | No answer from [host]:[port] after [seconds] seconds: check the address, the port and the network path. |
 | No answer within the deadline, once connected | The API server did not answer the request to [request] within [seconds] s. |
 
 A connect that never completes, as to an address whose packets are dropped, is a connection error, and Test Connection answers it with HTTP 503, which no browser sends again.

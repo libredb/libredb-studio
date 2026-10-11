@@ -76,7 +76,7 @@ import { Agent as HttpsAgent, type AgentOptions as HttpsAgentOptions, request as
 import { isIP, type LookupFunction, type Socket } from "node:net";
 import { checkServerIdentity, type PeerCertificate } from "node:tls";
 import { urlToHttpOptions } from "node:url";
-import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, waitedSeconds } from "@/lib/db/errors";
 import {
   assertNotLinkLocalLiteral,
   guardedLinkLocalRefusingLookup,
@@ -512,14 +512,14 @@ function abortFailure(signal: AbortSignal): TransportError {
 
 /**
  * A deadline that fired while the request's socket was still connecting: the lookup or the TCP connect never
- * completed, so no server was reached, and the sentence says so instead of reading as a slow answer. Whole seconds
- * from 10 s up, tenths below.
+ * completed, so no server was reached, and the sentence says so instead of reading as a slow answer. It names the
+ * wait this request made, never a limit: a deadline the caller started before the request (a paged walk, a retry
+ * with what is left) has spent part of itself already.
  */
 function unreachableFailure(endpoint: string, waitedMs: number): TransportError {
-  const seconds = waitedMs < 10_000 ? Math.round(waitedMs / 100) / 10 : Math.round(waitedMs / 1000);
   return new TransportError(
     "unreachable",
-    `No answer from ${endpoint} within ${seconds} seconds: check the address, the port and the network path.`,
+    `No answer from ${endpoint} after ${waitedSeconds(waitedMs)}: check the address, the port and the network path.`,
   );
 }
 
@@ -1112,8 +1112,9 @@ function transportCore(settings: CoreSettings): TransportCore {
         How a stop by the signal is reported. A deadline on a request whose socket is still connecting (the lookup or
         the TCP connect never completed, as for a host whose packets are dropped) reached no server, so it is
         "unreachable", a ConnectionError naming the endpoint, when the transport was asked for it; on a connected
-        socket, or on a request still waiting for a slot, it stays "timeout". Both runtimes set `connecting` from the connect() call until the TCP connect
-        completes (measured on Node 24 and Bun 1.4.2); a TLS handshake that stalls after it is a timeout.
+        socket, or on a request still waiting for a slot, it stays "timeout". Both runtimes set `connecting` from the
+        connect() call until the TCP connect completes (measured on Node 24 and Bun 1.4.2); a TLS handshake that
+        stalls after it is a timeout.
       */
       const stopped = (): TransportError => {
         const socket = outgoing?.socket;

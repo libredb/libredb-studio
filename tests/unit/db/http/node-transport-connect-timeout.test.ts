@@ -36,7 +36,7 @@ const { endpointUrl, httpOrigin } = await import("@/lib/db/http/endpoint");
 const { createNodeByteTransport, createNodeTransport, nodeTlsMaterial, TransportError } = await import(
   "@/lib/db/http/node-transport"
 );
-const { closeAll, eventually, httpListener } = await import("../../../helpers/node-transport-fixtures");
+const { closeAll, eventually, httpListener, silentListener } = await import("../../../helpers/node-transport-fixtures");
 
 const transports: Array<{ close(): void }> = [];
 afterEach(async () => {
@@ -45,7 +45,7 @@ afterEach(async () => {
 });
 
 const SENTENCE =
-  /^No answer from (\S+) within (\d+(?:\.\d)?) seconds: check the address, the port and the network path\.$/;
+  /^No answer from (\S+) after (\d+(?:\.\d)?) seconds?: check the address, the port and the network path\.$/;
 
 function textTransport(
   scheme: "http" | "https",
@@ -97,6 +97,23 @@ describe("a deadline before the socket connected", () => {
     const error = await failure(() => request(AbortSignal.timeout(300)));
     expect((error as InstanceType<typeof TransportError>).kind).toBe("unreachable");
     expect(named(error).endpoint).toBe("never.test:6443");
+  });
+
+  test("the seconds are the wait this request made, never a limit it was not given", async () => {
+    const request = textTransport("http", NEVER, 6443);
+    const deadline = AbortSignal.timeout(700);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const error = await failure(() => request(deadline));
+    const { seconds } = named(error);
+    expect(seconds).toBeGreaterThanOrEqual(0.2);
+    expect(seconds).toBeLessThanOrEqual(0.4);
+    expect(error.message).not.toContain("within");
+  });
+
+  test("a deadline of a few milliseconds still names a wait above zero", async () => {
+    const request = textTransport("http", NEVER, 6443);
+    const error = await failure(() => request(AbortSignal.timeout(5)));
+    expect(error.message).toContain(" after 0.1 seconds: ");
   });
 
   test("a default port is still named", async () => {
@@ -168,5 +185,14 @@ describe("a deadline after the socket connected", () => {
     expect(error.message).toBe("The request did not finish within its time limit");
     expect(listener.accepted()).toBe(1);
     await eventually(() => listener.open() === 0, "the held socket to close");
+  });
+
+  test("TLS: a server that accepts the connect and never answers the handshake is a timeout", async () => {
+    const listener = await silentListener();
+    const request = textTransport("https", "accepts.test", listener.port);
+    const error = await failure(() => request(AbortSignal.timeout(300)));
+    expect((error as InstanceType<typeof TransportError>).kind).toBe("timeout");
+    expect(error.message).toBe("The request did not finish within its time limit");
+    expect(listener.accepted()).toBe(1);
   });
 });

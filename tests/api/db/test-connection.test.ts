@@ -294,7 +294,7 @@ describe("POST /api/db/test-connection", () => {
 
     test("a connect that never completed answers 503 with the host, port and seconds, never a query", async () => {
       const sentence =
-        "No answer from 10.255.255.1:6443 within 10 seconds: check the address, the port and the network path.";
+        "No answer from 10.255.255.1:6443 after 10 seconds: check the address, the port and the network path.";
       (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(async () => {
         throw new TransportError("unreachable", sentence);
       });

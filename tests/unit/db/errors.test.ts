@@ -17,6 +17,7 @@ import {
   mapDatabaseError,
   describeOracleThinModeRefusal,
   describeOracleClientLoadFailure,
+  waitedSeconds,
 } from "@/lib/db/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 
@@ -697,5 +698,26 @@ describe("describeOracleClientLoadFailure", () => {
     expect(message).toContain("/tmp/ic");
     expect(message).toContain("something else entirely");
     expect(message).not.toContain("NJS-045");
+  });
+});
+
+describe("waitedSeconds", () => {
+  test("tenths below 10 s, never fewer than 0.1", () => {
+    expect(waitedSeconds(0)).toBe("0.1 seconds");
+    expect(waitedSeconds(30)).toBe("0.1 seconds");
+    expect(waitedSeconds(300)).toBe("0.3 seconds");
+    expect(waitedSeconds(1500)).toBe("1.5 seconds");
+    expect(waitedSeconds(9940)).toBe("9.9 seconds");
+  });
+
+  test("the singular for one second", () => {
+    expect(waitedSeconds(1000)).toBe("1 second");
+    expect(waitedSeconds(1040)).toBe("1 second");
+  });
+
+  test("whole seconds from 10 s up", () => {
+    expect(waitedSeconds(9960)).toBe("10 seconds");
+    expect(waitedSeconds(10_000)).toBe("10 seconds");
+    expect(waitedSeconds(20_232)).toBe("20 seconds");
   });
 });

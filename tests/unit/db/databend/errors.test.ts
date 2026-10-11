@@ -819,7 +819,7 @@ describe("our cancel and our deadline (X02, X07)", () => {
 
   test("a connect that never completed, which this transport does not report, would be a network failure", () => {
     const sentence =
-      "No answer from databend.test:8000 within 10 seconds: check the address, the port and the network path.";
+      "No answer from databend.test:8000 after 10 seconds: check the address, the port and the network path.";
     const error = transportFailure(new TransportError("unreachable", sentence), answered, context());
     expect(error.category).toBe("network");
     expect(error.message).toBe(sentence);

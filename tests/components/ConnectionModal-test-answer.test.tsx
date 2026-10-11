@@ -26,7 +26,7 @@ afterAll(() => {
 afterEach(cleanup);
 
 const NO_ANSWER =
-  "No answer from 10.255.255.1:5432 within 10 seconds: check the address, the port and the network path.";
+  "No answer from 10.255.255.1:5432 after 10 seconds: check the address, the port and the network path.";
 
 function labels(): string[] {
   return screen.getAllByRole("button").map((button) => button.textContent?.trim() ?? "");

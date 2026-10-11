@@ -148,7 +148,7 @@ describe("transportFailure", () => {
   test("a deadline before the socket connected passes as raised: a ConnectionError naming host, port and seconds", () => {
     const unreachable = new TransportError(
       "unreachable",
-      "No answer from ctrl-lb.example:6443 within 10 seconds: check the address, the port and the network path.",
+      "No answer from ctrl-lb.example:6443 after 10 seconds: check the address, the port and the network path.",
     );
     const error = transportFailure(LIST_NODES, unreachable, caps);
     expect(error).toBe(unreachable);
