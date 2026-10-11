@@ -91,7 +91,8 @@ Test Connection answers Studio's fixed success sentence, and shows these warning
 
 > This cluster lists more than 1,000 namespaces, so the tree shows the first 1,000; list the ones to show in the connection's Namespaces field.
 
-The API lists namespaces in name order, so when the Default namespace sorts past the first 1,000 it takes the place of the 1,000th, and the tree and plan mode's walk still read it.
+The API lists namespaces in name order, so when the Default namespace sorts past the first 1,000 and the list or one read of it shows it exists, it takes the place of the 1,000th, and the tree and plan mode's walk still read it.
+When the list answers, a Default namespace the API does not show is not drawn, past the cap or below it.
 
 `kubectl auth whoami` in the console shows who the connection is.
 

@@ -241,9 +241,21 @@ export interface NamespaceList {
 const NAMESPACE_NAME_SENTENCE =
   "The API server listed a namespace whose name is not a DNS-1123 label, which no namespace can have, so Studio does not list the namespaces; list the ones to show in the connection's Namespaces field.";
 
+/** Whether the API shows the namespace `name`: a 404 or a 403 on its read says no, any other failure is thrown. */
+async function namespaceExists(surface: KubernetesSurface, target: IndexedResource, name: string): Promise<boolean> {
+  if (!target.verbs.includes("get")) return false;
+  try {
+    await surface.client.json({ op: "get", target, name }, surface.call());
+    return true;
+  } catch (error) {
+    if (error instanceof KubernetesRequestError && (error.status === 404 || error.status === 403)) return false;
+    throw error;
+  }
+}
+
 /**
  * The namespaces from the API, the first 1,000 read one past the cap (the last of them the Default namespace when it
- * sorts past them), or `forbidden` when the list is refused.
+ * sorts past them and exists), or `forbidden` when the list is refused.
  */
 async function namespacesFromApi(surface: KubernetesSurface, index: ResourceIndex): Promise<NamespaceList> {
   const sources: readonly (readonly [group: string, resource: string])[] = [
@@ -268,8 +280,11 @@ async function namespacesFromApi(surface: KubernetesSurface, index: ResourceInde
         const kept = names.slice(0, KUBERNETES_TREE_OBJECT_CAP);
         const own = surface.endpoint.defaultNamespace;
         // The API lists namespaces in name order, so a Default namespace that sorts after the last one kept may be one
-        // the cap dropped: it stays a container, so the tree opens it and plan mode's walk reads it.
-        if (own > (kept.at(-1) as string)) kept.splice(KUBERNETES_TREE_OBJECT_CAP - 1, 1, own);
+        // the cap dropped: when the list or one read of it shows it exists, it takes the 1,000th place, so the tree
+        // opens it and plan mode's walk reads it. One the API does not show is not drawn, as below the cap.
+        if (own > (kept.at(-1) as string) && (names.includes(own) || (await namespaceExists(surface, target, own)))) {
+          kept.splice(KUBERNETES_TREE_OBJECT_CAP - 1, 1, own);
+        }
         return { names: kept, forbidden: false, capped: true };
       }
       return { names, forbidden: false };

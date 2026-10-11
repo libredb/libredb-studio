@@ -48,25 +48,59 @@ describe("listKubernetesContainers", () => {
     });
   });
 
-  test("a capped list that sorts past the Default namespace keeps it as the 1,000th, the session's", async () => {
+  test("a capped list that sorts past the Default namespace keeps it as the 1,000th once the API shows it exists", async () => {
     // The API lists namespaces in name order, as ns-0000 to ns-1199 sort.
     const padded = Array.from({ length: 1_200 }, (_unused, index) => ({
       name: `ns-${String(index).padStart(4, "0")}`,
     }));
-    const { surface } = testSurface(fakeCluster({ lists: { "/api/v1/namespaces": padded } }), { database: "ns-1100" });
+    const lists = { "/api/v1/namespaces": padded };
+    const objects = { "/api/v1/namespaces/ns-1100": { kind: "Namespace", metadata: { name: "ns-1100" } } };
+    const { surface, transport } = testSurface(fakeCluster({ lists, objects }), { database: "ns-1100" });
     const listed = await listNamespaces(surface);
     expect(listed.capped).toBe(true);
     expect(listed.names).toHaveLength(1_000);
     expect(listed.names.slice(-2)).toEqual(["ns-0998", "ns-1100"]);
+    expect(transport.calls.at(-1)?.method).toBe("GET /api/v1/namespaces/ns-1100");
     const containers = await listKubernetesContainers(surface);
     expect(containers.filter((container) => container.isSessionDefault).map((container) => container.name)).toEqual([
       "ns-1100",
     ]);
+  });
+
+  test("a capped list keeps a Default namespace it read without asking again, and drops one the API does not show", async () => {
+    const padded = Array.from({ length: 1_200 }, (_unused, index) => ({
+      name: `ns-${String(index).padStart(4, "0")}`,
+    }));
+    const lists = { "/api/v1/namespaces": padded };
     const first1000 = padded.slice(0, 1_000).map((row) => row.name);
+    const read = testSurface(fakeCluster({ lists }), { database: "ns-1000" });
+    expect((await listNamespaces(read.surface)).names.slice(-2)).toEqual(["ns-0998", "ns-1000"]);
+    expect(read.transport.calls.some((call) => call.method.startsWith("GET /api/v1/namespaces/"))).toBe(false);
     for (const database of ["ns-0005", "a-missing"]) {
-      const other = testSurface(fakeCluster({ lists: { "/api/v1/namespaces": padded } }), { database });
+      const other = testSurface(fakeCluster({ lists }), { database });
       expect((await listNamespaces(other.surface)).names).toEqual(first1000);
+      expect(other.transport.calls.some((call) => call.method.startsWith("GET /api/v1/namespaces/"))).toBe(false);
     }
+    const missing = testSurface(fakeCluster({ lists }), { database: "zz-missing" });
+    expect((await listNamespaces(missing.surface)).names).toEqual(first1000);
+    expect(missing.transport.calls.at(-1)?.method).toBe("GET /api/v1/namespaces/zz-missing");
+    const hidden = testSurface(fakeCluster({ lists, forbidden: ["/api/v1/namespaces/zz-hidden"] }), {
+      database: "zz-hidden",
+    });
+    expect((await listNamespaces(hidden.surface)).names).toEqual(first1000);
+  });
+
+  test("a capped list rethrows any other failure of the Default namespace's read", async () => {
+    const padded = Array.from({ length: 1_200 }, (_unused, index) => ({
+      name: `ns-${String(index).padStart(4, "0")}`,
+    }));
+    const cluster = fakeCluster({ lists: { "/api/v1/namespaces": padded } });
+    const { surface } = testSurface(
+      (request, line) =>
+        line === "GET /api/v1/namespaces/zz-broken" ? statusAnswer(500, "InternalError") : cluster(request, line),
+      { database: "zz-broken" },
+    );
+    await expect(listNamespaces(surface)).rejects.toThrow();
   });
 
   test("with the Namespaces field, no namespace list call is made", async () => {
