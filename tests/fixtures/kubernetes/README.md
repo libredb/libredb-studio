@@ -29,10 +29,10 @@ The `Accept` must match too: a request that asks for another `Accept` than the r
 ## The scrub
 
 Every exchange passes `tests/helpers/kubernetes-evidence-scrub.ts` before it is written.
-UIDs, credential ids and other UUIDs become `00000000-0000-4000-8000-<n>`, 32-digit hex ids a zero-padded counter, IPv4 addresses `192.0.2.<n>` and IPv6 addresses `2001:db8::<n>` (loopback stays), JWTs `<jwt>`, the personas' tokens `<token>`, and every PEM block, and every base64 string that decodes to one, a block whose body reads `PLACEHOLDER`, in the request and the answer alike, so a request built from a replayed answer is the request that was recorded.
-Every Secret outside the namespaces `shop` and `restricted` loses its values, its `stringData` and its last-applied annotation, and a Node loses its `k3s.io/node-*` annotations.
+UIDs, credential ids and other UUIDs become `00000000-0000-4000-8000-<n>`, 32-digit hex ids a zero-padded counter, IPv4 addresses `192.0.2.<n>` and IPv6 addresses `2001:db8::<n>` (loopback stays), JWTs `<jwt>`, the personas' tokens `<token>`, and every PEM block, and every base64 string or base64 run inside a longer string that decodes to one, a block whose body reads `PLACEHOLDER`, in the request and the answer alike, so a request built from a replayed answer is the request that was recorded.
+Every Secret outside the namespaces `shop` and `restricted`, a row of a Secrets Table included, loses its values, its `stringData` and its last-applied annotation, and a Node loses its `k3s.io/node-*` annotations.
 The Secrets of `shop` and `restricted` keep the fake markers `docker/kubernetes/sample.yaml` plants, so the redaction tests prove on real answers that no marker leaves the provider.
-Nothing is written while any file holds a token or a PEM text the run was given, a private key, a JWT or an address the placeholders missed.
+Nothing is written while any file holds a token or a PEM text the run was given, a private key, a JWT or an IPv4 or IPv6 address the placeholders missed.
 The captures were scanned with the pinned gitleaks image of `.github/workflows/security-scan.yml` before they were committed.
 
 ## What is built, not captured

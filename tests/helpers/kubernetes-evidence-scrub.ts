@@ -11,8 +11,8 @@
  * that was recorded: every UUID (object UIDs, the credential id of a token, a node's system UUID) becomes
  * `00000000-0000-4000-8000-<n>`, every 32-digit hex id `0…<n>`, every IPv4 address but loopback `192.0.2.<n>` (the
  * documentation range), every IPv6 address but loopback `2001:db8::<n>`, every JWT `<jwt>`, every PEM block, and every
- * base64 string that decodes to one, a fixed placeholder block. The same value gets the same placeholder for the life
- * of the scrubber, so one UID reads the same in every file of a capture.
+ * base64 string, or base64 run inside a string, that decodes to one, a fixed placeholder block. The same value gets the
+ * same placeholder for the life of the scrubber, so one UID reads the same in every file of a capture.
  *
  * Secret data is kept only in the namespaces where the sample data plants its fake markers, so the redaction tests can
  * prove the markers never leave the provider; every other Secret (a cluster's own, such as k3s's serving key) loses
@@ -20,7 +20,8 @@
  * annotations, which carry the server's arguments.
  *
  * `render` refuses the whole set, writing nothing, while any file holds a token or certificate the run was given, in
- * raw or base64 form, a PEM private key, a JWT, or an address the placeholders missed. The error names the file and
+ * raw or base64 form, a PEM private key (base64 of one inside a longer string included), a JWT, or an IPv4 or IPv6
+ * address the placeholders missed. The error names the file and
  * what it holds, never the value.
  */
 
@@ -64,11 +65,14 @@ export class KubernetesEvidenceLeakError extends Error {
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const HEX32 = /\b[0-9a-f]{32}\b/gi;
 const IPV4 = /(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])/g;
+/** A full or compressed IPv6 address, a leading `::` form included unless an IPv4 tail follows it (`::ffff:a.b.c.d`). */
 const IPV6 =
-  /(?<![\w:])(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?)(?![\w:])/gi;
+  /(?<![\w:])(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?|::[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}(?!\.\d))(?![\w:])/gi;
 const JWT = /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
 const PEM_BLOCK = /-----BEGIN ([A-Z0-9 ]+)-----[\s\S]*?-----END \1-----/g;
 const BASE64 = /^[A-Za-z0-9+/]{16,}={0,2}$/;
+/** A run of base64 inside a longer string, long enough to hold the start of a PEM block. */
+const EMBEDDED_BASE64 = /[A-Za-z0-9+/]{40,}={0,2}/g;
 const KEPT_ADDRESSES = new Set(["127.0.0.1", "0.0.0.0", "::1", "::"]);
 const LAST_APPLIED = "kubectl.kubernetes.io/last-applied-configuration";
 const SCRUBBED_VALUE = Buffer.from("<scrubbed>", "utf8").toString("base64");
@@ -88,6 +92,19 @@ function decodedPem(text: string): string | undefined {
   if (!BASE64.test(text)) return undefined;
   const decoded = Buffer.from(text, "base64").toString("utf8");
   return decoded.includes("-----BEGIN ") ? decoded : undefined;
+}
+
+/**
+ * A base64 run's PEM text and the characters before the run's first whole quantum, when the run, read from one of its
+ * four alignments, decodes to text that holds a PEM block, else undefined. A run inside a longer string can start
+ * mid-word (`key:abc<base64>`), so each alignment is tried.
+ */
+function embeddedPem(run: string): { readonly prefix: string; readonly pem: string } | undefined {
+  for (let skip = 0; skip < 4; skip += 1) {
+    const decoded = Buffer.from(run.slice(skip), "base64").toString("utf8");
+    if (decoded.includes("-----BEGIN ")) return { prefix: run.slice(0, skip), pem: decoded };
+  }
+  return undefined;
 }
 
 export class KubernetesEvidenceScrubber {
@@ -183,13 +200,13 @@ export class KubernetesEvidenceScrubber {
 
   /**
    * A Secret outside the planted namespaces keeps its keys and loses their values. An object is a Secret when its
-   * kind says so, or when the request asked for Secrets and it carries `data` or `stringData`, as a typed list's items
-   * and a metadata row do without a kind.
+   * kind says so, or when the request asked for Secrets and it has metadata, as a typed list's items do without a kind
+   * and a Table row's PartialObjectMetadata does with another: its last-applied annotation holds the values all the
+   * same. The list or Table around them has no namespace and nothing to lose.
    */
   private emptySecret(object: Record<string, unknown>, secretsRequest: boolean): void {
     const metadata = isRecord(object.metadata) ? object.metadata : undefined;
-    const holdsValues = isRecord(object.data) || isRecord(object.stringData);
-    const secret = object.kind === "Secret" || (secretsRequest && metadata !== undefined && holdsValues);
+    const secret = object.kind === "Secret" || (secretsRequest && metadata !== undefined);
     if (!secret || metadata === undefined) return;
     const namespace = typeof metadata.namespace === "string" ? metadata.namespace : "";
     if (this.secrets.plantedNamespaces.includes(namespace)) return;
@@ -211,7 +228,13 @@ export class KubernetesEvidenceScrubber {
   private text(text: string): string {
     const pem = decodedPem(text);
     if (pem !== undefined) return Buffer.from(this.text(pem), "utf8").toString("base64");
-    let out = text.replace(PEM_BLOCK, (_block, label: string) => placeholderPem(label));
+    let out = text.replace(EMBEDDED_BASE64, (run) => {
+      const found = embeddedPem(run);
+      return found === undefined
+        ? run
+        : `${found.prefix}${Buffer.from(this.text(found.pem), "utf8").toString("base64")}`;
+    });
+    out = out.replace(PEM_BLOCK, (_block, label: string) => placeholderPem(label));
     for (const token of this.secrets.tokens) if (token !== "") out = out.split(token).join("<token>");
     out = out.replace(JWT, "<jwt>");
     out = out.replace(UUID, (uuid) =>
@@ -244,7 +267,10 @@ export class KubernetesEvidenceScrubber {
     const labels: string[] = [];
     const strings = stringsOf(JSON.parse(text));
     const decoded = strings.map((value) => (BASE64.test(value) ? Buffer.from(value, "base64").toString("utf8") : ""));
-    const corpus = [...strings, ...decoded].join("\n");
+    const embedded = strings.flatMap((value) =>
+      [...value.matchAll(EMBEDDED_BASE64)].map((match) => embeddedPem(match[0])?.pem ?? ""),
+    );
+    const corpus = [...strings, ...decoded, ...embedded].join("\n");
     const base64 = (secret: string) => Buffer.from(secret, "utf8").toString("base64").replace(/=+$/, "");
     if (
       this.secrets.tokens.some((token) => token !== "" && [token, base64(token)].some((form) => corpus.includes(form)))
@@ -266,6 +292,10 @@ export class KubernetesEvidenceScrubber {
     const addresses = [...corpus.matchAll(IPV4)].map((match) => match[0]);
     if (addresses.some((address) => !KEPT_ADDRESSES.has(address) && !address.startsWith("192.0.2."))) {
       labels.push("an IPv4 address");
+    }
+    const v6 = [...corpus.matchAll(IPV6)].map((match) => match[0].toLowerCase());
+    if (v6.some((address) => !KEPT_ADDRESSES.has(address) && !address.startsWith("2001:db8:"))) {
+      labels.push("an IPv6 address");
     }
     return labels;
   }

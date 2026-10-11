@@ -172,6 +172,36 @@ describe("Secrets", () => {
     });
   });
 
+  test("a Table row of a secrets list is a Secret by the request, so its last-applied annotation goes", () => {
+    const table = {
+      kind: "Table",
+      apiVersion: "meta.k8s.io/v1",
+      metadata: { resourceVersion: "42" },
+      rows: [
+        {
+          cells: ["db", "Opaque", 1, "1d"],
+          object: {
+            kind: "PartialObjectMetadata",
+            apiVersion: "meta.k8s.io/v1",
+            metadata: {
+              name: "db",
+              namespace: "prod",
+              annotations: {
+                "kubectl.kubernetes.io/last-applied-configuration": `{"stringData":{"password":"${MARKER_VALUE}"}}`,
+                keep: "yes",
+              },
+            },
+          },
+        },
+      ],
+    };
+    const scrubbed = scrubber().exchange(exchange("/api/v1/secrets?includeObject=Metadata&limit=500", table));
+    expect(scrubbed.response.text).not.toContain(MARKER_VALUE);
+    expect(parsedText(scrubbed)).toMatchObject({
+      rows: [{ object: { kind: "PartialObjectMetadata", metadata: { name: "db", annotations: { keep: "yes" } } } }],
+    });
+  });
+
   test("a typed list's items carry no kind, and are Secrets because the request asked for Secrets", () => {
     const item = { metadata: { name: "x", namespace: "kube-system" }, data: { token: b64("value") } };
     expect(parsedText(scrubber().exchange(exchange("/api/v1/secrets?limit=500", { items: [item] })))).toEqual({
@@ -217,9 +247,55 @@ describe("plain text answers", () => {
   });
 });
 
+describe("base64 of a private key inside a longer string", () => {
+  // Not a key the run was given, so only the private-key rule can tell it.
+  const OTHER_KEY = pem("PRIVATE KEY", "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgnotarealkeybodyatall");
+  const BODY = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgnotarealkeybodyatall";
+
+  test.each([
+    [
+      "a ConfigMap value",
+      "/api/v1/namespaces/kube-system/configmaps/values",
+      { data: { values: `tls:\n  key: ${b64(OTHER_KEY)}\n` } },
+    ],
+    ["an env value", "/api/v1/namespaces/kube-system/pods/p", { spec: { env: [{ value: `KEY=${b64(OTHER_KEY)}` }] } }],
+    ["a log line", "/api/v1/namespaces/kube-system/pods/p/log?tailLines=5", `loaded ${b64(OTHER_KEY)} from disk\n`],
+    [
+      "a run that starts mid-word",
+      "/api/v1/namespaces/kube-system/pods/p/log?tailLines=5",
+      `key:abc${b64(OTHER_KEY)}\n`,
+    ],
+  ])("%s is rewritten to the placeholder block, and the set renders", (_name, path, body) => {
+    const s = scrubber();
+    const scrubbed = s.exchange(exchange(path, body));
+    const rendered = s.render({ "a.json": [scrubbed] })["a.json"];
+    expect(rendered).not.toContain(b64(OTHER_KEY).slice(0, 40));
+    expect(rendered).toContain(b64("-----BEGIN PRIVATE KEY-----\nPLACEHOLDER\n-----END PRIVATE KEY-----").slice(0, 40));
+    expect(Buffer.from(rendered, "utf8").toString()).not.toContain(BODY);
+  });
+
+  test("render refuses one the scrub did not see", () => {
+    expect(() => scrubber().render({ "a.json": { env: `KEY=${b64(OTHER_KEY)}` } })).toThrow(
+      KubernetesEvidenceLeakError,
+    );
+    expect(() => scrubber().render({ "a.json": { log: `loaded x${b64(OTHER_KEY)} from disk` } })).toThrow(
+      KubernetesEvidenceLeakError,
+    );
+  });
+});
+
 describe("render refuses a capture that still holds a credential", () => {
   test("a clean set renders as indented JSON with a final newline", () => {
     expect(scrubber().render({ "a.json": { a: 1 } })).toEqual({ "a.json": '{\n  "a": 1\n}\n' });
+  });
+
+  test("documentation and loopback IPv6 addresses render, and a leading :: address is scrubbed like any other", () => {
+    expect(() =>
+      scrubber().render({ "a.json": { a: "2001:db8::1f", b: "::1", c: "::", d: "std::vector" } }),
+    ).not.toThrow();
+    const s = scrubber();
+    const scrubbed = s.exchange(exchange("/api/v1/nodes", { address: "::a:5" }));
+    expect(parsedText(scrubbed)).toEqual({ address: "2001:db8::1" });
   });
 
   test.each([
@@ -231,6 +307,9 @@ describe("render refuses a capture that still holds a credential", () => {
     ["a JWT", { t: "eyJhbGciOi.eyJzdWIi.abc" }, "a JWT"],
     ["an address", { t: "10.43.0.1" }, "an IPv4 address"],
     ["an address inside a JSON text", { text: JSON.stringify({ ip: "10.43.0.1" }) }, "an IPv4 address"],
+    ["an IPv6 address", { f: { a: "fd00:10:42::5", b: "node at 2a01:4f8:1c1c:abcd::1" } }, "an IPv6 address"],
+    ["an IPv6 address in base64", { t: b64("server https://[fd00:10:42::9]:6443") }, "an IPv6 address"],
+    ["an IPv6 address that starts with ::", { t: "peer ::a:5 up" }, "an IPv6 address"],
   ])("%s", (_name, value, label) => {
     try {
       scrubber().render({ "leak.json": value });
