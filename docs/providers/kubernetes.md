@@ -323,7 +323,8 @@ No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this version reads 
 - Secret names are withheld from plan mode: the Secrets kind appears with its count.
 - Namespace names listed by the `Cluster` walk are withheld the same way: the Namespaces kind appears with its count, so no name of a namespace plan mode did not read reaches the model.
 - No value, label, annotation, env value, ConfigMap key or Secret key reaches the model, and the AI panels receive no Kubernetes name.
-- MCP is not offered for Kubernetes, and agent execution refuses it (B105).
+- MCP is not offered for Kubernetes, and agent execution refuses its investigation and data-analysis workflows before a run opens (B105).
+- The operations workflow opens on Kubernetes in both modes, as on every engine, because it sends no statement; its reports of sessions, slow queries, health, storage, table statistics and index usage come back empty or N/A here.
 
 ## 10. Error handling
 
