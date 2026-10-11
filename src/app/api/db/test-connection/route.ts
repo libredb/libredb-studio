@@ -6,6 +6,7 @@ import {
   withOneShotTunnel,
 } from "@/lib/db/factory";
 import { createErrorResponse } from "@/lib/api/errors";
+import { connectPhase } from "@/lib/db/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
@@ -76,16 +77,18 @@ export async function POST(req: NextRequest) {
       };
       try {
         if (!provider) {
-          provider = await createDatabaseProvider(
+          const opened = await createDatabaseProvider(
             effective,
             { queryTimeout: 10000 },
             besideWriter ? { readOnly: true } : execution,
           );
+          provider = opened;
           // The connection itself: every provider's connect() reaches the server and is
           // refused by a wrong host, port, credential or database - the SQL ones borrow a
           // pooled client, and the HTTP ones send a probe statement. So a connect that
           // returns is the fact this route exists to establish.
-          await provider.connect();
+          // A deadline met here is a ConnectionError naming the wait (connectPhase), never the query sentence.
+          await connectPhase(() => opened.connect());
         }
 
         // A connect can succeed onto something other than what was asked for, and the

@@ -304,17 +304,17 @@ describe("POST /api/db/test-connection", () => {
       expect(data.code).toBe("CONNECTION_ERROR");
     });
 
-    test("a deadline once connected answers the connection test's own sentence, never a query", async () => {
+    test("a deadline in the connect answers 503 with the connection's sentence, which a browser does not resend", async () => {
       (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(async () => {
         throw new TimeoutError("The API server did not answer the request within 10 s.", "kubernetes", 10000);
       });
       const { res, data } = await post();
-      expect(res.status).toBe(408);
-      expect(data.error).toBe(
-        "The connection test got no answer within 10 seconds: check the address, the port and the network path, and that the server is running.",
+      expect(res.status).toBe(503);
+      expect(data.error).toMatch(
+        /^The connection got no answer after \d+(?:\.\d)? seconds?: check the address, the port, the network path and that the server is running\.$/,
       );
       expect(data.error.toLowerCase()).not.toContain("query");
-      expect(data.code).toBe("TIMEOUT_ERROR");
+      expect(data.code).toBe("CONNECTION_ERROR");
     });
   });
 

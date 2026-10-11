@@ -602,6 +602,8 @@ Three refusals, each a 400 that runs nothing:
 }
 ```
 
+A deadline met while Studio opens the connection, before any statement is sent, is not a query timeout: it is answered with HTTP 503, code `CONNECTION_ERROR`, and "The connection got no answer after [seconds] seconds: check the address, the port, the network path and that the server is running."
+
 ##### MongoDB Query Format
 
 For MongoDB connections, the `sql` field should contain a JSON query:

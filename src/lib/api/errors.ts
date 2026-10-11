@@ -47,20 +47,6 @@ export interface ApiErrorResponse {
 // Error → HTTP Mapping
 // ============================================================================
 
-const QUERY_TIMEOUT = "Query timed out. Please try a simpler query or increase timeout.";
-const TEST_CONNECTION_ROUTE = "api/db/test-connection";
-
-/**
- * A deadline on the connection test ran no query, so the query sentence would send the user to rewrite one. A
- * connect that never completed is a ConnectionError with the transport's own sentence where the provider can tell
- * the phases apart; what reaches here is a deadline the provider reports as a TimeoutError, after the connect or
- * from a driver that does not say which phase it was in, so the sentence names the wait and where to look.
- */
-function connectionTestTimeout(error: TimeoutError): string {
-  const waited = error.timeout === undefined ? "in time" : `within ${error.timeout / 1000} seconds`;
-  return `The connection test got no answer ${waited}: check the address, the port and the network path, and that the server is running.`;
-}
-
 export function createErrorResponse(error: unknown, context?: { route?: string }): NextResponse<ApiErrorResponse> {
   const route = context?.route;
 
@@ -145,7 +131,7 @@ export function createErrorResponse(error: unknown, context?: { route?: string }
     logger.warn("Query timeout", { route, provider: error.provider, duration: error.timeout });
     return NextResponse.json(
       {
-        error: route === TEST_CONNECTION_ROUTE ? connectionTestTimeout(error) : QUERY_TIMEOUT,
+        error: "Query timed out. Please try a simpler query or increase timeout.",
         code: ApiErrorCode.TIMEOUT_ERROR,
         statusCode: 408,
         retryable: true,

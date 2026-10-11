@@ -248,6 +248,27 @@ export function waitedSeconds(ms: number): string {
   return seconds === 1 ? "1 second" : `${seconds} seconds`;
 }
 
+/**
+ * Runs a provider's connect(), timing it. A deadline met there ran no statement: the server was never reached, or
+ * was reached and did not answer the connect, and a driver cannot always tell which. So a TimeoutError from the
+ * connect is a ConnectionError naming the wait it made, on every route that connects, never the query sentence and
+ * never the 408 a browser sends again. The deadline is kept as its cause; every other failure passes as raised.
+ */
+export async function connectPhase(connect: () => Promise<void>): Promise<void> {
+  const started = Date.now();
+  try {
+    await connect();
+  } catch (error) {
+    if (!(error instanceof TimeoutError)) throw error;
+    const failure = new ConnectionError(
+      `The connection got no answer after ${waitedSeconds(Date.now() - started)}: check the address, the port, the network path and that the server is running.`,
+      error.provider,
+    );
+    failure.cause = error;
+    throw failure;
+  }
+}
+
 export function isTimeoutError(error: unknown): error is TimeoutError {
   return error instanceof TimeoutError;
 }

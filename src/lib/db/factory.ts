@@ -11,7 +11,7 @@ import {
   type ProviderOptions,
   type ProviderExecutionContext,
 } from "./types";
-import { DatabaseConfigError, ExecutionProfileError } from "./errors";
+import { connectPhase, DatabaseConfigError, ExecutionProfileError } from "./errors";
 import { createSSHTunnel, closeSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
@@ -880,7 +880,7 @@ export async function getOrCreateProvider(
   // DuckDB ignores it (non-admin DuckDB file access).
   const provider = await createDatabaseProvider(effectiveConnection, options, { allowExternalFileAccess });
   try {
-    await provider.connect();
+    await connectPhase(() => provider.connect());
   } catch (error) {
     // Clean up a freshly created SSH tunnel if provider connect fails to prevent FD leak
     if (tunnel && !tunnelPreexisted) {
@@ -1124,7 +1124,7 @@ export async function acquireExecutionProfileProvider(
   }
 
   try {
-    await provider.connect();
+    await connectPhase(() => provider.connect());
   } catch (error) {
     await closeFreshTunnel();
     throw error;

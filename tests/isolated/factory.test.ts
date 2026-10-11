@@ -52,7 +52,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative as relativePath } from "node:path";
 import type { DatabaseConnection, ReadOnlyStatementBudget } from "@/lib/db/types";
-import { DatabaseConfigError, ExecutionProfileError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, ExecutionProfileError, TimeoutError } from "@/lib/db/errors";
 import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
@@ -1156,6 +1156,47 @@ describe("getOrCreateProvider", () => {
 // These run on the real sqlite driver, against two real files. The victim's row is the whole
 // assertion: reading it through the attacker's call is the vulnerability, and no bookkeeping
 // count can stand in for it.
+
+describe("a deadline in the connect (connection, never query)", () => {
+  const CONNECT_SENTENCE =
+    /^The connection got no answer after \d+(?:\.\d)? seconds?: check the address, the port, the network path and that the server is running\.$/;
+
+  /** Every provider of the connection's class times out in connect() until the returned restore runs. */
+  async function connectTimesOut(conn: DatabaseConnection): Promise<() => void> {
+    const prototype = Object.getPrototypeOf(await createDatabaseProvider(conn)) as DatabaseProvider;
+    const spy = spyOn(prototype, "connect").mockImplementation(async () => {
+      throw new TimeoutError("The server did not answer within 60 s.", conn.type, 60000);
+    });
+    return () => spy.mockRestore();
+  }
+
+  test("getOrCreateProvider raises a ConnectionError with the connection's sentence and caches nothing", async () => {
+    const conn = makeConnection("postgres", { id: "pg-connect-deadline" });
+    const restore = await connectTimesOut(conn);
+    try {
+      const error = await getOrCreateProvider(conn).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect(error).not.toBeInstanceOf(TimeoutError);
+      expect((error as Error).message).toMatch(CONNECT_SENTENCE);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
+  test("acquireExecutionProfileProvider raises the same ConnectionError and caches nothing", async () => {
+    const conn = makeConnection("postgres", { id: "pg-profile-connect-deadline" });
+    const restore = await connectTimesOut(conn);
+    try {
+      const error = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toMatch(CONNECT_SENTENCE);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+});
 
 describe("getOrCreateProvider cache isolation", () => {
   let dir: string;

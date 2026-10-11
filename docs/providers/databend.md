@@ -627,7 +627,7 @@ For a user statement, after the first answer, a kill that Databend did not ackno
 > The statement did not finish within [seconds] seconds, and Databend did not acknowledge Studio's request to stop it, so it may still finish: check before running it again.
 
 With no first answer by then the cause reads "no first answer within [seconds] seconds".
-The first of these sentences reaches a caller of the provider itself, such as an embedded host's route; Studio's own routes answer it with HTTP 408 and their own sentence, "Query timed out. Please try a simpler query or increase timeout.", and Chromium sends a POST answered 408 on a kept-alive connection again, so in the browser a statement that reaches its deadline can run up to three times, each with its kill ([X27](../BACKLOG.md)).
+The first of these sentences reaches a caller of the provider itself, such as an embedded host's route; Studio's statement routes answer it with HTTP 408 and their own sentence, "Query timed out. Please try a simpler query or increase timeout.", and Chromium sends a POST answered 408 on a kept-alive connection again, so in the browser a statement that reaches its deadline can run up to three times, each with its kill ([X27](../BACKLOG.md)).
 A statement that waits for a statement slot longer than its deadline sends nothing:
 
 > Studio's Databend statement slots stayed busy for [seconds] seconds, so nothing was sent. Try again when a running statement finishes.

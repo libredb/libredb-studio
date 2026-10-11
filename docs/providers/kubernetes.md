@@ -341,7 +341,9 @@ No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this version reads 
 | No answer within the deadline, once connected | The API server did not answer the request to [request] within [seconds] s. |
 
 A connect that never completes, as to an address whose packets are dropped, is a connection error, and Test Connection answers it with HTTP 503, which no browser sends again.
-A deadline that fires once the socket connected stays a timeout.
+A deadline that fires once the socket connected stays a timeout in the provider.
+When it fires inside the connect, as for an API server that accepts the connection and never answers, every Studio route that connects, Test Connection included, answers HTTP 503 with "The connection got no answer after [seconds] seconds: check the address, the port, the network path and that the server is running."
+A deadline on a console request after the connect is answered by Studio's routes with HTTP 408 and their own query sentence ([X27](../BACKLOG.md)).
 
 A server older than the floor is refused at connect:
 
