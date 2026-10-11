@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { AuthenticationError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
@@ -328,5 +328,19 @@ describe("the default seams", () => {
     await expect(waiting).rejects.toThrow("cancelled");
     expect(DEFAULT_KUBERNETES_SEAMS.random()).toBeLessThan(1);
     expect(DEFAULT_KUBERNETES_SEAMS.now()).toBeGreaterThan(0);
+  });
+
+  test("the retry jitter draws from crypto.getRandomValues, never Math.random, and stays in [0, 1)", () => {
+    const mathRandom = spyOn(Math, "random");
+    try {
+      for (let draw = 0; draw < 50; draw += 1) {
+        const value = DEFAULT_KUBERNETES_SEAMS.random();
+        expect(value).toBeGreaterThanOrEqual(0);
+        expect(value).toBeLessThan(1);
+      }
+      expect(mathRandom).not.toHaveBeenCalled();
+    } finally {
+      mathRandom.mockRestore();
+    }
   });
 });

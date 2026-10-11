@@ -65,7 +65,8 @@ export const DEFAULT_KUBERNETES_SEAMS: KubernetesSeams = Object.freeze({
       };
       signal.addEventListener("abort", onAbort, { once: true });
     }),
-  random: () => Math.random(),
+  // crypto rather than Math.random: the jitter is no secret, but a scanner reads Math.random as a weak generator.
+  random: () => crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32,
 });
 
 /** The Accept of a JSON read: plain JSON. */
