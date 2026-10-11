@@ -370,6 +370,18 @@ describe("the pieces", () => {
       ]),
     ).toEqual(["old", "young"]);
     expect(sort([pod({ name: "b", node: "n" }), pod({ name: "a", node: "n" })])).toEqual(["b", "a"]);
+    // kubectl's afterOrZero: a zero time, a ready pod with no lastTransitionTime or a pod with no creationTimestamp,
+    // sorts after any real one.
+    const untimed = pod({ name: "ready-untimed", node: "n", ready: "2026-10-10T10:00:00Z" });
+    delete (untimed.status.conditions[0] as { lastTransitionTime?: string }).lastTransitionTime;
+    const timed = pod({ name: "ready-timed", node: "n", ready: "2026-10-10T11:00:00Z" });
+    expect(sort([untimed, timed])).toEqual(["ready-timed", "ready-untimed"]);
+    expect(sort([timed, untimed])).toEqual(["ready-timed", "ready-untimed"]);
+    const unborn = pod({ name: "no-creation", node: "n" });
+    delete (unborn.metadata as { creationTimestamp?: string }).creationTimestamp;
+    const born = pod({ name: "created", node: "n", created: "2026-10-10T11:00:00Z" });
+    expect(sort([unborn, born])).toEqual(["created", "no-creation"]);
+    expect(sort([born, unborn])).toEqual(["created", "no-creation"]);
   });
 
   test("selectors as the API reads them, sorted by key", () => {
