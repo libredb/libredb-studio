@@ -129,6 +129,14 @@ describe("containers and kinds", () => {
     expect(cluster.length + namespace.length).toBe(KUBERNETES_KIND_TABLE.length + 2);
   });
 
+  test("storageclasses is the one built-in kind whose Table printer decorates the Name cell", () => {
+    // Measured on k3s v1.35.5: a Table GET with includeObject=Metadata of every listable built-in kind, the Name cell
+    // against metadata.name; only a StorageClass's differs ("local-path (default)").
+    expect(KUBERNETES_KIND_TABLE.filter((entry) => entry.decoratedName === true).map((entry) => entry.id)).toEqual([
+      "storageclasses",
+    ]);
+  });
+
   test("a namespace named cluster is a namespace", () => {
     expect(kindsForContainerName("cluster")).toContain("pods");
   });

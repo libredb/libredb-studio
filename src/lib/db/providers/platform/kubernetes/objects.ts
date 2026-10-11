@@ -2,11 +2,14 @@
  * The tree surface: the containers (`Cluster`, then the namespaces) with the kinds each holds, the capped listings,
  * and the counts read from the same capped walk.
  *
- * A listing reads the Table with `includeObject=Metadata` in pages of 500, following `continue`, up to 1,000 objects
- * per kind and container, and takes each name from the row's metadata: the Name cell is display text, which a printer
- * may decorate (StorageClass writes `local-path (default)`). A count reads `includeObject=None` the same way one row
- * further, so up to 1,000 it is exact and past it the count is the 1,000 the tree lists, marked as a floor. `remainingItemCount` is never a count: the API omits it with selectors
- * and on the last page, and says not to rely on it.
+ * A listing reads the Table with `includeObject=None` in pages of 500, following `continue`, up to 1,000 objects
+ * per kind and container, and takes each name from the Name cell, so a page of large objects (a CRD's managedFields
+ * and last-applied annotation run to hundreds of KiB) never weighs on the response cap. A kind whose printer decorates
+ * that cell (StorageClass writes `local-path (default)`, the kind table's `decoratedName`) is read with
+ * `includeObject=Metadata` instead, and named by each row's metadata. A count reads `includeObject=None` the same way
+ * one row further, so up to 1,000 it is exact and past it the count is the 1,000 the tree lists, marked as a floor.
+ * `remainingItemCount` is never a count: the API omits it with selectors and on the last page, and says not to rely
+ * on it.
  *
  * A kind the identity may not list keeps its folder: its count answers `{ unavailable }` with Studio's sentence, so
  * one forbidden kind loses nothing else. A built-in kind this server does not serve answers the same way, and so does a
@@ -173,8 +176,8 @@ function tableReader(
 }
 
 /**
- * The rows of a capped walk, up to the cap plus `extra`. A listing reads each row's metadata, and a page of it past the
- * byte cap is read again at half the page size; a count reads the cells alone.
+ * The rows of a capped walk, up to the cap plus `extra`. A walk that reads each row's metadata reads a page past the
+ * byte cap again at half the page size; one that reads the cells alone does not need to.
  */
 async function cappedWalk(
   surface: KubernetesSurface,
@@ -380,7 +383,7 @@ export async function listKubernetesObjects(
       served,
       name === CLUSTER_CONTAINER ? undefined : name,
       0,
-      "Metadata",
+      entry.decoratedName === true ? "Metadata" : "None",
     );
     const pod = entry.group === "" && entry.id === "pods";
     return rows.map((row) => {

@@ -40,6 +40,12 @@ export interface BuiltInKind {
   readonly studioGroup?: StudioGroup;
   readonly label: string;
   readonly labelPlural: string;
+  /**
+   * The kind's Table printer writes more than the name in the Name cell, so a listing reads each row's metadata for
+   * it. Measured on k3s v1.35.5 with a Table GET of every listable kind here, the Name cell against `metadata.name`:
+   * only a StorageClass's differs, its printer appending ` (default)`.
+   */
+  readonly decoratedName?: true;
 }
 
 function kind(
@@ -50,6 +56,7 @@ function kind(
   studioGroup: StudioGroup | undefined,
   label: string,
   labelPlural: string,
+  options: { readonly decoratedName?: true } = {},
 ): BuiltInKind {
   return Object.freeze({
     id,
@@ -59,6 +66,7 @@ function kind(
     ...(studioGroup === undefined ? {} : { studioGroup }),
     label,
     labelPlural,
+    ...options,
   });
 }
 
@@ -174,7 +182,9 @@ export const KUBERNETES_KIND_TABLE: readonly BuiltInKind[] = Object.freeze([
   ),
   kind("ingressclasses", "networking.k8s.io", "ingressclass", "Cluster", NETWORK, "Ingress Class", "Ingress Classes"),
   kind("persistentvolumes", "", "persistentvolume", "Cluster", STORAGE, "Persistent Volume", "Persistent Volumes"),
-  kind("storageclasses", "storage.k8s.io", "storageclass", "Cluster", STORAGE, "Storage Class", "Storage Classes"),
+  kind("storageclasses", "storage.k8s.io", "storageclass", "Cluster", STORAGE, "Storage Class", "Storage Classes", {
+    decoratedName: true,
+  }),
   kind(
     "clusterroles",
     "rbac.authorization.k8s.io",

@@ -94,7 +94,7 @@ describe("listKubernetesObjects", () => {
     expect(await listKubernetesObjects(surface, ["Cluster"], "nodes")).toEqual([
       { path: ["Cluster", "node/k3d-0"], name: "k3d-0", kind: "nodes" },
     ]);
-    expect(transport.calls.at(-1)?.method).toBe("GET /api/v1/nodes?limit=500&includeObject=Metadata");
+    expect(transport.calls.at(-1)?.method).toBe("GET /api/v1/nodes?limit=500&includeObject=None");
   });
 
   test("lists the first 1,000 objects in pages of 500, following continue", async () => {
@@ -105,8 +105,8 @@ describe("listKubernetesObjects", () => {
     expectCalls(transport, [
       "GET /api",
       "GET /apis",
-      `GET ${PODS}?limit=500&includeObject=Metadata`,
-      `GET ${PODS}?limit=500&continue=500&includeObject=Metadata`,
+      `GET ${PODS}?limit=500&includeObject=None`,
+      `GET ${PODS}?limit=500&continue=500&includeObject=None`,
     ]);
   });
 
@@ -151,6 +151,14 @@ describe("listKubernetesObjects", () => {
     expect(await listKubernetesObjects(surface, ["shop"], "limitranges")).toEqual([]);
   });
 
+  test("a kind whose printer writes the bare name is listed without metadata and named by its Name cell", async () => {
+    const { surface, transport } = testSurface(fakeCluster({ lists: { [ROLES]: [{ name: "reader" }] } }));
+    expect(await listKubernetesObjects(surface, ["shop"], "roles")).toEqual([
+      { path: ["shop", "role/reader"], name: "reader", kind: "roles" },
+    ]);
+    expect(transport.calls.at(-1)?.method).toBe(`GET ${ROLES}?limit=500&includeObject=None`);
+  });
+
   test("the name is read from the row's metadata, not the Name cell the printer decorates", async () => {
     const { surface, transport } = testSurface(
       fakeCluster({
@@ -183,11 +191,11 @@ describe("listKubernetesObjects", () => {
 
   test("a page of metadata past the byte cap is read again at half the page size", async () => {
     const { surface, transport } = testSurface((request, line) => {
-      if (line.startsWith(`GET ${PODS}?limit=500`)) throw new TransportError("too-large", "too large");
-      return fakeCluster({ lists: { [PODS]: manyRows("web", 3) } })(request, line);
+      if (line.startsWith(`GET ${STORAGE_CLASSES}?limit=500`)) throw new TransportError("too-large", "too large");
+      return fakeCluster({ lists: { [STORAGE_CLASSES]: manyRows("sc", 3) } })(request, line);
     });
-    expect(await listKubernetesObjects(surface, ["shop"], "pods")).toHaveLength(3);
-    expect(transport.calls.at(-1)?.method).toBe(`GET ${PODS}?limit=250&includeObject=Metadata`);
+    expect(await listKubernetesObjects(surface, ["Cluster"], "storageclasses")).toHaveLength(3);
+    expect(transport.calls.at(-1)?.method).toBe(`GET ${STORAGE_CLASSES}?limit=250&includeObject=Metadata`);
   });
 
   test("one deadline bounds the whole walk, not each page: a slow list ends with the timeout sentence", async () => {
@@ -393,10 +401,10 @@ describe("a type the server stopped serving", () => {
     expect(transport.calls.map((entry) => entry.method)).toEqual([
       "GET /api",
       "GET /apis",
-      `GET ${PODS}?limit=500&includeObject=Metadata`,
+      `GET ${PODS}?limit=500&includeObject=None`,
       "GET /api",
       "GET /apis",
-      `GET ${PODS}?limit=500&includeObject=Metadata`,
+      `GET ${PODS}?limit=500&includeObject=None`,
     ]);
   });
 });
