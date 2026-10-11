@@ -198,6 +198,9 @@ type: kubernetes.io/service-account-token
 kubectl -n libredb-studio get secret studio-reader-token -o jsonpath='{.data.token}' | base64 -d
 ```
 
+A token from this Secret stays valid until the Secret is deleted, and Studio keeps it with the connection, in the browser's storage and, with `STORAGE_PROVIDER` set to `sqlite` or `postgres`, in the server's store.
+Prefer `kubectl create token` with a `--duration` you renew, and delete the Secret to revoke a token made this way.
+
 An expired or revoked token is one request and this sentence, never a retry:
 
 > The API server rejected the token or certificate (401 Unauthorized); a ServiceAccount token may have expired. Create a new token and paste it in the connection's Token field.
@@ -383,6 +386,7 @@ Kubernetes 1.30 and later is supported; 1.28 and 1.29 are read on a best-effort 
 
 The unit tests drive every module on a recording transport; the integration test replays what three k3s servers answered, captured by [`tests/live/kubernetes-evidence.ts`](../../tests/live/kubernetes-evidence.ts) from the clusters of [`docker/kubernetes/`](../../docker/kubernetes/) and described in [`tests/fixtures/kubernetes/README.md`](../../tests/fixtures/kubernetes/README.md).
 Measured on k3s 1.35.5 and 1.30.14, discovery answers the aggregated `v2` form; on 1.29.15 it answers `v2beta1`, which Studio reads the same way.
+Measured on k3s 1.29.15, 1.30.14 and 1.35.5, the log endpoint refuses an Accept of `text/plain` with a 406 NotAcceptable and answers the log as `text/plain` to the JSON Accept, so Studio asks for a log with the JSON Accept.
 Not measured: an etcd-backed managed cluster, Rancher's proxy, OpenShift (its projects fallback rests on built answers), and EKS on 443.
 
 ## 14. Known limitations
