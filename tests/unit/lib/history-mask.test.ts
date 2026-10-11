@@ -285,6 +285,42 @@ describe("maskStatementForHistory: a flag a paste from rich text hides", () => {
   });
 });
 
+// A long s (U+017F) and a Kelvin sign (U+212A) are the letters outside ASCII that case folding maps onto ASCII ones,
+// s and k; neither is a character a flag name holds, so one right next to a flag leaves the flag found.
+describe("maskStatementForHistory: a letter case folding maps onto ASCII, next to a flag", () => {
+  test.each([
+    ["a long s after the flag in a comment", `cli get pods # --token\u017f${SECRET}`, "cli get pods # --token ***"],
+    [
+      "a long s before the flag in a comment",
+      `cli get pods # \u017f--token ${SECRET}`,
+      "cli get pods # \u017f--token ***",
+    ],
+    [
+      "a Kelvin sign after the flag in a refused text",
+      `cli get pods | x --token\u212a${SECRET}`,
+      "cli get pods | x --token ***",
+    ],
+    [
+      "a Kelvin sign before the flag in a refused text",
+      `cli get pods | \u212a--token ${SECRET}`,
+      "cli get pods | \u212a--token ***",
+    ],
+    [
+      "a long s after the flag in an unclosed quote",
+      `cli get pods "--token\u017f${SECRET}`,
+      'cli get pods "--token ***',
+    ],
+    [
+      "a long s after a flag a continuation glues on",
+      `cli get pods\\\n--token\u017f${SECRET}`,
+      "cli get pods\\\n--token ***",
+    ],
+  ])("%s", (_name, text, masked) => {
+    expect(maskStatementForHistory(text, MASK)).toBe(masked);
+    expect(maskStatementForHistory(text, MASK)).not.toContain(SECRET);
+  });
+});
+
 describe("maskStatementForHistory: a word that a continuation joins from two flags", () => {
   test.each([
     [

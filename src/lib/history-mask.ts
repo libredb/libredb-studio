@@ -12,12 +12,14 @@
  * A flag a paste from rich text hides from the shell reader is still found. It is found anywhere in a word, a
  * comment or a line where no ASCII letter, digit, `_` or `-` stands right before or after it, not only where a word
  * starts: after a no-break space, a form feed, a zero-width character, a quote, a dash, a comma or a continuation,
- * and inside a quoted value or an error's text. Its name is found with quotes, backslashes or zero-width characters
- * inside it, and with dashes or minus signs written for the two hyphens it starts with. A flag followed in its word
- * by nothing but `=`, `:`, white space, quotes, backslashes or zero-width characters has the next word replaced as
- * its value.
+ * and inside a quoted value or an error's text. A letter outside ASCII right before or after it does not hide it,
+ * a long s (U+017F) or a Kelvin sign (U+212A) included, though case folding maps them onto s and k. Its name is
+ * found with quotes, backslashes or zero-width characters inside it, and with dashes or minus signs written for the
+ * two hyphens it starts with. A flag followed in its word by nothing but `=`, `:`, white space, quotes, backslashes
+ * or zero-width characters has the next word replaced as its value.
  *
- * Not masked: a flag spelled any other way, such as with a dash for a hyphen inside its name; a value written before
+ * Not masked: a flag spelled any other way, such as with a dash for a hyphen inside its name, or with a letter
+ * outside ASCII for one of its letters, a Kelvin sign for a k or a long s for an s included; a value written before
  * the flag that names it, as an error can quote one; and a value on a later line than its flag that no continuation
  * or open quote carries there.
  *
@@ -77,14 +79,22 @@ const INSIDE_NAME = /["'\\\p{Default_Ignorable_Code_Point}]/u;
 /**
  * A declared flag where it stands as a flag: not preceded by a character a flag name holds, so a flag glued to a
  * shell operator (`|--token`, `$(--token`) is found, and not followed by one, so `--tokenfile` is not.
- * Letter case is ignored: a console refuses `--TOKEN` as an unknown flag, and history still stores it.
+ * Letter case is ignored: a console refuses `--TOKEN` as an unknown flag, and history still stores it. Each ASCII
+ * letter of the name is matched in either case by a class of its own rather than by the `i` flag: under the `u` flag
+ * `INSIDE_NAME` needs, `i` folds a long s (U+017F) onto s and a Kelvin sign (U+212A) onto k, so the classes around
+ * the name would take either for a character a flag name holds and leave a flag right next to one unfound.
  * `INSIDE_NAME` characters may stand between the name's characters, and at either end they part the flag from the
  * text around it, so `--to"ken"` and `--token""value` are both found; more hyphens may lead it, since a dash is
  * read as two. `after` narrows what may follow it.
  */
 function flagPattern(flags: readonly string[], after = "(?=$|[^A-Za-z0-9_-])"): RegExp {
-  const names = flags.map((flag) => [...flag].map(escapeForPattern).join(`${INSIDE_NAME.source}*`));
-  return new RegExp(`(?<![A-Za-z0-9_-])-*(?:${names.join("|")})${after}`, "giu");
+  const names = flags.map((flag) => [...flag].map(eitherCase).join(`${INSIDE_NAME.source}*`));
+  return new RegExp(`(?<![A-Za-z0-9_-])-*(?:${names.join("|")})${after}`, "gu");
+}
+
+/** A character of a flag name as a pattern: an ASCII letter in either case, any other character as written. */
+function eitherCase(char: string): string {
+  return /^[A-Za-z]$/.test(char) ? `[${char.toLowerCase()}${char.toUpperCase()}]` : escapeForPattern(char);
 }
 
 /** A declared flag at the start of a word's text, followed by anything a flag name does not hold. */
