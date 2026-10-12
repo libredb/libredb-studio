@@ -101,7 +101,11 @@ describe("firestore parseCredentialText accepts", () => {
 
   test("a key without private_key_id leaves privateKeyId out", () => {
     const rest = { ...serviceAccount, private_key_id: undefined };
-    const expected = { type: "service_account", clientEmail: expectedServiceAccount.clientEmail, privateKey: PEM };
+    const expected = {
+      type: "service_account",
+      clientEmail: expectedServiceAccount.clientEmail,
+      privateKey: PEM,
+    } as const;
     expect(parseCredentialText(JSON.stringify(rest), rules)).toEqual(expected);
   });
 
