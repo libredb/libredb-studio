@@ -1933,7 +1933,7 @@ describe("assertObjectSurface and the object source read", () => {
         }) as never,
         expectation,
       ),
-    ).rejects.toThrow(/answered a part whose statement marker is not exactly true/);
+    ).rejects.toThrow(/answered a statement marker on a readable part; only a refusal-shaped part carries one/);
   });
 
   test("a statement with an empty sentence is refused, as a refusal with one is", async () => {

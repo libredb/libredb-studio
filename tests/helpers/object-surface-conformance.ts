@@ -1304,13 +1304,15 @@ function assertSourceDocument(
     // The neutral statement member is the refusal shape plus `statement: true`, so the key is
     // checked on its own: a `statement` holding any other value, or sitting on a readable part,
     // belongs to no member, and the viewer would draw it under the wrong heading.
-    if (
-      Object.hasOwn(part, "statement") &&
-      (!("unavailable" in part) || (part as { statement?: unknown }).statement !== true)
-    ) {
-      throw new Error(
-        `readObjectSource("${kindId}") answered a part whose statement marker is not exactly true on a refusal-shaped part`,
-      );
+    if (Object.hasOwn(part, "statement")) {
+      if (!("unavailable" in part)) {
+        throw new Error(
+          `readObjectSource("${kindId}") answered a statement marker on a readable part; only a refusal-shaped part carries one`,
+        );
+      }
+      if ((part as { statement?: unknown }).statement !== true) {
+        throw new Error(`readObjectSource("${kindId}") answered a part whose statement marker is not exactly true`);
+      }
     }
     if (isSourcePartUnavailable(part)) {
       if (part.unavailable.trim() === "") {
