@@ -4,11 +4,12 @@
  * request, and leaves everything else for Firestore to validate.
  */
 import { QueryError } from "@/lib/db/errors";
+import { LIMITS } from "../constants";
 import { isDocumentId, wireFieldPath } from "../field-path";
-import { type FirestoreTarget, idRefusal, isDocumentPath } from "../names";
+import { type FirestoreTarget, idRefusal, isDocumentPath, verbParentHasColon } from "../names";
 import { encodeLiteral, type Literal, type RestValue } from "../values";
 import { firestoreQueryError } from "./lexer";
-import { type FilterNode, type Operator, type QuerySource, splitText } from "./parser";
+import { type CursorBound, type FilterNode, type Operator, type QueryOps, type QuerySource, splitText } from "./parser";
 
 /** What a compile step needs besides the node: the text refusals quote, the database, the queried source. */
 export interface CompileScope {
@@ -27,6 +28,13 @@ export const COMPILE_SENTENCES = {
     `db.doc() compared with FieldPath.documentId() must name a document directly in ${collection}`,
   groupIdPath:
     "A value compared with FieldPath.documentId() on a collection group is a document path, with an even number of segments",
+  cursorArity: (values: number, orders: number): string =>
+    `This cursor holds ${values} values but the query has ${orders} orderBy() fields; give at most one value per orderBy() field`,
+  queryLimit: "A query's limit is an integer from 0 to 1,000",
+  aggregationLimit: "An aggregation's limit is an integer from 0 to 2,147,483,647",
+  offsetRange: "offset() takes an integer from 0 to 1,000",
+  colonQuery: (document: string, collection: string): string =>
+    `Studio cannot query a subcollection of a document whose id contains a colon (${JSON.stringify(document)}); query it through its collection group instead, starting with db.collectionGroup(${JSON.stringify(collection)})`,
 } as const;
 
 const OP_NAMES: Readonly<Record<Operator, string>> = {
@@ -116,4 +124,103 @@ export function compileFilter(node: FilterNode, scope: CompileScope): Record<str
   if (ARRAY_OPERATORS.has(node.op) && node.value.kind !== "array")
     throw fail(scope, node.at, COMPILE_SENTENCES.arrayOperand(node.op));
   return { fieldFilter: { field, op, value: encodeAt(node.value, scope, node.at) } };
+}
+
+export const COMPILE_WARNINGS = {
+  defaultLimit:
+    "Studio added .limit(100); add your own .limit(n) up to 1,000, or page with .startAfter(<last __name__>)",
+  offsetBilling: "Firestore bills every document an offset skips; page with startAfter() to read fewer documents",
+  aggregationCost:
+    "Firestore bills an aggregation one document read for each batch of up to 1,000 index entries it scans",
+} as const;
+
+/** Which request the query feeds: runQuery, runQuery with findNearest, or runAggregationQuery. */
+export type QueryMode = "query" | "vector" | "aggregate";
+
+const inRange = (value: number, low: number, high: number): boolean =>
+  Number.isInteger(value) && value >= low && value <= high;
+
+/** One cursor: at most one value per explicit orderBy, a position ordered by __name__ as a reference. */
+export function compileCursor(
+  bound: CursorBound,
+  ops: QueryOps,
+  scope: CompileScope,
+): { values: RestValue[]; before: boolean } {
+  if (bound.values.length > ops.orderBy.length) {
+    throw fail(scope, bound.at, COMPILE_SENTENCES.cursorArity(bound.values.length, ops.orderBy.length));
+  }
+  const values = bound.values.map((value, index) =>
+    isDocumentId(ops.orderBy[index].field.path)
+      ? documentIdValue(value, scope, bound.at)
+      : encodeAt(value, scope, bound.at),
+  );
+  return { values, before: bound.before };
+}
+
+/**
+ * The REST `StructuredQuery` of a chain. Only a plain runQuery gets the default limit, with its warning; an
+ * aggregation keeps the limit exactly as written, and a vector query's bound is findNearest's own limit.
+ */
+export function buildStructuredQuery(
+  ops: QueryOps,
+  mode: QueryMode,
+  scope: CompileScope,
+  warnings: string[],
+): Record<string, unknown> {
+  const { source } = scope;
+  const from =
+    source.kind === "collection"
+      ? { collectionId: source.path[source.path.length - 1] }
+      : { collectionId: source.collectionId, allDescendants: true };
+  const query: Record<string, unknown> = { from: [from] };
+  if (ops.select !== undefined) {
+    const fields =
+      ops.select.length === 0
+        ? [{ fieldPath: "__name__" }]
+        : ops.select.map((field) => ({ fieldPath: wireFieldPath(field.path) }));
+    query.select = { fields };
+  }
+  if (ops.where.length === 1) query.where = compileFilter(ops.where[0], scope);
+  if (ops.where.length > 1)
+    query.where = { compositeFilter: { op: "AND", filters: ops.where.map((node) => compileFilter(node, scope)) } };
+  if (ops.orderBy.length > 0) {
+    query.orderBy = ops.orderBy.map((order) => ({
+      field: { fieldPath: wireFieldPath(order.field.path) },
+      direction: order.direction,
+    }));
+  }
+  if (ops.start !== undefined) query.startAt = compileCursor(ops.start, ops, scope);
+  if (ops.end !== undefined) query.endAt = compileCursor(ops.end, ops, scope);
+  if (ops.offset !== undefined) {
+    if (!inRange(ops.offset.value, 0, LIMITS.maxOffset))
+      throw fail(scope, ops.offset.at, COMPILE_SENTENCES.offsetRange);
+    query.offset = ops.offset.value;
+    if (ops.offset.value > 0) warnings.push(COMPILE_WARNINGS.offsetBilling);
+  }
+  const aggregate = mode === "aggregate";
+  if (ops.limit !== undefined) {
+    if (!inRange(ops.limit.value, 0, aggregate ? LIMITS.maxAggregationInnerLimit : LIMITS.maxQueryLimit)) {
+      throw fail(scope, ops.limit.at, aggregate ? COMPILE_SENTENCES.aggregationLimit : COMPILE_SENTENCES.queryLimit);
+    }
+    query.limit = ops.limit.value;
+  } else if (mode === "query") {
+    query.limit = LIMITS.defaultQueryLimit;
+    warnings.push(COMPILE_WARNINGS.defaultLimit);
+  }
+  return query;
+}
+
+/** The document the query's verb is sent under: the collection's parent, or the root for a group. */
+export function queryParent(scope: CompileScope): readonly string[] {
+  const { source } = scope;
+  if (source.kind === "collectionGroup") return [];
+  const parent = source.path.slice(0, -1);
+  if (verbParentHasColon(parent)) {
+    throw fail(
+      scope,
+      source.at,
+      COMPILE_SENTENCES.colonQuery(parent[parent.length - 1], source.path[source.path.length - 1]),
+    );
+  }
+  return parent;
 }
