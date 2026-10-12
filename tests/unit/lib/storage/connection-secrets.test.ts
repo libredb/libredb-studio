@@ -149,6 +149,8 @@ describe("the classification is exhaustive by construction", () => {
         "apiPath",
         "namespaces",
         "tlsServerName",
+        // An AMQP port: an address, as port is, so `public`.
+        "amqpPort",
       ].sort(),
     );
   });

@@ -100,6 +100,8 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   apiPath: "edited",
   namespaces: "edited",
   tlsServerName: "edited",
+  // The AMQP port box owns it, so emptying it has to CLEAR it, as warehouse.
+  amqpPort: "edited",
   group: "preserved",
   managed: "preserved",
   seedId: "preserved",

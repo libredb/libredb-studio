@@ -24,6 +24,9 @@ const RESOLVABLE_FIELDS = [
   // `${RANCHER_CLUSTER_PATH}` is resolved rather than sent as a literal path.
   "apiPath",
   "tlsServerName",
+  // An AMQP port: part of the address a deployment keeps beside its host, so a seeded `${AMQP_PORT}` is resolved
+  // rather than sent as a literal port.
+  "amqpPort",
   // Elasticsearch API key pair (#708). A seeded `${ELASTIC_API_KEY_ID}` / `${vault:...}`
   // that is not on this list is sent literally and the cluster answers 401 on a key
   // that works. Both halves, not one: either left unresolved is a half-filled pair
@@ -63,6 +66,7 @@ interface VaultResolvableConnection {
   region?: string;
   apiPath?: string;
   tlsServerName?: string;
+  amqpPort?: string;
   apiKeyId?: string;
   apiKeySecret?: string;
   ssl?: ResolvableSsl;

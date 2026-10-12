@@ -315,6 +315,7 @@ connections:
 | `connections[].namespaces` | No | absent | Kubernetes only: the namespaces the tree lists, DNS-1123 labels separated by commas or spaces; when set, no namespace list is read, and a `database` (the Default namespace) outside the list is refused at connect. |
 | `connections[].apiPath` | No | absent | Kubernetes only: a path every request goes under, such as Rancher's `/k8s/clusters/<cluster id>`; no segment may be `api`, `apis`, `proxy`, `namespaces`, `nodes`, `services`, `pods`, `openapi` or `version`. |
 | `connections[].tlsServerName` | No | absent | Kubernetes only: the name the API server's certificate is checked against and sent as SNI, a kubeconfig's `tls-server-name`. |
+| `connections[].amqpPort` | No | absent | An AMQP 0-9-1 port as a quoted string of digits, such as `"5672"`; an unquoted number is refused, naming the field. Read by no engine yet. |
 | `connections[].authSource` | No | — | MongoDB: the database its credentials live in (`admin` in the ordinary deployment). Without it the driver checks the user against the database being opened, which reports a credentials error |
 | `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An etcd, Oxia, S3 or Kubernetes connection refuses `mcp: true` when the file loads: MCP is not offered for it |
 
@@ -432,7 +433,7 @@ connections:
 4. A literal password is used as written and logs a warning once per connection.
 5. With `SEED_LITERAL_VALUES=true`, steps 2 to 4 do not happen: every value is used as written (see [Literal values written by a platform](#literal-values-written-by-a-platform))
 
-**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`, `apiKeySecret`, and the TLS material under `ssl`: `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey`.
+**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`, `apiKeySecret`, `amqpPort`, and the TLS material under `ssl`: `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey`.
 
 ### Literal values written by a platform
 
@@ -469,7 +470,7 @@ The part before `#` is the KV v2 path (`<mount>/data/<name>`) and the part after
 
 **Quote the value.** YAML reads an unquoted `#` as the start of a comment, so `password: ${vault:secret/data/prod/postgres#password}` sets the password to the literal text `${vault:secret/data/prod/postgres` and drops the key. The quotes above are not optional.
 
-Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`, `apiKeySecret`, `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey`).
+Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`, `apiKeySecret`, `amqpPort`, `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey`).
 A reference with no `#key` fails when the connection is opened.
 
 A Vault reference is read lazily, one connection at a time:

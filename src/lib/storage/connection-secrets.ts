@@ -69,6 +69,8 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   apiPath: "public",
   namespaces: "public",
   tlsServerName: "public",
+  // An AMQP port: an address, as `port` is. It grants nothing.
+  amqpPort: "public",
   managed: "public",
   seedId: "public",
   agentUser: "public",

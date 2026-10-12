@@ -198,6 +198,9 @@ export const SeedConnectionSchema = z
     apiPath: z.string().optional(),
     namespaces: z.string().optional(),
     tlsServerName: z.string().optional(),
+    // An AMQP 0-9-1 port, digits as a string; read by no engine yet. Declared for the reason skipObjectScan is: zod
+    // strips an undeclared key silently. A string, not a number, as the connection field is; resolvable as `host` is.
+    amqpPort: z.string().optional(),
   })
   .superRefine((conn, ctx) => {
     if (conn.type === "elasticsearch") return;

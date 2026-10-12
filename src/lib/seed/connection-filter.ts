@@ -111,6 +111,9 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
         apiPath: conn.apiPath,
         namespaces: conn.namespaces,
         tlsServerName: conn.tlsServerName,
+        // The AMQP port, copied for the reason skipObjectScan is: dropped here, a seeded port would never reach the
+        // connection the file declared it for.
+        amqpPort: conn.amqpPort,
         createdAt: new Date(),
         managed: conn.managed ?? true,
         roles: conn.roles,

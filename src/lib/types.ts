@@ -426,6 +426,10 @@ export interface DatabaseConnection {
    */
   location?: string;
   /**
+   * An AMQP 0-9-1 port, digits only. Read by no engine yet.
+   */
+  amqpPort?: string;
+  /**
    * Read no catalog when this connection opens.
    *
    * For a connection whose owner holds tens of thousands of objects, even the two cheap

@@ -1151,6 +1151,9 @@ export function connectionIdentity(connection: DatabaseConnection): string {
               connection.sshTunnel.port,
               connection.sshTunnel.username,
             ],
+        // An AMQP port names the listener a read reaches, which can be another server; over-keying is the safe direction.
+        // Appended only when set and tagged, so every connection without it keeps the identity it had.
+        ...(connection.amqpPort ? [`amqpPort=${connection.amqpPort}`] : []),
       ]),
     )
     .digest("hex");

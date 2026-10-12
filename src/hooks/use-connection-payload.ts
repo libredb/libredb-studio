@@ -149,6 +149,9 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   apiPath: "resolution",
   tlsServerName: "resolution",
   namespaces: "cosmetic",
+  // An AMQP port: the listener a read is sent to, which can be another server than host and port reach, so a copy
+  // differing here does not resolve to the seed's connection.
+  amqpPort: "resolution",
   ssl: "nested",
   sshTunnel: "nested",
 };
