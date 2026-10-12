@@ -670,15 +670,15 @@ describe("BottomPanel", () => {
     /**
      * The export dialog and the grid speak about the SAME offer.
      *
-     * `hasMore` alone is not it. Since the preview cap left the SQL text, a 50-row table
-     * preview on Cassandra or Elasticsearch fills its bound exactly and the route answers
-     * `hasMore: true` — while those providers declare `supportsResultPagination: false`
-     * and the grid offers no control. The shortfall sentence would then tell the user to
-     * "load them first" about an action that exists nowhere in the product.
+     * `hasMore` alone is not it. On a 50-row table preview on Cassandra or Elasticsearch
+     * the route answers `hasMore: true` when its probe found a row past the bound, while
+     * those providers declare `supportsResultPagination: false` and the grid offers no
+     * control. Without a page to offer, the menu says the result was cut instead of
+     * telling the user to load rows nothing can load.
      */
     test.each([
       [true, "More rows are still on the server — load them first to include them."],
-      [false, null],
+      [false, "The result was cut, so the file is not the whole result."],
     ])("with paging %p the export dialog's shortfall follows the grid's offer", async (supported, shortfall) => {
       const props = pagedProps({ supportsResultPagination: supported });
       const { getByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
@@ -687,12 +687,46 @@ describe("BottomPanel", () => {
       const scope = within(document.body as HTMLElement).getByTestId("export-scope");
 
       expect(capturedResultsGridProps.supportsResultPagination).toBe(supported);
-      if (shortfall === null) {
-        expect(scope.textContent).toBe("Writes all 1 row.");
-      } else {
-        expect(scope.textContent).toContain(shortfall);
-      }
+      expect(scope.textContent).toContain(shortfall);
+      if (!supported) expect(scope.textContent).toContain("Writes the 1 row shown.");
     });
+
+    test.each([true, false])(
+      "a provider-cut result with paging %p reads as the rows shown, names no load, and counts 3",
+      async (supported) => {
+        const props = pagedProps(
+          { supportsResultPagination: supported },
+          {
+            currentTab: {
+              id: "tab-1",
+              name: "Query 1",
+              query: "SELECT * FROM orders",
+              resultQuery: "SELECT * FROM orders",
+              result: {
+                rows: [{ id: 1 }, { id: 2 }, { id: 3 }],
+                fields: ["id"],
+                rowCount: 3,
+                executionTime: 3,
+                pagination: { limit: 500, offset: 0, hasMore: false, totalReturned: 3, wasLimited: true },
+              },
+              isExecuting: false,
+              type: "sql" as const,
+            },
+          },
+        );
+        const { getByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+        await userEvent.click(getByText("Export"));
+        const body = within(document.body as HTMLElement);
+        const scope = body.getByTestId("export-scope");
+
+        expect(scope.textContent).toContain("Writes the 3 rows shown.");
+        expect(scope.textContent).toContain("The result was cut, so the file is not the whole result.");
+        expect(scope.textContent).not.toContain("Writes all");
+        expect(scope.textContent).not.toContain("load them first");
+        expect(body.getByTestId("export-row-count").textContent).toBe("3");
+      },
+    );
   });
 
   describe("the Graph tab (graph view spec)", () => {

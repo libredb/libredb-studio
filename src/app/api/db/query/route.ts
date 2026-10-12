@@ -3,6 +3,8 @@ import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-prob
 import { NextRequest, NextResponse } from "next/server";
 import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
+import { bridgeAbortToCancel } from "@/lib/api/abort-cancel";
+import { QueryCancelledError } from "@/lib/db/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
@@ -266,12 +268,19 @@ export async function POST(req: NextRequest) {
     const scope = newQueryCallScope();
     let openTransaction: OpenQueryTransactionOutcome = "none";
 
-    // Pass queryId to provider for cancellation tracking
+    // Pass queryId to provider for cancellation tracking, and cancel it if the request goes away while it runs.
+    // A cancel is idempotent, and the bridge cancels only the id this request bound, so it needs no owner check;
+    // the multi-query route's docblock (`src/app/api/db/multi-query/route.ts`) gives both rules in full.
     const supportsCancel = supportsQueryCancel(provider);
+    const cancelId = supportsCancel ? queryId : undefined;
+    // A request already gone starts nothing.
+    if (req.signal.aborted) throw new QueryCancelledError("The query was cancelled.");
+    const release = bridgeAbortToCancel(req.signal, provider, cancelId, "api/db/query");
     let result: Awaited<ReturnType<typeof provider.query>>;
     try {
-      result = await provider.query(probe.query, bound.params, supportsCancel ? queryId : undefined, scope);
+      result = await provider.query(probe.query, bound.params, cancelId, scope);
     } finally {
+      release();
       if (endsOpenQueryTransactions(provider)) {
         openTransaction = await provider.endOpenQueryTransaction(scope);
       }

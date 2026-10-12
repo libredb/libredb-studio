@@ -424,7 +424,8 @@ export interface StudioWorkspaceProps {
    * already on screen. A host that cannot apply a positive `offset` should leave
    * `capabilities.supportsResultPagination` undeclared and report `pagination.hasMore: false`:
    * `pageOfferFor` offers the control only when both are true, and `pagination.wasLimited`
-   * drives only the "limited" badge.
+   * drives the "limited" badge, and the export menu's cut sentence whenever no next page is
+   * offered.
    */
   onQueryExecute: (
     connectionId: string,

@@ -688,23 +688,40 @@ database where an HTTP URL would mean nothing.
 default port from `8123` to `8443`
 ([the transport constructor](../../src/lib/db/providers/sql/clickhouse/http-transport.ts)). There is no
 separate CA/client-certificate plumbing the way Couchbase's `node:https` path has: the transport
-uses the runtime's own `fetch`, whose TLS trust follows the platform's default certificate store.
+uses the runtime's own `fetch`, so the set of trusted CAs is the runtime's, not the connection's.
+Under Node (the Docker image and `npx @libredb/studio`) that set is Node's bundled CA list plus
+whatever `NODE_EXTRA_CA_CERTS` names; it does NOT include the operating system's store unless
+`NODE_USE_SYSTEM_CA=1` is set, and the runner image ships no OS store at all (no `ca-certificates`
+package, no `/etc/ssl/certs`). Under Bun (`bun dev`) `fetch` reads the OS store by default.
 
 `verify-system` (D26) is the mode that DESCRIBES this transport: `fetch` always verifies the chain
-against the platform's certificate store and cannot be told otherwise, so of the four non-`disable`
+against the runtime's trusted CAs and cannot be told otherwise, so of the four non-`disable`
 modes it is the only one whose name matches the handshake. `require` here does not mean "encrypt
 without checking" the way it does on the driver-based providers — nothing in this transport can skip a
 check — and `verify-ca`/`verify-full` cannot pin against a pasted CA. Nothing in the code branches on
 which one is selected.
 
-Two consequences worth stating plainly:
+Three consequences worth stating plainly:
 
 - **`ssl.caCert`, `ssl.clientCert` and `ssl.rejectUnauthorized` are not honoured.** Global `fetch`
   cannot carry a custom CA or relax verification without an undici `Agent` as its `dispatcher`, and
-  undici is not a dependency. A self-hosted node behind a **self-signed** certificate therefore fails
-  verification; ClickHouse Cloud and any node with a publicly-trusted certificate work. Honouring
-  them needs the `node:https` path Couchbase already has, which is a follow-up rather than a
-  limitation of the scheme.
+  undici is not a dependency. A self-hosted node behind a **self-signed** or **private-CA**
+  certificate therefore fails verification out of the box; ClickHouse Cloud and any node with a
+  publicly-trusted certificate work. Honouring them per connection needs the `node:https` path
+  Couchbase already has, which is a follow-up rather than a limitation of the scheme.
+- **A private CA is trusted per deployment, not per connection.** Start the server with
+  `NODE_EXTRA_CA_CERTS` naming a PEM file that holds the CA, or the server's own certificate when
+  it is self-signed. It adds to the bundled list, so publicly-trusted endpoints keep working.
+  Measured on 2026-10-12 with the `0.18.3` image against a ClickHouse 26.7 node on `8443`, through
+  `POST /api/db/test-connection`:
+
+  | Deployment setting | Private-CA certificate | Self-signed certificate |
+  |---|---|---|
+  | none | `UNABLE_TO_VERIFY_LEAF_SIGNATURE` | `DEPTH_ZERO_SELF_SIGNED_CERT` |
+  | CA pasted as `ssl.caCert` (`verify-ca`) | `UNABLE_TO_VERIFY_LEAF_SIGNATURE` | — |
+  | CA in `/etc/ssl/certs` only | `UNABLE_TO_VERIFY_LEAF_SIGNATURE` | — |
+  | CA in `/etc/ssl/certs` + `NODE_USE_SYSTEM_CA=1` | connects | — |
+  | `NODE_EXTRA_CA_CERTS=<CA or server cert>` | connects | connects |
 - **A pasted `https://` URL keeps its TLS intent.** `parseConnectionString` returns
   `sslMode: "require"` for that scheme and the connection form applies it, because the parsed
   host/port fields alone cannot express TLS — without it the connection would go out as plaintext

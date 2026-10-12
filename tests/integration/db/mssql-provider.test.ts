@@ -1953,6 +1953,21 @@ describe("MSSQLProvider", () => {
       expect(typeof first.totalSize).toBe("string");
       expect(typeof first.totalSizeBytes).toBe("number");
     });
+
+    test("pins row_count query expression to index_id IN (0, 1) without allocation_units inflation (#1406)", async () => {
+      let executedSql = "";
+      mockQueryFn = async (sql: string) => {
+        executedSql = sql;
+        return { recordset: [], rowsAffected: [0] };
+      };
+
+      await provider.connect();
+      await provider.getTableStats();
+
+      expect(executedSql).toContain("index_id IN (0, 1)");
+      expect(executedSql).toContain("ISNULL(p.row_count, 0)");
+      expect(executedSql).not.toContain("SUM(p.rows) AS row_count");
+    });
   });
 
   // =========================================================================

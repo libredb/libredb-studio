@@ -294,9 +294,12 @@ A spelling Studio does not connect with fills no field and says what to paste in
 An `@` past the address part is refused even after the sign-in's own `@`, since a password can hold an unencoded `@` before its `/`; percent-encoded, as in `databend://root:pw@host:443/db?role=analyst%40corp`, the text reads one way.
 `tls_ca_file` is not applied, nor is an `sslmode` other than `disable`, `require` and `enable`: each gets its caution above.
 Such an `sslmode` leaves SSL mode as it was, so a DSN without a port gets the scheme's: 80 for `databend+http://` and 443 for `databend://` and `databend+https://`.
-Any other parameter, `warehouse` and the sign-in ones refused above aside, is not applied either: it is named in a warning, never valued, and the other fields are filled in:
+Any other parameter, `warehouse` and the sign-in ones refused above aside, is not applied either, and the other fields are filled in.
+A parameter BendSQL reads by name, such as `role` or `tenant`, is named in a warning and never valued; any other, a session setting or a text with no `name=`, is only counted, since an unencoded `&` inside a value makes the rest of the value read as a name:
 
 > Not applied: [names]. Studio's Databend connection takes host, port, user, password, database, warehouse and TLS; the other fields were filled in.
+
+> Not applied: role and 1 other parameter. Studio's Databend connection takes host, port, user, password, database, warehouse and TLS; the other fields were filled in.
 
 The SSL / TLS panel and the SSH tunnel are offered.
 `readOnly: true` is refused for this type, because the provider does not enforce a read-only mode: a seed file that sets it is refused when the file loads, and a connection from the API before any provider is built.

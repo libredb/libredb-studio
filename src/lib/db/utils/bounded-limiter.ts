@@ -198,6 +198,8 @@ export interface RunRegistry {
   begin(queryId: string | undefined, deadline: AbortSignal): RunHandle;
   /** Aborts a running or queued run; false for an unknown id. */
   cancel(queryId: string): boolean;
+  /** The runs begun and not yet ended, with or without a queryId, running or queued. */
+  runsInFlight(): number;
 }
 
 /** The browser's `q-<epoch ms>-<id>` fits, and nothing a client could use to make the registry hold a large key. */
@@ -212,21 +214,38 @@ const CANCELLED_SENTENCE = "The query was cancelled.";
  * alone, with no owner check, as `POST /api/db/cancel` does for every cancel-capable provider, and only a client
  * that reuses its own id meets `DuplicateRunError`.
  *
- * A run's signal aborts at its deadline or at its cancel, whichever comes first. Nothing bridges a dropped HTTP
- * request to a cancel, so a run abandoned without Stop ends at its deadline.
+ * A run's signal aborts at its deadline or at its cancel, whichever comes first. `POST /api/db/query` and
+ * `POST /api/db/multi-query` cancel the run they bound when their request is aborted (`src/lib/api/abort-cancel.ts`);
+ * a run begun by any other caller and abandoned ends at its deadline.
  */
 export function createRunRegistry(): RunRegistry {
   const runs = new Map<string, AbortController>();
+  // Counted after both refusals below, so a refused begin counts nothing; each handle subtracts once.
+  let inFlight = 0;
+  const counted = (): (() => void) => {
+    inFlight += 1;
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      inFlight -= 1;
+    };
+  };
   return {
     begin(queryId, deadline) {
-      if (queryId === undefined) return { signal: deadline, end: () => {} };
+      if (queryId === undefined) {
+        const uncount = counted();
+        return { signal: deadline, end: uncount };
+      }
       if (typeof queryId !== "string" || !QUERY_ID.test(queryId)) throw new QueryError(QUERY_ID_SENTENCE);
       if (runs.has(queryId)) throw new DuplicateRunError(DUPLICATE_RUN_SENTENCE);
       const controller = new AbortController();
       runs.set(queryId, controller);
+      const uncount = counted();
       return {
         signal: AbortSignal.any([deadline, controller.signal]),
         end() {
+          uncount();
           // Only this run's own entry: once it ended, the same id may name a newer run, which must stay cancellable.
           if (runs.get(queryId) === controller) runs.delete(queryId);
         },
@@ -238,5 +257,6 @@ export function createRunRegistry(): RunRegistry {
       controller.abort(new QueryCancelledError(CANCELLED_SENTENCE));
       return true;
     },
+    runsInFlight: () => inFlight,
   };
 }

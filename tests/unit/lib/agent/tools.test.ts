@@ -512,7 +512,13 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
 
     const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
     if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
-    const events: AgentRunEvent[] = [{ kind: "tool-completed", atMs: 1, stepId: "step_1", artifact: outcome.artifact }];
+    // The draft event belongs here: `presentableArtifact` counts a read the RUN WROTE, and without
+    // it this fixture is a run that read nothing it could present - which is the other test's case,
+    // not this one. A real `run_read_query` emits both.
+    const events: AgentRunEvent[] = [
+      { kind: "statement-drafted", atMs: 1, stepId: "step_1", sql: "SELECT id FROM orders", rationale: "the rows" },
+      { kind: "tool-completed", atMs: 2, stepId: "step_1", artifact: outcome.artifact },
+    ];
 
     const report = composeReportTool(
       h.context,
@@ -581,6 +587,53 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
     expect(report.modelText).toContain('source to "artifact"');
     // And NOT the instruction that loses the id it was holding.
     expect(report.modelText).not.toContain("remove correlationId");
+  });
+
+  /*
+    THE ORDER IS ONLY AN INSTRUCTION WHERE THE OTHER CALL CAN SUCCEED.
+
+    `presentation belongs to present_answer - call present_answer with it first, then call this tool
+    again without it` was measured as a fix and shipped as one. It is now the single most frequent
+    refusal in the ledger: 382 deliveries, beside 188 `present_answer: ANSWER_NOT_A_DATA_READ`. The
+    two numbers are one loop. A run that has drafted no read has nothing presentable, so the tool it
+    is being sent to refuses it, and it comes back to `compose_report` with the same argument.
+
+    Measured 2026-10-11: `granite4:1b` analyze lost its one failing run to FIFTY refusals, and
+    `qwen2.5:3b-instruct` analyze to forty-seven, while the passing runs of the same cells finished
+    in seventeen to eighty-eight seconds.
+
+    `compose_report` does not need `presentation` at all. Where the run holds a presentable read the
+    order stands - present it, then report. Where it does not, the only move that ends the loop is to
+    drop the field, and saying so is the difference between an instruction and a wall.
+  */
+  test("a field whose other tool would refuse is told to drop it, not to call that tool", async () => {
+    const h = harness();
+
+    // A run that read the SCHEMA only: nothing here is a data read, so `present_answer` has nothing
+    // it can accept - which is the shape the 188 refusals were measured on.
+    const schema = await inspectSchemaTool(h.context, {});
+    if (schema.kind !== "completed") throw new Error(`expected a completed inspect, got ${schema.kind}`);
+    const events: AgentRunEvent[] = [{ kind: "tool-completed", atMs: 1, stepId: "step_1", artifact: schema.artifact }];
+
+    const report = composeReportTool(
+      h.context,
+      { runId: h.context.runId, events },
+      {
+        claims: [
+          {
+            claim: "orders is a table",
+            evidence: [{ source: "artifact", correlationId: schema.artifact.correlationId }],
+          },
+        ],
+        presentation: { kind: "table" },
+      },
+    );
+
+    if (report.kind !== "unavailable") throw new Error(`expected unavailable, got ${report.kind}`);
+    expect(report.reasonCode).toBe("INVALID_TOOL_INPUT");
+    // The move that ends the loop, not the one that restarts it.
+    expect(report.modelText).toContain("without it");
+    expect(report.modelText).not.toContain("call present_answer with it first");
   });
 
   /*
