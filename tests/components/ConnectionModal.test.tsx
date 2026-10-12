@@ -514,6 +514,7 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
   // Mirrored from the real entry; tests/unit/lib/db-ui-config.test.ts pins the real one.
   rabbitmq: {
     fieldLabels: {
+      host: "Host",
       port: "Management port",
       amqpPort: "AMQP port",
       apiPath: "Path prefix",
@@ -1758,6 +1759,7 @@ describe("ConnectionModal", () => {
       "apiPath",
       "namespaces",
       "tlsServerName",
+      "amqpPort",
     ] as const;
 
     /** Each connection-field label a render draws, keyed by the input it names (`htmlFor`). */
@@ -1932,6 +1934,22 @@ describe("ConnectionModal", () => {
         },
         MOCK_FIELD_COPY.kubernetes.fieldHints ?? {},
       ],
+      // The Host row's two boxes under the words the provider's sentences use, and the AMQP port and Path prefix boxes;
+      // every declared hint, the consent box's among them, because the default form's SSL Mode is disable.
+      [
+        "rabbitmq",
+        "rabbitmq",
+        {},
+        {
+          host: "Host",
+          port: "Management port",
+          user: "Username",
+          password: "Password",
+          amqpPort: "AMQP port",
+          apiPath: "Path prefix",
+        },
+        MOCK_FIELD_COPY.rabbitmq.fieldHints ?? {},
+      ],
       ["sqlite", "sqlite", {}, FILE_PATH, {}],
       ["duckdb", "duckdb", {}, FILE_PATH, {}],
       ["libredb", "libredb", {}, FILE_PATH, {}],
@@ -1966,14 +1984,14 @@ describe("ConnectionModal", () => {
         "postgres",
         "postgres",
         {},
-        labelsFor("host", "user", "password", "database"),
+        labelsFor("host", "port", "user", "password", "database"),
         ["host", "port", "user", "password", "database"],
       ],
       [
         "mongodb",
         "mongodb",
         {},
-        labelsFor("host", "user", "password", "database", "authSource"),
+        labelsFor("host", "port", "user", "password", "database", "authSource"),
         ["host", "port", "user", "password", "database", "authSource"],
       ],
       [
@@ -1990,37 +2008,37 @@ describe("ConnectionModal", () => {
         "trino",
         "trino",
         {},
-        labelsFor("host", "user", "password", "database", "schema"),
+        labelsFor("host", "port", "user", "password", "database", "schema"),
         ["host", "port", "user", "password", "database", "schema"],
       ],
       [
         "cassandra",
         "cassandra",
         {},
-        labelsFor("host", "user", "password", "database", "localDataCenter"),
+        labelsFor("host", "port", "user", "password", "database", "localDataCenter"),
         ["host", "port", "user", "password", "database", "localDataCenter"],
       ],
-      ["libsql", "libsql", {}, labelsFor("host", "user", "password"), ["host", "port", "user", "password"]],
+      ["libsql", "libsql", {}, labelsFor("host", "port", "user", "password"), ["host", "port", "user", "password"]],
       [
         "elasticsearch",
         "elasticsearch",
         {},
-        labelsFor("host", "user", "password", "apiKeyId", "apiKeySecret"),
+        labelsFor("host", "port", "user", "password", "apiKeyId", "apiKeySecret"),
         ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
       ],
       [
         "kafka",
         "kafka",
         {},
-        labelsFor("host", "user", "password", "saslMechanism"),
+        labelsFor("host", "port", "user", "password", "saslMechanism"),
         ["host", "port", "user", "password", "saslMechanism"],
       ],
-      ["etcd", "etcd", {}, labelsFor("host", "user", "password"), ["host", "port", "user", "password"]],
+      ["etcd", "etcd", {}, labelsFor("host", "port", "user", "password"), ["host", "port", "user", "password"]],
       [
         "s3",
         "s3",
         {},
-        labelsFor("host", "user", "password", "database", "region"),
+        labelsFor("host", "port", "user", "password", "database", "region"),
         ["host", "port", "user", "password", "database", "region", "allowInsecureAuth"],
       ],
       ["sqlite", "sqlite", {}, labelsFor("database"), ["database"]],
@@ -2263,6 +2281,22 @@ describe("ConnectionModal: RabbitMQ's AMQP port and Path prefix", () => {
       mockFormOverrides = { type };
       rerender(React.createElement(ConnectionModal, createDefaultProps()));
       expect(container.querySelector("#amqpPort")).toBeNull();
+    }
+  });
+
+  test("names the Host row's two boxes Host and Management port, the words the provider's sentences use", () => {
+    mockFormOverrides = { type: "rabbitmq" };
+    const { container, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(container.querySelector('label[for="host"]')?.textContent).toBe("Host");
+    expect(container.querySelector('label[for="port"]')?.textContent).toBe("Management port");
+
+    // A port label is drawn only where one is declared, and the shipped table declares it for RabbitMQ alone.
+    for (const type of Object.keys(MOCK_CONNECTION_FIELDS)
+      .filter((t) => t !== "rabbitmq")
+      .concat("postgres")) {
+      mockFormOverrides = { type };
+      rerender(React.createElement(ConnectionModal, createDefaultProps()));
+      expect(container.querySelector('label[for="port"]')).toBeNull();
     }
   });
 

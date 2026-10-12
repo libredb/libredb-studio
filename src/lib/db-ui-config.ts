@@ -1024,6 +1024,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     hostAcceptsUri: ["http", "https"],
     connectionFields: ["host", "port", "user", "password", "amqpPort", "apiPath", "allowInsecureAuth"],
     fieldLabels: {
+      host: "Host",
       port: "Management port",
       amqpPort: "AMQP port",
       apiPath: "Path prefix",
@@ -1134,8 +1135,8 @@ export function offersSslPanel(type: DatabaseType): boolean {
  * The fallback is the caller's because the dialog's own words are not one table: the `database`
  * field alone reads "Database Name", "Database File Path" or "Database Name (optional override)"
  * by the mode the form is in, and the per-type branches still choose several. `port` shares the
- * host row's label and draws none of its own, so a label declared for it has nowhere to appear;
- * a hint declared for it does.
+ * host row's label, so the dialog draws one for it only where one is declared: an engine that
+ * declares none keeps the row it always had.
  */
 export function connectionFieldLabel(config: DatabaseUIConfig, field: ConnectionField, fallback: string): string {
   return config.fieldLabels?.[field] ?? fallback;

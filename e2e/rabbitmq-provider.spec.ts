@@ -62,7 +62,9 @@ test.describe("RabbitMQ in the connection dialog", () => {
       // oxlint-disable-next-line no-await-in-loop -- one field at a time, so a failure names its field.
       await expect(dialog.locator(`#${field}-hint`)).toHaveText(connectionFieldHint(RABBITMQ, field) as string);
     }
-    // The shared Host row draws the port box with no label of its own for any engine, so its hint is what names it.
+    // The Host row's two boxes carry the names the provider's sentences use.
+    await expect(dialog.locator('label[for="host"]')).toHaveText(connectionFieldLabel(RABBITMQ, "host", ""));
+    await expect(dialog.locator('label[for="port"]')).toHaveText(connectionFieldLabel(RABBITMQ, "port", ""));
     await expect(dialog.locator("#port-hint")).toHaveText(connectionFieldHint(RABBITMQ, "port") as string);
   });
 

@@ -1130,6 +1130,14 @@ describe("declared field rules (Databend design 6.3)", () => {
       "Sends the username and password in clear text to the management API and the AMQP port",
     );
     expect(connectionFieldLabel(config, "port", "Port")).toBe("Management port");
+    // The field the provider's sentences call Host, not the dialog's "Host & Instance".
+    expect(connectionFieldLabel(config, "host", "Host & Instance")).toBe("Host");
+    // The shared Host row draws a port label only where one is declared, so no other engine's dialog gains one.
+    expect(
+      (Object.keys(DB_UI_CONFIG) as DatabaseType[]).filter(
+        (type) => DB_UI_CONFIG[type].fieldLabels?.port !== undefined,
+      ),
+    ).toEqual(["rabbitmq"]);
     expect(connectionFieldLabel(config, "amqpPort", "x")).toBe("AMQP port");
     expect(connectionFieldLabel(config, "apiPath", "x")).toBe("Path prefix");
     expect(connectionFieldPlaceholder(config, "amqpPort", "5672")).toBe("Empty: browse only");
