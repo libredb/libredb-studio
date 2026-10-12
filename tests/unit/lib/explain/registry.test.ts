@@ -21,6 +21,7 @@ const EVERY_FORMAT: Record<ExplainFormat, true> = {
   "duckdb-json": true,
   "databend-text": true,
   "bigquery-dryrun": true,
+  "firestore-explain": true,
 };
 
 /**
@@ -56,6 +57,10 @@ describe("getExplainStrategy", () => {
 
   test("resolves mysql-text", () => {
     expect(getExplainStrategy("mysql-text")?.format).toBe("mysql-text");
+  });
+
+  test("resolves firestore-explain", () => {
+    expect(getExplainStrategy("firestore-explain")?.format).toBe("firestore-explain");
   });
 
   test("returns null for undefined (provider without explain support)", () => {

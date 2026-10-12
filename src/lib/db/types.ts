@@ -609,7 +609,8 @@ export type ExplainFormat =
   | "trino-json"
   | "duckdb-json"
   | "databend-text"
-  | "bigquery-dryrun";
+  | "bigquery-dryrun"
+  | "firestore-explain";
 
 /**
  * How deep an engine's container chain is, in the TYPE rather than only in a derivation.
