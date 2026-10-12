@@ -1301,6 +1301,17 @@ function assertSourceDocument(
           "a refusal and a definition are different facts and a reader must never be shown one over the other",
       );
     }
+    // The neutral statement member is the refusal shape plus `statement: true`, so the key is
+    // checked on its own: a `statement` holding any other value, or sitting on a readable part,
+    // belongs to no member, and the viewer would draw it under the wrong heading.
+    if (
+      Object.hasOwn(part, "statement") &&
+      (!("unavailable" in part) || (part as { statement?: unknown }).statement !== true)
+    ) {
+      throw new Error(
+        `readObjectSource("${kindId}") answered a part whose statement marker is not exactly true on a refusal-shaped part`,
+      );
+    }
     if (isSourcePartUnavailable(part)) {
       if (part.unavailable.trim() === "") {
         throw new Error(`readObjectSource("${kindId}") answered a refusal with no sentence a person can read`);
