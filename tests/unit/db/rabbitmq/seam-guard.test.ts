@@ -5,6 +5,8 @@
  * - only `amqp/dial.ts` imports `node:net` or `node:tls`, type-only imports included; nothing under `amqp/` imports
  *   the management client, the read path or the provider; `generators.ts` and `limits.ts` import nothing from
  *   `amqp/`, `management/` or `node:*`, and `limits.ts` takes only type imports from outside the directory;
+ * - no module imports from another provider's directory, by the `@/lib/db/providers/` alias or by a relative path
+ *   out of this one, so the provider stays self-contained;
  * - exactly one `.write(` call exists in the whole directory, in `amqp/connection.ts`, which is the socket write every
  *   outbound frame passes through. `amqp/codec.ts` encodes strings with `TextEncoder.encodeInto` or `Buffer.from`,
  *   never `Buffer#write`, so the count holds no false call.
@@ -65,6 +67,17 @@ function target(module: string, specifier: string): string {
 }
 
 const isNodeSocket = (specifier: string) => /^(node:)?(net|tls)$/.test(specifier);
+
+/** The imports of `text` that reach another provider: an alias under providers/ outside this one, or a path out of it. */
+function foreignProviderImports(module: string, text: string): string[] {
+  return importsOf(text)
+    .filter(({ specifier }) =>
+      specifier.startsWith("@/lib/db/providers/")
+        ? !specifier.startsWith("@/lib/db/providers/stream/rabbitmq/")
+        : target(module, specifier).startsWith("../"),
+    )
+    .map(({ specifier }) => `${module} imports ${specifier}`);
+}
 const ALL = modules();
 
 describe("the provider directory", () => {
@@ -127,6 +140,19 @@ describe("the import guard", () => {
   test("only amqp/dial.ts imports node:net or node:tls, type-only imports included", () => {
     const importers = ALL.filter((module) => imports(module).some((each) => isNodeSocket(each.specifier)));
     expect(importers).toEqual(["amqp/dial.ts"]);
+  });
+
+  test("no module imports from another provider's directory, by alias or by a relative path out of this one", () => {
+    expect(ALL.flatMap((module) => foreignProviderImports(module, code(module)))).toEqual([]);
+    expect(
+      foreignProviderImports("render.ts", 'import { x } from "@/lib/db/providers/stream/kafka/decode";\n'),
+    ).toEqual(["render.ts imports @/lib/db/providers/stream/kafka/decode"]);
+    expect(foreignProviderImports("amqp/codec.ts", 'import type { y } from "../../kafka/types";\n')).toEqual([
+      "amqp/codec.ts imports ../../kafka/types",
+    ]);
+    expect(
+      foreignProviderImports("render.ts", 'import { z } from "@/lib/db/providers/stream/rabbitmq/limits";\n'),
+    ).toEqual([]);
   });
 
   test("nothing under amqp/ imports management/, read.ts, results.ts or index.ts", () => {
