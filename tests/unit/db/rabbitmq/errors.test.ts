@@ -821,8 +821,8 @@ describe("rendering warnings", () => {
     expect(E.timestampsOutOfRange(2)).toBe(
       "2 timestamps are outside the range a date can show and are shown as seconds since the epoch.",
     );
-    expect(E.cellsCut(1)).toBe("1 headers cell was cut at 65,536 characters.");
-    expect(E.cellsCut(3)).toBe("3 headers cells were cut at 65,536 characters.");
+    expect(E.cellsCut(1)).toBe("1 cell was cut at 65,536 characters.");
+    expect(E.cellsCut(3)).toBe("3 cells were cut at 65,536 characters.");
     expect(E.amqp10Bodies(1)).toBe("1 message was published over AMQP 1.0; Studio shows their encoded bytes.");
     expect(E.amqp10Bodies(2)).toBe("2 messages were published over AMQP 1.0; Studio shows their encoded bytes.");
     expect(E.deepPayloads(1)).toBe("1 payload nests deeper than 64 levels and is shown as base64.");

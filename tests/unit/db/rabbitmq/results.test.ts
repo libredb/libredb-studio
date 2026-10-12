@@ -195,6 +195,14 @@ describe("notes after the stop's warning", () => {
       cutBodies(1),
     ]);
   });
+
+  test("a payload cut at the cell, with no header at all, is counted as a cell, never as a headers cell", () => {
+    const text = message(BigInt(7), utf8("a".repeat(100_000)));
+    const kept = [{ ...text, properties: { headers: [offsetHeader(BigInt(7))] } }];
+    const result = buildReadResult(outcome({ kind: "limit" }, kept, 1), request("first"), 0, 30);
+    expect(result.rows[0]?.headers).toEqual({});
+    expect(messages(result)).toEqual(["1 cell was cut at 65,536 characters."]);
+  });
 });
 
 describe("streams of large messages, through export", () => {

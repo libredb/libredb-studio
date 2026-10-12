@@ -929,7 +929,7 @@ export function timestampsOutOfRange(count: number): string {
 }
 
 export function cellsCut(count: number): string {
-  return `${counted(count, "headers cell was", "headers cells were")} cut at ${grouped(RABBITMQ_CELL_CHARS)} characters.`;
+  return `${counted(count, "cell was", "cells were")} cut at ${grouped(RABBITMQ_CELL_CHARS)} characters.`;
 }
 
 export function amqp10Bodies(count: number): string {
