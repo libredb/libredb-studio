@@ -28,12 +28,12 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D292, U17 · 193
+- [Drivers and connections](#drivers-and-connections) — D1-D307, U17 · 208
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U114 · 105
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U117 · 108
 - [Dependencies](#dependencies) — P1-P9 · 7
-- [Documentation](#documentation) — DOC3-DOC21 · 18
+- [Documentation](#documentation) — DOC3-DOC22 · 19
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 6
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B106 · 42
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B107 · 43
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246)
 
@@ -3057,6 +3057,134 @@ Found 2026-10-12 while extracting the egress rule for a socket dial from the sha
 
 **Done when:** `dialBroker` calls `socketEgress(host, { refusesLinkLocal: true })` before it dials, passes the lookup to `net.connect` and `tls.connect` and lets its refusal through unchanged; `docs/providers/mqtt.md`, `docs/SECURITY.md` row 0.6 and "Known limits", the `DB_HTTP_BLOCK_PRIVATE_HOSTS` row of `docs/API_DOCS.md` and `.env.example` name the MQTT dial among what the flag covers; with tests for a link-local literal and a link-local DNS answer with the flag off, a private answer with the flag on, and a tunnelled connection.
 
+### D293. Firestore connections cannot write
+
+A Firestore connection reads and never writes: the transport admits seven read requests and refuses every other one before any socket (`src/lib/db/providers/document/firestore/requests.ts`), and the console refuses `set`, `add`, `update`, `delete`, `create`, `batch`, `runTransaction`, `bulkWriter` and `recursiveDelete` with one sentence.
+Writes need a design of their own, because a call made with an IAM credential is not bounded by Firebase Security Rules.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** a write design is approved (which requests, which confirmation, which audit line, how Security Rules' absence is shown), the closed request table admits exactly those requests, and tests pin each one and every refusal around it.
+
+### D294. The Google credential and token code exists twice
+
+`src/lib/db/providers/sql/bigquery/auth.ts` and `src/lib/db/providers/document/firestore/google-credentials.ts` with `google-token-source.ts` hold the same Google credential parsing, Application Default Credentials chain, grants and token cache, and each provider keeps its own lane pool, because no provider imports from another provider's directory.
+The Firestore half was written with BigQuery's signatures, with the scope, the environment names and the provider label as parameters, so a hoist is a swap of imports.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** one module outside every provider directory holds the Google-generic half and the lane pool, both providers import it with their own scope, environment names and policy, and both providers' tests pass unchanged.
+
+### D295. Firestore Pipelines are not offered
+
+The console compiles the Admin SDK query chain to `runQuery` and `runAggregationQuery` only, and the transport refuses `executePipeline`.
+Pipelines answer only on Enterprise edition databases, and reading them needs a pipeline grammar and its own bounds.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** a read-only pipeline subset is designed with its bounds and billing, the closed table admits `executePipeline` for it, and the console, its tests and `docs/providers/firestore.md` cover it.
+
+### D296. A Firestore database in Datastore mode is refused
+
+The connect probe reads the database resource and refuses a database whose `type` is `DATASTORE_MODE` with a sentence, because the Firestore API does not serve it (`docs/providers/firestore.md` section 12).
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** an engine for Datastore mode (the Datastore API, kinds, entities and GQL) is designed as its own type id or as a declared mode of this one, with captures from the emulator's Datastore mode.
+
+### D297. Firestore's MongoDB-compatible API is reached only through the `mongodb` type, unmeasured
+
+A Firestore Enterprise database with MongoDB compatibility speaks the MongoDB wire protocol on its own host, so it stays with the `mongodb` connection type, and the Firestore provider's refusal of a database whose Firestore API access is off says so.
+Firestore documents no support for several commands the `mongodb` type sends for its health, monitoring and kill surfaces (`listDatabases` with `authorizedDatabases`, `serverStatus`, `dbStats`, `currentOp`, `killOp`, `$indexStats`), and lists driver versions 5 and 6 while Studio ships 7.7.0; nothing was measured on a real database.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** a MongoDB-compatible Firestore database is measured through the `mongodb` type, each surface's answer is recorded in `docs/providers/mongodb.md`, and each surface that fails either answers a sentence naming Firestore or is fixed, with tests.
+
+### D298. Firestore has no Firebase Auth user sign-in
+
+Studio reads as an IAM identity, so Firebase Security Rules do not apply; reading as a Firebase Auth user, under the project's rules, would need a sign-in flow and an ID token per user.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** a connection can sign in as a Firebase Auth user, every request carries that user's ID token, Security Rules decide what it reads, and the doc and the dialog say which identity a connection reads as.
+
+### D299. Firestore has no service-account impersonation
+
+A credential file of type `impersonated_service_account` is refused, and a connection cannot read as one service account through another.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** an impersonated identity is resolved through the IAM Credentials API from a closed set of source credentials, its token is scoped and cached like the others, and tests pin the grant and its refusals.
+
+### D300. Firestore regional endpoints are not offered
+
+Every request goes to `https://firestore.googleapis.com`, a constant, and no connection field names a host.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** a connection can pick a regional or locational endpoint from a closed allow-list, never a free host field, with tests that no other host is dialled.
+
+### D301. The Firestore console has no `limitToLast`
+
+The console refuses `limitToLast`, which the SDK implements by reversing the order and the cursors and reading the answer backwards.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** `limitToLast(n)` compiles to the reversed query with its cursors swapped, the rows come back in the statement's order, and the compiler's tests cover each cursor combination.
+
+### D302. Firestore has no point-in-time reads
+
+The transport refuses `readTime` on every request, so every read sees the current data.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** a statement can name a read time within the database's retention window, the transport admits `readTime` only on read requests, and tests pin both the admitted and the refused forms.
+
+### D303. The Firestore console has no bytes literal
+
+A statement cannot compare a field with a bytes value, because the console grammar has no literal for one.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** a bytes literal (such as `Bytes.fromBase64String("...")`) parses, compiles to a `bytesValue`, and is covered by the parser, compiler and fuzz tests.
+
+### D304. Firestore's Enterprise BSON types are shown but not typed for editing or filtering
+
+An Enterprise database that also serves the MongoDB API can hold `minKey`, `maxKey`, `regex`, `objectId`, `int32`, `decimal128`, `bsonTimestamp` and `bsonBinary` values; the grid names their types and shows the decoded map, and the console has no literal for any of them.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** each BSON type has a cell form, a console literal and a filter rule, measured on an Enterprise database, with tests.
+
+### D305. No CI job runs the Firestore emulator
+
+The integration test replays captures of emulator 1.22.0, and `tests/live/firestore-live-check.ts` runs by hand; no CI job starts an emulator, so a newer emulator's behaviour is noticed only when someone captures again.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** an optional CI job starts the pinned emulator, runs the live check and the capture harness in a dry mode that compares answers with the committed captures, and reports a difference without failing the required checks.
+
+### D306. A BigQuery connection sends its access token to the BigQuery emulator host
+
+With `BIGQUERY_EMULATOR_HOST` set, `apiOrigin()` points every BigQuery API request at that host over plain HTTP, while `createBigQueryTransport()` still builds the connection's token source and sends `Authorization: Bearer <token>` on each request (`src/lib/db/providers/sql/bigquery/transport.ts`).
+A connection that carries a service-account key or an authorized-user file, or a server that reads its own Google identity, therefore mints a real access token and hands it to the emulator host.
+`.env.example` already says never to set the variable on a server people use.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** with `BIGQUERY_EMULATOR_HOST` set, no token source is built and no credential is read, requests carry a fixed placeholder bearer, a connection that carries a credential is refused with a sentence naming the variable, and tests show that no request reaches the token endpoint or the metadata server.
+
+### D307. Production's answer to an undecodable Firestore listing page token is unmeasured
+
+When the Keys panel follows a Firestore listing with a page token, the provider turns a 400 `INVALID_ARGUMENT` answer into "This listing expired; list the level again" (`levelFailure` in `src/lib/db/providers/document/firestore/key-scan.ts`).
+Emulator 1.22.0 gives that answer, "invalid page token", only for a token it can decode and does not know; a token it cannot decode gets HTTP 500 `UNKNOWN`, which `levelFailure` leaves as mapped (`tests/live/firestore-evidence-plan.ts`).
+What production answers to an undecodable token was not measured, so whether that sentence covers it there is open.
+
+Found 2026-10-12 while capturing the Firestore emulator's answers.
+
+**Done when:** a capture against a real Firestore project records the answer to an undecodable listing page token, the provider maps it to the expired-listing sentence or to one of its own, and a test over that capture pins it.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -4683,6 +4811,30 @@ Found 2026-10-11 while designing the Test Connection checks.
 
 **Done when:** a successful Test Connection with cautions shows a prefix that attributes them to nobody in particular (for example "Connected, with cautions:") and one caution per line, for every provider, with `tests/hooks/use-connection-form.test.ts` updated to the new sentences and a dialog test that renders two cautions on two lines.
 
+### U115. A billed engine has no read budget meter
+
+Firestore bills every document read, and Studio states the bound of each surface (`docs/providers/firestore.md` section 8) but does not count what a session has read.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** a provider can report the billed reads of each request, the UI shows a running count per connection and session, and an optional per-connection budget warns before a gesture that would pass it.
+
+### U116. The grid shows an absent field and a stored null alike
+
+The results grid renders `null` and `undefined` as the same NULL, so a Firestore document that lacks a field and one that stores null in it look the same, while `where(f, "==", null)` matches only the second.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** a result can mark a cell as absent, the grid draws it apart from NULL, export keeps the difference, and the Firestore results use it.
+
+### U117. The Keys panel counts a key and its folder as two entries
+
+On an engine whose keys are also folders, such as a Firestore document with subcollections, each document is one key and one folder, so the panel's "Listed n" reads twice the number of documents.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** the panel counts a row that is both a key and a folder once, the level route's count rule says how such a pair is counted, and the Keys panel tests cover an engine whose every key is a folder.
+
 ## Dependencies
 
 ### P1. The desktop shell's `glib` advisory has no reachable fix while Tauri v2 targets GTK 3
@@ -5100,6 +5252,15 @@ The other stale fleet counts the same sweep found (`docs/providers/mongodb.md` t
 Found 2026-10-10 by the documentation sweep of the S3 provider; pre-existing.
 
 **Done when:** the TOOLCHAIN.md sentence names the set those two files construct, or the number that set has, derived from the factory, and DOC6's entries are settled by its own Done when.
+
+### DOC22. docs/ADDING_A_PROVIDER.md names none of six guards a new provider meets
+
+A new type-id turns these guards red, and the guide names none of them, so an author finds each one only when it fails: `tests/unit/lib/table-count.test.ts` (the count statement per engine), `tests/unit/db/test-data-generation-capability.test.ts`, `tests/isolated/dialect-golden.test.ts` with its golden dialect outputs, `tests/unit/db/s3/provider-doc.test.ts` (the pinned chart description and engine lists), `CONNECTION_FORM_URI_MODE` and `CONNECTION_STRING_ACCEPTED` (`src/lib/db/compatibility.ts`).
+The guide's two driver-free counts are DOC20's.
+
+Found 2026-10-12 while designing the Firestore provider; pre-existing.
+
+**Done when:** the guide's checklist names each of these guards beside the step that trips it, or a test derives the checklist's guard list from the files that read `DatabaseType`, so the next guard added is named too.
 
 ## Release pipeline
 
@@ -6469,6 +6630,15 @@ Plan mode's inventory names the namespaces it walked and counts the ones it did 
 Found 2026-10-10 while designing the Kubernetes provider; an open question of the design.
 
 **Done when:** the owner decides whether a provider may withhold container names from machine surfaces, and either a declaration does it with a test, or the item is closed as accepted and `docs/AGENT.md` says so.
+
+### B107. Firestore has no agent execution and no MCP surface
+
+`MCP_EXPOSABLE.firestore` is false and the provider implements no `queryReadOnly`, so agent execution and MCP `run_read_query` refuse it; plan mode works, grounding on collection names with no document read (`docs/providers/firestore.md` section 3.5).
+Every Firestore read is billed, and no read contract for the query chain under an agent's budget is designed yet.
+
+Found 2026-10-12 while designing the Firestore provider.
+
+**Done when:** an MCP metadata surface that reads no document is designed, `MCP_EXPOSABLE.firestore` turns true for it, and `run_read_query` and agent execution serve a `queryReadOnly` that runs one console statement under a per-run read bound, with tests; cited in `docs/AGENT.md` beside B106.
 
 ## Passkey deferrals (#785)
 
