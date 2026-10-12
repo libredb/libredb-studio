@@ -47,10 +47,14 @@ describe(".gitleaksignore", () => {
     // plus the console tests' tokens) and one published SigV4 test vector. The
     // branch's own 34 went when that squash landed, the same way.
     //
+    // The 8 after them are the cursors of the MinIO, MinIO region, RustFS and
+    // Silo capture sets re-recorded under the reworded blocked-host sentence;
+    // they name a branch commit and move onto the squash commit once it lands.
+    //
     // This number is the point of the test: a suppression is a decision someone
     // has to make on purpose, so both a line silently dropped and a line
     // silently added land here as a failing diff rather than as nothing.
-    expect(contentLines).toHaveLength(43);
+    expect(contentLines).toHaveLength(51);
   });
 
   test("every non-comment, non-blank line is a well-formed fingerprint", () => {
