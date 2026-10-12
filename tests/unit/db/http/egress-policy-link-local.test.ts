@@ -46,8 +46,13 @@ mock.module("node:dns", () => ({
 }));
 
 const { DatabaseConfigError } = await import("@/lib/db/errors");
-const { assertNoLinkLocalDnsAnswer, assertNotLinkLocalLiteral, LINK_LOCAL_NETWORKS, linkLocalRefusingLookup } =
-  await import("@/lib/db/http/egress-policy");
+const {
+  assertNoLinkLocalDnsAnswer,
+  assertNotLinkLocalLiteral,
+  BLOCKED_HOST: BLOCKED,
+  LINK_LOCAL_NETWORKS,
+  linkLocalRefusingLookup,
+} = await import("@/lib/db/http/egress-policy");
 
 const LINK_LOCAL =
   "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says";
@@ -288,8 +293,6 @@ describe("through a byte transport with the guard off", () => {
     expect(listener.accepted()).toBe(1);
   });
 });
-
-const BLOCKED = "Invalid host: this HTTP database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS";
 
 describe("a byte transport refuses every link-local form whatever the guard flag says, and opens no socket", () => {
   const transports: Array<{ close(): void }> = [];

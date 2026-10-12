@@ -9,7 +9,8 @@ import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { DatabaseConfigError } from "@/lib/db/errors";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const BLOCKED_HOST = "Invalid host: this HTTP database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS";
+/** The guard's refusal of a non-public destination, worded for any transport the guard serves: it names no protocol. */
+export const BLOCKED_HOST = "Invalid host: this database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const BLOCKED_CONFIG = `Invalid ${FLAG}: expected true or false`;
 
 /**
@@ -123,9 +124,16 @@ export function guardedNodeOptions(hostname: string | null | undefined): Pick<Re
   return { lookup: publicAddressLookup, agent: false };
 }
 
-const LINK_LOCAL_HOST =
+export const LINK_LOCAL_HOST =
   "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says";
-const UNUSABLE_ANSWER = "Invalid host: the name did not resolve to a usable IP address";
+export const UNUSABLE_ANSWER = "Invalid host: the name did not resolve to a usable IP address";
+
+/**
+ * The three sentences of the shared egress refusal. A provider that wraps its own failures passes a DatabaseConfigError
+ * whose message is one of these through unchanged, so the user reads the guard's own words. The invalid-flag sentence
+ * is not among them: it is a configuration fault of the server, not a refused destination.
+ */
+export const EGRESS_REFUSAL_SENTENCES: ReadonlySet<string> = new Set([BLOCKED_HOST, LINK_LOCAL_HOST, UNUSABLE_ANSWER]);
 
 /**
  * The addresses a byte transport never reaches, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says (byte transport design 3.9):

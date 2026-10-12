@@ -6,6 +6,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { BLOCKED_HOST } from "@/lib/db/http/egress-policy";
 import {
   AUTHORIZATION_BY_TYPE,
   buildInfluxConnectionOptions,
@@ -130,9 +131,7 @@ describe("the endpoint is exactly what it claims", () => {
 
   test("with the egress guard on, a private literal host is refused before anything else is read", () => {
     process.env[FLAG] = "true";
-    expect(refusal("influxdb3", { host: "10.0.0.5", user: TEST_USER }).message).toBe(
-      "Invalid host: this HTTP database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS",
-    );
+    expect(refusal("influxdb3", { host: "10.0.0.5", user: TEST_USER }).message).toBe(BLOCKED_HOST);
     expect(build("influxdb3", REMOTE).origin.host).toBe("influx.example.com");
   });
 

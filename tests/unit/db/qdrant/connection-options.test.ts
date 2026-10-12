@@ -5,6 +5,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { BLOCKED_HOST } from "@/lib/db/http/egress-policy";
 import {
   buildQdrantConnectionOptions,
   QDRANT_DEFAULT_PORT,
@@ -115,9 +116,7 @@ describe("QE1: the endpoint is exactly what it claims", () => {
 
   test("with the egress guard on, a private literal host is refused before anything else is read", () => {
     process.env[FLAG] = "true";
-    expect(refusal({ host: "10.0.0.5", user: "someone" }).message).toBe(
-      "Invalid host: this HTTP database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS",
-    );
+    expect(refusal({ host: "10.0.0.5", user: "someone" }).message).toBe(BLOCKED_HOST);
     expect(build({ host: "qdrant.example.com" }).origin.host).toBe("qdrant.example.com");
   });
 

@@ -5,6 +5,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { BLOCKED_HOST } from "@/lib/db/http/egress-policy";
 import { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
 import {
   createNodeByteTransport,
@@ -62,9 +63,7 @@ describe("refusesLinkLocal", () => {
   test("with the guard on, a link-local literal gets the guard's sentence, because the guard runs first", () => {
     process.env[FLAG] = "true";
     const error = refusal(() => build(toHost("169.254.169.254", { refusesLinkLocal: true })));
-    expect(error.message).toBe(
-      "Invalid host: this HTTP database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS",
-    );
+    expect(error.message).toBe(BLOCKED_HOST);
   });
 
   test.each([undefined, false])("set to %p, a link-local literal builds a transport as it always has", (value) => {

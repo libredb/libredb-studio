@@ -7,13 +7,13 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { BLOCKED_HOST as BLOCKED } from "@/lib/db/http/egress-policy";
 import { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
 import { createNodeTransport, type NodeTransport } from "@/lib/db/http/node-transport";
 import { closeAll, httpListener, jsonAnswer } from "../../../helpers/node-transport-fixtures";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[FLAG];
-const BLOCKED = "Invalid host: this HTTP database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const transports: NodeTransport[] = [];
 
 afterEach(async () => {

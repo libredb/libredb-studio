@@ -26,6 +26,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { TLSSocket } from "node:tls";
 import { gzipSync } from "node:zlib";
+import { BLOCKED_HOST as BLOCKED } from "@/lib/db/http/egress-policy";
 import type { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
 import { httpOrigin as parentHttpOrigin, originHost } from "@/lib/db/http/endpoint";
 import type { createNodeTransport, nodeTlsMaterial } from "@/lib/db/http/node-transport";
@@ -988,7 +989,6 @@ async function runChild(binary: string): Promise<ChildRun> {
 }
 
 const TLS_FAILURE = /^The TLS connection failed \([A-Z][A-Z0-9_]*\)$/;
-const BLOCKED = "Invalid host: this HTTP database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS";
 
 type Expected =
   | { readonly ok: true; readonly status: number; readonly retryAfter?: string | null }
