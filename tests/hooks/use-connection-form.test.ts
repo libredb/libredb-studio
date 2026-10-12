@@ -3872,6 +3872,30 @@ describe("the AMQP port field", () => {
     act(() => result.current.setType(PROBE));
     act(() => result.current.setAmqpPort("5672"));
     expect((await saved(result)).amqpPort).toBe("5672");
+    // A new connection's save clears the form, so the next one typed into the open dialog starts without the port.
+    expect(result.current.amqpPort).toBe("");
+  });
+
+  test("an import fills the port for a type that takes it, and a type without the field refuses the entry", () => {
+    const imported = { name: "broker", fields: { host: "mq.example", amqpPort: "5672" }, notices: [] };
+    const taking = renderHook(() => useConnectionForm(props)).result;
+    act(() => taking.current.setType(PROBE));
+    act(() => taking.current.applyImported(imported));
+    expect([taking.current.host, taking.current.amqpPort, taking.current.testResult?.tone]).toEqual([
+      "mq.example",
+      "5672",
+      "success",
+    ]);
+
+    const refusing = renderHook(() => useConnectionForm(props)).result;
+    act(() => refusing.current.setType("mysql"));
+    const hostBefore = refusing.current.host;
+    act(() => refusing.current.applyImported(imported));
+    expect(refusing.current.testResult).toEqual({
+      tone: "error",
+      message: "The imported entry names a field this connection type does not take, so nothing was filled.",
+    });
+    expect([refusing.current.host, refusing.current.amqpPort]).toEqual([hostBefore, ""]);
   });
 
   test("an empty or blank box writes no key, and a type that does not take the field drops it", async () => {
