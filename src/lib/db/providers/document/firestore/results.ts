@@ -128,7 +128,7 @@ function unionColumns(documents: readonly RestDocument[]): Column[] {
 }
 
 const typeText = (seen: ReadonlySet<FirestoreTypeName>): string => {
-  const sorted = [...seen].sort();
+  const sorted = [...seen].sort(compareUtf8);
   return sorted.length === 1 ? sorted[0] : `mixed(${sorted.join("|")})`;
 };
 

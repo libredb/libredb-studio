@@ -90,7 +90,7 @@ function visit(
 }
 
 function typeText(types: ReadonlySet<FirestoreTypeName>): string {
-  const named = [...types].filter((type) => type !== "null").sort();
+  const named = [...types].filter((type) => type !== "null").sort(compareUtf8);
   if (named.length === 0) return "null";
   return named.length === 1 ? named[0] : `mixed(${named.join("|")})`;
 }
