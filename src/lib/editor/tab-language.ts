@@ -17,7 +17,8 @@ export type EditorLanguage =
   | "influxql"
   | "oxia"
   | "s3"
-  | "kubectl";
+  | "kubectl"
+  | "firestore";
 
 /**
  * The tab type a connection's tabs take.

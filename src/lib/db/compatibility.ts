@@ -112,6 +112,9 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // hiding. No relative is recorded: every broker speaks the same standard, and a standard is not a
   // compatibility claim about a product.
   mqtt: true,
+  // Firestore: its own provider, doc and integration test, read over Firestore REST v1 by a client of this
+  // repository's own. Native mode only; no relative is recorded.
+  firestore: true,
   libredb: true,
 });
 
@@ -186,6 +189,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   // A cluster the user already runs, reached over the Kubernetes API server's REST API.
   kubernetes: true,
   mqtt: true,
+  // A Firestore database the user already runs in Google Cloud, or the emulator the server names.
+  firestore: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
@@ -280,6 +285,9 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   // Structural rather than a mode: the encoder has no function that writes a PUBLISH, so there is no
   // write to enforce against. The valve repeats the check on the bytes.
   mqtt: true,
+  // Read-only whatever the flag says: the client builds only the read requests of its closed table, before any
+  // socket, and the provider offers no object edit and no maintenance operation.
+  firestore: true,
   libredb: false,
 });
 
@@ -335,6 +343,7 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
   s3: false,
   kubernetes: false,
   mqtt: false,
+  firestore: false,
   libredb: false,
 });
 
@@ -399,6 +408,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Outside this version, as for etcd, Oxia and S3: a read whose completeness cannot be proved is not a
   // read an agent should be handed without a reader looking at it.
   mqtt: false,
+  // Outside this version, as for etcd, Oxia, S3, Kubernetes and MQTT: the provider implements no read-only query
+  // path an MCP client could drive, and every read is billed to the user's project.
+  firestore: false,
   libredb: true,
 });
 
@@ -445,6 +457,7 @@ export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> =
   s3: false,
   kubernetes: false,
   mqtt: false,
+  firestore: false,
   libredb: false,
 });
 
@@ -497,6 +510,7 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
   s3: false,
   kubernetes: false,
   mqtt: false,
+  firestore: false,
   libredb: false,
 });
 

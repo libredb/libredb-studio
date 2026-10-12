@@ -52,6 +52,8 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   s3: "absent",
   kubernetes: "exact",
   mqtt: "absent",
+  // No container level at all: collections are object rows and deeper paths are Keys panel levels.
+  firestore: "absent",
   libredb: "exact",
   duckdb: "prefixes",
   mssql: "prefixes",

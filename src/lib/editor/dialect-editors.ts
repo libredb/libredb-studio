@@ -100,6 +100,9 @@ export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> 
   // the gate holds every tab type rendering in one language to one formatter: `json` is Kafka's language too, and
   // a reader pressing Format in two json tabs must not get two different answers.
   mqtt: Object.freeze({ monacoId: "json", format: formatJson }),
+  // A Firestore statement renders in the `firestore` language `firestore-language.ts` registers, and has no formatter:
+  // the JSON formatter refuses a call chain and the SQL formatter rewrites one.
+  firestore: Object.freeze({ monacoId: "firestore" }),
   // A kubectl statement renders in the `kubectl` language the console's lexer registers, and has no formatter: the
   // SQL formatter rewrites a command line, and the console formatter is the HTTP grammar's.
   kubectl: Object.freeze({ monacoId: "kubectl" }),

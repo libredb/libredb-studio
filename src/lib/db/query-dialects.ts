@@ -123,6 +123,17 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersCodeGeneration: false,
     offersCountQuery: false,
   }),
+  // Firestore: one statement of a read-only Admin SDK query chain. A collection's columns are sampled field paths, so
+  // no profile statement or model applies, and its rows are documents rather than rows of a SQL table, so neither SQL
+  // export format applies. Generate Count Query writes `db.collection("<id>").count()` into a tab, which the user
+  // runs: one aggregation, which Firestore bills one read per 1,000 index entries it scans.
+  firestore: Object.freeze({
+    tabType: "firestore",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: true,
+    offersSqlExport: false,
+  }),
   kubectl: Object.freeze({
     tabType: "kubectl",
     offersColumnProfiling: false,

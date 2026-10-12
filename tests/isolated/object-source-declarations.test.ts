@@ -204,6 +204,8 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
   ],
   // The one kind: a topic's payload opens in its Source tab, rendered as JSON.
   mqtt: ["topic/json"],
+  // The key-browser kind: a document opens in its Source tab as JSON (data, the REST document, its subcollections).
+  firestore: ["document/json"],
   libredb: [],
 });
 

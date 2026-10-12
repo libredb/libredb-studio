@@ -100,6 +100,8 @@ const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.fre
   // One kubectl statement: the dialect's record withholds the action, and a Kubernetes kind has no row count.
   kubernetes: null,
   mqtt: null,
+  // One aggregation statement of the console's subset, which the user runs from the tab it is written into.
+  firestore: 'db.collection("Order\\"Items").count()',
 });
 
 async function censusCapabilities(type: DatabaseType): Promise<ProviderCapabilities> {

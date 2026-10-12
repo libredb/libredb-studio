@@ -961,12 +961,26 @@ export interface ProviderCapabilities {
    * `"kubectl"` is the Kubernetes provider's: one statement of a read-only kubectl subset per run. It landed through one
    * record in each registry and no arm anywhere else.
    *
+   * `"firestore"` is the Firestore provider's: one statement of a read-only subset of the Admin SDK's query chain per
+   * run, `db.collection(...)` and the rest of its chain.
+   *
    * Those arms are now records: a member added here does not compile until it has one in each of
    * `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`)
    * and `DIALECT_GENERATORS` (`src/lib/query-generators.ts`), and every other reader of this field and of
    * `queryLanguage` is held to a closed list by `tests/unit/lib/dialect-reader-allowlist.test.ts`.
    */
-  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant" | "oxia" | "s3" | "mqtt" | "kubectl";
+  queryDialect?:
+    | "libredb"
+    | "redis"
+    | "kafka"
+    | "etcd"
+    | "milvus"
+    | "qdrant"
+    | "oxia"
+    | "s3"
+    | "mqtt"
+    | "firestore"
+    | "kubectl";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).

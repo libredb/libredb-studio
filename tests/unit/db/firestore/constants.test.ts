@@ -34,9 +34,8 @@ describe("Firestore constants", () => {
     expect(Object.isFrozen(ENV)).toBe(true);
   });
 
-  // T5.0 replaces this assertion with toBe("firestore"), red first, in the commit that names firestore in the union.
-  test("errors carry no provider tag until T5.0 names firestore", () => {
-    expect(FIRESTORE_ERROR_PROVIDER).toBeUndefined();
+  test("every Firestore error carries the provider tag firestore", () => {
+    expect(FIRESTORE_ERROR_PROVIDER).toBe("firestore");
   });
 
   test("every limit of spec 8.2, by name", () => {

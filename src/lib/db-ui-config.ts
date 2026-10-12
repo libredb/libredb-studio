@@ -30,6 +30,7 @@ import {
   BigQueryIcon,
   S3Icon,
   MqttIcon,
+  FirestoreIcon,
   KubernetesIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -933,6 +934,41 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     },
     readOnlyHint:
       "MQTT connections are read-only whether or not this is ticked, and not by a setting: this provider has no code that can write a PUBLISH, and its CONNECT carries no Will.",
+  },
+  firestore: {
+    // A mark drawn for Studio, never the Firebase or Google Cloud logo: a document with a second one behind it.
+    icon: FirestoreIcon,
+    // Every identity hue and every `-alt` step was an engine's already, so `lime` joined the identity palette with this
+    // entry: lime-800 in light and lime-400 in dark leave both closest pairs where they were (0.0205 in light, 0.0160 in
+    // dark), and the light step clears AA at 4.67 on every ground (tests/unit/theme-accent-contrast.test.ts).
+    color: "text-hue-lime",
+    label: "Firestore",
+    // No host or port: every request goes to firestore.googleapis.com, or to the emulator the server names.
+    defaultPort: "",
+    showConnectionStringToggle: false,
+    connectionFields: ["database", "schema", "password"],
+    fieldLabels: {
+      database: "Project ID",
+      schema: "Database ID",
+      password: "Service-account key, ADC JSON or access token",
+    },
+    fieldHints: {
+      database:
+        "The Google Cloud project that holds the database: 6 to 30 lowercase letters, digits and hyphens, starting with a letter. A legacy project id may carry a domain: prefix.",
+      schema:
+        "Empty for the (default) database. A named database's id is 4 to 63 lowercase letters, digits and hyphens, starting with a letter.",
+      password:
+        "Studio reads as this credential's IAM identity, and Firebase Security Rules do not apply to it. Grant a dedicated service account roles/datastore.viewer and paste its key. Every read Studio sends is billed to the project; docs/providers/firestore.md lists what each action reads. A pasted access token lasts about an hour. Leave this empty on an emulator server, or for an operator-seeded connection that uses the server's own identity.",
+    },
+    // The database box is the only one of the three that reads a declared placeholder: the dialog draws `***` in the
+    // password box and `default` in the schema box for every engine, so their guidance lives in the hints above.
+    fieldPlaceholders: { database: "my-project" },
+    // Always HTTPS to googleapis.com with the system trust store, and a tunnel would forward one address of several
+    // (the API, the token endpoint, the metadata server), so neither panel would be read.
+    showSshTunnel: false,
+    showSslPanel: false,
+    readOnlyHint:
+      "Firestore connections are read-only whether or not this is ticked, and not by a setting: this provider builds only the read requests of its closed request table, and none of them writes.",
   },
   libredb: {
     icon: LibreDBIcon,

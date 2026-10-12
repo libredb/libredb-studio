@@ -134,6 +134,8 @@ const EXPECTED_COLUMN_KINDS: Readonly<Record<DatabaseType, readonly string[]>> =
   // Every Kubernetes kind is config with a YAML source and no columns: a click opens the YAML.
   kubernetes: [],
   mqtt: [],
+  // A collection's columns are `__name__` and the fields a 20-document sample shows; a document opens its Source tab.
+  firestore: ["collection"],
   libredb: ["table", "collection", "keyspace"],
 });
 

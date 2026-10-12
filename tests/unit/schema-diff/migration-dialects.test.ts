@@ -50,6 +50,7 @@ const COLUMN_GRAMMAR: Record<DatabaseType, [string, string] | null> = {
   s3: null,
   kubernetes: null,
   mqtt: null,
+  firestore: null,
 };
 
 describe("migration dialect regressions (#284)", () => {

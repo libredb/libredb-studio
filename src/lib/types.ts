@@ -165,7 +165,14 @@ export type DatabaseType =
   // credential, with the discovery filter below naming what to subscribe to. Read-only is structural rather
   // than a mode: the outbound path can encode only CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and DISCONNECT, so
   // no PUBLISH and no Will exists to send.
-  | "mqtt";
+  | "mqtt"
+  // Google Cloud Firestore in Native mode, read only, over Firestore REST v1 by a client of this repository's own on
+  // the shared node transport (`src/lib/db/providers/document/firestore/`). The editor text is one statement of a
+  // read-only subset of the Admin SDK's query chain. Read-only whatever `readOnly` says: the client builds only the
+  // read requests of its closed request table. The connection's Database field is the project id, Schema the
+  // database id (empty for `(default)`), and Password a service-account key, an ADC JSON or an access token; empty,
+  // the credential comes from an emulator server or an operator-seeded server identity.
+  | "firestore";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -833,7 +840,8 @@ export interface QueryTab {
     | "oxia"
     | "s3"
     | "kubectl"
-    | "mqtt";
+    | "mqtt"
+    | "firestore";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

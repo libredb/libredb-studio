@@ -108,6 +108,7 @@ const EXPECTED: Readonly<Record<DatabaseType, SurfaceRow>> = {
   s3: NONE,
   kubernetes: NONE,
   mqtt: NONE,
+  firestore: NONE,
   libredb: NONE,
 };
 

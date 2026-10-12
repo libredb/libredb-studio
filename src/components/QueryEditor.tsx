@@ -95,7 +95,8 @@ interface QueryEditorProps {
     | "influxql"
     | "oxia"
     | "s3"
-    | "kubectl";
+    | "kubectl"
+    | "firestore";
   /**
    * The connected engine, whose grammar decides where a statement ends.
    *

@@ -449,6 +449,7 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   // One kubectl statement, not SQL: no SQL grammar is established for it, and none is read.
   kubernetes: "default",
   mqtt: "default",
+  firestore: "default",
 };
 
 /**
@@ -704,6 +705,8 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   // A kubectl statement is words split by POSIX shell rules, not SQL text.
   kubernetes: false,
   mqtt: false,
+  // A JavaScript-shaped query chain, not SQL text.
+  firestore: false,
 };
 
 describe("readsSqlText", () => {

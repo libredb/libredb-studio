@@ -1979,6 +1979,7 @@ describe("useConnectionForm", () => {
     s3: true,
     kubernetes: true,
     mqtt: true,
+    firestore: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

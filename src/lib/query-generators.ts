@@ -2,6 +2,7 @@ import { cypherForSegment } from "@/lib/db/graph/cypher/generators";
 import { quoteCypherName } from "@/lib/db/graph/cypher/quote";
 import { declaredLevels } from "@/lib/db/object-kinds";
 import { type QueryDialect, registeredDialect } from "@/lib/db/query-dialects";
+import { previewStatement } from "@/lib/db/providers/document/firestore/console/generators";
 import { encodeKey } from "@/lib/db/providers/keyvalue/etcd/keys";
 import { oxiaSelectQuery, oxiaTableQuery } from "@/lib/db/providers/keyvalue/oxia/generators";
 import { kubectlGetQuery, kubectlRowActionQuery } from "@/lib/db/providers/platform/kubernetes/generators";
@@ -778,6 +779,13 @@ const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Ob
       `// MQTT has no query console. ${objectSegment(path)} opens in its Source tab from the Keys panel.`,
     select: (path) =>
       `// MQTT has no query console. ${objectSegment(path)} opens in its Source tab from the Keys panel.`,
+  },
+  // Firestore reads a collection through one statement of its console's read-only Admin SDK subset, written by the
+  // provider's browser-safe console/generators.ts: a tree click and Generate Query are both the 100-document preview of
+  // the clicked collection, addressed by the object's own segment, the collection id the tree lists.
+  firestore: {
+    table: (path) => previewStatement([objectSegment(path)]),
+    select: (path) => previewStatement([objectSegment(path)]),
   },
   s3: {
     table: (path) => s3TableQuery(path),

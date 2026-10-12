@@ -100,6 +100,9 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   // One subscribe returns what it saw, and the cursor of `MQTT_KEY_SCAN` says there is no page two; its own
   // `prepareQuery` hands every statement on with `wasLimited: false` (#1635).
   mqtt: false,
+  // One statement is one request, and its own `prepareQuery` hands the text on with `offset: 0`: a page is the
+  // statement's own `.limit(n)` and `.startAfter(...)`, which the user writes (Firestore spec 3.4).
+  firestore: false,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];

@@ -9,11 +9,8 @@ import type { DatabaseType } from "@/lib/types";
 /** The provider's type id. */
 export const FIRESTORE_TYPE = "firestore" as const;
 
-/**
- * The provider tag every Firestore error carries. Undefined until the `DatabaseType` union names "firestore"; every
- * module tags its errors through this one name, so naming the provider is a one-line change here.
- */
-export const FIRESTORE_ERROR_PROVIDER: DatabaseType | undefined = undefined;
+/** The provider tag every Firestore error carries; every module tags its errors through this one name. */
+export const FIRESTORE_ERROR_PROVIDER: DatabaseType = FIRESTORE_TYPE;
 
 /** One connection's database: `databaseId` is "(default)" or a named database id. */
 export interface FirestoreTarget {
