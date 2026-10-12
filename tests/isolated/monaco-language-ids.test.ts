@@ -349,8 +349,8 @@ describe("the installed editor's language ids", () => {
     // collection declares `json`, 80 before Milvus, whose collection declares `json` too, 81 before Oxia,
     // whose shard and key each declare `json`, 83 before Databend, whose four kinds each declare `sql`, 87 before
     // S3, whose bucket and object each declare `json`, and 89 before Kubernetes, whose 37 built-in kinds each declare
-    // `yaml`.
-    expect(declared).toHaveLength(127);
+    // `yaml`, and 127 before RabbitMQ, whose stream, queue and exchange each declare `json`.
+    expect(declared).toHaveLength(130);
 
     const unregistered = declared.filter((entry) => !registered.has(entry.language));
     // Named, so a failure says which kind on which engine declared what, rather than false. This

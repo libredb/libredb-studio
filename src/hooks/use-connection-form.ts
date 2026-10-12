@@ -1460,6 +1460,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "s3",
     "kubernetes",
     "mqtt",
+    "rabbitmq",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

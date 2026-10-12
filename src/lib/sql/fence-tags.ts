@@ -121,6 +121,8 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // spells the command, and it still names this engine. No `yaml` or `sh` tag is registered: neither names an engine.
   kubernetes: true,
   mqtt: true,
+  // A ```rabbitmq block holds one JSON read request the editor runs as it is.
+  rabbitmq: true,
 });
 
 /**

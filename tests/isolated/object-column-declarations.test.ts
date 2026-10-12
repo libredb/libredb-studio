@@ -134,6 +134,8 @@ const EXPECTED_COLUMN_KINDS: Readonly<Record<DatabaseType, readonly string[]>> =
   // Every Kubernetes kind is config with a YAML source and no columns: a click opens the YAML.
   kubernetes: [],
   mqtt: [],
+  // One kind with columns: a stream, whose columns are the fixed shape of a read result.
+  rabbitmq: ["stream"],
   libredb: ["table", "collection", "keyspace"],
 });
 
@@ -217,9 +219,9 @@ describe("the fleet census of object column declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    // EXTERNAL_DATABASE_TYPES.length (30 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend, bigquery, s3 and
-    // kubernetes) plus the embedded store.
-    expect(CENSUS_TYPES).toHaveLength(32);
+    // EXTERNAL_DATABASE_TYPES.length (32 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend, bigquery, s3,
+    // kubernetes, mqtt and rabbitmq) plus the embedded store.
+    expect(CENSUS_TYPES).toHaveLength(33);
     expect(Object.keys(EXPECTED_COLUMN_KINDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // A row naming nothing would make its type-id's census pass on the empty set, so the design's
     // table has three such rows, and they are named here: every engine but Oxia, S3 and Kubernetes has at least one

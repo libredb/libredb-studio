@@ -104,6 +104,8 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   // contradict the app (issue #425, step 2).
   libredb: 30,
   bigquery: 31,
+  // Last (#1656): the newest name on this page, so no existing engine moves, as for BigQuery.
+  rabbitmq: 32,
 };
 
 /**

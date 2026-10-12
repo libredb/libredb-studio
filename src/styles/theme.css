@@ -191,6 +191,7 @@
   --studio-hue-cyan: #005f78;
   --studio-hue-cyan-alt: #104e64;
   --studio-hue-cyan-tint: #00b8db;
+  --studio-hue-lime: #3c6300;
   /*
    * Two identity hues carry a filled control of their own: Database Docs' "AI
    * Describe" button is teal because the panel is, and VisualExplain's AI tab is
@@ -325,6 +326,7 @@
   --studio-hue-cyan: #00d3f2;
   --studio-hue-cyan-alt: #53eafd;
   --studio-hue-cyan-tint: #00b8db;
+  --studio-hue-lime: #9ae600;
   --studio-hue-teal-solid: #009689;
   --studio-hue-teal-solid-hover: #00bba7;
   --studio-hue-purple-solid: #9810fa;
@@ -436,6 +438,7 @@
   --color-hue-cyan: var(--studio-hue-cyan);
   --color-hue-cyan-alt: var(--studio-hue-cyan-alt);
   --color-hue-cyan-tint: var(--studio-hue-cyan-tint);
+  --color-hue-lime: var(--studio-hue-lime);
   --color-hue-fuchsia: var(--studio-hue-fuchsia);
   --color-hue-fuchsia-alt: var(--studio-hue-fuchsia-alt);
   --color-hue-teal-solid: var(--studio-hue-teal-solid);

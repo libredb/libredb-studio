@@ -30,6 +30,7 @@ import {
   BigQueryIcon,
   S3Icon,
   MqttIcon,
+  RabbitMQIcon,
   KubernetesIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -935,6 +936,26 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     },
     readOnlyHint:
       "MQTT connections are read-only whether or not this is ticked, and not by a setting: this provider has no code that can write a PUBLISH, and its CONNECT carries no Will.",
+  },
+  rabbitmq: {
+    // A mark drawn for Studio, never the project's own logo.
+    icon: RabbitMQIcon,
+    // Every identity `-alt` theme.css declares is an engine's, so `lime` joined the identity palette with this entry
+    // (tests/unit/theme-accent-contrast.test.ts measures it): a base hue no engine held.
+    color: "text-hue-lime",
+    label: "RabbitMQ",
+    // The management API's port; 15671 with TLS.
+    defaultPort: "15672",
+    // Host and Management port hold the management API. An amqp:// URL is not taken: its parts go in their own fields.
+    showConnectionStringToggle: false,
+    // One tunnel carries one port, and the management API and AMQP use two, so the provider refuses a tunnel.
+    showSshTunnel: false,
+    hostAcceptsUri: ["http", "https"],
+    connectionFields: ["host", "port", "apiPath"],
+    fieldLabels: { port: "Management port", apiPath: "Path prefix" },
+    // The dialog's own sentence says the mode can be turned off, which is false here.
+    readOnlyHint:
+      "RabbitMQ connections are read-only whether or not this is ticked: Studio sends the broker GET requests and stream reads only, never a publish or a take.",
   },
   libredb: {
     icon: LibreDBIcon,

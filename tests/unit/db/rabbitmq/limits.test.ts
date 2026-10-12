@@ -85,6 +85,10 @@ describe("rabbitmq limits", () => {
     });
   });
 
+  test("the type id every error is tagged with", () => {
+    expect(String(limits.RABBITMQ_TYPE)).toBe("rabbitmq");
+  });
+
   test("the readable-queue check stays inside the ranges its bounds may move in", () => {
     expect(limits.RABBITMQ_TEST_CHECK_MAX_VHOSTS).toBeGreaterThanOrEqual(1);
     expect(limits.RABBITMQ_TEST_CHECK_MAX_VHOSTS).toBeLessThanOrEqual(20);

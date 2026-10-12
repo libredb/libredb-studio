@@ -144,6 +144,15 @@ export const CREDENTIAL_WARNINGS: Readonly<Partial<Record<DatabaseType, readonly
         "This is the documented default credential a RustFS server starts with when RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY are not set, so anyone who knows RustFS can sign in with it. Set both on the server, or connect with an access key of your own.",
     },
   ],
+  rabbitmq: [
+    {
+      kind: "pair",
+      user: "guest",
+      password: "guest",
+      message:
+        "guest/guest is RabbitMQ's default administrator, which the official Docker image accepts from any host; create a user for Studio (studio-reader) instead.",
+    },
+  ],
 };
 
 interface Credential {

@@ -26,7 +26,7 @@ const MANAGE_NO_EXP_URL_SAFE = "e30.eyJhY2Nlc3MiOiJtIiwic3ViIjoieHg_Pz8_Pz4-In0.
 type Credential = { user?: string; password?: string };
 
 describe("CREDENTIAL_WARNINGS", () => {
-  test("milvus, qdrant, influxdb, influxdb3, oxia, databend and s3 are the shipped types that declare credential warnings (vector-family spec 3.12, InfluxDB spec E12, SB3-1.5, Databend design 7.2)", () => {
+  test("milvus, qdrant, influxdb, influxdb3, oxia, databend, s3 and rabbitmq are the shipped types that declare credential warnings (vector-family spec 3.12, InfluxDB spec E12, SB3-1.5, Databend design 7.2)", () => {
     expect(Object.keys(CREDENTIAL_WARNINGS)).toEqual([
       "milvus",
       "qdrant",
@@ -35,11 +35,13 @@ describe("CREDENTIAL_WARNINGS", () => {
       "oxia",
       "databend",
       "s3",
+      "rabbitmq",
     ]);
     expect(CREDENTIAL_WARNINGS.milvus?.map((entry) => entry.kind)).toEqual(["pair", "no-secret"]);
     expect(CREDENTIAL_WARNINGS.qdrant?.map((entry) => entry.kind)).toEqual(["jwt", "no-secret"]);
     expect(CREDENTIAL_WARNINGS.oxia?.map((entry) => entry.kind)).toEqual(["jwt"]);
     expect(CREDENTIAL_WARNINGS.s3?.map((entry) => entry.kind)).toEqual(["pair", "pair"]);
+    expect(CREDENTIAL_WARNINGS.rabbitmq?.map((entry) => entry.kind)).toEqual(["pair"]);
   });
 });
 
@@ -264,5 +266,25 @@ describe("readOnlySeedRefusal", () => {
 
   test("a type that declares nothing refuses nothing", () => {
     expect(readOnlySeedRefusal("postgres", {})).toBeUndefined();
+  });
+});
+
+/**
+ * The RabbitMQ row: the official image's guest account is an administrator it accepts from any host, so the pair
+ * warns in the dialog and refuses a read-only seed.
+ */
+describe("the rabbitmq row", () => {
+  const GUEST_SENTENCE =
+    "Credential warning: guest/guest is RabbitMQ's default administrator, which the official Docker image accepts from any host; create a user for Studio (studio-reader) instead.";
+
+  test("the guest pair warns with its framed sentence and refuses a read-only seed", () => {
+    expect(credentialWarningFor("rabbitmq", { user: "guest", password: "guest" })).toBe(GUEST_SENTENCE);
+    expect(readOnlySeedRefusal("rabbitmq", { user: "guest", password: "guest" })).toBe(GUEST_SENTENCE);
+  });
+
+  test("the guest user with another password, and the recommended user, do not warn", () => {
+    expect(credentialWarningFor("rabbitmq", { user: "guest", password: "rotated-secret" })).toBeUndefined();
+    expect(credentialWarningFor("rabbitmq", { user: "studio-reader", password: "guest" })).toBeUndefined();
+    expect(readOnlySeedRefusal("rabbitmq", { user: "studio-reader", password: "" })).toBeUndefined();
   });
 });

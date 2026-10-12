@@ -7,6 +7,7 @@ import { oxiaSelectQuery, oxiaTableQuery } from "@/lib/db/providers/keyvalue/oxi
 import { kubectlGetQuery, kubectlRowActionQuery } from "@/lib/db/providers/platform/kubernetes/generators";
 import { s3SelectQuery, s3TableQuery } from "@/lib/db/providers/objectstore/s3/console/generators";
 import { quoteGoString, quoteTxnWord, quoteWord } from "@/lib/db/providers/keyvalue/etcd/lexer";
+import { rabbitmqSelectQuery, rabbitmqTableQuery } from "@/lib/db/providers/stream/rabbitmq/generators";
 import { influxqlSelectQuery, influxqlTableQuery } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
 import { influxqlSource, quoteInfluxqlIdentifier } from "@/lib/db/providers/timeseries/influxdb/influxql-quote";
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
@@ -778,6 +779,13 @@ const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Ob
       `// MQTT has no query console. ${objectSegment(path)} opens in its Source tab from the Keys panel.`,
     select: (path) =>
       `// MQTT has no query console. ${objectSegment(path)} opens in its Source tab from the Keys panel.`,
+  },
+  // RabbitMQ reads a stream through its own JSON read request, written by the provider's browser-safe generators.ts:
+  // the click reads the last chunk ("Read Last Chunk") and Generate Read Request the first message, 50 rows each.
+  // Neither reads the columns or the scope, and neither throws.
+  rabbitmq: {
+    table: (path) => rabbitmqTableQuery(path),
+    select: (path) => rabbitmqSelectQuery(path),
   },
   s3: {
     table: (path) => s3TableQuery(path),

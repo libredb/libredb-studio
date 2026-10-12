@@ -965,7 +965,18 @@ export interface ProviderCapabilities {
    * and `DIALECT_GENERATORS` (`src/lib/query-generators.ts`), and every other reader of this field and of
    * `queryLanguage` is held to a closed list by `tests/unit/lib/dialect-reader-allowlist.test.ts`.
    */
-  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant" | "oxia" | "s3" | "mqtt" | "kubectl";
+  queryDialect?:
+    | "libredb"
+    | "redis"
+    | "kafka"
+    | "etcd"
+    | "milvus"
+    | "qdrant"
+    | "oxia"
+    | "s3"
+    | "mqtt"
+    | "rabbitmq"
+    | "kubectl";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).

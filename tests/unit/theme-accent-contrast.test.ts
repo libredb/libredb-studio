@@ -220,6 +220,7 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
   { hue: "teal", light: "teal-800", lightAlt: "teal-950" },
   { hue: "cyan", light: "cyan-800", lightAlt: "cyan-900" },
   { hue: "fuchsia", light: "fuchsia-800", lightAlt: "fuchsia-900" },
+  { hue: "lime", light: "lime-800", lightAlt: "lime-900" },
 ];
 
 /**
@@ -256,6 +257,8 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
  * `amber-alt` left them - 0.0205 in light (orange vs amber-alt) against 0.0160 in dark (rose-alt vs red-alt) - so the
  * "pink-alt made the light set tighter than the dark one" reading recorded for Databend above no longer holds: that
  * was measured before Kubernetes's `amber-alt` moved the light minimum.
+ * `lime` joined as a base hue with RabbitMQ (#1656): every identity `-alt` was an engine's once BigQuery took
+ * `cyan-alt`, and `lime`, a hue no engine held, clears every test below at its -800 and -400 steps.
  */
 const IDENTITY_ALTS = [
   "blue",

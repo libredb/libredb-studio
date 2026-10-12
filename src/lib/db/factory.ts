@@ -359,6 +359,14 @@ export async function createDatabaseProvider(
       return new MqttProvider(connection, options);
     }
 
+    // RabbitMQ: the second member of the stream family, read-only whatever the flag says. No seam is passed: the
+    // provider runs on its production management transport, AMQP dial and clock.
+    case "rabbitmq": {
+      // The explicit /index specifier keeps this dynamic import statically analysable.
+      const { RabbitMQProvider } = await import("./providers/stream/rabbitmq/index");
+      return new RabbitMQProvider(connection, options);
+    }
+
     // Platforms - dynamically imported
     case "kubernetes": {
       // The explicit /index specifier keeps this dynamic import statically analysable. Read-only whatever the flag
@@ -378,7 +386,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, bigquery, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, s3, mqtt, kubernetes, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, bigquery, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, s3, mqtt, rabbitmq, kubernetes, libredb`,
         connection.type,
       );
   }

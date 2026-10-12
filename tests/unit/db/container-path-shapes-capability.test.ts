@@ -52,6 +52,7 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   s3: "absent",
   kubernetes: "exact",
   mqtt: "absent",
+  rabbitmq: "absent",
   libredb: "exact",
   duckdb: "prefixes",
   mssql: "prefixes",

@@ -515,6 +515,9 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
   // exists because the record is exhaustive over every engine whose text is not SQL, and its operations list is
   // empty by construction: this provider has no code that can write to a broker.
   mqtt: { operations: new Set<string>(), read: () => [], decidesAlone: true, safetyAnalysis: false },
+  // RabbitMQ (#1656): a read request reads a stream's messages and nothing else, so no destructive verb exists to read
+  // and nothing is posted for an AI analysis.
+  rabbitmq: { operations: new Set<string>(), read: () => [], decidesAlone: true, safetyAnalysis: false },
   kubernetes: {
     operations: KUBERNETES_DESTRUCTIVE_OPERATIONS,
     read: readKubernetesOperations,

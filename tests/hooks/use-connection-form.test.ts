@@ -74,6 +74,7 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   // send that credential without TLS. No namespaces, no API path, no TLS server name: those are Kubernetes'
   // fields, and this row was a copy of its neighbour until an audit read it.
   mqtt: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+  rabbitmq: ["host", "port", "apiPath"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -1979,6 +1980,7 @@ describe("useConnectionForm", () => {
     s3: true,
     kubernetes: true,
     mqtt: true,
+    rabbitmq: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

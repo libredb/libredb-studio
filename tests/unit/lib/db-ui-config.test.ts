@@ -89,6 +89,7 @@ const ALL_TYPES: DatabaseType[] = [
   "s3",
   "kubernetes",
   "mqtt",
+  "rabbitmq",
 ];
 
 describe("db-ui-config", () => {
@@ -301,7 +302,7 @@ describe("db-ui-config", () => {
       expect(offersSshTunnel("postgres")).toBe(true);
     });
 
-    test("only kafka's and bigquery's connections refuse an SSH tunnel, and only because their entries declare it", () => {
+    test("only kafka's, bigquery's and rabbitmq's connections refuse an SSH tunnel, and only because their entries declare it", () => {
       // Derived from the declaration rather than typed out: a tunnel forwards one address, and a
       // Kafka client reaches every broker at the address the broker advertises (docs/providers/kafka.md).
       for (const type of ALL_TYPES) {
@@ -311,7 +312,7 @@ describe("db-ui-config", () => {
         });
       }
       const refusing = ALL_TYPES.filter((type) => !offersSshTunnel(type));
-      expect(refusing.sort()).toEqual(["bigquery", "kafka"]);
+      expect(refusing.sort()).toEqual(["bigquery", "kafka", "rabbitmq"]);
       // A file-based engine still answers true: its panel is hidden by isFileBased instead.
       expect(offersSshTunnel("sqlite")).toBe(true);
     });
@@ -955,7 +956,7 @@ describe("declared connection-field copy (#1085)", () => {
     }
   });
 
-  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, bigquery, s3, kubernetes and mqtt declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, bigquery, s3, kubernetes, mqtt and rabbitmq declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
@@ -976,6 +977,7 @@ describe("declared connection-field copy (#1085)", () => {
       "s3",
       "kubernetes",
       "mqtt",
+      "rabbitmq",
     ]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
@@ -1386,6 +1388,8 @@ describe("db-showcase", () => {
         "libredb",
         // Last (rank 28): the newest name on this page, so no existing engine moves.
         "bigquery",
+        // Last (#1656), for BigQuery's reason.
+        "rabbitmq",
       ]);
     });
   });
@@ -1410,7 +1414,7 @@ describe("db-showcase", () => {
 });
 
 describe("Host box addresses and credential warnings", () => {
-  test("only milvus, qdrant, the two InfluxDB types, databend, s3 and kubernetes declare hostAcceptsUri, so every other Host box takes a host alone", () => {
+  test("only milvus, qdrant, the two InfluxDB types, databend, s3, kubernetes and rabbitmq declare hostAcceptsUri, so every other Host box takes a host alone", () => {
     expect(ALL_TYPES.filter((type) => hostUriSchemes(type).length > 0)).toEqual([
       "milvus",
       "qdrant",
@@ -1419,6 +1423,7 @@ describe("Host box addresses and credential warnings", () => {
       "databend",
       "s3",
       "kubernetes",
+      "rabbitmq",
     ]);
   });
 

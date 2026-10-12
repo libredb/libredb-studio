@@ -1475,7 +1475,7 @@ describe("DOCKERHUB.md", () => {
 
 /** The chart description, exactly. */
 const CHART_DESCRIPTION =
-  "Web-based SQL IDE for cloud-native teams supporting thirty-one engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage and Kubernetes";
+  "Web-based SQL IDE for cloud-native teams supporting thirty-two engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage and Kubernetes";
 
 describe("the chart and the operator name S3 where an evaluator searches", () => {
   test("50. the description, the three keywords, the mirror and both CSV descriptions", () => {
@@ -1753,7 +1753,7 @@ describe("the architecture, provider, editor and guide docs", () => {
     );
     expect(optimization).toContain(`holds exactly those ${word(nonSql)},`);
     expect(provider.getCapabilities().supportsResultPagination).toBe(false);
-    expect(optimization).toContain("Fifteen providers cannot serve page two.");
+    expect(optimization).toContain("Sixteen providers cannot serve page two.");
     expect(optimization).toContain("Qdrant, Oxia and S3-compatible object storage answer it with page one.");
     expect(optimization).toContain("The S3 row names no operation and, like the Oxia row, is the gate's whole answer:");
     expect(optimization).toContain(
@@ -1943,7 +1943,7 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
     expect(flow).toContain(
       "- On S3-compatible object storage the grounding carries bucket names only, never an object key, a prefix, a size or any object content (objects are listed by the Keys panel, not by the object walk).",
     );
-    expect(flow).toContain("On the twenty-three engines that declare no foreign keys at all");
+    expect(flow).toContain("On the twenty-four engines that declare no foreign keys at all");
     expect(flow).toContain(
       "Qdrant, Oxia, Databend, S3-compatible object storage and Kubernetes) this block carries no relations",
     );

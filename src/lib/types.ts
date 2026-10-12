@@ -165,7 +165,13 @@ export type DatabaseType =
   // credential, with the discovery filter below naming what to subscribe to. Read-only is structural rather
   // than a mode: the outbound path can encode only CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and DISCONNECT, so
   // no PUBLISH and no Will exists to send.
-  | "mqtt";
+  | "mqtt"
+  // RabbitMQ (#1656), one broker read only: virtual hosts, streams, queues and exchanges from the management HTTP API,
+  // and a bounded, non-destructive read of a stream's messages over AMQP 0-9-1 by a client of this repository's own
+  // (`src/lib/db/providers/stream/rabbitmq/`). Never takes a message from a queue and never writes to the broker. The
+  // connection's Port is the management port, `amqpPort` the AMQP port of stream reads (empty means browse only), and
+  // `apiPath` the management API's path prefix.
+  | "rabbitmq";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -837,7 +843,8 @@ export interface QueryTab {
     | "oxia"
     | "s3"
     | "kubectl"
-    | "mqtt";
+    | "mqtt"
+    | "rabbitmq";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

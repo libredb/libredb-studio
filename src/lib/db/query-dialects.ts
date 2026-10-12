@@ -123,6 +123,15 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersCodeGeneration: false,
     offersCountQuery: false,
   }),
+  // RabbitMQ (#1656): a JSON read request of the provider's own schema. A stream's columns are the fixed shape of a
+  // read result, so no profile, model or count statement applies, and neither SQL export format does.
+  rabbitmq: Object.freeze({
+    tabType: "rabbitmq",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+    offersSqlExport: false,
+  }),
   kubectl: Object.freeze({
     tabType: "kubectl",
     offersColumnProfiling: false,

@@ -763,6 +763,28 @@ export const BigQueryIcon: React.FC<IconProps> = ({ className, ...props }) => (
 );
 
 /**
+ * RabbitMQ: a mark drawn for Studio, never the project's own logo: two messages waiting in line and the arrow they
+ * leave by, which is what a queue does in the plainest terms. Stroked on the house 24-unit grid like the others.
+ */
+export const RabbitMQIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <rect x="2.5" y="8" width="4" height="8" rx="1" />
+    <rect x="9" y="8" width="4" height="8" rx="1" />
+    <path d="M15.5 12h6" />
+    <path d="m19 9.5 2.5 2.5-2.5 2.5" />
+  </svg>
+);
+
+/**
  * MQTT: a mark drawn for Studio, never a product's logo: a node with the arcs of a broadcast rising from it,
  * which is what a broker does in the plainest terms. Stroked on the house 24-unit grid like the others.
  */

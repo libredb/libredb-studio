@@ -100,6 +100,7 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   // One subscribe returns what it saw, and the cursor of `MQTT_KEY_SCAN` says there is no page two; its own
   // `prepareQuery` hands every statement on with `wasLimited: false` (#1635).
   mqtt: false,
+  rabbitmq: false,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];

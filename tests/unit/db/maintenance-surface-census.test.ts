@@ -108,6 +108,7 @@ const EXPECTED: Readonly<Record<DatabaseType, SurfaceRow>> = {
   s3: NONE,
   kubernetes: NONE,
   mqtt: NONE,
+  rabbitmq: NONE,
   libredb: NONE,
 };
 
@@ -121,9 +122,9 @@ describe("every shipped provider's per-row maintenance controls (R46 C3)", () =>
     expect(surfacesOf(provider.getCapabilities(), provider.getLabels())).toEqual(EXPECTED[type]);
   });
 
-  test("11 of 32 type-ids offer per-row controls on the two tabs, 10 on the row menus, one outside MaintenanceType", () => {
+  test("11 of 33 type-ids offer per-row controls on the two tabs, 10 on the row menus, one outside MaintenanceType", () => {
     const rows = Object.values(EXPECTED);
-    expect(rows.length).toBe(32);
+    expect(rows.length).toBe(33);
     expect(rows.filter((row) => row.tabs !== "").length).toBe(11);
     expect(rows.filter((row) => row.tree !== "").length).toBe(10);
     expect(rows.filter((row) => row.outsideMaintenanceType !== "").length).toBe(1);

@@ -8,6 +8,10 @@
  * docs/providers/rabbitmq.md prints this table with the reason for each value.
  */
 import type { BoundedLimiterOptions } from "@/lib/db/utils/bounded-limiter";
+import type { DatabaseType } from "@/lib/types";
+
+/** The provider's type id, the one every error of this provider is tagged with. */
+export const RABBITMQ_TYPE: DatabaseType = "rabbitmq";
 
 // --- Version and ports -------------------------------------------------------------------------------------------
 
