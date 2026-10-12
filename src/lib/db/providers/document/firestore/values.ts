@@ -6,8 +6,8 @@
  * Browser-safe.
  */
 import { QueryError } from "@/lib/db/errors";
-import { FIRESTORE_ERROR_PROVIDER } from "./constants";
-import { type FirestoreTarget, relativeSegments } from "./names";
+import { FIRESTORE_ERROR_PROVIDER, LIMITS } from "./constants";
+import { type FirestoreTarget, fullDocumentName, isDocumentPath, relativeSegments, segmentsRefusal } from "./names";
 
 /** A REST `Value`: exactly one key. */
 export type RestValue = Readonly<Record<string, unknown>>;
@@ -82,9 +82,27 @@ const INTEGER_TEXT = /^-?\d+$/;
 const DOUBLE_TEXT = /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 const VECTOR_TYPE = "__vector__";
+const MIN_INT64 = BigInt("-9223372036854775808");
+const MAX_INT64 = BigInt("9223372036854775807");
+/** 0001-01-01T00:00:00Z and 9999-12-31T23:59:59Z in Unix seconds. */
+const MIN_SECONDS = BigInt("-62135596800");
+const MAX_SECONDS = BigInt("253402300799");
+const MAX_NANOS = 999_999_999;
 
 export const VALUE_SENTENCES = Object.freeze({
   unreadable: (what: string): string => `Firestore answered a value Studio cannot read: ${what}`,
+  integerText: "An integer literal must be decimal digits with an optional leading minus sign",
+  integerRange:
+    "An integer must lie between -9223372036854775808 and 9223372036854775807, Firestore's 64-bit range; write a fraction or an exponent for a double",
+  doubleRange: "A number literal must be a finite double",
+  stringMalformed: "A string or map key must be well-formed Unicode text",
+  timestampRange: "A timestamp must lie between 0001-01-01T00:00:00Z and 9999-12-31T23:59:59.999999999Z",
+  timestampNanos: "Timestamp nanoseconds must be an integer from 0 to 999,999,999",
+  latitude: "A GeoPoint latitude must be a number from -90 to 90",
+  longitude: "A GeoPoint longitude must be a number from -180 to 180",
+  referencePath: "db.doc() takes a document path: an even number of segments, such as users/alice",
+  vectorElement: "A vector holds finite numbers only",
+  vectorDimensions: "A vector holds at most 2,048 numbers",
 });
 
 export function decodeValue(value: RestValue, target: FirestoreTarget): unknown {
@@ -236,4 +254,91 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 
 function refuse(message: string): QueryError {
   return new QueryError(message, FIRESTORE_ERROR_PROVIDER);
+}
+
+export function encodeLiteral(literal: Literal, target: FirestoreTarget): RestValue {
+  switch (literal.kind) {
+    case "null":
+      return { nullValue: null };
+    case "boolean":
+      return { booleanValue: literal.value };
+    case "integer":
+      return { integerValue: canonicalInteger(literal.text) };
+    case "double":
+      return { doubleValue: encodeDouble(literal.value) };
+    case "string":
+      return { stringValue: wellFormed(literal.value) };
+    case "timestamp":
+      return { timestampValue: timestampText(literal.seconds, literal.nanos) };
+    case "geopoint":
+      return { geoPointValue: geoPoint(literal.latitude, literal.longitude) };
+    case "reference":
+      return { referenceValue: referenceName(literal.segments, target) };
+    case "vector":
+      return vectorValue(literal.values);
+    case "array":
+      return { arrayValue: { values: literal.items.map((item) => encodeLiteral(item, target)) } };
+    case "map":
+      return {
+        mapValue: {
+          fields: Object.fromEntries(
+            literal.entries.map(([key, value]) => [wellFormed(key), encodeLiteral(value, target)]),
+          ),
+        },
+      };
+  }
+}
+
+function canonicalInteger(text: string): string {
+  if (!INTEGER_TEXT.test(text)) throw refuse(VALUE_SENTENCES.integerText);
+  const integer = BigInt(text);
+  if (integer < MIN_INT64 || integer > MAX_INT64) throw refuse(VALUE_SENTENCES.integerRange);
+  return integer.toString();
+}
+
+function encodeDouble(value: number | "NaN" | "Infinity" | "-Infinity"): number | string {
+  if (typeof value === "string") return value;
+  if (!Number.isFinite(value)) throw refuse(VALUE_SENTENCES.doubleRange);
+  return value;
+}
+
+function wellFormed(text: string): string {
+  if (!text.isWellFormed()) throw refuse(VALUE_SENTENCES.stringMalformed);
+  return text;
+}
+
+/** RFC 3339 in UTC; nine fraction digits when nanos is not 0, none otherwise. */
+function timestampText(seconds: string, nanos: number): string {
+  if (!Number.isInteger(nanos) || nanos < 0 || nanos > MAX_NANOS) throw refuse(VALUE_SENTENCES.timestampNanos);
+  if (!INTEGER_TEXT.test(seconds)) throw refuse(VALUE_SENTENCES.timestampRange);
+  const whole = BigInt(seconds);
+  if (whole < MIN_SECONDS || whole > MAX_SECONDS) throw refuse(VALUE_SENTENCES.timestampRange);
+  const second = new Date(Number(whole) * 1000).toISOString().slice(0, 19);
+  return nanos === 0 ? `${second}Z` : `${second}.${String(nanos).padStart(9, "0")}Z`;
+}
+
+function geoPoint(latitude: number, longitude: number): { latitude: number; longitude: number } {
+  if (!(Number.isFinite(latitude) && latitude >= -90 && latitude <= 90)) throw refuse(VALUE_SENTENCES.latitude);
+  if (!(Number.isFinite(longitude) && longitude >= -180 && longitude <= 180)) throw refuse(VALUE_SENTENCES.longitude);
+  return { latitude, longitude };
+}
+
+function referenceName(segments: readonly string[], target: FirestoreTarget): string {
+  if (!isDocumentPath(segments)) throw refuse(VALUE_SENTENCES.referencePath);
+  const refusal = segmentsRefusal(segments);
+  if (refusal !== null) throw refuse(refusal);
+  return fullDocumentName(target, segments);
+}
+
+function vectorValue(values: readonly number[]): RestValue {
+  if (values.length > LIMITS.maxVectorDimensions) throw refuse(VALUE_SENTENCES.vectorDimensions);
+  if (!values.every((value) => Number.isFinite(value))) throw refuse(VALUE_SENTENCES.vectorElement);
+  return {
+    mapValue: {
+      fields: {
+        __type__: { stringValue: VECTOR_TYPE },
+        value: { arrayValue: { values: values.map((value) => ({ doubleValue: value })) } },
+      },
+    },
+  };
 }
