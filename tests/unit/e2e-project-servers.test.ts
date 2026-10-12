@@ -121,3 +121,30 @@ describe("the Firestore browse spec runs against a server of its own that sends 
     expect(source.split("\n").filter((line) => /\bexpect\b/.test(line) && /Too many requests/.test(line))).toEqual([]);
   });
 });
+
+describe("every server waits for the one cold build with a budget sized for a CI runner", () => {
+  // The first server runs `next build` before `next start`, and every other server waits for its .next/BUILD_ID,
+  // so each timeout has to cover a cold production build. Measured 2026-10-12 on GitHub runners: that build's
+  // first output came 65 to 114 s after the command started in ten runs of main, and two runs (main 68a7d19e4,
+  // #1695 cd04e6e03) were stopped at the 120 s timeout before the build finished.
+  const servers = Array.isArray(config.webServer) ? config.webServer : [];
+
+  test("every server builds or waits for the build, so the budget below applies to each", () => {
+    expect(servers.length).toBeGreaterThan(0);
+    for (const server of servers) {
+      expect({ command: server.command, waits: /bun run build|\.next\/BUILD_ID/.test(server.command ?? "") }).toEqual({
+        command: server.command,
+        waits: true,
+      });
+    }
+  });
+
+  test("each allows five minutes, past twice the slowest build measured", () => {
+    for (const server of servers) {
+      expect({ command: server.command, timeout: server.timeout }).toEqual({
+        command: server.command,
+        timeout: 300_000,
+      });
+    }
+  });
+});

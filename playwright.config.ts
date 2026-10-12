@@ -25,6 +25,12 @@ const launchPort = Number(process.env.E2E_LAUNCH_PORT ?? 3012);
 const firestorePort = Number(process.env.E2E_FIRESTORE_PORT ?? 3013);
 const firestoreStubPort = Number(process.env.E2E_FIRESTORE_STUB_PORT ?? 3014);
 
+// How long each server below may take to answer. The first one runs a cold `next build` before `next start`, and
+// every other one waits for that build's .next/BUILD_ID, so each budget covers the build. Measured 2026-10-12 on
+// GitHub runners: the build's first output came 65 to 114 s after the command started in ten runs of main, and
+// two runs were stopped at the earlier 120 s before the build finished.
+const SERVER_START_TIMEOUT_MS = 300_000;
+
 const testCredentials = {
   JWT_SECRET: "test-jwt-secret-for-e2e-tests-32ch",
   ADMIN_EMAIL: "admin@libredb.org",
@@ -212,7 +218,7 @@ export default defineConfig({
       command: "rm -f .next/BUILD_ID && bun run build && bun start",
       url: `http://localhost:${port}`,
       reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
+      timeout: SERVER_START_TIMEOUT_MS,
       env: { PORT: String(port), ...testCredentials },
     },
     {
@@ -236,7 +242,7 @@ export default defineConfig({
       command: "until [ -f .next/BUILD_ID ]; do sleep 1; done; bun start",
       url: `http://localhost:${offlinePort}`,
       reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
+      timeout: SERVER_START_TIMEOUT_MS,
       env: {
         PORT: String(offlinePort),
         STORAGE_SQLITE_PATH: "./data-e2e-offline/libredb-storage.db",
@@ -250,7 +256,7 @@ export default defineConfig({
       command: "rm -rf data-e2e-passkey && until [ -f .next/BUILD_ID ]; do sleep 1; done; bun start",
       url: `http://localhost:${passkeyPort}`,
       reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
+      timeout: SERVER_START_TIMEOUT_MS,
       env: {
         PORT: String(passkeyPort),
         STORAGE_PROVIDER: "sqlite",
@@ -273,7 +279,7 @@ export default defineConfig({
       command: "rm -rf data-e2e-launch && until [ -f .next/BUILD_ID ]; do sleep 1; done; bun start",
       url: `http://localhost:${launchPort}`,
       reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
+      timeout: SERVER_START_TIMEOUT_MS,
       env: {
         PORT: String(launchPort),
         STORAGE_PROVIDER: "sqlite",
@@ -296,7 +302,7 @@ export default defineConfig({
       command: "rm -rf data-e2e-firestore && until [ -f .next/BUILD_ID ]; do sleep 1; done; bun start",
       url: `http://localhost:${firestorePort}`,
       reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
+      timeout: SERVER_START_TIMEOUT_MS,
       env: {
         PORT: String(firestorePort),
         STORAGE_SQLITE_PATH: "./data-e2e-firestore/libredb-storage.db",
