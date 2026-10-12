@@ -47,6 +47,7 @@ describe("the bounds of spec S11", () => {
     expect(lex(`${"(".repeat(32)}${")".repeat(32)}`)).toHaveLength(65);
     expect(lex("()".repeat(100))).toHaveLength(201);
     refusedWith("[{(".repeat(11), LEXER_SENTENCES.tooDeep, 32);
+    refusedWith(`${")".repeat(5)}${"(".repeat(33)}`, LEXER_SENTENCES.tooDeep, 37);
   });
 });
 

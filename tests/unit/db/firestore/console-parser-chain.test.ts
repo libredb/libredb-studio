@@ -139,6 +139,7 @@ describe("query calls", () => {
     expect(parseStatement('db.collection("a").startAt(1).endAt(2)')).toMatchObject({
       ops: { start: { before: true }, end: { before: false } },
     });
+    expect(parseStatement('db.collection("a").select()')).toMatchObject({ ops: { select: [] } });
   });
 
   test("where or orderBy after a cursor is refused, as the SDK refuses it", () => {

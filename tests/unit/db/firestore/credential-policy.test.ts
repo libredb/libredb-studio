@@ -42,6 +42,9 @@ describe("firestore credential sentences", () => {
     expect(S.emulatorCredential("127.0.0.1:8080")).toBe(
       "This server sends every Firestore connection to the emulator at 127.0.0.1:8080 (FIRESTORE_EMULATOR_HOST): clear the credential field, or ask the operator to unset the variable",
     );
+    expect(S.emulatorHost).toBe(
+      "FIRESTORE_EMULATOR_HOST must be host:port or [ipv6]:port with no scheme, such as 127.0.0.1:8080",
+    );
   });
 
   test("the rules carry the provider and the project id rule", () => {

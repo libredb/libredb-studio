@@ -153,6 +153,11 @@ describe("timestamps", () => {
     "2026-10-12T09:30:00+24:00",
     "October 12, 2026",
     "0000-01-01",
+    "2026-10-12T09:60:00Z",
+    "2026-10-12T09:30:60Z",
+    "2026-10-12T09:30:00+01:60",
+    "2026-00-12",
+    "2026-10-00",
   ])("fromDate refuses %j at the string", (date) => {
     refused(() => literal(`Timestamp.fromDate(new Date(${JSON.stringify(date)}))`), PARSER_SENTENCES.dateText, 28);
   });
@@ -209,6 +214,8 @@ describe("timestamps", () => {
     expect(literal("new Timestamp(1, 999999999)")).toEqual({ kind: "timestamp", seconds: "1", nanos: 999_999_999 });
     expect(literal("new Timestamp(253402300799, 999999999)")).toMatchObject({ seconds: "253402300799" });
     refused(() => literal("new Timestamp(1, 1000000000)"), PARSER_SENTENCES.nanosRange, 17);
+    refused(() => literal("new Timestamp(1, -1)"), PARSER_SENTENCES.nanosRange, 17);
+    expect(literal("new Timestamp(-62135596800, 0)")).toMatchObject({ seconds: "-62135596800" });
     refused(() => literal("new Timestamp(-62135596801, 0)"), PARSER_SENTENCES.timestampRange, 0);
     refused(() => literal("new Timestamp(1)"), PARSER_SENTENCES.arguments("new Timestamp()", "exactly 2 arguments"), 0);
   });
@@ -217,6 +224,7 @@ describe("timestamps", () => {
 describe("geopoints, vectors and references", () => {
   test("a geopoint takes latitude -90 to 90 and longitude -180 to 180", () => {
     expect(literal("new GeoPoint(-90, 180)")).toEqual({ kind: "geopoint", latitude: -90, longitude: 180 });
+    expect(literal("new GeoPoint(90, -180)")).toEqual({ kind: "geopoint", latitude: 90, longitude: -180 });
     expect(literal("new admin.firestore.GeoPoint(1, 2.5)")).toEqual({ kind: "geopoint", latitude: 1, longitude: 2.5 });
     refused(() => literal("new GeoPoint(90.5, 0)"), PARSER_SENTENCES.latitude, 13);
     refused(() => literal("new GeoPoint(0, -180.1)"), PARSER_SENTENCES.longitude, 16);
@@ -228,6 +236,7 @@ describe("geopoints, vectors and references", () => {
     refused(() => literal('FieldValue.vector(["a"])'), PARSER_SENTENCES.vectorElements, 19);
     refused(() => literal("FieldValue.vector([NaN])"), PARSER_SENTENCES.vectorElements, 19);
     refused(() => literal("FieldValue.vector(1)"), PARSER_SENTENCES.vectorElements, 18);
+    expect(literal(`FieldValue.vector([${"1,".repeat(2_048)}])`)).toMatchObject({ kind: "vector" });
     refused(() => literal(`FieldValue.vector([${"1,".repeat(2_049)}])`), PARSER_SENTENCES.vectorSize, 18);
   });
 

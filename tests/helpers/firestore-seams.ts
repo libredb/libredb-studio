@@ -6,6 +6,9 @@
  * A request settles the way the shared node transport settles one: its signal aborting rejects it with a
  * TransportError of kind "timeout" when the reason is a TimeoutError DOMException and "aborted" otherwise, and
  * close() rejects every request still in flight with kind "aborted".
+ *
+ * sleep records its milliseconds and resolves at once, or rejects with the signal's reason when the signal is
+ * already aborted, as the real sleep does; it never waits, so an abort during a sleep cannot be staged through it.
  */
 import {
   type NodeRequest,
@@ -154,8 +157,9 @@ export function fakeSeams(options: FakeSeamsOptions = {}): FakeFirestoreSeams {
   return {
     createTransport,
     now: () => clock,
-    sleep: async (ms) => {
+    sleep: async (ms, signal) => {
       sleeps.push(ms);
+      if (signal?.aborted) throw signal.reason;
     },
     timeoutSignal: (ms) => {
       const controller = new AbortController();
