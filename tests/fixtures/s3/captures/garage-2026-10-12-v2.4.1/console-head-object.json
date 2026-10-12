@@ -1,0 +1,122 @@
+{
+  "file": "garage-2026-10-12-v2.4.1/console-head-object.json",
+  "scenario": "console-head-object",
+  "target": "garage",
+  "clockOffsetMs": 0,
+  "exchanges": [
+    {
+      "step": "connect",
+      "request": {
+        "method": "GET",
+        "path": "/",
+        "query": "max-buckets=10000",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261012T024808Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000002/20261012/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "content-length",
+            "666"
+          ],
+          [
+            "date",
+            "Mon, 12 Oct 2026 02:48:08 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "application/xml",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult><Buckets><Bucket><CreationDate>2026-10-12T02:43:43.482Z</CreationDate><Name>studio-scoped</Name></Bucket><Bucket><CreationDate>2026-10-12T02:43:43.557Z</CreationDate><Name>studio-versions</Name></Bucket><Bucket><CreationDate>2026-10-12T02:43:43.631Z</CreationDate><Name>studio-bulk</Name></Bucket><Bucket><CreationDate>2026-10-12T02:43:43.393Z</CreationDate><Name>studio-demo</Name></Bucket><Bucket><CreationDate>2026-10-12T02:43:43.706Z</CreationDate><Name>studio-empty</Name></Bucket></Buckets><Owner><DisplayName>browse</DisplayName><ID>GK000000000000000000000002</ID></Owner></ListAllMyBucketsResult>"
+        }
+      }
+    },
+    {
+      "step": "head-object",
+      "request": {
+        "method": "HEAD",
+        "path": "/studio-demo/data/table.csv",
+        "query": "",
+        "headers": {
+          "host": "127.0.0.1:3900",
+          "accept-encoding": "identity",
+          "x-amz-date": "20261012T024808Z",
+          "x-amz-content-sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "authorization": {
+          "scheme": "AWS4-HMAC-SHA256",
+          "credential": "GK000000000000000000000002/20261012/garage/s3/aws4_request",
+          "signedHeaders": [
+            "host",
+            "x-amz-content-sha256",
+            "x-amz-date"
+          ]
+        }
+      },
+      "answer": {
+        "status": 200,
+        "headers": [
+          [
+            "last-modified",
+            "Mon, 12 Oct 2026 02:43:45 GMT"
+          ],
+          [
+            "accept-ranges",
+            "bytes"
+          ],
+          [
+            "etag",
+            "\"336a1c20b77e4905e49ff81a12cfc23e\""
+          ],
+          [
+            "content-length",
+            "72"
+          ],
+          [
+            "date",
+            "Mon, 12 Oct 2026 02:48:08 GMT"
+          ]
+        ],
+        "headersTruncated": false,
+        "contentType": "text/csv",
+        "contentEncoding": null,
+        "retryAfter": null,
+        "truncated": false,
+        "body": {
+          "empty": true
+        }
+      }
+    }
+  ],
+  "result": [
+    {
+      "step": "head-object",
+      "ok": {
+        "rows": 4,
+        "names": [
+          "Field",
+          "Value"
+        ],
+        "notices": []
+      },
+      "exchanges": 1
+    }
+  ]
+}
