@@ -68,9 +68,9 @@ describe("parseTables and findControlTable", () => {
     expect(table?.rows).toHaveLength(PROGRAMME_CONTROL_IDS.length);
   });
 
-  test("the programme ends with the S3 controls then the Kubernetes request allowlist", () => {
-    expect(PROGRAMME_CONTROL_IDS.slice(-6)).toEqual(["3.15", "3.16", "3.17", "3.18", "3.19", "3.20"]);
-    expect(PROGRAMME_CONTROL_IDS).toHaveLength(39);
+  test("the programme ends with the S3 controls, the Kubernetes request allowlist, then the RabbitMQ read path", () => {
+    expect(PROGRAMME_CONTROL_IDS.slice(-7)).toEqual(["3.15", "3.16", "3.17", "3.18", "3.19", "3.20", "3.21"]);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(40);
   });
 
   test("ignores a table that is not the control table", () => {
