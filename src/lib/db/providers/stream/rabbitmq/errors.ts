@@ -32,6 +32,7 @@ import {
   RABBITMQ_LAST_HINT_BACKSTEP,
   RABBITMQ_LISTING_PAGE_SIZE,
   RABBITMQ_MGMT_DEPTH,
+  RABBITMQ_MIN_VERSION,
   RABBITMQ_NAME_MAX_BYTES,
   RABBITMQ_NAME_PROSE_CHARS,
   RABBITMQ_PAYLOAD_JSON_DEPTH,
@@ -175,15 +176,20 @@ export const PROVIDER_CLOSED = "This connection was closed while Studio was usin
 export const MAINTENANCE_REFUSED =
   "RabbitMQ offers no maintenance operation in Studio: Studio reads the broker and never changes it.";
 
+/** The floor as a person reads it: "4.2.0" is "4.2", while a floor with a patch of its own keeps it. */
+function floorText(floor: string): string {
+  return floor.endsWith(".0") ? floor.slice(0, -2) : floor;
+}
+
 /** A broker below the supported floor. `version` has passed the shape check of `connect()`. */
-export function versionTooOld(version: string): DatabaseConfigError {
-  return configError(`This broker runs RabbitMQ ${version}; Studio supports 4.2 and later.`);
+export function versionTooOld(version: string, floor = RABBITMQ_MIN_VERSION): DatabaseConfigError {
+  return configError(`This broker runs RabbitMQ ${version}; Studio supports ${floorText(floor)} and later.`);
 }
 
 /** A `rabbitmq_version` that fails the shape check, never shown. */
-export function versionUnreadable(): DatabaseConfigError {
+export function versionUnreadable(floor = RABBITMQ_MIN_VERSION): DatabaseConfigError {
   return configError(
-    "This server's management API reports a version Studio cannot read; Studio supports RabbitMQ 4.2 and later.",
+    `This server's management API reports a version Studio cannot read; Studio supports RabbitMQ ${floorText(floor)} and later.`,
   );
 }
 

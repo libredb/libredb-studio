@@ -128,6 +128,18 @@ describe("connection sentences", () => {
       "This server's management API reports a version Studio cannot read; Studio supports RabbitMQ 4.2 and later.",
     );
   });
+
+  test("the version refusals name the floor they are given, a .0 patch left out, so a raised floor is not stale", () => {
+    expect(E.versionTooOld("4.2.9", "4.3.0").message).toBe(
+      "This broker runs RabbitMQ 4.2.9; Studio supports 4.3 and later.",
+    );
+    expect(E.versionTooOld("4.2.0", "4.2.1").message).toBe(
+      "This broker runs RabbitMQ 4.2.0; Studio supports 4.2.1 and later.",
+    );
+    expect(E.versionUnreadable("5.0.0").message).toBe(
+      "This server's management API reports a version Studio cannot read; Studio supports RabbitMQ 5.0 and later.",
+    );
+  });
 });
 
 describe("the closing sentences", () => {
