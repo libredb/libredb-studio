@@ -94,18 +94,21 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   // Behind Kubernetes and ahead of libSQL (#1635): the broker a team runs beside its databases, met beside them
   // rather than as one of them, and the newest name on this page, so only libSQL and the embedded store move.
   mqtt: 28,
+  // Behind MQTT and ahead of libSQL: the cloud data warehouse a team runs beside its databases, and the newest name
+  // on this page, so only libSQL and the embedded store move, as they did for Databend and the rest.
+  bigquery: 29,
+  // Behind BigQuery and ahead of libSQL: the document database a Google Cloud team runs beside its databases, and
+  // the newest name on this page, so only libSQL and the embedded store move, as they did for BigQuery and the rest.
+  firestore: 30,
   // Behind etcd and ahead of the embedded store: libSQL is the name on this page an
   // evaluator is least likely to have met, but it is a product name (Turso's server)
   // rather than our own, so it goes ahead of `libredb`.
-  libsql: 29,
+  libsql: 31,
   // Last on purpose: the embedded store is the least recognisable name here. It is
   // still shown - it is a shipped provider with a doc (docs/providers/libredb.md), an
   // icon and a slot in the connection picker, so omitting it would make the login page
   // contradict the app (issue #425, step 2).
-  libredb: 30,
-  bigquery: 31,
-  // Last (rank 32): the newest name on this page, so no existing engine moves (the BigQuery precedent).
-  firestore: 32,
+  libredb: 32,
 };
 
 /**

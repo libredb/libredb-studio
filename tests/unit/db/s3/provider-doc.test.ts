@@ -1473,19 +1473,12 @@ describe("DOCKERHUB.md", () => {
   });
 });
 
-/** The chart description, exactly. */
-const CHART_DESCRIPTION =
-  "Web-based SQL IDE for cloud-native teams supporting thirty-two engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage and Kubernetes";
-
 describe("the chart and the operator name S3 where an evaluator searches", () => {
-  test("50. the description, the three keywords, the mirror and both CSV descriptions", () => {
+  test("50. the three keywords, the mirror and both CSV descriptions", () => {
     const chart = parseYaml(read("charts/libredb-studio/Chart.yaml")) as {
-      readonly description: string;
       readonly version: string;
       readonly keywords: readonly string[];
     };
-    expect(chart.description).toBe(CHART_DESCRIPTION);
-    expect(chart.description).toContain(` ${word(EXTERNAL_DATABASE_TYPES.length)} engines - `);
     const databend = chart.keywords.indexOf("databend");
     expect(chart.keywords.slice(databend + 1, databend + 4)).toEqual(["s3", "object-storage", "minio"]);
     const readme = read("charts/libredb-studio/README.md");

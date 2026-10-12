@@ -1384,12 +1384,14 @@ describe("db-showcase", () => {
         // them rather than as one of them, and the newest name on this page, so only libSQL and the embedded store
         // move (the Milvus, Qdrant, Oxia, Databend, S3 and Kubernetes precedent).
         "mqtt",
+        // Behind MQTT and ahead of libSQL: the cloud data warehouse a team runs beside its databases, so only libSQL
+        // and the embedded store move, as they did for Databend.
+        "bigquery",
+        // Behind BigQuery and ahead of libSQL: the document database a Google Cloud team runs beside its databases,
+        // so only libSQL and the embedded store move, as they did for BigQuery.
+        "firestore",
         "libsql",
         "libredb",
-        // Last (rank 28): the newest name on this page, so no existing engine moves.
-        "bigquery",
-        // Last (rank 32): the newest name on this page, so no existing engine moves (the BigQuery precedent).
-        "firestore",
       ]);
     });
   });
