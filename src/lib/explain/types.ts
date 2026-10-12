@@ -47,6 +47,11 @@ export interface StoredExplainPlan {
  */
 export interface ExplainStrategy {
   readonly format: ExplainFormat;
+  /**
+   * `false` where the editor sends no plan beside an ordinary run, because the engine bills every plan request. Absent
+   * means the editor asks for an estimate plan in the background beside every run of a statement the strategy explains.
+   */
+  readonly backgroundPlan?: false;
   /** Dialect EXPLAIN SQL for a SELECT statement, or null when not explainable. */
   buildSql(sql: string, mode: ExplainMode): string | null;
   /**

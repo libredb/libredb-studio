@@ -172,4 +172,8 @@ describe("the firestore-explain strategy (Firestore spec 5.7)", () => {
   ])("answers null for a foreign shape: %j", (raw) => {
     expect(firestoreExplainStrategy.toRenderModel(raw)).toBeNull();
   });
+
+  test("sends no plan beside an ordinary run, because Firestore bills every plan request", () => {
+    expect(firestoreExplainStrategy.backgroundPlan).toBe(false);
+  });
 });

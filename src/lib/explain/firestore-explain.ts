@@ -106,6 +106,8 @@ function statsNode(stats: Readonly<Record<string, unknown>>): ExplainTreeNode {
 
 export const firestoreExplainStrategy: ExplainStrategy = {
   format: "firestore-explain",
+  // Firestore bills a plan request like a query, so an ordinary run sends none; the Explain button still does.
+  backgroundPlan: false,
   // Plan-only in both modes: the provider sends `analyze: false` whatever the mode, so estimate equals analyze. Text the
   // parser refuses is marked too, so the server answers with the parser's own sentence.
   buildSql(text) {
