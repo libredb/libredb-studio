@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AuthenticationError, QueryError } from "@/lib/db/errors";
+import { AuthenticationError, QueryError, TimeoutError } from "@/lib/db/errors";
 import type { NodeRequest } from "@/lib/db/http/node-transport";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { DEFAULT_DATABASE_ID, FIRESTORE_API_ORIGIN, LIMITS } from "@/lib/db/providers/document/firestore/constants";
@@ -276,6 +276,29 @@ describe("firestore transport answers", () => {
     const expected = mapGoogleError(readGoogleError(300, text), context);
     expect(error.constructor).toBe(expected.constructor);
     expect(error.message).toBe(expected.message);
+  });
+
+  test("a 2xx stream that ends in an error element is that error, never a short answer", async () => {
+    const request: FirestoreRequest = {
+      kind: "runQuery",
+      parent: [],
+      body: { structuredQuery: { from: [{ collectionId: "users" }], limit: 100 } },
+    };
+    const read = {
+      document: { name: "projects/demo-p/databases/(default)/documents/users/a" },
+      readTime: "2026-10-12T00:00:00Z",
+    };
+    const { client: whole } = client(() => jsonAnswer([read]));
+    expect(await whole.send(request, { signal, context })).toEqual([read]);
+    const stream = [read, { error: { code: 504, status: "DEADLINE_EXCEEDED", message: "Deadline exceeded." } }];
+    const { client: cut } = client(() => jsonAnswer(stream));
+    const error = await failureOf(cut.send(request, { signal, context }));
+    const expected = mapGoogleError(readGoogleError(200, JSON.stringify(stream)), context);
+    expect(error).toBeInstanceOf(TimeoutError);
+    expect(error.constructor).toBe(expected.constructor);
+    expect(error.message).toBe(expected.message);
+    // A literal, not the error table's own output: Google's words reach the user.
+    expect(error.message).toContain("Deadline exceeded (DEADLINE_EXCEEDED)");
   });
 
   // The transport hands the header to errors.ts as GoogleError.retryAfter; errors.ts writes "7" as "7s".

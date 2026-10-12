@@ -93,6 +93,14 @@ export const ERROR_SENTENCES = Object.freeze({
   probeUnreadable: "Firestore answered the database probe with a body Studio cannot read",
 });
 
+/**
+ * True when a 2xx answer is a stream that failed after it began: runQuery, runAggregationQuery and batchGet answer a
+ * JSON array, and a failure past the first element arrives as an element holding Google's error envelope.
+ */
+export function endsInError(answer: unknown): boolean {
+  return Array.isArray(answer) && answer.some((element) => isRecord(element) && isRecord(element.error));
+}
+
 export function readGoogleError(httpStatus: number, text: string): GoogleError {
   let parsed: unknown;
   try {

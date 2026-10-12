@@ -26,7 +26,14 @@ import {
   LIMITS,
 } from "./constants";
 import type { FirestoreAuth } from "./credential-policy";
-import { type ErrorContext, type GoogleError, mapGoogleError, mapTransportFailure, readGoogleError } from "./errors";
+import {
+  type ErrorContext,
+  endsInError,
+  type GoogleError,
+  mapGoogleError,
+  mapTransportFailure,
+  readGoogleError,
+} from "./errors";
 import { parseMetadataHost } from "./google-credentials";
 import { createTokenSource } from "./google-token-source";
 import { databaseName, type FirestoreTarget } from "./names";
@@ -234,11 +241,16 @@ export function createFirestoreClient(
       if (response.status < 200 || response.status > 299) {
         throw mapGoogleError(answerError(response), context);
       }
+      let answer: unknown;
       try {
-        return JSON.parse(response.text) as unknown;
+        answer = JSON.parse(response.text) as unknown;
       } catch {
         throw new QueryError(S.notJson, FIRESTORE_TYPE);
       }
+      // A stream that fails after its first element still answers 2xx: its error element names the failure, and the
+      // elements before it are never shown as a whole answer.
+      if (endsInError(answer)) throw mapGoogleError(answerError(response), context);
+      return answer;
     },
     close() {
       if (closer.signal.aborted) return;
