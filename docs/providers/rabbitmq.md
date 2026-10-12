@@ -469,7 +469,7 @@ The seed table, one row per queue and stream; a stream's offsets are the order o
 | `/` | `st-spoof` | stream | 0: 0-9-1, type amqp-1.0, an encoded amqp-value body; 1: AMQP 1.0 data, annotation x-basic-type amqp-1.0 (AMQP 1.0); 2: 0-9-1 control | R-S7: the spoof does not trigger the AMQP 1.0 label |
 | `/` | `st-uuid-key` | stream | 0: annotation x-map with a uuid key (AMQP 1.0) | R-S7: delivered with a 16-byte key on the pinned releases, without the entry on a fixed build |
 | `/` | `st-hostile-headers` | stream | 0: headers __proto__, constructor and an empty name; 1: x-deep, a table nested 12 levels; 2: x-wide, a table of 4,000 keys; 3: markup in the body and a header | R-S7 header depth, width and key names; the markup component case |
-| `/` | `st-buffer-shape` | stream | 0: a JSON object shaped like a Node Buffer | U116: how the results grid renders a JSON payload shaped like a Node Buffer |
+| `/` | `st-buffer-shape` | stream | 0: a JSON object shaped like a Node Buffer | U119: how the results grid renders a JSON payload shaped like a Node Buffer |
 | `/` | `st-g2-poison-mid` | stream | 0 to 1: good (AMQP 1.0); 2: poison: a uuid application property (AMQP 1.0); 3: good (AMQP 1.0) | R-S17, a numeric and a keyword start |
 | `/` | `g9-poison` | stream | 0 to 4: good; 5: poison: annotation x-char, a char (AMQP 1.0); 6 to 9: good | R-S17, a poison between 0-9-1 messages |
 | `/` | `h1-props` | stream | 0: good (AMQP 1.0); 1: poison: a content type of 300 bytes (AMQP 1.0); 2: good (AMQP 1.0) | R-S17 offset 1 |

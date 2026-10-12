@@ -395,7 +395,7 @@ export const RABBITMQ_SEED_TABLE: readonly SeedQueue[] = [
         { contentType: "application/json" },
       ),
     ],
-    readBy: "U116: how the results grid renders a JSON payload shaped like a Node Buffer",
+    readBy: "U119: how the results grid renders a JSON payload shaped like a Node Buffer",
     readerMay: true,
   },
   {

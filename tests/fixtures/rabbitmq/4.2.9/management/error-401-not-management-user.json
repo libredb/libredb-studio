@@ -3,8 +3,8 @@
   "image": "rabbitmq:4.2.9-management@sha256:9e9fd21d60f060acc9ecbd847cd1dcb87e6550bdb0297c27e79a40bfe1766ce4",
   "digest": "sha256:9e9fd21d60f060acc9ecbd847cd1dcb87e6550bdb0297c27e79a40bfe1766ce4",
   "version": "4.2.9",
-  "seed": "4f1ca27a7e49a95d0ef1e58b701b46419ec17959d4425b83507d7d45de87f140",
-  "date": "2026-10-12T11:06:16.346Z",
+  "seed": "c73ec9c21c09da45c0b9f1726da2a1873a930e927a411da850ff26b1144cbfb3",
+  "date": "2026-10-12T12:21:30.445Z",
   "surface": "connect() as studio-untagged, a user without a tag"
  },
  "exchanges": [

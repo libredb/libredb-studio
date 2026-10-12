@@ -3,8 +3,8 @@
   "image": "pivotalrabbitmq/rabbitmq@sha256:0a34c75c447856b52770f6e19cd58b0431427c263de2b89d531c686f0cdf0e50",
   "digest": "sha256:0a34c75c447856b52770f6e19cd58b0431427c263de2b89d531c686f0cdf0e50",
   "version": "4.3.x nightly",
-  "seed": "4f1ca27a7e49a95d0ef1e58b701b46419ec17959d4425b83507d7d45de87f140",
-  "date": "2026-10-12T11:05:38.801Z",
+  "seed": "c73ec9c21c09da45c0b9f1726da2a1873a930e927a411da850ff26b1144cbfb3",
+  "date": "2026-10-12T12:20:41.669Z",
   "surface": "connect() and the type checks of the poison reads as studio-reader"
  },
  "exchanges": [
@@ -33,7 +33,7 @@
    "query": "columns=type,online,members&disable_stats=true",
    "status": 200,
    "contentType": "application/json",
-   "body": "{\"members\":[\"rabbit@0c5311734f30\"],\"online\":[\"rabbit@0c5311734f30\"],\"type\":\"stream\"}"
+   "body": "{\"members\":[\"rabbit@9dd9467a766f\"],\"online\":[\"rabbit@9dd9467a766f\"],\"type\":\"stream\"}"
   },
   {
    "method": "GET",
@@ -42,7 +42,7 @@
    "query": "columns=type,online,members&disable_stats=true",
    "status": 200,
    "contentType": "application/json",
-   "body": "{\"members\":[\"rabbit@0c5311734f30\"],\"online\":[\"rabbit@0c5311734f30\"],\"type\":\"stream\"}"
+   "body": "{\"members\":[\"rabbit@9dd9467a766f\"],\"online\":[\"rabbit@9dd9467a766f\"],\"type\":\"stream\"}"
   },
   {
    "method": "GET",
@@ -51,7 +51,7 @@
    "query": "columns=type,online,members&disable_stats=true",
    "status": 200,
    "contentType": "application/json",
-   "body": "{\"members\":[\"rabbit@0c5311734f30\"],\"online\":[\"rabbit@0c5311734f30\"],\"type\":\"stream\"}"
+   "body": "{\"members\":[\"rabbit@9dd9467a766f\"],\"online\":[\"rabbit@9dd9467a766f\"],\"type\":\"stream\"}"
   },
   {
    "method": "GET",
@@ -60,7 +60,7 @@
    "query": "columns=type,online,members&disable_stats=true",
    "status": 200,
    "contentType": "application/json",
-   "body": "{\"members\":[\"rabbit@0c5311734f30\"],\"online\":[\"rabbit@0c5311734f30\"],\"type\":\"stream\"}"
+   "body": "{\"members\":[\"rabbit@9dd9467a766f\"],\"online\":[\"rabbit@9dd9467a766f\"],\"type\":\"stream\"}"
   },
   {
    "method": "GET",
@@ -69,7 +69,7 @@
    "query": "columns=type,online,members&disable_stats=true",
    "status": 200,
    "contentType": "application/json",
-   "body": "{\"members\":[\"rabbit@0c5311734f30\"],\"online\":[\"rabbit@0c5311734f30\"],\"type\":\"stream\"}"
+   "body": "{\"members\":[\"rabbit@9dd9467a766f\"],\"online\":[\"rabbit@9dd9467a766f\"],\"type\":\"stream\"}"
   }
  ]
 }

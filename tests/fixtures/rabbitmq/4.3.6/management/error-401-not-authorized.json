@@ -3,8 +3,8 @@
   "image": "rabbitmq:4.3.6-management@sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd",
   "digest": "sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd",
   "version": "4.3.6",
-  "seed": "4f1ca27a7e49a95d0ef1e58b701b46419ec17959d4425b83507d7d45de87f140",
-  "date": "2026-10-12T11:03:47.703Z",
+  "seed": "c73ec9c21c09da45c0b9f1726da2a1873a930e927a411da850ff26b1144cbfb3",
+  "date": "2026-10-12T12:20:08.390Z",
   "surface": "connect() as studio-reader with a wrong password"
  },
  "exchanges": [

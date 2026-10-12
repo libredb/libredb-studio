@@ -3,8 +3,8 @@
   "image": "rabbitmq:4.3.6-management@sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd",
   "digest": "sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd",
   "version": "4.3.6",
-  "seed": "4f1ca27a7e49a95d0ef1e58b701b46419ec17959d4425b83507d7d45de87f140",
-  "date": "2026-10-12T11:03:38.874Z",
+  "seed": "c73ec9c21c09da45c0b9f1726da2a1873a930e927a411da850ff26b1144cbfb3",
+  "date": "2026-10-12T12:20:06.812Z",
   "surface": "the tree, every listing, details, sources, monitoring, Test Connection and the reads' type checks as studio-reader"
  },
  "exchanges": [
@@ -33,7 +33,7 @@
    "query": "",
    "status": 200,
    "contentType": "application/json",
-   "body": "[{\"messages\":1095,\"name\":\"/\",\"description\":\"\",\"metadata\":{\"description\":\"\",\"tags\":[],\"default_queue_type\":\"classic\"},\"tags\":[],\"default_queue_type\":\"classic\",\"messages_ready\":1095,\"messages_unacknowledged\":0,\"protected_from_deletion\":false,\"tracing\":false,\"cluster_state\":{\"rabbit@libredb-rabbitmq\":\"running\"},\"message_stats\":{\"confirm\":1071,\"confirm_details\":{\"rate\":0.0},\"drop_unroutable\":0,\"drop_unroutable_details\":{\"rate\":0.0},\"publish\":1071,\"publish_details\":{\"rate\":0.0},\"return_unroutable\":0,\"return_unroutable_details\":{\"rate\":0.0}},\"messages_details\":{\"rate\":1.2},\"messages_unacknowledged_details\":{\"rate\":0.0},\"messages_ready_details\":{\"rate\":1.2}},{\"messages\":14,\"name\":\"billing\",\"description\":\"\",\"metadata\":{\"description\":\"\",\"tags\":[],\"default_queue_type\":\"classic\"},\"tags\":[],\"default_queue_type\":\"classic\",\"messages_ready\":14,\"messages_unacknowledged\":0,\"protected_from_deletion\":false,\"tracing\":false,\"cluster_state\":{\"rabbit@libredb-rabbitmq\":\"running\"},\"message_stats\":{\"confirm\":14,\"confirm_details\":{\"rate\":0.0},\"drop_unroutable\":0,\"drop_unroutable_details\":{\"rate\":0.0},\"publish\":14,\"publish_details\":{\"rate\":0.0},\"return_unroutable\":0,\"return_unroutable_details\":{\"rate\":0.0}},\"messages_details\":{\"rate\":0.4},\"messages_unacknowledged_details\":{\"rate\":0.0},\"messages_ready_details\":{\"rate\":0.4}}]"
+   "body": "[{\"name\":\"/\",\"description\":\"\",\"metadata\":{\"description\":\"\",\"tags\":[],\"default_queue_type\":\"classic\"},\"tags\":[],\"default_queue_type\":\"classic\",\"protected_from_deletion\":false,\"tracing\":false,\"cluster_state\":{\"rabbit@libredb-rabbitmq\":\"running\"}},{\"name\":\"billing\",\"description\":\"\",\"metadata\":{\"description\":\"\",\"tags\":[],\"default_queue_type\":\"classic\"},\"tags\":[],\"default_queue_type\":\"classic\",\"protected_from_deletion\":false,\"tracing\":false,\"cluster_state\":{\"rabbit@libredb-rabbitmq\":\"running\"}}]"
   },
   {
    "method": "GET",
@@ -60,7 +60,7 @@
    "query": "columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name",
    "status": 200,
    "contentType": "application/json",
-   "body": "{\"filtered_count\":23,\"item_count\":23,\"items\":[{\"name\":\"g9-poison\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h1-props\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h3-solo\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h3-wide\",\"state\":\"running\",\"type\":\"stream\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-canary\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-classic-dead\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-classic-empty\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":3,\"messages_ready\":3,\"messages_unacknowledged\":0,\"name\":\"q-classic-orders\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":3,\"messages_ready\":3,\"messages_unacknowledged\":0,\"name\":\"q-quorum-nodlx\",\"state\":\"running\",\"type\":\"quorum\"},{\"messages\":3,\"messages_ready\":3,\"messages_unacknowledged\":0,\"name\":\"q-quorum-payments\",\"state\":\"running\",\"type\":\"quorum\"},{\"name\":\"st-amqp10\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-buffer-shape\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-events\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-g2-poison-mid\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-hostile-headers\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-0\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-1\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-2\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-orders\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-restricted\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-routes\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-spoof\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-uuid-key\",\"state\":\"running\",\"type\":\"stream\"}],\"page\":1,\"page_count\":1,\"page_size\":500,\"total_count\":23}"
+   "body": "{\"filtered_count\":23,\"item_count\":23,\"items\":[{\"name\":\"g9-poison\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h1-props\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h3-solo\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h3-wide\",\"state\":\"running\",\"type\":\"stream\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-canary\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-classic-dead\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-classic-empty\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":3,\"messages_ready\":3,\"messages_unacknowledged\":0,\"name\":\"q-classic-orders\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-quorum-nodlx\",\"state\":\"running\",\"type\":\"quorum\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-quorum-payments\",\"state\":\"running\",\"type\":\"quorum\"},{\"name\":\"st-amqp10\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-buffer-shape\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-events\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-g2-poison-mid\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-hostile-headers\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-0\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-1\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-2\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-orders\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-restricted\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-routes\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-spoof\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-uuid-key\",\"state\":\"running\",\"type\":\"stream\"}],\"page\":1,\"page_count\":1,\"page_size\":500,\"total_count\":23}"
   },
   {
    "method": "GET",
@@ -87,7 +87,7 @@
    "query": "columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name",
    "status": 200,
    "contentType": "application/json",
-   "body": "{\"filtered_count\":3,\"item_count\":3,\"items\":[{\"messages\":2,\"messages_ready\":2,\"messages_unacknowledged\":0,\"name\":\"q-billing-invoices\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":2,\"messages_ready\":2,\"messages_unacknowledged\":0,\"name\":\"q-billing-ledger\",\"state\":\"running\",\"type\":\"quorum\"},{\"name\":\"st-billing-audit\",\"state\":\"running\",\"type\":\"stream\"}],\"page\":1,\"page_count\":1,\"page_size\":500,\"total_count\":3}"
+   "body": "{\"filtered_count\":3,\"item_count\":3,\"items\":[{\"messages\":2,\"messages_ready\":2,\"messages_unacknowledged\":0,\"name\":\"q-billing-invoices\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-billing-ledger\",\"state\":\"running\",\"type\":\"quorum\"},{\"name\":\"st-billing-audit\",\"state\":\"running\",\"type\":\"stream\"}],\"page\":1,\"page_count\":1,\"page_size\":500,\"total_count\":3}"
   },
   {
    "method": "GET",
@@ -114,7 +114,7 @@
    "query": "",
    "status": 200,
    "contentType": "application/json",
-   "body": "{\"garbage_collection\":{\"max_heap_size\":-1,\"min_bin_vheap_size\":-1,\"min_heap_size\":-1,\"fullsweep_after\":-1,\"minor_gcs\":-1},\"consumer_details\":[],\"arguments\":{\"x-queue-type\":\"stream\"},\"auto_delete\":false,\"consumers\":0,\"deliveries\":[],\"durable\":true,\"effective_policy_definition\":{},\"exclusive\":false,\"first_timestamp\":0,\"incoming\":[],\"internal\":false,\"internal_owner\":false,\"leader\":\"rabbit@libredb-rabbitmq\",\"members\":[\"rabbit@libredb-rabbitmq\"],\"memory\":14008,\"message_stats\":{\"publish\":13,\"publish_details\":{\"rate\":0.0}},\"messages\":13,\"messages_details\":{\"rate\":0.0},\"messages_ready\":13,\"messages_ready_details\":{\"rate\":0.0},\"messages_unacknowledged\":0,\"messages_unacknowledged_details\":{\"rate\":0.0},\"name\":\"st-orders\",\"node\":\"rabbit@libredb-rabbitmq\",\"online\":[\"rabbit@libredb-rabbitmq\"],\"operator_policy\":null,\"policy\":null,\"readers\":{\"rabbit@libredb-rabbitmq\":0},\"reductions\":0,\"reductions_details\":{\"rate\":0.0},\"segments\":1,\"state\":\"running\",\"type\":\"stream\",\"vhost\":\"/\"}"
+   "body": "{\"garbage_collection\":{\"max_heap_size\":-1,\"min_bin_vheap_size\":-1,\"min_heap_size\":-1,\"fullsweep_after\":-1,\"minor_gcs\":-1},\"consumer_details\":[],\"arguments\":{\"x-queue-type\":\"stream\"},\"auto_delete\":false,\"deliveries\":[],\"durable\":true,\"exclusive\":false,\"incoming\":[],\"internal\":false,\"internal_owner\":false,\"leader\":\"rabbit@libredb-rabbitmq\",\"members\":[\"rabbit@libredb-rabbitmq\"],\"name\":\"st-orders\",\"node\":\"rabbit@libredb-rabbitmq\",\"online\":[\"rabbit@libredb-rabbitmq\"],\"state\":\"running\",\"type\":\"stream\",\"vhost\":\"/\"}"
   },
   {
    "method": "GET",
@@ -132,7 +132,7 @@
    "query": "",
    "status": 200,
    "contentType": "application/json",
-   "body": "{\"consumer_details\":[],\"arguments\":{\"x-queue-type\":\"classic\"},\"auto_delete\":false,\"consumer_capacity\":0,\"consumer_utilisation\":0,\"consumers\":0,\"deliveries\":[],\"durable\":true,\"effective_policy_definition\":{},\"exclusive\":false,\"exclusive_consumer_tag\":null,\"garbage_collection\":{\"fullsweep_after\":65535,\"max_heap_size\":0,\"min_bin_vheap_size\":46422,\"min_heap_size\":233,\"minor_gcs\":2},\"head_message_timestamp\":null,\"idle_since\":\"2026-10-12T11:03:19.625+00:00\",\"incoming\":[],\"internal\":false,\"internal_owner\":false,\"memory\":21912,\"message_bytes\":39,\"message_bytes_persistent\":0,\"message_bytes_ram\":13,\"message_bytes_ready\":39,\"message_bytes_unacknowledged\":0,\"message_stats\":{\"publish\":3,\"publish_details\":{\"rate\":0.0}},\"messages\":3,\"messages_details\":{\"rate\":0.0},\"messages_persistent\":0,\"messages_ram\":1,\"messages_ready\":3,\"messages_ready_details\":{\"rate\":0.0},\"messages_ready_ram\":1,\"messages_unacknowledged\":0,\"messages_unacknowledged_details\":{\"rate\":0.0},\"messages_unacknowledged_ram\":0,\"name\":\"q-classic-orders\",\"node\":\"rabbit@libredb-rabbitmq\",\"operator_policy\":null,\"policy\":null,\"reductions\":10275,\"reductions_details\":{\"rate\":0.0},\"single_active_consumer_tag\":null,\"state\":\"running\",\"storage_version\":2,\"type\":\"classic\",\"vhost\":\"/\"}"
+   "body": "{\"garbage_collection\":{\"max_heap_size\":-1,\"min_bin_vheap_size\":-1,\"min_heap_size\":-1,\"fullsweep_after\":-1,\"minor_gcs\":-1},\"consumer_details\":[],\"arguments\":{\"x-queue-type\":\"classic\"},\"auto_delete\":false,\"deliveries\":[],\"durable\":true,\"exclusive\":false,\"incoming\":[],\"internal\":false,\"internal_owner\":false,\"name\":\"q-classic-orders\",\"node\":\"rabbit@libredb-rabbitmq\",\"state\":\"running\",\"type\":\"classic\",\"vhost\":\"/\"}"
   },
   {
    "method": "GET",
@@ -168,7 +168,7 @@
    "query": "",
    "status": 200,
    "contentType": "application/json",
-   "body": "{\"consumer_details\":[],\"arguments\":{\"x-dead-letter-exchange\":\"dlx\",\"x-queue-type\":\"quorum\"},\"auto_delete\":false,\"consumer_capacity\":0,\"consumer_utilisation\":0,\"consumers\":0,\"delayed_retry\":\"disabled\",\"deliveries\":[],\"delivery_limit\":20,\"durable\":true,\"effective_policy_definition\":{},\"exclusive\":false,\"garbage_collection\":{\"fullsweep_after\":65535,\"max_heap_size\":0,\"min_bin_vheap_size\":2984878,\"min_heap_size\":233,\"minor_gcs\":6},\"incoming\":[],\"internal\":false,\"internal_owner\":false,\"leader\":\"rabbit@libredb-rabbitmq\",\"members\":[\"rabbit@libredb-rabbitmq\"],\"memory\":68356,\"message_bytes\":45,\"message_bytes_dlx\":0,\"message_bytes_persistent\":45,\"message_bytes_ram\":0,\"message_bytes_ready\":45,\"message_bytes_unacknowledged\":0,\"message_stats\":{\"publish\":3,\"publish_details\":{\"rate\":0.0}},\"messages\":3,\"messages_active_priorities\":1,\"messages_by_priority\":{\"4\":3},\"messages_delayed\":0,\"messages_details\":{\"rate\":0.6},\"messages_dlx\":0,\"messages_persistent\":3,\"messages_ram\":0,\"messages_ready\":3,\"messages_ready_details\":{\"rate\":0.6},\"messages_ready_returned\":0,\"messages_unacknowledged\":0,\"messages_unacknowledged_details\":{\"rate\":0.0},\"name\":\"q-quorum-payments\",\"node\":\"rabbit@libredb-rabbitmq\",\"online\":[\"rabbit@libredb-rabbitmq\"],\"open_files\":{\"rabbit@libredb-rabbitmq\":0},\"operator_policy\":null,\"policy\":null,\"publishers\":0,\"reductions\":20823,\"reductions_details\":{\"rate\":926.2},\"single_active_consumer_tag\":null,\"state\":\"running\",\"type\":\"quorum\",\"vhost\":\"/\"}"
+   "body": "{\"garbage_collection\":{\"max_heap_size\":-1,\"min_bin_vheap_size\":-1,\"min_heap_size\":-1,\"fullsweep_after\":-1,\"minor_gcs\":-1},\"consumer_details\":[],\"arguments\":{\"x-dead-letter-exchange\":\"dlx\",\"x-queue-type\":\"quorum\"},\"auto_delete\":false,\"deliveries\":[],\"durable\":true,\"exclusive\":false,\"incoming\":[],\"internal\":false,\"internal_owner\":false,\"leader\":\"rabbit@libredb-rabbitmq\",\"members\":[\"rabbit@libredb-rabbitmq\"],\"name\":\"q-quorum-payments\",\"node\":\"rabbit@libredb-rabbitmq\",\"online\":[\"rabbit@libredb-rabbitmq\"],\"state\":\"running\",\"type\":\"quorum\",\"vhost\":\"/\"}"
   },
   {
    "method": "GET",
@@ -222,7 +222,7 @@
    "query": "",
    "status": 200,
    "contentType": "application/json",
-   "body": "{\"arguments\":{},\"auto_delete\":false,\"durable\":true,\"incoming\":[],\"internal\":false,\"message_stats\":{\"publish_in\":1056,\"publish_in_details\":{\"rate\":0.0},\"publish_out\":1056,\"publish_out_details\":{\"rate\":0.0}},\"name\":\"\",\"outgoing\":[],\"type\":\"direct\",\"user_who_performed_action\":\"rmq-internal\",\"vhost\":\"/\"}"
+   "body": "{\"arguments\":{},\"auto_delete\":false,\"durable\":true,\"incoming\":[],\"internal\":false,\"name\":\"\",\"outgoing\":[],\"type\":\"direct\",\"user_who_performed_action\":\"rmq-internal\",\"vhost\":\"/\"}"
   },
   {
    "method": "GET",
@@ -249,7 +249,7 @@
    "query": "",
    "status": 200,
    "contentType": "application/json",
-   "body": "{\"arguments\":{\"x-super-stream\":true},\"auto_delete\":false,\"durable\":true,\"incoming\":[],\"internal\":false,\"message_stats\":{\"publish_in\":12,\"publish_in_details\":{\"rate\":0.0},\"publish_out\":12,\"publish_out_details\":{\"rate\":0.0}},\"name\":\"st-invoices\",\"outgoing\":[],\"type\":\"direct\",\"user_who_performed_action\":\"libredb-admin\",\"vhost\":\"/\"}"
+   "body": "{\"arguments\":{\"x-super-stream\":true},\"auto_delete\":false,\"durable\":true,\"incoming\":[],\"internal\":false,\"name\":\"st-invoices\",\"outgoing\":[],\"type\":\"direct\",\"user_who_performed_action\":\"libredb-admin\",\"vhost\":\"/\"}"
   },
   {
    "method": "GET",
