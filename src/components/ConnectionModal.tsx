@@ -388,6 +388,10 @@ export function ConnectionModal({
                     value={pasteInput}
                     onChange={(e) => setPasteInput(e.target.value)}
                     placeholder="postgres://user:pass@host:5432/db  or  mongodb://...  or  databend://..."
+                    autoComplete="off"
+                    spellCheck={false}
+                    autoCorrect="off"
+                    autoCapitalize="off"
                     className="h-9 bg-panel border-hairline focus:border-brand-tint/50 text-xs font-mono flex-1"
                     onKeyDown={(e) => e.key === "Enter" && handlePasteConnectionString()}
                   />
@@ -606,6 +610,10 @@ export function ConnectionModal({
                       value={connectionString}
                       onChange={(e) => setConnectionString(e.target.value)}
                       placeholder={connectionUriPlaceholder}
+                      autoComplete="off"
+                      spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
                       aria-describedby={describedByHint(uiConfig, "connectionString")}
                       className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                     />
@@ -756,6 +764,9 @@ export function ConnectionModal({
                         // Server credential, not the user's own login: "new-password" is the only
                         // value Chrome honours to keep saved site passwords out of the field.
                         autoComplete="new-password"
+                        spellCheck={false}
+                        autoCorrect="off"
+                        autoCapitalize="off"
                         aria-describedby={describedByHint(uiConfig, "password")}
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
                       />
@@ -1104,6 +1115,9 @@ export function ConnectionModal({
                           onChange={(e) => setApiKeySecret(e.target.value)}
                           placeholder="***"
                           autoComplete="new-password"
+                          spellCheck={false}
+                          autoCorrect="off"
+                          autoCapitalize="off"
                           aria-describedby={describedByHint(uiConfig, "apiKeySecret")}
                           className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                         />
@@ -1282,6 +1296,10 @@ export function ConnectionModal({
                                   value={caCert}
                                   onChange={(e) => setCaCert(e.target.value)}
                                   placeholder="-----BEGIN CERTIFICATE-----&#10;Paste CA cert content here...&#10;-----END CERTIFICATE-----"
+                                  autoComplete="off"
+                                  spellCheck={false}
+                                  autoCorrect="off"
+                                  autoCapitalize="off"
                                   rows={3}
                                   className="w-full rounded-md bg-panel border border-hairline focus:border-hue-emerald-tint/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
                                 />
@@ -1296,6 +1314,10 @@ export function ConnectionModal({
                                       value={clientCert}
                                       onChange={(e) => setClientCert(e.target.value)}
                                       placeholder="-----BEGIN CERTIFICATE-----&#10;Optional client cert...&#10;-----END CERTIFICATE-----"
+                                      autoComplete="off"
+                                      spellCheck={false}
+                                      autoCorrect="off"
+                                      autoCapitalize="off"
                                       rows={3}
                                       className="w-full rounded-md bg-panel border border-hairline focus:border-hue-emerald-tint/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
                                     />
@@ -1308,6 +1330,10 @@ export function ConnectionModal({
                                       value={clientKey}
                                       onChange={(e) => setClientKey(e.target.value)}
                                       placeholder="-----BEGIN PRIVATE KEY-----&#10;Optional client key...&#10;-----END PRIVATE KEY-----"
+                                      autoComplete="off"
+                                      spellCheck={false}
+                                      autoCorrect="off"
+                                      autoCapitalize="off"
                                       rows={3}
                                       className="w-full rounded-md bg-panel border border-hairline focus:border-hue-emerald-tint/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
                                     />
@@ -1461,6 +1487,9 @@ export function ConnectionModal({
                                     onChange={(e) => setSSHPassword(e.target.value)}
                                     placeholder="••••••••"
                                     autoComplete="new-password"
+                                    spellCheck={false}
+                                    autoCorrect="off"
+                                    autoCapitalize="off"
                                     className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
                                   />
                                 </div>
@@ -1472,6 +1501,10 @@ export function ConnectionModal({
                                       value={sshPrivateKey}
                                       onChange={(e) => setSSHPrivateKey(e.target.value)}
                                       placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;Paste private key here...&#10;-----END OPENSSH PRIVATE KEY-----"
+                                      autoComplete="off"
+                                      spellCheck={false}
+                                      autoCorrect="off"
+                                      autoCapitalize="off"
                                       rows={4}
                                       className="w-full rounded-md bg-panel border border-hairline focus:border-hue-purple-tint/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
                                     />
@@ -1484,6 +1517,9 @@ export function ConnectionModal({
                                       onChange={(e) => setSSHPassphrase(e.target.value)}
                                       placeholder="Key passphrase (if encrypted)"
                                       autoComplete="new-password"
+                                      spellCheck={false}
+                                      autoCorrect="off"
+                                      autoCapitalize="off"
                                       className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
                                     />
                                   </div>
