@@ -113,6 +113,7 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
       schemaRefreshPattern: "(?!)",
       defaultPort: RABBITMQ_DEFAULT_MANAGEMENT_PORT,
       containerLevels: RABBITMQ_CONTAINER_LEVELS,
+      containerPathShapes: "exact",
       objectKinds: RABBITMQ_OBJECT_KINDS,
       // Plan mode reads the default virtual host, not every virtual host of a large broker.
       agentWalkScope: { mode: "session-default" },
