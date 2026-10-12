@@ -267,6 +267,13 @@ export async function createDatabaseProvider(
       return new CouchbaseProvider(connection, options);
     }
 
+    case "firestore": {
+      // The explicit /index specifier keeps this dynamic import statically analysable. Read-only whatever the flag
+      // says, so no execution context rides along, as for Kubernetes.
+      const { FirestoreProvider } = await import("./providers/document/firestore/index");
+      return new FirestoreProvider(connection, options);
+    }
+
     // Key-Value Stores - dynamically imported
     case "redis": {
       const { RedisProvider } = await import("./providers/keyvalue/redis");
@@ -378,7 +385,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, bigquery, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, s3, mqtt, kubernetes, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, bigquery, cassandra, elasticsearch, opensearch, mongodb, couchbase, firestore, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, s3, mqtt, kubernetes, libredb`,
         connection.type,
       );
   }

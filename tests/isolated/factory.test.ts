@@ -525,6 +525,44 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("couchbase");
   });
 
+  test('creates provider for type "firestore", unconnected, with its own dialect and its read-only enforcement', async () => {
+    // No host, port, user or credential: the constructor reads no credential and opens nothing (Firestore spec 3.3).
+    const conn = makeConnection("firestore", {
+      host: undefined,
+      port: undefined,
+      user: undefined,
+      password: undefined,
+      database: "demo-studio",
+    });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider.type).toBe("firestore");
+    expect(provider.getCapabilities().queryLanguage).toBe("json");
+    expect(provider.getCapabilities().queryDialect).toBe("firestore");
+    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("a firestore connection with readOnly: true is built, since its provider keeps the mode", async () => {
+    const conn = {
+      ...makeConnection("firestore", {
+        host: undefined,
+        port: undefined,
+        password: undefined,
+        database: "demo-studio",
+      }),
+      readOnly: true,
+    };
+    expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
+    expect((await createDatabaseProvider(conn)).type).toBe("firestore");
+  });
+
+  test("the factory error lists firestore between couchbase and redis, the order of the cases", async () => {
+    const conn = makeConnection("not-an-engine");
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(
+      /Supported types: .*\bmongodb, couchbase, firestore, redis\b/,
+    );
+  });
+
   test('creates provider for type "elasticsearch"', async () => {
     // Two type-ids resolve to ONE module (`providers/sql/search/index`), which is the
     // first time that happens here - so both cases are asserted, and each is asserted
