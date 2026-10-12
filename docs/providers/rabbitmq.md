@@ -333,12 +333,12 @@ A name is written as a JSON string literal, with control, line-separator and bid
 | Management port refused | `ConnectionError` | Nothing listens on {host}:{port}: check Management port and that the rabbitmq_management plugin is enabled. |
 | Reset without HTTP | `ConnectionError` | {host}:{port} closed the connection without an HTTP answer: check that Management port is the management API (15672, or 15671 with TLS). |
 | Not HTTP | `ConnectionError` | {host}:{port} answered with something that is not HTTP: this looks like an AMQP port, or this port needs TLS; Management port is usually 15672 (15671 with TLS). |
-| A plain listener on a TLS connection | `ConnectionError` | {host}:{port} does not speak TLS: turn TLS off, or use the TLS port (15671 for management, 5671 for AMQP). |
-| Certificate not trusted for this host (wrong CA, self-signed, another name) | `ConnectionError` | {host}:{port} presented a certificate Studio does not trust for this host: check the CA and the host name under SSL / TLS. |
-| Client certificate refused by the broker | `ConnectionError` | {host}:{port} refused the TLS connection: check the client certificate and key under SSL / TLS. |
+| A plain listener on a TLS connection | `ConnectionError` | {host}:{port} does not speak TLS: choose SSL mode disable under SSL / TLS, or use the TLS port (15671 for management, 5671 for AMQP). |
+| Certificate not trusted for this host (wrong CA, self-signed, another name) | `ConnectionError` | {host}:{port} presented a certificate Studio does not trust for this host: check the CA certificate under SSL / TLS, and that the certificate names the host set in Host. |
+| Client certificate refused by the broker | `ConnectionError` | {host}:{port} refused the TLS connection: check the client certificate and key under SSL / TLS (shown in verify-ca and verify-full). |
 | Not the management API | `ConnectionError` | {host}:{port} has no RabbitMQ management API at /api/whoami: check Management port (15672, or 15671 with TLS) and Path prefix. |
 | No AMQP session | `ConnectionError` | {host}:{port} did not start an AMQP session: check that AMQP port is 5672 (5671 with TLS). |
-| AMQPS without TLS | `ConnectionError` | {host}:{port} expects TLS: turn TLS on, or use 5672. |
+| AMQPS without TLS | `ConnectionError` | {host}:{port} expects TLS: choose an SSL mode under SSL / TLS, or use 5672. |
 | AMQP unreachable | `ConnectionError` | Nothing listens on {host}:{port}: check the address and AMQP port. |
 | AMQP port empty | `DatabaseConfigError` | Reading a stream needs AMQP port: set it on the connection (5672, or 5671 with TLS). |
 | Password without TLS | `DatabaseConfigError` | This connection would send its password without TLS to a host that is not this machine, where anyone on the path can read it. Choose an SSL mode under SSL / TLS and use the TLS ports (15671 for management, 5671 for AMQP). Or tick "Send the password without TLS", which this connection then does on every management request and read. |

@@ -451,7 +451,7 @@ describe("transport failures", () => {
     );
     expect(refused).toBeInstanceOf(ConnectionError);
     expect(refused.message).toBe(
-      "127.0.0.1:15672 refused the TLS connection: check the client certificate and key under SSL / TLS.",
+      "127.0.0.1:15672 refused the TLS connection: check the client certificate and key under SSL / TLS (shown in verify-ca and verify-full).",
     );
     // Over plain HTTP, on any later route, or after part of an answer, a reset keeps the connection sentences.
     const lost = "The connection to 127.0.0.1:15672 failed before the management API answered completely.";
@@ -514,7 +514,7 @@ describe("over the real node transport, against local listeners (R-S8's manageme
     expect(await whoami(trusted.port, verify)).not.toBeInstanceOf(Error);
 
     const untrusted = (port: number) =>
-      `${at(port)} presented a certificate Studio does not trust for this host: check the CA and the host name under SSL / TLS.`;
+      `${at(port)} presented a certificate Studio does not trust for this host: check the CA certificate under SSL / TLS, and that the certificate names the host set in Host.`;
     const rogue = (await whoami(trusted.port, { mode: "verify-full", caCert: certificates.rogueCa })) as Error;
     expect(rogue.message).toBe(untrusted(trusted.port));
     const farName = await httpsListener(certificates.farName, jsonAnswer(200, WHOAMI_BODY));
@@ -522,14 +522,14 @@ describe("over the real node transport, against local listeners (R-S8's manageme
 
     const plain = await httpListener(jsonAnswer(200, WHOAMI_BODY));
     expect(((await whoami(plain.port, verify)) as Error).message).toBe(
-      `${at(plain.port)} does not speak TLS: turn TLS off, or use the TLS port (15671 for management, 5671 for AMQP).`,
+      `${at(plain.port)} does not speak TLS: choose SSL mode disable under SSL / TLS, or use the TLS port (15671 for management, 5671 for AMQP).`,
     );
 
     const mutual = await httpsListener(
       { ...certificates.local, clientCa: certificates.ca },
       jsonAnswer(200, WHOAMI_BODY),
     );
-    const refused = `${at(mutual.port)} refused the TLS connection: check the client certificate and key under SSL / TLS.`;
+    const refused = `${at(mutual.port)} refused the TLS connection: check the client certificate and key under SSL / TLS (shown in verify-ca and verify-full).`;
     expect(((await whoami(mutual.port, verify)) as Error).message).toBe(refused);
     const stranger = { ...verify, clientCert: certificates.second.cert, clientKey: certificates.second.key };
     expect(((await whoami(mutual.port, stranger)) as Error).message).toBe(refused);

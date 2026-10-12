@@ -294,7 +294,7 @@ describe("the GETs of every automatic path", () => {
     stub.answer("GET /api/stream/billing/ledger/tracking", { status: 503, body: "{}" });
     const warnings = await p.testConnectionWarnings();
     expect(warnings.map((w) => w.message)).toEqual([
-      'This account can read classic or quorum queue "ledger" in virtual host "billing": a client using it could take their messages. Studio never does; narrow the read permission to stream names.',
+      'This account can read classic or quorum queue "ledger" in virtual host "billing": a client using it could take its messages. Studio never does; narrow the read permission to stream names.',
     ]);
     expect(since()).toEqual([
       ALARMS,

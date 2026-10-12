@@ -346,21 +346,21 @@ function networkFailure(error: TransportError, context: ManagementFailureContext
 /** TLS to a plain listener, for both endpoints, and only for that. */
 function notTls(endpoint: string): ConnectionError {
   return connectionError(
-    `${endpoint} does not speak TLS: turn TLS off, or use the TLS port (15671 for management, 5671 for AMQP).`,
+    `${endpoint} does not speak TLS: choose SSL mode disable under SSL / TLS, or use the TLS port (15671 for management, 5671 for AMQP).`,
   );
 }
 
 /** Both endpoints: the certificate failed verification for this host (unknown CA, self-signed, name). */
 export function tlsCertificateUntrusted(endpoint: string): ConnectionError {
   return connectionError(
-    `${endpoint} presented a certificate Studio does not trust for this host: check the CA and the host name under SSL / TLS.`,
+    `${endpoint} presented a certificate Studio does not trust for this host: check the CA certificate under SSL / TLS, and that the certificate names the host set in Host.`,
   );
 }
 
 /** Both endpoints: the broker refused the TLS connection, in practice Studio's client certificate. */
 export function tlsClientCertificateRefused(endpoint: string): ConnectionError {
   return connectionError(
-    `${endpoint} refused the TLS connection: check the client certificate and key under SSL / TLS.`,
+    `${endpoint} refused the TLS connection: check the client certificate and key under SSL / TLS (shown in verify-ca and verify-full).`,
   );
 }
 
@@ -576,7 +576,7 @@ export function readableQueuesCaution(
   const found = shown.length + more;
   const listed = more > 0 ? `${quoteNames(shown)} and ${more} more` : quoteNames(shown);
   const unchecked = notChecked > 0 ? ` ${notChecked} more ${notChecked === 1 ? "was" : "were"} not checked.` : "";
-  return `This account can read classic or quorum ${found === 1 ? "queue" : "queues"} ${listed} in virtual host ${quoteName(vhost)}: a client using it could take their messages. Studio never does; narrow the read permission to stream names.${unchecked}`;
+  return `This account can read classic or quorum ${found === 1 ? "queue" : "queues"} ${listed} in virtual host ${quoteName(vhost)}: a client using it could take ${found === 1 ? "its" : "their"} messages. Studio never does; narrow the read permission to stream names.${unchecked}`;
 }
 
 /** The summary after three vhosts' cautions. */
@@ -776,7 +776,7 @@ export function amqpNotTls(endpoint: string): ConnectionError {
 
 /** Plain AMQP to a TLS port. */
 export function amqpExpectsTls(endpoint: string): ConnectionError {
-  return connectionError(`${endpoint} expects TLS: turn TLS on, or use 5672.`);
+  return connectionError(`${endpoint} expects TLS: choose an SSL mode under SSL / TLS, or use 5672.`);
 }
 
 /** No AMQP session started: another service on the port, or silence. */

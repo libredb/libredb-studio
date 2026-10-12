@@ -268,7 +268,7 @@ describe("management failures", () => {
     expect(map("aborted")).toBeInstanceOf(QueryCancelledError);
     expect(map("aborted").message).toBe(E.PROVIDER_CLOSED);
     expect(map("tls", "The TLS connection failed (EPROTO)").message).toBe(
-      "mq.example:15672 does not speak TLS: turn TLS off, or use the TLS port (15671 for management, 5671 for AMQP).",
+      "mq.example:15672 does not speak TLS: choose SSL mode disable under SSL / TLS, or use the TLS port (15671 for management, 5671 for AMQP).",
     );
     expect(map("redirect").message).toBe(
       "mq.example:15672 answered with a redirect, which Studio does not follow: set Host, Management port and Path prefix to the management API itself.",
@@ -314,11 +314,11 @@ describe("management failures", () => {
     const tls = (code: string) =>
       E.managementTransportError(new TransportError("tls", `The TLS connection failed (${code})`), at).message;
     const plain =
-      "mq.example:15672 does not speak TLS: turn TLS off, or use the TLS port (15671 for management, 5671 for AMQP).";
+      "mq.example:15672 does not speak TLS: choose SSL mode disable under SSL / TLS, or use the TLS port (15671 for management, 5671 for AMQP).";
     const untrusted =
-      "mq.example:15672 presented a certificate Studio does not trust for this host: check the CA and the host name under SSL / TLS.";
+      "mq.example:15672 presented a certificate Studio does not trust for this host: check the CA certificate under SSL / TLS, and that the certificate names the host set in Host.";
     const refused =
-      "mq.example:15672 refused the TLS connection: check the client certificate and key under SSL / TLS.";
+      "mq.example:15672 refused the TLS connection: check the client certificate and key under SSL / TLS (shown in verify-ca and verify-full).";
     // The codes measured on Node 24.14.0, Bun 1.4.2 and Node 26.10.0 against local listeners, plus two of the list.
     for (const code of ["EPROTO", "ERR_SSL_WRONG_VERSION_NUMBER", "ERR_SSL_PACKET_LENGTH_TOO_LONG"])
       expect(tls(code)).toBe(plain);
@@ -485,7 +485,7 @@ describe("Test Connection cautions", () => {
 
   test("a readable-queue caution names at most five queues, quoted, then counts the rest and the unchecked", () => {
     expect(E.readableQueuesCaution("/", ["orders"], 0, 0)).toBe(
-      'This account can read classic or quorum queue "orders" in virtual host "/": a client using it could take their messages. Studio never does; narrow the read permission to stream names.',
+      'This account can read classic or quorum queue "orders" in virtual host "/": a client using it could take its messages. Studio never does; narrow the read permission to stream names.',
     );
     const seven = ["q1", "q2", "q3", "q4", "q5", "q6", "q7"];
     const many = E.readableQueuesCaution("billing", seven, 2, 3);
@@ -683,7 +683,9 @@ describe("read failures before consume-ok", () => {
     const at = "mq.example:5672";
     expect(E.amqpUnreachable(at).message).toBe("Nothing listens on mq.example:5672: check the address and AMQP port.");
     expect(E.amqpNotTls(at).message).toContain("does not speak TLS");
-    expect(E.amqpExpectsTls(at).message).toBe("mq.example:5672 expects TLS: turn TLS on, or use 5672.");
+    expect(E.amqpExpectsTls(at).message).toBe(
+      "mq.example:5672 expects TLS: choose an SSL mode under SSL / TLS, or use 5672.",
+    );
     expect(E.amqpNoSession(at).message).toBe(
       "mq.example:5672 did not start an AMQP session: check that AMQP port is 5672 (5671 with TLS).",
     );

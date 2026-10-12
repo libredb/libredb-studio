@@ -134,7 +134,7 @@ describe("a queue's detail", () => {
     );
     const access = document.parts[5];
     expect(isSourcePartStatement(access) && access.unavailable).toBe(
-      'This account can read classic or quorum queue "payments" in virtual host "/": a client using it could take their messages. Studio never does; narrow the read permission to stream names.',
+      'This account can read classic or quorum queue "payments" in virtual host "/": a client using it could take its messages. Studio never does; narrow the read permission to stream names.',
     );
   });
 
