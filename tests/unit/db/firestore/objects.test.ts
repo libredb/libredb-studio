@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
-import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
+import { callerBoundTruncationReason, isSourcePartStatement } from "@/lib/db/object-kinds";
 import { SENTENCES } from "@/lib/db/providers/document/firestore/constants";
 import {
   countFirestoreObjects,
@@ -266,14 +266,17 @@ describe("the document Source tab", () => {
     });
   });
 
-  test("a document id holding a colon answers two parts and says why its subcollections are not listed", async () => {
+  test("a document id holding a colon answers two parts and a neutral statement of why its subcollections are not listed", async () => {
     const fake = fakeFirestore(() => ({ ...alice, name: docName("users", "a:b") }));
     const document = await readFirestoreSource(fake.client, ["users/a:b"], "document", undefined, SIGNAL, B);
+    // The document read fine; the panel states a limitation, so the part is a statement, not a refusal.
     expect(document.parts[2]).toEqual({
       id: "subcollections",
       label: "Subcollections",
       unavailable: SENTENCES.colonSubcollections("users/a:b"),
+      statement: true,
     });
+    expect(isSourcePartStatement(document.parts[2])).toBe(true);
     expect(fake.sent).toHaveLength(1);
   });
 

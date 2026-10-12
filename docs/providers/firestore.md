@@ -373,7 +373,7 @@ The panel counts a key and its folder as two entries, so "Listed n" reads twice 
 ### 6.4 The Source tab
 
 A document opens in three parts: "Data", its fields decoded as in section 5.6; "Document", the REST document verbatim; and "Subcollections", its subcollection ids.
-A document whose id contains `:` shows the first two parts and says why the third is not listed.
+A document whose id contains `:` shows the first two parts, and in place of the third a neutral statement, without the failure heading, of why its subcollections are not listed.
 
 ### 6.5 Generated statements
 
