@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D316, U17 · 216
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U122 · 113
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U123 · 114
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC24 · 21
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -4947,6 +4947,16 @@ On RabbitMQ the default exchange's name is the empty string, so its tab reads `/
 Found 2026-10-12 in a browser pass of the RabbitMQ provider.
 
 **Done when:** a Source tab names an object whose own segment is empty, or whose container is `/`, in words a reader can match to the tree row it was opened from, with a test over the default exchange's path and a browser pass.
+
+### U123. Switching the part of a read-only multi-part source saves the next part's text as the previous part's draft
+
+On a source with several parts and no editable one, such as a RabbitMQ queue (Queue, Counts, Bindings, Consumers), clicking from one part to the next writes a draft into `libredb_source_drafts_v1` (`SOURCE_DRAFTS_KEY`, `src/lib/storage/local-storage.ts`) under the part being left, holding the text of the part being opened: the queue part held the Counts JSON, Counts held Bindings, Bindings held Consumers.
+The tab is then marked "(unsaved edit)" although nothing was edited; after a reload every part shows its own fresh read, so no wrong text is shown, only the false mark and the stored drafts.
+`src/components/object-source/ObjectSourceView.tsx` is shared code.
+
+Found 2026-10-12 in a browser pass of the RabbitMQ provider, reproduced with scripted clicks.
+
+**Done when:** switching parts of a source writes no draft unless the user edited the part, a draft is stored under the part it was typed in, and a component test clicks through four read-only parts and finds no draft and no unsaved mark.
 
 ## Dependencies
 
