@@ -210,6 +210,14 @@ const refusedSecondPart: ObjectSourceDocument = {
   ],
 };
 
+/** The neutral member: a fact about the object, drawn as plain text and never as a failure. */
+const STATEMENT_PART = {
+  id: "notes",
+  label: "Notes",
+  unavailable: "This object holds nothing that can be read without changing it.",
+  statement: true,
+} as const satisfies ObjectSourcePart;
+
 function editorValue(): string {
   return (screen.getByTestId("source-editor") as HTMLTextAreaElement).value;
 }
@@ -1033,6 +1041,16 @@ describe("ObjectSourceView", () => {
     );
   });
 
+  test("draws a prop-supplied statement, the shape a tab restored from storage carries, as a statement", () => {
+    // A tab's document survives a reload through `localStorage` and comes back as parsed JSON, so
+    // the marker reaches this prop as a plain `true` that no compiler saw.
+    renderWithDocument(JSON.parse(JSON.stringify({ path: [...PATH], kind: "package", parts: [STATEMENT_PART] })));
+
+    expect(screen.queryByTestId("object-source-failure")).toBeNull();
+    expect(screen.getByTestId("object-source-statement-message").textContent).toBe(STATEMENT_PART.unavailable);
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
   test("still renders a prop-supplied document that the shape check accepts", () => {
     // The control for the three refusals above. Without it they could all pass over a viewer
     // that simply refused every prop-supplied document.
@@ -1054,6 +1072,67 @@ describe("ObjectSourceView", () => {
     expect(screen.queryByRole("tablist")).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.getByText("The text for object 'customer_summary' is encrypted.")).toBeTruthy();
+  });
+
+  test("a statement part draws its sentence as neutral text, with no failure heading and NO editor", async () => {
+    const withStatement: ObjectSourceDocument = {
+      path: [...PATH],
+      kind: "package",
+      parts: [oneReadablePart.parts[0], STATEMENT_PART],
+    };
+    render(<Harness reader={readerFor(withStatement)} />);
+    await waitFor(() => expect(screen.getByTestId("source-editor")).toBeTruthy());
+
+    await userEvent.click(screen.getAllByRole("tab")[1]!);
+
+    await waitFor(() => expect(screen.getByTestId("object-source-statement")).toBeTruthy());
+    expect(screen.getByTestId("object-source-statement-message").textContent).toBe(STATEMENT_PART.unavailable);
+    // Neutral, so none of the refusal's grammar: no heading, no warning colour, no refusal pane.
+    expect(screen.queryByText("This definition could not be read.")).toBeNull();
+    expect(screen.queryByTestId("object-source-refused")).toBeNull();
+    expect(screen.getByTestId("object-source-statement-message").className).not.toContain("text-warning");
+    // And none of the editor's: a statement is not a definition, so no buffer and no caption.
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByTestId("object-source-caption")).toBeNull();
+  });
+
+  test("draws a document whose ONLY part is a statement, with no tablist and no editor", async () => {
+    const onlyStatement: ObjectSourceDocument = { path: [...PATH], kind: "package", parts: [STATEMENT_PART] };
+    render(<Harness reader={readerFor(onlyStatement)} />);
+
+    await waitFor(() => expect(screen.getByTestId("object-source-statement")).toBeTruthy());
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByTestId("object-source-refused")).toBeNull();
+  });
+
+  test("a refusal beside a statement still draws the failure heading, so the two stay apart", async () => {
+    const both: ObjectSourceDocument = {
+      path: [...PATH],
+      kind: "package",
+      parts: [STATEMENT_PART, refusedSecondPart.parts[1]!],
+    };
+    render(<Harness reader={readerFor(both)} />);
+    await waitFor(() => expect(screen.getByTestId("object-source-statement")).toBeTruthy());
+
+    await userEvent.click(screen.getAllByRole("tab")[1]!);
+
+    await waitFor(() => expect(screen.getByTestId("object-source-refused")).toBeTruthy());
+    expect(screen.getByText("This definition could not be read.")).toBeTruthy();
+    expect(screen.queryByTestId("object-source-statement")).toBeNull();
+  });
+
+  test("a host statement whose marker is not exactly true is reported as unrenderable, never guessed at", async () => {
+    const malformed = {
+      path: [...PATH],
+      kind: "package",
+      parts: [{ ...STATEMENT_PART, statement: "true" }],
+    };
+    render(<Harness reader={readerFor(malformed)} />);
+
+    await waitFor(() => expect(screen.getByTestId("object-source-failure")).toBeTruthy());
+    expect(screen.queryByTestId("object-source-statement")).toBeNull();
+    expect(screen.queryByTestId("object-source-refused")).toBeNull();
   });
 
   /**
@@ -1686,6 +1765,19 @@ describe("ObjectSourceView edit mode", () => {
     expect(screen.queryByTestId("object-source-edit")).toBeNull();
     expect(editor().readOnly).toBe(true);
     expect(domReadOnly()).toBe(true);
+  });
+
+  test("a statement part draws no edit bar, even under a shell that can apply", async () => {
+    const { applier } = applierDouble();
+    render(<EditHarness applier={applier} document={withPart(READABLE, STATEMENT_PART)} />);
+    await waitFor(() => expect(screen.getByTestId("object-source-edit-bar")).toBeTruthy());
+
+    await userEvent.click(screen.getAllByRole("tab")[1]!);
+
+    await waitFor(() => expect(screen.getByTestId("object-source-statement")).toBeTruthy());
+    expect(screen.queryByTestId("object-source-edit-bar")).toBeNull();
+    expect(screen.queryByTestId("object-source-edit")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
   });
 
   test("the bar draws the predicate's sentence with a stable data-refusal, and no Edit control", async () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import Editor from "@monaco-editor/react";
-import { FileWarning, LoaderCircle, RefreshCw, TriangleAlert } from "lucide-react";
+import { FileWarning, Info, LoaderCircle, RefreshCw, TriangleAlert } from "lucide-react";
 import type * as Monaco from "monaco-editor";
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ApplyPreviewDialog, type ApplyPreviewState } from "./ApplyPreviewDialog";
@@ -20,7 +20,7 @@ import {
 import { partEditability, type SourceEditability } from "./source-editable";
 import { Button } from "@/components/ui/button";
 import { isObjectEditBuildResponseShape, isObjectEditOutcomeShape } from "@/lib/api/object-edit-wire";
-import { isSourcePartUnavailable, SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { isSourcePartStatement, isSourcePartUnavailable, SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
 import type {
   ObjectEditConsequenceClass,
@@ -1569,7 +1569,20 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
               ? { role: "tabpanel", id: panelId(activeIndex), "aria-labelledby": tabId(activeIndex) }
               : {})}
           >
-            {isSourcePartUnavailable(part) ? (
+            {isSourcePartStatement(part) ? (
+              /*
+               * A NEUTRAL STATEMENT, asked BEFORE the refusal because `isSourcePartUnavailable`
+               * answers true for it too. It is a fact about the object, so it carries none of the
+               * failure grammar below: no "could not be read" heading and no warning colour. It is
+               * still not a definition, so there is no editor here either.
+               */
+              <div className="flex-1 px-3 py-8 text-center text-muted-foreground" data-testid="object-source-statement">
+                <Info aria-hidden="true" strokeWidth={1.5} className="mx-auto mb-2 h-8 w-8 opacity-50" />
+                <p className="mx-auto max-w-xl break-words text-xs" data-testid="object-source-statement-message">
+                  {part.unavailable}
+                </p>
+              </div>
+            ) : isSourcePartUnavailable(part) ? (
               /*
                * A DIFFERENT component, not an editor with an empty buffer. This is the
                * composition DBeaver gets wrong, measured in its source: an unreadable

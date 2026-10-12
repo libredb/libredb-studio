@@ -344,6 +344,7 @@ whole surface is built on:
 | The engine… | The answer | Why |
 |---|---|---|
 | declined the read, and said so | a PART carrying `unavailable`, holding the engine's own sentence **unprefixed** and with no `text` | the reader needs the server's words to act on. A part is never both `unavailable` and `text` |
+| has nothing to show by design, and that is a fact rather than a failure | a PART carrying `unavailable` with the sentence and `statement: true` | the viewer draws it as plain text, without the "could not be read" heading. A part never carries `statement` without `unavailable` |
 | holds no such object | RAISE a `QueryError` naming the object | a document invented for a dropped object is a claim the engine never made |
 | answered nothing, or an empty text | RAISE | an empty text puts an empty editor over a definition nobody read, which is the shape this contract exists to make unrepresentable |
 | never answered at all (a dropped socket, a timeout) | RAISE a `ConnectionError` | nobody answering is not the server answering "no", and a transport message rendered as this object's refusal is a symptom presented as a fact |
