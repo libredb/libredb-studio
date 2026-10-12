@@ -365,6 +365,9 @@ A cursor from a listing Google no longer honours is refused with:
 
 > This listing expired; list the level again
 
+Google answers a page token it no longer honours, or one it cannot decode, with 400 `INVALID_ARGUMENT` and "invalid page token" (measured 2026-10-12 against a real project).
+The emulator 1.22.0 answers a token it cannot decode with 500 `UNKNOWN` instead, and the panel shows that error as the emulator words it.
+
 The panel counts a key and its folder as two entries, so "Listed n" reads twice the number of documents.
 
 ### 6.4 The Source tab

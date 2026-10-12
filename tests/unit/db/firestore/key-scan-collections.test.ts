@@ -160,6 +160,8 @@ describe("the collection level", () => {
   });
 
   test("a page token Google refuses answers the expired sentence; the same refusal with no token stays Google's", async () => {
+    // Production's own answer to an expired or undecodable page token, measured 2026-10-12 against a real project:
+    // HTTP 400 {"code": 400, "status": "INVALID_ARGUMENT", "message": "invalid page token"}.
     const refusal = googleFailure(400, "INVALID_ARGUMENT", "invalid page token");
     const fake = fakeFirestore(() => {
       throw refusal;

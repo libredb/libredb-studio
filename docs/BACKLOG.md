@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D307, U17 · 208
+- [Drivers and connections](#drivers-and-connections) — D1-D306, U17 · 207
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U117 · 108
@@ -3176,16 +3176,6 @@ A connection that carries a service-account key or an authorized-user file, or a
 Found 2026-10-12 while designing the Firestore provider.
 
 **Done when:** with `BIGQUERY_EMULATOR_HOST` set, no token source is built and no credential is read, requests carry a fixed placeholder bearer, a connection that carries a credential is refused with a sentence naming the variable, and tests show that no request reaches the token endpoint or the metadata server.
-
-### D307. Production's answer to an undecodable Firestore listing page token is unmeasured
-
-When the Keys panel follows a Firestore listing with a page token, the provider turns a 400 `INVALID_ARGUMENT` answer into "This listing expired; list the level again" (`levelFailure` in `src/lib/db/providers/document/firestore/key-scan.ts`).
-Emulator 1.22.0 gives that answer, "invalid page token", only for a token it can decode and does not know; a token it cannot decode gets HTTP 500 `UNKNOWN`, which `levelFailure` leaves as mapped (`tests/live/firestore-evidence-plan.ts`).
-What production answers to an undecodable token was not measured, so whether that sentence covers it there is open.
-
-Found 2026-10-12 while capturing the Firestore emulator's answers.
-
-**Done when:** a capture against a real Firestore project records the answer to an undecodable listing page token, the provider maps it to the expired-listing sentence or to one of its own, and a test over that capture pins it.
 
 ## Value interpolation
 
