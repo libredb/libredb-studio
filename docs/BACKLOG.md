@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 6
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B109 · 45
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B110 · 46
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
 
@@ -6796,6 +6796,15 @@ The route has no tools, so the exposure is a spoofed document on the user's own 
 Found 2026-10-12 while designing the RabbitMQ provider.
 
 **Done when:** the route fences the names as plan mode and MCP do (`src/lib/agent/untrusted-content.ts`), with a test that a table named as an instruction is found only inside the fence.
+
+### B110. The answer card counts every inventoried object under the engine's entity noun
+
+The inventory chip of `src/components/agent/AnswerCard.tsx` prints the capture's object count with `capture.noun`, the engine's entity noun, so on an engine whose inventory holds several kinds the chip names them all by one kind.
+A RabbitMQ plan run's chip read "41 streams read" while the capture held 17 streams, 6 queues and 18 exchanges.
+
+Found 2026-10-12 in a plan-mode pass of the RabbitMQ provider.
+
+**Done when:** the chip names objects of several kinds as what they are, by kind or by a neutral noun, with a test over a capture that holds three kinds.
 
 ## Passkey deferrals (#785)
 
