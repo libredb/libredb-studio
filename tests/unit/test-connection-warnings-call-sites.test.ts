@@ -9,8 +9,9 @@
  * callers. So the rule is pinned on the shape of the source.
  *
  * A source scan reads text: a call reached through a helper that takes the method by another
- * name passes, and a mention inside a string that holds `//` or `/*` may be missed. It catches
- * the careless second call site, which is the case it exists for.
+ * name passes, and a quote inside a regular expression literal or a string that spans lines can
+ * hide what follows it on that line. It catches the careless second call site, which is the case
+ * it exists for.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -29,8 +30,34 @@ const DEFINITION = new RegExp(
 );
 /** A docblock continuation line, all of which is comment. */
 const DOCBLOCK_LINE = /^\s*\*/;
-/** Removes block comments that open on the line (closed there or not) and a trailing line comment. */
-const withoutComments = (line: string): string => line.replace(/\/\*.*?(?:\*\/|$)/g, "").replace(/\/\/.*$/, "");
+/**
+ * Removes block comments that open on the line (closed there or not) and a trailing line comment,
+ * stepping over string literals, so a `//` or `/*` inside a string does not hide the code after it.
+ */
+const withoutComments = (line: string): string => {
+  let code = "";
+  let quote: string | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (quote !== null) {
+      code += char;
+      if (char === "\\") code += line[++i] ?? "";
+      else if (char === quote) quote = null;
+    } else if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      code += char;
+    } else if (line.startsWith("//", i)) {
+      break;
+    } else if (line.startsWith("/*", i)) {
+      const end = line.indexOf("*/", i + 2);
+      if (end < 0) break;
+      i = end + 1;
+    } else {
+      code += char;
+    }
+  }
+  return code;
+};
 
 /**
  * The lines of `source` that use the method. Mentions are counted after comments are removed, and
@@ -54,6 +81,8 @@ describe("the scan tells a use from a definition", () => {
     ["a destructure", "const { testConnectionWarnings } = provider;"],
     ["a call after a leading block comment", "  /* refresh */ await provider.testConnectionWarnings?.();"],
     ["a bare call of a same-named function", "  testConnectionWarnings(provider);"],
+    ["a call after a string that holds //", '  await run("http://host", provider.testConnectionWarnings());'],
+    ["a call after a string that holds /*", "  const found = [glob('src/*'), provider.testConnectionWarnings()];"],
     [
       "a call inside a one-line delegating method",
       "  async testConnectionWarnings() { return this.inner.testConnectionWarnings(); }",
@@ -70,6 +99,7 @@ describe("the scan tells a use from a definition", () => {
     ["a docblock opening", "  /** testConnectionWarnings() runs on a user's click only */"],
     ["a trailing comment after code", "  const cautions = []; // filled by testConnectionWarnings()"],
     ["an object-literal method", "  async testConnectionWarnings() {"],
+    ["a comment after a string that holds a quote", `  const q = "'"; // testConnectionWarnings()`],
   ])("skips %s", (_, line) => {
     expect(usesOf(line)).toEqual([]);
   });
