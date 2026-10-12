@@ -101,5 +101,5 @@ export const SENTENCES = Object.freeze({
   colonSubcollections: (documentPath: string): string =>
     `Studio cannot list the subcollections of a document whose id contains a colon; query them with db.collection("${quoted(documentPath)}/<subcollection>")`,
   colonVerbParent: (documentPath: string): string =>
-    `Studio cannot query under the document ${documentPath}, because its id contains a colon, which Firestore reads as the start of a method name; nothing was sent`,
+    `Studio cannot query under the document ${JSON.stringify(documentPath)}, because its id contains a colon, which Firestore reads as the start of a method name; nothing was sent`,
 }) satisfies Readonly<Record<string, string | ((...args: never[]) => string)>>;

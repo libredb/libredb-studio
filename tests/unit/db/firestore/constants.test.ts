@@ -93,8 +93,11 @@ describe("Firestore constants", () => {
     expect(control).toContain("c/a\\u000ab\\u2028:c/<subcollection>");
     expect(control).not.toMatch(/[\u0000-\u001f\u2028\u2029]/);
     expect(SENTENCES.colonVerbParent("users/a:b")).toBe(
-      "Studio cannot query under the document users/a:b, because its id contains a colon, which Firestore reads as the start of a method name; nothing was sent",
+      'Studio cannot query under the document "users/a:b", because its id contains a colon, which Firestore reads as the start of a method name; nothing was sent',
     );
+    const verbControl = SENTENCES.colonVerbParent("c/a\nb:c");
+    expect(verbControl).toContain('"c/a\\nb:c"');
+    expect(verbControl).not.toMatch(/[\u0000-\u001f\u2028\u2029]/);
     expect(Object.isFrozen(SENTENCES)).toBe(true);
     const texts = [
       SENTENCES.readOnly,
