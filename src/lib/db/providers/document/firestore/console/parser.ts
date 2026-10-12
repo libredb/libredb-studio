@@ -6,7 +6,7 @@
 import { QueryError } from "@/lib/db/errors";
 import { LIMITS } from "../constants";
 import { DOCUMENT_ID, type FieldPathSegments, fieldPathOf, parseFieldPathString } from "../field-path";
-import { isDocumentPath, splitPath } from "../names";
+import { idRefusal, isDocumentPath, splitPath } from "../names";
 import type { Literal } from "../values";
 import { firestoreQueryError, lex, type Token } from "./lexer";
 
@@ -623,4 +623,458 @@ export function aggregateOf(expr: Expr, text: string): { op: "count" | "sum" | "
     return { op: expr.name === "AggregateField.sum" ? "sum" : "avg", field: fieldRefOf(expr.args[0], text) };
   }
   throw firestoreQueryError(text, expr.at, PARSER_SENTENCES.aggregateField);
+}
+
+const DECLARATIONS: ReadonlySet<string> = new Set(["const", "let", "var", "import", "export", "function"]);
+const ROOT_CALLS: ReadonlySet<string> = new Set(["firestore", "getFirestore"]);
+const MODULAR_READS: ReadonlySet<string> = new Set([
+  "query",
+  "collection",
+  "collectionGroup",
+  "doc",
+  "getDoc",
+  "getDocs",
+  "getDocFromServer",
+  "getDocsFromServer",
+  "getCountFromServer",
+  "getAggregateFromServer",
+  "onSnapshot",
+  "where",
+  "orderBy",
+  "limit",
+  "documentId",
+  "and",
+  "or",
+]);
+const MODULAR_WRITES: ReadonlySet<string> = new Set([
+  "setDoc",
+  "addDoc",
+  "updateDoc",
+  "deleteDoc",
+  "writeBatch",
+  "runTransaction",
+]);
+const RUNS_ITSELF: ReadonlySet<string> = new Set(["then", "catch", "finally", "onSnapshot", "stream", "withConverter"]);
+const WRITES: ReadonlySet<string> = new Set([
+  "set",
+  "add",
+  "update",
+  "delete",
+  "create",
+  "batch",
+  "runTransaction",
+  "bulkWriter",
+  "recursiveDelete",
+]);
+const MEASURES: ReadonlySet<string> = new Set(["EUCLIDEAN", "COSINE", "DOT_PRODUCT"]);
+const QUERY_CALLS =
+  "where(), orderBy(), limit(), offset(), startAt(), startAfter(), endAt(), endBefore(), select(), findNearest(), count(), aggregate(), explain() or get()";
+const ALLOWED = {
+  db: "collection(), collectionGroup(), doc(), listCollections() or getAll()",
+  document: "collection(), get() or listCollections()",
+  collection: `doc(), listDocuments(), ${QUERY_CALLS}`,
+  query: QUERY_CALLS,
+} as const;
+
+type CollectionSource = Extract<QuerySource, { kind: "collection" }>;
+interface OpsDraft {
+  where: FilterNode[];
+  orderBy: { field: FieldRef; direction: "ASCENDING" | "DESCENDING" }[];
+  limit?: { value: number; at: number };
+  offset?: { value: number; at: number };
+  select?: FieldRef[];
+  start?: CursorBound;
+  end?: CursorBound;
+  /** Where the first cursor call stood; a later where() or orderBy() is refused. */
+  cursorAt?: number;
+}
+interface QueryChain {
+  readonly source: QuerySource;
+  readonly ops: OpsDraft;
+}
+type Chain =
+  | { readonly s: "db" }
+  | { readonly s: "document"; readonly path: string[]; readonly at: number }
+  | { readonly s: "collection"; readonly source: CollectionSource; readonly ops: OpsDraft }
+  | { readonly s: "query"; readonly source: QuerySource; readonly ops: OpsDraft }
+  | { readonly s: "vector"; readonly source: QuerySource; readonly ops: OpsDraft; readonly nearest: NearestSpec }
+  | {
+      readonly s: "aggregation";
+      readonly source: QuerySource;
+      readonly ops: OpsDraft;
+      readonly aggregations: AggregationSpec[];
+    }
+  | { readonly s: "end"; readonly statement: Statement; readonly name: string };
+interface Call {
+  readonly name: string;
+  readonly at: number;
+  readonly args: readonly Expr[];
+}
+
+const fail = (text: string, at: number, sentence: string): QueryError => firestoreQueryError(text, at, sentence);
+const emptyOps = (): OpsDraft => ({ where: [], orderBy: [] });
+const end = (statement: Statement, call: Call): Chain => ({ s: "end", statement, name: call.name });
+
+function one(call: Call, text: string): Expr {
+  if (call.args.length !== 1)
+    throw fail(text, call.at, PARSER_SENTENCES.arguments(`${call.name}()`, "exactly one argument"));
+  return call.args[0];
+}
+
+function none(call: Call, text: string): void {
+  if (call.args.length !== 0) throw fail(text, call.at, PARSER_SENTENCES.noArgs(call.name));
+}
+
+/** A path relative to `base`, validated from the database root so each segment meets its own id rule. */
+function joinedPath(base: readonly string[], expr: Expr, text: string, sentence: string): string[] {
+  return splitText(`${base.join("/")}/${stringOf(expr, text, sentence)}`, expr.at, text);
+}
+
+function freezeOps(ops: OpsDraft): QueryOps {
+  return {
+    where: ops.where,
+    orderBy: ops.orderBy,
+    ...(ops.limit === undefined ? {} : { limit: ops.limit }),
+    ...(ops.offset === undefined ? {} : { offset: ops.offset }),
+    ...(ops.select === undefined ? {} : { select: ops.select }),
+    ...(ops.start === undefined ? {} : { start: ops.start }),
+    ...(ops.end === undefined ? {} : { end: ops.end }),
+  };
+}
+
+function queryStatement(chain: QueryChain, explain?: ExplainCall): Statement {
+  return {
+    kind: "query",
+    source: chain.source,
+    ops: freezeOps(chain.ops),
+    ...(explain === undefined ? {} : { explain }),
+  };
+}
+
+function terminalStatement(chain: Extract<Chain, { s: "vector" | "aggregation" }>, explain?: ExplainCall): Statement {
+  const base = { source: chain.source, ops: freezeOps(chain.ops), ...(explain === undefined ? {} : { explain }) };
+  return chain.s === "vector"
+    ? { kind: "vector", ...base, nearest: chain.nearest }
+    : { kind: "aggregate", ...base, aggregations: chain.aggregations };
+}
+
+function refuseLeadingNearMiss(reader: Reader): void {
+  const first = reader.peek();
+  if (first.kind !== "identifier") return;
+  const calls = reader.isPunct("(", 1);
+  if (DECLARATIONS.has(first.text) || reader.isPunct("=", 1)) throw reader.fail(first.start, PARSER_SENTENCES.oneChain);
+  const adminRoot =
+    first.text === "admin" && reader.isPunct(".", 1) && reader.isIdent("firestore", 2) && reader.isPunct("(", 3);
+  if (adminRoot || (calls && ROOT_CALLS.has(first.text))) throw reader.fail(first.start, PARSER_SENTENCES.root);
+  if (calls && MODULAR_WRITES.has(first.text)) throw reader.fail(first.start, PARSER_SENTENCES.readOnly);
+  if (calls && MODULAR_READS.has(first.text)) throw reader.fail(first.start, PARSER_SENTENCES.modular);
+}
+
+function fromDb(call: Call, text: string): Chain {
+  switch (call.name) {
+    case "collection": {
+      const arg = one(call, text);
+      const path = splitText(stringOf(arg, text, PARSER_SENTENCES.collectionPath), arg.at, text);
+      if (path.length % 2 !== 1) throw fail(text, arg.at, PARSER_SENTENCES.collectionPath);
+      return { s: "collection", source: { kind: "collection", path, at: arg.at }, ops: emptyOps() };
+    }
+    case "collectionGroup": {
+      const arg = one(call, text);
+      const id = stringOf(arg, text, PARSER_SENTENCES.groupId);
+      if (id.includes("/")) throw fail(text, arg.at, PARSER_SENTENCES.groupId);
+      const refusal = idRefusal(id, "collection");
+      if (refusal !== null) throw fail(text, arg.at, refusal);
+      return { s: "query", source: { kind: "collectionGroup", collectionId: id, at: arg.at }, ops: emptyOps() };
+    }
+    case "doc": {
+      if (call.args.length === 0) throw fail(text, call.at, PARSER_SENTENCES.newDoc);
+      const arg = one(call, text);
+      const path = splitText(stringOf(arg, text, PARSER_SENTENCES.documentPath), arg.at, text);
+      if (!isDocumentPath(path)) throw fail(text, arg.at, PARSER_SENTENCES.documentPath);
+      return { s: "document", path, at: arg.at };
+    }
+    case "listCollections":
+      none(call, text);
+      return end({ kind: "listCollections", parent: [], at: call.at }, call);
+    case "getAll": {
+      if (call.args.length === 0 || call.args.length > LIMITS.maxGetAllRefs)
+        throw fail(text, call.at, PARSER_SENTENCES.getAllRefs);
+      const refs = call.args.map((arg) => {
+        if (arg.t !== "call" || arg.isNew || arg.name !== "db.doc")
+          throw fail(text, arg.at, PARSER_SENTENCES.getAllRefs);
+        const literal = literalOf(arg, text);
+        return literal.kind === "reference" ? literal.segments : [];
+      });
+      return end({ kind: "getAll", refs }, call);
+    }
+    default:
+      throw fail(text, call.at, PARSER_SENTENCES.notOn(call.name, "db", ALLOWED.db));
+  }
+}
+
+function fromDocument(chain: Extract<Chain, { s: "document" }>, call: Call, text: string): Chain {
+  switch (call.name) {
+    case "collection": {
+      const arg = one(call, text);
+      const path = joinedPath(chain.path, arg, text, PARSER_SENTENCES.collectionPath);
+      if (path.length % 2 !== 1) throw fail(text, arg.at, PARSER_SENTENCES.collectionPath);
+      return { s: "collection", source: { kind: "collection", path, at: arg.at }, ops: emptyOps() };
+    }
+    case "get":
+      none(call, text);
+      return end({ kind: "getDocument", path: chain.path, at: chain.at }, call);
+    case "listCollections":
+      none(call, text);
+      return end({ kind: "listCollections", parent: chain.path, at: call.at }, call);
+    default:
+      throw fail(text, call.at, PARSER_SENTENCES.notOn(call.name, "a document", ALLOWED.document));
+  }
+}
+
+function fromCollection(chain: Extract<Chain, { s: "collection" }>, call: Call, text: string): Chain {
+  if (call.name === "doc") {
+    if (call.args.length === 0) throw fail(text, call.at, PARSER_SENTENCES.newDoc);
+    const arg = one(call, text);
+    const path = joinedPath(chain.source.path, arg, text, PARSER_SENTENCES.documentPath);
+    if (!isDocumentPath(path)) throw fail(text, arg.at, PARSER_SENTENCES.documentPath);
+    return { s: "document", path, at: arg.at };
+  }
+  if (call.name === "listDocuments") {
+    none(call, text);
+    return end({ kind: "listDocuments", collection: chain.source.path, at: call.at }, call);
+  }
+  return fromQuery(chain, call, text, ALLOWED.collection);
+}
+
+function notAfterCursor(ops: OpsDraft, call: Call, text: string): void {
+  if (ops.cursorAt !== undefined) throw fail(text, call.at, PARSER_SENTENCES.afterCursor(call.name));
+}
+
+function directionOf(expr: Expr, text: string): "ASCENDING" | "DESCENDING" {
+  const value = expr.t === "string" ? expr.value : undefined;
+  if (value !== "asc" && value !== "desc") throw fail(text, expr.at, PARSER_SENTENCES.direction);
+  return value === "asc" ? "ASCENDING" : "DESCENDING";
+}
+
+function queryVectorOf(expr: Expr, text: string): number[] {
+  if (expr.t === "array") return vectorNumbers(expr, text);
+  if (expr.t === "call" && !expr.isNew && expr.name === "FieldValue.vector") {
+    arity(expr, 1, text);
+    return vectorNumbers(expr.args[0], text);
+  }
+  throw fail(text, expr.at, PARSER_SENTENCES.queryVector);
+}
+
+function measureOf(expr: Expr, text: string): NearestSpec["distanceMeasure"] {
+  const value = expr.t === "string" ? expr.value : "";
+  if (!MEASURES.has(value)) throw fail(text, expr.at, PARSER_SENTENCES.measure);
+  return value as NearestSpec["distanceMeasure"];
+}
+
+function nearestOf(call: Call, text: string): NearestSpec {
+  const [options] = call.args;
+  if (call.args.length !== 1 || options.t !== "object") throw fail(text, call.at, PARSER_SENTENCES.nearestShape);
+  let field: FieldRef | undefined;
+  let queryVector: number[] | undefined;
+  let limit: number | undefined;
+  let distanceMeasure: NearestSpec["distanceMeasure"] | undefined;
+  let distanceResultField: FieldRef | undefined;
+  let distanceThreshold: number | undefined;
+  for (const entry of options.entries) {
+    switch (entry.key) {
+      case "vectorField":
+        field = fieldRefOf(entry.value, text);
+        break;
+      case "queryVector":
+        queryVector = queryVectorOf(entry.value, text);
+        break;
+      case "limit":
+        limit = Number(integerOf(entry.value, text, "findNearest() limit"));
+        break;
+      case "distanceMeasure":
+        distanceMeasure = measureOf(entry.value, text);
+        break;
+      case "distanceResultField":
+        distanceResultField = fieldRefOf(entry.value, text);
+        break;
+      case "distanceThreshold":
+        distanceThreshold = numberOf(entry.value, text, "distanceThreshold");
+        break;
+      default:
+        throw fail(text, entry.keyAt, PARSER_SENTENCES.nearestOption(entry.key));
+    }
+  }
+  if (field === undefined) throw fail(text, call.at, PARSER_SENTENCES.nearestMissing("vectorField"));
+  if (queryVector === undefined) throw fail(text, call.at, PARSER_SENTENCES.nearestMissing("queryVector"));
+  if (limit === undefined) throw fail(text, call.at, PARSER_SENTENCES.nearestMissing("limit"));
+  if (distanceMeasure === undefined) throw fail(text, call.at, PARSER_SENTENCES.nearestMissing("distanceMeasure"));
+  return {
+    field,
+    queryVector,
+    limit,
+    distanceMeasure,
+    ...(distanceResultField === undefined ? {} : { distanceResultField }),
+    ...(distanceThreshold === undefined ? {} : { distanceThreshold }),
+    at: call.at,
+  };
+}
+
+function aggregationsOf(call: Call, text: string): AggregationSpec[] {
+  const [spec] = call.args;
+  if (call.args.length !== 1 || spec.t !== "object") throw fail(text, call.at, PARSER_SENTENCES.aggregateShape);
+  return spec.entries.map((entry) => {
+    const { op, field } = aggregateOf(entry.value, text);
+    return field === undefined
+      ? { key: entry.key, op, at: entry.keyAt }
+      : { key: entry.key, op, field, at: entry.keyAt };
+  });
+}
+
+function explainOf(call: Call, text: string): ExplainCall {
+  if (call.args.length === 0) return { analyze: false, at: call.at };
+  const [options] = call.args;
+  if (call.args.length === 1 && options.t === "object" && options.entries.length === 0)
+    return { analyze: false, at: call.at };
+  const entry = options.t === "object" && options.entries.length === 1 ? options.entries[0] : undefined;
+  const value = entry?.key === "analyze" && entry.value.t === "word" ? entry.value.name : undefined;
+  if (call.args.length !== 1 || (value !== "true" && value !== "false"))
+    throw fail(text, call.at, PARSER_SENTENCES.explainShape);
+  return { analyze: value === "true", at: call.at };
+}
+
+function fromQuery(chain: QueryChain, call: Call, text: string, allowed: string): Chain {
+  const { source, ops } = chain;
+  const next: Chain = { s: "query", source, ops };
+  switch (call.name) {
+    case "where":
+      notAfterCursor(ops, call, text);
+      if (call.args.length === 1) ops.where.push(filterOf(call.args[0], text));
+      else if (call.args.length === 3)
+        ops.where.push(compareNode(call.args[0], call.args[1], call.args[2], call.at, text));
+      else throw fail(text, call.at, PARSER_SENTENCES.whereArguments);
+      return next;
+    case "orderBy": {
+      notAfterCursor(ops, call, text);
+      if (call.args.length !== 1 && call.args.length !== 2) {
+        throw fail(text, call.at, PARSER_SENTENCES.arguments("orderBy()", "a field and an optional direction"));
+      }
+      const direction = call.args.length === 2 ? directionOf(call.args[1], text) : "ASCENDING";
+      ops.orderBy.push({ field: fieldRefOf(call.args[0], text), direction });
+      return next;
+    }
+    case "limit":
+    case "offset": {
+      const arg = one(call, text);
+      const value = { value: Number(integerOf(arg, text, `${call.name}()`)), at: arg.at };
+      if (call.name === "limit") ops.limit = value;
+      else ops.offset = value;
+      return next;
+    }
+    case "limitToLast":
+      throw fail(text, call.at, PARSER_SENTENCES.limitToLast);
+    case "startAt":
+    case "startAfter":
+    case "endAt":
+    case "endBefore": {
+      if (call.args.length === 0) throw fail(text, call.at, PARSER_SENTENCES.cursorValues(call.name));
+      const values = call.args.map((arg) => literalOf(arg, text));
+      const bound: CursorBound = { values, before: call.name === "startAt" || call.name === "endBefore", at: call.at };
+      if (call.name.startsWith("start")) ops.start = bound;
+      else ops.end = bound;
+      ops.cursorAt ??= call.at;
+      return next;
+    }
+    case "select":
+      ops.select = call.args.map((arg) => fieldRefOf(arg, text));
+      return next;
+    case "findNearest":
+      return { s: "vector", source, ops, nearest: nearestOf(call, text) };
+    case "count":
+      none(call, text);
+      return { s: "aggregation", source, ops, aggregations: [{ key: "count", op: "count", at: call.at }] };
+    case "aggregate":
+      return { s: "aggregation", source, ops, aggregations: aggregationsOf(call, text) };
+    case "explain":
+      return end(queryStatement(chain, explainOf(call, text)), call);
+    case "get":
+      none(call, text);
+      return end(queryStatement(chain), call);
+    default:
+      throw fail(text, call.at, PARSER_SENTENCES.notOn(call.name, "a query", allowed));
+  }
+}
+
+function fromTerminal(chain: Extract<Chain, { s: "vector" | "aggregation" }>, call: Call, text: string): Chain {
+  if (call.name === "get") {
+    none(call, text);
+    return end(terminalStatement(chain), call);
+  }
+  if (call.name === "explain") return end(terminalStatement(chain, explainOf(call, text)), call);
+  const noun = chain.s === "vector" ? "a vector query" : "an aggregation";
+  throw fail(text, call.at, PARSER_SENTENCES.notOn(call.name, noun, "get() or explain()"));
+}
+
+function step(chain: Chain, call: Call, text: string): Chain {
+  switch (chain.s) {
+    case "end":
+      throw fail(text, call.at, PARSER_SENTENCES.afterEnd(chain.name));
+    case "db":
+      return fromDb(call, text);
+    case "document":
+      return fromDocument(chain, call, text);
+    case "collection":
+      return fromCollection(chain, call, text);
+    case "query":
+      return fromQuery(chain, call, text, ALLOWED.query);
+    case "vector":
+    case "aggregation":
+      return fromTerminal(chain, call, text);
+  }
+}
+
+/** The statement an unfinished chain runs as: spec 5.4's implicit get(). */
+function finish(chain: Chain, text: string, endAt: number): Statement {
+  switch (chain.s) {
+    case "db":
+      throw fail(text, endAt, PARSER_SENTENCES.emptyChain);
+    case "end":
+      return chain.statement;
+    case "document":
+      return { kind: "getDocument", path: chain.path, at: chain.at };
+    case "collection":
+    case "query":
+      return queryStatement(chain);
+    case "vector":
+    case "aggregation":
+      return terminalStatement(chain);
+  }
+}
+
+/** One console statement: `[await] db { .call(...) } [;]`, read into a typed statement or refused with a position. */
+export function parseStatement(text: string): Statement {
+  const reader = new Reader(text, lex(text));
+  refuseLeadingNearMiss(reader);
+  if (reader.isIdent("await")) {
+    reader.next();
+    refuseLeadingNearMiss(reader);
+  }
+  if (!reader.isIdent("db")) throw reader.fail(reader.peek().start, PARSER_SENTENCES.root);
+  reader.next();
+  let chain: Chain = { s: "db" };
+  while (reader.isPunct(".")) {
+    reader.next();
+    const name = reader.peek();
+    if (name.kind !== "identifier") throw reader.fail(name.start, PARSER_SENTENCES.expected("a method name"));
+    reader.next();
+    if (RUNS_ITSELF.has(name.text)) throw reader.fail(name.start, PARSER_SENTENCES.runsItself);
+    if (WRITES.has(name.text)) throw reader.fail(name.start, PARSER_SENTENCES.readOnly);
+    if (!reader.isPunct("(")) throw reader.fail(reader.peek().start, PARSER_SENTENCES.parens(name.text));
+    reader.next();
+    chain = step(chain, { name: name.text, at: name.start, args: parseList(reader, ")") }, text);
+  }
+  if (reader.isPunct(";")) reader.next();
+  const rest = reader.peek();
+  if (rest.kind === "identifier") throw reader.fail(rest.start, PARSER_SENTENCES.oneChain);
+  if (rest.kind !== "eof") throw reader.fail(rest.start, PARSER_SENTENCES.expected('"." or the end of the statement'));
+  return finish(chain, text, rest.start);
 }
