@@ -318,7 +318,7 @@ jobs:
     # is the fail-safe), never a broken job, which is why it went unnoticed;
     # tests/unit/ci-playwright-image.test.ts now fails on it.
     container:
-      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      image: mcr.microsoft.com/playwright:v1.64.0-noble
 
     steps:
       - name: Checkout code
@@ -534,7 +534,7 @@ jobs:
     # only need node + bun; the docker/deb/rpm/snap channels elsewhere need a
     # daemon or a package manager and therefore stay on the bare runner.
     container:
-      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      image: mcr.microsoft.com/playwright:v1.64.0-noble
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
