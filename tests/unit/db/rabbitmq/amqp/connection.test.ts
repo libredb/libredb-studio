@@ -153,7 +153,7 @@ describe("negotiation", () => {
     expect(h.methods()).toEqual(["header", "10.11"]);
   });
 
-  test("PLAIN only, the 0-9 version only, and the locale en_US when offered", async () => {
+  test("PLAIN only, the 0-9 version only, and the locale en_US when offered or when the first one is too long", async () => {
     const noPlain = await connect([
       { expect: "protocol-header" },
       { send: serverFrames.connectionStart({ mechanisms: "EXTERNAL AMQPLAIN ANONYMOUS" }) },
@@ -173,6 +173,8 @@ describe("negotiation", () => {
       ["de_DE en_US", "en_US"],
       ["fr_FR", "fr_FR"],
       ["", "en_US"],
+      // A first locale longer than a short string holds falls back to en_US instead of failing to encode start-ok.
+      [`${"x".repeat(256)} fr_FR`, "en_US"],
     ] as const) {
       const h = await connect([{ expect: "protocol-header" }, { send: serverFrames.connectionStart({ locales }) }]);
       void h.connection.open(1).catch(() => {});

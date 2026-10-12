@@ -15,6 +15,7 @@ import {
   RABBITMQ_FRAME_MAX_CEILING,
   RABBITMQ_FRAME_MIN_BYTES,
   RABBITMQ_HEARTBEAT_CEILING_S,
+  RABBITMQ_NAME_MAX_BYTES,
   type RabbitMQClock,
 } from "../limits";
 import type { AmqpEndpoint } from "../connection-options";
@@ -188,7 +189,14 @@ export function createAmqpConnection(options: AmqpConnectionOptions): AmqpConnec
       const start = decodeConnectionStart(event.args);
       if (start.versionMajor !== 0 || start.versionMinor !== 9) return fail({ kind: "other-version" });
       if (!start.mechanisms.includes("PLAIN")) return fail({ kind: "no-plain" });
-      const locale = start.locales.includes("en_US") ? "en_US" : (start.locales[0] ?? "en_US");
+      // start-ok carries the locale as a short string, so an offered one longer than 255 bytes falls back to en_US.
+      const offered = start.locales[0];
+      const locale =
+        start.locales.includes("en_US") ||
+        offered === undefined ||
+        new TextEncoder().encode(offered).length > RABBITMQ_NAME_MAX_BYTES
+          ? "en_US"
+          : offered;
       const { username, password } = options.endpoint;
       send(ENCODERS["connection.start-ok"]({ username, password, locale, studioVersion: options.studioVersion }));
       state = "tune";
