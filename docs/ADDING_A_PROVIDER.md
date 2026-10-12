@@ -353,7 +353,7 @@ Emptiness is sometimes absence itself: measured on Redis 8.10.0,
 `FUNCTION LIST LIBRARYNAME no_such_library WITHCODE` answers an empty array rather than an error, so
 whatever reads it has to treat emptiness as the absence and raise.
 
-**Every part carries `origin` and `form`, and both are facts about the TEXT rather than decoration:**
+**Every readable part carries `origin` and `form`, and both are facts about the TEXT rather than decoration:**
 
 - `origin` is `stored` when the bytes are the author's own, as the engine kept them, and
   `regenerated` when the engine composed the statement from its catalog. Oracle's
