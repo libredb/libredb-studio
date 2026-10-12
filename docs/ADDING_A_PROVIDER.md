@@ -409,15 +409,18 @@ An operation that runs on one object, and that an admin should see described bef
 
 ### Cautions on Test Connection: `connectWarnings` and `testConnectionWarnings`
 
-Two optional methods let a provider hand Test Connection a caution, and the dialog then answers amber instead of green; the first Save shows the caution and the second saves.
+Two optional methods let a provider hand Test Connection a caution, and the dialog then answers amber instead of green; the first Save shows the caution and the second saves when it meets the same caution text.
+Test Connection and the dialog's Save both post to `POST /api/db/test-connection`, so both run these methods.
 Declare neither when your engine has nothing to caution about; `POST /api/db/test-connection` answers as before for a provider without them.
 
 - `connectWarnings(): QueryWarning[]` returns what `connect()` learned or derived on the requests it made anyway, with no request of its own, such as a startup NOTICE from the server (#1401).
-- `testConnectionWarnings(): Promise<QueryWarning[]>` runs probes that cost requests of their own, and only a user's Test Connection calls it: once, after a successful `connect()` and after `connectWarnings()`, on the provider the route built for that click, never on a cached or borrowed one.
+- `testConnectionWarnings(): Promise<QueryWarning[]>` runs probes that cost requests of their own, and only a user's Test Connection or Save calls it: once, after a successful `connect()` and after `connectWarnings()`, on the provider the route built for that click, never on a cached or borrowed one.
   Its cautions follow `connectWarnings()`'s in the answer.
   Put a check here, not in `connect()`, when it needs a request, because `connect()` also runs on every background cache miss, where nobody reads a caution.
   It answers cautions and never rejects: a fact it could not check is a caution or nothing, bounded by a deadline of its own.
   A rejection is a defect: the route logs it, shows one caution in its own words in its place, and still counts the connection as tested.
+  A caution's text depends only on what the server reports, never on timing: no count a deadline cut short, and a fixed order, or the second Save meets a different caution and asks again.
+  A caution is your own sentence, never a caught error's or a library's text, because every user who can test the connection reads it.
 - Return `[]` when there is nothing to say: any caution turns the answer amber, so a correct connection must come back empty.
 
 `tests/unit/test-connection-warnings-call-sites.test.ts` fails if anything under `src/` other than the Test Connection route calls `testConnectionWarnings`.

@@ -1825,16 +1825,21 @@ export interface DatabaseProvider {
   connectWarnings?(): QueryWarning[];
 
   /**
-   * Extra probes run only on a user's Test Connection; cautions, never an error.
+   * Extra probes run only when a user asks to test the connection; cautions, never an error.
    *
-   * `POST /api/db/test-connection` is its one caller (pinned by a source scan): it calls it once,
+   * `POST /api/db/test-connection` is its one caller (pinned by a source scan), and both Test
+   * Connection and the connection dialog's Save post to it. It calls the method once,
    * after a successful `connect()` and after `connectWarnings()`, on the provider it built for
    * that click and never on a cached or borrowed one, and lists its cautions after
    * `connectWarnings()`'s. So each request it makes is paid for by a user who asked and by no
    * background path. Any caution turns the dialog's answer amber, so a connection with nothing
    * to caution about answers `[]`. A rejection is a defect: the route shows one caution of its
    * own in its place and the connection still counts as tested. It bounds its own probes with a
-   * deadline, because the route waits for it before answering. Optional, because most engines
+   * deadline, because the route waits for it before answering. The dialog's second Save goes
+   * through only when it meets the same caution text the first one showed, so a caution's text
+   * depends only on what the server reports, never on timing: no count a deadline cut short, and a
+   * fixed order. A caution is the provider's own sentence, never a caught error's or a library's
+   * text, because every user who can test the connection reads it. Optional, because most engines
    * have nothing to check beyond `connect()`.
    */
   testConnectionWarnings?(): Promise<QueryWarning[]>;
