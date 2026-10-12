@@ -278,7 +278,7 @@ describe("firestore transport answers", () => {
     expect(error.message).toBe(expected.message);
   });
 
-  // The transport hands the header to errors.ts as GoogleError.retryAfter; errors.ts writes "7" as "7s" (PLAN-1 C7).
+  // The transport hands the header to errors.ts as GoogleError.retryAfter; errors.ts writes "7" as "7s".
   test("a 429 without RetryInfo reports its Retry-After header as the retry delay", async () => {
     const text = JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded." } });
     const { client: firestore } = client(() => jsonAnswer(JSON.parse(text), 429, "7"));

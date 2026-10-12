@@ -1,8 +1,7 @@
 /**
- * The Firestore rows and names the docs and listings carry beyond the provider doc: the providers README (with the
- * MQTT row it lacked), ADDING_A_PROVIDER's id lists (with the BigQuery and MQTT ids they lacked), the API docs, the
- * seed docs, `.env.example`, the READMEs and Docker Hub. Counts and exhaustive lists are held by the existing guards
- * named in docs/superpowers/firestore-provider/03-plan/PLAN-6-evidence-docs.md, task T6.10.
+ * The Firestore rows and names the docs and listings carry beyond the provider doc: the providers README (its
+ * Firestore and MQTT rows), ADDING_A_PROVIDER's id lists (the Firestore, BigQuery and MQTT ids), the API docs, the
+ * seed docs, `.env.example`, the READMEs and Docker Hub. Counts and exhaustive lists are held by the existing guards.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -134,9 +133,7 @@ describe("the READMEs and Docker Hub", () => {
     const hub = read("DOCKERHUB.md");
     const lines = hub.split("\n");
     const couchbase = lines.findIndex((line) => line.startsWith("| **Couchbase** |"));
-    expect(lines[couchbase + 1]).toBe(
-      "| **Firestore** | none, REST | Read-only Admin SDK query chain |",
-    );
+    expect(lines[couchbase + 1]).toBe("| **Firestore** | none, REST | Read-only Admin SDK query chain |");
     expect(hub).toContain(
       "Firestore, Prometheus, InfluxDB, Apache Kafka, MQTT, Oxia, S3-compatible object storage and Kubernetes are read-only too",
     );

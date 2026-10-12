@@ -120,8 +120,8 @@ describe("a run", () => {
     expect(sent[0].options.context.secretForms).toEqual(["ya29.pasted-secret"]);
   });
 
-  test("an answer past the size cap gets the console's query sentence (Review Focus 4)", async () => {
-    // The client maps a transport failure with the request kind added, as T2.7's send does.
+  test("an answer past the size cap gets the console's query sentence", async () => {
+    // The client maps a transport failure with the request kind added, as transport.ts's send does.
     const client: FirestoreClient = {
       mode: "google",
       target: TARGET,
@@ -183,7 +183,7 @@ describe("explain", () => {
     });
   });
 
-  test("on an emulator server every explain is refused with Part 1's sentence before any request (spec 4.3)", async () => {
+  test("on an emulator server every explain is refused with the emulator sentence before any request (spec 4.3)", async () => {
     for (const text of [
       'db.collection("users").explain()',
       'db.collection("users").count().explain({ analyze: true })',
@@ -232,7 +232,7 @@ describe("collection id listings", () => {
     expect(result.warnings).toEqual([{ message: RESULT_SENTENCES.idCap }]);
   });
 
-  test("the same cap, page size, repeat rule, id filter and UTF-8 order as PLAN-4's listCollectionIdsSorted (F11)", async () => {
+  test("the same cap, page size, repeat rule, id filter and UTF-8 order as objects.ts's listCollectionIdsSorted", async () => {
     const { client, sent } = fakeClient([
       { collectionIds: ["é", "b", "a/b"], nextPageToken: "t1" },
       { collectionIds: ["b", "z", "a"] },

@@ -6,8 +6,8 @@
  * page, filtered by the partial, its folders sorted by UTF-8 bytes and paged after the cursor's last entry
  * (start-after), so a list that changes between two pages neither skips nor repeats a folder. Every refusal of the
  * options, the pattern and the cursor comes before any request; a document whose id holds ":" cannot be listed,
- * because a verb request under it is refused, and Part 1's sentence says how to query its subcollections instead.
- * Every request names the `keys` surface, so an answer past its cap gets the panel's own sentence from Part 1.
+ * because a verb request under it is refused, and the refusal says how to query its subcollections instead.
+ * Every request names the `keys` surface, so an answer past its cap gets the panel's own sentence from errors.ts.
  *
  * A collection level with no partial is one `listDocuments` with `showMissing`, because a parent that exists only
  * through its subcollections is invisible to queries; no mask is sent, because none returns names only while

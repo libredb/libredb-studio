@@ -1,7 +1,7 @@
 /**
  * The console chain as the Admin SDK's state machine (spec 5.4): every row of the state table, the implicit ends,
  * repeated calls, cursor slots, and the near misses a statement copied from Firebase docs or Stack Overflow hits,
- * each with its own sentence, line and column (Review Focus 3).
+ * each with its own sentence, line and column.
  */
 import { describe, expect, test } from "bun:test";
 import { LEXER_SENTENCES } from "@/lib/db/providers/document/firestore/console/lexer";
@@ -280,7 +280,7 @@ describe("ends and the statement around the chain", () => {
   });
 });
 
-describe("near misses copied from Firebase docs and Stack Overflow (Review Focus 3)", () => {
+describe("near misses copied from Firebase docs and Stack Overflow", () => {
   test.each([
     [
       "const snapshot = await db.collection('cities').where('capital', '==', true).get();",

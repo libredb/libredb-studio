@@ -70,7 +70,7 @@ describe("inferColumns", () => {
     expect(columns["a.b.c"].type).toBe("map");
   });
 
-  test("documents that disagree give mixed(a|b), in sorted type names (Review Focus 4)", () => {
+  test("documents that disagree give mixed(a|b), in sorted type names", () => {
     const columns = byName(inferColumns([doc("a", { age: int(1) }), doc("b", { age: str("one") })], TARGET));
     expect(columns.age.type).toBe("mixed(integer|string)");
     expect(columns.age.nullable).toBe(false);
@@ -88,7 +88,7 @@ describe("inferColumns", () => {
     expect(byName(inferColumns([doc("a", { gone: nul })], TARGET)).gone.type).toBe("null");
   });
 
-  test("vectors of different dimensions are one vector column and are not expanded (Review Focus 4)", () => {
+  test("vectors of different dimensions are one vector column and are not expanded", () => {
     const columns = byName(
       inferColumns([doc("a", { embedding: vector(1, 2, 3) }), doc("b", { embedding: vector(1, 2, 3, 4, 5) })], TARGET),
     );
@@ -96,7 +96,7 @@ describe("inferColumns", () => {
     expect(Object.keys(columns).some((name) => name.startsWith("embedding."))).toBe(false);
   });
 
-  test("a wide document keeps the first 200 fields in UTF-8 order of their names (Review Focus 4)", () => {
+  test("a wide document keeps the first 200 fields in UTF-8 order of their names", () => {
     const fields: Record<string, RestValue> = {};
     for (let index = 999; index >= 0; index -= 1) fields[`f${String(index).padStart(3, "0")}`] = int(index);
     const columns = inferColumns([doc("wide", fields)], TARGET);

@@ -19,7 +19,7 @@ export interface ExecuteDeps {
   readonly signal: AbortSignal;
   readonly now: () => number;
   readonly credential: ErrorContext["credential"];
-  /** The credential's forms (PLAN-4's `CallBase`); a Google message holding one is withheld (spec S7). */
+  /** The credential's forms (`CallBase` in objects.ts); a Google message holding one is withheld (spec S7). */
   readonly secretForms?: readonly string[];
 }
 
@@ -66,7 +66,8 @@ export async function executeStatement(text: string, deps: ExecuteDeps): Promise
   const body = explainButton ? text.slice(FIRESTORE_EXPLAIN_MARKER.length) : text;
   const { target } = deps.client;
   const { request, shape, warnings } = compileStatement(parseStatement(body), body, { target, explainButton });
-  // The emulator ignores Query Explain (spec 4.3, O8): refused before any request, in Part 1's words.
+  // The emulator ignores Query Explain (spec 4.3): refused before any request, with the emulator sentence of
+  // constants.ts.
   if (shape.kind === "explain" && deps.client.mode === "emulator") {
     throw new QueryError(SENTENCES.emulatorExplain, FIRESTORE_TYPE, body);
   }

@@ -82,7 +82,7 @@ export const LIMITS = Object.freeze({
 
 /**
  * A path inside a suggested `db.collection("...")`: `\` and `"` take a backslash, and every character below U+0020
- * plus U+2028 and U+2029 is written `\uXXXX`, the rule Part 3's `jsString` follows, so the console lexer reads the
+ * plus U+2028 and U+2029 is written `\uXXXX`, the rule the console's `jsString` follows, so the console lexer reads the
  * suggestion back as the same path.
  */
 function quoted(path: string): string {

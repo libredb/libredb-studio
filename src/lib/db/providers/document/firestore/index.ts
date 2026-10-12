@@ -119,7 +119,7 @@ function closeSession(session: Pick<FirestoreSession, "client" | "lifetime">): v
   session.client.close();
 }
 
-/** The database resource: proves the credential and the database; Part 1 names the mode and access refusals. */
+/** The database resource: proves the credential and the database; errors.ts names the mode and access refusals. */
 async function probeGoogle(
   client: FirestoreClient,
   base: CallBase,

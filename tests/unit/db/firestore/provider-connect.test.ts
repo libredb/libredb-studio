@@ -1,9 +1,9 @@
 /**
  * The Firestore provider's declarations and lifecycle (spec 3.3, 3.4, 4.3, 4.4): capabilities with no Explain on an
- * emulator server, labels, prepareQuery leaving the text alone, validation, the database-resource probe and Part 1's
+ * emulator server, labels, prepareQuery leaving the text alone, validation, the database-resource probe and its
  * Datastore-mode, disabled-access and unreadable refusals, the emulator's one id page with Bearer owner and its
  * warnings, a pasted token's warning, the query timeout handed to the transport, the credential's forms on every
- * context, disconnect, and the members that answer with no request. The real transport runs over PLAN-2's fake seams.
+ * context, disconnect, and the members that answer with no request. The real transport runs over the fake seams.
  */
 import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
@@ -76,7 +76,7 @@ describe("declarations", () => {
     expect(seams.lanes).toHaveLength(0);
   });
 
-  test("an emulator server declares no Explain (Review Focus 5)", () => {
+  test("an emulator server declares no Explain", () => {
     const capabilities = provider(seamsOf(googleServer(), EMULATOR), { password: "" }).getCapabilities();
     expect(capabilities.supportsExplain).toBe(false);
     expect("explainFormat" in capabilities).toBe(false);
@@ -137,7 +137,7 @@ describe("connect against Google", () => {
     expect(seams.deadlines.map((deadline) => deadline.ms)).toContain(1000 + 5000);
   });
 
-  test("a Datastore-mode database is refused with Part 1's sentence and the transport closed", async () => {
+  test("a Datastore-mode database is refused with its own sentence and the transport closed", async () => {
     const seams = seamsOf(googleServer({ ...DATABASE, type: "DATASTORE_MODE" }));
     const firestore = provider(seams);
     await expect(firestore.connect()).rejects.toThrow(`${ERROR_SENTENCES.datastoreMode}.`);
@@ -145,7 +145,7 @@ describe("connect against Google", () => {
     expect(seams.lanesOf("api").map((lane) => lane.closed)).toEqual([1]);
   });
 
-  test("a database with Firestore API access off is refused with Part 1's sentence", async () => {
+  test("a database with Firestore API access off is refused with its own sentence", async () => {
     const seams = seamsOf(googleServer({ ...DATABASE, firestoreDataAccessMode: "DATA_ACCESS_MODE_DISABLED" }));
     const connecting = provider(seams).connect();
     await expect(connecting).rejects.toBeInstanceOf(DatabaseConfigError);
@@ -168,7 +168,7 @@ describe("connect against Google", () => {
   });
 });
 
-describe("connect against the emulator (Review Focus 5)", () => {
+describe("connect against the emulator", () => {
   const env = { ...EMULATOR, FIRESTORE_SERVER_CREDENTIALS: "true", GOOGLE_APPLICATION_CREDENTIALS: "/keys/sa.json" };
 
   test("one id page with Bearer owner, no credential read, and the emulator's warnings", async () => {

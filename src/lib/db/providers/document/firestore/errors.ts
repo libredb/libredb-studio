@@ -16,7 +16,10 @@ import {
 } from "@/lib/db/errors";
 import { FIRESTORE_TYPE, type FirestoreTarget, LIMITS, SENTENCES } from "./constants";
 
-/** `FirestoreRequest["kind"]`, spelt here because `requests.ts` lands after this module; T1.7's test pins the two equal. */
+/**
+ * `FirestoreRequest["kind"]`, spelt here so this module imports nothing from `requests.ts`; requests.test.ts pins the
+ * two equal.
+ */
 export type RequestKind =
   | "database"
   | "get"

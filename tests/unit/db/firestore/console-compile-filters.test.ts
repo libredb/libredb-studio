@@ -189,7 +189,7 @@ describe("document-id values on a collection group", () => {
   });
 });
 
-describe("a value Part 1 refuses to encode", () => {
+describe("a value values.ts refuses to encode", () => {
   test("a lone surrogate read from an escape is refused at its where, never without a position", () => {
     refused(users('"a", "==", "\\uD800"'), VALUE_SENTENCES.stringMalformed, 23);
     refused(users('"a", "==", { "\\uD800": 1 }'), VALUE_SENTENCES.stringMalformed, 23);

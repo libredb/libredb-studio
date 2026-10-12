@@ -228,7 +228,7 @@ export function createFirestoreClient(
       try {
         response = await exchange(request, bounded);
       } catch (error) {
-        // The request kind lets errors.ts answer a too-large document read with its own sentence (PLAN-1 C8).
+        // The request kind lets errors.ts answer a too-large document read with its own sentence.
         throw failure(error, { ...context, requestKind: request.kind });
       }
       if (response.status < 200 || response.status > 299) {

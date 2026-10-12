@@ -200,7 +200,7 @@ function aggregationRows(
 function collectionIdRows(json: unknown, parent: readonly string[]): ShapedResult {
   const listed = isRecord(json) ? (json.collectionIds ?? []) : undefined;
   if (!Array.isArray(listed) || listed.some((id) => typeof id !== "string")) throw malformed("a collection listing");
-  // An id repeated across pages is listed once, as PLAN-4's listCollectionIdsSorted lists it for the tree.
+  // An id repeated across pages is listed once, as objects.ts's listCollectionIdsSorted lists it for the tree.
   const distinct = [...new Set(listed as string[])];
   const ids = distinct.filter((id) => idRefusal(id, "collection") === null).sort(compareUtf8);
   const warnings: string[] = [];

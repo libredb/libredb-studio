@@ -1,7 +1,7 @@
 /**
  * Firestore answers into grid rows (spec 5.6): the response array, documents, column order and the column cap,
- * column types, vector columns, aggregations, listings, document reads and the explain row, including the wide,
- * mixed and vector-varying collections of Review Focus 4.
+ * column types, vector columns, aggregations, listings, document reads and the explain row, including wide, mixed
+ * and vector-varying collections.
  */
 import { describe, expect, test } from "bun:test";
 import { RESULT_SENTENCES, readQueryStream, shapeResult } from "@/lib/db/providers/document/firestore/results";
@@ -129,7 +129,7 @@ describe("documents", () => {
   });
 });
 
-describe("a wide, mixed, vector-varying collection (Review Focus 4)", () => {
+describe("a wide, mixed, vector-varying collection", () => {
   test("the columns stop at 500 with a warning, types read mixed, and only one-dimension vectors are declared", () => {
     const first: Record<string, unknown> = { e: vec(1, 2, 3), f: vec(1, 2), g: vec(1), m: int(1) };
     const second: Record<string, unknown> = { e: vec(4, 5, 6), f: vec(1, 2, 3), g: str("x"), m: { doubleValue: 1.5 } };

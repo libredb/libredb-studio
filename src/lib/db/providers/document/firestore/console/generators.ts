@@ -4,7 +4,7 @@
  */
 import { LIMITS } from "../constants";
 
-// The plan-mode sentence lives in labels.ts (spec 3.1, PLAN-1 contract change C4) and names one example (spec 7).
+// The plan-mode sentence lives in labels.ts (spec 3.1) and names one example (spec 7).
 export { FIRESTORE_STATEMENT_LANGUAGE } from "../labels";
 
 /** The one example the plan-mode sentence quotes, so this module's test can check that it parses. */

@@ -1,7 +1,7 @@
 /**
  * Each statement kind as one request of the closed table (spec 5.4, S1): queries, aggregations with wire aliases,
  * vector queries, explain, document gets, listings and getAll, the explain button's rules (spec 5.7), and the
- * colon refusal with reserved characters elsewhere passing through exactly (Review Focus 1).
+ * colon refusal with reserved characters elsewhere passing through exactly.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -237,7 +237,7 @@ describe("documents and listings", () => {
   });
 });
 
-describe("the colon parent and reserved characters (Review Focus 1)", () => {
+describe("the colon parent and reserved characters", () => {
   test("a verb under a document whose id holds a colon is refused with its sentence", () => {
     refused('db.collection("users/a:b/orders")', COMPILE_SENTENCES.colonQuery("a:b", "orders"), 14);
     refused('db.doc("users/a:b").collection("orders").count()', COMPILE_SENTENCES.colonQuery("a:b", "orders"), 31);

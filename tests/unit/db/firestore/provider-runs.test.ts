@@ -1,8 +1,8 @@
 /**
  * The Firestore provider's runs (spec 3.4, 8.1, 8.2): a statement under the run registry, so `cancelQuery` stops it by
  * its id and the run answers the registry's cancel; the transport's deadline, the query timeout plus 5 seconds, over
- * the connect probe, every statement and every surface read, fired through PLAN-2's fake seams and answered with
- * Part 1's timeout sentence; and the emulator's Explain sentence on the console path.
+ * the connect probe, every statement and every surface read, fired through the fake seams and answered with
+ * the timeout sentence; and the emulator's Explain sentence on the console path.
  */
 import { describe, expect, test } from "bun:test";
 import { QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
@@ -82,7 +82,7 @@ describe("the transport's deadline", () => {
     expect(seams.deadlines.filter((deadline) => deadline.ms === DEADLINE_MS)).toHaveLength(requestsOf(seams).length);
   });
 
-  test("a statement past the deadline answers Part 1's TimeoutError", async () => {
+  test("a statement past the deadline answers the provider's TimeoutError", async () => {
     const seams = seamsOf(googleServer(undefined, HANG));
     const firestore = await connected(seams);
     const running = firestore.query(STATEMENT, undefined, "q-3");
@@ -133,8 +133,8 @@ describe("the transport's deadline", () => {
   });
 });
 
-describe("the emulator on the console path (Review Focus 5)", () => {
-  test(".explain() answers Part 1's emulator sentence before any query request (spec 4.3)", async () => {
+describe("the emulator on the console path", () => {
+  test(".explain() answers the emulator sentence before any query request (spec 4.3)", async () => {
     // The connect probe's id page answers an object; a query request, if one were sent, would answer a stream.
     const emulator: WireHandler = (request) =>
       request.path.endsWith(":runQuery") ? jsonAnswer([{ readTime: TIME }]) : jsonAnswer({});

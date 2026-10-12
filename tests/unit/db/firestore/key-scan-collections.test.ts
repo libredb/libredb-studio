@@ -144,7 +144,7 @@ describe("the collection level", () => {
     expect(fake.sent).toHaveLength(0);
   });
 
-  test("documents too large for the response cap answer the level's own sentence (Review Focus 4)", async () => {
+  test("documents too large for the response cap answer the level's own sentence", async () => {
     const fake = fakeFirestore((_request, _built, sent) => {
       throw tooLargeFailure(sent.context);
     });
@@ -199,7 +199,7 @@ describe("the collection level", () => {
     }
   });
 
-  test("a nested collection and reserved characters round-trip, a colon parent included (Review Focus 1)", async () => {
+  test("a nested collection and reserved characters round-trip, a colon parent included", async () => {
     const parent = ["c o", "d%#?`\u00e9\u{1D11E}"];
     const { result, fake } = await scan(() => listed([present(...parent, "sub", "x y")]), {
       pattern: "c o/d%#?`\u00e9\u{1D11E}/sub/",

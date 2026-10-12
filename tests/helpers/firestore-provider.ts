@@ -1,5 +1,5 @@
 /**
- * Fixtures for the Firestore provider tests, over PLAN-2's fake seams (`firestore-seams.ts`): the provider runs its
+ * Fixtures for the Firestore provider tests, over the fake seams (`firestore-seams.ts`): the provider runs its
  * real transport, and these turn a per-request handler into the seams' answer function and every recorded request
  * into one flat view with its lane, method, path, query, authorization header and parsed body.
  */
@@ -12,7 +12,7 @@ import { type FakeFirestoreSeams, type FirestoreAnswer, jsonAnswer } from "./fir
 
 export const PROVIDER_TARGET: FirestoreTarget = Object.freeze({ projectId: "demo-studio", databaseId: "(default)" });
 export const PROVIDER_DOCS = "projects/demo-studio/databases/(default)/documents";
-/** Long enough for PLAN-2's access-token rule (20 URL-safe characters or more). */
+/** Long enough for the access-token rule in google-credentials.ts (20 URL-safe characters or more). */
 export const PASTED_TOKEN = "ya29.pasted-token-value-123";
 export const DATABASE = Object.freeze({
   name: "projects/demo-studio/databases/(default)",

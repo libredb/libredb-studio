@@ -2,7 +2,7 @@
  * A fake FirestoreClient for the provider-surface unit tests. Every request passes the real closed request table
  * (`buildRequest`) before the handler sees it, so a request the table refuses fails the test as it would fail the
  * provider, and the built request and its send options are recorded for the tests. A handler answers the parsed JSON
- * Firestore would, or throws a failure built by Part 1's own mapping with the context the code under test sent, so a
+ * Firestore would, or throws a failure built by errors.ts's own mapping with the context the code under test sent, so a
  * surface's wording and the credential's redaction are exercised exactly as the transport would exercise them.
  */
 import { TransportError } from "@/lib/db/http/node-transport";
@@ -54,7 +54,7 @@ export function fakeFirestore(handler: FakeHandler, mode: "google" | "emulator" 
 
 const LISTING: ErrorContext = { phase: "listing", credential: "service_account", target: FAKE_TARGET };
 
-/** The error the transport raises for a Google error envelope, mapped by Part 1 under `context`. */
+/** The error the transport raises for a Google error envelope, mapped by errors.ts under `context`. */
 export function googleFailure(
   httpStatus: number,
   status: string,
@@ -67,7 +67,10 @@ export function googleFailure(
   );
 }
 
-/** The error the transport raises when an answer passes its cap, mapped by Part 1 under the context that was sent. */
+/**
+ * The error the transport raises when an answer passes its cap, mapped by errors.ts under the context that was
+ * sent.
+ */
 export function tooLargeFailure(context: ErrorContext): Error {
   return mapTransportFailure(new TransportError("too-large", "The response passed its size bound."), context);
 }

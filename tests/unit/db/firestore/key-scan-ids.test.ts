@@ -2,7 +2,7 @@
  * The Keys panel's id levels (spec 5.3): the root lists top-level collection ids and a document level its
  * subcollection ids, each read whole with `listCollectionIdsSorted` on every page (at most 10 requests of 1,000 ids),
  * filtered by the partial, sorted by UTF-8 bytes and paged after the cursor's last entry; every option, pattern and
- * cursor refusal comes before any request, a document id holding a colon is refused with Part 1's sentence, and every
+ * cursor refusal comes before any request, a document id holding a colon is refused with its own sentence, and every
  * request carries the credential's forms, so a Google message quoting the credential is withheld (S7).
  */
 import { describe, expect, test } from "bun:test";
@@ -175,7 +175,7 @@ describe("the root level", () => {
     );
   });
 
-  test("an id listing too large for its cap answers the Keys panel's sentence (Review Focus 4)", async () => {
+  test("an id listing too large for its cap answers the Keys panel's sentence", async () => {
     const failure = page((_request, _built, sent) => {
       throw tooLargeFailure(sent.context);
     }, {});
@@ -209,7 +209,7 @@ describe("the document level", () => {
     expect(typed.result.prefixes).toEqual(["users/alice/orders/"]);
   });
 
-  test("a document id holding a colon is refused with Part 1's sentence before any request (Review Focus 1)", async () => {
+  test("a document id holding a colon is refused with its own sentence before any request", async () => {
     const fake = fakeFirestore(() => ids(["orders"]));
     const request = readLevelRequest(options({ pattern: "users/a:b/" }));
     await expect(scanIdLevel(request, fake.client, SIGNAL, FAKE_BASE)).rejects.toBeInstanceOf(DatabaseConfigError);
@@ -219,7 +219,7 @@ describe("the document level", () => {
     expect(fake.sent).toHaveLength(0);
   });
 
-  test("ids with reserved URL characters round-trip through the encoded path (Review Focus 1)", async () => {
+  test("ids with reserved URL characters round-trip through the encoded path", async () => {
     const { result, fake } = await page(() => ids(["s p", "%x"]), { pattern: "c o/d%#?`é\u{1D11E}/" });
     expect(fake.sent[0].request).toEqual({
       kind: "listCollectionIds",
