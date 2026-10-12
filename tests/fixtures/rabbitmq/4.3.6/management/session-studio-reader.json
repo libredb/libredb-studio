@@ -1,0 +1,462 @@
+{
+ "$captured": {
+  "image": "rabbitmq:4.3.6-management@sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd",
+  "digest": "sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd",
+  "version": "4.3.6",
+  "seed": "4f1ca27a7e49a95d0ef1e58b701b46419ec17959d4425b83507d7d45de87f140",
+  "date": "2026-10-12T11:03:38.874Z",
+  "surface": "the tree, every listing, details, sources, monitoring, Test Connection and the reads' type checks as studio-reader"
+ },
+ "exchanges": [
+  {
+   "method": "GET",
+   "key": "GET /api/whoami",
+   "path": "/api/whoami",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"name\":\"studio-reader\",\"tags\":[\"management\"],\"is_internal_user\":true}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/overview?columns=rabbitmq_version,product_name",
+   "path": "/api/overview",
+   "query": "columns=rabbitmq_version,product_name",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"product_name\":\"RabbitMQ\",\"rabbitmq_version\":\"4.3.6\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/vhosts",
+   "path": "/api/vhosts",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[{\"messages\":1095,\"name\":\"/\",\"description\":\"\",\"metadata\":{\"description\":\"\",\"tags\":[],\"default_queue_type\":\"classic\"},\"tags\":[],\"default_queue_type\":\"classic\",\"messages_ready\":1095,\"messages_unacknowledged\":0,\"protected_from_deletion\":false,\"tracing\":false,\"cluster_state\":{\"rabbit@libredb-rabbitmq\":\"running\"},\"message_stats\":{\"confirm\":1071,\"confirm_details\":{\"rate\":0.0},\"drop_unroutable\":0,\"drop_unroutable_details\":{\"rate\":0.0},\"publish\":1071,\"publish_details\":{\"rate\":0.0},\"return_unroutable\":0,\"return_unroutable_details\":{\"rate\":0.0}},\"messages_details\":{\"rate\":1.2},\"messages_unacknowledged_details\":{\"rate\":0.0},\"messages_ready_details\":{\"rate\":1.2}},{\"messages\":14,\"name\":\"billing\",\"description\":\"\",\"metadata\":{\"description\":\"\",\"tags\":[],\"default_queue_type\":\"classic\"},\"tags\":[],\"default_queue_type\":\"classic\",\"messages_ready\":14,\"messages_unacknowledged\":0,\"protected_from_deletion\":false,\"tracing\":false,\"cluster_state\":{\"rabbit@libredb-rabbitmq\":\"running\"},\"message_stats\":{\"confirm\":14,\"confirm_details\":{\"rate\":0.0},\"drop_unroutable\":0,\"drop_unroutable_details\":{\"rate\":0.0},\"publish\":14,\"publish_details\":{\"rate\":0.0},\"return_unroutable\":0,\"return_unroutable_details\":{\"rate\":0.0}},\"messages_details\":{\"rate\":0.4},\"messages_unacknowledged_details\":{\"rate\":0.0},\"messages_ready_details\":{\"rate\":0.4}}]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F?columns=name,type,state&disable_stats=true&page=1&page_size=500&sort=type&sort_reverse=true",
+   "path": "/api/queues/%2F",
+   "query": "columns=name,type,state&disable_stats=true&page=1&page_size=500&sort=type&sort_reverse=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"filtered_count\":23,\"item_count\":23,\"items\":[{\"name\":\"st-uuid-key\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-spoof\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-routes\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-restricted\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-orders\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-2\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-1\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-0\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-hostile-headers\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-g2-poison-mid\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-events\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-buffer-shape\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-amqp10\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h3-wide\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h3-solo\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h1-props\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"g9-poison\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"q-quorum-payments\",\"state\":\"running\",\"type\":\"quorum\"},{\"name\":\"q-quorum-nodlx\",\"state\":\"running\",\"type\":\"quorum\"},{\"name\":\"q-classic-orders\",\"state\":\"running\",\"type\":\"classic\"},{\"name\":\"q-classic-empty\",\"state\":\"running\",\"type\":\"classic\"},{\"name\":\"q-classic-dead\",\"state\":\"running\",\"type\":\"classic\"},{\"name\":\"q-canary\",\"state\":\"running\",\"type\":\"classic\"}],\"page\":1,\"page_count\":1,\"page_size\":500,\"total_count\":23}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/exchanges/%2F?columns=name,type,durable,auto_delete,internal&page=1&page_size=500&sort=name",
+   "path": "/api/exchanges/%2F",
+   "query": "columns=name,type,durable,auto_delete,internal&page=1&page_size=500&sort=name",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"filtered_count\":18,\"item_count\":18,\"items\":[{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"\",\"type\":\"direct\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"amq.direct\",\"type\":\"direct\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"amq.fanout\",\"type\":\"fanout\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"amq.headers\",\"type\":\"headers\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"amq.match\",\"type\":\"headers\"},{\"auto_delete\":false,\"durable\":true,\"internal\":true,\"name\":\"amq.rabbitmq.log\",\"type\":\"topic\"},{\"auto_delete\":false,\"durable\":true,\"internal\":true,\"name\":\"amq.rabbitmq.trace\",\"type\":\"topic\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"amq.topic\",\"type\":\"topic\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"dlx\",\"type\":\"fanout\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"ex-direct\",\"type\":\"direct\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"ex-fanout\",\"type\":\"fanout\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"ex-headers\",\"type\":\"headers\"},{\"auto_delete\":false,\"durable\":true,\"internal\":true,\"name\":\"ex-internal\",\"type\":\"direct\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"ex-routes-direct\",\"type\":\"direct\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"ex-routes-topic\",\"type\":\"topic\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"ex-topic\",\"type\":\"topic\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"ex-with-ae\",\"type\":\"direct\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"st-invoices\",\"type\":\"direct\"}],\"page\":1,\"page_count\":1,\"page_size\":500,\"total_count\":18}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F?columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name",
+   "path": "/api/queues/%2F",
+   "query": "columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"filtered_count\":23,\"item_count\":23,\"items\":[{\"name\":\"g9-poison\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h1-props\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h3-solo\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h3-wide\",\"state\":\"running\",\"type\":\"stream\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-canary\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-classic-dead\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-classic-empty\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":3,\"messages_ready\":3,\"messages_unacknowledged\":0,\"name\":\"q-classic-orders\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":3,\"messages_ready\":3,\"messages_unacknowledged\":0,\"name\":\"q-quorum-nodlx\",\"state\":\"running\",\"type\":\"quorum\"},{\"messages\":3,\"messages_ready\":3,\"messages_unacknowledged\":0,\"name\":\"q-quorum-payments\",\"state\":\"running\",\"type\":\"quorum\"},{\"name\":\"st-amqp10\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-buffer-shape\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-events\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-g2-poison-mid\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-hostile-headers\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-0\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-1\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-2\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-orders\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-restricted\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-routes\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-spoof\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-uuid-key\",\"state\":\"running\",\"type\":\"stream\"}],\"page\":1,\"page_count\":1,\"page_size\":500,\"total_count\":23}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/billing?columns=name,type,state&disable_stats=true&page=1&page_size=500&sort=type&sort_reverse=true",
+   "path": "/api/queues/billing",
+   "query": "columns=name,type,state&disable_stats=true&page=1&page_size=500&sort=type&sort_reverse=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"filtered_count\":3,\"item_count\":3,\"items\":[{\"name\":\"st-billing-audit\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"q-billing-ledger\",\"state\":\"running\",\"type\":\"quorum\"},{\"name\":\"q-billing-invoices\",\"state\":\"running\",\"type\":\"classic\"}],\"page\":1,\"page_count\":1,\"page_size\":500,\"total_count\":3}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/exchanges/billing?columns=name,type,durable,auto_delete,internal&page=1&page_size=500&sort=name",
+   "path": "/api/exchanges/billing",
+   "query": "columns=name,type,durable,auto_delete,internal&page=1&page_size=500&sort=name",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"filtered_count\":7,\"item_count\":7,\"items\":[{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"\",\"type\":\"direct\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"amq.direct\",\"type\":\"direct\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"amq.fanout\",\"type\":\"fanout\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"amq.headers\",\"type\":\"headers\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"amq.match\",\"type\":\"headers\"},{\"auto_delete\":false,\"durable\":true,\"internal\":true,\"name\":\"amq.rabbitmq.trace\",\"type\":\"topic\"},{\"auto_delete\":false,\"durable\":true,\"internal\":false,\"name\":\"amq.topic\",\"type\":\"topic\"}],\"page\":1,\"page_count\":1,\"page_size\":500,\"total_count\":7}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/billing?columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name",
+   "path": "/api/queues/billing",
+   "query": "columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"filtered_count\":3,\"item_count\":3,\"items\":[{\"messages\":2,\"messages_ready\":2,\"messages_unacknowledged\":0,\"name\":\"q-billing-invoices\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":2,\"messages_ready\":2,\"messages_unacknowledged\":0,\"name\":\"q-billing-ledger\",\"state\":\"running\",\"type\":\"quorum\"},{\"name\":\"st-billing-audit\",\"state\":\"running\",\"type\":\"stream\"}],\"page\":1,\"page_count\":1,\"page_size\":500,\"total_count\":3}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/policies/%2F",
+   "path": "/api/policies/%2F",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/operator-policies/%2F",
+   "path": "/api/operator-policies/%2F",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-orders",
+   "path": "/api/queues/%2F/st-orders",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"garbage_collection\":{\"max_heap_size\":-1,\"min_bin_vheap_size\":-1,\"min_heap_size\":-1,\"fullsweep_after\":-1,\"minor_gcs\":-1},\"consumer_details\":[],\"arguments\":{\"x-queue-type\":\"stream\"},\"auto_delete\":false,\"consumers\":0,\"deliveries\":[],\"durable\":true,\"effective_policy_definition\":{},\"exclusive\":false,\"first_timestamp\":0,\"incoming\":[],\"internal\":false,\"internal_owner\":false,\"leader\":\"rabbit@libredb-rabbitmq\",\"members\":[\"rabbit@libredb-rabbitmq\"],\"memory\":14008,\"message_stats\":{\"publish\":13,\"publish_details\":{\"rate\":0.0}},\"messages\":13,\"messages_details\":{\"rate\":0.0},\"messages_ready\":13,\"messages_ready_details\":{\"rate\":0.0},\"messages_unacknowledged\":0,\"messages_unacknowledged_details\":{\"rate\":0.0},\"name\":\"st-orders\",\"node\":\"rabbit@libredb-rabbitmq\",\"online\":[\"rabbit@libredb-rabbitmq\"],\"operator_policy\":null,\"policy\":null,\"readers\":{\"rabbit@libredb-rabbitmq\":0},\"reductions\":0,\"reductions_details\":{\"rate\":0.0},\"segments\":1,\"state\":\"running\",\"type\":\"stream\",\"vhost\":\"/\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-orders/bindings",
+   "path": "/api/queues/%2F/st-orders/bindings",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-orders\",\"destination_type\":\"queue\",\"routing_key\":\"st-orders\",\"arguments\":{},\"properties_key\":\"st-orders\"}]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/q-classic-orders",
+   "path": "/api/queues/%2F/q-classic-orders",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"consumer_details\":[],\"arguments\":{\"x-queue-type\":\"classic\"},\"auto_delete\":false,\"consumer_capacity\":0,\"consumer_utilisation\":0,\"consumers\":0,\"deliveries\":[],\"durable\":true,\"effective_policy_definition\":{},\"exclusive\":false,\"exclusive_consumer_tag\":null,\"garbage_collection\":{\"fullsweep_after\":65535,\"max_heap_size\":0,\"min_bin_vheap_size\":46422,\"min_heap_size\":233,\"minor_gcs\":2},\"head_message_timestamp\":null,\"idle_since\":\"2026-10-12T11:03:19.625+00:00\",\"incoming\":[],\"internal\":false,\"internal_owner\":false,\"memory\":21912,\"message_bytes\":39,\"message_bytes_persistent\":0,\"message_bytes_ram\":13,\"message_bytes_ready\":39,\"message_bytes_unacknowledged\":0,\"message_stats\":{\"publish\":3,\"publish_details\":{\"rate\":0.0}},\"messages\":3,\"messages_details\":{\"rate\":0.0},\"messages_persistent\":0,\"messages_ram\":1,\"messages_ready\":3,\"messages_ready_details\":{\"rate\":0.0},\"messages_ready_ram\":1,\"messages_unacknowledged\":0,\"messages_unacknowledged_details\":{\"rate\":0.0},\"messages_unacknowledged_ram\":0,\"name\":\"q-classic-orders\",\"node\":\"rabbit@libredb-rabbitmq\",\"operator_policy\":null,\"policy\":null,\"reductions\":10275,\"reductions_details\":{\"rate\":0.0},\"single_active_consumer_tag\":null,\"state\":\"running\",\"storage_version\":2,\"type\":\"classic\",\"vhost\":\"/\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/q-classic-orders/bindings",
+   "path": "/api/queues/%2F/q-classic-orders/bindings",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"q-classic-orders\",\"destination_type\":\"queue\",\"routing_key\":\"q-classic-orders\",\"arguments\":{},\"properties_key\":\"q-classic-orders\"},{\"source\":\"ex-direct\",\"vhost\":\"/\",\"destination\":\"q-classic-orders\",\"destination_type\":\"queue\",\"routing_key\":\"orders\",\"arguments\":{},\"properties_key\":\"orders\"},{\"source\":\"ex-topic\",\"vhost\":\"/\",\"destination\":\"q-classic-orders\",\"destination_type\":\"queue\",\"routing_key\":\"orders.*.created\",\"arguments\":{},\"properties_key\":\"orders.%2A.created\"}]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/extensions",
+   "path": "/api/extensions",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[{\"javascript\":\"dispatcher.js\"},[],[],[],[],[],{\"javascript\":[\"stream_management-ejs.js\",\"stream.js\"]},[],[],[]]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/%2F/q-classic-orders/tracking",
+   "path": "/api/stream/%2F/q-classic-orders/tracking",
+   "query": "",
+   "status": 401,
+   "contentType": "application/json",
+   "body": "{\"error\":\"not_authorised\",\"reason\":\"Access refused.\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/q-quorum-payments",
+   "path": "/api/queues/%2F/q-quorum-payments",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"consumer_details\":[],\"arguments\":{\"x-dead-letter-exchange\":\"dlx\",\"x-queue-type\":\"quorum\"},\"auto_delete\":false,\"consumer_capacity\":0,\"consumer_utilisation\":0,\"consumers\":0,\"delayed_retry\":\"disabled\",\"deliveries\":[],\"delivery_limit\":20,\"durable\":true,\"effective_policy_definition\":{},\"exclusive\":false,\"garbage_collection\":{\"fullsweep_after\":65535,\"max_heap_size\":0,\"min_bin_vheap_size\":2984878,\"min_heap_size\":233,\"minor_gcs\":6},\"incoming\":[],\"internal\":false,\"internal_owner\":false,\"leader\":\"rabbit@libredb-rabbitmq\",\"members\":[\"rabbit@libredb-rabbitmq\"],\"memory\":68356,\"message_bytes\":45,\"message_bytes_dlx\":0,\"message_bytes_persistent\":45,\"message_bytes_ram\":0,\"message_bytes_ready\":45,\"message_bytes_unacknowledged\":0,\"message_stats\":{\"publish\":3,\"publish_details\":{\"rate\":0.0}},\"messages\":3,\"messages_active_priorities\":1,\"messages_by_priority\":{\"4\":3},\"messages_delayed\":0,\"messages_details\":{\"rate\":0.6},\"messages_dlx\":0,\"messages_persistent\":3,\"messages_ram\":0,\"messages_ready\":3,\"messages_ready_details\":{\"rate\":0.6},\"messages_ready_returned\":0,\"messages_unacknowledged\":0,\"messages_unacknowledged_details\":{\"rate\":0.0},\"name\":\"q-quorum-payments\",\"node\":\"rabbit@libredb-rabbitmq\",\"online\":[\"rabbit@libredb-rabbitmq\"],\"open_files\":{\"rabbit@libredb-rabbitmq\":0},\"operator_policy\":null,\"policy\":null,\"publishers\":0,\"reductions\":20823,\"reductions_details\":{\"rate\":926.2},\"single_active_consumer_tag\":null,\"state\":\"running\",\"type\":\"quorum\",\"vhost\":\"/\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/q-quorum-payments/bindings",
+   "path": "/api/queues/%2F/q-quorum-payments/bindings",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"q-quorum-payments\",\"destination_type\":\"queue\",\"routing_key\":\"q-quorum-payments\",\"arguments\":{},\"properties_key\":\"q-quorum-payments\"}]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/%2F/q-quorum-payments/tracking",
+   "path": "/api/stream/%2F/q-quorum-payments/tracking",
+   "query": "",
+   "status": 401,
+   "contentType": "application/json",
+   "body": "{\"error\":\"not_authorised\",\"reason\":\"Access refused.\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/exchanges/%2F/ex-direct",
+   "path": "/api/exchanges/%2F/ex-direct",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"arguments\":{},\"auto_delete\":false,\"durable\":true,\"incoming\":[],\"internal\":false,\"name\":\"ex-direct\",\"outgoing\":[],\"type\":\"direct\",\"user_who_performed_action\":\"libredb-admin\",\"vhost\":\"/\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/exchanges/%2F/ex-direct/bindings/source",
+   "path": "/api/exchanges/%2F/ex-direct/bindings/source",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[{\"source\":\"ex-direct\",\"vhost\":\"/\",\"destination\":\"q-classic-orders\",\"destination_type\":\"queue\",\"routing_key\":\"orders\",\"arguments\":{},\"properties_key\":\"orders\"}]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/exchanges/%2F/ex-direct/bindings/destination",
+   "path": "/api/exchanges/%2F/ex-direct/bindings/destination",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/exchanges/%2F/amq.default",
+   "path": "/api/exchanges/%2F/amq.default",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"arguments\":{},\"auto_delete\":false,\"durable\":true,\"incoming\":[],\"internal\":false,\"message_stats\":{\"publish_in\":1056,\"publish_in_details\":{\"rate\":0.0},\"publish_out\":1056,\"publish_out_details\":{\"rate\":0.0}},\"name\":\"\",\"outgoing\":[],\"type\":\"direct\",\"user_who_performed_action\":\"rmq-internal\",\"vhost\":\"/\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/exchanges/%2F/amq.default/bindings/source",
+   "path": "/api/exchanges/%2F/amq.default/bindings/source",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"g9-poison\",\"destination_type\":\"queue\",\"routing_key\":\"g9-poison\",\"arguments\":{},\"properties_key\":\"g9-poison\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"h1-props\",\"destination_type\":\"queue\",\"routing_key\":\"h1-props\",\"arguments\":{},\"properties_key\":\"h1-props\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"h3-solo\",\"destination_type\":\"queue\",\"routing_key\":\"h3-solo\",\"arguments\":{},\"properties_key\":\"h3-solo\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"h3-wide\",\"destination_type\":\"queue\",\"routing_key\":\"h3-wide\",\"arguments\":{},\"properties_key\":\"h3-wide\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"q-canary\",\"destination_type\":\"queue\",\"routing_key\":\"q-canary\",\"arguments\":{},\"properties_key\":\"q-canary\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"q-classic-dead\",\"destination_type\":\"queue\",\"routing_key\":\"q-classic-dead\",\"arguments\":{},\"properties_key\":\"q-classic-dead\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"q-classic-empty\",\"destination_type\":\"queue\",\"routing_key\":\"q-classic-empty\",\"arguments\":{},\"properties_key\":\"q-classic-empty\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"q-classic-orders\",\"destination_type\":\"queue\",\"routing_key\":\"q-classic-orders\",\"arguments\":{},\"properties_key\":\"q-classic-orders\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"q-quorum-nodlx\",\"destination_type\":\"queue\",\"routing_key\":\"q-quorum-nodlx\",\"arguments\":{},\"properties_key\":\"q-quorum-nodlx\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"q-quorum-payments\",\"destination_type\":\"queue\",\"routing_key\":\"q-quorum-payments\",\"arguments\":{},\"properties_key\":\"q-quorum-payments\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-amqp10\",\"destination_type\":\"queue\",\"routing_key\":\"st-amqp10\",\"arguments\":{},\"properties_key\":\"st-amqp10\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-buffer-shape\",\"destination_type\":\"queue\",\"routing_key\":\"st-buffer-shape\",\"arguments\":{},\"properties_key\":\"st-buffer-shape\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-events\",\"destination_type\":\"queue\",\"routing_key\":\"st-events\",\"arguments\":{},\"properties_key\":\"st-events\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-g2-poison-mid\",\"destination_type\":\"queue\",\"routing_key\":\"st-g2-poison-mid\",\"arguments\":{},\"properties_key\":\"st-g2-poison-mid\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-hostile-headers\",\"destination_type\":\"queue\",\"routing_key\":\"st-hostile-headers\",\"arguments\":{},\"properties_key\":\"st-hostile-headers\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-invoices-0\",\"destination_type\":\"queue\",\"routing_key\":\"st-invoices-0\",\"arguments\":{},\"properties_key\":\"st-invoices-0\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-invoices-1\",\"destination_type\":\"queue\",\"routing_key\":\"st-invoices-1\",\"arguments\":{},\"properties_key\":\"st-invoices-1\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-invoices-2\",\"destination_type\":\"queue\",\"routing_key\":\"st-invoices-2\",\"arguments\":{},\"properties_key\":\"st-invoices-2\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-orders\",\"destination_type\":\"queue\",\"routing_key\":\"st-orders\",\"arguments\":{},\"properties_key\":\"st-orders\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-restricted\",\"destination_type\":\"queue\",\"routing_key\":\"st-restricted\",\"arguments\":{},\"properties_key\":\"st-restricted\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-routes\",\"destination_type\":\"queue\",\"routing_key\":\"st-routes\",\"arguments\":{},\"properties_key\":\"st-routes\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-spoof\",\"destination_type\":\"queue\",\"routing_key\":\"st-spoof\",\"arguments\":{},\"properties_key\":\"st-spoof\"},{\"source\":\"\",\"vhost\":\"/\",\"destination\":\"st-uuid-key\",\"destination_type\":\"queue\",\"routing_key\":\"st-uuid-key\",\"arguments\":{},\"properties_key\":\"st-uuid-key\"}]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/exchanges/%2F/amq.default/bindings/destination",
+   "path": "/api/exchanges/%2F/amq.default/bindings/destination",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/exchanges/%2F/st-invoices",
+   "path": "/api/exchanges/%2F/st-invoices",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"arguments\":{\"x-super-stream\":true},\"auto_delete\":false,\"durable\":true,\"incoming\":[],\"internal\":false,\"message_stats\":{\"publish_in\":12,\"publish_in_details\":{\"rate\":0.0},\"publish_out\":12,\"publish_out_details\":{\"rate\":0.0}},\"name\":\"st-invoices\",\"outgoing\":[],\"type\":\"direct\",\"user_who_performed_action\":\"libredb-admin\",\"vhost\":\"/\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/exchanges/%2F/st-invoices/bindings/source",
+   "path": "/api/exchanges/%2F/st-invoices/bindings/source",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[{\"source\":\"st-invoices\",\"vhost\":\"/\",\"destination\":\"st-invoices-0\",\"destination_type\":\"queue\",\"routing_key\":\"0\",\"arguments\":{\"x-stream-partition-order\":0},\"properties_key\":\"0~iKEaZQ\"},{\"source\":\"st-invoices\",\"vhost\":\"/\",\"destination\":\"st-invoices-1\",\"destination_type\":\"queue\",\"routing_key\":\"1\",\"arguments\":{\"x-stream-partition-order\":1},\"properties_key\":\"1~1jlUUQ\"},{\"source\":\"st-invoices\",\"vhost\":\"/\",\"destination\":\"st-invoices-2\",\"destination_type\":\"queue\",\"routing_key\":\"2\",\"arguments\":{\"x-stream-partition-order\":2},\"properties_key\":\"2~eQ_kzA\"}]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/exchanges/%2F/st-invoices/bindings/destination",
+   "path": "/api/exchanges/%2F/st-invoices/bindings/destination",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/health/checks/alarms",
+   "path": "/api/health/checks/alarms",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"status\":\"ok\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/overview?columns=rabbitmq_version,product_name,management_version",
+   "path": "/api/overview",
+   "query": "columns=rabbitmq_version,product_name,management_version",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"management_version\":\"4.3.6\",\"product_name\":\"RabbitMQ\",\"rabbitmq_version\":\"4.3.6\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/%2F/q-canary/tracking",
+   "path": "/api/stream/%2F/q-canary/tracking",
+   "query": "",
+   "status": 401,
+   "contentType": "application/json",
+   "body": "{\"error\":\"not_authorised\",\"reason\":\"Access refused.\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/%2F/q-classic-dead/tracking",
+   "path": "/api/stream/%2F/q-classic-dead/tracking",
+   "query": "",
+   "status": 401,
+   "contentType": "application/json",
+   "body": "{\"error\":\"not_authorised\",\"reason\":\"Access refused.\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/%2F/q-classic-empty/tracking",
+   "path": "/api/stream/%2F/q-classic-empty/tracking",
+   "query": "",
+   "status": 401,
+   "contentType": "application/json",
+   "body": "{\"error\":\"not_authorised\",\"reason\":\"Access refused.\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/%2F/q-quorum-nodlx/tracking",
+   "path": "/api/stream/%2F/q-quorum-nodlx/tracking",
+   "query": "",
+   "status": 401,
+   "contentType": "application/json",
+   "body": "{\"error\":\"not_authorised\",\"reason\":\"Access refused.\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/billing/q-billing-invoices/tracking",
+   "path": "/api/stream/billing/q-billing-invoices/tracking",
+   "query": "",
+   "status": 401,
+   "contentType": "application/json",
+   "body": "{\"error\":\"not_authorised\",\"reason\":\"Access refused.\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/billing/q-billing-ledger/tracking",
+   "path": "/api/stream/billing/q-billing-ledger/tracking",
+   "query": "",
+   "status": 401,
+   "contentType": "application/json",
+   "body": "{\"error\":\"not_authorised\",\"reason\":\"Access refused.\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-orders?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/st-orders",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq\"],\"online\":[\"rabbit@libredb-rabbitmq\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-events?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/st-events",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq\"],\"online\":[\"rabbit@libredb-rabbitmq\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-routes?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/st-routes",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq\"],\"online\":[\"rabbit@libredb-rabbitmq\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-amqp10?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/st-amqp10",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq\"],\"online\":[\"rabbit@libredb-rabbitmq\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-spoof?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/st-spoof",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq\"],\"online\":[\"rabbit@libredb-rabbitmq\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-uuid-key?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/st-uuid-key",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq\"],\"online\":[\"rabbit@libredb-rabbitmq\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-hostile-headers?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/st-hostile-headers",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq\"],\"online\":[\"rabbit@libredb-rabbitmq\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-buffer-shape?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/st-buffer-shape",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq\"],\"online\":[\"rabbit@libredb-rabbitmq\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-g2-poison-mid?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/st-g2-poison-mid",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq\"],\"online\":[\"rabbit@libredb-rabbitmq\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/g9-poison?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/g9-poison",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq\"],\"online\":[\"rabbit@libredb-rabbitmq\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/h1-props?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/h1-props",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq\"],\"online\":[\"rabbit@libredb-rabbitmq\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/h3-solo?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/h3-solo",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq\"],\"online\":[\"rabbit@libredb-rabbitmq\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/h3-wide?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/h3-wide",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq\"],\"online\":[\"rabbit@libredb-rabbitmq\"],\"type\":\"stream\"}"
+  }
+ ]
+}

@@ -1,0 +1,39 @@
+{
+ "$captured": {
+  "image": "rabbitmq:4.3.6-management@sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd",
+  "digest": "sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd",
+  "version": "4.3.6",
+  "seed": "4f1ca27a7e49a95d0ef1e58b701b46419ec17959d4425b83507d7d45de87f140",
+  "date": "2026-10-12T11:06:52.574Z",
+  "surface": "the type check of a stream whose only replica is on a stopped node, through node 1"
+ },
+ "exchanges": [
+  {
+   "method": "GET",
+   "key": "GET /api/whoami",
+   "path": "/api/whoami",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"name\":\"studio-reader\",\"tags\":[\"management\"],\"is_internal_user\":true}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/overview?columns=rabbitmq_version,product_name",
+   "path": "/api/overview",
+   "query": "columns=rabbitmq_version,product_name",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"product_name\":\"RabbitMQ\",\"rabbitmq_version\":\"4.3.6\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/evidence-cluster/st-solo?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/evidence-cluster/st-solo",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@libredb-rabbitmq-cluster-2\"],\"online\":[],\"type\":\"stream\"}"
+  }
+ ]
+}

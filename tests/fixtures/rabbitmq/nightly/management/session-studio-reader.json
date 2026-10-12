@@ -1,0 +1,75 @@
+{
+ "$captured": {
+  "image": "pivotalrabbitmq/rabbitmq@sha256:0a34c75c447856b52770f6e19cd58b0431427c263de2b89d531c686f0cdf0e50",
+  "digest": "sha256:0a34c75c447856b52770f6e19cd58b0431427c263de2b89d531c686f0cdf0e50",
+  "version": "4.3.x nightly",
+  "seed": "4f1ca27a7e49a95d0ef1e58b701b46419ec17959d4425b83507d7d45de87f140",
+  "date": "2026-10-12T11:05:38.801Z",
+  "surface": "connect() and the type checks of the poison reads as studio-reader"
+ },
+ "exchanges": [
+  {
+   "method": "GET",
+   "key": "GET /api/whoami",
+   "path": "/api/whoami",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"name\":\"studio-reader\",\"tags\":[\"management\"],\"is_internal_user\":true}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/overview?columns=rabbitmq_version,product_name",
+   "path": "/api/overview",
+   "query": "columns=rabbitmq_version,product_name",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"product_name\":\"RabbitMQ\",\"rabbitmq_version\":\"4.3.0+1f35fd8b8a0f6a4e750d7438fe68471aee84e7fc\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-uuid-key?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/st-uuid-key",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@0c5311734f30\"],\"online\":[\"rabbit@0c5311734f30\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-g2-poison-mid?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/st-g2-poison-mid",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@0c5311734f30\"],\"online\":[\"rabbit@0c5311734f30\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/g9-poison?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/g9-poison",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@0c5311734f30\"],\"online\":[\"rabbit@0c5311734f30\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/h1-props?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/h1-props",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@0c5311734f30\"],\"online\":[\"rabbit@0c5311734f30\"],\"type\":\"stream\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/h3-solo?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/h3-solo",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"members\":[\"rabbit@0c5311734f30\"],\"online\":[\"rabbit@0c5311734f30\"],\"type\":\"stream\"}"
+  }
+ ]
+}

@@ -1,0 +1,21 @@
+{
+ "$captured": {
+  "image": "rabbitmq:4.3.6-management@sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd",
+  "digest": "sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd",
+  "version": "4.3.6",
+  "seed": "4f1ca27a7e49a95d0ef1e58b701b46419ec17959d4425b83507d7d45de87f140",
+  "date": "2026-10-12T11:03:52.998Z",
+  "surface": "connect() as guest from outside the container, with guest's localhost rule restored"
+ },
+ "exchanges": [
+  {
+   "method": "GET",
+   "key": "GET /api/whoami",
+   "path": "/api/whoami",
+   "query": "",
+   "status": 401,
+   "contentType": "application/json",
+   "body": "{\"error\":\"not_authorized\",\"reason\":\"Not_Authorized\"}"
+  }
+ ]
+}

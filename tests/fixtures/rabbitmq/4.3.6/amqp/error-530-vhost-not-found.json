@@ -1,0 +1,12 @@
+{
+ "$captured": {
+  "image": "rabbitmq:4.3.6-management@sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd",
+  "digest": "sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd",
+  "version": "4.3.6",
+  "seed": "4f1ca27a7e49a95d0ef1e58b701b46419ec17959d4425b83507d7d45de87f140",
+  "date": "2026-10-12T11:03:49.970Z",
+  "surface": "a vhost that does not exist; type check answered as a stream"
+ },
+ "request": "a vhost that does not exist; type check answered as a stream",
+ "serverBytes": "AQAAAAACDwAKAAoACQAAAeAMY2FwYWJpbGl0aWVzRgAAAMcScHVibGlzaGVyX2NvbmZpcm1zdAEaZXhjaGFuZ2VfZXhjaGFuZ2VfYmluZGluZ3N0AQpiYXNpYy5uYWNrdAEWY29uc3VtZXJfY2FuY2VsX25vdGlmeXQBEmNvbm5lY3Rpb24uYmxvY2tlZHQBE2NvbnN1bWVyX3ByaW9yaXRpZXN0ARxhdXRoZW50aWNhdGlvbl9mYWlsdXJlX2Nsb3NldAEQcGVyX2NvbnN1bWVyX3Fvc3QBD2RpcmVjdF9yZXBseV90b3QBDGNsdXN0ZXJfbmFtZVMAAAAXcmFiYml0QGxpYnJlZGItcmFiYml0bXEJY29weXJpZ2h0UwAAADxDb3B5cmlnaHQgKGMpIDIwMDctMjAyNiBCcm9hZGNvbSBJbmMgYW5kL29yIGl0cyBzdWJzaWRpYXJpZXMLaW5mb3JtYXRpb25TAAAAOUxpY2Vuc2VkIHVuZGVyIHRoZSBNUEwgMi4wLiBXZWJzaXRlOiBodHRwczovL3JhYmJpdG1xLmNvbQhwbGF0Zm9ybVMAAAAURXJsYW5nL09UUCAyNy4zLjQuMTgHcHJvZHVjdFMAAAAIUmFiYml0TVEHdmVyc2lvblMAAAAFNC4zLjYAAAAYUExBSU4gQU5PTllNT1VTIEFNUVBMQUlOAAAABWVuX1VTzgEAAAAAAAwACgAeB/8AAgAAADzOAQAAAAAAOQAKADICEi5OT1RfQUxMT1dFRCAtIHZob3N0IGV2aWRlbmNlLW1pc3Npbmcgbm90IGZvdW5kAAoAKM4="
+}

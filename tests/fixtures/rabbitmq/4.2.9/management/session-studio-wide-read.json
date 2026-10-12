@@ -1,0 +1,147 @@
+{
+ "$captured": {
+  "image": "rabbitmq:4.2.9-management@sha256:9e9fd21d60f060acc9ecbd847cd1dcb87e6550bdb0297c27e79a40bfe1766ce4",
+  "digest": "sha256:9e9fd21d60f060acc9ecbd847cd1dcb87e6550bdb0297c27e79a40bfe1766ce4",
+  "version": "4.2.9",
+  "seed": "4f1ca27a7e49a95d0ef1e58b701b46419ec17959d4425b83507d7d45de87f140",
+  "date": "2026-10-12T11:06:15.140Z",
+  "surface": "connect() and Test Connection as studio-wide-read"
+ },
+ "exchanges": [
+  {
+   "method": "GET",
+   "key": "GET /api/whoami",
+   "path": "/api/whoami",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"name\":\"studio-wide-read\",\"tags\":[\"management\"],\"is_internal_user\":true}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/overview?columns=rabbitmq_version,product_name",
+   "path": "/api/overview",
+   "query": "columns=rabbitmq_version,product_name",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"product_name\":\"RabbitMQ\",\"rabbitmq_version\":\"4.2.9\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/health/checks/alarms",
+   "path": "/api/health/checks/alarms",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"status\":\"ok\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/vhosts",
+   "path": "/api/vhosts",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[{\"messages\":1095,\"name\":\"/\",\"recv_oct\":258,\"send_oct\":571,\"description\":\"\",\"metadata\":{\"description\":\"\",\"tags\":[],\"default_queue_type\":\"classic\"},\"tags\":[],\"default_queue_type\":\"classic\",\"messages_ready\":1095,\"messages_unacknowledged\":0,\"protected_from_deletion\":false,\"tracing\":false,\"cluster_state\":{\"rabbit@libredb-rabbitmq-42\":\"running\"},\"message_stats\":{\"ack\":37,\"ack_details\":{\"rate\":1.2},\"confirm\":1071,\"confirm_details\":{\"rate\":0.0},\"deliver\":45,\"deliver_details\":{\"rate\":1.6},\"deliver_get\":45,\"deliver_get_details\":{\"rate\":1.6},\"deliver_no_ack\":0,\"deliver_no_ack_details\":{\"rate\":0.0},\"drop_unroutable\":0,\"drop_unroutable_details\":{\"rate\":0.0},\"get\":0,\"get_details\":{\"rate\":0.0},\"get_empty\":0,\"get_empty_details\":{\"rate\":0.0},\"get_no_ack\":0,\"get_no_ack_details\":{\"rate\":0.0},\"publish\":1071,\"publish_details\":{\"rate\":0.0},\"redeliver\":0,\"redeliver_details\":{\"rate\":0.0},\"return_unroutable\":0,\"return_unroutable_details\":{\"rate\":0.0}},\"recv_oct_details\":{\"rate\":0.0},\"send_oct_details\":{\"rate\":0.0},\"messages_details\":{\"rate\":0.0},\"messages_unacknowledged_details\":{\"rate\":0.0},\"messages_ready_details\":{\"rate\":0.0}},{\"messages\":14,\"name\":\"billing\",\"description\":\"\",\"metadata\":{\"description\":\"\",\"tags\":[],\"default_queue_type\":\"classic\"},\"tags\":[],\"default_queue_type\":\"classic\",\"messages_ready\":14,\"messages_unacknowledged\":0,\"protected_from_deletion\":false,\"tracing\":false,\"cluster_state\":{\"rabbit@libredb-rabbitmq-42\":\"running\"},\"message_stats\":{\"confirm\":14,\"confirm_details\":{\"rate\":0.0},\"drop_unroutable\":0,\"drop_unroutable_details\":{\"rate\":0.0},\"publish\":14,\"publish_details\":{\"rate\":0.0},\"return_unroutable\":0,\"return_unroutable_details\":{\"rate\":0.0}},\"messages_details\":{\"rate\":0.0},\"messages_unacknowledged_details\":{\"rate\":0.0},\"messages_ready_details\":{\"rate\":0.0}}]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/extensions",
+   "path": "/api/extensions",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[{\"javascript\":\"dispatcher.js\"},[],[],[],[],[],{\"javascript\":\"stream.js\"},[],[],[]]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F?columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name",
+   "path": "/api/queues/%2F",
+   "query": "columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"filtered_count\":23,\"item_count\":23,\"items\":[{\"name\":\"g9-poison\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h1-props\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h3-solo\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"h3-wide\",\"state\":\"running\",\"type\":\"stream\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-canary\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-classic-dead\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":0,\"messages_ready\":0,\"messages_unacknowledged\":0,\"name\":\"q-classic-empty\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":3,\"messages_ready\":3,\"messages_unacknowledged\":0,\"name\":\"q-classic-orders\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":3,\"messages_ready\":3,\"messages_unacknowledged\":0,\"name\":\"q-quorum-nodlx\",\"state\":\"running\",\"type\":\"quorum\"},{\"messages\":3,\"messages_ready\":3,\"messages_unacknowledged\":0,\"name\":\"q-quorum-payments\",\"state\":\"running\",\"type\":\"quorum\"},{\"name\":\"st-amqp10\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-buffer-shape\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-events\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-g2-poison-mid\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-hostile-headers\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-0\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-1\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-invoices-2\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-orders\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-restricted\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-routes\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-spoof\",\"state\":\"running\",\"type\":\"stream\"},{\"name\":\"st-uuid-key\",\"state\":\"running\",\"type\":\"stream\"}],\"page\":1,\"page_count\":1,\"page_size\":500,\"total_count\":23}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/%2F/q-canary/tracking",
+   "path": "/api/stream/%2F/q-canary/tracking",
+   "query": "",
+   "status": 503,
+   "contentType": "application/json",
+   "body": "{\"error\":\"service_unavailable\",\"reason\":\"The stream leader is not available\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/%2F/q-classic-dead/tracking",
+   "path": "/api/stream/%2F/q-classic-dead/tracking",
+   "query": "",
+   "status": 503,
+   "contentType": "application/json",
+   "body": "{\"error\":\"service_unavailable\",\"reason\":\"The stream leader is not available\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/%2F/q-classic-empty/tracking",
+   "path": "/api/stream/%2F/q-classic-empty/tracking",
+   "query": "",
+   "status": 503,
+   "contentType": "application/json",
+   "body": "{\"error\":\"service_unavailable\",\"reason\":\"The stream leader is not available\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/%2F/q-classic-orders/tracking",
+   "path": "/api/stream/%2F/q-classic-orders/tracking",
+   "query": "",
+   "status": 503,
+   "contentType": "application/json",
+   "body": "{\"error\":\"service_unavailable\",\"reason\":\"The stream leader is not available\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/%2F/q-quorum-nodlx/tracking",
+   "path": "/api/stream/%2F/q-quorum-nodlx/tracking",
+   "query": "",
+   "status": 503,
+   "contentType": "application/json",
+   "body": "{\"error\":\"service_unavailable\",\"reason\":\"The stream leader is not available\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/%2F/q-quorum-payments/tracking",
+   "path": "/api/stream/%2F/q-quorum-payments/tracking",
+   "query": "",
+   "status": 503,
+   "contentType": "application/json",
+   "body": "{\"error\":\"service_unavailable\",\"reason\":\"The stream leader is not available\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/billing?columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name",
+   "path": "/api/queues/billing",
+   "query": "columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"filtered_count\":3,\"item_count\":3,\"items\":[{\"messages\":2,\"messages_ready\":2,\"messages_unacknowledged\":0,\"name\":\"q-billing-invoices\",\"state\":\"running\",\"type\":\"classic\"},{\"messages\":2,\"messages_ready\":2,\"messages_unacknowledged\":0,\"name\":\"q-billing-ledger\",\"state\":\"running\",\"type\":\"quorum\"},{\"name\":\"st-billing-audit\",\"state\":\"running\",\"type\":\"stream\"}],\"page\":1,\"page_count\":1,\"page_size\":500,\"total_count\":3}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/billing/q-billing-invoices/tracking",
+   "path": "/api/stream/billing/q-billing-invoices/tracking",
+   "query": "",
+   "status": 503,
+   "contentType": "application/json",
+   "body": "{\"error\":\"service_unavailable\",\"reason\":\"The stream leader is not available\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/stream/billing/q-billing-ledger/tracking",
+   "path": "/api/stream/billing/q-billing-ledger/tracking",
+   "query": "",
+   "status": 503,
+   "contentType": "application/json",
+   "body": "{\"error\":\"service_unavailable\",\"reason\":\"The stream leader is not available\"}"
+  }
+ ]
+}

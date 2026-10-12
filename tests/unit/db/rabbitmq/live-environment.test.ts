@@ -10,19 +10,31 @@
  */
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { ENCODERS } from "@/lib/db/providers/stream/rabbitmq/amqp/codec";
 import { patternBytes, patternSha256 } from "../../../helpers/rabbitmq-body-pattern";
 import {
+  type AmqpRecording,
+  captureNames,
+  captureSecretHits,
+  type ManagementExchange,
+  recordingDial,
+  recordingTransport,
+  stubAnswers,
+  stubKey,
+} from "../../../helpers/rabbitmq-captures";
+import {
   RABBITMQ_42_IMAGE,
   RABBITMQ_429_DIGEST,
   RABBITMQ_436_DIGEST,
   RABBITMQ_FIXTURE_IMAGE,
+  RABBITMQ_NIGHTLY_IMAGE,
   RABBITMQ_SEED_IMAGE,
   liveTarget,
 } from "../../../helpers/rabbitmq-live";
+import { requestKey } from "../../../helpers/rabbitmq-management-stub";
 import { controlMoved, parseDeliveryMetrics, rowDifferences, TAKE_COUNTERS } from "../../../helpers/rabbitmq-oracle";
 import { decodeValue, encodeMessage, encodeValue, v } from "../../../helpers/rabbitmq-test-amqp10";
 import {
@@ -32,7 +44,7 @@ import {
   methodFrame,
   methodId,
 } from "../../../helpers/rabbitmq-test-amqp091";
-import { fixturePasswords, RABBITMQ_SEED_TABLE, readerPattern } from "../../../live/rabbitmq-seed";
+import { fixturePasswords, RABBITMQ_SEED_TABLE, readerPattern, seedHash } from "../../../live/rabbitmq-seed";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -413,5 +425,142 @@ describe("the R-S1 oracle's arithmetic", () => {
     expect(controlMoved({}, { canary: { queue_get_total: 1, queue_get_empty_total: 1 } }, "canary")).toContain(
       "also moved queue_get_empty_total",
     );
+  });
+});
+
+describe("the capture seams", () => {
+  const WHOAMI = "http://127.0.0.1:15672/api/whoami";
+  const TYPE_CHECK =
+    "http://127.0.0.1:15672/api/queues/%2F/st-orders?disable_stats=true&columns=type%2Conline%2Cmembers";
+
+  /** A management transport factory that answers each URL with the next status of its list. */
+  function answering(statuses: Record<string, number[]>) {
+    return () => ({
+      request: async (request: { readonly url: string }) => ({
+        status: statuses[request.url]?.shift() ?? 599,
+        contentType: "application/json",
+        retryAfter: null,
+        text: `{"at":${Date.now()},"n":${Math.random()}}`,
+      }),
+      close: () => {},
+    });
+  }
+
+  async function record(statuses: Record<string, number[]>, urls: readonly string[]): Promise<ManagementExchange[]> {
+    const sink: ManagementExchange[] = [];
+    const transport = recordingTransport(answering(statuses), sink)({} as never);
+    for (const url of urls)
+      await transport.request({ method: "GET", url, signal: new AbortController().signal, maxResponseBytes: 1024 });
+    return sink;
+  }
+
+  test("a recorded exchange is keyed exactly as the management API stub keys its request", async () => {
+    const sink = await record({ [WHOAMI]: [200], [TYPE_CHECK]: [200] }, [WHOAMI, TYPE_CHECK]);
+    expect(sink.map(stubKey)).toEqual([
+      requestKey({ method: "GET", url: WHOAMI }),
+      requestKey({ method: "GET", url: TYPE_CHECK }),
+    ]);
+    expect(sink.map(stubKey)).toEqual([
+      "GET /api/whoami",
+      "GET /api/queues/%2F/st-orders?columns=type,online,members&disable_stats=true",
+    ]);
+    expect(sink[1].query.startsWith("columns=type,online,members")).toBe(true);
+  });
+
+  test("a repeat with the same status is kept once, though its body moved; a repeat with another status is kept", async () => {
+    const same = await record({ [WHOAMI]: [200, 200] }, [WHOAMI, WHOAMI]);
+    expect(same.length).toBe(1);
+    const header = { image: "", digest: "", version: "", seed: "", date: "", surface: "planted" };
+    expect(Object.keys(stubAnswers({ $captured: header, exchanges: same }))).toEqual(["GET /api/whoami"]);
+    const other = await record({ [WHOAMI]: [200, 401] }, [WHOAMI, WHOAMI]);
+    expect(other.map((e) => e.status)).toEqual([200, 401]);
+    expect(() => stubAnswers({ $captured: header, exchanges: other })).toThrow("GET /api/whoami is recorded twice");
+  });
+
+  test("the client's connection.close marks how many server bytes had arrived", async () => {
+    let onData: (chunk: Uint8Array) => void = () => {};
+    const socket = {
+      write: () => true,
+      on: (event: string, listener: (chunk: Uint8Array) => void) => {
+        if (event === "data") onData = listener;
+      },
+      pause: () => {},
+      resume: () => {},
+      destroy: () => {},
+      destroyed: false,
+    };
+    const sink: AmqpRecording[] = [];
+    const wrapped = await recordingDial(async () => socket as never, sink)({} as never, new AbortController().signal);
+    wrapped.on("data", () => {});
+    onData(new Uint8Array(100));
+    wrapped.write(methodFrame(0, 10, 51));
+    expect(sink[0].clientClosedAt).toBeNull();
+    onData(new Uint8Array(20));
+    wrapped.write(methodFrame(0, 10, 50));
+    onData(new Uint8Array(30));
+    expect(sink[0].clientClosedAt).toBe(120);
+  });
+});
+
+describe("the captures", () => {
+  const SETS = ["4.3.6", "4.2.9", "nightly"] as const;
+  const DIGESTS: Readonly<Record<string, string>> = {
+    "4.3.6": RABBITMQ_436_DIGEST,
+    "4.2.9": RABBITMQ_429_DIGEST,
+    nightly: RABBITMQ_NIGHTLY_IMAGE.split("@")[1],
+  };
+  const files = SETS.flatMap((set) =>
+    (["management", "amqp"] as const).flatMap((kind) =>
+      captureNames(set, kind).map((name) => ({
+        set,
+        kind,
+        name,
+        file: `tests/fixtures/rabbitmq/${set}/${kind}/${name}.json`,
+      })),
+    ),
+  );
+
+  test("every pinned set has captures, so the checks below cannot pass empty", () => {
+    for (const set of SETS) expect(files.filter((f) => f.set === set).length).toBeGreaterThan(0);
+  });
+
+  test("every capture names the digest of its set and the seed it was taken from", () => {
+    // seedHash() hashes every pattern body of the seed, megabytes each, so it is computed once.
+    const seed = seedHash();
+    for (const { set, file } of files) {
+      const header = (JSON.parse(read(file)) as { $captured: { digest: string; seed: string; image: string } })
+        .$captured;
+      expect({ file, digest: header.digest, seed: header.seed }).toEqual({
+        file,
+        digest: DIGESTS[set],
+        seed,
+      });
+    }
+  });
+
+  test("no capture carries a fixture password, in any form an answer could hold it", () => {
+    const { admin, fixture } = fixturePasswords();
+    for (const { file } of files)
+      expect({ file, hits: captureSecretHits(read(file), [admin, fixture]) }).toEqual({ file, hits: [] });
+  });
+
+  test("no management capture holds a key twice, so its replay answers each request as the broker did", () => {
+    for (const { kind, file } of files.filter((f) => f.kind === "management")) {
+      const keys = (JSON.parse(read(file)) as { exchanges: ManagementExchange[] }).exchanges.map(stubKey);
+      expect({ file, kind, repeated: keys.filter((key, at) => keys.indexOf(key) !== at) }).toEqual({
+        file,
+        kind,
+        repeated: [],
+      });
+    }
+  });
+
+  test("the captures stay small enough to review: 1 MiB a file (2 MiB for h3-wide's ten 84 KB tables), 8 MiB in all", () => {
+    const sizes = files.map(({ file }) => ({ file, size: statSync(path.join(ROOT, file)).size }));
+    for (const { file, size } of sizes) {
+      const cap = file.endsWith("/amqp/read-h3-wide-first.json") ? 2 * 1_048_576 : 1_048_576;
+      expect({ file, over: size > cap }).toEqual({ file, over: false });
+    }
+    expect(sizes.reduce((sum, { size }) => sum + size, 0)).toBeLessThanOrEqual(8 * 1_048_576);
   });
 });

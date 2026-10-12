@@ -1,0 +1,93 @@
+{
+ "$captured": {
+  "image": "rabbitmq:4.2.9-management@sha256:9e9fd21d60f060acc9ecbd847cd1dcb87e6550bdb0297c27e79a40bfe1766ce4",
+  "digest": "sha256:9e9fd21d60f060acc9ecbd847cd1dcb87e6550bdb0297c27e79a40bfe1766ce4",
+  "version": "4.2.9",
+  "seed": "4f1ca27a7e49a95d0ef1e58b701b46419ec17959d4425b83507d7d45de87f140",
+  "date": "2026-10-12T11:06:16.721Z",
+  "surface": "countObjects of a vhost that does not exist, the source of a missing queue and the type check of a missing stream"
+ },
+ "exchanges": [
+  {
+   "method": "GET",
+   "key": "GET /api/whoami",
+   "path": "/api/whoami",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"name\":\"studio-reader\",\"tags\":[\"management\"],\"is_internal_user\":true}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/overview?columns=rabbitmq_version,product_name",
+   "path": "/api/overview",
+   "query": "columns=rabbitmq_version,product_name",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "{\"product_name\":\"RabbitMQ\",\"rabbitmq_version\":\"4.2.9\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/evidence-missing?columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name",
+   "path": "/api/queues/evidence-missing",
+   "query": "columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name",
+   "status": 404,
+   "contentType": "application/json",
+   "body": "{\"error\":\"Object Not Found\",\"reason\":\"Not Found\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/exchanges/evidence-missing?columns=name,type,durable,auto_delete,internal&page=1&page_size=500&sort=name",
+   "path": "/api/exchanges/evidence-missing",
+   "query": "columns=name,type,durable,auto_delete,internal&page=1&page_size=500&sort=name",
+   "status": 404,
+   "contentType": "application/json",
+   "body": "{\"error\":\"Object Not Found\",\"reason\":\"Not Found\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/evidence-missing?columns=name,type,state&disable_stats=true&page=1&page_size=500&sort=type&sort_reverse=true",
+   "path": "/api/queues/evidence-missing",
+   "query": "columns=name,type,state&disable_stats=true&page=1&page_size=500&sort=type&sort_reverse=true",
+   "status": 404,
+   "contentType": "application/json",
+   "body": "{\"error\":\"Object Not Found\",\"reason\":\"Not Found\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/q-missing",
+   "path": "/api/queues/%2F/q-missing",
+   "query": "",
+   "status": 404,
+   "contentType": "application/json",
+   "body": "{\"error\":\"Object Not Found\",\"reason\":\"Not Found\"}"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/policies/%2F",
+   "path": "/api/policies/%2F",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/operator-policies/%2F",
+   "path": "/api/operator-policies/%2F",
+   "query": "",
+   "status": 200,
+   "contentType": "application/json",
+   "body": "[]"
+  },
+  {
+   "method": "GET",
+   "key": "GET /api/queues/%2F/st-missing?columns=type,online,members&disable_stats=true",
+   "path": "/api/queues/%2F/st-missing",
+   "query": "columns=type,online,members&disable_stats=true",
+   "status": 404,
+   "contentType": "application/json",
+   "body": "{\"error\":\"Object Not Found\",\"reason\":\"Not Found\"}"
+  }
+ ]
+}
