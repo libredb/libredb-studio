@@ -23,10 +23,21 @@ import {
 import { EGRESS_REFUSAL_SENTENCES } from "@/lib/db/http/egress-policy";
 import { isTlsFailureCode, TransportError } from "@/lib/db/http/node-transport";
 import {
+  RABBITMQ_BODY_CEILING_BYTES,
+  RABBITMQ_BODY_PREFIX_BYTES,
   RABBITMQ_CAUTION_NAMED_QUEUES,
+  RABBITMQ_CELL_CHARS,
+  RABBITMQ_FRAME_MIN_BYTES,
+  RABBITMQ_IDLE_MS,
+  RABBITMQ_LAST_HINT_BACKSTEP,
   RABBITMQ_LISTING_PAGE_SIZE,
   RABBITMQ_MGMT_DEPTH,
+  RABBITMQ_NAME_MAX_BYTES,
   RABBITMQ_NAME_PROSE_CHARS,
+  RABBITMQ_PAYLOAD_JSON_DEPTH,
+  RABBITMQ_READ_MAX_ROWS,
+  RABBITMQ_READ_WIRE_BYTES,
+  RABBITMQ_RESULT_BUDGET_BYTES,
   RABBITMQ_TYPE,
 } from "./limits";
 
@@ -606,4 +617,333 @@ export const STREAM_COUNTS_NOTE =
 /** The title of a detail's counts part. */
 export function countsLabel(sampledAt: string): string {
   return `Counts (sampled at ${sampledAt})`;
+}
+
+// =====================================================================================================================
+// The read request
+// =====================================================================================================================
+
+/** A key outside the four, named escaped and cut like any user text. */
+export function unknownRequestKey(key: string): string {
+  return `Unknown key ${quoteName(key)} in the read request; the keys are vhost, stream, from and limit.`;
+}
+
+export const FROM_FORMS =
+  '"from" is "first", "last", "next", {"offset": n}, {"timestamp": "<ISO-8601 with a zone>"} or {"age": "<n><unit>"}, with unit Y, M (months), D, h, m (minutes) or s.';
+export const LIMIT_RANGE = `"limit" must be a whole number from 1 to ${RABBITMQ_READ_MAX_ROWS}.`;
+export const NAMES_REQUIRED = `"vhost" and "stream" are required strings of 1 to ${RABBITMQ_NAME_MAX_BYTES} bytes, without NUL, and not . or ..`;
+export const OFFSET_NOT_WHOLE =
+  "The offset must be a non-negative whole number; above 9007199254740991 write it as a digit string.";
+export const OFFSET_TOO_LARGE = "The offset must be at most 9223372036854775807.";
+export const TIMESTAMP_BEFORE_EPOCH = "The timestamp must be at or after 1970-01-01T00:00:00Z.";
+export const TIMESTAMP_FORM =
+  'The timestamp must be ISO-8601 with a zone, as YYYY-MM-DDThh:mm with optional seconds of at most three decimals, then Z, +hh:mm or -hh:mm, such as "2026-09-23T00:00:00Z" or "2026-09-23T03:00:00+03:00", because RabbitMQ would otherwise read it in the Studio server\'s time zone.';
+export const TIMESTAMP_DAY = "The timestamp names a day of a month that does not have it.";
+export const REQUEST_NOT_OBJECT =
+  'A RabbitMQ read request is one JSON object, such as {"vhost": "/", "stream": "orders", "from": "last", "limit": 50}.';
+export const REQUEST_EMPTY = 'The editor is empty: write a read request such as {"vhost": "/", "stream": "orders"}.';
+export const REQUEST_PARAMS = "Bound params are not supported: a RabbitMQ read request has no placeholders.";
+
+// =====================================================================================================================
+// The type check
+// =====================================================================================================================
+
+/** The type check's refusal: the type is named only when it is classic or quorum, never another broker value. */
+export function notAStream(name: string, type: string): QueryError {
+  if (type === "classic" || type === "quorum")
+    return queryError(
+      `${quoteName(name)} is a ${type} queue; Studio reads streams only, because reading a queue removes messages.`,
+    );
+  return queryError(`${quoteName(name)} is not a stream; Studio reads streams only.`);
+}
+
+// =====================================================================================================================
+// Read failures before consume-ok
+// =====================================================================================================================
+
+export type ProtocolFact =
+  | "frame-too-large"
+  | "frame-end"
+  | "unknown-field"
+  | "body-ceiling"
+  | "header-too-large"
+  | "unexpected-frame"
+  | "unknown-frame-type"
+  | "missing-offset"
+  | "malformed-frame";
+
+const PROTOCOL_FACTS: Readonly<Record<ProtocolFact, string>> = Object.freeze({
+  "frame-too-large": "a frame larger than the negotiated size",
+  "frame-end": "a frame without its end marker",
+  "unknown-field": "an unknown field type",
+  "body-ceiling": `a message body above ${capText(RABBITMQ_BODY_CEILING_BYTES)}`,
+  "header-too-large": "a content header above its limit",
+  "unexpected-frame": "a frame out of sequence",
+  "unknown-frame-type": "a frame of an unknown type",
+  "missing-offset": "a message without its stream offset",
+  "malformed-frame": "a frame whose fields do not fit its size",
+});
+
+/** A protocol violation: a fixed phrase per case, never the peer's bytes. */
+export function amqpProtocolError(endpoint: string, fact: ProtocolFact): ConnectionError {
+  return connectionError(
+    `The server at ${endpoint} broke the AMQP 0-9-1 protocol (${PROTOCOL_FACTS[fact]}); the read was stopped.`,
+  );
+}
+
+export interface AmqpCloseInfo {
+  readonly replyCode: number;
+  /** Matched only against fixed patterns; never quoted. */
+  readonly replyText: string;
+  readonly classId: number;
+  readonly methodId: number;
+  readonly scope: "connection" | "channel";
+}
+
+export interface ReadFailureContext {
+  readonly endpoint: string;
+  readonly vhost: string;
+  readonly stream: string;
+  /** The type check's `online` and `members`, for the no-replica sentences. */
+  readonly online: readonly string[];
+  readonly members: readonly string[];
+}
+
+const NO_LOCAL_REPLICA = /does not have a running replica on the local node/;
+
+/** Which no-replica sentence the type check's node lists select. */
+function noReplica(context: ReadFailureContext): QueryError {
+  const name = quoteName(context.stream);
+  if (context.online.length === 0) return queryError(`No replica of stream ${name} is reported online.`);
+  const online = new Set(context.online);
+  if (context.members.length > 0 && context.members.every((member) => online.has(member)))
+    return queryError(
+      `The node behind AMQP port may still be starting its replica of stream ${name}: read again in a few seconds.`,
+    );
+  return queryError(
+    `The node behind AMQP port holds no running replica of stream ${name}; replicas are reported online on other nodes: point AMQP port at one of them.`,
+  );
+}
+
+/** A connection.close or channel.close before consume-ok, by reply code and the fixed patterns; the text is never quoted. */
+export function amqpCloseError(close: AmqpCloseInfo, context: ReadFailureContext): Error {
+  const vhost = quoteName(context.vhost);
+  switch (close.replyCode) {
+    case 403:
+      return close.scope === "connection"
+        ? authenticationError("The broker refused this username and password on the AMQP port.")
+        : queryError(
+            `This user may not read stream ${quoteName(context.stream)}: its read permission pattern on ${vhost} does not match the name.`,
+          );
+    case 530:
+      if (/^NOT_ALLOWED - vhost .* not found$/.test(close.replyText))
+        return queryError(`The broker has no virtual host ${vhost}.`);
+      if (/^NOT_ALLOWED - access to vhost /.test(close.replyText))
+        return authenticationError(
+          `This user may not open virtual host ${vhost} over AMQP: grant it permissions there.`,
+        );
+      return authenticationError(
+        `Virtual host ${vhost} does not exist, or this user may not open it over AMQP: check both in the management UI.`,
+      );
+    case 404:
+      return missingObject(context.vhost, context.stream);
+    case 406:
+      if (NO_LOCAL_REPLICA.test(close.replyText)) return noReplica(context);
+      // The broker refuses x-stream-offset on anything but a stream: the type changed after the type check.
+      return notAStream(context.stream, "");
+    case 541:
+      return conversionAtConsume(context.stream);
+    default:
+      return unexpected("the stream read");
+  }
+}
+
+/** Nothing listens on the AMQP port. */
+export function amqpUnreachable(endpoint: string): ConnectionError {
+  return connectionError(`Nothing listens on ${endpoint}: check the address and AMQP port.`);
+}
+
+/** TLS to a plain AMQP listener, and only that: the AMQP mapping picks it with `tlsFailureKind`, as the management side does. */
+export function amqpNotTls(endpoint: string): ConnectionError {
+  return notTls(endpoint);
+}
+
+/** Plain AMQP to a TLS port. */
+export function amqpExpectsTls(endpoint: string): ConnectionError {
+  return connectionError(`${endpoint} expects TLS: turn TLS on, or use 5672.`);
+}
+
+/** No AMQP session started: another service on the port, or silence. */
+export function amqpNoSession(endpoint: string): ConnectionError {
+  return connectionError(`${endpoint} did not start an AMQP session: check that AMQP port is 5672 (5671 with TLS).`);
+}
+
+/** A protocol header other than 0-9-1 in answer to Studio's. */
+export function amqpOtherProtocol(endpoint: string): ConnectionError {
+  return connectionError(
+    `${endpoint} speaks another protocol version than AMQP 0-9-1: check that AMQP port is 5672 or 5671, not 5552 or 15672.`,
+  );
+}
+
+/** A server that offers no PLAIN mechanism. */
+export function amqpNoPlain(endpoint: string): ConnectionError {
+  return connectionError(`The server at ${endpoint} offers no PLAIN login, the only one Studio uses.`);
+}
+
+/** A frame size below RabbitMQ's own floor, not the protocol's. */
+export function frameMaxTooSmall(bytes: number): ConnectionError {
+  return connectionError(
+    `The broker proposed a frame size of ${bytes.toLocaleString("en-US")} bytes, below the ${grouped(RABBITMQ_FRAME_MIN_BYTES)} RabbitMQ requires.`,
+  );
+}
+
+/** Missed heartbeats before the read started. */
+export function heartbeatsMissed(endpoint: string): ConnectionError {
+  return connectionError(`${endpoint} stopped answering during the AMQP handshake.`);
+}
+
+export type ReadPhase = "queued" | "connecting" | "tls" | "handshake";
+
+/** A read's deadline before consume-ok, naming the phase it was in; nothing is returned. */
+export function readPhaseTimeout(
+  phase: ReadPhase,
+  context: { readonly seconds: number; readonly endpoint: string; readonly stream: string },
+): TimeoutError {
+  const n = context.seconds;
+  const sentences: Readonly<Record<ReadPhase, string>> = {
+    queued: `Waited ${n} s for a read slot; the stream was not read.`,
+    connecting: `No answer from ${context.endpoint} within ${n} s.`,
+    tls: `${context.endpoint} accepted the connection but did not finish the TLS handshake within ${n} s.`,
+    handshake: `Waited ${n} s for the broker to start the read of stream ${quoteName(context.stream)}; nothing was read.`,
+  };
+  return timeoutError(sentences[phase], n * 1_000);
+}
+
+export const READ_SLOTS_FULL = "Too many stream reads are running on this Studio server; try again when one ends.";
+
+/** A 541 before consume-ok. */
+export function conversionAtConsume(stream: string): QueryError {
+  return queryError(
+    `The broker closed the connection (541 INTERNAL_ERROR) while starting the read of stream ${quoteName(stream)}; this can happen when the stream is deleted at that moment. Refresh the tree and read again.`,
+  );
+}
+
+// =====================================================================================================================
+// Stop warnings and conversion sentences; offsets are bigint and printed as decimal strings
+// =====================================================================================================================
+
+export const IDLE_WARNING = `No further message arrived within ${RABBITMQ_IDLE_MS / 1_000} s; this is not proof that the stream ends here.`;
+export const NEXT_EMPTY_WARNING = `A read from "next" reads only messages published after the read started, and none arrived within ${RABBITMQ_IDLE_MS / 1_000} s.`;
+
+/** A request a sentence quotes, its names whole and escaped, so the request parser reads it back. */
+function quotedRequest(vhost: string, stream: string, from: string, limit?: number): string {
+  const tail = limit === undefined ? "" : `, "limit": ${limit}`;
+  return `{"vhost": ${quoteNameInRequest(vhost)}, "stream": ${quoteNameInRequest(stream)}, "from": ${from}${tail}}`;
+}
+
+/** A "last" read that stopped idle with rows: where older messages start. */
+export function lastIdleWarning(vhost: string, stream: string, rows: number, firstOffset: bigint): string {
+  const back = BigInt(RABBITMQ_LAST_HINT_BACKSTEP);
+  const earlier = firstOffset > back ? firstOffset - back : BigInt(0);
+  return `Read from "last" starts at the broker's last stored chunk, here ${counted(rows, "message", "messages")}; for older messages read ${quotedRequest(vhost, stream, `{"offset": "${earlier}"}`)}.`;
+}
+
+export function budgetWarning(offset: bigint): string {
+  return `The result reached its ${capText(RABBITMQ_RESULT_BUDGET_BYTES)} limit before offset ${offset}; read again from offset ${offset}.`;
+}
+
+export function wireWarning(offset: bigint): string {
+  return `The read transferred ${capText(RABBITMQ_READ_WIRE_BYTES)} before offset ${offset}, mostly bodies longer than ${grouped(RABBITMQ_BODY_PREFIX_BYTES)} bytes; read again from offset ${offset} with a smaller limit.`;
+}
+
+/** A message whose declared size alone exceeds the wire cap, its offset decoded: the read can only step past it. */
+export function wireOversizeAtOffset(offset: bigint): string {
+  return `The message at offset ${offset} is larger than the ${capText(RABBITMQ_READ_WIRE_BYTES)} one read may transfer, so Studio cannot show it; read from offset ${offset + BigInt(1)} to continue past it.`;
+}
+
+/** The same before its offset was decoded; null when no row was kept, so the message may be the first. */
+export function wireOversizeUnknown(afterOffset: bigint | null): string {
+  const where = afterOffset === null ? "at the read's start" : `after offset ${afterOffset}`;
+  return `A message ${where} is larger than the ${capText(RABBITMQ_READ_WIRE_BYTES)} one read may transfer, so Studio cannot show it or name its offset.`;
+}
+
+export function serverCancelWarning(offset: bigint | null): string {
+  return offset === null
+    ? "The broker ended the read before delivering any message: the stream may have been deleted."
+    : `The broker ended the read after offset ${offset}: the stream may have been deleted.`;
+}
+
+export function closedWarning(offset: bigint | null): string {
+  return offset === null
+    ? "The broker closed the connection before delivering any message."
+    : `The broker closed the connection after offset ${offset}; the rows read so far are shown.`;
+}
+
+export function deadlineWarning(seconds: number, offset: bigint | null): string {
+  return offset === null
+    ? `The read stopped at its time limit of ${seconds} s before any message arrived.`
+    : `The read stopped at its time limit of ${seconds} s after offset ${offset}; rows read so far are shown; read again from offset ${offset}.`;
+}
+
+export function cancelWarning(offset: bigint | null): string {
+  return offset === null
+    ? "The read was stopped before any message arrived."
+    : `The read was stopped after offset ${offset}; rows read so far are shown.`;
+}
+
+export const TIMESTAMP_START_WARNING =
+  "A timestamp read starts at the chunk that holds that second, so messages published shortly before it can appear. The start uses the time the broker stored the messages; the timestamp column is the publisher's own property, which can be empty or differ.";
+
+/** A 541 after consume-ok with rows: the bad message is within the next P after the last offset delivered. */
+export function conversionAfter(offset: bigint, prefetch: number, vhost: string, stream: string): string {
+  const lead = `The broker closed the connection (541 INTERNAL_ERROR) after offset ${offset}: it could not convert the next message`;
+  const bound =
+    prefetch > 1
+      ? ` to AMQP 0-9-1. The message is within the next ${prefetch} messages after offset ${offset}, and messages between may not have been delivered.`
+      : ` after offset ${offset} to AMQP 0-9-1.`;
+  return `${lead}${bound} Read ${quotedRequest(vhost, stream, `{"offset": "${offset + BigInt(1)}"}`, 1)} and step one offset at a time to find it; a read that returns no row stops on it.`;
+}
+
+/** A 541 after consume-ok with no row, from a numeric start S. */
+export function conversionNoRowNumeric(start: bigint, prefetch: number, vhost: string, stream: string): string {
+  const which = prefetch > 1 ? `one of the first ${prefetch} messages` : "the first message";
+  return `The broker closed the connection (541 INTERNAL_ERROR) before delivering any message: it could not convert ${which} it would deliver from offset ${start} to AMQP 0-9-1. Offsets inside compressed batches and before the retention start are not delivered, so that message can be later than ${start}. Read ${quotedRequest(vhost, stream, `{"offset": "${start}"}`, 1)} and step forward one offset at a time: a read that ends with this note started at or before the message, and the first read that returns a row started past it.`;
+}
+
+/** A 541 after consume-ok with no row, from a keyword, `next`, timestamp or age start; `start` as Studio re-serialises it. */
+export function conversionNoRowKeyword(start: string, isLast: boolean, vhost: string, stream: string): string {
+  const lastHint = isLast
+    ? " The stream's message count in its detail, read as an offset, is at or past the end while retention has removed nothing; a read from it ends with the 'no further message' note."
+    : "";
+  return `The broker closed the connection (541 INTERNAL_ERROR) before delivering any message: one of the first messages from ${start} cannot be converted to AMQP 0-9-1. Studio cannot name its offset. Read ${quotedRequest(vhost, stream, '"first"', 1)} to learn the first offset; if that read also ends with this note, the first retained message cannot be converted, and Studio cannot read past it until retention removes it, while a stream protocol client can. Then read numeric offsets with "limit": ${RABBITMQ_READ_MAX_ROWS}: a read that ends with the 541 note started at or before the message, and the note names the offset after which it stopped; a read that ends with the 'no further message' note probably started after it; a read that returns all ${RABBITMQ_READ_MAX_ROWS} rows started more than ${RABBITMQ_READ_MAX_ROWS} messages before it.${lastHint} Halve the range until the note names the message.`;
+}
+
+// =====================================================================================================================
+// Rendering warnings
+// =====================================================================================================================
+
+export function timestampsOutOfRange(count: number): string {
+  return count === 1
+    ? "1 timestamp is outside the range a date can show and is shown as seconds since the epoch."
+    : `${count} timestamps are outside the range a date can show and are shown as seconds since the epoch.`;
+}
+
+export function cellsCut(count: number): string {
+  return `${counted(count, "headers cell was", "headers cells were")} cut at ${grouped(RABBITMQ_CELL_CHARS)} characters.`;
+}
+
+export function amqp10Bodies(count: number): string {
+  return `${counted(count, "message was", "messages were")} published over AMQP 1.0; Studio shows their encoded bytes.`;
+}
+
+export function deepPayloads(count: number): string {
+  return count === 1
+    ? `1 payload nests deeper than ${RABBITMQ_PAYLOAD_JSON_DEPTH} levels and is shown as base64.`
+    : `${count} payloads nest deeper than ${RABBITMQ_PAYLOAD_JSON_DEPTH} levels and are shown as base64.`;
+}
+
+export function cutBodies(count: number): string {
+  return count === 1
+    ? `1 payload longer than ${grouped(RABBITMQ_BODY_PREFIX_BYTES)} bytes shows its first bytes only; payload_bytes has the full size.`
+    : `${count} payloads longer than ${grouped(RABBITMQ_BODY_PREFIX_BYTES)} bytes show their first bytes only; payload_bytes has the full size.`;
 }

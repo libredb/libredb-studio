@@ -532,3 +532,306 @@ describe("tree and detail sentences", () => {
     expect(E.countsLabel("12:00:05")).toBe("Counts (sampled at 12:00:05)");
   });
 });
+
+describe("read request sentences", () => {
+  test("an unknown key is named quoted, escaped and cut", () => {
+    expect(E.unknownRequestKey("offset")).toBe(
+      'Unknown key "offset" in the read request; the keys are vhost, stream, from and limit.',
+    );
+    expect(E.unknownRequestKey("a\u202eb")).toContain('"a\\u202eb"');
+  });
+
+  test("the request refusals, word for word", () => {
+    expect(E.FROM_FORMS).toBe(
+      '"from" is "first", "last", "next", {"offset": n}, {"timestamp": "<ISO-8601 with a zone>"} or {"age": "<n><unit>"}, with unit Y, M (months), D, h, m (minutes) or s.',
+    );
+    expect(E.LIMIT_RANGE).toBe('"limit" must be a whole number from 1 to 500.');
+    expect(E.NAMES_REQUIRED).toBe(
+      '"vhost" and "stream" are required strings of 1 to 255 bytes, without NUL, and not . or ..',
+    );
+    expect(E.OFFSET_NOT_WHOLE).toBe(
+      "The offset must be a non-negative whole number; above 9007199254740991 write it as a digit string.",
+    );
+    expect(E.OFFSET_TOO_LARGE).toBe("The offset must be at most 9223372036854775807.");
+    expect(E.TIMESTAMP_BEFORE_EPOCH).toBe("The timestamp must be at or after 1970-01-01T00:00:00Z.");
+    expect(E.TIMESTAMP_FORM).toContain("RabbitMQ");
+    expect(E.TIMESTAMP_FORM).not.toContain("Kafka");
+    expect(E.TIMESTAMP_DAY).toBe("The timestamp names a day of a month that does not have it.");
+    for (const sentence of [E.REQUEST_NOT_OBJECT, E.REQUEST_EMPTY])
+      expect(JSON.parse(sentence.slice(sentence.indexOf("{"), -1))).toBeDefined();
+    expect(E.REQUEST_PARAMS).toBe("Bound params are not supported: a RabbitMQ read request has no placeholders.");
+  });
+
+  test("the type check names classic and quorum, and nothing else the broker reports", () => {
+    expect(E.notAStream("jobs", "classic").message).toBe(
+      '"jobs" is a classic queue; Studio reads streams only, because reading a queue removes messages.',
+    );
+    expect(E.notAStream("jobs", "quorum").message).toContain("is a quorum queue");
+    const other = E.notAStream("jobs", "<script>");
+    expect(other).toBeInstanceOf(QueryError);
+    expect(other.message).toBe('"jobs" is not a stream; Studio reads streams only.');
+  });
+});
+
+describe("read failures before consume-ok", () => {
+  const read: E.ReadFailureContext = {
+    endpoint: "mq.example:5672",
+    vhost: "billing",
+    stream: "audit",
+    online: ["rabbit@a"],
+    members: ["rabbit@a", "rabbit@b"],
+  };
+  const close = (replyCode: number, replyText: string, scope: "connection" | "channel" = "connection") =>
+    E.amqpCloseError({ replyCode, replyText, classId: 0, methodId: 0, scope }, read);
+
+  test("every protocol fact is a fixed phrase", () => {
+    const facts: E.ProtocolFact[] = [
+      "frame-too-large",
+      "frame-end",
+      "unknown-field",
+      "body-ceiling",
+      "header-too-large",
+      "unexpected-frame",
+      "unknown-frame-type",
+      "missing-offset",
+      "malformed-frame",
+    ];
+    const sentences = facts.map((fact) => E.amqpProtocolError("mq.example:5672", fact).message);
+    expect(new Set(sentences).size).toBe(facts.length);
+    expect(sentences[0]).toBe(
+      "The server at mq.example:5672 broke the AMQP 0-9-1 protocol (a frame larger than the negotiated size); the read was stopped.",
+    );
+    expect(sentences[3]).toContain("(a message body above 512 MiB)");
+    expect(sentences[7]).toContain("(a message without its stream offset)");
+    expect(sentences[8]).toContain("(a frame whose fields do not fit its size)");
+  });
+
+  test("a 403 is the credential refusal at handshake and the read refusal on the channel", () => {
+    const auth = close(
+      403,
+      "ACCESS_REFUSED - Login was refused using authentication mechanism PLAIN. user: 'studio-reader'",
+    );
+    expect(auth).toBeInstanceOf(AuthenticationError);
+    expect(auth.message).toBe("The broker refused this username and password on the AMQP port.");
+    const channel = close(
+      403,
+      "ACCESS_REFUSED - read access to queue 'audit' in vhost 'billing' refused for user 'studio-reader'",
+      "channel",
+    );
+    expect(channel).toBeInstanceOf(QueryError);
+    expect(channel.message).toBe(
+      'This user may not read stream "audit": its read permission pattern on "billing" does not match the name.',
+    );
+    expect(channel.message).not.toContain("studio-reader");
+  });
+
+  test("a 530 by its fixed patterns, the code alone otherwise", () => {
+    expect(close(530, "NOT_ALLOWED - vhost billing not found").message).toBe(
+      'The broker has no virtual host "billing".',
+    );
+    const access = close(530, "NOT_ALLOWED - access to vhost 'billing' refused for user 'studio-reader'");
+    expect(access).toBeInstanceOf(AuthenticationError);
+    expect(access.message).toBe('This user may not open virtual host "billing" over AMQP: grant it permissions there.');
+    expect(close(530, "SOMETHING ELSE").message).toBe(
+      'Virtual host "billing" does not exist, or this user may not open it over AMQP: check both in the management UI.',
+    );
+  });
+
+  test("a 404, a 406 without a replica, a 541 and any other code", () => {
+    expect(close(404, "NOT_FOUND - no queue 'audit'", "channel").message).toContain(
+      'has no queue, stream or exchange "audit"',
+    );
+    expect(close(406, "PRECONDITION_FAILED - x-stream-offset", "channel").message).toBe(
+      '"audit" is not a stream; Studio reads streams only.',
+    );
+    expect(close(541, "INTERNAL_ERROR").message).toBe(E.conversionAtConsume("audit").message);
+    expect(close(320, "CONNECTION_FORCED - PEER-SENTINEL").message).toBe(
+      "Studio could not read the broker's answer for the stream read.",
+    );
+  });
+
+  test("the no-replica 406 picks its sentence from the type check's node lists", () => {
+    const replica =
+      "PRECONDITION_FAILED - stream queue 'audit' in vhost 'billing' does not have a running replica on the local node";
+    const at = (online: string[], members: string[]) =>
+      E.amqpCloseError(
+        { replyCode: 406, replyText: replica, classId: 60, methodId: 20, scope: "channel" },
+        { ...read, online, members },
+      ).message;
+    expect(at(["rabbit@a"], ["rabbit@a", "rabbit@b"])).toBe(
+      'The node behind AMQP port holds no running replica of stream "audit"; replicas are reported online on other nodes: point AMQP port at one of them.',
+    );
+    expect(at([], ["rabbit@a"])).toBe('No replica of stream "audit" is reported online.');
+    expect(at(["rabbit@b", "rabbit@a"], ["rabbit@a", "rabbit@b"])).toBe(
+      'The node behind AMQP port may still be starting its replica of stream "audit": read again in a few seconds.',
+    );
+  });
+
+  test("the AMQP connection sentences name the endpoint only", () => {
+    const at = "mq.example:5672";
+    expect(E.amqpUnreachable(at).message).toBe("Nothing listens on mq.example:5672: check the address and AMQP port.");
+    expect(E.amqpNotTls(at).message).toContain("does not speak TLS");
+    expect(E.amqpExpectsTls(at).message).toBe("mq.example:5672 expects TLS: turn TLS on, or use 5672.");
+    expect(E.amqpNoSession(at).message).toBe(
+      "mq.example:5672 did not start an AMQP session: check that AMQP port is 5672 (5671 with TLS).",
+    );
+    expect(E.amqpOtherProtocol(at).message).toContain("not 5552 or 15672");
+    expect(E.amqpNoPlain(at).message).toBe(
+      "The server at mq.example:5672 offers no PLAIN login, the only one Studio uses.",
+    );
+    expect(E.frameMaxTooSmall(4_096).message).toBe(
+      "The broker proposed a frame size of 4,096 bytes, below the 8,192 RabbitMQ requires.",
+    );
+    expect(E.heartbeatsMissed(at).message).toBe("mq.example:5672 stopped answering during the AMQP handshake.");
+    for (const error of [E.amqpUnreachable(at), E.amqpNoPlain(at), E.frameMaxTooSmall(1), E.heartbeatsMissed(at)])
+      expect(error).toBeInstanceOf(ConnectionError);
+  });
+
+  test("each phase timeout names its phase and is a TimeoutError", () => {
+    const at = { seconds: 30, endpoint: "mq.example:5672", stream: "audit" };
+    expect(E.readPhaseTimeout("queued", at).message).toBe("Waited 30 s for a read slot; the stream was not read.");
+    expect(E.readPhaseTimeout("connecting", at).message).toBe("No answer from mq.example:5672 within 30 s.");
+    expect(E.readPhaseTimeout("tls", at).message).toBe(
+      "mq.example:5672 accepted the connection but did not finish the TLS handshake within 30 s.",
+    );
+    expect(E.readPhaseTimeout("handshake", at).message).toBe(
+      'Waited 30 s for the broker to start the read of stream "audit"; nothing was read.',
+    );
+    expect(E.readPhaseTimeout("queued", at)).toBeInstanceOf(TimeoutError);
+    expect((E.readPhaseTimeout("queued", at) as TimeoutError).timeout).toBe(30_000);
+    expect(E.READ_SLOTS_FULL).toBe("Too many stream reads are running on this Studio server; try again when one ends.");
+    expect(E.conversionAtConsume("audit").message).toStartWith(
+      'The broker closed the connection (541 INTERNAL_ERROR) while starting the read of stream "audit"',
+    );
+  });
+});
+
+describe("stop warnings", () => {
+  const big = BigInt("9223372036854775806");
+
+  test("idle, next, budget and wire, with offsets as decimal strings", () => {
+    expect(E.IDLE_WARNING).toBe("No further message arrived within 1 s; this is not proof that the stream ends here.");
+    expect(E.NEXT_EMPTY_WARNING).toContain('A read from "next" reads only messages published after the read started');
+    expect(E.budgetWarning(big)).toBe(
+      "The result reached its 8 MiB limit before offset 9223372036854775806; read again from offset 9223372036854775806.",
+    );
+    expect(E.wireWarning(BigInt(42))).toBe(
+      "The read transferred 64 MiB before offset 42, mostly bodies longer than 262,144 bytes; read again from offset 42 with a smaller limit.",
+    );
+    expect(E.wireOversizeAtOffset(big)).toContain("read from offset 9223372036854775807 to continue past it.");
+    expect(E.wireOversizeUnknown(BigInt(7))).toBe(
+      "A message after offset 7 is larger than the 64 MiB one read may transfer, so Studio cannot show it or name its offset.",
+    );
+    expect(E.wireOversizeUnknown(null)).toStartWith("A message at the read's start is larger");
+  });
+
+  test("the last-chunk hint steps back 50 offsets, never below 0, and quotes a request that parses back", () => {
+    const hint = E.lastIdleWarning("/", "orders", 3, BigInt(120));
+    expect(hint).toBe(
+      'Read from "last" starts at the broker\'s last stored chunk, here 3 messages; for older messages read {"vhost": "/", "stream": "orders", "from": {"offset": "70"}}.',
+    );
+    expect(E.lastIdleWarning("/", "orders", 1, BigInt(10))).toContain("here 1 message; for older messages read");
+    expect(E.lastIdleWarning("/", "orders", 1, BigInt(10))).toContain('{"offset": "0"}');
+    const name = `x${"\u00e9".repeat(200)}\u202e`;
+    const quoted = E.lastIdleWarning(name, name, 2, BigInt(5));
+    const request = JSON.parse(quoted.slice(quoted.indexOf('{"vhost"'), -1)) as { vhost: string; stream: string };
+    expect(request).toMatchObject({ vhost: name, stream: name });
+  });
+
+  test("server cancel, close, deadline and cancel, with and without a row", () => {
+    expect(E.serverCancelWarning(BigInt(9))).toBe(
+      "The broker ended the read after offset 9: the stream may have been deleted.",
+    );
+    expect(E.serverCancelWarning(null)).toContain("before delivering any message");
+    expect(E.closedWarning(BigInt(9))).toBe(
+      "The broker closed the connection after offset 9; the rows read so far are shown.",
+    );
+    expect(E.closedWarning(null)).toBe("The broker closed the connection before delivering any message.");
+    expect(E.deadlineWarning(30, BigInt(9))).toBe(
+      "The read stopped at its time limit of 30 s after offset 9; rows read so far are shown; read again from offset 9.",
+    );
+    expect(E.deadlineWarning(1.1, null)).toBe(
+      "The read stopped at its time limit of 1.1 s before any message arrived.",
+    );
+    expect(E.cancelWarning(BigInt(9))).toBe("The read was stopped after offset 9; rows read so far are shown.");
+    expect(E.cancelWarning(null)).toBe("The read was stopped before any message arrived.");
+    expect(E.TIMESTAMP_START_WARNING).toStartWith("A timestamp read starts at the chunk that holds that second");
+  });
+});
+
+describe("conversion sentences", () => {
+  test("after offset N with prefetch above 1 bounds the message within P, and quotes a one-row read from N + 1", () => {
+    expect(E.conversionAfter(BigInt(41), 10, "/", "orders")).toBe(
+      'The broker closed the connection (541 INTERNAL_ERROR) after offset 41: it could not convert the next message to AMQP 0-9-1. The message is within the next 10 messages after offset 41, and messages between may not have been delivered. Read {"vhost": "/", "stream": "orders", "from": {"offset": "42"}, "limit": 1} and step one offset at a time to find it; a read that returns no row stops on it.',
+    );
+  });
+
+  test("with prefetch 1 the first sentence names the next message after N and the bound is left out", () => {
+    const one = E.conversionAfter(BigInt(41), 1, "/", "orders");
+    expect(one).toStartWith(
+      "The broker closed the connection (541 INTERNAL_ERROR) after offset 41: it could not convert the next message after offset 41 to AMQP 0-9-1. Read",
+    );
+    expect(one).not.toContain("within the next");
+  });
+
+  test("no row from a numeric start names S and P, or the first message with P = 1", () => {
+    const many = E.conversionNoRowNumeric(BigInt(100), 10, "/", "orders");
+    expect(many).toContain(
+      "it could not convert one of the first 10 messages it would deliver from offset 100 to AMQP 0-9-1.",
+    );
+    expect(many).toContain('Read {"vhost": "/", "stream": "orders", "from": {"offset": "100"}, "limit": 1}');
+    expect(E.conversionNoRowNumeric(BigInt(100), 1, "/", "orders")).toContain(
+      "it could not convert the first message it would deliver from offset 100",
+    );
+  });
+
+  test("no row from a keyword start bisects, and a last start adds the message-count hint", () => {
+    const first = E.conversionNoRowKeyword('"first"', false, "/", "orders");
+    expect(first).toContain('one of the first messages from "first" cannot be converted to AMQP 0-9-1.');
+    expect(first).toContain('Read {"vhost": "/", "stream": "orders", "from": "first", "limit": 1}');
+    expect(first).not.toContain("message count in its detail");
+    const last = E.conversionNoRowKeyword('"last"', true, "/", "orders");
+    expect(last).toContain("The stream's message count in its detail, read as an offset");
+    expect(last.indexOf("message count in its detail")).toBeLessThan(last.indexOf("Halve the range"));
+  });
+
+  test("every quoted request holds the full escaped names and parses back to them", () => {
+    const vhost = `v${"x".repeat(254)}`;
+    const stream = 'a\nb\u202ec, "d"';
+    for (const sentence of [
+      E.conversionAfter(BigInt(1), 10, vhost, stream),
+      E.conversionNoRowNumeric(BigInt(1), 10, vhost, stream),
+      E.conversionNoRowKeyword('{"age": "1h"}', false, vhost, stream),
+    ]) {
+      const start = sentence.indexOf('{"vhost"');
+      const end = sentence.indexOf('"limit": 1}', start) + '"limit": 1}'.length;
+      const request = JSON.parse(sentence.slice(start, end)) as { vhost: string; stream: string };
+      expect(request.vhost).toBe(vhost);
+      expect(request.stream).toBe(stream);
+      expect(sentence).not.toContain("\u202e");
+    }
+  });
+});
+
+describe("rendering warnings", () => {
+  test("each count is singular for one and plural otherwise", () => {
+    expect(E.timestampsOutOfRange(1)).toBe(
+      "1 timestamp is outside the range a date can show and is shown as seconds since the epoch.",
+    );
+    expect(E.timestampsOutOfRange(2)).toBe(
+      "2 timestamps are outside the range a date can show and are shown as seconds since the epoch.",
+    );
+    expect(E.cellsCut(1)).toBe("1 headers cell was cut at 65,536 characters.");
+    expect(E.cellsCut(3)).toBe("3 headers cells were cut at 65,536 characters.");
+    expect(E.amqp10Bodies(1)).toBe("1 message was published over AMQP 1.0; Studio shows their encoded bytes.");
+    expect(E.amqp10Bodies(2)).toBe("2 messages were published over AMQP 1.0; Studio shows their encoded bytes.");
+    expect(E.deepPayloads(1)).toBe("1 payload nests deeper than 64 levels and is shown as base64.");
+    expect(E.deepPayloads(5)).toBe("5 payloads nest deeper than 64 levels and are shown as base64.");
+    expect(E.cutBodies(1)).toBe(
+      "1 payload longer than 262,144 bytes shows its first bytes only; payload_bytes has the full size.",
+    );
+    expect(E.cutBodies(4)).toBe(
+      "4 payloads longer than 262,144 bytes show their first bytes only; payload_bytes has the full size.",
+    );
+  });
+});
