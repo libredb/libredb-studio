@@ -10,8 +10,13 @@ import { connectionIdentity } from "@/lib/agent/context-snapshot";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { providerCacheKey } from "@/lib/db/provider-cache-key";
 import { filterByRoles } from "@/lib/seed/connection-filter";
-import { resolveConnectionCredentials, UndefinedSeedVariableError } from "@/lib/seed/credential-resolver";
+import {
+  resolveConnectionCredentials,
+  resolveVaultCredentials,
+  UndefinedSeedVariableError,
+} from "@/lib/seed/credential-resolver";
 import { SeedConnectionSchema, type SeedConnection } from "@/lib/seed/types";
+import { resetVaultCache } from "@/lib/seed/vault-client";
 import { CONNECTION_FIELDS } from "@/lib/storage/connection-secrets";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -27,6 +32,9 @@ const seed: SeedConnection = { id: "amqp-seed", name: "Seed", type: "postgres", 
 
 afterEach(() => {
   delete process.env.AMQP_PORT_FIELD_TEST;
+  delete process.env.VAULT_ADDR;
+  delete process.env.VAULT_TOKEN;
+  resetVaultCache();
 });
 
 function thrownBy(run: () => unknown): unknown {
@@ -65,6 +73,26 @@ describe("the seed layer keeps the AMQP port", () => {
   test("a whole-value ${VAR} reference is resolved, as an address a deployment keeps out of the seed", () => {
     process.env.AMQP_PORT_FIELD_TEST = "5671";
     expect(resolveConnectionCredentials({ ...seed, amqpPort: "${AMQP_PORT_FIELD_TEST}" }).amqpPort).toBe("5671");
+  });
+
+  test("a ${vault:...} reference is resolved through the injected transport, as the other resolvable fields are", async () => {
+    process.env.VAULT_ADDR = "http://127.0.0.1:8200";
+    process.env.VAULT_TOKEN = ["ro", "ot"].join("");
+    const paths: string[] = [];
+    const resolved = await resolveVaultCredentials(
+      { ...seed, amqpPort: "${vault:secret/data/broker#amqpPort}" },
+      {
+        fetch: (async (input: RequestInfo | URL) => {
+          paths.push(new URL(String(input)).pathname);
+          return new Response(JSON.stringify({ data: { data: { amqpPort: "5671" } } }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }) as unknown as typeof fetch,
+      },
+    );
+    expect(resolved.amqpPort).toBe("5671");
+    expect(paths).toEqual(["/v1/secret/data/broker"]);
   });
 
   test("an undefined variable names the field, so a literal reference is never sent as a port", () => {
