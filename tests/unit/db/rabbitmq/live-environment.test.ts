@@ -9,9 +9,12 @@
  * file is also run on a planted copy with one fault, so a rule that cannot fail is caught here.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { ENCODERS } from "@/lib/db/providers/stream/rabbitmq/amqp/codec";
+import { patternBytes, patternSha256 } from "../../../helpers/rabbitmq-body-pattern";
 import {
   RABBITMQ_42_IMAGE,
   RABBITMQ_429_DIGEST,
@@ -20,6 +23,14 @@ import {
   RABBITMQ_SEED_IMAGE,
   liveTarget,
 } from "../../../helpers/rabbitmq-live";
+import { decodeValue, encodeMessage, encodeValue, v } from "../../../helpers/rabbitmq-test-amqp10";
+import {
+  ByteWriter,
+  contentFrames,
+  FrameSplitter,
+  methodFrame,
+  methodId,
+} from "../../../helpers/rabbitmq-test-amqp091";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -195,5 +206,128 @@ describe("the live target", () => {
     expect(() =>
       liveTarget({ ...env, RABBITMQ_LIVE_DIGEST: RABBITMQ_436_DIGEST, RABBITMQ_LIVE_AMQP_PORT: "0" }),
     ).toThrow("RABBITMQ_LIVE_AMQP_PORT must be a port number");
+  });
+});
+
+describe("the live scripts and their test-only helpers", () => {
+  const LIVE = readdirSync(path.join(ROOT, "tests/live")).filter((file) => file.startsWith("rabbitmq-"));
+  const HELPERS = readdirSync(path.join(ROOT, "tests/helpers")).filter((file) => file.startsWith("rabbitmq-"));
+
+  test("the seed, the live checks and the helpers never call docker exec", () => {
+    const sources = [...LIVE.map((file) => `tests/live/${file}`), ...HELPERS.map((file) => `tests/helpers/${file}`)];
+    expect(sources).toContain("tests/helpers/rabbitmq-test-amqp091.ts");
+    expect(sources.filter((file) => /docker["'`,\s]+exec|docker exec/.test(read(file)))).toEqual([]);
+  });
+
+  test("no module under src/ imports a test-only publisher, the basic.get control or the admin client", () => {
+    const walk = (dir: string): string[] =>
+      readdirSync(path.join(ROOT, dir), { withFileTypes: true }).flatMap((entry) =>
+        entry.isDirectory()
+          ? walk(`${dir}/${entry.name}`)
+          : /\.(ts|tsx)$/.test(entry.name)
+            ? [`${dir}/${entry.name}`]
+            : [],
+      );
+    const files = walk("src");
+    expect(files.length).toBeGreaterThan(500);
+    const forbidden =
+      /from\s+["'][^"']*(tests\/|rabbitmq-test-amqp|rabbitmq-basic-get|rabbitmq-live|rabbitmq-oracle|rabbitmq-seed)/;
+    expect(files.filter((file) => forbidden.test(read(file)))).toEqual([]);
+    expect(forbidden.test('import { basicGetOnce } from "../../tests/helpers/rabbitmq-basic-get";')).toBe(true);
+  });
+
+  test("the provider's encoder table is still the read path's thirteen frames", () => {
+    expect(Object.keys(ENCODERS).sort()).toEqual(
+      [
+        "basic.ack",
+        "basic.cancel-ok",
+        "basic.consume",
+        "basic.qos",
+        "channel.close-ok",
+        "channel.open",
+        "connection.close",
+        "connection.close-ok",
+        "connection.open",
+        "connection.start-ok",
+        "connection.tune-ok",
+        "heartbeat",
+        "protocol-header",
+      ].sort(),
+    );
+  });
+});
+
+describe("the body pattern", () => {
+  test("its digest, computed block by block, is the digest of its bytes", () => {
+    expect(patternSha256("st-orders/7", 70_000)).toBe(
+      createHash("sha256").update(patternBytes("st-orders/7", 70_000)).digest("hex"),
+    );
+    expect(patternBytes("x", 33)).toHaveLength(33);
+  });
+});
+
+describe("the test-only AMQP 0-9-1 publisher's encoding", () => {
+  test("a method frame is type, channel, size, class, method, arguments and 0xCE", () => {
+    expect([...methodFrame(1, 85, 10, (w) => w.u8(0))]).toEqual([1, 0, 1, 0, 0, 0, 5, 0, 85, 0, 10, 0, 0xce]);
+  });
+
+  test("a field table writes every tag RabbitMQ reads, and an empty, __proto__ or repeated name as given", () => {
+    const table = new ByteWriter()
+      .table([
+        ["__proto__", { t: "S", v: "p" }],
+        ["", { t: "t", v: true }],
+        ["n", { t: "l", v: BigInt("9007199254740993") }],
+        ["n", { t: "V" }],
+      ])
+      .bytes();
+    expect(Buffer.from(table).toString("hex")).toBe(
+      "00000021095f5f70726f746f5f5f530000000170007401016e6c0020000000000001016e56",
+    );
+  });
+
+  test("a body is split into frames that fit the negotiated frame size", () => {
+    const frames = contentFrames(1, { contentType: "text/plain" }, new Uint8Array(300), 136);
+    expect(frames.map((frame) => frame[0])).toEqual([2, 3, 3, 3]);
+    expect(frames.slice(1).map((frame) => frame.length - 8)).toEqual([128, 128, 44]);
+  });
+
+  test("the frame splitter returns whole frames across chunk boundaries and refuses a bad frame end", () => {
+    const bytes = methodFrame(0, 10, 41, (w) => w.shortstr(""));
+    const splitter = new FrameSplitter();
+    expect(splitter.push(bytes.subarray(0, 5))).toEqual([]);
+    const [frame] = splitter.push(bytes.subarray(5));
+    expect(methodId(frame.payload)).toEqual({ classId: 10, methodId: 41 });
+    const bad = bytes.slice();
+    bad[bad.length - 1] = 0;
+    expect(() => new FrameSplitter().push(bad)).toThrow("did not end in 0xCE");
+  });
+});
+
+describe("the test-only AMQP 1.0 sender's encoding", () => {
+  test("an amqp-value section round-trips through the decoder", () => {
+    const encoded = encodeValue(
+      v.described(0x77, v.map([v.str("a"), v.int(1)], [v.str("u"), v.uuid(new Uint8Array(16).fill(1))])),
+    );
+    const decoded = decodeValue(encoded, 0).value as { descriptor: bigint; value: unknown[] };
+    expect(decoded.descriptor).toBe(BigInt(0x77));
+    expect(decoded.value.slice(0, 2)).toEqual(["a", 1]);
+    expect(decodeValue(encoded, 0).next).toBe(encoded.length);
+  });
+
+  test("a message writes its sections in the standard's order", () => {
+    const bytes = encodeMessage({
+      messageAnnotations: [["x-a", v.str("1")]],
+      properties: { contentType: "text/plain" },
+      applicationProperties: [["p", v.str("ok")]],
+      body: { kind: "data", sections: [new Uint8Array([1]), new Uint8Array([2])] },
+      footer: [["x-f", v.str("f")]],
+    });
+    const codes: bigint[] = [];
+    for (let at = 0; at < bytes.length; ) {
+      const section = decodeValue(bytes, at);
+      codes.push((section.value as { descriptor: bigint }).descriptor);
+      at = section.next;
+    }
+    expect(codes.map(Number)).toEqual([0x72, 0x73, 0x74, 0x75, 0x75, 0x78]);
   });
 });
