@@ -1130,8 +1130,8 @@ export function connectionIdentity(connection: DatabaseConnection): string {
         // S3's `region` is deliberately absent: it is the scope a request is signed for, not the catalog; a wrong region
         // is refused rather than answered with other buckets.
         // Kubernetes' API path and TLS server name pick which cluster answers behind one host and port, so either
-        // names another catalog. Its namespace list is deliberately absent: it changes what the tree draws, not which
-        // cluster this is.
+        // names another catalog; RabbitMQ's Path prefix, the same field, picks the broker the same way. Kubernetes'
+        // namespace list is deliberately absent: it changes what the tree draws, not which cluster this is.
         connection.apiPath ?? "",
         connection.tlsServerName ?? "",
         connection.agentUser ?? "",

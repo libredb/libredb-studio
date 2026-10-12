@@ -954,7 +954,7 @@ describe("declared connection-field copy (#1085)", () => {
     // The consent box draws the type's own sentence, with no fallback, so a type that takes the field and declares no
     // hint would draw an empty paragraph under the box (InfluxDB spec R4).
     const taking = ALL_TYPES.filter((type) => takesConnectionField(type, "allowInsecureAuth"));
-    expect(taking).toEqual(["db2", "influxdb", "influxdb3", "oxia", "databend", "s3", "mqtt"]);
+    expect(taking).toEqual(["db2", "influxdb", "influxdb3", "oxia", "databend", "s3", "mqtt", "rabbitmq"]);
     for (const type of taking) {
       const hint = connectionFieldHint(getDBConfig(type), "allowInsecureAuth");
       expect({ type, hint: typeof hint, empty: hint?.length === 0 }).toEqual({ type, hint: "string", empty: false });
@@ -1114,7 +1114,19 @@ describe("declared field rules (Databend design 6.3)", () => {
       showConnectionStringToggle: false,
       hostAcceptsUri: ["http", "https"],
     });
-    expect(config.connectionFields).toEqual(["host", "port", "user", "password", "amqpPort", "apiPath"]);
+    expect(config.connectionFields).toEqual([
+      "host",
+      "port",
+      "user",
+      "password",
+      "amqpPort",
+      "apiPath",
+      "allowInsecureAuth",
+    ]);
+    expect(connectionFieldLabel(config, "allowInsecureAuth", "x")).toBe("Send the password without TLS");
+    expect(connectionFieldHint(config, "allowInsecureAuth")).toStartWith(
+      "Sends the username and password in clear text to the management API and the AMQP port",
+    );
     expect(connectionFieldLabel(config, "port", "Port")).toBe("Management port");
     expect(connectionFieldLabel(config, "amqpPort", "x")).toBe("AMQP port");
     expect(connectionFieldLabel(config, "apiPath", "x")).toBe("Path prefix");

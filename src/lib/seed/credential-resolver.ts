@@ -20,8 +20,8 @@ const RESOLVABLE_FIELDS = [
   // S3's signing region, kept beside the endpoint in a deployment's environment, so a seeded `${S3_REGION}` is
   // resolved rather than signed for literally.
   "region",
-  // Kubernetes' API path and TLS server name: parts of the address a deployment keeps beside its host, so a seeded
-  // `${RANCHER_CLUSTER_PATH}` is resolved rather than sent as a literal path.
+  // Kubernetes' API path (also RabbitMQ's Path prefix) and TLS server name: parts of the address a deployment keeps
+  // beside its host, so a seeded `${RANCHER_CLUSTER_PATH}` is resolved rather than sent as a literal path.
   "apiPath",
   "tlsServerName",
   // An AMQP port: part of the address a deployment keeps beside its host, so a seeded `${AMQP_PORT}` is resolved

@@ -3,7 +3,7 @@ import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/li
 
 /**
  * The bastion's ROUTE, length-framed inside its own field so a tunnel's four values cannot slide
- * across each other any more than the outer ten can.
+ * across each other any more than the outer fields can.
  *
  * The field set is `connectionIdentity`'s in `src/lib/agent/context-snapshot.ts`, taken deliberately
  * rather than re-derived, so this repository's two connection identities cannot drift apart: its
@@ -49,15 +49,15 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * two different servers. Stated as a limit rather than left to be discovered: it does not catch a
  * different server that answers on the same host and port.
  *
- * WHY TEN FIELDS AND NOT FIVE. The first five (`type`, `host`, `port`, `database`, `user`) were
+ * WHY MORE THAN FIVE FIELDS. The first five (`type`, `host`, `port`, `database`, `user`) were
  * the whole frame until an external review of PR #831 asked what a connection reaches when it
  * carries a URI. The criterion for a field belonging here is not that the field exists, it is
- * that changing that field ALONE, with the other nine held equal, sends the same sealed plan to
+ * that changing that field ALONE, with the others held equal, sends the same sealed plan to
  * a different server, a different database or a different namespace. Each of the four additions
  * was checked against the code that opens the connection, and the check REPRODUCED before it was
  * fixed: two connections differing only in `connectionString` answered the same digest.
  *
- * The TENTH field arrived one round later, and how it was missed is worth recording: the first
+ * `sshTunnel` arrived one round later, and how it was missed is worth recording: the first
  * audit walked `DatabaseConnection`'s fields one by one and never consulted this repository's OTHER
  * connection identity, `connectionIdentity` in `src/lib/agent/context-snapshot.ts`, which had the
  * answer written down already. Two connections differing only in `sshTunnel` answered

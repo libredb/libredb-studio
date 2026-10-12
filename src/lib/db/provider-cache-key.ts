@@ -101,7 +101,7 @@ export async function providerCacheKey(
 /**
  * A digest of every secret and secondary identity that decides WHO a connection opens as.
  *
- * Length-framed before hashing, the way `connectionFingerprint` frames its ten fields and for the
+ * Length-framed before hashing, the way `connectionFingerprint` frames its fields and for the
  * same reason: without it, two fields can slide across their boundary and answer one digest for
  * two different credential sets.
  *
@@ -139,7 +139,8 @@ export async function providerCacheKey(
  *   `src/lib/agent/context-snapshot.ts` frames it for the same reason.
  * - `allowInsecureAuth` decides whether a Db2, InfluxDB or Databend provider sends its secret with no TLS (#786,
  *   InfluxDB spec I7), whether an Oxia provider sends its token without TLS, and whether an S3 provider connects over
- *   plain HTTP at all, so a connection whose consent was taken back must not be handed a provider opened under it.
+ *   plain HTTP at all (and whether a RabbitMQ provider sends its password without TLS on both endpoints), so a
+ *   connection whose consent was taken back must not be handed a provider opened under it.
  * - `dataServers` decides which hosts receive the token (O6), so a connection whose list changed must
  *   not be handed a provider whose policy admitted other hosts.
  * - `warehouse` decides which Databend compute every statement runs on (`X-DATABEND-WAREHOUSE`), and so which

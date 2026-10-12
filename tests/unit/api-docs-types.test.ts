@@ -184,18 +184,18 @@ describe("the unions docs/API_DOCS.md inlines in VectorColumn match the publishe
 });
 
 describe("the allowInsecureAuth field names every engine that reads it", () => {
-  test("docs/API_DOCS.md and docs/SEED_CONNECTIONS.md name Db2, both InfluxDB types, Oxia, Databend, S3 and MQTT, the types whose form offers the field", () => {
+  test("docs/API_DOCS.md and docs/SEED_CONNECTIONS.md name Db2, both InfluxDB types, Oxia, Databend, S3, MQTT and RabbitMQ, the types whose form offers the field", () => {
     const readers = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => (config.connectionFields as readonly string[] | undefined)?.includes("allowInsecureAuth"))
       .map(([type]) => type);
     // The control: an eighth type taking the field fails here until both docs name it.
-    expect(readers).toEqual(["db2", "influxdb", "influxdb3", "oxia", "databend", "s3", "mqtt"]);
-    expect(API_DOCS).toContain("`allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3, MQTT)");
+    expect(readers).toEqual(["db2", "influxdb", "influxdb3", "oxia", "databend", "s3", "mqtt", "rabbitmq"]);
+    expect(API_DOCS).toContain("`allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3, MQTT, RabbitMQ)");
     expect(DATA_TYPES).toContain(
-      "allowInsecureAuth?: boolean; // Db2, both InfluxDB types, Oxia, Databend, S3 and MQTT (#786):",
+      "allowInsecureAuth?: boolean; // Db2, both InfluxDB types, Oxia, Databend, S3, MQTT and RabbitMQ (#786):",
     );
     expect(read("docs/SEED_CONNECTIONS.md")).toContain(
-      "| `connections[].allowInsecureAuth` | No | absent | Db2, both InfluxDB types, Oxia, Databend, S3 and MQTT (#786):",
+      "| `connections[].allowInsecureAuth` | No | absent | Db2, both InfluxDB types, Oxia, Databend, S3, MQTT and RabbitMQ (#786):",
     );
   });
 });

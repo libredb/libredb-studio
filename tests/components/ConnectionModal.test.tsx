@@ -304,7 +304,7 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   databend: ["host", "port", "user", "password", "database", "warehouse", "allowInsecureAuth"],
   s3: ["host", "port", "user", "password", "database", "region", "allowInsecureAuth"],
   kubernetes: ["host", "port", "password", "database", "namespaces", "apiPath", "tlsServerName"],
-  rabbitmq: ["host", "port", "user", "password", "amqpPort", "apiPath"],
+  rabbitmq: ["host", "port", "user", "password", "amqpPort", "apiPath", "allowInsecureAuth"],
 };
 /**
  * A field list one test declares on top of the mirrored table, reset before every test. The dataServers cases
@@ -513,13 +513,20 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
   },
   // Mirrored from the real entry; tests/unit/lib/db-ui-config.test.ts pins the real one.
   rabbitmq: {
-    fieldLabels: { port: "Management port", amqpPort: "AMQP port", apiPath: "Path prefix" },
+    fieldLabels: {
+      port: "Management port",
+      amqpPort: "AMQP port",
+      apiPath: "Path prefix",
+      allowInsecureAuth: "Send the password without TLS",
+    },
     fieldPlaceholders: { amqpPort: "Empty: browse only" },
     fieldHints: {
       amqpPort:
         "5672, or 5671 with TLS. Only for stream reads; leave empty to browse only. Test Connection checks the management API only; the AMQP port is checked on the first read.",
       apiPath:
         "The path the management API is served under, for management.path_prefix or a reverse proxy location, such as /rabbitmq. Empty for a direct connection.",
+      allowInsecureAuth:
+        "Sends the username and password in clear text to the management API and the AMQP port, where anyone on the path can read them. Prefer an SSL mode and the TLS ports 15671 and 5671.",
     },
     showSshTunnel: false,
   },

@@ -64,8 +64,9 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   // The S3 signing region: a region name such as us-east-1, which the server publishes in its own errors. It decides
   // how a request is signed and grants nothing; the secret access key that signs is classified above.
   region: "public",
-  // Kubernetes: a server path prefix, a list of namespace names and a certificate host name. Each says where requests
-  // go or what the tree shows; the token or client key that authenticates them is classified above or under ssl.
+  // Kubernetes: a server path prefix (also RabbitMQ's Path prefix), a list of namespace names and a certificate host
+  // name. Each says where requests go or what the tree shows; the credential that authenticates them is classified
+  // above or under ssl.
   apiPath: "public",
   namespaces: "public",
   tlsServerName: "public",

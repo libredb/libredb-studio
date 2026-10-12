@@ -941,8 +941,9 @@ export function ConnectionModal({
                   )}
 
                   {/*
-                    Kubernetes' namespace list, API path and TLS server name, each drawn where the engine takes the
-                    field, the way the warehouse is. The provider checks each and names the field when it refuses it.
+                    Kubernetes' namespace list, API path (RabbitMQ's Path prefix) and TLS server name, each drawn where
+                    the engine takes the field, the way the warehouse is. The provider checks each and names the field
+                    when it refuses it.
                   */}
                   {takesConnectionField(type, "namespaces") && (
                     <div className="space-y-2">

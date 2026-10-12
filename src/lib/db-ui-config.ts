@@ -71,9 +71,9 @@ export interface DatabaseUIConfig {
     // `fieldOptions` below declares.
     | "saslMechanism"
     // Db2 (#786), both InfluxDB types (InfluxDB spec I7), Oxia for its token, Databend for its password, and
-    // S3-compatible object storage for the connection itself: the consent to connect without TLS, drawn as a checkbox
-    // while SSL Mode is disable, under the sentence the type declares in `fieldHints`. The provider refuses a
-    // connection with no TLS unless it is set.
+    // S3-compatible object storage for the connection itself, and MQTT and RabbitMQ for their passwords: the consent
+    // to connect without TLS, drawn as a checkbox while SSL Mode is disable, under the sentence the type declares in
+    // `fieldHints`. The provider refuses a connection with no TLS unless it is set.
     | "allowInsecureAuth"
     // Oxia only (O6): a cluster's data-server addresses, one text box.
     | "dataServers"
@@ -83,8 +83,8 @@ export interface DatabaseUIConfig {
     | "location"
     // S3-compatible object storage only: the signing region, one text box.
     | "region"
-    // Kubernetes only: the server path prefix (Rancher's /k8s/clusters/<id>), the namespaces the tree lists, and the
-    // TLS server name, three text boxes.
+    // Kubernetes: the server path prefix (Rancher's /k8s/clusters/<id>), which RabbitMQ also takes as its Path prefix,
+    // and, Kubernetes only, the namespaces the tree lists and the TLS server name, three text boxes.
     | "apiPath"
     | "namespaces"
     | "tlsServerName"
@@ -331,6 +331,8 @@ export const RABBITMQ_FIELD_HINTS: Readonly<Partial<Record<ConnectionField, stri
     "5672, or 5671 with TLS. Only for stream reads; leave empty to browse only. Test Connection checks the management API only; the AMQP port is checked on the first read.",
   apiPath:
     "The path the management API is served under, for management.path_prefix or a reverse proxy location, such as /rabbitmq. Empty for a direct connection.",
+  allowInsecureAuth:
+    "Sends the username and password in clear text to the management API and the AMQP port, where anyone on the path can read them. Prefer an SSL mode and the TLS ports 15671 and 5671.",
 });
 
 export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
@@ -984,8 +986,13 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // One tunnel carries one port, and the management API and AMQP use two, so the provider refuses a tunnel.
     showSshTunnel: false,
     hostAcceptsUri: ["http", "https"],
-    connectionFields: ["host", "port", "user", "password", "amqpPort", "apiPath"],
-    fieldLabels: { port: "Management port", amqpPort: "AMQP port", apiPath: "Path prefix" },
+    connectionFields: ["host", "port", "user", "password", "amqpPort", "apiPath", "allowInsecureAuth"],
+    fieldLabels: {
+      port: "Management port",
+      amqpPort: "AMQP port",
+      apiPath: "Path prefix",
+      allowInsecureAuth: "Send the password without TLS",
+    },
     // A greyed port number would read as a default the field does not have.
     fieldPlaceholders: { amqpPort: "Empty: browse only" },
     fieldHints: RABBITMQ_FIELD_HINTS,

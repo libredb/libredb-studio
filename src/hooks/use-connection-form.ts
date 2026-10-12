@@ -96,7 +96,8 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   location: "edited",
   // S3's Region box owns it, so emptying it has to CLEAR it, as warehouse.
   region: "edited",
-  // Kubernetes' API path, Namespaces and TLS server name boxes own them, so emptying one has to CLEAR it, as warehouse.
+  // Kubernetes' API path (RabbitMQ's Path prefix), Namespaces and TLS server name boxes own them, so emptying one has
+  // to CLEAR it, as warehouse.
   apiPath: "edited",
   namespaces: "edited",
   tlsServerName: "edited",
@@ -214,7 +215,8 @@ export const CONNECTION_FORM_DEFAULTS = {
   location: "",
   // A leftover region would sign the next S3 connection's requests for the previous server's region, which it refuses.
   region: "",
-  // A leftover API path would send the next Kubernetes connection's requests to another cluster behind the same proxy.
+  // A leftover API path would send the next connection's requests to another cluster or another broker behind the same
+  // proxy.
   apiPath: "",
   // A leftover list would draw the previous cluster's namespaces for the next connection.
   namespaces: "",
@@ -546,7 +548,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
    */
   const [region, setRegion] = useState(D.region);
   /**
-   * Kubernetes' API path, Namespaces and TLS server name, as typed. Drawn only for an engine that takes each field;
+   * Kubernetes' API path (also RabbitMQ's Path prefix), Namespaces and TLS server name, as typed. Drawn only for an
+   * engine that takes each field;
    * stored as typed, because the provider checks each and names the field when it refuses it.
    */
   const [apiPath, setApiPath] = useState(D.apiPath);
