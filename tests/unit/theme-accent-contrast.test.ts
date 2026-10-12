@@ -220,6 +220,10 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
   { hue: "teal", light: "teal-800", lightAlt: "teal-950" },
   { hue: "cyan", light: "cyan-800", lightAlt: "cyan-900" },
   { hue: "fuchsia", light: "fuchsia-800", lightAlt: "fuchsia-900" },
+  // Firestore's identity: every base hue and every `-alt` step was an engine's already, so a hue joined the palette.
+  // Of the hues Tailwind ships, lime-800 clears AA in light (4.67) and leaves both closest identity pairs where
+  // they were (0.0205 light, 0.0160 dark).
+  { hue: "lime", light: "lime-800", lightAlt: "lime-900" },
 ];
 
 /**

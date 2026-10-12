@@ -783,3 +783,26 @@ export const MqttIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <path d="M6 4.5A13.5 13.5 0 0 1 19.5 18" />
   </svg>
 );
+
+/**
+ * Firestore: a mark drawn for Studio, never the Firebase or Google Cloud logo: a document with a second one behind it,
+ * the collection-of-documents shape in the plainest terms. Stroked on the house 24-unit grid like the others.
+ */
+export const FirestoreIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M8 3h6l4 4v10.5a1.5 1.5 0 0 1-1.5 1.5H8a1.5 1.5 0 0 1-1.5-1.5v-13A1.5 1.5 0 0 1 8 3z" />
+    <path d="M14 3v4h4" />
+    <path d="M9.5 11h5" />
+    <path d="M9.5 14h3" />
+    <path d="M4 7v12.5A1.5 1.5 0 0 0 5.5 21H14" />
+  </svg>
+);
