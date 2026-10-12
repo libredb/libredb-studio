@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D291, U17 · 193
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U113 · 104
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U114 · 105
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC21 · 18
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -4671,6 +4671,17 @@ So the Kubernetes `logs` grid gives LINE the width of TIME, POD and CONTAINER, a
 Found 2026-10-11 in a live test of the Kubernetes provider against a kubeadm 1.32 cluster.
 
 **Done when:** a result can name a column that takes the remaining width (or a declared weight), the grid honours it at the first render and on reset, the Kubernetes `logs` result names LINE, and a grid test pins both the hint and the unhinted default.
+
+### U114. Test Connection puts every caution after "The server reported:", on one line
+
+`cautionSentence` in `src/hooks/use-connection-form.ts` shows the cautions of a successful Test Connection as "The server reported: " followed by every caution joined by "; ".
+The prefix is true of a server's own notice (`connectWarnings()`, #1401), and false of a caution the provider computed itself, such as a probe result from `testConnectionWarnings()` or the route's own sentence when that method rejects: the dialog attributes Studio's words to the server.
+Joining every caution into one line also makes several long cautions hard to read.
+The prefix is shared by every provider, so changing it changes every provider's dialog, and it was left as it is when `testConnectionWarnings()` was added.
+
+Found 2026-10-11 while designing the Test Connection checks.
+
+**Done when:** a successful Test Connection with cautions shows a prefix that attributes them to nobody in particular (for example "Connected, with cautions:") and one caution per line, for every provider, with `tests/hooks/use-connection-form.test.ts` updated to the new sentences and a dialog test that renders two cautions on two lines.
 
 ## Dependencies
 
