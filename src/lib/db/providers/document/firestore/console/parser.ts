@@ -474,6 +474,14 @@ function wordLiteral(name: WordName): Literal {
   return { kind: "double", value: name };
 }
 
+/** The document path of one `db.doc("path")` call, or the reference-path refusal. */
+function referenceOf(expr: CallExpr, text: string): string[] {
+  arity(expr, 1, text);
+  const segments = splitText(stringOf(expr.args[0], text, PARSER_SENTENCES.referencePath), expr.args[0].at, text);
+  if (!isDocumentPath(segments)) throw firestoreQueryError(text, expr.args[0].at, PARSER_SENTENCES.referencePath);
+  return segments;
+}
+
 function callLiteral(expr: CallExpr, text: string): Literal {
   switch (callKey(expr)) {
     case "Timestamp.fromDate": {
@@ -508,12 +516,8 @@ function callLiteral(expr: CallExpr, text: string): Literal {
     case "FieldValue.vector":
       arity(expr, 1, text);
       return { kind: "vector", values: vectorNumbers(expr.args[0], text) };
-    case "db.doc": {
-      arity(expr, 1, text);
-      const segments = splitText(stringOf(expr.args[0], text, PARSER_SENTENCES.referencePath), expr.args[0].at, text);
-      if (!isDocumentPath(segments)) throw firestoreQueryError(text, expr.args[0].at, PARSER_SENTENCES.referencePath);
-      return { kind: "reference", segments };
-    }
+    case "db.doc":
+      return { kind: "reference", segments: referenceOf(expr, text) };
   }
   if (!expr.isNew && expr.name.startsWith("FieldValue.")) {
     throw firestoreQueryError(text, expr.at, PARSER_SENTENCES.writeValue(expr.name));
@@ -801,8 +805,7 @@ function fromDb(call: Call, text: string): Chain {
       const refs = call.args.map((arg) => {
         if (arg.t !== "call" || arg.isNew || arg.name !== "db.doc")
           throw fail(text, arg.at, PARSER_SENTENCES.getAllRefs);
-        const literal = literalOf(arg, text);
-        return literal.kind === "reference" ? literal.segments : [];
+        return referenceOf(arg, text);
       });
       return end({ kind: "getAll", refs }, call);
     }
