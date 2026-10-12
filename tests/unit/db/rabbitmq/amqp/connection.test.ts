@@ -353,7 +353,7 @@ describe("after consume-ok", () => {
     expect(h.closes).toEqual([{ kind: "socket-error" }]);
   });
 
-  test("close() waits for close-ok, and discards what arrives meanwhile", async () => {
+  test("close() waits for close-ok, and discards what arrives meanwhile, telling the read loop only its size", async () => {
     const h = await reading([
       { expect: { classId: 10, methodId: 50 } },
       { send: message({ deliveryTag: BigInt(9), offset: BigInt(9), body: bytesOf("late") }) },
@@ -361,7 +361,9 @@ describe("after consume-ok", () => {
     ]);
     const before = h.deliveries.length;
     await h.connection.close();
-    expect(h.deliveries.length).toBe(before);
+    const meanwhile = h.deliveries.slice(before);
+    expect(meanwhile.length).toBeGreaterThan(0);
+    expect(meanwhile.map((event) => event.type)).toEqual(meanwhile.map(() => "inbound"));
     expect(h.closes).toEqual([]);
     await until(() => h.peer.openSockets() === 0, "socket closed");
   });

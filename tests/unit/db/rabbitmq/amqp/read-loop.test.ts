@@ -272,6 +272,29 @@ describe("rows and the normal end", () => {
     await run.advance(1_000);
     expect((await run.result).stop).toEqual({ kind: "limit" });
   });
+
+  test("bytes that keep arriving while the close waits count against the wire cap, which drops the socket", async () => {
+    const run = await start({ limit: 1, answers: { "10.50": undefined } });
+    run.socket.push(messages(1));
+    await settle();
+    expect(run.settled).toBe(false);
+    const body = new Uint8Array(4 * 1024 * 1024);
+    let accepted = 0;
+    for (let index = 0; index < 40 && !run.socket.destroyed; index++) {
+      const bytes = message({ deliveryTag: BigInt(index + 2), offset: BigInt(index + 1), body });
+      for (let at = 0; at < bytes.length && !run.socket.destroyed; at += 65_536) {
+        const slice = bytes.subarray(at, at + 65_536);
+        run.socket.push(slice);
+        accepted += slice.length;
+      }
+    }
+    expect(run.socket.destroyed).toBe(true);
+    expect(accepted).toBeLessThanOrEqual(RABBITMQ_READ_WIRE_BYTES + 65_536);
+    const outcome = await run.result;
+    expect(outcome.stop).toEqual({ kind: "limit" });
+    expect(outcome.messages.map((m) => m.offset)).toEqual([BigInt(0)]);
+    expect(run.clock.pending()).toBe(0);
+  });
 });
 
 describe("hard stops", () => {

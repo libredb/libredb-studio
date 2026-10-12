@@ -259,7 +259,8 @@ export function createAmqpConnection(options: AmqpConnectionOptions): AmqpConnec
         fail({ kind: "violation", fact: event.fact });
         return;
       default:
-        if (state === "reading") options.onDelivery(event);
+        // The wire cap counts what arrives while the close waits too: deliveries keep coming until close-ok.
+        if (state === "reading" || (state === "closing" && event.type === "inbound")) options.onDelivery(event);
     }
   }
 

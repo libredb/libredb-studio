@@ -207,12 +207,17 @@ export async function readStream(input: StreamReadInput): Promise<StreamReadOutc
   }
 
   function onDelivery(event: FrameEvent): void {
+    if (event.type === "inbound") {
+      wire += event.bytes;
+      // After a graceful stop the close still reads until close-ok; the cap bounds those bytes as well.
+      if (wire > RABBITMQ_READ_WIRE_BYTES) {
+        if (stopped === null) wireStop();
+        else connection.drop();
+      }
+      return;
+    }
     if (stopped !== null) return;
     switch (event.type) {
-      case "inbound":
-        wire += event.bytes;
-        if (wire > RABBITMQ_READ_WIRE_BYTES) wireStop();
-        return;
       case "progress":
         if (!event.heartbeatOnly) armIdle();
         return;
