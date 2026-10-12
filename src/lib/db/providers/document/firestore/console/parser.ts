@@ -200,8 +200,6 @@ const OPERATORS: ReadonlySet<string> = new Set([
   "array-contains-any",
 ]);
 const INTEGER_TEXT = /^-?\d+$/;
-const INT64_MIN = BigInt("-9223372036854775808");
-const INT64_MAX = BigInt("9223372036854775807");
 const MIN_SECONDS = BigInt("-62135596800");
 const MAX_SECONDS = BigInt("253402300799");
 const THOUSAND = BigInt(1000);
@@ -465,7 +463,8 @@ function dateOf(expr: Expr, text: string): { seconds: bigint; nanos: number } {
 function numberLiteral(expr: NumberExpr, text: string): Literal {
   if (!INTEGER_TEXT.test(expr.text)) return { kind: "double", value: finiteNumber(expr, text) };
   const value = BigInt(expr.text);
-  if (value < INT64_MIN || value > INT64_MAX) throw firestoreQueryError(text, expr.at, PARSER_SENTENCES.integerRange);
+  // A Firestore integer is a signed 64-bit value: asIntN wraps anything outside that range to a different number.
+  if (BigInt.asIntN(64, value) !== value) throw firestoreQueryError(text, expr.at, PARSER_SENTENCES.integerRange);
   return { kind: "integer", text: value.toString() };
 }
 

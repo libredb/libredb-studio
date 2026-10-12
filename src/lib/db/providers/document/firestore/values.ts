@@ -80,10 +80,7 @@ const BSON_TYPES = new Map<string, FirestoreTypeName>([
 const DOUBLE_SPECIALS = new Set(["NaN", "Infinity", "-Infinity"]);
 const INTEGER_TEXT = /^-?\d+$/;
 const DOUBLE_TEXT = /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
-const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 const VECTOR_TYPE = "__vector__";
-const MIN_INT64 = BigInt("-9223372036854775808");
-const MAX_INT64 = BigInt("9223372036854775807");
 /** 0001-01-01T00:00:00Z and 9999-12-31T23:59:59Z in Unix seconds. */
 const MIN_SECONDS = BigInt("-62135596800");
 const MAX_SECONDS = BigInt("253402300799");
@@ -184,7 +181,8 @@ function decodeInteger(raw: unknown): number | string {
   if (typeof raw === "number" && Number.isSafeInteger(raw)) return raw;
   if (typeof raw !== "string" || !INTEGER_TEXT.test(raw)) throw refuse(VALUE_SENTENCES.unreadable("integerValue"));
   const integer = BigInt(raw);
-  return integer <= MAX_SAFE && integer >= -MAX_SAFE ? Number(integer) : integer.toString();
+  // Converting first is exact for every safe integer, and rounds anything past 2^53 to a value Number.isSafeInteger refuses.
+  return Number.isSafeInteger(Number(integer)) ? Number(integer) : integer.toString();
 }
 
 function decodeDouble(raw: unknown): number | string {
@@ -292,7 +290,8 @@ export function encodeLiteral(literal: Literal, target: FirestoreTarget): RestVa
 function canonicalInteger(text: string): string {
   if (!INTEGER_TEXT.test(text)) throw refuse(VALUE_SENTENCES.integerText);
   const integer = BigInt(text);
-  if (integer < MIN_INT64 || integer > MAX_INT64) throw refuse(VALUE_SENTENCES.integerRange);
+  // A Firestore integer is a signed 64-bit value: asIntN wraps anything outside that range to a different number.
+  if (BigInt.asIntN(64, integer) !== integer) throw refuse(VALUE_SENTENCES.integerRange);
   return integer.toString();
 }
 
