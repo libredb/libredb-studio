@@ -4206,6 +4206,19 @@ describe("a databend:// paste (Databend design 6.2)", () => {
     expect(plain.current.testResult).toEqual({ tone: "warning", message: databendNotAppliedNotice(["role"]) });
   });
 
+  test.each([
+    ["databend://u:p@host/db?password=SENTINELA&SENTINELB", "Not applied: 2 parameters."],
+    ["databend://u:p@host/db?warehouse=w&SENTINELBARETOKEN", "Not applied: 1 parameter."],
+    ["databend://u:p@host/db?role=r&enable_dphyp=1", "Not applied: role and 1 other parameter."],
+  ])("a paste of %s shows no text of a value in its warning, and counts what it cannot name", (text, lead) => {
+    const result = paste(text);
+    expect(result.current.testResult).toEqual({
+      tone: "warning",
+      message: `${lead} Studio's Databend connection takes host, port, user, password, database, warehouse and TLS; the other fields were filled in.`,
+    });
+    expect(result.current.testResult!.message).not.toContain("SENTINEL");
+  });
+
   test("a tls_ca_file says Studio reads no CA path and where the certificate goes, after the names not applied", () => {
     const file = paste("databend://u:p@host/db?tls_ca_file=/etc/databend/ca.pem&role=r&sslmode=require");
     expect(file.current.sslMode).toBe("verify-system");

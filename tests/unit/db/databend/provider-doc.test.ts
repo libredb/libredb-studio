@@ -702,8 +702,13 @@ describe("docs/providers/databend.md quotes what the code says", () => {
       "`tls_ca_file` is not applied, nor is an `sslmode` other than `disable`, `require` and `enable`: each gets its caution above.",
     );
     expect(prose).toContain(
-      "Any other parameter, `warehouse` and the sign-in ones refused above aside, is not applied either: it is named in a warning, never valued, and the other fields are filled in:",
+      "Any other parameter, `warehouse` and the sign-in ones refused above aside, is not applied either, and the other fields are filled in.",
     );
+    expect(prose).toContain(
+      "A parameter BendSQL reads by name, such as `role` or `tenant`, is named in a warning and never valued; any other, a session setting or a text with no `name=`, is only counted, since an unencoded `&` inside a value makes the rest of the value read as a name:",
+    );
+    expect(prose).not.toContain("it is named in a warning, never valued");
+    expect(prose).toContain(`> ${databendNotAppliedNotice(["role"], 1)}`);
     expect(prose).not.toContain("A parameter other than `warehouse`, `sslmode` and `tls_ca_file` is not applied");
     const read = (query: string) => parseConnectionString(`databend://root@localhost:8000/db?${query}`);
     expect(read("tls_ca_file=/ca.pem")?.cautions).toEqual([DATABEND_DSN_CAUTIONS.caFile]);
@@ -711,6 +716,8 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     for (const mode of ["disable", "require", "enable"]) expect(read(`sslmode=${mode}`)?.cautions).toBeUndefined();
     expect(read("tls_ca_file=/ca.pem&role=r&warehouse=w")?.ignoredParameters).toEqual(["role"]);
     expect(read("access_token=t&role=r")?.refusal).toBe(DATABEND_DSN_REFUSALS.signIn);
+    expect(read("role=r&enable_dphyp=1")?.ignoredParameters).toEqual(["role"]);
+    expect(read("role=r&enable_dphyp=1")?.unnamedParameters).toBe(1);
   });
 
   test("a paste past an unread sslmode gets the scheme's port and unticks the cleartext consent, as 4.1 and 4.3 say", () => {

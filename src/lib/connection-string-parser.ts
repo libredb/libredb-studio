@@ -95,6 +95,11 @@ export interface ParsedConnection {
    */
   ignoredParameters?: string[];
   /**
+   * How many other query parameters the paste did not apply, counted and never named: a parameter that is not one of
+   * the driver's own names, or a text with no `name=`, can be the rest of a value an unencoded `&` split off.
+   */
+  unnamedParameters?: number;
+  /**
    * Why the paste was refused as a whole, in the sentence the form shows. When set, nothing but `type` is, and the
    * form applies nothing, its type included.
    */
@@ -192,9 +197,14 @@ export const DATABEND_DSN_CAUTIONS = Object.freeze({
     `sslmode=${mode} is not a Databend DSN mode (BendSQL reads disable, require and enable), so SSL mode was left as it was: choose one under SSL / TLS.`,
 });
 
-/** The warning a Databend paste shows for the parameters it did not apply, named and never valued. */
-export function databendNotAppliedNotice(names: readonly string[]): string {
-  return `Not applied: ${names.join(", ")}. Studio's Databend connection takes host, port, user, password, database, warehouse and TLS; the other fields were filled in.`;
+/**
+ * The warning a Databend paste shows for the parameters it did not apply: BendSQL's own names, never valued, and a
+ * count of the rest, which are never named.
+ */
+export function databendNotAppliedNotice(names: readonly string[], unnamed = 0): string {
+  const counted = `${unnamed} ${names.length > 0 ? "other " : ""}parameter${unnamed === 1 ? "" : "s"}`;
+  const listed = [names.join(", "), unnamed > 0 ? counted : ""].filter(Boolean).join(" and ");
+  return `Not applied: ${listed}. Studio's Databend connection takes host, port, user, password, database, warehouse and TLS; the other fields were filled in.`;
 }
 
 /**
@@ -766,6 +776,50 @@ function databendRefusal(key: keyof typeof DATABEND_DSN_REFUSALS): ParsedConnect
 /** The DSN parameters a paste reads, each into a field or a caution; every other name is reported as not applied. */
 const DATABEND_APPLIED_PARAMETERS = new Set(["warehouse", "sslmode", "tls_ca_file"]);
 
+/**
+ * The other parameters BendSQL reads by name (`core/src/client.rs`, `from_dsn`), which a paste names when it does not
+ * apply them. BendSQL sends any other name as a session setting; a paste counts those and never names them, since an
+ * unencoded `&` inside a value makes the rest of the value read as a name.
+ */
+const DATABEND_NAMED_PARAMETERS = new Set([
+  "wait_time_secs",
+  "max_rows_in_buffer",
+  "max_rows_per_page",
+  "connect_timeout",
+  "page_request_timeout_secs",
+  "presign",
+  "tenant",
+  "role",
+  "login",
+  "session_token",
+  "body_format",
+  "query_result_format",
+  "retry_count",
+  "retry_delay_secs",
+]);
+
+/**
+ * The query parameters a Databend paste did not apply: BendSQL's own names, each once in the order pasted, and how
+ * many others there are. A text with no `=` is counted even when it spells a name, since it can be a value's tail.
+ */
+function databendIgnoredParameters(search: string): { names: string[]; unnamed: number } {
+  const names = new Set<string>();
+  const unnamed = new Set<string>();
+  for (const pair of search.slice(1).split("&")) {
+    if (pair === "") continue;
+    const equals = pair.indexOf("=");
+    if (equals < 0) {
+      unnamed.add(pair);
+      continue;
+    }
+    const name = [...new URLSearchParams(pair).keys()][0];
+    if (DATABEND_APPLIED_PARAMETERS.has(name)) continue;
+    if (DATABEND_NAMED_PARAMETERS.has(name)) names.add(name);
+    else unnamed.add(name);
+  }
+  return { names: [...names], unnamed: unnamed.size };
+}
+
 /** The `sslmode` values BendSQL reads; any other refuses the DSN there. */
 const DATABEND_SSLMODES = new Set(["disable", "require", "enable"]);
 
@@ -831,7 +885,7 @@ function parseDatabendDSN(uri: string): ParsedConnection | null {
   if (url.searchParams.has("tls_ca_file")) cautions.push(DATABEND_DSN_CAUTIONS.caFile);
 
   const warehouse = url.searchParams.getAll("warehouse").at(-1) || databendCloudHostWarehouse(url.hostname);
-  const ignored = names.filter((name) => !DATABEND_APPLIED_PARAMETERS.has(name));
+  const ignored = databendIgnoredParameters(url.search);
   // An sslmode BendSQL does not read leaves the mode unset, so the port is the scheme's: 80 for +http, else 443.
   const plain = tls.sslMode === undefined ? plainScheme : tls.sslMode === "disable";
   return {
@@ -846,7 +900,8 @@ function parseDatabendDSN(uri: string): ParsedConnection | null {
     allowInsecureAuth: false,
     ...(notice ? { notice } : {}),
     ...(cautions.length > 0 ? { cautions } : {}),
-    ...(ignored.length > 0 ? { ignoredParameters: ignored } : {}),
+    ...(ignored.names.length > 0 ? { ignoredParameters: ignored.names } : {}),
+    ...(ignored.unnamed > 0 ? { unnamedParameters: ignored.unnamed } : {}),
   };
 }
 

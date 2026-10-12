@@ -1498,15 +1498,58 @@ describe("parseConnectionString: databend:// DSNs", () => {
     expect(parseConnectionString("databend+http://u:p@host:8000/db?sslmode=verify-full")!.port).toBe("8000");
   });
 
-  test("other parameters are named once each, in order, and never valued", () => {
+  test("BendSQL's own parameters are named once each, in order, and never valued; any other is counted", () => {
     const result = parseConnectionString(
       "databend://u:p@host/db?role=analyst_secret&enable_dphyp=1&warehouse=w1&tenant=t9&role=again&sslmode=disable",
     )!;
-    expect(result.ignoredParameters).toEqual(["role", "enable_dphyp", "tenant"]);
+    expect(result.ignoredParameters).toEqual(["role", "tenant"]);
+    expect(result.unnamedParameters).toBe(1);
     expect(result.warehouse).toBe("w1");
     const text = JSON.stringify(result);
-    for (const value of ["analyst_secret", "again", "t9"]) expect(text).not.toContain(value);
-    expect(parseConnectionString("databend://u:p@host/db?warehouse=w1")!.ignoredParameters).toBeUndefined();
+    for (const value of ["analyst_secret", "again", "t9", "enable_dphyp"]) expect(text).not.toContain(value);
+    const plain = parseConnectionString("databend://u:p@host/db?warehouse=w1")!;
+    expect(plain.ignoredParameters).toBeUndefined();
+    expect(plain.unnamedParameters).toBeUndefined();
+  });
+
+  test.each([
+    // An unencoded & inside the password parameter's value: the rest of the value reads as a name of its own.
+    ["password=SENTINELA&SENTINELB", 2],
+    // A bare token, with no name=, is no parameter BendSQL names.
+    ["warehouse=w&SENTINELBARETOKEN", 1],
+    // A recognised name with no =, which can be the tail of a value split at an &, is counted too.
+    ["role", 1],
+    ["x=1&x=2&&SENTINELC", 2],
+  ])("a paste of %s names nothing from it and counts %d", (query, count) => {
+    const result = parseConnectionString(`databend://u:p@host/db?${query}`)!;
+    expect(result.refusal).toBeUndefined();
+    expect(result.ignoredParameters).toBeUndefined();
+    expect(result.unnamedParameters).toBe(count);
+    expect(JSON.stringify(result)).not.toContain("SENTINEL");
+  });
+
+  test("every parameter BendSQL reads by name and Studio does not apply is named", () => {
+    const names = [
+      "wait_time_secs",
+      "max_rows_in_buffer",
+      "max_rows_per_page",
+      "connect_timeout",
+      "page_request_timeout_secs",
+      "presign",
+      "tenant",
+      "role",
+      "login",
+      "session_token",
+      "body_format",
+      "query_result_format",
+      "retry_count",
+      "retry_delay_secs",
+    ];
+    const result = parseConnectionString(`databend://u:p@host/db?${names.map((name) => `${name}=1`).join("&")}`)!;
+    expect(result.ignoredParameters).toEqual(names);
+    expect(result.unnamedParameters).toBeUndefined();
+    // Percent-encoded, a name reads as the URL parser decodes it.
+    expect(parseConnectionString("databend://u:p@host/db?rol%65=r")!.ignoredParameters).toEqual(["role"]);
   });
 
   test("a repeated applied parameter takes its last value, as BendSQL's query_pairs loop does", () => {
@@ -1534,10 +1577,16 @@ describe("parseConnectionString: databend:// DSNs", () => {
     expect([colon.user, colon.password, colon.host]).toEqual(["u", "a:b", "host"]);
   });
 
-  test("the not-applied notice names the parameters and what the connection takes", () => {
-    expect(databendNotAppliedNotice(["role", "enable_dphyp"])).toBe(
-      "Not applied: role, enable_dphyp. Studio's Databend connection takes host, port, user, password, database, warehouse and TLS; the other fields were filled in.",
+  test("the not-applied notice names the parameters, counts the rest and says what the connection takes", () => {
+    const takes =
+      "Studio's Databend connection takes host, port, user, password, database, warehouse and TLS; the other fields were filled in.";
+    expect(databendNotAppliedNotice(["role", "tenant"])).toBe(`Not applied: role, tenant. ${takes}`);
+    expect(databendNotAppliedNotice(["role"], 1)).toBe(`Not applied: role and 1 other parameter. ${takes}`);
+    expect(databendNotAppliedNotice(["role", "tenant"], 3)).toBe(
+      `Not applied: role, tenant and 3 other parameters. ${takes}`,
     );
+    expect(databendNotAppliedNotice([], 1)).toBe(`Not applied: 1 parameter. ${takes}`);
+    expect(databendNotAppliedNotice([], 2)).toBe(`Not applied: 2 parameters. ${takes}`);
   });
 
   test("an empty warehouse= fills nothing", () => {

@@ -1350,11 +1350,14 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       });
       return;
     }
-    // A Databend paste: the parameters it did not apply, named and never valued, then the TLS parameters it read and
-    // did not apply in Databend's own words, then a notice on what an applied one means.
-    if (parsed.ignoredParameters || parsed.cautions) {
+    // A Databend paste: the parameters it did not apply, BendSQL's own named and never valued and the rest counted,
+    // then the TLS parameters it read and did not apply in Databend's own words, then a notice on what an applied one
+    // means.
+    if (parsed.ignoredParameters || parsed.unnamedParameters || parsed.cautions) {
       const message = [
-        parsed.ignoredParameters ? databendNotAppliedNotice(parsed.ignoredParameters) : undefined,
+        parsed.ignoredParameters || parsed.unnamedParameters
+          ? databendNotAppliedNotice(parsed.ignoredParameters ?? [], parsed.unnamedParameters)
+          : undefined,
         ...(parsed.cautions ?? []),
         parsed.notice,
       ].filter(Boolean);
