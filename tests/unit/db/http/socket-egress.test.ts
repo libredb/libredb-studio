@@ -94,15 +94,20 @@ describe("a literal is checked before any lookup is chosen", () => {
     expect(refusal(() => socketEgress("", { refusesLinkLocal: true })).message).toBe(BLOCKED_HOST);
   });
 
-  test.each(["169.254.169.254", "fe80::1", "[fe80::1]", "fe80::1%eth0", "[::ffff:169.254.169.254]", "[fd00:ec2::254]"])(
-    "flag off, refusesLinkLocal: %s is refused with the link-local sentence",
-    (host) => {
-      flag("off");
-      const error = refusal(() => socketEgress(host, { refusesLinkLocal: true }));
-      expect(error).toBeInstanceOf(DatabaseConfigError);
-      expect(error.message).toBe(LINK_LOCAL_HOST);
-    },
-  );
+  test.each([
+    "169.254.169.254",
+    "fe80::1",
+    "[fe80::1]",
+    "fe80::1%eth0",
+    "[fe80::1%eth0]",
+    "[::ffff:169.254.169.254]",
+    "[fd00:ec2::254]",
+  ])("flag off, refusesLinkLocal: %s is refused with the link-local sentence", (host) => {
+    flag("off");
+    const error = refusal(() => socketEgress(host, { refusesLinkLocal: true }));
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error.message).toBe(LINK_LOCAL_HOST);
+  });
 
   test("flag off, without refusesLinkLocal: a link-local literal gets the runtime's own lookup, as today", () => {
     flag("off");
