@@ -31,6 +31,7 @@ import {
   methodFrame,
   methodId,
 } from "../../../helpers/rabbitmq-test-amqp091";
+import { fixturePasswords, RABBITMQ_SEED_TABLE, readerPattern } from "../../../live/rabbitmq-seed";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -329,5 +330,47 @@ describe("the test-only AMQP 1.0 sender's encoding", () => {
       at = section.next;
     }
     expect(codes.map(Number)).toEqual([0x72, 0x73, 0x74, 0x75, 0x75, 0x78]);
+  });
+});
+
+describe("the seed table", () => {
+  test("--env prints the two fixture passwords as export lines, built from parts, and seeds nothing", () => {
+    const { admin, fixture } = fixturePasswords();
+    expect(admin).not.toBe(fixture);
+    const run = Bun.spawnSync([process.execPath, "tests/live/rabbitmq-seed.ts", "--env"], { cwd: ROOT, env: {} });
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout.toString()).toBe(
+      `export RABBITMQ_LIVE_ADMIN_PASSWORD=${admin}\nexport RABBITMQ_LIVE_FIXTURE_PASSWORD=${fixture}\n`,
+    );
+  });
+
+  test("every queue is named once per vhost", () => {
+    const keys = RABBITMQ_SEED_TABLE.map((queue) => `${queue.vhost}/${queue.name}`);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  test("studio-reader's pattern names every stream it may read, and no classic or quorum queue and not st-restricted", () => {
+    for (const vhost of ["/", "billing"]) {
+      const pattern = new RegExp(readerPattern(vhost));
+      for (const queue of RABBITMQ_SEED_TABLE.filter((q) => q.vhost === vhost)) {
+        expect({ name: queue.name, matched: pattern.test(queue.name) }).toEqual({
+          name: queue.name,
+          matched: queue.readerMay,
+        });
+      }
+    }
+    expect(RABBITMQ_SEED_TABLE.filter((queue) => queue.readerMay && queue.type !== "stream")).toEqual([]);
+    expect(new RegExp(readerPattern("/")).test("st-orders-v1")).toBe(false);
+  });
+
+  test("a large body is a pattern labelled by its stream and offset", () => {
+    const orders = RABBITMQ_SEED_TABLE.find((queue) => queue.name === "st-orders");
+    const patterns = (orders?.messages ?? []).flatMap((message, offset) =>
+      message.via === "amqp091" && message.body.kind === "pattern" ? [{ offset, body: message.body }] : [],
+    );
+    expect(patterns.map(({ offset, body }) => [offset, body.label, body.size])).toEqual([
+      [7, "st-orders/7", 1_048_576],
+      [8, "st-orders/8", 15_728_640],
+    ]);
   });
 });
