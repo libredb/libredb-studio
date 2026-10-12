@@ -410,10 +410,20 @@ jobs:
         # pg cannot show them. Superuser, because one case deletes an account with foreign keys off.
         run: |
           docker run -d --rm --name passkey-contract-pg -e POSTGRES_PASSWORD=contract -p 127.0.0.1:55432:5432 postgres:17
+          # The image's first start runs a temporary server on its Unix socket only, stops it and starts the real
+          # one, so a psql over the socket can answer from the temporary server and the contract's TCP connection
+          # then lands in the restart ("Connection terminated unexpectedly"). Wait on TCP, where only the real
+          # server listens, and stop here if it never does.
+          ready=""
           for i in $(seq 1 60); do
-            docker exec passkey-contract-pg psql -U postgres -tAc "select 1" > /dev/null 2>&1 && break
+            docker exec passkey-contract-pg pg_isready -q -h 127.0.0.1 -p 5432 -U postgres && { ready=yes; break; }
             sleep 1
           done
+          if [ -z "$ready" ]; then
+            echo "PostgreSQL accepted no TCP connection within 60 s"
+            docker logs passkey-contract-pg
+            exit 1
+          fi
           bun tests/live/passkey-store-postgres.ts
           docker rm -f passkey-contract-pg
         env:
