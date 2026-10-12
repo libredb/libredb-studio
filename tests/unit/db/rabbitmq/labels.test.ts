@@ -51,6 +51,14 @@ describe("statementLanguage", () => {
     expect(sentence).toContain("the queue and exchange names in the inventory are not readable");
   });
 
+  test("says how an inventory name splits into the vhost and stream keys", () => {
+    // The inventory joins the path with a dot, so the stream st-orders in "/" reaches the model as "/.st-orders"; two
+    // plan runs copied that name into "stream" whole or as ".st-orders" when no sentence said where it splits.
+    expect(sentence).toContain(
+      'an inventory entry is named by its virtual host, a dot and its own name, and a plan run reads only the virtual host "/", so the entry "/.orders" is the stream "orders", written {"vhost": "/", "stream": "orders"}; "stream" never carries the "/." prefix or any part of it',
+    );
+  });
+
   test("lists every start form, months against minutes", () => {
     for (const form of ['"first"', '"last"', '"next"', '{"offset": <n>}', '{"timestamp": "<ISO-8601 with a zone>"}'])
       expect(sentence).toContain(form);

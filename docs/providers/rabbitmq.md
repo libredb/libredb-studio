@@ -245,6 +245,7 @@ No node name and no other principal's name is shown.
 - A model receives virtual host, stream, queue and exchange names, kinds, the fixed stream columns, counts and the request language, each name inside the untrusted-content fence in plan mode and MCP.
 - A model never receives a message cell, a consumer tag, a peer address, another user's name, a node name or a health-check body.
 - Plan mode walks only `/`, at most 7 management GETs at any vhost count, and tells the model how many virtual hosts it did not read; it drafts a read request and never runs it.
+- The plan-mode inventory names each object by its virtual host, a dot and its name, so the stream `orders` reaches the model as `/.orders`; the request language it is given says that `"stream"` takes only the part after `/.`.
 - MCP `inspect_schema` makes 2 GETs per call (`/api/vhosts` and the chosen virtual host's Streams page), plus `connect()`'s 2 on a fresh instance; above 500 streams it sees the Streams folder's 500 names as the whole list, and a stream outside them is reached only by a typed read.
 - MCP matches a named virtual host case-insensitively, so of `Billing` and `billing` a call naming `billing` reads the one listed first.
 - There is no agent execution and no MCP `run_read_query` for RabbitMQ.
