@@ -7,6 +7,7 @@
  */
 import { type AddressInfo, createServer, type Socket } from "node:net";
 import { createServer as createTlsServer } from "node:tls";
+import type { AmqpSocket } from "@/lib/db/providers/stream/rabbitmq/amqp/dial";
 import type { BasicProperties, FieldEntry, FieldValue } from "@/lib/db/providers/stream/rabbitmq/amqp/field-table";
 import type { RabbitMQClock } from "@/lib/db/providers/stream/rabbitmq/limits";
 
@@ -538,3 +539,90 @@ export function createManualClock(start = 0): ManualClock {
     pending: () => timers.size,
   };
 }
+
+/**
+ * An AmqpSocket with no network under it, for tests on the injected clock: the test pushes server bytes with `push`,
+ * which reaches the client synchronously, and every frame the client writes is parsed into `received`. A `respond`
+ * function may answer a client frame; its bytes arrive in a microtask, never inside the client's own write.
+ */
+export interface MemorySocket extends AmqpSocket {
+  readonly received: readonly ReceivedFrame[];
+  push(bytes: Uint8Array): void;
+  /** The peer ends the connection: `end` then `close`. */
+  end(): void;
+}
+
+export function createMemorySocket(respond?: (frame: ReceivedFrame) => Uint8Array | undefined): MemorySocket {
+  const listeners = new Map<string, ((...args: never[]) => void)[]>();
+  const received: ReceivedFrame[] = [];
+  const emit = (event: string, ...args: unknown[]): void => {
+    for (const listener of listeners.get(event) ?? []) (listener as (...values: unknown[]) => void)(...args);
+  };
+  const parse = clientFrames((frame) => {
+    received.push(frame);
+    const answer = respond?.(frame);
+    if (answer !== undefined) queueMicrotask(() => socket.push(answer));
+  });
+  let destroyed = false;
+  const socket: MemorySocket = {
+    received,
+    get destroyed() {
+      return destroyed;
+    },
+    write(data) {
+      if (!destroyed) parse(data);
+      return true;
+    },
+    on(event: string, listener: (...args: never[]) => void) {
+      listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+      return socket;
+    },
+    pause: () => socket,
+    resume: () => socket,
+    destroy() {
+      if (destroyed) return socket;
+      destroyed = true;
+      queueMicrotask(() => emit("close"));
+      return socket;
+    },
+    push(bytes) {
+      if (!destroyed) emit("data", bytes);
+    },
+    end() {
+      if (destroyed) return;
+      emit("end");
+      socket.destroy();
+    },
+  } as MemorySocket;
+  return socket;
+}
+
+/**
+ * A broker's answers to a client's handshake and close, frame by frame, with `overrides` keyed "class.method" (or
+ * "header" for the protocol header) replacing or removing (undefined) an answer.
+ */
+export function brokerAnswers(
+  overrides: Readonly<Record<string, Uint8Array | undefined>> = {},
+  tune: Parameters<typeof serverFrames.tune>[0] = {},
+): (frame: ReceivedFrame) => Uint8Array | undefined {
+  const answers: Record<string, Uint8Array | undefined> = {
+    header: serverFrames.connectionStart(),
+    "10.11": serverFrames.tune(tune),
+    "10.40": serverFrames.openOk(),
+    "20.10": serverFrames.channelOpenOk(),
+    "60.10": serverFrames.qosOk(),
+    "60.20": serverFrames.consumeOk(),
+    "10.50": serverFrames.closeOk(),
+    ...overrides,
+  };
+  return (frame) => answers[frame.type === 0 ? "header" : `${frame.classId}.${frame.methodId}`];
+}
+
+/** "header", "heartbeat", or "class.method", per frame. */
+export const frameNames = (frames: readonly ReceivedFrame[]): string[] =>
+  frames.map((frame) =>
+    frame.type === 0 ? "header" : frame.type === 8 ? "heartbeat" : `${frame.classId}.${frame.methodId}`,
+  );
+
+/** Lets queued microtasks and one macrotask run, so pushed answers and promise continuations settle. */
+export const settle = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));

@@ -10,9 +10,11 @@ import { createServer as createTlsServer, type TLSSocket } from "node:tls";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { BLOCKED_HOST, LINK_LOCAL_HOST } from "@/lib/db/http/egress-policy";
 import { type AmqpSocket, DialAborted, DialFailed, dialAmqp } from "@/lib/db/providers/stream/rabbitmq/amqp/dial";
+import { readStream } from "@/lib/db/providers/stream/rabbitmq/amqp/read-loop";
 import type { AmqpEndpoint } from "@/lib/db/providers/stream/rabbitmq/connection-options";
+import { tlsClientCertificateRefused } from "@/lib/db/providers/stream/rabbitmq/errors";
 import { makeCertificates, type TransportCertificates } from "../../../../helpers/node-transport-fixtures";
-import { closedPort, until } from "../../../../helpers/rabbitmq-fake-peer";
+import { closedPort, createManualClock, until } from "../../../../helpers/rabbitmq-fake-peer";
 
 interface Counted {
   readonly server: Server;
@@ -219,6 +221,29 @@ describe("TLS dials", () => {
     );
     expect(error).toBeInstanceOf(DialFailed);
     expect((error as DialFailed).kind).toBe("client-certificate");
+    expect(refusing.accepted).toBe(1);
+  });
+
+  test("a TLS 1.3 broker refusing the client certificate after the handshake ends the read with that sentence", async () => {
+    const refusing = await listen({ ...certificates.local, clientCa: certificates.ca, refuse: "TLSv1.3" });
+    const at = endpoint("localhost", refusing.port, tlsTo("localhost", certificates.ca));
+    const error = await readStream({
+      endpoint: at,
+      vhost: "/",
+      stream: "st-orders",
+      from: { kind: "keyword", value: "last" },
+      limit: 1,
+      signal: new AbortController().signal,
+      deadlineSeconds: 30,
+      replicas: { online: [], members: [] },
+      dial: dialAmqp,
+      clock: createManualClock(),
+      studioVersion: null,
+    }).then(
+      () => new Error("the read succeeded"),
+      (rejected: Error) => rejected,
+    );
+    expect(error.message).toBe(tlsClientCertificateRefused(at.display).message);
     expect(refusing.accepted).toBe(1);
   });
 
