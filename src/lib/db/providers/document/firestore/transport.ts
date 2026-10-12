@@ -16,6 +16,7 @@
 import { DatabaseError, QueryError } from "@/lib/db/errors";
 import { endpointUrl, type HttpOrigin, httpOrigin } from "@/lib/db/http/endpoint";
 import { type NodeResponse, type NodeTransport, TransportError } from "@/lib/db/http/node-transport";
+import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
 import {
   DEFAULT_DATABASE_ID,
   FIRESTORE_API_ORIGIN,
@@ -31,7 +32,6 @@ import { createTokenSource } from "./google-token-source";
 import { databaseName, type FirestoreTarget } from "./names";
 import { buildRequest, type FirestoreRequest } from "./requests";
 import type { FirestoreSeams } from "./seams";
-import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
 
 export interface SendOptions {
   readonly signal: AbortSignal;

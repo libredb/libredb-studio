@@ -12,7 +12,8 @@
  * Every request carries the context its failure is mapped under: the session's credential kind and the credential's
  * secret forms (`CallBase`, built once per session by the provider, so a Google message quoting the credential is
  * withheld), the connection's target, and the surface that asked, so an answer past its cap is worded for it.
- */ import { QueryError } from "@/lib/db/errors";
+ */
+import { QueryError } from "@/lib/db/errors";
 import { applySourceBound, callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type {
   DatabaseObject,

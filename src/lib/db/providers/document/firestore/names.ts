@@ -128,7 +128,8 @@ export function encodeSegments(segments: readonly string[]): string {
 
 /**
  * UTF-8 byte order without encoding: for well-formed text it is code point order, so the comparison walks code
- * points. Answers -1, 0 or 1.
+ * points. Answers -1, 0 or 1. Callers pass ids that already passed idRefusal; for a lone surrogate the order is not
+ * Buffer.compare order.
  */
 export function compareUtf8(a: string, b: string): number {
   let i = 0;

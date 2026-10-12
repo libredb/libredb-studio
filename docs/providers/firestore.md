@@ -335,6 +335,7 @@ Activating a collection runs the generated preview, `db.collection("users").limi
 ### 6.2 Field sampling
 
 Expanding a collection samples 20 documents in `__name__` order, 20 billed reads, and shows dotted field paths to depth 3, at most 200, each with its type list and marked as sampled.
+Past 200, the cut keeps the first 200 by the sorted column names, `new FieldPath(...)` names included, so a nested field written in that form sorts under `n` and not under its first segment.
 Sampled fields appear only when a collection is expanded, because sampling bills a read per document, and they never reach a model or the MCP surface.
 The inventory and plan mode read no document: each collection carries `__name__` only.
 

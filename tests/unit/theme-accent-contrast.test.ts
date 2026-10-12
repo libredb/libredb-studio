@@ -260,6 +260,9 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
  * `amber-alt` left them - 0.0205 in light (orange vs amber-alt) against 0.0160 in dark (rose-alt vs red-alt) - so the
  * "pink-alt made the light set tighter than the dark one" reading recorded for Databend above no longer holds: that
  * was measured before Kubernetes's `amber-alt` moved the light minimum.
+ * `lime` joined with Firestore as a base hue in HUES, not as an `-alt` here: every base hue and every `-alt` step was
+ * already an engine's, and of the hues Tailwind ships, lime-800 clears AA in light (4.67) and leaves both closest
+ * identity pairs where they were (0.0205 in light, 0.0160 in dark).
  */
 const IDENTITY_ALTS = [
   "blue",
