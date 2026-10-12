@@ -32,7 +32,7 @@ const FINGERPRINT = /^[0-9a-f]{40}:[^:\s]+:[a-z0-9-]+:[0-9]+$/;
 const contentLines = lines.map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
 
 describe(".gitleaksignore", () => {
-  test("has fingerprint entries - 24 from the sweep, plus #708's ApiKey fixture, plus 2 added since, plus the S3 squash commit's 16", () => {
+  test("has fingerprint entries - 24 from the sweep, plus #708's ApiKey fixture, plus 2 added since, plus the S3 squash commit's 16, plus the Firestore branch's 2", () => {
     // 24 came out of the 2026-08-09 full-history sweep. The 3 added since are
     // #708's fabricated ApiKey-header test pair, plus one placeholder JWT
     // secret written twice into the release runbook's smoke phase in 2ff08e3a,
@@ -51,10 +51,14 @@ describe(".gitleaksignore", () => {
     // Silo capture sets re-recorded under the reworded blocked-host sentence;
     // they name a branch commit and move onto the squash commit once it lands.
     //
+    // The Firestore branch's commit 6ec99b39 adds 2: an error sentence that quoted the PEM header above the header
+    // constant, and a broken-JSON test value. Both lines were rewritten later on the branch, so these go when its
+    // squash lands, as the S3 branch's 34 did.
+    //
     // This number is the point of the test: a suppression is a decision someone
     // has to make on purpose, so both a line silently dropped and a line
     // silently added land here as a failing diff rather than as nothing.
-    expect(contentLines).toHaveLength(51);
+    expect(contentLines).toHaveLength(53);
   });
 
   test("every non-comment, non-blank line is a well-formed fingerprint", () => {

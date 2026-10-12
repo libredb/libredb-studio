@@ -133,7 +133,7 @@ describe("firestore parseCredentialText refuses", () => {
     ["a word", "hello", S.notACredential],
     ["a token with spaces inside", "ya29.abc def ghi jkl mno pqr", S.notACredential],
     ["a JSON array", "[1,2,3]", S.notACredential],
-    ["broken JSON", '{"type": "service_account", "private_key": "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC', S.notJson],
+    ["broken JSON", '{"type": "service_account", "private_key": "not-a-key', S.notJson],
     ["JSON with no type", JSON.stringify({ client_email: "a@b.c" }), S.noType],
     ["JSON with a numeric type", JSON.stringify({ type: 7 }), S.noType],
     ["an external_account file", JSON.stringify(externalAccount), S.unsupportedType("external_account")],

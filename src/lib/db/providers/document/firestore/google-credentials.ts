@@ -50,6 +50,8 @@ export interface CredentialRules {
 }
 
 const ACCEPTED = "paste a service-account key JSON, an authorized-user JSON or an access token";
+const PEM_BEGIN = "-----BEGIN PRIVATE KEY-----";
+const PEM_END = "-----END PRIVATE KEY-----";
 
 export const GOOGLE_CREDENTIAL_SENTENCES = Object.freeze({
   notACredential: `The credential is neither a service-account key JSON, an authorized-user JSON nor an access token: ${ACCEPTED}`,
@@ -59,7 +61,7 @@ export const GOOGLE_CREDENTIAL_SENTENCES = Object.freeze({
   unsupportedType: (type: string) => `Credentials of type "${type}" are not supported: ${ACCEPTED}`,
   serviceAccountFields: "The service-account key JSON needs client_email and private_key as non-empty strings",
   privateKeyShape:
-    "The service-account key's private_key is not a PKCS #8 PEM private key (-----BEGIN PRIVATE KEY-----)",
+    `The service-account key's private_key is not a PKCS #8 PEM private key (${PEM_BEGIN})`,
   authorizedUserFields:
     "The authorized-user JSON needs client_id, client_secret and refresh_token as non-empty strings",
   quotaProject: (reason: string) =>
@@ -77,8 +79,6 @@ const ACCESS_TOKEN = /^[\w.~+/=-]{20,}$/;
 const BEARER = /^Bearer\s+/i;
 /** A type value safe to quote back: a credential type name, never markup or a long string. */
 const TYPE_NAME = /^[a-z][a-z_]{0,63}$/;
-const PEM_BEGIN = "-----BEGIN PRIVATE KEY-----";
-const PEM_END = "-----END PRIVATE KEY-----";
 const DEFAULT_METADATA_HOST = "metadata.google.internal";
 const POSIX_WELL_KNOWN = "/.config/gcloud/application_default_credentials.json";
 const WINDOWS_WELL_KNOWN = "\\gcloud\\application_default_credentials.json";
