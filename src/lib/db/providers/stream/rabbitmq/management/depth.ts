@@ -6,11 +6,29 @@
 import { RABBITMQ_MGMT_DEPTH } from "../limits";
 
 export function nestsTooDeep(value: unknown, maxDepth: number = RABBITMQ_MGMT_DEPTH): boolean {
-  const pending: { readonly value: unknown; readonly depth: number }[] = [{ value, depth: 1 }];
+  if (typeof value !== "object" || value === null) return false;
+  if (maxDepth < 1) return true;
+  // Only objects and arrays take a stack entry, and children are read in place: an answer of millions of scalars,
+  // which a bindings answer's declarer-written arguments can be, costs no record and no copy per scalar.
+  const pending: { readonly value: object; readonly depth: number }[] = [{ value, depth: 1 }];
   for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    if (typeof next.value !== "object" || next.value === null) continue;
-    if (next.depth > maxDepth) return true;
-    for (const child of Object.values(next.value)) pending.push({ value: child, depth: next.depth + 1 });
+    const node = next.value as Record<string, unknown>;
+    const depth = next.depth + 1;
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i++) {
+        const child: unknown = node[i];
+        if (typeof child !== "object" || child === null) continue;
+        if (depth > maxDepth) return true;
+        pending.push({ value: child, depth });
+      }
+      continue;
+    }
+    for (const key in node) {
+      const child = node[key];
+      if (typeof child !== "object" || child === null) continue;
+      if (depth > maxDepth) return true;
+      pending.push({ value: child, depth });
+    }
   }
   return false;
 }
