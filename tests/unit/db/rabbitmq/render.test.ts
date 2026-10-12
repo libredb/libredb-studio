@@ -378,6 +378,8 @@ describe("payload decoder chain", () => {
     const value = (...section: number[]) => [0x00, 0x53, 0x77, ...section];
     const sequence = (...section: number[]) => [0x00, 0x53, 0x76, ...section];
     const footer = [0x00, 0x53, 0x78, 0xc1, 0x01, 0x00];
+    // RabbitMQ 4.2 and 4.3 write a section descriptor as a full ulong: 0x80 and eight bytes, the code in the last.
+    const ulong = (code: number) => [0x00, 0x80, 0, 0, 0, 0, 0, 0, 0, code];
     const amqp1 = utf8("amqp-1.0");
 
     test.each([
@@ -397,6 +399,13 @@ describe("payload decoder chain", () => {
           ...sequence(0x98, ...new Array(16).fill(0)),
         ],
       ],
+      ["an amqp-value with a ulong descriptor", [...ulong(0x77), 0xa1, 0x05, ...utf8("hello")]],
+      [
+        "two amqp-sequence sections with ulong descriptors",
+        [...ulong(0x76), 0x45, ...ulong(0x76), 0xc0, 0x02, 0x01, 0x41],
+      ],
+      ["an amqp-value with a ulong footer", [...value(0x41), ...ulong(0x78), 0xc1, 0x01, 0x00]],
+      ["a ulong amqp-value with a smallulong footer", [...ulong(0x77), 0x41, ...footer]],
     ])("%s is labelled amqp-1.0 when type says so", (_, body) => {
       expect(isAmqp10Body(Uint8Array.from(body))).toBe(true);
       const { row, tally } = render({ body: Uint8Array.from(body), properties: { type: amqp1 } });
@@ -423,6 +432,11 @@ describe("payload decoder chain", () => {
       ["a descriptor with no value", value(0x00, 0xa3, 0x05)],
       ["the descriptor's code is not a smallulong", [0x00, 0x52, 0x77, 0x41]],
       ["a header cut short", [0x00, 0x53]],
+      ["a ulong descriptor with a non-zero high byte", [0x00, 0x80, 1, 0, 0, 0, 0, 0, 0, 0x77, 0x41]],
+      ["a ulong descriptor with a non-zero middle byte", [0x00, 0x80, 0, 0, 0, 0, 0, 0, 1, 0x77, 0x41]],
+      ["a ulong data section", [...ulong(0x75), 0xa0, 0x01, 0x61]],
+      ["a ulong descriptor cut short", [0x00, 0x80, 0, 0, 0, 0, 0, 0, 0]],
+      ["a ulong footer first", [...ulong(0x78), 0xc1, 0x01, 0x00]],
     ])("%s is not AMQP 1.0", (_, body) => {
       expect(isAmqp10Body(Uint8Array.from(body))).toBe(false);
     });

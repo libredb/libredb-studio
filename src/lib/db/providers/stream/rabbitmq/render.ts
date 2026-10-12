@@ -279,6 +279,25 @@ const SECTION_AMQP_VALUE = 0x77;
 const SECTION_FOOTER = 0x78;
 const DESCRIBED = 0x00;
 const SMALL_ULONG = 0x53;
+const ULONG = 0x80;
+/** The bytes of a full ulong: RabbitMQ 4.2 and 4.3 write a section descriptor this way, the code in the last byte. */
+const ULONG_WIDTH = 8;
+
+/**
+ * The section code of the descriptor at `index` and the index just past it, or undefined when the bytes there are not
+ * a section descriptor: `00 53 <code>` (smallulong) or `00 80` and eight bytes whose first seven are zero (ulong).
+ */
+function sectionDescriptor(bytes: Uint8Array, index: number): { code: number; next: number } | undefined {
+  if (bytes[index] !== DESCRIBED) return undefined;
+  if (bytes[index + 1] === SMALL_ULONG) {
+    return index + 3 <= bytes.length ? { code: bytes[index + 2], next: index + 3 } : undefined;
+  }
+  if (bytes[index + 1] !== ULONG) return undefined;
+  const last = index + 1 + ULONG_WIDTH;
+  if (last >= bytes.length) return undefined;
+  for (let high = index + 2; high < last; high += 1) if (bytes[high] !== 0) return undefined;
+  return { code: bytes[last], next: last + 1 };
+}
 
 /** The bytes after a fixed-width constructor, by its subcategory nibble; the codes each nibble defines. */
 const FIXED_WIDTHS: ReadonlyMap<number, number> = new Map([
@@ -335,15 +354,16 @@ export function isAmqp10Body(bytes: Uint8Array): boolean {
   let sections = 0;
   let previous = -1;
   while (index < bytes.length) {
-    if (index + 3 > bytes.length || bytes[index] !== DESCRIBED || bytes[index + 1] !== SMALL_ULONG) return false;
-    const section = bytes[index + 2];
+    const descriptor = sectionDescriptor(bytes, index);
+    if (descriptor === undefined) return false;
+    const section = descriptor.code;
     const allowed =
       sections === 0
         ? section === SECTION_AMQP_VALUE || section === SECTION_AMQP_SEQUENCE
         : previous !== SECTION_FOOTER &&
           (section === SECTION_FOOTER || (section === SECTION_AMQP_SEQUENCE && previous === SECTION_AMQP_SEQUENCE));
     if (!allowed) return false;
-    index = skipValue(bytes, index + 3);
+    index = skipValue(bytes, descriptor.next);
     if (index < 0) return false;
     previous = section;
     sections += 1;
