@@ -19,8 +19,8 @@ const CHECKS_DID_NOT_FINISH =
   "The extra checks Test Connection runs for this connection did not finish, so a caution they would give may be missing.";
 
 /**
- * The cautions of the probes a provider runs only on a user's Test Connection, or none when it
- * declares no such probes.
+ * The cautions of the probes a provider runs only when a user tests the connection (Test
+ * Connection or the dialog's Save), or none when it declares no such probes.
  *
  * The method's contract is cautions, never an error, so a rejection is a defect in the provider
  * and not a fact about the connection: `connect()` already succeeded, and the answer stays a

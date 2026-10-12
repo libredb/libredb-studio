@@ -377,6 +377,20 @@ describe("POST /api/db/test-connection", () => {
       expect(logged.mock.calls[0][2]).toEqual({ route: "api/db/test-connection", provider: mockProvider.type });
     });
 
+    test.each([
+      ["null", null],
+      ["a single caution object", { message: "one caution, not a list" }],
+    ])("a resolution of %s is the same one caution, after connectWarnings()'s", async (_, resolved) => {
+      probing.connectWarnings = () => [connectCaution];
+      probing.testConnectionWarnings = async () => resolved as unknown as QueryWarning[];
+
+      const data = await post();
+
+      expect(data.success).toBe(true);
+      expect(data.warnings).toEqual([connectCaution, { message: CHECKS_DID_NOT_FINISH }]);
+      expect(logged).toHaveBeenCalledTimes(1);
+    });
+
     test("a rejection followed by a failed health read is a degraded success carrying the caution", async () => {
       probing.testConnectionWarnings = async () => {
         throw new Error("probe failed");
