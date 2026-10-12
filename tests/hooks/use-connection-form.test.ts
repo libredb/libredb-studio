@@ -3833,6 +3833,122 @@ describe("Kubernetes' namespace list, API path and TLS server name", () => {
   });
 });
 
+describe("the AMQP port field", () => {
+  // No shipped type takes the AMQP port yet, so these cases lend it to PostgreSQL's mocked field list and take it back,
+  // which drives the dialog's plumbing for the field before any engine reads it. MySQL stays the type without it.
+  const PROBE: DatabaseType = "postgres";
+  const props = {
+    isOpen: true,
+    onClose: mock(() => {}),
+    onConnect: mock<(connection: DatabaseConnection) => void>(() => {}),
+    onTestConnection: async () => ({ success: true }),
+    editConnection: null as DatabaseConnection | null,
+  };
+  const stored: DatabaseConnection = {
+    id: "a1",
+    name: "Broker",
+    type: PROBE,
+    host: "mq.example",
+    port: 15672,
+    amqpPort: "5671",
+    createdAt: new Date(),
+  };
+  beforeEach(() => {
+    props.onConnect.mockClear();
+    MOCK_CONNECTION_FIELDS[PROBE] = ["host", "port", "user", "password", "database", "amqpPort"];
+  });
+  afterEach(() => {
+    delete MOCK_CONNECTION_FIELDS[PROBE];
+  });
+
+  const saved = async (result: { current: ReturnType<typeof useConnectionForm> }) => {
+    props.onConnect.mockClear();
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    return props.onConnect.mock.calls[0][0];
+  };
+
+  test("buildConnection carries the port as typed for a type that takes it", async () => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType(PROBE));
+    act(() => result.current.setAmqpPort("5672"));
+    expect((await saved(result)).amqpPort).toBe("5672");
+    // A new connection's save clears the form, so the next one typed into the open dialog starts without the port.
+    expect(result.current.amqpPort).toBe("");
+  });
+
+  test("an import fills the port for a type that takes it, and a type without the field refuses the entry", () => {
+    const imported = { name: "broker", fields: { host: "mq.example", amqpPort: "5672" }, notices: [] };
+    const taking = renderHook(() => useConnectionForm(props)).result;
+    act(() => taking.current.setType(PROBE));
+    act(() => taking.current.applyImported(imported));
+    expect([taking.current.host, taking.current.amqpPort, taking.current.testResult?.tone]).toEqual([
+      "mq.example",
+      "5672",
+      "success",
+    ]);
+
+    const refusing = renderHook(() => useConnectionForm(props)).result;
+    act(() => refusing.current.setType("mysql"));
+    const hostBefore = refusing.current.host;
+    act(() => refusing.current.applyImported(imported));
+    expect(refusing.current.testResult).toEqual({
+      tone: "error",
+      message: "The imported entry names a field this connection type does not take, so nothing was filled.",
+    });
+    expect([refusing.current.host, refusing.current.amqpPort]).toEqual([hostBefore, ""]);
+  });
+
+  test("an empty or blank box writes no key, and a type that does not take the field drops it", async () => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType(PROBE));
+    expect(await saved(result)).not.toHaveProperty("amqpPort");
+    act(() => result.current.setAmqpPort("   "));
+    expect(await saved(result)).not.toHaveProperty("amqpPort");
+
+    act(() => result.current.setAmqpPort("5672"));
+    act(() => result.current.setType("mysql"));
+    expect(await saved(result)).not.toHaveProperty("amqpPort");
+  });
+
+  test("an edit that changes only the port reaches the saved connection", async () => {
+    // The payload is memoized over its fields: a port missing from its dependency list leaves the first value in place.
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType(PROBE));
+    act(() => result.current.setAmqpPort("5672"));
+    expect((await saved(result)).amqpPort).toBe("5672");
+    act(() => result.current.setAmqpPort("5671"));
+    expect((await saved(result)).amqpPort).toBe("5671");
+  });
+
+  test("editing a stored port: saved unchanged it stays, emptied or on a type without the field it is dropped", async () => {
+    const { result } = renderHook(() => useConnectionForm({ ...props, editConnection: stored }));
+    expect((await saved(result)).amqpPort).toBe("5671");
+    act(() => result.current.setAmqpPort(""));
+    expect(await saved(result)).not.toHaveProperty("amqpPort");
+    act(() => result.current.setAmqpPort("5672"));
+    act(() => result.current.setType("mysql"));
+    expect(await saved(result)).not.toHaveProperty("amqpPort");
+  });
+
+  test("editing loads the stored port, a connection without one shows an empty box, and closing resets it", () => {
+    const bare: DatabaseConnection = { ...stored, id: "a2", amqpPort: undefined };
+    const { result, rerender } = renderHook((p) => useConnectionForm(p), {
+      initialProps: { ...props, editConnection: stored as DatabaseConnection | null },
+    });
+    expect(result.current.amqpPort).toBe("5671");
+    rerender({ ...props, editConnection: bare });
+    expect(result.current.amqpPort).toBe("");
+    act(() => result.current.setAmqpPort("5672"));
+    rerender({ ...props, isOpen: false });
+    rerender({ ...props, isOpen: true, editConnection: null });
+    expect(result.current.amqpPort).toBe("");
+    expect(CONNECTION_FORM_DEFAULTS.amqpPort).toBe("");
+  });
+});
+
 describe("the form checks before Test Connection and Save (Databend design 6.3)", () => {
   const props = {
     isOpen: true,

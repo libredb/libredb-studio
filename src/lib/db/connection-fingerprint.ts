@@ -165,6 +165,9 @@ export async function connectionFingerprint(connection: DatabaseConnection & Wit
     // both pick the server. Framed only when set and tagged, so every other connection's digest is unchanged.
     ...(connection.apiPath ? [`apiPath=${connection.apiPath}`] : []),
     ...(connection.tlsServerName ? [`tlsServerName=${connection.tlsServerName}`] : []),
+    // An AMQP port: a read goes to that listener, which can belong to another server than the one at host and port.
+    // Framed only when set and tagged, as the two above, so every other connection's digest is unchanged.
+    ...(connection.amqpPort ? [`amqpPort=${connection.amqpPort}`] : []),
   ]
     .map((value) => `${value.length}:${value}`)
     .join("");

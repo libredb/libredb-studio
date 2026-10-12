@@ -677,6 +677,7 @@ const FIELD_CHECKLIST: Record<ConnectionField, true> = {
   apiPath: true,
   namespaces: true,
   tlsServerName: true,
+  amqpPort: true,
 };
 const EVERY_FIELD = Object.keys(FIELD_CHECKLIST) as ConnectionField[];
 

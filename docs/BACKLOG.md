@@ -2433,6 +2433,8 @@ Oxia and etcd both show it above their own "The value is empty (0 bytes)" senten
 
 Found 2026-10-04 by the browser pass of the Oxia provider (step 6).
 
+The shared half is in place: `ObjectSourcePart` has a neutral member, `{ id, label, unavailable, statement: true }`, which the Source tab draws without the failure heading, so what remains is Oxia and etcd answering an empty value with it.
+
 **Done when:** an empty value reads as an empty value, with no failure heading or error icon.
 
 ### D221. The Keys panel's empty state under a prefix says the database holds no keys

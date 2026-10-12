@@ -3128,6 +3128,36 @@ export type ObjectSourcePart =
       readonly label: string;
       /** The engine's own sentence, unprefixed, never a rewrite of it. */
       readonly unavailable: string;
+    }
+  /**
+   * A neutral statement about the object, never a failure: "this engine cannot show X without
+   * changing it, so nothing is read here". The viewer draws the sentence as plain text, without the
+   * "could not be read" heading the refusal arm gets.
+   *
+   * A SUPERSET of the refusal arm, and that is the point of its shape: `unavailable` carries the
+   * statement's sentence and `statement: true` marks it neutral. Every reader that narrows with
+   * `isSourcePartUnavailable` still lands it on the refusal arm, so the route's rules for a refusal
+   * hold for it unchanged: never truncated, never an `edit`, never a `text` beside it.
+   * `isSourcePartStatement` is the narrowing that tells the two apart, and it accepts `true` only.
+   *
+   * The compiler does NOT keep `statement` off the readable arm: a union admits a property any of
+   * its members declares, so `{ text, ..., statement: true }` type-checks. Run time closes it, as it
+   * closes the text-plus-refusal hybrid: the client's shape check and `assertObjectSurface` refuse a
+   * `statement` key on a part without `unavailable`, and the client then refuses the whole document.
+   *
+   * ADDITIVE ON PURPOSE, for the reason `KindCount` is: this type is published through
+   * `src/exports/types.ts`, so the two existing members stay valid unchanged. The cost is not the
+   * same as `KindCount`'s, and saying so is what a host needs: a consumer that has not heard of
+   * `statement` narrows this member to the refusal arm and shows a neutral fact under "This
+   * definition could not be read", a mislabelled fact where an unknown count state degrades only to
+   * an imprecise number.
+   */
+  | {
+      readonly id: string;
+      readonly label: string;
+      /** The statement itself: a neutral fact about the object, never a failure. */
+      readonly unavailable: string;
+      readonly statement: true;
     };
 
 /**

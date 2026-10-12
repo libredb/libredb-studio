@@ -148,6 +148,12 @@ function isPartShape(part: unknown): boolean {
   // Both keys at once is the collapse, and it is checked BEFORE either arm is examined,
   // because each arm on its own would accept the part.
   if (Object.hasOwn(part, "unavailable") && Object.hasOwn(part, "text")) return false;
+  // A statement is the refusal shape plus `statement: true` and nothing else: any other value, or
+  // the key on a readable part, belongs to no member, and the viewer would have to guess which
+  // heading to draw over the sentence.
+  if (Object.hasOwn(part, "statement") && (part.statement !== true || !Object.hasOwn(part, "unavailable"))) {
+    return false;
+  }
   if (Object.hasOwn(part, "unavailable")) {
     return isFilledString(part.unavailable) && part.unavailable.length <= SOURCE_CHARACTER_LIMIT;
   }

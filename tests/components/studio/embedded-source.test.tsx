@@ -1008,6 +1008,17 @@ describe("a host document that fails the shape check is a failed read, not a ren
     expect(screen.queryByTestId("source-editor")).toBeNull();
   });
 
+  test("a statement whose marker is not exactly true", async () => {
+    await readAnswering({
+      path: ROUTINE.path,
+      kind: "function",
+      parts: [{ id: "notes", label: "Notes", unavailable: "Nothing is read here.", statement: "yes" }],
+    });
+    expect(screen.getByTestId("object-source-failure-message").textContent).toBe(UNRENDERABLE);
+    expect(screen.queryByTestId("object-source-statement")).toBeNull();
+    expect(screen.queryByTestId("object-source-refused")).toBeNull();
+  });
+
   /*
    * RECIPE RULE 12 BINDS THIS SHELL DIFFERENTLY FROM A PROVIDER, and the answer moved once
    * (#789 Phase 2, external review of PR #820).
@@ -1058,6 +1069,31 @@ describe("a host document that fails the shape check is a failed read, not a ren
     // And the address the host was handed is that same object, so the caption is not right by
     // accident while the read went somewhere else.
     expect(asked).toEqual([["host-conn-1", ["app", "order_total(integer)"], "function"]]);
+  });
+});
+
+/**
+ * A host's neutral statement part draws in the embedded shell exactly as it does standalone: the
+ * sentence as plain text, without the failure heading, and with no editor under it.
+ */
+describe("a host statement part", () => {
+  test("draws the host's sentence as a neutral statement, with no failure heading and no editor", async () => {
+    renderWorkspace({
+      ...treeReader(),
+      readObjectSource: async () => ({
+        path: ROUTINE.path,
+        kind: "function",
+        parts: [{ id: "notes", label: "Notes", unavailable: "Nothing is read here.", statement: true }],
+      }),
+    });
+    await openTree();
+    await viewSource();
+
+    await waitFor(() => expect(screen.getByTestId("object-source-statement")).toBeTruthy());
+    expect(screen.getByTestId("object-source-statement-message").textContent).toBe("Nothing is read here.");
+    expect(screen.queryByText("This definition could not be read.")).toBeNull();
+    expect(screen.queryByTestId("object-source-refused")).toBeNull();
+    expect(screen.queryByTestId("source-editor")).toBeNull();
   });
 });
 

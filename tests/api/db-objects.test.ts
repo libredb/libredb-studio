@@ -12,7 +12,12 @@ import {
   readObjectRouteBody,
   type ObjectRequestContext,
 } from "@/lib/api/object-route";
-import { SOURCE_CHARACTER_LIMIT, SOURCE_PART_LIMIT, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
+import {
+  isSourcePartStatement,
+  SOURCE_CHARACTER_LIMIT,
+  SOURCE_PART_LIMIT,
+  sourceBoundTruncationReason,
+} from "@/lib/db/object-kinds";
 import { EDIT_BODY_BYTE_LIMIT } from "@/lib/db/object-edit";
 // The CLIENT's shape check, imported into the route's own suite on purpose: the route carries a
 // refusal sentence through untouched and the client refuses that document, and one test pinning
@@ -2470,6 +2475,92 @@ describe("POST /api/db/objects/source", () => {
       "the source read answered a part that carries both a refusal and a text; a refusal and a definition " +
         "are different facts and a reader must never be shown one over the other",
     );
+  });
+
+  test("carries a statement part through with its marker, and the client reads it back as a statement", async () => {
+    // The statement member is a superset of the refusal arm, so the route needs no rule of its own
+    // for it: the bound skips it, an `edit` on it is stripped, and `statement: true` survives the
+    // rest spread and the JSON body untouched.
+    const statement = {
+      id: "notes",
+      label: "Notes",
+      unavailable: "This object holds nothing that can be read without changing it.",
+      statement: true,
+      edit: { offered: true },
+    } satisfies ObjectSourcePart;
+    activeProvider = sourceProviderReading({
+      path: ["app", "f"],
+      kind: "function",
+      parts: [readablePart(), statement],
+    });
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await parseResponseJSON<ObjectSourceDocument>(response);
+    expect(body.parts[1]).toEqual({
+      id: "notes",
+      label: "Notes",
+      unavailable: "This object holds nothing that can be read without changing it.",
+      statement: true,
+    });
+    expect(isSourceDocumentShape(body)).toBe(true);
+    expect(isSourcePartStatement(body.parts[1]!)).toBe(true);
+  });
+
+  test("refuses a statement part that also carries a text, with the refusal arm's hybrid sentence", async () => {
+    // The statement member inherits the refusal arm's "never a text beside it" at the route as
+    // well as at the client: a special case for `statement` in `boundPart` would let a definition
+    // ship under a sentence the viewer draws instead of it.
+    const hybrid = {
+      ...readablePart({ text: "x".repeat(SOURCE_CHARACTER_LIMIT * 2) }),
+      unavailable: "This object holds nothing that can be read without changing it.",
+      statement: true,
+    } satisfies ObjectSourcePart;
+    activeProvider = sourceProviderReading(documentWithOnePart(hybrid));
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      "the source read answered a part that carries both a refusal and a text; a refusal and a definition " +
+        "are different facts and a reader must never be shown one over the other",
+    );
+  });
+
+  test("carries an over-long statement sentence whole, as it does a refusal, and the client refuses it", async () => {
+    // Never truncated at the route, for the refusal arm's reason: the sentence carries no
+    // `truncated` mark, so a cut would ship half a fact with nothing saying so. The client's bound
+    // is where the document is refused, and both ends are pinned here.
+    const statement = {
+      id: "notes",
+      label: "Notes",
+      unavailable: "s".repeat(SOURCE_CHARACTER_LIMIT + 10),
+      statement: true,
+    } satisfies ObjectSourcePart;
+    activeProvider = sourceProviderReading(documentWithOnePart(statement));
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await parseResponseJSON<ObjectSourceDocument>(response);
+    expect(body.parts[0]).toEqual(statement);
+    expect(isSourceDocumentShape(body)).toBe(false);
   });
 
   test("refuses a document that carries no parts at all, by name and not by a TypeError", async () => {

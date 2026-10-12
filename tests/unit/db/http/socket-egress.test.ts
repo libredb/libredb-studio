@@ -161,18 +161,24 @@ describe("a DNS answer with a zone index", () => {
   );
 });
 
-/** Dials `localhost` on the listener's port with the lookup given: "connected", or the error the socket raised. */
+/**
+ * Dials `localhost` on the listener's port with the lookup given: "connected" once the listener has closed the
+ * connection, or the error the socket raised. The client's connect event can come before the listener's connection
+ * event (measured on macOS), and the counting listener closes each connection from that event, so waiting for the
+ * close means its count already includes this dial.
+ */
 function dialPlain(listener: Listener, lookup: LookupFunction | undefined): Promise<"connected" | Error> {
   return new Promise((resolve) => {
     const socket = netConnect({ host: "localhost", port: listener.port, ...(lookup === undefined ? {} : { lookup }) });
+    let connected = false;
+    let failure = new Error("the socket closed before it connected, without an error");
     socket.once("connect", () => {
-      socket.destroy();
-      resolve("connected");
+      connected = true;
     });
-    socket.once("error", (error) => {
-      socket.destroy();
-      resolve(error);
+    socket.on("error", (error) => {
+      failure = error;
     });
+    socket.once("close", () => resolve(connected ? "connected" : failure));
   });
 }
 

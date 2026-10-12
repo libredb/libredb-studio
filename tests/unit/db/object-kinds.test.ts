@@ -20,6 +20,7 @@ import {
   kindHasColumns,
   kindHasSource,
   isSourcePartUnavailable,
+  isSourcePartStatement,
   applySourceBound,
   sourceBoundTruncationReason,
   SOURCE_CHARACTER_LIMIT,
@@ -400,6 +401,70 @@ describe("isSourcePartUnavailable", () => {
       if (isSourcePartUnavailable(part)) continue;
       texts.push(part.text);
     }
+    expect(texts).toEqual(["SELECT 1"]);
+  });
+});
+
+describe("isSourcePartStatement", () => {
+  const statement: ObjectSourcePart = {
+    id: "messages",
+    label: "Messages",
+    unavailable: "This kind of object holds no definition to show.",
+    statement: true,
+  };
+  const refused: ObjectSourcePart = { id: "definition", label: "Definition", unavailable: "Encrypted." };
+  const readable: ObjectSourcePart = {
+    id: "definition",
+    label: "Definition",
+    text: "SELECT 1",
+    language: "sql",
+    form: "complete",
+    origin: "stored",
+  };
+
+  test("answers true for a statement part", () => {
+    expect(isSourcePartStatement(statement)).toBe(true);
+  });
+
+  test("answers false for a refusal and for a readable part", () => {
+    expect(isSourcePartStatement(refused)).toBe(false);
+    expect(isSourcePartStatement(readable)).toBe(false);
+    expect(isSourcePartStatement({ ...readable, statement: true } as ObjectSourcePart)).toBe(false);
+  });
+
+  test("answers false for a statement key holding anything but true, which came from outside our compiler", () => {
+    for (const value of [false, "true", 1, null, undefined]) {
+      const parsed = JSON.parse(JSON.stringify({ ...refused })) as Record<string, unknown>;
+      parsed.statement = value;
+      expect(isSourcePartStatement(parsed as ObjectSourcePart)).toBe(false);
+    }
+  });
+
+  test("answers false for an inherited statement key, because only the part's own keys are its shape", () => {
+    const inherited = Object.create({ statement: true }) as Record<string, unknown>;
+    Object.assign(inherited, refused);
+    expect(isSourcePartStatement(inherited as ObjectSourcePart)).toBe(false);
+  });
+
+  test("a statement part is still a refusal to every reader that has not heard of it", () => {
+    // The member is a superset of the refusal arm, so the route's rules (never truncated, never
+    // an edit, no text beside it) and every existing narrowing hold for it unchanged.
+    expect(isSourcePartUnavailable(statement)).toBe(true);
+  });
+
+  test("narrows both branches, so the caller reaches the sentence on one side and the text on the other", () => {
+    const parts: readonly ObjectSourcePart[] = [readable, refused, statement];
+    const statements: string[] = [];
+    const texts: string[] = [];
+    for (const part of parts) {
+      if (isSourcePartStatement(part)) {
+        statements.push(part.unavailable);
+        continue;
+      }
+      if (isSourcePartUnavailable(part)) continue;
+      texts.push(part.text);
+    }
+    expect(statements).toEqual(["This kind of object holds no definition to show."]);
     expect(texts).toEqual(["SELECT 1"]);
   });
 });

@@ -1878,6 +1878,91 @@ describe("assertObjectSurface and the object source read", () => {
     );
   });
 
+  // A provider answers the neutral statement member as a SECOND part beside its readable one, so
+  // the bound check still has a readable part to probe and the case is about the statement alone.
+  function withStatement(statement: Record<string, unknown>) {
+    return sourceProvider({
+      readObjectSource: async (path: readonly string[], kind: string, limit?: number) => {
+        raiseIfAbsent(path);
+        return {
+          path,
+          kind,
+          parts: [
+            {
+              id: "definition",
+              label: "Definition",
+              ...applySourceBound(readable, limit),
+              language: "sql",
+              form: "complete",
+              origin: "regenerated",
+            },
+            statement,
+          ],
+        };
+      },
+    });
+  }
+
+  test("accepts a statement part beside a readable one", async () => {
+    await assertObjectSurface(
+      withStatement({ id: "notes", label: "Notes", unavailable: "Nothing is read here.", statement: true }) as never,
+      expectation,
+    );
+  });
+
+  test.each([false, "true", 1, null])("a statement whose marker is %p is refused", async (value) => {
+    await expect(
+      assertObjectSurface(
+        withStatement({ id: "notes", label: "Notes", unavailable: "Nothing is read here.", statement: value }) as never,
+        expectation,
+      ),
+    ).rejects.toThrow(/answered a part whose statement marker is not exactly true/);
+  });
+
+  test("a statement marker on a readable part is refused, because no member carries both", async () => {
+    await expect(
+      assertObjectSurface(
+        withStatement({
+          id: "notes",
+          label: "Notes",
+          text: readable,
+          language: "sql",
+          form: "complete",
+          origin: "stored",
+          statement: true,
+        }) as never,
+        expectation,
+      ),
+    ).rejects.toThrow(/answered a statement marker on a readable part; only a refusal-shaped part carries one/);
+  });
+
+  test("a statement with an empty sentence is refused, as a refusal with one is", async () => {
+    await expect(
+      assertObjectSurface(
+        withStatement({ id: "notes", label: "Notes", unavailable: " \n ", statement: true }) as never,
+        expectation,
+      ),
+    ).rejects.toThrow(/answered a refusal with no sentence/);
+  });
+
+  test("a statement carrying a text is refused, the same collapse as a refusal carrying one", async () => {
+    await expect(
+      assertObjectSurface(
+        withStatement({
+          id: "notes",
+          label: "Notes",
+          text: readable,
+          language: "sql",
+          form: "complete",
+          origin: "stored",
+          unavailable: "Nothing is read here.",
+          statement: true,
+        }) as never,
+        expectation,
+      ),
+    ).rejects.toThrow(/answered a part that carries both a refusal and a text/);
+  });
+
   // A provider with a SECOND bound of its own names both, so the guard asks for CONTAINS
   // and never for equality.
   test("accepts a bound reason that carries the shared sentence inside a composed one", async () => {

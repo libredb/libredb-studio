@@ -438,6 +438,10 @@ sends the same approved statement somewhere else: `type`, `host`, `port`, `datab
 `connectionString` that overrides all of those when a record carries one, Trino's session `schema`,
 Oracle's `serviceName`, a MSSQL `instanceName`, and the SSH tunnel's ROUTE - its four addressing
 fields, because the same `db:5432` reached through two different bastions is two different databases.
+Three more are hashed only when a record sets them, each tagged with its own name, so a record without
+them keeps its digest: Kubernetes' `apiPath` and `tlsServerName`, which pick one cluster among the
+many one host and port can serve, and `amqpPort`, the listener a read goes to, which can belong to
+another server than the one at `host` and `port`.
 `host` and `port` are the FAR END on both sides of the compare. The provider factory rewrites a
 tunnelled record to the tunnel's loopback endpoint before the driver opens, so it carries the far end
 alongside that rewrite and the seal hashes the far end, never the ephemeral local port, which is a
