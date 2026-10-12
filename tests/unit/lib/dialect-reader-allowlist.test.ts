@@ -122,7 +122,7 @@ const ALLOWED: readonly Reader[] = [
   {
     path: "src/lib/query-generators.ts",
     text: 'if (capabilities.queryLanguage === "json") {',
-    owner: "generateCountQuery: MongoDB's count, reached only where offersCountQuery allows it",
+    owner: "generateCountQuery: MongoDB's count, below the DIALECT_GENERATORS record's count",
   },
 ];
 

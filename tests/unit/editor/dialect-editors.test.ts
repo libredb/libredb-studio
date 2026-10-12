@@ -22,6 +22,7 @@ const EDITOR_LANGUAGES: readonly EditorLanguage[] = [
   "oxia",
   "s3",
   "kubectl",
+  "firestore",
 ];
 
 describe("DIALECT_EDITORS", () => {
@@ -29,6 +30,7 @@ describe("DIALECT_EDITORS", () => {
     expect(Object.keys(DIALECT_EDITORS).sort()).toEqual([
       "cypher",
       "etcd",
+      "firestore",
       "influxql",
       "kafka",
       "kubectl",
@@ -65,6 +67,7 @@ describe("DIALECT_EDITORS", () => {
       oxia: "oxia",
       s3: "s3",
       kubectl: "kubectl",
+      firestore: "firestore",
     });
   });
 

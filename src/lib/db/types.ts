@@ -536,7 +536,7 @@ export function offersCodeGeneration(capabilities: ProviderCapabilities | undefi
  * PromQL counts series at an instant, which is not the row count this action promises.
  *
  * A declared dialect is offered it only where its record's `offersCountQuery` in `QUERY_DIALECTS`
- * (`src/lib/db/query-dialects.ts`) says so, which none does, and a declared dialect with no record is refused.
+ * (`src/lib/db/query-dialects.ts`) says so, which Firestore's alone does, and a declared dialect with no record is refused.
  *
  * A derived grouping is refused on top of the language, because a Redis `user:*` row is a
  * summary this server built and there is no object to address (#427).

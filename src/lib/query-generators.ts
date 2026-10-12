@@ -2,7 +2,7 @@ import { cypherForSegment } from "@/lib/db/graph/cypher/generators";
 import { quoteCypherName } from "@/lib/db/graph/cypher/quote";
 import { declaredLevels } from "@/lib/db/object-kinds";
 import { type QueryDialect, registeredDialect } from "@/lib/db/query-dialects";
-import { previewStatement } from "@/lib/db/providers/document/firestore/console/generators";
+import { countStatement, previewStatement } from "@/lib/db/providers/document/firestore/console/generators";
 import { encodeKey } from "@/lib/db/providers/keyvalue/etcd/keys";
 import { oxiaSelectQuery, oxiaTableQuery } from "@/lib/db/providers/keyvalue/oxia/generators";
 import { kubectlGetQuery, kubectlRowActionQuery } from "@/lib/db/providers/platform/kubernetes/generators";
@@ -686,14 +686,20 @@ export interface DialectGenerators {
    * concatenated.
    */
   readonly rowAction?: (path: readonly string[], actionId: string, scope: GeneratorScope) => string;
+  /**
+   * The statement Generate Count Query writes for one object, on a dialect whose `QUERY_DIALECTS` record offers it.
+   * Absent on every dialect whose record does not; `generateCountQuery` refuses a record that offers a count and
+   * writes none, rather than falling through to the JSON arm's MongoDB count document.
+   */
+  readonly count?: (path: readonly string[]) => string;
 }
 
 /**
  * Every query dialect's generators, read by `generateTableQuery` and `generateSelectQuery` BEFORE their JSON arm:
  * each dialect declares `queryLanguage: "json"` too, and without its record a tree click auto-executes a MongoDB
  * `find` its provider refuses (#427, #1088, #1089). A `Record` over `QueryDialect`, so a dialect added to the
- * union does not compile until it has its generators. Module-internal: the two generators and
- * `generateRowActionQuery` are its only readers, and this module's export list is pinned
+ * union does not compile until it has its generators. Module-internal: the two generators, `generateCountQuery`
+ * and `generateRowActionQuery` are its only readers, and this module's export list is pinned
  * (`tests/unit/lib/query-generators.test.ts`).
  */
 const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Object.freeze({
@@ -782,10 +788,12 @@ const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Ob
   },
   // Firestore reads a collection through one statement of its console's read-only Admin SDK subset, written by the
   // provider's browser-safe console/generators.ts: a tree click and Generate Query are both the 100-document preview of
-  // the clicked collection, addressed by the object's own segment, the collection id the tree lists.
+  // the clicked collection, addressed by the object's own segment, the collection id the tree lists. Generate Count
+  // Query writes the count() aggregation of the same collection.
   firestore: {
     table: (path) => previewStatement([objectSegment(path)]),
     select: (path) => previewStatement([objectSegment(path)]),
+    count: (path) => countStatement([objectSegment(path)]),
   },
   s3: {
     table: (path) => s3TableQuery(path),
@@ -1227,11 +1235,27 @@ export function generateRowActionQuery(
   return rowAction(path, actionId, scope);
 }
 
-/** Prepare an editable count statement, without a row limit or any execution (#702). */
-export function generateCountQuery(path: readonly string[], capabilities: ProviderCapabilities): string | null {
+/**
+ * Prepare an editable count statement, without a row limit or any execution (#702). A dialect's own count statement,
+ * from its `DIALECT_GENERATORS` record, comes before the JSON arm, as the other two generators' do. `registry` is the
+ * record this module holds; a test passes its own to reach the refusal no shipped record triggers.
+ */
+export function generateCountQuery(
+  path: readonly string[],
+  capabilities: ProviderCapabilities,
+  registry: Readonly<Partial<Record<QueryDialect, DialectGenerators>>> = DIALECT_GENERATORS,
+): string | null {
   if (!offersCountQuery(capabilities)) return null;
   // Refuses an empty address before any dialect spells it, the JSON arm's own check included.
   objectSegment(path);
+  const dialect = registeredDialect(capabilities);
+  if (dialect !== undefined) {
+    const count = registry[dialect]?.count;
+    if (count === undefined) {
+      throw new Error(`the ${dialect} dialect offers Generate Count Query and writes no count statement`);
+    }
+    return count(path);
+  }
   if (capabilities.queryLanguage === "json") {
     return JSON.stringify({ ...jsonCommandAddress(path, capabilities), operation: "count", filter: {} }, null, 2);
   }

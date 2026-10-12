@@ -43,8 +43,9 @@ export interface DialectSpec {
 /**
  * Today's answers, each exactly what the per-dialect arms gave before the registry: Redis and LibreDB keep the
  * code generator because it names a row rather than addressing it (#427), Kafka's topic columns and etcd's group
- * columns are the fixed shape of a read result and model nothing an application stores (#1088, #1089), and no
- * dialect has a profile statement or a count statement in its grammar. Kafka renders in Monaco's built-in `json`
+ * columns are the fixed shape of a read result and model nothing an application stores (#1088, #1089), no
+ * dialect has a profile statement in its grammar, and Firestore's alone has a count statement, written by its
+ * `DIALECT_GENERATORS` record. Kafka renders in Monaco's built-in `json`
  * mode, which `DIALECT_EDITORS` says, and not here: this record is keyed by dialect, that one by tab type.
  */
 export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Object.freeze({

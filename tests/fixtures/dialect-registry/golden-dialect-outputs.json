@@ -371,6 +371,18 @@
   "selectQuery": "// MQTT has no query console. Order\"Items opens in its Source tab from the Keys panel.",
   "countQuery": null
  },
+ "firestore": {
+  "queryLanguage": "json",
+  "queryDialect": "firestore",
+  "tabType": "firestore",
+  "monacoLanguage": "firestore",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": true,
+  "tableQuery": "db.collection(\"Order\\\"Items\").limit(100)",
+  "selectQuery": "db.collection(\"Order\\\"Items\").limit(100)",
+  "countQuery": "db.collection(\"Order\\\"Items\").count()"
+ },
  "libredb": {
   "queryLanguage": "json",
   "queryDialect": "libredb",
