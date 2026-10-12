@@ -420,7 +420,8 @@ Declare neither when your engine has nothing to caution about; `POST /api/db/tes
   Put a check here, not in `connect()`, when it needs a request, because `connect()` also runs on every background cache miss, where nobody reads a caution.
   It answers cautions and never rejects: a fact it could not check is a caution or nothing, bounded by a deadline of its own.
   A rejection is a defect: the route logs it, shows one caution in its own words in its place, and still counts the connection as tested.
-  A caution's text depends only on what the server reports, never on timing: no count a deadline cut short, and a fixed order, or the second Save meets a different caution and asks again.
+  A caution's text depends only on what the server reports, in a fixed order, or the second Save meets a different caution and asks again.
+  The one exception is a count a check deadline cut short, which can differ between the two clicks: the dialog then shows the new text once more before saving.
   A caution is your own sentence, never a caught error's or a library's text, because every user who can test the connection reads it.
 - Return `[]` when there is nothing to say: any caution turns the answer amber, so a correct connection must come back empty.
 
