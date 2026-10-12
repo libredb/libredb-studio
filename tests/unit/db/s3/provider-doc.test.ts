@@ -1781,7 +1781,7 @@ describe("the architecture, provider, editor and guide docs", () => {
     );
     // The thirteen HTTP-only and built-in ids the paragraph names, plus s3 and kubernetes, which reach their servers over
     // node:https.
-    expect(flat(guide)).toContain("Fifteen shipped type-ids need no driver:");
+    expect(flat(guide)).toContain("Sixteen shipped type-ids need no driver:");
     expect(flat(guide)).toContain(
       "S3-compatible object storage over the S3 REST API, signed by Studio's own SigV4 code ([s3.md](./providers/s3.md)), Kubernetes over the API server's REST API ([kubernetes.md](./providers/kubernetes.md)), and RabbitMQ over its management HTTP API, with stream reads through the provider's own AMQP 0-9-1 client ([rabbitmq.md](./providers/rabbitmq.md)).",
     );

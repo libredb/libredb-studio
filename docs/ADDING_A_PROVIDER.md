@@ -19,7 +19,7 @@ Three decisions. The first is the consequential one, which is why it is first.
 
 1. **Does it need a driver at all?** Score the engine against the rubric below. A database with a
    first-class HTTP API can be supported with no dependency at all, and that is worth real effort to
-   establish before you start. Fifteen shipped type-ids need no driver: SQLite uses the built-in
+   establish before you start. Sixteen shipped type-ids need no driver: SQLite uses the built-in
    `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, and the rest reach the engine over HTTP with
    nothing but `fetch`/`node:https`. Couchbase goes over the documented REST endpoints
    ([couchbase.md](./providers/couchbase.md)), ClickHouse over its HTTP interface
