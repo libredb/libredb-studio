@@ -1865,6 +1865,20 @@ export interface DatabaseProvider {
   disconnect(): Promise<void>;
 
   /**
+   * Whether a run this provider started is still running or waiting, so that closing the provider now would end it.
+   *
+   * The factory's idle sweep reads it and keeps an idle cached provider that answers true. Optional, because only a
+   * provider whose `disconnect()` ends running work needs it, and absent reads as false. It answers synchronously from
+   * state the provider holds, sends nothing and never throws; a throw is a defect of the provider, logged as an error,
+   * and the entry is then evicted as it would be without the method. Every run it counts must end at its own deadline,
+   * or a busy entry would be kept for the life of the process.
+   *
+   * A method and not a capability flag, because its answer changes from moment to moment while `getCapabilities()` is
+   * a declaration the censuses read once. `tests/unit/db/runs-in-flight-census.test.ts` pins who declares it.
+   */
+  hasRunsInFlight?(): boolean;
+
+  /**
    * Check if provider is currently connected
    */
   isConnected(): boolean;

@@ -1595,6 +1595,64 @@ describe("evictIdleProviders", () => {
     expect(evicted).toBe(1);
     expect(getProviderCacheStats().size).toBe(0);
   });
+
+  test("an idle entry whose provider reports a run in flight is kept, then evicted once it reports none", async () => {
+    const info = spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const provider = await getOrCreateProvider(makeConnection("sqlite", { id: "busy-a" }));
+      let busy = true;
+      const disconnect = spyOn(provider, "disconnect");
+      Object.assign(provider, { hasRunsInFlight: () => busy });
+
+      expect(await evictIdleProviders(0)).toBe(0);
+      expect(getProviderCacheStats().size).toBe(1);
+      expect(disconnect).not.toHaveBeenCalled();
+      expect(mockCloseSSHTunnel).not.toHaveBeenCalledWith("busy-a");
+      const kept = info.mock.calls
+        .map((call) => call.join(" "))
+        .filter((line) => line.includes("reports a run in flight"));
+      expect(kept).toHaveLength(1);
+      expect(kept[0]).toContain("busy-a");
+
+      busy = false;
+      expect(await evictIdleProviders(0)).toBe(1);
+      expect(getProviderCacheStats().size).toBe(0);
+      expect(mockCloseSSHTunnel).toHaveBeenCalledWith("busy-a");
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  test("a fresh entry's hasRunsInFlight is never called", async () => {
+    const provider = await getOrCreateProvider(makeConnection("sqlite", { id: "fresh-busy" }));
+    const asked = mock(() => true);
+    Object.assign(provider, { hasRunsInFlight: asked });
+    expect(await evictIdleProviders(999_999_999)).toBe(0);
+    expect(asked).not.toHaveBeenCalled();
+  });
+
+  test("of two idle entries whose first one's hasRunsInFlight throws, both are evicted and one error names the first", async () => {
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const first = await getOrCreateProvider(makeConnection("sqlite", { id: "throws-a" }));
+      await getOrCreateProvider(makeConnection("sqlite", { id: "plain-b" }));
+      Object.assign(first, {
+        hasRunsInFlight: () => {
+          throw new Error("registry exploded");
+        },
+      });
+      expect(await evictIdleProviders(0)).toBe(2);
+      expect(getProviderCacheStats().size).toBe(0);
+      const lines = error.mock.calls
+        .map((call) => call.join(" "))
+        .filter((line) => line.includes("hasRunsInFlight() threw"));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("throws-a");
+      expect(lines[0]).toContain("registry exploded");
+    } finally {
+      error.mockRestore();
+    }
+  });
 });
 
 // ─── idle sweep timer ─────────────────────────────────────────────────────
@@ -2055,6 +2113,43 @@ describe("acquireExecutionProfileProvider", () => {
       expect(getExecutionProfileCacheStats().size).toBe(0);
       expect(getProviderCacheStats().size).toBe(1);
       expect(mockCloseSSHTunnel).not.toHaveBeenCalled();
+    } finally {
+      clock.restore();
+    }
+  });
+
+  test("an idle profiled entry reporting a run in flight is kept with its line, and evicted once it reports none", async () => {
+    const clock = installFakeClock();
+    const info = spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const agent = await acquireExecutionProfileProvider(pgConn(), "agent-read-only");
+      let busy = true;
+      Object.assign(agent, { hasRunsInFlight: () => busy });
+      clock.advance(60_000);
+      expect(await evictIdleProviders(30_000)).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(1);
+      expect(info.mock.calls.flat().join(" ")).toContain("Keeping idle profiled provider");
+      busy = false;
+      expect(await evictIdleProviders(30_000)).toBe(1);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    } finally {
+      info.mockRestore();
+      clock.restore();
+    }
+  });
+
+  test("a busy shared entry keeps the tunnel open while its idle profiled sibling is evicted", async () => {
+    const clock = installFakeClock();
+    try {
+      const shared = await getOrCreateProvider(pgConn());
+      await acquireExecutionProfileProvider(pgConn(), "agent-read-only");
+      Object.assign(shared, { hasRunsInFlight: () => true });
+      clock.advance(60_000);
+      mockCloseSSHTunnel.mockClear();
+      expect(await evictIdleProviders(30_000)).toBe(1);
+      expect(getProviderCacheStats().size).toBe(1);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+      expect(mockCloseSSHTunnel).not.toHaveBeenCalledWith("pg-profile");
     } finally {
       clock.restore();
     }

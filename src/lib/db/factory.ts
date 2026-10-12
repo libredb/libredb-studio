@@ -691,6 +691,27 @@ const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
+ * Whether an idle entry's provider reports a run in flight, so the sweep keeps it for the next sweep.
+ * A throw is the provider's defect: logged at error, and the entry is evicted as one without the method, because
+ * rethrowing would abandon the rest of the sweep and reading it as busy would let such a provider pin its entry.
+ */
+function keepsRunInFlight(
+  provider: DatabaseProvider,
+  id: string,
+  noun: "idle provider" | "idle profiled provider",
+): boolean {
+  if (provider.hasRunsInFlight === undefined) return false;
+  try {
+    return provider.hasRunsInFlight() === true;
+  } catch (error) {
+    logger.error(`[DB] hasRunsInFlight() threw for ${noun} ${sanitize(id)}, so it is evicted as idle.`, error, {
+      connectionId: id,
+    });
+    return false;
+  }
+}
+
+/**
  * Evict providers that have been idle longer than maxIdleMs.
  * Called by the periodic sweep timer, but also exported for direct testing.
  *
@@ -703,9 +724,14 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
   for (const [key, entry] of providerCache) {
     if (now - entry.lastUsed >= maxIdleMs) {
       const id = entry.connectionId;
-      logger.info(
-        `[DB] Evicting idle provider: ${sanitize(id)} (idle ${Math.round((now - entry.lastUsed) / 60000)}min)`,
-      );
+      const idleMinutes = Math.round((now - entry.lastUsed) / 60000);
+      if (keepsRunInFlight(entry.provider, id, "idle provider")) {
+        logger.info(
+          `[DB] Keeping idle provider ${sanitize(id)} (idle ${idleMinutes}min): it reports a run in flight, so the next sweep checks it again.`,
+        );
+        continue;
+      }
+      logger.info(`[DB] Evicting idle provider: ${sanitize(id)} (idle ${idleMinutes}min)`);
       try {
         await entry.provider.disconnect();
       } catch (error) {
@@ -733,6 +759,12 @@ export async function evictIdleProviders(maxIdleMs: number = IDLE_TIMEOUT_MS): P
   // connection id, so it is closed only once nothing serves that connection.
   for (const [key, entry] of profiledProviderCache) {
     if (now - entry.lastUsed >= maxIdleMs) {
+      if (keepsRunInFlight(entry.provider, entry.connectionId, "idle profiled provider")) {
+        logger.info(
+          `[DB] Keeping idle profiled provider ${sanitize(entry.connectionId)}: it reports a run in flight, so the next sweep checks it again.`,
+        );
+        continue;
+      }
       logger.info(`[DB] Evicting idle profiled provider: ${sanitize(entry.connectionId)}`);
       try {
         await entry.provider.disconnect();

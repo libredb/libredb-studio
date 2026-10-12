@@ -545,7 +545,7 @@ end to end. See [providers/trino.md](./providers/trino.md).
 ## Performance Notes
 
 - Connection pooling provides 5-10x speedup for repeated queries
-- Idle connections are automatically closed after 30 seconds
+- A cached provider idle for 30 minutes is closed, checked every 5 minutes, except one whose `hasRunsInFlight()` answers true, which the next sweep checks again.
 - Query timeouts prevent runaway queries
 - Schema queries are optimized with LIMIT clauses
 - MongoDB uses estimated document counts for performance

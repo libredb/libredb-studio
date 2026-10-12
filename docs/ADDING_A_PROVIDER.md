@@ -406,6 +406,10 @@ An operation that runs on one object, and that an admin should see described bef
   `tests/unit/db/maintenance-confirmation-capability.test.ts` holds such a spec to `perEntity: true` and the provider to implementing `previewMaintenance`.
   Implement `previewMaintenance(type, path)` with it: `path` is the object's address, container levels then the object; the method reads only, checks that the object exists, raises a `QueryError` naming what is missing, and answers a `MaintenancePreview` whose `refusal`, when set, withholds the confirm button.
 - Implement `engineUser()` when the engine has a principal to name: the maintenance route writes it on every audit row, as `engine_user` on the stdout line, so it is a user name and never any part of a secret.
+- Implement `hasRunsInFlight(): boolean` when your `disconnect()` ends a statement that is still running.
+  The factory's idle sweep closes a cached provider 30 minutes after its last acquisition, and a provider that polls a long statement is not acquired again while it polls, so without it the sweep cancels that statement.
+  Answer it from your run registry (`runsInFlight() > 0`), synchronously and without throwing, and end every run you count at its own deadline.
+  `tests/unit/db/runs-in-flight-census.test.ts` pins who declares it; flip your row there.
 
 `tests/unit/db/maintenance-surface-census.test.ts` pins what every shipped provider offers today, and that only Milvus declares any of this; a provider that adds such an operation updates its row there in the same change.
 

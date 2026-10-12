@@ -297,6 +297,72 @@ describe("createRunRegistry", () => {
     handle.end();
   });
 
+  describe("runsInFlight", () => {
+    test("is 0 on a new registry", () => {
+      expect(createRunRegistry().runsInFlight()).toBe(0);
+    });
+
+    test("a run with an id and a run without one each count until their end", () => {
+      const registry = createRunRegistry();
+      const named = registry.begin("q-flight-1", never());
+      const anonymous = registry.begin(undefined, never());
+      expect(registry.runsInFlight()).toBe(2);
+      named.end();
+      expect(registry.runsInFlight()).toBe(1);
+      anonymous.end();
+      expect(registry.runsInFlight()).toBe(0);
+    });
+
+    test("a second end of either kind subtracts nothing more", () => {
+      const registry = createRunRegistry();
+      const named = registry.begin("q-flight-2", never());
+      const anonymous = registry.begin(undefined, never());
+      named.end();
+      named.end();
+      expect(registry.runsInFlight()).toBe(1);
+      const third = registry.begin(undefined, never());
+      anonymous.end();
+      anonymous.end();
+      expect(registry.runsInFlight()).toBe(1);
+      third.end();
+      expect(registry.runsInFlight()).toBe(0);
+    });
+
+    test("a refused begin counts nothing", () => {
+      const registry = createRunRegistry();
+      const first = registry.begin("q-flight-3", never());
+      expect(() => registry.begin("q-flight-3", never())).toThrow(DuplicateRunError);
+      expect(() => registry.begin("not a valid id!", never())).toThrow(QUERY_ID_SENTENCE);
+      expect(registry.runsInFlight()).toBe(1);
+      first.end();
+      expect(registry.runsInFlight()).toBe(0);
+    });
+
+    test("a cancelled run and a run whose deadline aborted still count until their end", () => {
+      const registry = createRunRegistry();
+      const cancelled = registry.begin("q-flight-4", never());
+      const deadline = new AbortController();
+      const expired = registry.begin("q-flight-5", deadline.signal);
+      registry.cancel("q-flight-4");
+      deadline.abort(new DOMException("deadline", "TimeoutError"));
+      expect(cancelled.signal.aborted).toBe(true);
+      expect(expired.signal.aborted).toBe(true);
+      expect(registry.runsInFlight()).toBe(2);
+      cancelled.end();
+      expired.end();
+      expect(registry.runsInFlight()).toBe(0);
+    });
+
+    test("a stale end of a reused id leaves the newer run counted", () => {
+      const registry = createRunRegistry();
+      const older = registry.begin("q-flight-6", never());
+      older.end();
+      registry.begin("q-flight-6", never());
+      older.end();
+      expect(registry.runsInFlight()).toBe(1);
+    });
+  });
+
   test("the deadline aborts the run's signal with the deadline's reason", () => {
     const deadline = new AbortController();
     const handle = createRunRegistry().begin("q-deadline", deadline.signal);
