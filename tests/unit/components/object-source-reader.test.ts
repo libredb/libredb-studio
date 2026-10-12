@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { partEditability, type SourceEditablePart } from "@/components/object-source/source-editable";
 import { httpSourceReader, isSourceDocumentShape } from "@/components/object-source/source-reader";
-import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
+import { isSourcePartStatement, SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -75,6 +75,68 @@ describe("isSourceDocumentShape", () => {
 
   test("rejects a refusal with an empty sentence, which would draw our headline over a blank line", () => {
     expect(isSourceDocumentShape({ ...document, parts: [{ id: "d", label: "D", unavailable: "   " }] })).toBe(false);
+  });
+
+  test("accepts a statement part, the neutral member that carries a fact and no failure", () => {
+    expect(
+      isSourceDocumentShape({
+        ...document,
+        parts: [readable, { id: "notes", label: "Notes", unavailable: "Nothing is read here.", statement: true }],
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects a statement key holding anything but true, because the viewer would guess which member it is", () => {
+    for (const value of [false, "true", 1, null, {}]) {
+      expect(
+        isSourceDocumentShape({
+          ...document,
+          parts: [{ id: "notes", label: "Notes", unavailable: "Nothing is read here.", statement: value }],
+        }),
+      ).toBe(false);
+    }
+  });
+
+  test("rejects a statement key on a readable part, which is no member of the union", () => {
+    expect(isSourceDocumentShape({ ...document, parts: [{ ...readable, statement: true }] })).toBe(false);
+  });
+
+  test("rejects a statement carrying a text, the same collapse as a refusal carrying one", () => {
+    expect(
+      isSourceDocumentShape({
+        ...document,
+        parts: [{ ...readable, unavailable: "Nothing is read here.", statement: true }],
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects a statement with an empty sentence, as it rejects a refusal with one", () => {
+    expect(
+      isSourceDocumentShape({
+        ...document,
+        parts: [{ id: "notes", label: "Notes", unavailable: " ", statement: true }],
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects a statement sentence longer than a text is allowed to be, and accepts one exactly on the bound", () => {
+    const statementOf = (sentence: string) => ({
+      ...document,
+      parts: [{ id: "notes", label: "Notes", unavailable: sentence, statement: true }],
+    });
+    expect(isSourceDocumentShape(statementOf("s".repeat(SOURCE_CHARACTER_LIMIT + 1)))).toBe(false);
+    expect(isSourceDocumentShape(statementOf("s".repeat(SOURCE_CHARACTER_LIMIT)))).toBe(true);
+  });
+
+  test("a statement survives a JSON round trip as a statement", () => {
+    const sent = {
+      ...document,
+      parts: [readable, { id: "notes", label: "Notes", unavailable: "Nothing.", statement: true }],
+    };
+    const received: unknown = JSON.parse(JSON.stringify(sent));
+    expect(isSourceDocumentShape(received)).toBe(true);
+    if (!isSourceDocumentShape(received)) throw new Error("the round trip lost the document");
+    expect(isSourcePartStatement(received.parts[1]!)).toBe(true);
   });
 
   test("rejects an empty text, because an empty definition is not a definition", () => {
