@@ -23,8 +23,8 @@ section: database
 priority: optional
 maintainer: cevheri <cevheribozoglan@gmail.com>
 description: |
-  Web-based SQL IDE for thirty-one engines - PostgreSQL, MySQL, SQLite, libSQL, DuckDB,
-  Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
+  Web-based SQL IDE for thirty-two engines - PostgreSQL, MySQL, SQLite, libSQL, DuckDB,
+  Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid,
   Elasticsearch, OpenSearch, Trino, Databend, BigQuery, Apache Cassandra, Prometheus,
   InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes and MQTT - with AI query assistance.
   Ships the standalone Next.js server with a bundled private Node.js

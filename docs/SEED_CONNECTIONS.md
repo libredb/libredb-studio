@@ -78,8 +78,26 @@ An mssql seed that carried only a `connectionString`, for example, loaded and op
 The types whose provider reads it are postgres, mysql, sqlite, libsql, oracle, db2, clickhouse, mongodb and couchbase.
 sqlite reads it as the database file path, with a `file:` prefix removed, although its provider's capability flag says it does not ([docs/providers/sqlite.md](./providers/sqlite.md)).
 mssql does not read it, although its provider's capability flag says it does: the flag covers the connection form, which splits a pasted URI into fields, and the provider builds from those fields only ([docs/providers/mssql.md](./providers/mssql.md#44-connection-string-nuance)).
-The 23 that refuse it are bigquery, duckdb, mssql, druid, trino, cassandra, elasticsearch, opensearch, redis, prometheus, kafka, etcd, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend, s3, kubernetes, mqtt and libredb.
+The 24 that refuse it are bigquery, duckdb, mssql, druid, trino, cassandra, elasticsearch, opensearch, redis, prometheus, kafka, etcd, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend, s3, kubernetes, mqtt, firestore and libredb.
 To fix a refused file, move the value into `host`, `port`, `user`, `password` and `database`, and remove `connectionString`.
+
+### A Firestore connection
+
+A Firestore seed names the project in `database` and, optionally, a named database in `schema`; `password` holds a service-account key, an authorized-user file or an access token, or stays empty to use the server's own Google identity ([providers/firestore.md](providers/firestore.md)).
+
+```yaml
+connections:
+  - id: "firestore-production"
+    name: "Firestore production"
+    type: "firestore"
+    database: "acme-prod"            # project id
+    schema: "orders"                 # optional; empty means (default)
+    # No password: the server's own identity. Needs FIRESTORE_SERVER_CREDENTIALS=true on the server.
+    roles: ["admin"]
+    managed: true
+```
+
+A Firestore connection takes no `connectionString` and is refused if it carries one.
 
 ### Diagnostics
 

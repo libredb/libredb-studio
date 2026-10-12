@@ -112,7 +112,7 @@ LibreDB Studio устроен наоборот: **инструмент прих�
 
 ### Тридцать СУБД, один интерфейс
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT
 
 Для всех SQL-СУБД доступен одинаковый набор инструментов: дерево объектов базы (схемы, таблицы, столбцы), ER-диаграммы, сравнение схем и панели мониторинга. MongoDB и Redis работают не на SQL, поэтому ER-диаграмм и сравнения схем для них нет.
 
@@ -132,6 +132,7 @@ ER-диаграмма для Elasticsearch и OpenSearch показывает и
 | **DuckDB** | `@duckdb/node-api` (нативный модуль, около 68 МБ на платформу) | Полноценная SQL IDE для локального файла DuckDB или базы в памяти (`:memory:`). Файл должен лежать на том же сервере, где запущена Studio. Есть дерево плана через `EXPLAIN (FORMAT JSON)`, реальный размер таблиц и отмена запросов. Операции обслуживания: `VACUUM`, `ANALYZE` и `CHECKPOINT`. Журнала медленных запросов и списка сеансов в DuckDB нет, и соответствующие панели прямо об этом сообщают. Файл базы может открыть только один процесс, даже на чтение, поэтому второй экземпляр Studio к той же базе не подключится |
 | **MongoDB** | `mongodb` | Редактор запросов в формате JSON, операции с коллекциями (find, aggregate, insert, update, delete) |
 | **Couchbase** | Без драйвера, по HTTP (REST API запросов и управления) | Полноценная IDE для SQL++, EXPLAIN, просмотр бакетов, скоупов и коллекций, определение полей через `INFER` |
+| **Firestore** | Без драйвера, по REST (Firestore REST API v1) | Только чтение: коллекции верхнего уровня в дереве, документы и подколлекции любой глубины в панели Keys, данные документа во вкладке Source и цепочка запросов Admin SDK, которую Studio разбирает и никогда не выполняет как JavaScript, с `count()`, `sum()`, `average()`, `findNearest` и Query Explain |
 | **ClickHouse** | Без драйвера, по HTTP (SQL-интерфейс, порт 8123) | Полноценная SQL IDE, дерево EXPLAIN в JSON, чтение схемы из системных таблиц, `OPTIMIZE TABLE` |
 | **Apache Druid** | Без драйвера, по HTTP (`POST /druid/v2/sql`) | SQL IDE только для чтения, дерево EXPLAIN, чтение схемы из `INFORMATION_SCHEMA`, мониторинг по таблицам `sys.*` |
 | **Elasticsearch** | Без драйвера, по HTTP (`POST /_sql?format=json`, порт 9200) | SQL IDE только для чтения, просмотр индексов и полей, состояние кластера, число документов и размер каждого индекса. Нет EXPLAIN, операций обслуживания, панелей медленных запросов и сеансов. В SQL Elasticsearch нет `OFFSET`, поэтому вторую страницу результатов получить нельзя |

@@ -34,6 +34,7 @@ Three decisions. The first is the consequential one, which is why it is first.
    Databend over its own HTTP query API, `POST /v1/query` ([databend.md](./providers/databend.md)),
    S3-compatible object storage over the S3 REST API, signed by Studio's own SigV4 code ([s3.md](./providers/s3.md)),
    and Kubernetes over the API server's REST API ([kubernetes.md](./providers/kubernetes.md)).
+   BigQuery over its REST API v2 ([bigquery.md](./providers/bigquery.md)) and Firestore over its REST API v1 ([firestore.md](./providers/firestore.md)) need none either.
    If it does need one, it will be something like `pg`, `mysql2`, `mongodb`, `ioredis`, `oracledb`,
    `mssql` or `db2-node`.
 
@@ -238,10 +239,10 @@ The Memgraph provider is filed as `docs/BACKLOG.md` D141.
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3' | 'kubernetes';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3' | 'kubernetes' | 'bigquery' | 'mqtt' | 'firestore';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3' | 'kubernetes' | 'cockroachdb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia' | 'databend' | 's3' | 'kubernetes' | 'bigquery' | 'mqtt' | 'firestore' | 'cockroachdb';
 ```
 
 A type-id may contain a digit: `db2` does.
@@ -256,7 +257,7 @@ If your database uses a new editor mode (not `'sql'` or `'mongodb'`), add it:
 ```typescript
 export interface QueryTab {
   // ...
-  type: 'sql' | 'mongodb' | 'redis' | 'libredb' | 'promql' | 'kafka' | 'etcd' | 'cypher' | 'milvus' | 'qdrant' | 'influxql' | 'oxia';  // Add your type here if needed
+  type: 'sql' | 'mongodb' | 'redis' | 'libredb' | 'promql' | 'kafka' | 'etcd' | 'cypher' | 'milvus' | 'qdrant' | 'influxql' | 'oxia' | 's3' | 'kubectl' | 'mqtt' | 'firestore';  // Add your type here if needed
 }
 ```
 
@@ -819,7 +820,7 @@ Every field and what it controls:
 | Field | Type | Controls |
 |-------|------|----------|
 | `queryLanguage` | `'sql' \| 'json' \| 'promql' \| 'cypher' \| 'influxql'` | Monaco editor language mode, AI prompt style, query template format. A closed union: a new member needs an arm, or a test pinning its branch, in every reader (#1085) |
-| `queryDialect` | `'libredb' \| 'redis' \| 'kafka' \| 'etcd' \| 'milvus' \| 'qdrant' \| 'oxia' \| 's3' \| 'kubectl' \| undefined` | Optional. Names the dialect's records in three registries, which the tab type, the Monaco language, the formatter, the generated statements and the Generate Code and Generate Count Query gates consult **before** `queryLanguage` (only Profile answers an SQL language first, `offersColumnProfiling` in `src/lib/db/types.ts`): `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`, the tab type and the row-menu gates), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`, the Monaco language and the formatter) and `DIALECT_GENERATORS` (`query-generators.ts`, what a tree click and Generate Query write). A new dialect adds its three records, not a check in each reader: `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
+| `queryDialect` | `'libredb' \| 'redis' \| 'kafka' \| 'etcd' \| 'milvus' \| 'qdrant' \| 'oxia' \| 's3' \| 'mqtt' \| 'firestore' \| 'kubectl' \| undefined` | Optional. Names the dialect's records in three registries, which the tab type, the Monaco language, the formatter, the generated statements and the Generate Code and Generate Count Query gates consult **before** `queryLanguage` (only Profile answers an SQL language first, `offersColumnProfiling` in `src/lib/db/types.ts`): `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`, the tab type and the row-menu gates), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`, the Monaco language and the formatter) and `DIALECT_GENERATORS` (`query-generators.ts`, what a tree click and Generate Query write). A new dialect adds its three records, not a check in each reader: `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
 | `supportsExplain` | `boolean` | EXPLAIN button visibility in QueryEditor toolbar |
 | `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
@@ -907,7 +908,7 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · db2 · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · cassandra · prometheus · influxdb · influxdb3 · kafka · etcd · neo4j · milvus · qdrant · oxia · databend · s3 · kubernetes · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · db2 · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · bigquery · cassandra · prometheus · influxdb · influxdb3 · kafka · etcd · neo4j · milvus · qdrant · oxia · databend · s3 · kubernetes · mqtt · firestore · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), a
@@ -1028,8 +1029,8 @@ The integration points, all of which need an entry. This is the list the Strateg
       published engine count silently undercount; it is listed here because the count in `README.md`
       and `docs/BRAND_MESSAGING.md` is derived from it and has to move in the same PR
 - [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
-      sixteen shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
-      `libsql`, `sqlite`, `prometheus`, `qdrant`, `milvus`, `influxdb`, `influxdb3`, `oxia`, `databend` and `kubernetes`
+      eighteen shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
+      `libsql`, `sqlite`, `prometheus`, `qdrant`, `milvus`, `influxdb`, `influxdb3`, `oxia`, `databend`, `kubernetes`, `bigquery` and `firestore`
       each add nothing here (`milvus` and `oxia` only extend the `//dependencies` note).
       `s3` needs no driver but adds the Parquet decoders `hyparquet` and `hyparquet-compressors`, with their `//dependencies` note.
 - [ ] `database-compose.yml` — a service, so the next person can repeat the live pass. A distributed

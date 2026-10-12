@@ -17,6 +17,7 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Redis | `redis` | Key-Value | `ioredis` | JSON | [redis.md](./redis.md) |
 | MongoDB | `mongodb` | Document | `mongodb` | JSON (MQL) | [mongodb.md](./mongodb.md) |
 | Couchbase | `couchbase` | Document | none (HTTP: Query + management REST) | SQL (SQL++) | [couchbase.md](./couchbase.md) |
+| Google Cloud Firestore | `firestore` | Document | none, REST over the shared `node:https` transport (the Firestore REST API v1); `jose` signs service-account grants | The Admin SDK query chain (a read-only subset, parsed by Studio) | [firestore.md](./firestore.md) |
 | ClickHouse | `clickhouse` | SQL | none (HTTP interface) | SQL | [clickhouse.md](./clickhouse.md) |
 | Apache Druid | `druid` | SQL (analytics) | none (HTTP: SQL endpoint) | SQL (Calcite) | [druid.md](./druid.md) |
 | Elasticsearch | `elasticsearch` | SQL (search) | none (HTTP: `_sql` + REST) | SQL (Elasticsearch SQL) | [elasticsearch.md](./elasticsearch.md) |
@@ -36,13 +37,14 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | InfluxDB 3 (SQL) | `influxdb3` | Time series | none, HTTP over the shared `node:http(s)` transport | SQL (Apache DataFusion, read-only) | [influxdb3.md](./influxdb3.md) |
 | S3-compatible object storage | `s3` | Object storage | none, REST over the shared `node:http(s)` transport, signed by Studio's own SigV4 code; `hyparquet` for Parquet previews | AWS CLI read commands (a subset, read-only) | [s3.md](./s3.md) |
 | Kubernetes | `kubernetes` | Platform | none, HTTP over the shared `node:https` transport (the API server's REST API) | kubectl read commands (a subset) | [kubernetes.md](./kubernetes.md) |
+| MQTT | `mqtt` | Key-Value (a broker's topic tree) | `mqtt-packet` (its parser only; the packets Studio sends are Studio's own) | None: no query console | [mqtt.md](./mqtt.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
-  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, Oxia, Databend, S3 and Kubernetes are). The official product name (e.g.
+  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, Oxia, Databend, S3, Kubernetes and Firestore are). The official product name (e.g.
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch`, and `providers/timeseries/influxdb/` is
   `influxdb` and `influxdb3`, two classes on two base classes sharing one connection layer — and each type-id still gets its own
@@ -275,8 +277,8 @@ InfluxDB (InfluxQL) has a row per server line it reads, because each line is a s
 The Oxia row was verified against the running container on 2026-10-04, by the capture `tests/fixtures/oxia/README.md` records.
 The Databend row was verified against the running `databend-http` container (v1.2.951-nightly) on 2026-10-08: the user and password below sign in, and `system.databases` lists the seeded `libredb_demo` and `studio_demo`.
 
-Start the forty-four always-on services with a plain `docker compose -f database-compose.yml up -d`:
-twenty-eight engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `etcd-seed`, `oxia-seed`, `milvus-seed`, `qdrant-seed`, `influxdb-seed`, `databend-http-seed`, `silo-principals`, `silo-seed`, `garage-keys`, `garage-setup`, `garage-seed`, `rustfs-principals` and `rustfs-seed` seed sidecars; the `Profile` column names
+Start the forty-six always-on services with a plain `docker compose -f database-compose.yml up -d`:
+twenty-nine engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `etcd-seed`, `oxia-seed`, `milvus-seed`, `qdrant-seed`, `influxdb-seed`, `databend-http-seed`, `silo-principals`, `silo-seed`, `garage-keys`, `garage-setup`, `garage-seed`, `rustfs-principals`, `rustfs-seed` and `firestore-seed` seed sidecars; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider, so a plain `up -d` can reproduce that
 provider's integration pass.

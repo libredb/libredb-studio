@@ -111,7 +111,7 @@ LibreDB Studioは逆向きです。**データをツールのところへ持っ�
 
 ### 30のエンジン、1つのインターフェース
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · Firestore · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · BigQuery · Databend · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia · S3-compatible object storage · Kubernetes · MQTT
 
 スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。Druid、Elasticsearch、OpenSearch、TrinoはこのビルドがパースできるURI形式を持たないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。検索クラスタのER図は箱だけで線がありません。インデックスは外部キーを宣言せず、エンジンのモデルにも宣言できる外部キーが存在しないためです。
 
@@ -127,6 +127,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 | **DuckDB** | `@duckdb/node-api`（ネイティブN-APIアドオン、プラットフォームごとに約68MBのバインディング） | アプリが動作するサーバ上のローカルDuckDBファイル、または`:memory:`に対するフルSQL IDE。`EXPLAIN (FORMAT JSON)`による物理プランツリー、`duckdb_*`カタログの自省、`pragma_storage_info`のブロック割り当てから得られる実際のテーブル別バイト数、ドライバ自身の`interrupt()`によるクエリキャンセル。メンテナンス操作は`VACUUM`・`ANALYZE`・`CHECKPOINT`の3つです。`REINDEX`はこのエンジンではパースエラーであり、`PRAGMA integrity_check`も`PRAGMA optimize`も存在しないため、それらの操作は提供しません。スロークエリログもセッション一覧もありません。DuckDBはどちらも公開していないため、これらのパネルは0を表示するのではなくその旨を伝えます。データベースファイルを開けるOSプロセスは1つだけで、読み取り専用モードでも2つ目は拒否されるため、このインスタンスが保持しているファイルを別のStudioインスタンスが開くことはできません |
 | **MongoDB** | `mongodb` | JSONクエリエディタ、コレクション操作（find、aggregate、insert、update、delete） |
 | **Couchbase** | ドライバなし、HTTPのみ（Query + 管理REST） | フルSQL++ IDE、EXPLAIN、bucket/scope/collectionエクスプローラ、`INFER`によるカラム推論 |
+| **Firestore** | ドライバなし、REST（Firestore REST API v1） | 読み取り専用：ツリーにトップレベルのコレクション、Keysパネルで任意の深さのドキュメントとサブコレクション、ドキュメントはSourceタブで表示。Admin SDKのクエリチェーンはStudioが解析し、JavaScriptとして実行しない。`count()`、`sum()`、`average()`、`findNearest`、Query Explainに対応 |
 | **ClickHouse** | ドライバなし、HTTPのみ（SQLインターフェース、8123） | フルSQL IDE、JSON EXPLAINツリー、システムテーブルからのスキーマ取得、`OPTIMIZE TABLE` |
 | **Apache Druid** | ドライバなし、HTTPのみ（`POST /druid/v2/sql`） | 読み取り専用SQL IDE、ネイティブクエリのEXPLAINツリー、`INFORMATION_SCHEMA`、`sys.*`監視 |
 | **Elasticsearch** | ドライバなし、HTTPのみ（`POST /_sql?format=json`、9200） | 読み取り専用SQL IDE、mappingベースのインデックス／フィールドエクスプローラ、クラスタヘルスとインデックスごとのドキュメント数・ストアサイズ。EXPLAINなし、メンテナンス操作なし、スロークエリ／セッションパネルなし。Elasticsearch SQLには`OFFSET`もないため、2ページ目以降は取得できません |

@@ -187,7 +187,7 @@ A rule that could **not** be established is not guessed from a neighbouring dial
 at the compatibility default below, and it is listed here rather than left implicit. The default is per
 **fact**, not per dialect: a dialect whose `#` rule is known can still be undecided about its brackets.
 
-**MongoDB, Redis, Prometheus, InfluxDB (InfluxQL), Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes are the thirteen types whose query text is not SQL at all**: `NON_SQL_DIALECTS` in `src/lib/sql/grammar.ts` holds exactly those thirteen, which is what `readsSqlText()` reports on.
+**MongoDB, Firestore, Redis, Prometheus, InfluxDB (InfluxQL), Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes are the fourteen types whose query text is not SQL at all**: `NON_SQL_DIALECTS` in `src/lib/sql/grammar.ts` holds exactly those fourteen, which is what `readsSqlText()` reports on.
 Their providers never reach these readers on the query path, and the confirmation gate, which reads whatever is in the editor, asks `readsSqlText()` before applying any span-based rule to their text, so a JSON document, a Redis command, a PromQL expression, an InfluxQL statement, a Kafka read request, an etcdctl command, a Cypher statement, a Milvus request, a Qdrant request, an `oxia client` read command, an AWS CLI read command or a kubectl statement is not judged by a SQL reader that cannot parse it.
 
 The gate's SQL keyword test still reads MongoDB and Redis text first, as a backstop, which on Redis also asks about a read whose arguments include `update` and then `set` (`docs/BACKLOG.md` U43).

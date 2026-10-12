@@ -1,10 +1,10 @@
-LibreDB Studio brings a full SQL IDE to Rancher-managed Kubernetes clusters: browse schemas and run queries across thirty-one engines with no desktop client. Where an engine cannot edit data, its controls show as unsupported.
+LibreDB Studio brings a full SQL IDE to Rancher-managed Kubernetes clusters: browse schemas and run queries across thirty-two engines with no desktop client. Where an engine cannot edit data, its controls show as unsupported.
 
 The Helm chart installs from the Rancher Apps catalog with defaults: first-run admin credentials are generated and logged; production installs can supply their own secrets. It runs on your own infrastructure and is developed and commercially supported by the LibreDB team.
 <ul>
-<li>Thirty-one engines: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, BigQuery, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, MQTT</li>
+<li>Thirty-two engines: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, BigQuery, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, MQTT</li>
 <li>Optional AI, off by default (Gemini, OpenAI or a local model): plain-English query explanation from the EXPLAIN plan on PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino, Databend and BigQuery. A read-only agent on PostgreSQL, SQLite, DuckDB and SQL Server never writes</li>
 <li>Hardened chart defaults: non-root, read-only root filesystem, NetworkPolicy, PDB, HPA, Ingress/TLS</li>
-<li>Self-hosted and air-gap friendly: no external services required</li>
+<li>Self-hosted and air-gap friendly: no external services</li>
 <li>amd64 and arm64 images, with Rancher, RKE2/K3s and Kubernetes versions validated each release</li>
 </ul>

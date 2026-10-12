@@ -22,13 +22,13 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.18.3
-    createdAt: "2026-10-11T22:23:18Z"
-    description: Open-source web-based SQL IDE for thirty-one engines - PostgreSQL,
+    createdAt: "2026-10-12T04:01:02Z"
+    description: Open-source web-based SQL IDE for thirty-two engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
-      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Apache
-      Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant,
-      InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage and Kubernetes
-      - with AI-powered query assistance.
+      Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery,
+      Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus,
+      Qdrant, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage and
+      Kubernetes - with AI-powered query assistance.
     olm.skipRange: '>=0.0.0 <0.18.3'
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: helm.sdk.operatorframework.io/v1
@@ -54,7 +54,7 @@ spec:
   description: |
     LibreDB Studio is an open-source, web-based SQL IDE. Query PostgreSQL,
     MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
-    ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache
+    Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Apache
     Cassandra, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, InfluxDB,
     InfluxDB 3, Oxia, Databend, S3-compatible object storage and Kubernetes from the browser,
     with AI-powered query assistance (natural-language-to-SQL, explain, fix),

@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Apache Cassandra, Prometheus, InfluxDB, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes** from your browser, with AI query assistance, RBAC and OIDC SSO.
+Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Apache Cassandra, Prometheus, InfluxDB, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes** from your browser, with AI query assistance, RBAC and OIDC SSO.
 
 ---
 
@@ -34,9 +34,9 @@ docker run \
   libredb/libredb-studio:latest
 ```
 
-Open <http://localhost:3000>. No password is set above, so the first start generates one and prints it with `docker logs libredb-studio`. To choose your own instead, add `-e ADMIN_PASSWORD=...` and `-e JWT_SECRET=...` — the secret has to be at least 32 characters.
+Open <http://localhost:3000>. No password is set above, so the first start generates one and prints it with `docker logs libredb-studio`. To choose your own instead, add `-e ADMIN_PASSWORD=...` and `-e JWT_SECRET=...` - the secret has to be at least 32 characters.
 
-> **None of these auth variables are mandatory.** With the local provider, `ADMIN_PASSWORD` and `JWT_SECRET` are required only when you opt into strict mode (`AUTH_BOOTSTRAP=off`); otherwise both are generated on first start. `USER_EMAIL` / `USER_PASSWORD` are always optional — omit them to run admin-only, since no default user password is ever assumed. None of them are used when `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
+> **None of these auth variables are mandatory.** With the local provider, `ADMIN_PASSWORD` and `JWT_SECRET` are required only when you opt into strict mode (`AUTH_BOOTSTRAP=off`); otherwise both are generated on first start. `USER_EMAIL` / `USER_PASSWORD` are always optional - omit them to run admin-only, since no default user password is ever assumed. None of them are used when `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
 
 > **Enable AI:** add `-e LLM_PROVIDER=gemini -e LLM_API_KEY=your_key -e LLM_MODEL=gemini-2.5-flash`. That also brings the read-only agent, whose availability is derived from having a model configured; add `-v libredb-data:/app/data` if its run history should survive a container recreate, or `-e LIBREDB_AGENT_ENABLED=false` to keep the AI features and decline the agent.
 
@@ -72,7 +72,7 @@ Pick whichever fits how the database runs:
 | Another container, same Docker network | the **service or container name** (`postgres`, `my-mysql`) with the port **inside** the container | `docker run -p 3000:3000 --network <that-network> …` |
 | On the host, or a container publishing a host port | `host.docker.internal` | `docker run -p 3000:3000 --add-host=host.docker.internal:host-gateway …` |
 | Anywhere the host can reach (Linux only) | `localhost` works as written | `docker run --network host …` (no `-p`; the app binds the host's port 3000) |
-| A managed service (RDS, Atlas, Neon, …) | its real hostname | nothing special — it is reachable from anywhere |
+| A managed service (RDS, Atlas, Neon, …) | its real hostname | nothing special - it is reachable from anywhere |
 
 Two things worth knowing before you pick:
 
@@ -97,20 +97,20 @@ Every one of those tags is published on three bases, and the suffix is appended 
 | Suffix | Base | Engines | Use |
 |-----|-------------|-----|-----|
 | none | Debian trixie-slim (glibc) | all, and the only one where Oracle Thick mode can be layered on | the default, and what every example here pulls |
-| `-alpine` | Alpine 3.23 (musl) | all, Oracle Thin only | far fewer OS findings: Trivy 0.73.0 on 2026-09-15 scored the Debian base 3 CRITICAL / 52 HIGH against 0 / 2 for `node:26-alpine` — the newest Debian tag scores the same as ours, so those belong to the distro, not to a stale pin |
+| `-alpine` | Alpine 3.23 (musl) | all, Oracle Thin only | far fewer OS findings: Trivy 0.73.0 on 2026-09-15 scored the Debian base 3 CRITICAL / 52 HIGH against 0 / 2 for `node:26-alpine` - the newest Debian tag scores the same as ours, so those belong to the distro, not to a stale pin |
 | `-alpine-slim` | Alpine 3.23 with Alpine's own `nodejs` | all except DuckDB | smallest; also drops sharp and runs Alpine's packaged Node rather than the official image's unstripped binary |
 
 `-alpine` is the same product as the default image. `-alpine-slim` is the only variant that trades features for size: opening a DuckDB connection on it answers with a message naming the tags that do ship that driver. Oracle Thick mode needs Oracle Instant Client, which has no musl build, so it stays on the default tag. None of the three carries the application source.
 
 - **Architectures:** `linux/amd64` and `linux/arm64` as a multi-arch manifest for `latest`, `X.Y.Z`, `main` and their `sha-` tags. Preview builds from `feat/**` / `fix/**` branches (`dev` and their `sha-` tags) are `linux/amd64` only: CI has no native arm64 runner for this job.
-- **Primary registry:** `ghcr.io/libredb/libredb-studio` (GitHub Container Registry), where CI publishes with build provenance. This Docker Hub repository is a mirror of the identical multi-arch image; the `libredb` namespace is in the [Docker-Sponsored Open Source](https://www.docker.com/community/open-source/) programme, so `docker pull libredb/libredb-studio` is rate-limit-free and needs no account.
+- **Primary registry:** `ghcr.io/libredb/libredb-studio`, where CI publishes with build provenance. This Docker Hub repository is a mirror of the identical multi-arch image; the `libredb` namespace is in the [Docker-Sponsored Open Source](https://www.docker.com/community/open-source/) programme, so `docker pull libredb/libredb-studio` is rate-limit-free and needs no account.
 
 ---
 
 ## Supported databases
 
-Thirty-one external engines share one interface.
-The thirty-second row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
+Thirty-two external engines share one interface.
+The thirty-third row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -125,6 +125,7 @@ The thirty-second row is the embedded LibreDB store: it ships inside the image, 
 | **MongoDB** | `mongodb` | JSON query editor, find/aggregate/insert/update/delete |
 | **Redis** | `ioredis` | Command editor, non-blocking `SCAN` key browser, `INFO` monitoring, per-type command generation |
 | **Couchbase** | none, HTTP | SQL++ query editor, bucket/scope/collection browser, cluster health |
+| **Firestore** | none, REST | Read-only Admin SDK query chain |
 | **ClickHouse** | none, HTTP | Full SQL IDE over the HTTP interface, part/compression sizes, `system.*` monitoring |
 | **Apache Druid** | none, HTTP | Read-only SQL IDE over the SQL endpoint, datasource and segment browser |
 | **Elasticsearch** | none, HTTP | Read-only SQL IDE over `_sql`, mapping-driven index/field explorer, cluster health with per-index document counts and store sizes |
@@ -148,30 +149,30 @@ The thirty-second row is the embedded LibreDB store: it ships inside the image, 
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
 **Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing when used.
-Prometheus, InfluxDB, Apache Kafka, MQTT, Oxia, S3-compatible object storage and Kubernetes are read-only too: Studio calls only read APIs.
+Firestore, Prometheus, InfluxDB, Apache Kafka, MQTT, Oxia, S3-compatible object storage and Kubernetes are read-only too: Studio calls only read APIs.
 
 ### Engines with no provider of their own
 
-Twenty-seven further engines speak the wire protocol of one of the thirty-one drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much worked is recorded per engine.
+Twenty-seven further engines speak the wire protocol of one of the thirty-two drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
 | MariaDB · Percona Server for MySQL | `mysql` | Full - both are drop-in builds: all fifteen surfaces answer and the numbers are correct. Percona's `version()` answers a bare 8.4.11-11, so the overview names it from `@@version_comment` |
-| Percona Distribution for PostgreSQL | `postgres` | Full — behaves as PostgreSQL throughout, with correct row counts and sizes, and unlike the MySQL build it names itself in `version()` |
-| ParadeDB | `postgres` | Full — correct numbers, but its nine extensions put 41 objects in the object browser for 2 user tables, and agent plan mode fails on a stock install because 539 non-system columns exceed the grounding capture's ceiling. `version()` names PostgreSQL only |
-| OrioleDB | `postgres` | Full — clean object browser and exact row counts, but its own storage is invisible to PostgreSQL's size functions, so every index reads 0 bytes and the cache hit ratio reads N/A. Nightly images only |
-| TiDB | `mysql` | Full — but a freshly loaded table reads 0 rows and 0 B until TiDB's background statistics catch up, the slow-query panel stays empty, and only a standalone `--store=unistore` server was probed |
+| Percona Distribution for PostgreSQL | `postgres` | Full - behaves as PostgreSQL throughout, with correct row counts and sizes, and unlike the MySQL build it names itself in `version()` |
+| ParadeDB | `postgres` | Full - correct numbers, but its nine extensions put 41 objects in the object browser for 2 user tables, and agent plan mode fails on a stock install because 539 non-system columns exceed the grounding capture's ceiling. `version()` names PostgreSQL only |
+| OrioleDB | `postgres` | Full - clean object browser and exact row counts, but its own storage is invisible to PostgreSQL's size functions, so every index reads 0 bytes and the cache hit ratio reads N/A. Nightly images only |
+| TiDB | `mysql` | Full - but a freshly loaded table reads 0 rows and 0 B until TiDB's background statistics catch up, the slow-query panel stays empty, and only a standalone `--store=unistore` server was probed |
 | Vitess | `mysql` | Full. Row counts and sizes are exact, but a running query cannot be cancelled: vtgate refuses `KILL QUERY` and the statement runs to completion. Per-index sizes read 0 bytes, and only an unsharded single-shard keyspace was probed |
-| Citus | `postgres` | Full — but statistics describe the coordinator, so a distributed table's row count and size are wrong rather than missing |
-| TimescaleDB | `postgres` | Full — but the statistics describe the empty parent table, so a hypertable's row count and size are wrong rather than missing, and every chunk shows up in the object browser |
-| YugabyteDB | `postgres` | Full — but row counts and sizes read 0 until you run `ANALYZE`, and index sizes always read 0 bytes |
+| Citus | `postgres` | Full - but statistics describe the coordinator, so a distributed table's row count and size are wrong rather than missing |
+| TimescaleDB | `postgres` | Full - but the statistics describe the empty parent table, so a hypertable's row count and size are wrong rather than missing, and every chunk shows up in the object browser |
+| YugabyteDB | `postgres` | Full - but row counts and sizes read 0 until you run `ANALYZE`, and index sizes always read 0 bytes |
 | AlloyDB Omni | `postgres` | Full. Row counts and sizes are exact, but `version()` names AlloyDB nowhere, its own `google_ml` tables appear in the object browser, and the slow-query panel stays empty until `pg_stat_statements` is installed |
 | Valkey · DragonflyDB · KeyDB | `redis` | Full |
-| Garnet | `redis` | Full — every Redis surface answers, and the overview names the engine ahead of the compat level, as `Garnet 2.1.5 (Redis 7.4.3)`. Three readings are absences wearing a value: every size shows 0 B, the cache hit ratio shows 100% and max connections reads 0, because Garnet publishes neither `used_memory` nor keyspace counters |
-| FerretDB | `mongodb` | Full — sign in with the backend PostgreSQL credentials |
-| StarRocks | `mysql` | Partial — the editor, object browser, metrics, slow queries and Explain work; the health and session panels do not, because the engine has no `information_schema.PROCESSLIST`. The version reads MySQL 5.1, and row counts, sizes and indexes are empty |
-| Apache Doris | `mysql` | Full — the engine StarRocks was forked from, and the more trustworthy of the two: every surface answers, row counts and sizes are correct, cancellation genuinely cancels, and Explain shows the engine's own plan. A freshly loaded table reads 0 for about a minute until its background statistics land, no index is ever reported, and a foreign key is accepted but invisible and unenforced |
-| CockroachDB | `postgres` | Partial — editor, metrics, slow queries and sessions work; the object browser and size panels are blank |
+| Garnet | `redis` | Full - every Redis surface answers, and the overview names the engine ahead of the compat level, as `Garnet 2.1.5 (Redis 7.4.3)`. Three readings are absences wearing a value: every size shows 0 B, the cache hit ratio shows 100% and max connections reads 0, because Garnet publishes neither `used_memory` nor keyspace counters |
+| FerretDB | `mongodb` | Full - sign in with the backend PostgreSQL credentials |
+| StarRocks | `mysql` | Partial - the editor, object browser, metrics, slow queries and Explain work; the health and session panels do not, because the engine has no `information_schema.PROCESSLIST`. The version reads MySQL 5.1, and row counts, sizes and indexes are empty |
+| Apache Doris | `mysql` | Full - the engine StarRocks was forked from, and the more trustworthy of the two: every surface answers, row counts and sizes are correct, cancellation genuinely cancels, and Explain shows the engine's own plan. A freshly loaded table reads 0 for about a minute until its background statistics land, no index is ever reported, and a foreign key is accepted but invisible and unenforced |
+| CockroachDB | `postgres` | Partial - editor, metrics, slow queries and sessions work; the object browser and size panels are blank |
 | Apache Cloudberry (incubating) | `postgres` | Partial. Row counts and sizes are correct after `ANALYZE`, but the monitoring dashboard and the table and index statistics all fail on one MPP planner restriction, and a foreign key is read back as though enforced when it is not |
 | OceanBase | `mysql` | Partial - health fails outright because the tenant has no `performance_schema` database at all, every size reads 0 B, and row counts are correct only once `ANALYZE TABLE` has run |
 | SingleStore | `mysql` | Partial - every surface answers, including the five that once failed for reasons that were ours rather than SingleStore's. Row counts and sizes are missing rather than wrong, a 2000-row table reading 0 rows and 0 B, and foreign keys do not exist at all |
@@ -186,16 +187,16 @@ Details, probed versions and each caveat: [`docs/providers/README.md`](https://g
 
 ## Key features
 
-- **Professional SQL IDE** — Monaco editor (VS Code engine), schema-aware autocomplete, multi-tab workspace, Visual EXPLAIN.
-- **Interactive ER diagrams** — real FK edges, cardinality, auto-layout (ELK.js), PNG/SVG export.
-- **Schema diff & migration** — compare snapshots/connections and auto-generate migration SQL.
-- **Read-only database agent** — state an objective, and the run drafts SQL, reads the results and composes a report whose claims cite them. Three workflows (investigate / optimize / assess), a visible statement-and-time budget, and writes refused before the database is reached. **Agent mode executes on PostgreSQL, SQLite, DuckDB and SQL Server only** — the four engines with a database-native read-only execution profile; anywhere else a statement-sending run is refused at the start. Plan mode is toolless, runs no statement of yours, and is grounded in your own schema on every engine. Standalone image only. [Guide](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_GUIDE.md) · [What leaves the machine](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_DATA_FLOW.md).
-- **Model-backed helpers** — query safety analysis, EXPLAIN-in-plain-English, AI-generated schema docs, data-profile summaries. Gemini / OpenAI / Ollama / custom; with no `LLM_*` variables at all, no AI call is made. A key is required for Gemini and OpenAI only: Ollama and a custom endpoint count as a configured model without one.
-- **Pro data grid** — virtualized millions of rows, inline editing, per-column filters, pivot table, CSV/JSON export.
-- **Data visualization** — 8 chart types with aggregation and saved-chart dashboards.
-- **Data privacy & masking** — automatic sensitive-column detection, RBAC-enforced masking, export protection.
-- **Auth & SSO** — local email/password or OIDC (Auth0, Keycloak, Okta, Azure AD, Zitadel) with PKCE and role mapping.
-- **DBA toolkit (admin)** — live monitoring dashboard, threshold alerts, full audit trail, and one-click maintenance in each engine's own terms (VACUUM/ANALYZE/REINDEX on PostgreSQL, `OPTIMIZE TABLE` on MySQL, and nothing offered where an engine has no maintenance statement to run).
+- **Professional SQL IDE** - Monaco editor (VS Code engine), schema-aware autocomplete, multi-tab workspace, Visual EXPLAIN.
+- **Interactive ER diagrams** - real FK edges, cardinality, auto-layout (ELK.js), PNG/SVG export.
+- **Schema diff & migration** - compare snapshots/connections and auto-generate migration SQL.
+- **Read-only database agent** - state an objective, and the run drafts SQL, reads the results and composes a report whose claims cite them. Three workflows (investigate / optimize / assess), a visible statement-and-time budget, and writes refused before the database is reached. **Agent mode executes on PostgreSQL, SQLite, DuckDB and SQL Server only** - the four engines with a database-native read-only execution profile; anywhere else a statement-sending run is refused at the start. Plan mode is toolless, runs no statement of yours, and is grounded in your own schema on every engine. Standalone image only. [Guide](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_GUIDE.md) · [What leaves the machine](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_DATA_FLOW.md).
+- **Model-backed helpers** - query safety analysis, EXPLAIN-in-plain-English, AI-generated schema docs, data-profile summaries. Gemini / OpenAI / Ollama / custom; with no `LLM_*` variables at all, no AI call is made. A key is required for Gemini and OpenAI only: Ollama and a custom endpoint count as a configured model without one.
+- **Pro data grid** - virtualized millions of rows, inline editing, per-column filters, pivot table, CSV/JSON export.
+- **Data visualization** - 8 chart types with aggregation and saved-chart dashboards.
+- **Data privacy & masking** - automatic sensitive-column detection, RBAC-enforced masking, export protection.
+- **Auth & SSO** - local email/password or OIDC (Auth0, Keycloak, Okta, Azure AD, Zitadel) with PKCE and role mapping.
+- **DBA toolkit (admin)** - live monitoring dashboard, threshold alerts, full audit trail, and one-click maintenance in each engine's own terms (VACUUM/ANALYZE/REINDEX on PostgreSQL, `OPTIMIZE TABLE` on MySQL, and nothing offered where an engine has no maintenance statement to run).
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/libredb/libredb-studio/main/public/screenshots/erd-diagram.png" alt="Interactive ER Diagram" width="100%" />
@@ -229,9 +230,9 @@ Health check endpoint: `GET /api/db/health` · Container HTTP port: `3000`.
 
 ## Deploy
 
-- **Kubernetes (Helm)** — `oci://ghcr.io/libredb/charts/libredb-studio` · [Artifact Hub](https://artifacthub.io/packages/search?repo=libredb-studio)
-- **CapRover** — built into the official One-Click Apps catalog: **Apps → One-Click Apps/Databases** → search **LibreDB Studio**. No third-party repo to add.
-- **PaaS** — one-click buttons for Koyeb & Render in the [GitHub README](https://github.com/libredb/libredb-studio#one-click-deploy).
+- **Kubernetes (Helm)** - `oci://ghcr.io/libredb/charts/libredb-studio` · [Artifact Hub](https://artifacthub.io/packages/search?repo=libredb-studio)
+- **CapRover** - built into the official One-Click Apps catalog: **Apps → One-Click Apps/Databases** → search **LibreDB Studio**. No third-party repo to add.
+- **PaaS** - one-click buttons for Koyeb & Render in the [GitHub README](https://github.com/libredb/libredb-studio#one-click-deploy).
 
 ---
 
@@ -239,7 +240,7 @@ Health check endpoint: `GET /api/db/health` · Container HTTP port: `3000`.
 
 - **Project website:** <https://libredb.org>
 - **Source & docs:** <https://github.com/libredb/libredb-studio>
-- **Contributing:** [CONTRIBUTING.md](https://github.com/libredb/libredb-studio/blob/main/CONTRIBUTING.md) — how to open an issue, run the test suite and send a pull request, alongside the [Code of Conduct](https://github.com/libredb/libredb-studio/blob/main/CODE_OF_CONDUCT.md)
+- **Contributing:** [CONTRIBUTING.md](https://github.com/libredb/libredb-studio/blob/main/CONTRIBUTING.md) - how to open an issue, run the test suite and send a pull request, alongside the [Code of Conduct](https://github.com/libredb/libredb-studio/blob/main/CODE_OF_CONDUCT.md)
 - **Live demo:** <https://app.libredb.org>
 - **DeepWiki docs:** <https://deepwiki.com/libredb/libredb-studio>
 - **License:** MIT
