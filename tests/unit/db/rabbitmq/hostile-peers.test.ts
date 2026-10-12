@@ -6,7 +6,15 @@
  * into a rejection.
  *
  * The 100 ms margin is about 25 times the 3.9 ms overshoot measured for one read per process; the peers run
- * concurrently here, so the margin also covers their contention, re-measured on the ubuntu runner before merge. The
+ * concurrently here, so the margin also covers their contention, re-measured on the ubuntu runner before merge.
+ *
+ * Several expected stops are a race on one event loop: a peer's close or cancel against the read's 1,000 ms idle timer,
+ * and the idle timer against the 2,000 ms deadline. The client's parse of the header-heavy pair holds the loop for one
+ * stretch of about 300 ms, and over 900 ms with the test pinned to one core beside three busy loops, which once turned
+ * "socket-end-mid-read" into idle and "heartbeats-in-content" into deadline. So those two peers run in a wave of their
+ * own after the rest, and the peers that close, cancel or end mid-read act on the client's acks instead of a 100 ms
+ * wait. Measured on the starved core, the light wave's longest stall is under 200 ms, against the 1,000 ms an idle
+ * stop needs, and every idle stop's last byte arrives by 320 ms, leaving 680 ms before the deadline could win. The
  * file's budget is 20 s: about 3 s per runtime, plus the bundle.
  */
 import { beforeAll, describe, expect, test } from "bun:test";
@@ -14,7 +22,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { makeCertificates } from "../../../helpers/node-transport-fixtures";
-import { HOSTILE_PEERS, type HostileOutcome, runHostilePeer } from "../../../helpers/rabbitmq-fake-peer";
+import { HOSTILE_PEERS, type HostileOutcome, runHostileSet } from "../../../helpers/rabbitmq-fake-peer";
 
 const DEADLINE_MS = 2_000;
 const MARGIN_MS = 100;
@@ -54,7 +62,7 @@ beforeAll(async () => {
   process.on("uncaughtException", count);
   process.on("unhandledRejection", count);
   try {
-    const outcomes = await Promise.all(HOSTILE_PEERS.map((peer) => runHostilePeer(peer, certificate)));
+    const outcomes = await runHostileSet(certificate);
     underBun = { runtime: `bun ${Bun.version}`, outcomes, uncaught };
   } finally {
     process.off("uncaughtException", count);
@@ -67,12 +75,12 @@ beforeAll(async () => {
       join(work, "child.ts"),
       [
         'import { readFileSync } from "node:fs";',
-        `import { HOSTILE_PEERS, runHostilePeer } from ${JSON.stringify(HELPER)};`,
+        `import { runHostileSet } from ${JSON.stringify(HELPER)};`,
         "let uncaught = 0;",
         'process.on("uncaughtException", () => { uncaught += 1; });',
         'process.on("unhandledRejection", () => { uncaught += 1; });',
         'const certificate = JSON.parse(readFileSync(process.argv[2], "utf8"));',
-        "const outcomes = await Promise.all(HOSTILE_PEERS.map((peer) => runHostilePeer(peer, certificate)));",
+        "const outcomes = await runHostileSet(certificate);",
         'process.stdout.write(JSON.stringify({ runtime: process.version, outcomes, uncaught }) + "\\n");',
         "process.exit(0);",
         "",
@@ -126,6 +134,13 @@ function check(run: RuntimeRun): void {
 describe("R-S10: hostile peers settle within the deadline, uncaught-free, leaving no socket", () => {
   test("the set holds the 36 peers, the header-heavy pair and the trickled header frame", () => {
     expect(HOSTILE_PEERS).toHaveLength(39);
+  });
+
+  test("only the header-heavy pair runs in the heavy-parse wave", () => {
+    expect(HOSTILE_PEERS.filter((peer) => peer.heavyParse).map((peer) => peer.name)).toEqual([
+      "header-heavy-void",
+      "header-heavy-bytes",
+    ]);
   });
 
   test("under Bun", () => {

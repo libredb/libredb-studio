@@ -642,6 +642,12 @@ export interface HostilePeer {
   /** Dial a port nothing listens on. */
   readonly closedPort?: boolean;
   readonly limit?: number;
+  /**
+   * The client's parse of this peer's frames holds the event loop for one long stretch (about 300 ms for the pair
+   * unloaded, over 900 ms on a starved core), so the peer runs in a wave of its own after the others: a stall that long
+   * in a shared loop would decide the idle and deadline races of the peers beside it.
+   */
+  readonly heavyParse?: true;
   /** Every outcome this peer may lead to; a race between two stops names both. */
   readonly expect: readonly ReadLabel[];
 }
@@ -650,12 +656,13 @@ const MIB = 1024 * 1024;
 const ready = (tune: Parameters<typeof serverFrames.tune>[0] = {}): PeerStep[] => handshakeSteps(tune);
 const delivery = (tag: number, body = bytesOf("m")) =>
   message({ deliveryTag: BigInt(tag), offset: BigInt(tag - 1), body });
-const twoThenClose = (end: PeerStep): PeerStep[] => [
-  ...ready(),
+/** The client acks each delivery as it completes; the peer acts on those acks, never on a wall-clock wait. */
+const twoAcked: PeerStep[] = [
   { send: bytesOf(delivery(1), delivery(2)) },
-  { waitMs: 100 },
-  end,
+  { expect: { classId: 60, methodId: 80 } },
+  { expect: { classId: 60, methodId: 80 } },
 ];
+const twoThenClose = (end: PeerStep): PeerStep[] => [...ready(), ...twoAcked, end];
 const header = (bodySize: bigint, headersRaw?: Uint8Array) =>
   serverFrames.contentHeader({
     bodySize,
@@ -906,23 +913,12 @@ export const HOSTILE_PEERS: readonly HostilePeer[] = [
   },
   {
     name: "server-cancel",
-    steps: () => [
-      ...ready(),
-      { send: bytesOf(delivery(1), delivery(2)) },
-      { waitMs: 100 },
-      { send: serverFrames.basicCancel() },
-      ...closeSteps,
-    ],
+    steps: () => [...ready(), ...twoAcked, { send: serverFrames.basicCancel() }, ...closeSteps],
     expect: ["stop:server-cancel"],
   },
   {
     name: "server-close-320",
-    steps: () => [
-      ...ready(),
-      { send: bytesOf(delivery(1), delivery(2)) },
-      { waitMs: 100 },
-      { send: serverFrames.connectionClose(320, "CONNECTION_FORCED - shutdown") },
-    ],
+    steps: () => [...ready(), ...twoAcked, { send: serverFrames.connectionClose(320, "CONNECTION_FORCED - shutdown") }],
     expect: ["stop:closed"],
   },
   {
@@ -968,12 +964,14 @@ export const HOSTILE_PEERS: readonly HostilePeer[] = [
   {
     name: "header-heavy-void",
     limit: 100,
+    heavyParse: true,
     steps: () => [...ready(), { repeat: heavyHeader(1, "void"), times: 100 }],
     expect: ["stop:budget", "stop:limit"],
   },
   {
     name: "header-heavy-bytes",
     limit: 100,
+    heavyParse: true,
     steps: () => [...ready(), { repeat: heavyHeader(1, "bytes"), times: 100 }],
     expect: ["stop:budget", "stop:limit"],
   },
@@ -1061,4 +1059,24 @@ export async function runHostilePeer(
   const openAfter = fake?.openSockets() ?? 0;
   await fake?.stop();
   return { name: peer.name, label, rows, ms, openAfter };
+}
+
+/**
+ * Runs the whole hostile set: the light peers at once, then the heavy-parse peers at once, and answers the outcomes in
+ * HOSTILE_PEERS order.
+ */
+export async function runHostileSet(certificate: {
+  readonly key: string;
+  readonly cert: string;
+}): Promise<HostileOutcome[]> {
+  const wave = (heavy: boolean): Promise<HostileOutcome[]> =>
+    Promise.all(
+      HOSTILE_PEERS.filter((peer) => (peer.heavyParse ?? false) === heavy).map((peer) =>
+        runHostilePeer(peer, certificate),
+      ),
+    );
+  const light = await wave(false);
+  const heavy = await wave(true);
+  const byName = new Map([...light, ...heavy].map((outcome) => [outcome.name, outcome]));
+  return HOSTILE_PEERS.map((peer) => byName.get(peer.name) as HostileOutcome);
 }
