@@ -242,6 +242,24 @@ describe("retained limits", () => {
     );
   });
 
+  test("past the table limit only the first x-stream-offset entry is kept; its repeats are counted, not kept", () => {
+    const items = Array.from({ length: 20_000 }, () => ["V", new Uint8Array(0)] as const);
+    const repeats = Array.from(
+      { length: 1_000 },
+      (_, index) => ["x-stream-offset", "l", i64(BigInt(index + 1))] as const,
+    );
+    const table = rawTable([["spent", "A", rawArray(items)], ...repeats]);
+    const walked = walk(withHeaders(table));
+    const kept = walked.header.properties.headers as readonly FieldEntry[];
+    const offsets = kept.filter((entry) => text(entry.name) === "x-stream-offset");
+    expect(offsets).toEqual([{ name: name("x-stream-offset"), value: { tag: "l", value: BigInt(1) } }]);
+    expect(walked.offsets).toEqual([BigInt(1)]);
+    expect(walked.header.properties.headersOmitted?.entries).toBeGreaterThanOrEqual(999);
+    expect(walked.header.retainedBytes).toBeLessThanOrEqual(
+      RABBITMQ_HEADER_TABLE_RETAINED_BYTES + 255 + ENTRY_OVERHEAD_BYTES + 8,
+    );
+  });
+
   test("a nested table that does not fit is one marker", () => {
     const table = rawTable([
       ["n", "F", rawTable([["s", "S", longstr(new Uint8Array(RABBITMQ_HEADER_VALUE_RETAINED_BYTES))]])],

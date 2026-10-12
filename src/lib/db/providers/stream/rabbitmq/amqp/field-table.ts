@@ -227,7 +227,8 @@ export function* walkContentHeader(
       }
       const tag = String.fromCharCode((yield take(1, level.end))[0] as number);
       const isOffset = level.depth === 1 && tag === "l" && name !== null && sameBytes(name, OFFSET_KEY);
-      const keep = isOffset || retained < RABBITMQ_HEADER_TABLE_RETAINED_BYTES;
+      // Only the first offset entry passes the spent limit: a repeat would otherwise be kept beyond it every time.
+      const keep = (isOffset && !offsetSeen) || retained < RABBITMQ_HEADER_TABLE_RETAINED_BYTES;
       const place = (value: FieldValue): void => {
         if (!keep) {
           omittedEntries += 1;
