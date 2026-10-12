@@ -201,6 +201,22 @@ export const guardedLinkLocalRefusingLookup: LookupFunction = checkedLookup((add
 });
 
 /**
+ * The egress rule for one socket dial to `host`, which may be an IPv6 literal with or without its brackets. The literal
+ * checks run first, because an IP literal never reaches a lookup: with DB_HTTP_BLOCK_PRIVATE_HOSTS on the guard's, which
+ * also refuses an empty host, and then with `refusesLinkLocal` the link-local check whatever the flag says, so the
+ * guard's sentence wins where both refuse. The answer is the lookup the socket dials through, which checks the address
+ * it dials and hands that address to the socket: both checks with the flag on and `refusesLinkLocal`, the link-local
+ * one alone with the flag off, the guard's alone without `refusesLinkLocal`, and undefined, the runtime's own lookup,
+ * with neither.
+ */
+export function socketEgress(host: string, rules: { readonly refusesLinkLocal: boolean }): LookupFunction | undefined {
+  const { lookup: guardLookup } = guardedNodeOptions(host);
+  if (!rules.refusesLinkLocal) return guardLookup;
+  assertNotLinkLocalLiteral(host);
+  return guardLookup === undefined ? linkLocalRefusingLookup : guardedLinkLocalRefusingLookup;
+}
+
+/**
  * The restricted mode uses Node's request socket so its DNS lookup can validate and
  * pin the address. The default path remains the transport's native fetch, including
  * its test injection point and normal local-network behavior.

@@ -77,12 +77,7 @@ import { isIP, type LookupFunction, type Socket } from "node:net";
 import { type ConnectionOptions, checkServerIdentity, type PeerCertificate } from "node:tls";
 import { urlToHttpOptions } from "node:url";
 import { ConnectionError, DatabaseConfigError, waitedSeconds } from "@/lib/db/errors";
-import {
-  assertNotLinkLocalLiteral,
-  guardedLinkLocalRefusingLookup,
-  guardedNodeOptions,
-  linkLocalRefusingLookup,
-} from "@/lib/db/http/egress-policy";
+import { socketEgress } from "@/lib/db/http/egress-policy";
 import { endpointUrl, type HttpOrigin, originHost, rejectRedirect } from "@/lib/db/http/endpoint";
 import type { SSLConfig, SSLMode } from "@/lib/types";
 
@@ -1229,10 +1224,8 @@ function connectionOf<A>(
   // sentence wins when it is on, and every socket is opened through a lookup that checks the answer it dials: with the
   // guard on, its check and then the link-local check, because the guard's has no zone rule; with it off,
   // linkLocalRefusingLookup (byte transport design 3.9). Without refusesLinkLocal the guard's lookup is kept alone.
-  const { lookup: guardLookup } = guardedNodeOptions(origin.host);
-  if (refusesLinkLocal) assertNotLinkLocalLiteral(origin.host);
-  const linkLocalLookup = guardLookup === undefined ? linkLocalRefusingLookup : guardedLinkLocalRefusingLookup;
-  const lookup = refusesLinkLocal ? linkLocalLookup : guardLookup;
+  // socketEgress holds that rule, so a socket dial outside this transport applies the same one.
+  const lookup = socketEgress(origin.host, { refusesLinkLocal });
   const addressed = address(origin);
   const connectionHeaders = headersOf(options.headers);
   const requestHeaderNames = requestHeaderNamesOf(options.requestHeaderNames, connectionHeaders);
