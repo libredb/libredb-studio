@@ -214,7 +214,9 @@ export const FIRESTORE_SCENARIOS: readonly EvidenceScenario[] = Object.freeze([
         op: "scan",
         pattern: "orders/",
         count: 3,
-        cursor: { t: "not-a-page-token" },
+        // Base64 of "not-a-page-token": emulator 1.22.0 answers a token it cannot decode with HTTP 500 UNKNOWN, and
+        // a decodable one it does not know with 400 INVALID_ARGUMENT "invalid page token", the refusal measured here.
+        cursor: { t: "bm90LWEtcGFnZS10b2tlbg" },
         refused: "This listing expired; list the level again",
       },
       { op: "scan", pattern: "orphans/", count: 100, keys: [], prefixes: ["orphans/ghost/"] },
