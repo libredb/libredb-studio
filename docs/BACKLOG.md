@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D291, U17 · 193
+- [Drivers and connections](#drivers-and-connections) — D1-D292, U17 · 194
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U113 · 104
@@ -3056,6 +3056,16 @@ The console reads the same pod (`podsOf` in `src/lib/db/providers/platform/kuber
 Found 2026-10-11 in the adversarial review of the pod-logs change (#1667); it is older than that change.
 
 **Done when:** a `kubectl logs TYPE/NAME` that resolves to more than one pod without `--all-pods` carries the notice as a result warning in kubectl's wording, with tests in `tests/unit/db/kubernetes/console/logs.test.ts` and the `logs` bullet of `docs/providers/kubernetes.md` updated.
+
+### D292. The MQTT dial is outside `DB_HTTP_BLOCK_PRIVATE_HOSTS` and reaches link-local addresses
+
+The MQTT provider opens its socket with `net.connect` or `tls.connect`, passes no `lookup` and checks no literal (`dialBroker` in `src/lib/db/providers/keyvalue/mqtt/session.ts`), so it reaches link-local addresses, the instance metadata address `169.254.169.254` among them, whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says, and private and loopback addresses with the flag on.
+`socketEgress(host, { refusesLinkLocal: true })` in `src/lib/db/http/egress-policy.ts` is the rule for one socket dial: it refuses a blocked or link-local literal before the dial and returns the checked lookup the socket dials through, which hands the socket the address it checked.
+Through an SSH tunnel the MQTT socket dials the local forward, a loopback address, so the change also decides what the flag does to a tunnelled MQTT connection; the HTTP transports refuse one while the flag is on.
+
+Found 2026-10-12 while extracting the egress rule for a socket dial from the shared node transport.
+
+**Done when:** `dialBroker` calls `socketEgress(host, { refusesLinkLocal: true })` before it dials, passes the lookup to `net.connect` and `tls.connect` and lets its refusal through unchanged; `docs/providers/mqtt.md`, `docs/SECURITY.md` row 0.6 and "Known limits", the `DB_HTTP_BLOCK_PRIVATE_HOSTS` row of `docs/API_DOCS.md` and `.env.example` name the MQTT dial among what the flag covers; with tests for a link-local literal and a link-local DNS answer with the flag off, a private answer with the flag on, and a tunnelled connection.
 
 ## Value interpolation
 
