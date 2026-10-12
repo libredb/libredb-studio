@@ -245,7 +245,7 @@ describe("the console is total", () => {
     BUDGET_MS,
   );
 
-  test("each bound fails with its own sentence wherever the excess lands", () => {
+  test("each bound fails with its own sentence for any size of excess", () => {
     const random = seededRandom(SEED + 1);
     for (let iteration = 0; iteration < 20; iteration++) {
       const extra = 1 + Math.floor(random() * 100);

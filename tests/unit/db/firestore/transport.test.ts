@@ -266,6 +266,18 @@ describe("firestore transport answers", () => {
     }
   });
 
+  test("299 is the last status read as an answer, and 300 is mapped like any other failure", async () => {
+    const body = { name: "projects/demo-p/databases/(default)" };
+    const { client: last } = client(() => jsonAnswer(body, 299));
+    expect(await last.send({ kind: "database" }, { signal, context })).toEqual(body);
+    const text = JSON.stringify(body);
+    const { client: moved } = client(() => ({ status: 300, contentType: "application/json", retryAfter: null, text }));
+    const error = await failureOf(moved.send({ kind: "database" }, { signal, context }));
+    const expected = mapGoogleError(readGoogleError(300, text), context);
+    expect(error.constructor).toBe(expected.constructor);
+    expect(error.message).toBe(expected.message);
+  });
+
   // The transport hands the header to errors.ts as GoogleError.retryAfter; errors.ts writes "7" as "7s" (PLAN-1 C7).
   test("a 429 without RetryInfo reports its Retry-After header as the retry delay", async () => {
     const text = JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded." } });

@@ -71,6 +71,13 @@ describe("the cursor envelope", () => {
     const within = { v: 1 as const, p: "x".repeat(1507), a: "y/" };
     expect(envelope(within)).toHaveLength(2045);
     expect(decodeLevelCursor(envelope(within), within.p)).toEqual(within);
+    // 1,532 bytes spell exactly 2,048 characters, and one byte more spells 2,049.
+    const exact = { v: 1 as const, p: "x".repeat(1509), a: "y/" };
+    expect(envelope(exact)).toHaveLength(2048);
+    expect(decodeLevelCursor(envelope(exact), exact.p)).toEqual(exact);
+    const over = { v: 1, p: "x".repeat(1510), a: "y/" };
+    expect(envelope(over)).toHaveLength(2049);
+    expect(refusal(envelope(over), over.p)).toBe(C.notEnvelope);
   });
 
   test("another version is refused", () => {
@@ -87,6 +94,8 @@ describe("the cursor envelope", () => {
     expect(refusal(envelope({ v: 1, p: "users/", t: "" }))).toBe(C.malformed);
     expect(refusal(envelope({ v: 1, p: "users/", t: 7 }))).toBe(C.malformed);
     expect(refusal(envelope({ v: 1, p: "users/", o: "users/alice" }), "users/")).toBe(C.malformed);
+    expect(refusal(envelope({ v: 1, p: "", a: "users/", o: "users/x/" }))).toBe(C.malformed);
+    expect(refusal(envelope({ v: 1, p: "users/", o: 3 }), "users/")).toBe(C.malformed);
     // A lone surrogate spelled as a JSON escape names no id.
     expect(refusal("fsk1." + Buffer.from('{"v":1,"p":"","a":"\\ud800/"}').toString("base64url"))).toBe(C.malformed);
   });
@@ -105,5 +114,7 @@ describe("the cursor envelope", () => {
   test("a position too long for the envelope is refused when encoded", () => {
     expect(() => encodeLevelCursor({ v: 1, p: "x".repeat(2000), a: "y/" })).toThrow(QueryError);
     expect(() => encodeLevelCursor({ v: 1, p: "x".repeat(2000), a: "y/" })).toThrow(C.tooLong);
+    expect(encodeLevelCursor({ v: 1, p: "x".repeat(1509), a: "y/" })).toHaveLength(2048);
+    expect(() => encodeLevelCursor({ v: 1, p: "x".repeat(1510), a: "y/" })).toThrow(C.tooLong);
   });
 });

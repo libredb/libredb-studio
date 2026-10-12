@@ -191,6 +191,8 @@ describe("explain", () => {
 
   test("the Explain button refuses a statement that calls explain() itself", () => {
     refused('db.collection("users").explain()', COMPILE_SENTENCES.explainOwn, 23, true);
+    refused('db.collection("users").count().explain()', COMPILE_SENTENCES.explainOwn, 31, true);
+    refused(`${NEAREST}.explain()`, COMPILE_SENTENCES.explainOwn, NEAREST.length + 1, true);
   });
 });
 

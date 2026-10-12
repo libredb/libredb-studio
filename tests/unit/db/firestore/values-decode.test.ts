@@ -203,4 +203,8 @@ describe("isVectorValue and vectorOf", () => {
       vectorOf({ mapValue: { fields: { __type__: { stringValue: "__vector__" }, value: { stringValue: "x" } } } }),
     ).toBeNull();
   });
+
+  test("a malformed element is refused, not read as null", () => {
+    expect(refusal(() => vectorOf(vector([{ doubleValue: "abc" }])))).toBe(V.unreadable("doubleValue"));
+  });
 });

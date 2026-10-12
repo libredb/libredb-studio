@@ -75,6 +75,7 @@ describe("limit and offset", () => {
     expect(built('db.collection("users").limit(5000).count()', "aggregate").query.limit).toBe(5000);
     expect(built('db.collection("users").limit(2147483647).count()', "aggregate").query.limit).toBe(2_147_483_647);
     refused('db.collection("users").limit(2147483648).count()', "aggregate", COMPILE_SENTENCES.aggregationLimit, 29);
+    refused('db.collection("users").limit(-1).count()', "aggregate", COMPILE_SENTENCES.aggregationLimit, 29);
   });
 
   test("offset is 0 to 1,000 and a positive one carries the billing warning", () => {
@@ -83,7 +84,9 @@ describe("limit and offset", () => {
       warnings: [COMPILE_WARNINGS.offsetBilling, COMPILE_WARNINGS.defaultLimit],
     });
     expect(built('db.collection("users").offset(0).limit(1)')).toMatchObject({ query: { offset: 0 }, warnings: [] });
+    expect(built('db.collection("users").offset(1000)').query.offset).toBe(1000);
     refused('db.collection("users").offset(1001)', "query", COMPILE_SENTENCES.offsetRange, 30);
+    refused('db.collection("users").offset(-1)', "query", COMPILE_SENTENCES.offsetRange, 30);
   });
 });
 

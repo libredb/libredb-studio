@@ -348,6 +348,11 @@ describe("everything outside the table is refused before a request exists", () =
       R.batchGetDocuments,
     ],
     ["a batchGet collection name", { kind: "batchGet", body: { documents: [`${ROOT}/c`] } }, R.batchGetDocuments],
+    [
+      "a batchGet name with a reserved id",
+      { kind: "batchGet", body: { documents: [`${ROOT}/c/__x__`] } },
+      R.batchGetDocuments,
+    ],
     ["a batchGet with no documents", { kind: "batchGet", body: { documents: [] } }, R.batchGetDocuments],
     [
       "a batchGet with 1,001 documents",

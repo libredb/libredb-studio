@@ -138,6 +138,11 @@ describe("the root level", () => {
     expect(third.result).toMatchObject({ prefixes: ["e/"], cursor: "0" });
   });
 
+  test("a level whose remaining ids exactly fill the page ends it", async () => {
+    const exact = await page(() => ids(["a", "b"]), { count: 2 });
+    expect(exact.result).toMatchObject({ prefixes: ["a/", "b/"], cursor: "0" });
+  });
+
   test("a cursor of the collection level's shape is refused before any request", async () => {
     const fake = fakeFirestore(() => ids(["users"]));
     const request = readLevelRequest(options({ cursor: encodeLevelCursor({ v: 1, p: "", t: "T" }) }));
