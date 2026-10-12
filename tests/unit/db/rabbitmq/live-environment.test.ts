@@ -23,6 +23,7 @@ import {
   RABBITMQ_SEED_IMAGE,
   liveTarget,
 } from "../../../helpers/rabbitmq-live";
+import { controlMoved, parseDeliveryMetrics, rowDifferences, TAKE_COUNTERS } from "../../../helpers/rabbitmq-oracle";
 import { decodeValue, encodeMessage, encodeValue, v } from "../../../helpers/rabbitmq-test-amqp10";
 import {
   ByteWriter,
@@ -372,5 +373,45 @@ describe("the seed table", () => {
       [7, "st-orders/7", 1_048_576],
       [8, "st-orders/8", 15_728_640],
     ]);
+  });
+});
+
+describe("the R-S1 oracle's arithmetic", () => {
+  const types = TAKE_COUNTERS.map((counter) => `# TYPE rabbitmq_detailed_${counter} counter`).join("\n");
+  const row = (vhost: string, queue: string, gets: number) =>
+    `rabbitmq_detailed_queue_get_total{vhost="${vhost}",queue="${queue}"} ${gets}\nrabbitmq_detailed_queue_get_ack_total{vhost="${vhost}",queue="${queue}"} 0`;
+
+  test("a family without its TYPE lines is a broken oracle, not an empty one", () => {
+    expect(() => parseDeliveryMetrics("", "/")).toThrow("The oracle is broken");
+  });
+
+  test("rows are read for the one vhost asked, with escaped label values", () => {
+    const text = [
+      types,
+      row("/", "q-a", 0),
+      row("billing", "q-a", 9),
+      row("/", 'q "quoted"', 1).replaceAll('q "quoted"', 'q \\"quoted\\"'),
+    ].join("\n");
+    expect(parseDeliveryMetrics(text, "/")).toEqual({
+      "q-a": { queue_get_total: 0, queue_get_ack_total: 0 },
+      'q "quoted"': { queue_get_total: 1, queue_get_ack_total: 0 },
+    });
+  });
+
+  test("a row that appears, moves or disappears is a difference, and an unchanged absence is not", () => {
+    const before = { a: { queue_get_total: 0 }, b: { queue_get_total: 0 } };
+    expect(rowDifferences(["a", "b", "c"], before, before)).toEqual([]);
+    expect(rowDifferences(["a", "c"], before, { a: { queue_get_total: 1 }, c: { queue_get_total: 0 } })).toEqual([
+      'a: {"queue_get_total":0} -> {"queue_get_total":1}',
+      'c: null -> {"queue_get_total":0}',
+    ]);
+  });
+
+  test("the control passes only when queue_get_total moved by one and nothing else in the row moved", () => {
+    expect(controlMoved({}, { canary: { queue_get_total: 1, queue_get_empty_total: 0 } }, "canary")).toBeNull();
+    expect(controlMoved({}, {}, "canary")).toContain("by 0, not 1");
+    expect(controlMoved({}, { canary: { queue_get_total: 1, queue_get_empty_total: 1 } }, "canary")).toContain(
+      "also moved queue_get_empty_total",
+    );
   });
 });
