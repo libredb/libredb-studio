@@ -553,6 +553,22 @@ export function isSourcePartUnavailable(
   return "unavailable" in part;
 }
 
+/**
+ * The narrowing predicate for a neutral statement part, the member that carries a fact about the
+ * object rather than a refusal to read it.
+ *
+ * Ask it BEFORE `isSourcePartUnavailable`, which answers true for a statement too. Only the part's
+ * OWN `statement` key counts, and only the value `true`: a part that crossed a host seam or a JSON
+ * round trip with `statement: "true"` is not a statement, and the reader's shape check refuses it.
+ */
+export function isSourcePartStatement(
+  part: ObjectSourcePart,
+): part is { readonly id: string; readonly label: string; readonly unavailable: string; readonly statement: true } {
+  return (
+    "unavailable" in part && Object.hasOwn(part, "statement") && (part as { statement?: unknown }).statement === true
+  );
+}
+
 /** The default per-part character bound the source route applies when a caller names none. */
 export const SOURCE_CHARACTER_LIMIT = 1_000_000;
 
