@@ -125,19 +125,18 @@ dfb4a9af0dcf58a7042b138d9d710a011041fb1a:docs/kubernetes-helm-chart-artifacthub-
 11717b7e56f0dc8d293e834a1327b01aa2a4e342:tests/unit/db/s3/console-token.test.ts:generic-api-key:24
 11717b7e56f0dc8d293e834a1327b01aa2a4e342:tests/unit/db/s3/console-token.test.ts:generic-api-key:29
 
-# The S3 capture sets re-recorded under the reworded blocked-host sentence, on
-# the branch commit below: the same kind of ListObjectsV2 continuation cursor
-# as the block above, returned by the same throwaway fixture buckets. These
-# name a branch commit; once its squash lands they are replaced with the
-# squash commit's, as #1658 did for #1654.
-4bdcf5d9d8d547aada4a704f906564e16a3a59b4:tests/fixtures/s3/captures/minio-2026-10-12-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:285
-4bdcf5d9d8d547aada4a704f906564e16a3a59b4:tests/fixtures/s3/captures/minio-2026-10-12-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:306
-4bdcf5d9d8d547aada4a704f906564e16a3a59b4:tests/fixtures/s3/captures/minio-region-2026-10-12-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:305
-4bdcf5d9d8d547aada4a704f906564e16a3a59b4:tests/fixtures/s3/captures/minio-region-2026-10-12-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:326
-4bdcf5d9d8d547aada4a704f906564e16a3a59b4:tests/fixtures/s3/captures/rustfs-2026-10-12-1.0.1/console-list-objects-v2-token.json:generic-api-key:285
-4bdcf5d9d8d547aada4a704f906564e16a3a59b4:tests/fixtures/s3/captures/rustfs-2026-10-12-1.0.1/console-list-objects-v2-token.json:generic-api-key:306
-4bdcf5d9d8d547aada4a704f906564e16a3a59b4:tests/fixtures/s3/captures/silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:285
-4bdcf5d9d8d547aada4a704f906564e16a3a59b4:tests/fixtures/s3/captures/silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:306
+# The S3 capture sets re-recorded under the reworded blocked-host sentence,
+# squash-merged in eb6b696a (#1685): the same kind of ListObjectsV2
+# continuation cursor as the block above, returned by the same throwaway
+# fixture buckets.
+eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/minio-2026-10-12-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:285
+eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/minio-2026-10-12-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:306
+eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/minio-region-2026-10-12-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:305
+eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/minio-region-2026-10-12-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:326
+eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/rustfs-2026-10-12-1.0.1/console-list-objects-v2-token.json:generic-api-key:285
+eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/rustfs-2026-10-12-1.0.1/console-list-objects-v2-token.json:generic-api-key:306
+eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:285
+eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:306
 
 # The AWS SigV4 test suite's published `post-sts-header-before` vector: its
 # `x-amz-security-token` and expected signature are the example values AWS
