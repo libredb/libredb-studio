@@ -1812,13 +1812,32 @@ export interface DatabaseProvider {
   connect(): Promise<void>;
 
   /**
-   * What the server cautioned while `connect()` opened the connection, in the server's own
-   * words; empty when it said nothing worth showing. A connect that succeeded is not always
-   * the connection asked for: Materialize accepts a session database that does not exist and
-   * reports it only as a startup NOTICE (#1401). Optional, because most engines have no such
-   * channel; `POST /api/db/test-connection` reads it when it is there.
+   * Cautions about the connection `connect()` just opened, built only from what `connect()`
+   * learned or derived on the requests it made anyway, with no request of its own. The
+   * server's words where the server gave them; empty when there is nothing worth showing. A
+   * connect that succeeded is not always the connection asked for: Materialize accepts a
+   * session database that does not exist and reports it only as a startup NOTICE (#1401).
+   * Optional, because most engines have no such channel; `POST /api/db/test-connection` reads
+   * it when it is there. A caution that needs a request of its own belongs in
+   * `testConnectionWarnings()`, because `connect()` also runs on every background cache miss,
+   * where nobody reads a caution.
    */
   connectWarnings?(): QueryWarning[];
+
+  /**
+   * Extra probes run only on a user's Test Connection; cautions, never an error.
+   *
+   * `POST /api/db/test-connection` is its one caller (pinned by a source scan): it calls it once,
+   * after a successful `connect()` and after `connectWarnings()`, on the provider it built for
+   * that click and never on a cached or borrowed one, and lists its cautions after
+   * `connectWarnings()`'s. So each request it makes is paid for by a user who asked and by no
+   * background path. Any caution turns the dialog's answer amber, so a connection with nothing
+   * to caution about answers `[]`. A rejection is a defect: the route shows one caution of its
+   * own in its place and the connection still counts as tested. It bounds its own probes with a
+   * deadline, because the route waits for it before answering. Optional, because most engines
+   * have nothing to check beyond `connect()`.
+   */
+  testConnectionWarnings?(): Promise<QueryWarning[]>;
 
   /**
    * Close all connections and cleanup resources
