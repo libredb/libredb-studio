@@ -24,7 +24,7 @@
         "status": 200,
         "contentType": "application/json",
         "retryAfter": null,
-        "text": "{\"collectionIds\":[\"ids\"],\"nextPageToken\":\"CgNpZHMSCMy+v4PugUFz\"}"
+        "text": "{\"collectionIds\":[\"ids\"],\"nextPageToken\":\"CgNpZHMSCGUcYUO96Iaq\"}"
       }
     },
     {
@@ -69,7 +69,7 @@
         "status": 200,
         "contentType": "application/json",
         "retryAfter": null,
-        "text": "[{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/a:b\",\"fields\":{\"name\":{\"stringValue\":\"Colon\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"},\"readTime\":\"2026-10-12T03:46:39.075794Z\"},{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/alice\",\"fields\":{\"name\":{\"stringValue\":\"Alice\"},\"age\":{\"integerValue\":\"34\"},\"big\":{\"integerValue\":\"9007199254740993\"},\"score\":{\"doubleValue\":4.5},\"ratio\":{\"doubleValue\":\"NaN\"},\"active\":{\"booleanValue\":true},\"nickname\":{\"nullValue\":null},\"joined\":{\"timestampValue\":\"2026-01-02T03:04:05.123456Z\"},\"avatar\":{\"bytesValue\":\"AAEC/w==\"},\"manager\":{\"referenceValue\":\"projects/demo-libredb/databases/(default)/documents/users/bob\"},\"home\":{\"geoPointValue\":{\"latitude\":41.0082,\"longitude\":28.9784}},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"admin\"},{\"stringValue\":\"beta\"}]}},\"address\":{\"mapValue\":{\"fields\":{\"city\":{\"stringValue\":\"Istanbul\"},\"geo\":{\"mapValue\":{\"fields\":{\"zone\":{\"stringValue\":\"eu\"}}}}}}},\"emptyList\":{\"arrayValue\":{}},\"emptyMap\":{\"mapValue\":{}},\"embedding\":{\"mapValue\":{\"fields\":{\"__type__\":{\"stringValue\":\"__vector__\"},\"value\":{\"arrayValue\":{\"values\":[{\"doubleValue\":0.1},{\"doubleValue\":0.2},{\"doubleValue\":0.3}]}}}}},\"dotted.key\":{\"stringValue\":\"a field whose name holds a dot\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"},\"readTime\":\"2026-10-12T03:46:39.075794Z\"},{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/bob\",\"fields\":{\"name\":{\"stringValue\":\"Bob\"},\"age\":{\"integerValue\":\"41\"},\"score\":{\"doubleValue\":3.5},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"ops\"}]}}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"},\"readTime\":\"2026-10-12T03:46:39.075794Z\"},{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/carol\",\"fields\":{\"name\":{\"stringValue\":\"Carol\"},\"age\":{\"stringValue\":\"unknown\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"},\"readTime\":\"2026-10-12T03:46:39.075794Z\",\"done\":true}]"
+        "text": "[{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/a:b\",\"fields\":{\"name\":{\"stringValue\":\"Colon\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"},\"readTime\":\"2026-10-12T03:48:49.333502Z\"},{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/alice\",\"fields\":{\"name\":{\"stringValue\":\"Alice\"},\"age\":{\"integerValue\":\"34\"},\"big\":{\"integerValue\":\"9007199254740993\"},\"score\":{\"doubleValue\":4.5},\"ratio\":{\"doubleValue\":\"NaN\"},\"active\":{\"booleanValue\":true},\"nickname\":{\"nullValue\":null},\"joined\":{\"timestampValue\":\"2026-01-02T03:04:05.123456Z\"},\"avatar\":{\"bytesValue\":\"AAEC/w==\"},\"manager\":{\"referenceValue\":\"projects/demo-libredb/databases/(default)/documents/users/bob\"},\"home\":{\"geoPointValue\":{\"latitude\":41.0082,\"longitude\":28.9784}},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"admin\"},{\"stringValue\":\"beta\"}]}},\"address\":{\"mapValue\":{\"fields\":{\"city\":{\"stringValue\":\"Istanbul\"},\"geo\":{\"mapValue\":{\"fields\":{\"zone\":{\"stringValue\":\"eu\"}}}}}}},\"emptyList\":{\"arrayValue\":{}},\"emptyMap\":{\"mapValue\":{}},\"embedding\":{\"mapValue\":{\"fields\":{\"__type__\":{\"stringValue\":\"__vector__\"},\"value\":{\"arrayValue\":{\"values\":[{\"doubleValue\":0.1},{\"doubleValue\":0.2},{\"doubleValue\":0.3}]}}}}},\"dotted.key\":{\"stringValue\":\"a field whose name holds a dot\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"},\"readTime\":\"2026-10-12T03:48:49.333502Z\"},{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/bob\",\"fields\":{\"name\":{\"stringValue\":\"Bob\"},\"age\":{\"integerValue\":\"41\"},\"score\":{\"doubleValue\":3.5},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"ops\"}]}}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"},\"readTime\":\"2026-10-12T03:48:49.333502Z\"},{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/carol\",\"fields\":{\"name\":{\"stringValue\":\"Carol\"},\"age\":{\"stringValue\":\"unknown\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"},\"readTime\":\"2026-10-12T03:48:49.333502Z\",\"done\":true}]"
       }
     },
     {
@@ -128,7 +128,7 @@
         "status": 200,
         "contentType": "application/json",
         "retryAfter": null,
-        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/a:b\",\"fields\":{\"name\":{\"stringValue\":\"Colon\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"},{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/alice\",\"fields\":{\"name\":{\"stringValue\":\"Alice\"},\"age\":{\"integerValue\":\"34\"},\"big\":{\"integerValue\":\"9007199254740993\"},\"score\":{\"doubleValue\":4.5},\"ratio\":{\"doubleValue\":\"NaN\"},\"active\":{\"booleanValue\":true},\"nickname\":{\"nullValue\":null},\"joined\":{\"timestampValue\":\"2026-01-02T03:04:05.123456Z\"},\"avatar\":{\"bytesValue\":\"AAEC/w==\"},\"manager\":{\"referenceValue\":\"projects/demo-libredb/databases/(default)/documents/users/bob\"},\"home\":{\"geoPointValue\":{\"latitude\":41.0082,\"longitude\":28.9784}},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"admin\"},{\"stringValue\":\"beta\"}]}},\"address\":{\"mapValue\":{\"fields\":{\"city\":{\"stringValue\":\"Istanbul\"},\"geo\":{\"mapValue\":{\"fields\":{\"zone\":{\"stringValue\":\"eu\"}}}}}}},\"emptyList\":{\"arrayValue\":{}},\"emptyMap\":{\"mapValue\":{}},\"embedding\":{\"mapValue\":{\"fields\":{\"__type__\":{\"stringValue\":\"__vector__\"},\"value\":{\"arrayValue\":{\"values\":[{\"doubleValue\":0.1},{\"doubleValue\":0.2},{\"doubleValue\":0.3}]}}}}},\"dotted.key\":{\"stringValue\":\"a field whose name holds a dot\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"},{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/bob\",\"fields\":{\"name\":{\"stringValue\":\"Bob\"},\"age\":{\"integerValue\":\"41\"},\"score\":{\"doubleValue\":3.5},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"ops\"}]}}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"},{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/carol\",\"fields\":{\"name\":{\"stringValue\":\"Carol\"},\"age\":{\"stringValue\":\"unknown\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"}]}"
+        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/a:b\",\"fields\":{\"name\":{\"stringValue\":\"Colon\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"},{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/alice\",\"fields\":{\"name\":{\"stringValue\":\"Alice\"},\"age\":{\"integerValue\":\"34\"},\"big\":{\"integerValue\":\"9007199254740993\"},\"score\":{\"doubleValue\":4.5},\"ratio\":{\"doubleValue\":\"NaN\"},\"active\":{\"booleanValue\":true},\"nickname\":{\"nullValue\":null},\"joined\":{\"timestampValue\":\"2026-01-02T03:04:05.123456Z\"},\"avatar\":{\"bytesValue\":\"AAEC/w==\"},\"manager\":{\"referenceValue\":\"projects/demo-libredb/databases/(default)/documents/users/bob\"},\"home\":{\"geoPointValue\":{\"latitude\":41.0082,\"longitude\":28.9784}},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"admin\"},{\"stringValue\":\"beta\"}]}},\"address\":{\"mapValue\":{\"fields\":{\"city\":{\"stringValue\":\"Istanbul\"},\"geo\":{\"mapValue\":{\"fields\":{\"zone\":{\"stringValue\":\"eu\"}}}}}}},\"emptyList\":{\"arrayValue\":{}},\"emptyMap\":{\"mapValue\":{}},\"embedding\":{\"mapValue\":{\"fields\":{\"__type__\":{\"stringValue\":\"__vector__\"},\"value\":{\"arrayValue\":{\"values\":[{\"doubleValue\":0.1},{\"doubleValue\":0.2},{\"doubleValue\":0.3}]}}}}},\"dotted.key\":{\"stringValue\":\"a field whose name holds a dot\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"},{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/bob\",\"fields\":{\"name\":{\"stringValue\":\"Bob\"},\"age\":{\"integerValue\":\"41\"},\"score\":{\"doubleValue\":3.5},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"ops\"}]}}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"},{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/carol\",\"fields\":{\"name\":{\"stringValue\":\"Carol\"},\"age\":{\"stringValue\":\"unknown\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"}]}"
       }
     },
     {
@@ -143,7 +143,7 @@
         "status": 200,
         "contentType": "application/json",
         "retryAfter": null,
-        "text": "[{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/alice\",\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"},\"readTime\":\"2026-10-12T03:46:39.165483Z\",\"done\":true}]"
+        "text": "[{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/alice\",\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"},\"readTime\":\"2026-10-12T03:48:49.400990Z\",\"done\":true}]"
       }
     },
     {
@@ -172,70 +172,70 @@
         "status": 200,
         "contentType": "application/json",
         "retryAfter": null,
-        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/orders/0001\",\"fields\":{\"total\":{\"integerValue\":\"10\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"}],\"nextPageToken\":\"Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDESCDu+QJKuUfFh\"}"
+        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/orders/0001\",\"fields\":{\"total\":{\"integerValue\":\"10\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"}],\"nextPageToken\":\"Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDESCFeRQK9bhefZ\"}"
       }
     },
     {
       "lane": "emulator",
       "request": {
         "method": "GET",
-        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/orders?pageSize=1&pageToken=Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDESCDu%2BQJKuUfFh&showMissing=true",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/orders?pageSize=1&pageToken=Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDESCFeRQK9bhefZ&showMissing=true",
         "maxResponseBytes": 67108864
       },
       "response": {
         "status": 200,
         "contentType": "application/json",
         "retryAfter": null,
-        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/orders/0002\",\"fields\":{\"total\":{\"integerValue\":\"20\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"}],\"nextPageToken\":\"Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDISCA1fBQNwXNtH\"}"
+        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/orders/0002\",\"fields\":{\"total\":{\"integerValue\":\"20\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"}],\"nextPageToken\":\"Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDISCFu5QBW8rMWz\"}"
       }
     },
     {
       "lane": "emulator",
       "request": {
         "method": "GET",
-        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/orders?pageSize=1&pageToken=Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDISCA1fBQNwXNtH&showMissing=true",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/orders?pageSize=1&pageToken=Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDISCFu5QBW8rMWz&showMissing=true",
         "maxResponseBytes": 67108864
       },
       "response": {
         "status": 200,
         "contentType": "application/json",
         "retryAfter": null,
-        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/orders/0003\",\"fields\":{\"total\":{\"integerValue\":\"30\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"}],\"nextPageToken\":\"Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDMSCF3SeJBnYMgV\"}"
+        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/orders/0003\",\"fields\":{\"total\":{\"integerValue\":\"30\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"}],\"nextPageToken\":\"Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDMSCGIq+T+9itF8\"}"
       }
     },
     {
       "lane": "emulator",
       "request": {
         "method": "GET",
-        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/orders?pageSize=1&pageToken=Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDMSCF3SeJBnYMgV&showMissing=true",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/orders?pageSize=1&pageToken=Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDMSCGIq%2BT%2B9itF8&showMissing=true",
         "maxResponseBytes": 67108864
       },
       "response": {
         "status": 200,
         "contentType": "application/json",
         "retryAfter": null,
-        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/orders/0004\",\"fields\":{\"total\":{\"integerValue\":\"40\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"}],\"nextPageToken\":\"Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDQSCI4QFdkgVDLG\"}"
+        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/orders/0004\",\"fields\":{\"total\":{\"integerValue\":\"40\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"}],\"nextPageToken\":\"Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDQSCI49fSVQaoLY\"}"
       }
     },
     {
       "lane": "emulator",
       "request": {
         "method": "GET",
-        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/orders?pageSize=1&pageToken=Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDQSCI4QFdkgVDLG&showMissing=true",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/orders?pageSize=1&pageToken=Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDQSCI49fSVQaoLY&showMissing=true",
         "maxResponseBytes": 67108864
       },
       "response": {
         "status": 200,
         "contentType": "application/json",
         "retryAfter": null,
-        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/orders/0005\",\"fields\":{\"total\":{\"integerValue\":\"50\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"}],\"nextPageToken\":\"Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDUSCBnzq4NsR8Ce\"}"
+        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/orders/0005\",\"fields\":{\"total\":{\"integerValue\":\"50\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"}],\"nextPageToken\":\"Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDUSCGHOSC4+s4m/\"}"
       }
     },
     {
       "lane": "emulator",
       "request": {
         "method": "GET",
-        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/orders?pageSize=1&pageToken=Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDUSCBnzq4NsR8Ce&showMissing=true",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/orders?pageSize=1&pageToken=Cj9wcm9qZWN0cy9kZW1vLWxpYnJlZGIvZGF0YWJhc2VzLyhkZWZhdWx0KS9kb2N1bWVudHMvb3JkZXJzLzAwMDUSCGHOSC4%2Bs4m%2F&showMissing=true",
         "maxResponseBytes": 67108864
       },
       "response": {
@@ -284,7 +284,7 @@
         "status": 200,
         "contentType": "application/json",
         "retryAfter": null,
-        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/ids/z\",\"fields\":{\"label\":{\"stringValue\":\"ASCII\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"},{\"name\":\"projects/demo-libredb/databases/(default)/documents/ids/Ａ\",\"fields\":{\"label\":{\"stringValue\":\"fullwidth A\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"},{\"name\":\"projects/demo-libredb/databases/(default)/documents/ids/𐐀\",\"fields\":{\"label\":{\"stringValue\":\"Deseret long I\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"}]}"
+        "text": "{\"documents\":[{\"name\":\"projects/demo-libredb/databases/(default)/documents/ids/z\",\"fields\":{\"label\":{\"stringValue\":\"ASCII\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"},{\"name\":\"projects/demo-libredb/databases/(default)/documents/ids/Ａ\",\"fields\":{\"label\":{\"stringValue\":\"fullwidth A\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"},{\"name\":\"projects/demo-libredb/databases/(default)/documents/ids/𐐀\",\"fields\":{\"label\":{\"stringValue\":\"Deseret long I\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"}]}"
       }
     },
     {
@@ -298,7 +298,7 @@
         "status": 200,
         "contentType": "application/json",
         "retryAfter": null,
-        "text": "{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/alice\",\"fields\":{\"name\":{\"stringValue\":\"Alice\"},\"age\":{\"integerValue\":\"34\"},\"big\":{\"integerValue\":\"9007199254740993\"},\"score\":{\"doubleValue\":4.5},\"ratio\":{\"doubleValue\":\"NaN\"},\"active\":{\"booleanValue\":true},\"nickname\":{\"nullValue\":null},\"joined\":{\"timestampValue\":\"2026-01-02T03:04:05.123456Z\"},\"avatar\":{\"bytesValue\":\"AAEC/w==\"},\"manager\":{\"referenceValue\":\"projects/demo-libredb/databases/(default)/documents/users/bob\"},\"home\":{\"geoPointValue\":{\"latitude\":41.0082,\"longitude\":28.9784}},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"admin\"},{\"stringValue\":\"beta\"}]}},\"address\":{\"mapValue\":{\"fields\":{\"city\":{\"stringValue\":\"Istanbul\"},\"geo\":{\"mapValue\":{\"fields\":{\"zone\":{\"stringValue\":\"eu\"}}}}}}},\"emptyList\":{\"arrayValue\":{}},\"emptyMap\":{\"mapValue\":{}},\"embedding\":{\"mapValue\":{\"fields\":{\"__type__\":{\"stringValue\":\"__vector__\"},\"value\":{\"arrayValue\":{\"values\":[{\"doubleValue\":0.1},{\"doubleValue\":0.2},{\"doubleValue\":0.3}]}}}}},\"dotted.key\":{\"stringValue\":\"a field whose name holds a dot\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"}"
+        "text": "{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/alice\",\"fields\":{\"name\":{\"stringValue\":\"Alice\"},\"age\":{\"integerValue\":\"34\"},\"big\":{\"integerValue\":\"9007199254740993\"},\"score\":{\"doubleValue\":4.5},\"ratio\":{\"doubleValue\":\"NaN\"},\"active\":{\"booleanValue\":true},\"nickname\":{\"nullValue\":null},\"joined\":{\"timestampValue\":\"2026-01-02T03:04:05.123456Z\"},\"avatar\":{\"bytesValue\":\"AAEC/w==\"},\"manager\":{\"referenceValue\":\"projects/demo-libredb/databases/(default)/documents/users/bob\"},\"home\":{\"geoPointValue\":{\"latitude\":41.0082,\"longitude\":28.9784}},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"admin\"},{\"stringValue\":\"beta\"}]}},\"address\":{\"mapValue\":{\"fields\":{\"city\":{\"stringValue\":\"Istanbul\"},\"geo\":{\"mapValue\":{\"fields\":{\"zone\":{\"stringValue\":\"eu\"}}}}}}},\"emptyList\":{\"arrayValue\":{}},\"emptyMap\":{\"mapValue\":{}},\"embedding\":{\"mapValue\":{\"fields\":{\"__type__\":{\"stringValue\":\"__vector__\"},\"value\":{\"arrayValue\":{\"values\":[{\"doubleValue\":0.1},{\"doubleValue\":0.2},{\"doubleValue\":0.3}]}}}}},\"dotted.key\":{\"stringValue\":\"a field whose name holds a dot\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"}"
       }
     },
     {
@@ -327,7 +327,7 @@
         "status": 200,
         "contentType": "application/json",
         "retryAfter": null,
-        "text": "{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/a:b\",\"fields\":{\"name\":{\"stringValue\":\"Colon\"}},\"createTime\":\"2026-10-12T03:46:38.980498Z\",\"updateTime\":\"2026-10-12T03:46:38.980498Z\"}"
+        "text": "{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/a:b\",\"fields\":{\"name\":{\"stringValue\":\"Colon\"}},\"createTime\":\"2026-10-12T03:48:49.251906Z\",\"updateTime\":\"2026-10-12T03:48:49.251906Z\"}"
       }
     },
     {

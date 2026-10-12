@@ -2,11 +2,8 @@
   "emulator": "cloud-firestore-emulator 1.22.0",
   "jarSha256": "9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c",
   "java": "openjdk version \"25.0.4.1\" 2026-08-18",
-  "studioCommit": "89b877feb93be9b298840ed3d73c3566515c10fb",
-  "uncommitted": [
-    "tests/live/firestore-evidence-plan.ts",
-    "tests/live/firestore-evidence.ts"
-  ],
+  "studioCommit": "3a1e39a7378b8de36739edc18407658393286405",
+  "uncommitted": [],
   "date": "2026-10-12",
   "scenarios": [
     {
