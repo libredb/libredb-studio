@@ -34,3 +34,15 @@ export async function refusalAsync(run: () => Promise<unknown>): Promise<QueryEr
   }
   throw new Error("expected a QueryError, and nothing was thrown");
 }
+
+/** A seeded PRNG (mulberry32): one seed gives one sequence on every platform, so a failing input can be replayed. */
+export function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = state;
+    mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
