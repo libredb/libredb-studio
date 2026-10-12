@@ -4881,7 +4881,8 @@ Found 2026-10-11 in a live test of the Kubernetes provider against a kubeadm 1.3
 ### U114. Test Connection puts every caution after "The server reported:", on one line
 
 `cautionSentence` in `src/hooks/use-connection-form.ts` shows the cautions of a successful Test Connection as "The server reported: " followed by every caution joined by "; ".
-The prefix is true of a server's own notice (`connectWarnings()`, #1401), and false of a caution the provider computed itself, such as a probe result from `testConnectionWarnings()` or the route's own sentence when that method rejects: the dialog attributes Studio's words to the server.
+The prefix is true of a server's own notice (`connectWarnings()`, #1401), and false of a caution the provider computed itself, such as a probe result from `testConnectionWarnings()`, the route's own sentence when that method rejects, or a sentence a provider writes into `connectWarnings()` itself: the dialog attributes Studio's words to the server.
+RabbitMQ does both: its `connectWarnings()` says that AMQP port is empty, and it is the one provider that implements `testConnectionWarnings()`, so a browse-only RabbitMQ connection reads "Connected. The server reported: AMQP port is empty, ..." with up to three more cautions on the same line.
 Joining every caution into one line also makes several long cautions hard to read.
 The prefix is shared by every provider, so changing it changes every provider's dialog, and it was left as it is when `testConnectionWarnings()` was added.
 
