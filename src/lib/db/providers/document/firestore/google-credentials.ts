@@ -60,8 +60,7 @@ export const GOOGLE_CREDENTIAL_SENTENCES = Object.freeze({
   unknownType: `The credential JSON's type is not one Studio recognises: ${ACCEPTED}`,
   unsupportedType: (type: string) => `Credentials of type "${type}" are not supported: ${ACCEPTED}`,
   serviceAccountFields: "The service-account key JSON needs client_email and private_key as non-empty strings",
-  privateKeyShape:
-    `The service-account key's private_key is not a PKCS #8 PEM private key (${PEM_BEGIN})`,
+  privateKeyShape: `The service-account key's private_key is not a PKCS #8 PEM private key (${PEM_BEGIN})`,
   authorizedUserFields:
     "The authorized-user JSON needs client_id, client_secret and refresh_token as non-empty strings",
   quotaProject: (reason: string) =>
