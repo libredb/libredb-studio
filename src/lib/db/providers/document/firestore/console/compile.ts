@@ -5,11 +5,22 @@
  */
 import { QueryError } from "@/lib/db/errors";
 import { LIMITS } from "../constants";
-import { isDocumentId, wireFieldPath } from "../field-path";
-import { type FirestoreTarget, idRefusal, isDocumentPath, verbParentHasColon } from "../names";
+import { type FieldPathSegments, isDocumentId, wireFieldPath } from "../field-path";
+import { type FirestoreTarget, fullDocumentName, idRefusal, isDocumentPath, verbParentHasColon } from "../names";
+import type { FirestoreRequest } from "../requests";
 import { encodeLiteral, type Literal, type RestValue } from "../values";
 import { firestoreQueryError } from "./lexer";
-import { type CursorBound, type FilterNode, type Operator, type QueryOps, type QuerySource, splitText } from "./parser";
+import {
+  type AggregationSpec,
+  type CursorBound,
+  type FilterNode,
+  type NearestSpec,
+  type Operator,
+  type QueryOps,
+  type QuerySource,
+  type Statement,
+  splitText,
+} from "./parser";
 
 /** What a compile step needs besides the node: the text refusals quote, the database, the queried source. */
 export interface CompileScope {
@@ -35,6 +46,14 @@ export const COMPILE_SENTENCES = {
   offsetRange: "offset() takes an integer from 0 to 1,000",
   colonQuery: (document: string, collection: string): string =>
     `Studio cannot query a subcollection of a document whose id contains a colon (${JSON.stringify(document)}); query it through its collection group instead, starting with db.collectionGroup(${JSON.stringify(collection)})`,
+  aggregations: "A statement takes 1 to 5 aggregations",
+  nearestLimit: "findNearest() takes a limit from 1 to 1,000",
+  nearestVector: "queryVector holds 1 to 2,048 numbers",
+  colonList: (document: string): string =>
+    `Studio cannot list the subcollections of a document whose id contains a colon (${JSON.stringify(document)})`,
+  explainKind: (noun: string): string =>
+    `The Explain button plans a query, a vector query or an aggregation; ${noun} has no plan`,
+  explainOwn: "This statement calls explain() itself; run it with Run, or remove explain() to use the Explain button",
 } as const;
 
 const OP_NAMES: Readonly<Record<Operator, string>> = {
@@ -223,4 +242,158 @@ export function queryParent(scope: CompileScope): readonly string[] {
     );
   }
   return parent;
+}
+
+export type ResultShape =
+  | { readonly kind: "documents"; readonly select?: readonly FieldPathSegments[] }
+  | { readonly kind: "aggregation"; readonly keys: readonly { wire: string; user: string }[] }
+  | { readonly kind: "collectionIds"; readonly parent: readonly string[] }
+  | { readonly kind: "documentNames" }
+  | { readonly kind: "document" }
+  | { readonly kind: "getAll"; readonly order: readonly string[] }
+  | { readonly kind: "explain"; readonly analyze: boolean };
+export interface CompiledStatement {
+  readonly request: FirestoreRequest;
+  readonly shape: ResultShape;
+  readonly warnings: readonly string[];
+}
+/** `explainButton`: the Explain button's marker was present, so the statement is planned, never run. */
+export interface CompileOptions {
+  readonly target: FirestoreTarget;
+  readonly explainButton: boolean;
+}
+
+type Unexplainable = "getDocument" | "listCollections" | "listDocuments" | "getAll";
+const NO_PLAN: Readonly<Record<Unexplainable, string>> = {
+  getDocument: "a document read",
+  listCollections: "a collection listing",
+  listDocuments: "a document listing",
+  getAll: "getAll()",
+};
+type QueryStatement = Extract<Statement, { kind: QueryMode }>;
+
+function compileNearest(nearest: NearestSpec, scope: CompileScope): Record<string, unknown> {
+  if (!inRange(nearest.limit, LIMITS.minNearestLimit, LIMITS.maxNearestLimit))
+    throw fail(scope, nearest.at, COMPILE_SENTENCES.nearestLimit);
+  if (nearest.queryVector.length === 0 || nearest.queryVector.length > LIMITS.maxVectorDimensions) {
+    throw fail(scope, nearest.at, COMPILE_SENTENCES.nearestVector);
+  }
+  return {
+    vectorField: { fieldPath: wireFieldPath(nearest.field.path) },
+    queryVector: encodeAt({ kind: "vector", values: nearest.queryVector }, scope, nearest.at),
+    distanceMeasure: nearest.distanceMeasure,
+    limit: nearest.limit,
+    ...(nearest.distanceResultField === undefined
+      ? {}
+      : { distanceResultField: wireFieldPath(nearest.distanceResultField.path) }),
+    ...(nearest.distanceThreshold === undefined ? {} : { distanceThreshold: nearest.distanceThreshold }),
+  };
+}
+
+function compileAggregations(aggregations: readonly AggregationSpec[], scope: CompileScope): Record<string, unknown>[] {
+  if (aggregations.length < LIMITS.minAggregations || aggregations.length > LIMITS.maxAggregations) {
+    throw fail(scope, aggregations[LIMITS.maxAggregations]?.at ?? scope.source.at, COMPILE_SENTENCES.aggregations);
+  }
+  return aggregations.map((aggregation, index) => {
+    const alias = `aggregate_${index}`;
+    if (aggregation.field === undefined) return { alias, count: {} };
+    return { alias, [aggregation.op]: { field: { fieldPath: wireFieldPath(aggregation.field.path) } } };
+  });
+}
+
+function compileQuery(statement: QueryStatement, text: string, options: CompileOptions): CompiledStatement {
+  const scope: CompileScope = { text, target: options.target, source: statement.source };
+  const warnings: string[] = [];
+  const structuredQuery = buildStructuredQuery(statement.ops, statement.kind, scope, warnings);
+  if (statement.kind === "vector") structuredQuery.findNearest = compileNearest(statement.nearest, scope);
+  const parent = queryParent(scope);
+  const analyze = options.explainButton ? false : statement.explain?.analyze;
+  const explain = analyze === undefined ? {} : { explainOptions: { analyze } };
+  if (statement.kind === "aggregate") {
+    const aggregations = compileAggregations(statement.aggregations, scope);
+    warnings.push(COMPILE_WARNINGS.aggregationCost);
+    const keys = statement.aggregations.map((aggregation, index) => ({
+      wire: `aggregate_${index}`,
+      user: aggregation.key,
+    }));
+    return {
+      request: {
+        kind: "runAggregationQuery",
+        parent,
+        body: { structuredAggregationQuery: { structuredQuery, aggregations }, ...explain },
+      },
+      shape: analyze === undefined ? { kind: "aggregation", keys } : { kind: "explain", analyze },
+      warnings,
+    };
+  }
+  const select = statement.ops.select?.map((field) => field.path);
+  const shape: ResultShape =
+    analyze !== undefined
+      ? { kind: "explain", analyze }
+      : select === undefined
+        ? { kind: "documents" }
+        : { kind: "documents", select };
+  return { request: { kind: "runQuery", parent, body: { structuredQuery, ...explain } }, shape, warnings };
+}
+
+function refuseForExplainButton(statement: Statement, text: string): void {
+  switch (statement.kind) {
+    case "getDocument":
+    case "listCollections":
+    case "listDocuments":
+    case "getAll":
+      throw firestoreQueryError(text, 0, COMPILE_SENTENCES.explainKind(NO_PLAN[statement.kind]));
+    default:
+      if (statement.explain !== undefined)
+        throw firestoreQueryError(text, statement.explain.at, COMPILE_SENTENCES.explainOwn);
+  }
+}
+
+/** One statement as one closed-table request, the shape its answer is read in, and its warnings. */
+export function compileStatement(statement: Statement, text: string, options: CompileOptions): CompiledStatement {
+  if (options.explainButton) refuseForExplainButton(statement, text);
+  switch (statement.kind) {
+    case "query":
+    case "vector":
+    case "aggregate":
+      return compileQuery(statement, text, options);
+    case "getDocument":
+      return {
+        request: { kind: "batchGet", body: { documents: [fullDocumentName(options.target, statement.path)] } },
+        shape: { kind: "document" },
+        warnings: [],
+      };
+    case "listCollections": {
+      const { parent } = statement;
+      if (verbParentHasColon(parent))
+        throw firestoreQueryError(text, statement.at, COMPILE_SENTENCES.colonList(parent[parent.length - 1]));
+      return {
+        request: { kind: "listCollectionIds", parent, pageSize: LIMITS.idListingPageSize },
+        shape: { kind: "collectionIds", parent },
+        warnings: [],
+      };
+    }
+    case "listDocuments": {
+      const { collection } = statement;
+      return {
+        request: {
+          kind: "listDocuments",
+          parent: collection.slice(0, -1),
+          collectionId: collection[collection.length - 1],
+          pageSize: LIMITS.collectionPageSizeUnmasked,
+          showMissing: true,
+        },
+        shape: { kind: "documentNames" },
+        warnings: [],
+      };
+    }
+    case "getAll": {
+      const names = statement.refs.map((ref) => fullDocumentName(options.target, ref));
+      return {
+        request: { kind: "batchGet", body: { documents: [...new Set(names)] } },
+        shape: { kind: "getAll", order: statement.refs.map((ref) => ref.join("/")) },
+        warnings: [],
+      };
+    }
+  }
 }
