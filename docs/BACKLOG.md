@@ -27,11 +27,11 @@ None of it is a GitHub issue.
 
 **Sections**
 
-- [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
+- [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
 - [Drivers and connections](#drivers-and-connections) — D1-D316, U17 · 216
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U123 · 113
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U124 · 114
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC24 · 21
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -129,6 +129,18 @@ is the same gap inside a dialect that is read: it is not a unit, so it is still 
 **Done when:** each dialect's body rule is measured on a live server and written as its `script` row, with
 a test per dialect in `tests/unit/sql/statement-splitter.test.ts` (the MySQL one there pins today's cut).
 MySQL's `BEGIN` alone is a transaction, as SQLite's is, so its rule is not Oracle's `pl-sql`.
+
+### S9. A CQL `BEGIN BATCH … APPLY BATCH` is cut at its inner `;`
+
+CQL's batch is one statement whose body holds a `;` after each inner write (`docs/providers/cassandra.md`, "`BEGIN BATCH … APPLY BATCH` is a single statement").
+The `cassandra` grammar row declares no body rule, `script: DEFAULT_SQL_GRAMMAR.script` (`src/lib/sql/grammar.ts:663`), so `splitExecutionUnits` in `src/lib/sql/statement-splitter.ts` ends a unit at every code `;`.
+On this tree a two-insert batch comes back as three units: `BEGIN BATCH` with the first `INSERT`, the second `INSERT`, and `APPLY BATCH`.
+The multi-statement route runs those units one by one (`src/app/api/db/multi-query/route.ts:213`), so the first fails with "line 0:-1 mismatched input <EOF> expecting K_APPLY" and the editor reports "Executed 0/81 statements" for a batch the splitter cut into 81 units, where the batch should have run as one statement.
+Neither `blocks` value fits: `pl-sql` and `trigger-body` read `BEGIN … END`, and a CQL batch closes with `APPLY BATCH`.
+
+Seen 2026-10-12 in the editor during other provider work; reproduced on this tree by calling `splitExecutionUnits` with the `cassandra` grammar.
+
+**Done when:** the `cassandra` row declares a body rule that keeps `BEGIN [UNLOGGED | COUNTER] BATCH … APPLY BATCH` as one unit, the rule is measured on Apache Cassandra and ScyllaDB, and `tests/unit/sql/statement-splitter.test.ts` pins a batch with several inner `;` as one unit beside a following statement as a second.
 
 ---
 
@@ -1823,7 +1835,7 @@ Not fixed there: the change is to the adapter's log-dir read, whose error table 
 
 ### D126. Concurrent first acquisitions of one connection and profile each open a provider
 
-`acquireExecutionProfileProvider` (`src/lib/db/factory.ts:1010-1121`) checks the profiled cache, and on a miss constructs and connects a provider, then stores it (`:1117`).
+`acquireExecutionProfileProvider` (`src/lib/db/factory.ts:1086-1197`) checks the profiled cache, and on a miss constructs and connects a provider, then stores it (`:1193`).
 Two callers that miss at the same time each construct one, and the later store overwrites the earlier entry, so the earlier provider stays connected with nothing left to close it.
 The editor and agent paths reach this function the same way.
 `/api/mcp` avoids it on its own side, with an in-flight map keyed on the exported `profiledCacheKey` (`src/lib/mcp/context.ts`).
@@ -4935,6 +4947,18 @@ The tab is then marked "(unsaved edit)" although nothing was edited; after a rel
 Found 2026-10-12 in a browser pass of the RabbitMQ provider, reproduced with scripted clicks.
 
 **Done when:** switching parts of a source writes no draft unless the user edited the part, a draft is stored under the part it was typed in, and a component test clicks through four read-only parts and finds no draft and no unsaved mark.
+
+### U124. Firestore's Database ID box carries a sentence about Create Table and SHOW SCHEMAS
+
+The connection dialog draws one fixed sentence under the schema box for every engine that takes the field (`src/components/ConnectionModal.tsx:1063`, `:1080-1083`): "Used for unqualified table names in queries and Create Table. Leave empty to qualify names yourself. Run SHOW SCHEMAS to list the catalog's schemas."
+It was written for Trino, and the box is also Firestore's "Database ID" (`src/lib/db-ui-config.ts:987-992`), where the provider declares `supportsCreateTable: false` (`src/lib/db/providers/document/firestore/index.ts:200`) and there is no `SHOW SCHEMAS`.
+So a Firestore user reads, under the engine's own hint ("Empty for the (default) database"), advice about table names and a statement the engine does not have.
+BigQuery's "Default dataset" box (`src/lib/db-ui-config.ts:859`) takes the same sentence, and whether it holds there is not measured.
+The sentence is not a declared field, so an engine entry cannot replace or drop it the way `fieldHints` and `fieldPlaceholders` do.
+
+Found 2026-10-12 while reading the connection dialog for a new provider.
+
+**Done when:** the sentence under the schema box comes from the engine's declaration, or is drawn only for an engine whose declaration says it applies, Firestore's box carries no Create Table or `SHOW SCHEMAS` advice, and a component test renders the dialog for Firestore and for Trino and pins which of the two draws it.
 
 ## Dependencies
 
