@@ -166,7 +166,7 @@ Clicking a stream in the tree runs "Read Last Chunk", `{"vhost": v, "stream": s,
 | 1 | `offset` | string | The stream offset, as a decimal string |
 | 2 | `timestamp` | timestamp, nullable | The `timestamp` property, in UTC; null when absent |
 | 3 | `exchange` | string | The publish exchange; `""` for the default exchange or an AMQP 1.0 publish |
-| 4 | `routing_key` | string | The publisher's first routing key |
+| 4 | `routing_key` | string | The publisher's first routing key; the stream name for a message stored without one, as an AMQP 1.0 publish to the queue address is |
 | 5 | `headers` | json | The headers by wire tag, names as delivered, `x-stream-offset` removed |
 | 6 | `properties` | json | The other basic properties present, snake_case |
 | 7 | `payload` | json | Parsed JSON, text, or `"<base64> (<n> bytes)"` |
@@ -192,7 +192,8 @@ A publisher that sends a uuid or a char in application properties is conformant 
 
 Body bytes are kept up to 262,144 per message and 8 MiB per result; a larger body is kept as a prefix and the rest is discarded frame by frame without buffering. Peak RSS stays under the process baseline plus 3 times the result budget plus a fixed allowance that does not grow with the bytes discarded.
 A cut body is transferred in full and only its first 262,144 bytes are kept; `payload_bytes` has the full size, and one warning counts the cut bodies.
-One read transfers at most 64 MiB; a message larger than that cannot be shown, and the warning names the offset to read from to continue past it.
+One read transfers at most 64 MiB; a message larger than that cannot be shown.
+The warning names the offset to read from to continue past it, or, when the cap is reached before the message's offset arrives, says that Studio cannot name it.
 A declared body above 512 MiB is refused as a protocol violation before any body byte.
 
 ### 5.5 Stop reasons and warnings

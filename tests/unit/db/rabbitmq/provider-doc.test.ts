@@ -152,6 +152,18 @@ describe("statements the provider makes, printed whole", () => {
     );
   });
 
+  test("the routing key column names the stream for a message stored without a routing key, as the row does", () => {
+    expect(rowOf("4")).toBe(
+      "| 4 | `routing_key` | string | The publisher's first routing key; the stream name for a message stored without one, as an AMQP 1.0 publish to the queue address is |",
+    );
+  });
+
+  test("the transfer cap's warning, with the message's offset and before it is known", () => {
+    expect(DOC).toContain(
+      "One read transfers at most 64 MiB; a message larger than that cannot be shown.\nThe warning names the offset to read from to continue past it, or, when the cap is reached before the message's offset arrives, says that Studio cannot name it.",
+    );
+  });
+
   test("the memory bound of a read", () => {
     expect(DOC).toContain(
       "Body bytes are kept up to 262,144 per message and 8 MiB per result; a larger body is kept as a prefix and the rest is discarded frame by frame without buffering. Peak RSS stays under the process baseline plus 3 times the result budget plus a fixed allowance that does not grow with the bytes discarded.",
