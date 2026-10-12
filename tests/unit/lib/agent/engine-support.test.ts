@@ -131,6 +131,12 @@ describe("AGENT_EXECUTION_ENGINES", () => {
     const measured = databaseTypes.filter((_, index) => results[index]);
     expect(measured.sort()).toEqual([...AGENT_EXECUTION_ENGINES].sort());
   });
+
+  test("firestore offers no read-only statement path, so agent mode does not execute on it (Firestore spec 7)", async () => {
+    expect(databaseTypes).toContain("firestore");
+    expect(await hasReadOnlyPath("firestore")).toBe(false);
+    expect(AGENT_EXECUTION_ENGINES).not.toContain("firestore");
+  });
 });
 
 /**

@@ -45,7 +45,7 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
-import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
+import { createCanonicalOperationRegistry, sqlExplainAnalyzeDescriptor } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, QueryResult } from "@/lib/db/types";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -1791,6 +1791,25 @@ describe("acquireExecutionProfileProvider", () => {
       "agent-read-only",
     ).catch((e: unknown) => e);
 
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("refuses firestore the agent's read-only profile, the gate the explain-analyze descriptor's capability check is not", async () => {
+    // `sql.explain.analyze` requires only `supportsExplain`, which Firestore declares for the editor's Explain button
+    // (Firestore spec 5.7), so the refusal of a plan execution on Firestore is this profile gate: no `queryReadOnly`.
+    expect(sqlExplainAnalyzeDescriptor.requiredCapabilities).toEqual(["supportsExplain"]);
+    const error: unknown = await acquireExecutionProfileProvider(
+      makeConnection("firestore", {
+        id: "firestore-profile",
+        host: undefined,
+        port: undefined,
+        password: undefined,
+        database: "demo-studio",
+      }),
+      "agent-read-only",
+    ).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ExecutionProfileError);
     expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
     expect(getExecutionProfileCacheStats().size).toBe(0);

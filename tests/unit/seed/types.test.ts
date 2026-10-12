@@ -452,6 +452,34 @@ describe("SeedConnectionSchema: an S3 connection is not offered to MCP", () => {
   });
 });
 
+describe("SeedConnectionSchema: a Firestore connection (Firestore spec 3.3, 7)", () => {
+  const firestore = { id: "orders", name: "Orders", type: "firestore", database: "acme-orders", roles: ["*"] };
+
+  it("is accepted with no host, port or credential, the shape of an operator seed on the server's identity", () => {
+    const result = SeedConnectionSchema.safeParse({ ...firestore, schema: "orders-eu", managed: true });
+    expect(result.success).toBe(true);
+    expect(result.data?.type).toBe("firestore");
+    expect(result.data?.schema).toBe("orders-eu");
+  });
+
+  it("fails a seed with mcp: true, naming mcp and the type", () => {
+    const result = SeedConnectionSchema.safeParse({ ...firestore, mcp: true });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
+      [
+        "mcp",
+        "mcp is not offered for firestore: the product does not expose this engine to MCP clients. Remove mcp from this connection.",
+      ],
+    ]);
+  });
+
+  it("keeps readOnly: true, which its provider enforces", () => {
+    const result = SeedConnectionSchema.safeParse({ ...firestore, readOnly: true });
+    expect(result.success).toBe(true);
+    expect(result.data?.readOnly).toBe(true);
+  });
+});
+
 describe("SeedConnectionSchema: Db2's consent to a cleartext password (#786)", () => {
   const db2 = {
     id: "warehouse",
