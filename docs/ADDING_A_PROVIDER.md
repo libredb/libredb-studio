@@ -409,7 +409,7 @@ An operation that runs on one object, and that an admin should see described bef
 
 ### Cautions on Test Connection: `connectWarnings` and `testConnectionWarnings`
 
-Two optional methods let a provider hand Test Connection a caution, and the dialog then answers amber instead of green; the first Save shows the caution and the second saves when it meets the same caution text.
+Two optional methods let a provider hand Test Connection a caution, and the dialog then answers amber instead of green; the first Save shows the caution, and the second saves unless it meets a different caution.
 Test Connection and the dialog's Save both post to `POST /api/db/test-connection`, so both run these methods.
 Declare neither when your engine has nothing to caution about; `POST /api/db/test-connection` answers as before for a provider without them.
 

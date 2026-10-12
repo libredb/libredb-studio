@@ -1835,8 +1835,8 @@ export interface DatabaseProvider {
    * background path. Any caution turns the dialog's answer amber, so a connection with nothing
    * to caution about answers `[]`. A rejection is a defect: the route shows one caution of its
    * own in its place and the connection still counts as tested. It bounds its own probes with a
-   * deadline, because the route waits for it before answering. The dialog's second Save goes
-   * through only when it meets the same caution text the first one showed, so a caution's text
+   * deadline, because the route waits for it before answering. The dialog's second Save stops
+   * again when it meets a caution other than the one the first showed, so a caution's text
    * depends only on what the server reports, never on timing: no count a deadline cut short, and a
    * fixed order. A caution is the provider's own sentence, never a caught error's or a library's
    * text, because every user who can test the connection reads it. Optional, because most engines
