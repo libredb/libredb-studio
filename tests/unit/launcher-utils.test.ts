@@ -626,6 +626,19 @@ describe("resolvePathVariables", () => {
     );
   });
 
+  test("resolves a relative GOOGLE_APPLICATION_CREDENTIALS, the key file the Google providers read on the server's opt-in", () => {
+    // Under `npx @libredb/studio` the server runs from the payload cache, so `keys/sa.json` typed beside the command
+    // would otherwise name a file in that cache.
+    expect(PATH_VARIABLES).toContain("GOOGLE_APPLICATION_CREDENTIALS");
+    expect(
+      resolvePathVariables({ GOOGLE_APPLICATION_CREDENTIALS: "keys/sa.json" }, cwd).GOOGLE_APPLICATION_CREDENTIALS,
+    ).toBe(path.join(cwd, "keys", "sa.json"));
+    const absolute = path.resolve(tempDir, "sa.json");
+    expect(resolvePathVariables({ GOOGLE_APPLICATION_CREDENTIALS: absolute }, cwd).GOOGLE_APPLICATION_CREDENTIALS).toBe(
+      absolute,
+    );
+  });
+
   test("leaves an absolute value untouched", () => {
     const absolute = path.resolve(os.tmpdir(), "seed.yaml");
     expect(resolvePathVariables({ SEED_CONFIG_PATH: absolute }, cwd).SEED_CONFIG_PATH).toBe(absolute);

@@ -56,6 +56,8 @@ export function mcpUrlFor(hostname, port) {
  * - WORKFLOW_LOCAL_DATA_DIR, AGENT_MODEL_TUNING_PATH: src/lib/agent/config.ts
  * - ORACLE_CLIENT_LIB_DIR: src/lib/db/providers/sql/oracle.ts (Thick mode libDir)
  * - NODE_EXTRA_CA_CERTS: read by Node itself when server.js starts (docs/OIDC.md)
+ * - GOOGLE_APPLICATION_CREDENTIALS: src/lib/db/providers/document/firestore/google-credentials.ts and
+ *   src/lib/db/providers/sql/bigquery/auth.ts, each read only on its server-credentials opt-in
  *
  * The guard in tests/unit/launcher-utils.test.ts fails when .env.example documents a *_PATH, *_DIR
  * or *_FILE variable that is in neither this list nor URL_PATH_VARIABLES.
@@ -72,6 +74,7 @@ export const PATH_VARIABLES = Object.freeze([
   "AGENT_MODEL_TUNING_PATH",
   "ORACLE_CLIENT_LIB_DIR",
   "NODE_EXTRA_CA_CERTS",
+  "GOOGLE_APPLICATION_CREDENTIALS",
 ]);
 
 /**
