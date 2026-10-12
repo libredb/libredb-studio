@@ -958,8 +958,6 @@ describe("createDatabaseProvider", () => {
       // No cancel: a read is one subscription with its own budget, and there is no statement to stop.
       "mqtt",
       "opensearch",
-      // No cancel yet: the stream read path is not complete in this build, so nothing runs that could be stopped.
-      "rabbitmq",
       "redis",
     ]);
   });

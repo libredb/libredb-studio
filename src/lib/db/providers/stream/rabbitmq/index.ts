@@ -12,8 +12,8 @@
  *
  * The seams are test seams the factory never passes, and no connection field reaches them.
  */
+import { getAppVersion } from "@/lib/app-version";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError } from "@/lib/db/errors";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
 import type {
   ActiveSessionDetails,
@@ -37,8 +37,10 @@ import type {
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
+import { createRunRegistry, type RunRegistry } from "@/lib/db/utils/bounded-limiter";
 import type { DatabaseConnection, QueryWarning } from "@/lib/types";
 import { testConnectionCautions } from "./access-check";
+import { type AmqpDial, dialAmqp } from "./amqp/dial";
 import { type RabbitMQEndpoints, readConnectionOptions } from "./connection-options";
 import {
   AMQP_PORT_EMPTY_CAUTION,
@@ -54,7 +56,6 @@ import { RABBITMQ_LABELS } from "./labels";
 import {
   type DeadlineSignalFactory,
   RABBITMQ_DEFAULT_MANAGEMENT_PORT,
-  RABBITMQ_TYPE,
   type RabbitMQClock,
   SYSTEM_CLOCK,
   systemDeadlineSignal,
@@ -78,18 +79,24 @@ import {
   RABBITMQ_OBJECT_KINDS,
   type StreamListingMemo,
 } from "./objects";
+import { rabbitmqReadLimiter, runRead } from "./read";
 import { readSource } from "./source";
 import { createTrackingProbe, type TrackingProbe } from "./tracking-probe";
 
 /** The test seams; the factory passes none, so a built provider always runs on these defaults. */
 export interface RabbitMQSeams {
   readonly managementTransport: ManagementTransportFactory;
+  /** The AMQP socket dial; the factory never passes one, so production dials with dialAmqp. */
+  readonly dial: AmqpDial;
+  /** Sees each span of body or header bytes the frame reader discards, without a copy; absent in production. */
+  readonly onSkippedBytes?: (view: Uint8Array) => void;
   readonly clock: RabbitMQClock;
   readonly deadlineSignal: DeadlineSignalFactory;
 }
 
 const DEFAULT_SEAMS: RabbitMQSeams = Object.freeze({
   managementTransport: createNodeTransport,
+  dial: dialAmqp,
   clock: SYSTEM_CLOCK,
   deadlineSignal: systemDeadlineSignal,
 });
@@ -116,12 +123,6 @@ export const RABBITMQ_CONTAINER_LEVELS: ContainerLevels = [
   { id: "schema", label: "Virtual host", labelPlural: "Virtual hosts" },
 ];
 
-/**
- * The refusal of query() while the read path is still being built: the type is registered and the management
- * surfaces work, so the tree and the dialog work, and no read is sent.
- */
-export const RABBITMQ_PROVIDER_PENDING = "The RabbitMQ provider is not complete in this build.";
-
 export class RabbitMQProvider extends BaseDatabaseProvider {
   /** The merged seams: the factory passes none, so a factory-built provider holds the defaults. */
   protected readonly seams: RabbitMQSeams;
@@ -131,6 +132,10 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
   private readonly managementLimiter = rabbitmqManagementLimiter();
   private readonly bindingsLimiter = rabbitmqBindingsLimiter();
   private session: RabbitMQSession | null = null;
+  /** The runs `cancelQuery` reaches by queryId; a run without a queryId is not registered. */
+  private readonly runs: RunRegistry = createRunRegistry();
+  /** This instance's one read slot in the process-wide read table. */
+  private readonly readLimiter = rabbitmqReadLimiter();
 
   /**
    * Validates nothing and opens nothing: the connection's rules run in `connect()`, so a provider built only for its
@@ -179,11 +184,6 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
 
   public override getLabels(): ProviderLabels {
     return { ...RABBITMQ_LABELS };
-  }
-
-  /** Refuses before any I/O while the provider is incomplete. */
-  private pending(): never {
-    throw new DatabaseConfigError(RABBITMQ_PROVIDER_PENDING, RABBITMQ_TYPE);
   }
 
   /**
@@ -295,8 +295,32 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
   // Query path
   // ==========================================================================
 
-  public async query(): Promise<QueryResult> {
-    this.pending();
+  /**
+   * One stream read: the one method that opens an AMQP connection, which lives inside this call and nothing of it
+   * survives the call.
+   */
+  public override async query(text: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
+    // After disconnect() the lifetime carries the provider's own closed sentence, and nothing is sent.
+    if (this.lifetime.signal.aborted) throw this.lifetime.signal.reason;
+    const { endpoints, management } = this.requireConnected();
+    return runRead(text, params, queryId, {
+      endpoints,
+      management,
+      readLimiter: this.readLimiter,
+      runs: this.runs,
+      lifetime: this.lifetime.signal,
+      queryTimeoutMs: this.queryTimeout,
+      dial: this.seams.dial,
+      clock: this.seams.clock,
+      deadlineSignal: this.seams.deadlineSignal,
+      ...(this.seams.onSkippedBytes === undefined ? {} : { onSkippedBytes: this.seams.onSkippedBytes }),
+      studioVersion: getAppVersion(),
+    });
+  }
+
+  /** Stops a running or queued read by its queryId and answers true; an unknown id answers false. */
+  public async cancelQuery(queryId: string): Promise<boolean> {
+    return this.runs.cancel(queryId);
   }
 
   // ==========================================================================
