@@ -3101,6 +3101,11 @@ export type ObjectSourcePart =
    * hold for it unchanged: never truncated, never an `edit`, never a `text` beside it.
    * `isSourcePartStatement` is the narrowing that tells the two apart, and it accepts `true` only.
    *
+   * The compiler does NOT keep `statement` off the readable arm: a union admits a property any of
+   * its members declares, so `{ text, ..., statement: true }` type-checks. Run time closes it, as it
+   * closes the text-plus-refusal hybrid: the client's shape check and `assertObjectSurface` refuse a
+   * `statement` key on a part without `unavailable`, and the client then refuses the whole document.
+   *
    * ADDITIVE ON PURPOSE, for the reason `KindCount` is: this type is published through
    * `src/exports/types.ts`, so the two existing members stay valid unchanged. The cost is not the
    * same as `KindCount`'s, and saying so is what a host needs: a consumer that has not heard of
