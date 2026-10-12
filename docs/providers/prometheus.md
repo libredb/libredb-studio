@@ -444,7 +444,7 @@ Measured through the provider's shaper and the chart's own mapping, `up[5m]` fro
   The budget was measured in the image's runtime, under its 384 MiB heap (`--max-old-space-size=384` in the `Dockerfile`) and the chart's `512Mi` memory limit (M14, [§3.8](#38-measurements)), and M3's representative subquery takes 14,346,726 bytes of it at the compose server's label sets, so on a server with longer label sets that subquery is cut by bytes while its 30,000 cells are far below the cell budget.
 - A truncated result carries a `QueryWarning` naming what was cut and how much, and reports itself limited on its own `pagination`, `wasLimited: true` with `hasMore: false`, which `POST /api/db/query` keeps (#1085, section 5.4).
   So the stats strip shows the "limited" badge, whose sentence, "Studio bounded this result. Anything beyond the bound is not in it.", names neither rows nor fetching, because these bounds leave out whole series, which in a matrix are columns, and the cell and byte budgets leave out series the provider already received; no next page is offered, because the cut is this provider's own bound and no offset advances it.
-  The export menu over such a result still says it writes all the rows, which `docs/BACKLOG.md` U42 records.
+  The export menu over such a result says it writes the rows shown and that the result was cut.
 - The envelope's `warnings` and `infos` (for example "metric might not be a counter") become `QueryWarning` entries in the engine's own words, ahead of this provider's own.
 
 ### 5.5 Timeout and cancellation
@@ -716,7 +716,6 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 - **On a server past `METRIC_LIST_CAP` metric names or `DESCRIBE_SERIES_CAP` series in the hour, plan mode grounds metrics only**, because the grounding walk stops at the metric folder's truncated batch (M7, `docs/BACKLOG.md` B84).
 - **A listed metric whose series went quiet before the hour is left out of the bulk column read**, and the inventory carries it with no columns ([§6.1](#metric-columns), `docs/BACKLOG.md` D107).
 - **The overview's metric count is unavailable only when a full list of `TSDB_LABEL_SCAN_LIMIT` label names omits the `__name__` entry** (M2), and a listed entry is the full count at any length of that list.
-- **The export menu says it writes all the rows of a result one of this provider's bounds cut** ([§5.4](#54-caps-warnings-and-truncation), `docs/BACKLOG.md` U42).
 - **The chart tab draws a missing sample, and a `NaN` or `Inf` among numbers, at 0**, so a raw range over targets scraped at their own offsets charts false zeros, while a stepped subquery charts correctly as long as every series has a sample at every step; a column 20% or more `NaN` or `Inf` is not drawn as a series, and becomes the default x axis only while it holds at most 50 distinct values ([§3.7](#37-nan-and-inf-stay-strings-and-what-the-chart-does-with-them), [§5.2](#52-result-shaping), `docs/BACKLOG.md` U44).
 - **Queries compete with the server's own rule evaluation** ([§3.4](#34-the-servers-query-slots-are-shared)).
 

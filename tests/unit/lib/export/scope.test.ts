@@ -43,6 +43,69 @@ describe("describeExportScope", () => {
     expect(scope.shortfall).toBe("More rows are still on the server — load them first to include them.");
   });
 
+  const CUT = "The result was cut, so the file is not the whole result.";
+  const cutBy = (count: number) => ({ limit: 500, offset: 0, hasMore: false, totalReturned: count, wasLimited: true });
+
+  /**
+   * A RESULT THE PROVIDER CUT AT ITS OWN BOUND (`wasLimited` without `hasMore`).
+   *
+   * No page can fetch the rest, so the menu says the file holds the rows shown and that the result was cut, beside
+   * the grid's "limited" badge, and names no action.
+   */
+  test.each([
+    [500, false, "Writes the 500 rows shown."],
+    [500, true, "Writes the 500 rows shown."],
+    [1, false, "Writes the 1 row shown."],
+    [1, true, "Writes the 1 row shown."],
+    [0, false, "Writes the 0 rows shown."],
+    [0, true, "Writes the 0 rows shown."],
+  ])("a provider-cut result of %p rows (page fetchable: %p) reads as the rows shown", (count, fetchable, summary) => {
+    const scope = describeExportScope({ rows: rows(count), pagination: cutBy(count) }, fetchable);
+    expect(scope.summary).toBe(summary);
+    expect(scope.shortfall).toBe(CUT);
+  });
+
+  test.each([
+    [500, "Writes the 500 rows shown."],
+    [1, "Writes the 1 row shown."],
+  ])("a route-bounded result of %p rows with no page offered reads as the rows shown", (count, summary) => {
+    const scope = describeExportScope(
+      {
+        rows: rows(count),
+        pagination: { limit: count, offset: 0, hasMore: true, totalReturned: count, wasLimited: true },
+      },
+      false,
+    );
+    expect(scope.summary).toBe(summary);
+    expect(scope.shortfall).toBe(CUT);
+    expect(scope.shortfall).not.toContain("load");
+  });
+
+  test("a cut result's count is grouped", () => {
+    expect(describeExportScope({ rows: rows(1234), pagination: cutBy(1234) }, false).countLabel).toBe("1,234");
+    expect(describeExportScope({ rows: rows(1234), pagination: cutBy(1234) }, false).summary).toBe(
+      "Writes the 1,234 rows shown.",
+    );
+  });
+
+  test("a page really offered stays the loadable case even when the provider also cut", () => {
+    const scope = describeExportScope(
+      { rows: rows(500), pagination: { limit: 500, offset: 0, hasMore: true, totalReturned: 500, wasLimited: true } },
+      true,
+    );
+    expect(scope.summary).toBe("Writes the 500 rows loaded here.");
+    expect(scope.shortfall).toBe("More rows are still on the server — load them first to include them.");
+  });
+
+  test("hasMore without wasLimited and no page offered still reads as all the rows", () => {
+    const scope = describeExportScope(
+      { rows: rows(20), pagination: { limit: 20, offset: 0, hasMore: true, totalReturned: 20, wasLimited: false } },
+      false,
+    );
+    expect(scope.summary).toBe("Writes all 20 rows.");
+    expect(scope.shortfall).toBeNull();
+  });
+
   /**
    * A bound the USER typed is not a shortfall either (#816).
    *
@@ -71,18 +134,18 @@ describe("describeExportScope", () => {
   });
 
   /**
-   * AN ENGINE THAT CANNOT PAGE IS NOT A SHORTFALL EITHER (#816).
+   * AN ENGINE THAT CANNOT PAGE HAS A SHORTFALL WITH NO LOAD TO NAME (#816).
    *
    * Measured 2026-09-20 with an unconnected provider: a tree click on Cassandra now
    * generates `SELECT * FROM app.orders;`, the limiter bounds it at the preview page size
-   * (`wasLimited: true`, `limit: 50`) and a table of 50 or more rows fills it exactly, so
-   * the route answers `hasMore: true`. Elasticsearch measures identically. Both declare
+   * (`wasLimited: true`, `limit: 50`) and a table of more than 50 rows fills it, and since
+   * #1440 the route answers `hasMore: true` only when its probe found a row past the bound
+   * (`src/lib/api/page-probe.ts:32`). Elasticsearch measures identically. Both declare
    * `supportsResultPagination: false` — `prepareQuery` throws on any `offset > 0` — so the
    * grid correctly offers no control.
    *
-   * `hasMore` alone would make this dialog say "load them first" about an action that
-   * exists nowhere in the product, which is the standard the comment above applies to the
-   * user-typed bound. The grid's own offer is what the sentence is bound to instead.
+   * The menu says the file holds the rows shown and that the result was cut, and names no
+   * load, because no control exists to fetch the rest.
    */
   test("an engine that cannot page is not asked to load more first", () => {
     const scope = describeExportScope(
@@ -93,15 +156,20 @@ describe("describeExportScope", () => {
       false,
     );
 
-    expect(scope.summary).toBe("Writes all 50 rows.");
-    expect(scope.shortfall).toBeNull();
+    expect(scope.summary).toBe("Writes the 50 rows shown.");
+    expect(scope.shortfall).toBe("The result was cut, so the file is not the whole result.");
+    expect(scope.shortfall).not.toContain("load");
   });
 
+  /**
+   * A result that fit inside the route's bound has carried `wasLimited: false` since
+   * `src/app/api/db/query/route.ts:319` set it from the probe.
+   */
   test("a limit the result fit inside is not a shortfall", () => {
     const scope = describeExportScope(
       {
         rows: rows(12),
-        pagination: { limit: 500, offset: 0, hasMore: false, totalReturned: 12, wasLimited: true },
+        pagination: { limit: 500, offset: 0, hasMore: false, totalReturned: 12, wasLimited: false },
       },
       true,
     );

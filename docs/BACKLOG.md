@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D306, U17 · 207
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U117 · 108
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U117 · 107
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC22 · 19
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -4007,28 +4007,6 @@ Found 2026-09-23 while gating Profile for #1085 (section 3.2), whose isolation r
 X13 already names this site in its **Done when**, so the change that settles X13 rewrites the comment too.
 
 **Done when:** the comment names the flag's readers as the code has them, or names none, and says how the profile route refuses this provider today.
-
-### U42. The export menu says it writes every row of a result a provider cut at its own bound
-
-`describeExportScope` in `src/lib/export/scope.ts` words the export menu's summary from one condition: the grid can fetch a next page (the `pageOfferFor` answer `src/components/studio/BottomPanel.tsx` passes in) and the route's `pagination.hasMore` is true.
-Only then does it say "Writes the N rows loaded here." with its shortfall sentence; otherwise it says "Writes all N rows.", and it never reads `pagination.wasLimited`.
-A result a provider cut at its own bound meets neither half: since #1085 (section 5.4) `POST /api/db/query` keeps the Prometheus provider's `wasLimited: true` for a vector cut at the series cap, with `hasMore` false, and the engine cannot page, so no page is offered.
-So the stats strip shows "limited", whose sentence says the result was bounded and that anything beyond the bound is not in it, while the export menu over the same result says every row is in the file.
-
-Measured 2026-09-23 end to end: the Prometheus provider's own `query`, over an injected `send` answering 501 series, returned 500 rows with its series notice; the route's rule gave `pagination` `{ hasMore: false, wasLimited: true }` and `pageOfferFor` no offer, and `describeExportScope` answered "Writes all 500 rows." with no shortfall.
-The control, 500 series with nothing cut, answers the same sentence, so the menu cannot tell a cut result from a whole one.
-The two shapes alone, from the repository root:
-
-    bun -e 'import { describeExportScope } from "./src/lib/export/scope"; const rows = Array.from({ length: 500 }, () => ({})); console.log(describeExportScope({ rows, pagination: { limit: 500, offset: 0, hasMore: false, totalReturned: 500, wasLimited: true } }, false).summary); console.log(describeExportScope({ rows }, false).summary);'
-
-Both lines print `Writes all 500 rows.`.
-The same sentence is written for an engine that cannot page over a preview that filled its bound: "an engine that cannot page is not asked to load more first" in `tests/unit/lib/export/scope.test.ts` expects "Writes all 50 rows." for a preview whose `hasMore` is true, where that test's subject is the shortfall's instruction to load more, which rightly stays absent there.
-X2 is the other half of the same problem, an export that writes the whole result rather than the page the grid holds.
-
-Found 2026-09-23 while making the query route keep a provider-reported `wasLimited` for #1085 (section 5.4).
-Not fixed in #1085: the export dialog is shared by every engine, and that PR changes only how the route reports the bound.
-
-**Done when:** the summary says "all" only for a result nothing cut, a result whose `pagination.wasLimited` is true reads as the rows loaded here without an instruction to load more where no page can be fetched, and tests pin a result a provider cut, a bounded preview on an engine that cannot page, and a complete result.
 
 ### U43. The gate's SQL keyword test prompts on a Redis read whose arguments include `update` and then `set`
 
