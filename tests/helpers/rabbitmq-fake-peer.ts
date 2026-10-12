@@ -7,9 +7,10 @@
  */
 import { type AddressInfo, createServer, type Socket } from "node:net";
 import { createServer as createTlsServer } from "node:tls";
-import type { AmqpSocket } from "@/lib/db/providers/stream/rabbitmq/amqp/dial";
+import { type AmqpSocket, dialAmqp } from "@/lib/db/providers/stream/rabbitmq/amqp/dial";
 import type { BasicProperties, FieldEntry, FieldValue } from "@/lib/db/providers/stream/rabbitmq/amqp/field-table";
-import type { RabbitMQClock } from "@/lib/db/providers/stream/rabbitmq/limits";
+import { readStream, type StopReason } from "@/lib/db/providers/stream/rabbitmq/amqp/read-loop";
+import { type RabbitMQClock, SYSTEM_CLOCK } from "@/lib/db/providers/stream/rabbitmq/limits";
 
 const utf8 = new TextEncoder();
 
@@ -626,3 +627,438 @@ export const frameNames = (frames: readonly ReceivedFrame[]): string[] =>
 
 /** Lets queued microtasks and one macrotask run, so pushed answers and promise continuations settle. */
 export const settle = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+
+/** What one read against a peer came to: its stop kind, or the class name of its error. */
+export type ReadLabel = `stop:${StopReason["kind"]}` | `error:${string}`;
+
+export interface HostilePeer {
+  readonly name: string;
+  /** The broker's script, built when the peer starts; absent for "closed-port". */
+  readonly steps?: () => readonly PeerStep[];
+  /** The peer listens with TLS (the runner supplies the certificate). */
+  readonly tlsPeer?: boolean;
+  /** The read dials with TLS, verifying nothing (the peer's certificate is self-made). */
+  readonly tlsDial?: boolean;
+  /** Dial a port nothing listens on. */
+  readonly closedPort?: boolean;
+  readonly limit?: number;
+  /** Every outcome this peer may lead to; a race between two stops names both. */
+  readonly expect: readonly ReadLabel[];
+}
+
+const MIB = 1024 * 1024;
+const ready = (tune: Parameters<typeof serverFrames.tune>[0] = {}): PeerStep[] => handshakeSteps(tune);
+const delivery = (tag: number, body = bytesOf("m")) =>
+  message({ deliveryTag: BigInt(tag), offset: BigInt(tag - 1), body });
+const twoThenClose = (end: PeerStep): PeerStep[] => [
+  ...ready(),
+  { send: bytesOf(delivery(1), delivery(2)) },
+  { waitMs: 100 },
+  end,
+];
+const header = (bodySize: bigint, headersRaw?: Uint8Array) =>
+  serverFrames.contentHeader({
+    bodySize,
+    properties: { headersRaw: headersRaw ?? rawTable([["x-stream-offset", "l", i64(BigInt(0))]]) },
+  });
+const deliverOnly = serverFrames.deliver({ deliveryTag: BigInt(1) });
+/** One delivery whose header frame is 131,072 bytes of tiny entries, which a header-heavy peer sends 100 times. */
+function heavyHeader(tag: number, kind: "void" | "bytes"): Uint8Array {
+  const entries: [string, string, Uint8Array][] = [["x-stream-offset", "l", i64(BigInt(tag - 1))]];
+  const value = kind === "void" ? new Uint8Array(0) : longstr(bytesOf(0, 0, 0, 0));
+  const tagChar = kind === "void" ? "V" : "x";
+  const each = 1 + 2 + 1 + value.length;
+  for (let index = 0; entries.length * each < 131_072 - 200; index++)
+    entries.push([index.toString(36).padStart(2, "0").slice(-2), tagChar, value]);
+  return bytesOf(serverFrames.deliver({ deliveryTag: BigInt(tag) }), header(BigInt(0), rawTable(entries)));
+}
+
+/**
+ * The 36 peers of the read client's hostile set, the two header-heavy peers, and the trickled 300 MiB header frame.
+ * The set's black hole (an address that never accepts) is replaced by `tls-never-finishes`, because every peer here
+ * listens on 127.0.0.1; the connecting phase it stood for is pinned by `dial.test.ts` (an abort before the connect
+ * event) and `read-loop.test.ts` (a dial stopped while connecting names that phase).
+ */
+export const HOSTILE_PEERS: readonly HostilePeer[] = [
+  { name: "closed-port", closedPort: true, expect: ["error:ConnectionError"] },
+  { name: "tls-never-finishes", steps: () => [{ waitMs: 60_000 }], tlsDial: true, expect: ["error:TimeoutError"] },
+  { name: "silent", steps: () => [{ waitMs: 60_000 }], expect: ["error:TimeoutError"] },
+  {
+    name: "http",
+    steps: () => [
+      { expect: "protocol-header" },
+      { send: bytesOf("HTTP/1.1 400 Bad Request\r\n\r\n") },
+      { end: "close" },
+    ],
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "amqp-1.0-header",
+    steps: () => [{ expect: "protocol-header" }, { send: bytesOf("AMQP", 0, 1, 0, 0) }, { end: "close" }],
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "start-then-hang",
+    steps: () => [{ expect: "protocol-header" }, { send: serverFrames.connectionStart() }, { waitMs: 60_000 }],
+    expect: ["error:TimeoutError"],
+  },
+  {
+    name: "oversize-handshake",
+    steps: () => [
+      { expect: "protocol-header" },
+      { send: bytesOf(1, u16(0), u32(0x7fff_fff0)) },
+      { repeat: new Uint8Array(MIB), times: 64 },
+    ],
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "trickle",
+    steps: () => [{ expect: "protocol-header" }, { trickle: serverFrames.connectionStart(), everyMs: 500 }],
+    expect: ["error:TimeoutError"],
+  },
+  {
+    name: "external-only",
+    steps: () => [
+      { expect: "protocol-header" },
+      { send: serverFrames.connectionStart({ mechanisms: "EXTERNAL AMQPLAIN" }) },
+    ],
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "version-0-8",
+    steps: () => [{ expect: "protocol-header" }, { send: serverFrames.connectionStart({ minor: 8 }) }],
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "auth-close-403",
+    steps: () => [
+      { expect: "protocol-header" },
+      { send: serverFrames.connectionStart() },
+      { expect: { classId: 10, methodId: 11 } },
+      { send: serverFrames.connectionClose(403, "ACCESS_REFUSED - Login was refused") },
+    ],
+    expect: ["error:AuthenticationError"],
+  },
+  {
+    name: "auth-drop",
+    steps: () => [
+      { expect: "protocol-header" },
+      { send: serverFrames.connectionStart() },
+      { expect: { classId: 10, methodId: 11 } },
+      { end: "destroy" },
+    ],
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "vhost-530",
+    steps: () => [
+      ...ready().slice(0, 6),
+      { send: serverFrames.connectionClose(530, "NOT_ALLOWED - vhost x not found", 10, 40) },
+    ],
+    expect: ["error:QueryError", "error:AuthenticationError"],
+  },
+  {
+    name: "tune-frame-max-0",
+    steps: () => [...ready({ frameMax: 0 }), { send: delivery(1) }, ...closeSteps],
+    expect: ["stop:idle"],
+  },
+  {
+    name: "frame-max-0-then-1-mib-body-frame",
+    steps: () => [
+      ...ready({ frameMax: 0 }),
+      { send: bytesOf(deliverOnly, header(BigInt(MIB)), serverFrames.body(new Uint8Array(MIB))) },
+    ],
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "tune-frame-max-4096",
+    steps: () => ready({ frameMax: 4_096 }).slice(0, 4),
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "heartbeat-1-silent",
+    steps: () => [...ready({ heartbeat: 1 }).slice(0, 8), { waitMs: 60_000 }],
+    expect: ["error:ConnectionError", "error:TimeoutError"],
+  },
+  {
+    name: "heartbeat-1-alive",
+    steps: () => [
+      ...ready({ heartbeat: 1 }).slice(0, 8),
+      ...Array.from({ length: 10 }, (): PeerStep[] => [{ send: serverFrames.heartbeat() }, { waitMs: 400 }]).flat(),
+    ],
+    expect: ["error:TimeoutError"],
+  },
+  {
+    name: "oversize-after-open",
+    steps: () => [
+      ...ready().slice(0, 8),
+      { send: bytesOf(1, u16(1), u32(0x7fff_fff0)) },
+      { repeat: new Uint8Array(MIB), times: 64 },
+    ],
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "consume-404",
+    steps: () => [...ready().slice(0, -1), { send: serverFrames.channelClose(404, "NOT_FOUND - no queue", 60, 20) }],
+    expect: ["error:QueryError"],
+  },
+  {
+    name: "good",
+    steps: () => [
+      ...ready(),
+      { send: bytesOf(delivery(1), delivery(2), delivery(3, new Uint8Array(0))) },
+      ...closeSteps,
+    ],
+    expect: ["stop:idle"],
+  },
+  {
+    name: "huge-declared-body",
+    steps: () => [
+      ...ready(),
+      { send: bytesOf(deliverOnly, header(BigInt(2) ** BigInt(40))) },
+      { repeat: serverFrames.body(new Uint8Array(131_064)), times: 512 },
+    ],
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "huge-body-frame",
+    steps: () => [
+      ...ready(),
+      { send: bytesOf(deliverOnly, header(BigInt(100)), 3, u16(1), u32(0x7fff_fff0)) },
+      { repeat: new Uint8Array(MIB), times: 64 },
+    ],
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "body-overrun",
+    steps: () => [
+      ...ready(),
+      { send: bytesOf(deliverOnly, header(BigInt(10)), serverFrames.body(new Uint8Array(20))) },
+    ],
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "heartbeats-in-content",
+    steps: () => [
+      ...ready(),
+      {
+        send: bytesOf(
+          deliverOnly,
+          header(BigInt(8 * 65_536)),
+          ...Array.from({ length: 8 }, () =>
+            bytesOf(serverFrames.body(new Uint8Array(65_536)), serverFrames.heartbeat()),
+          ),
+        ),
+      },
+      ...closeSteps,
+    ],
+    expect: ["stop:idle"],
+  },
+  {
+    name: "table-depth-10",
+    steps: () => [
+      ...ready(),
+      {
+        send: bytesOf(
+          deliverOnly,
+          header(
+            BigInt(1),
+            rawTable([
+              ["x-stream-offset", "l", i64(BigInt(0))],
+              ["deep", "F", nestedTable(10)],
+            ]),
+          ),
+          serverFrames.body(bytesOf("d")),
+        ),
+      },
+      ...closeSteps,
+    ],
+    expect: ["stop:idle"],
+  },
+  {
+    name: "table-depth-20",
+    steps: () => [
+      ...ready(),
+      {
+        send: bytesOf(
+          deliverOnly,
+          header(
+            BigInt(1),
+            rawTable([
+              ["x-stream-offset", "l", i64(BigInt(0))],
+              ["deep", "F", nestedTable(20)],
+            ]),
+          ),
+          serverFrames.body(bytesOf("d")),
+        ),
+      },
+      ...closeSteps,
+    ],
+    expect: ["stop:idle"],
+  },
+  {
+    name: "unknown-tag",
+    steps: () => [
+      ...ready(),
+      { send: bytesOf(deliverOnly, header(BigInt(1), rawTable([["z", "Z", new Uint8Array(0)]]))) },
+    ],
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "server-cancel",
+    steps: () => [
+      ...ready(),
+      { send: bytesOf(delivery(1), delivery(2)) },
+      { waitMs: 100 },
+      { send: serverFrames.basicCancel() },
+      ...closeSteps,
+    ],
+    expect: ["stop:server-cancel"],
+  },
+  {
+    name: "server-close-320",
+    steps: () => [
+      ...ready(),
+      { send: bytesOf(delivery(1), delivery(2)) },
+      { waitMs: 100 },
+      { send: serverFrames.connectionClose(320, "CONNECTION_FORCED - shutdown") },
+    ],
+    expect: ["stop:closed"],
+  },
+  {
+    name: "blocked-unblocked",
+    steps: () => [
+      ...ready(),
+      { send: bytesOf(methodFrame(10, 60, shortstr("low on memory")), delivery(1), methodFrame(10, 61), delivery(2)) },
+      ...closeSteps,
+    ],
+    expect: ["stop:idle"],
+  },
+  { name: "socket-end-mid-read", steps: () => twoThenClose({ end: "close" }), expect: ["stop:closed"] },
+  {
+    name: "tls-half-close",
+    steps: () => twoThenClose({ end: "half-close" }),
+    tlsPeer: true,
+    tlsDial: true,
+    expect: ["stop:closed"],
+  },
+  {
+    name: "channel-flow-mid-read",
+    steps: () => [...ready(), { send: bytesOf(delivery(1), methodFrame(20, 20, bytesOf(0))) }],
+    expect: ["error:ConnectionError"],
+  },
+  {
+    name: "flood-past-prefetch",
+    limit: 100,
+    steps: () => [
+      ...ready(),
+      {
+        repeat: bytesOf(...Array.from({ length: 1_000 }, (_, index) => delivery(index + 1, new Uint8Array(1_000)))),
+        times: 200,
+      },
+    ],
+    expect: ["stop:limit"],
+  },
+  {
+    name: "ignores-close",
+    limit: 1,
+    steps: () => [...ready(), { send: delivery(1) }, { waitMs: 60_000 }],
+    expect: ["stop:limit"],
+  },
+  {
+    name: "header-heavy-void",
+    limit: 100,
+    steps: () => [...ready(), { repeat: heavyHeader(1, "void"), times: 100 }],
+    expect: ["stop:budget", "stop:limit"],
+  },
+  {
+    name: "header-heavy-bytes",
+    limit: 100,
+    steps: () => [...ready(), { repeat: heavyHeader(1, "bytes"), times: 100 }],
+    expect: ["stop:budget", "stop:limit"],
+  },
+  {
+    name: "trickled-300-mib-header-frame",
+    steps: () => [
+      ...ready(),
+      {
+        send: bytesOf(
+          deliverOnly,
+          2,
+          u16(1),
+          u32(300 * MIB),
+          u16(60),
+          u16(0),
+          u64(BigInt(0)),
+          u16(1 << 13),
+          u32(300 * MIB - 18),
+          3,
+          "big",
+          "x",
+          u32(300 * MIB - 27),
+        ),
+      },
+      { trickle: new Uint8Array(400), everyMs: 10 },
+    ],
+    expect: ["stop:deadline"],
+  },
+];
+
+export interface HostileOutcome {
+  readonly name: string;
+  readonly label: ReadLabel;
+  readonly rows: number;
+  /** From the read's start to its settling. */
+  readonly ms: number;
+  /** Peer sockets still open 1 s after the read settled. */
+  readonly openAfter: number;
+}
+
+/**
+ * Runs one hostile peer against the real read loop and dial under the system clock with a 2,000 ms deadline, and
+ * answers what it came to. Self-contained in its imports, so a Node child can run it from a bundle.
+ */
+export async function runHostilePeer(
+  peer: HostilePeer,
+  certificate: { readonly key: string; readonly cert: string },
+): Promise<HostileOutcome> {
+  const fake = peer.closedPort
+    ? null
+    : await startFakePeer(peer.steps?.() ?? [], peer.tlsPeer ? { tls: certificate } : {});
+  const port = fake?.port ?? (await closedPort());
+  const started = performance.now();
+  let label: ReadLabel;
+  let rows = 0;
+  try {
+    const outcome = await readStream({
+      endpoint: {
+        host: "127.0.0.1",
+        port,
+        tls: peer.tlsDial ? { rejectUnauthorized: false, identity: "127.0.0.1" } : null,
+        username: "studio-reader",
+        password: ["pa", "ss"].join(""),
+        display: `127.0.0.1:${port}`,
+      },
+      vhost: "/",
+      stream: "st",
+      from: { kind: "keyword", value: "first" },
+      limit: peer.limit ?? 50,
+      signal: AbortSignal.timeout(2_000),
+      deadlineSeconds: 2,
+      replicas: { online: [], members: [] },
+      dial: dialAmqp,
+      clock: SYSTEM_CLOCK,
+      studioVersion: null,
+    });
+    label = `stop:${outcome.stop.kind}`;
+    rows = outcome.messages.length;
+  } catch (error) {
+    label = `error:${(error as Error).name}`;
+  }
+  const ms = performance.now() - started;
+  // The peer sees the client's socket go once its FIN or RST is read; other peers' floods can delay that by a few ms.
+  for (let waited = 0; waited < 1_000 && (fake?.openSockets() ?? 0) > 0; waited += 10) await sleep(10);
+  const openAfter = fake?.openSockets() ?? 0;
+  await fake?.stop();
+  return { name: peer.name, label, rows, ms, openAfter };
+}
