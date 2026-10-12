@@ -1467,7 +1467,7 @@ describe("DOCKERHUB.md", () => {
     expect(SHIPPED_DATABASE_TYPES).toHaveLength(EXTERNAL_DATABASE_TYPES.length + 1);
     expect(hub).toContain(`The ${ordinal(SHIPPED_DATABASE_TYPES.length)} row is the embedded LibreDB store`);
     expect(hub).toContain(
-      "Prometheus, InfluxDB, Apache Kafka, MQTT, Oxia, S3-compatible object storage and Kubernetes are read-only too",
+      "Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, Oxia, S3-compatible object storage and Kubernetes are read-only too",
     );
     expect(hub).toContain(`of one of the ${word(EXTERNAL_DATABASE_TYPES.length)} drivers above`);
   });
@@ -1678,8 +1678,9 @@ describe("docs/providers/README.md", () => {
     const influxdb3 = lines.findIndex((line) => line.startsWith("| InfluxDB 3 (SQL) | `influxdb3` |"));
     expect(lines[influxdb3 + 1]).toBe(PROVIDERS_INDEX_ROW);
     expect(lines[influxdb3 + 2].startsWith("| Kubernetes | `kubernetes` |")).toBe(true);
-    expect(lines[influxdb3 + 3].startsWith("| LibreDB | `libredb` |")).toBe(true);
-    expect(index).toContain("Qdrant, InfluxDB, Oxia, Databend, S3 and Kubernetes are)");
+    expect(lines[influxdb3 + 3].startsWith("| RabbitMQ | `rabbitmq` |")).toBe(true);
+    expect(lines[influxdb3 + 4].startsWith("| LibreDB | `libredb` |")).toBe(true);
+    expect(index).toContain("Qdrant, InfluxDB, Oxia, Databend, S3, Kubernetes and RabbitMQ are)");
     for (const fixture of S3_FIXTURES) {
       const row = lines.find((line) =>
         line.startsWith(`| S3-compatible object storage, ${fixture.name} | \`${fixture.service}\` |`),
@@ -1716,7 +1717,7 @@ describe("the architecture, provider, editor and guide docs", () => {
       `${word(EXTERNAL_DATABASE_TYPES.length)} external engines, plus the embedded LibreDB store`,
     );
     expect(claude).toContain(
-      "`oxia`, `milvus`, `qdrant`, `s3`, `kubernetes`, `libredb`) extend `BaseDatabaseProvider` directly",
+      "`oxia`, `milvus`, `qdrant`, `s3`, `kubernetes`, `rabbitmq`, `libredb`) extend `BaseDatabaseProvider` directly",
     );
     const architecture = read("docs/ARCHITECTURE.md");
     expect(architecture).toContain(`It supports **${ids} database backends**`);
@@ -1782,7 +1783,7 @@ describe("the architecture, provider, editor and guide docs", () => {
     // node:https.
     expect(flat(guide)).toContain("Fifteen shipped type-ids need no driver:");
     expect(flat(guide)).toContain(
-      "S3-compatible object storage over the S3 REST API, signed by Studio's own SigV4 code ([s3.md](./providers/s3.md)), and Kubernetes over the API server's REST API ([kubernetes.md](./providers/kubernetes.md)).",
+      "S3-compatible object storage over the S3 REST API, signed by Studio's own SigV4 code ([s3.md](./providers/s3.md)), Kubernetes over the API server's REST API ([kubernetes.md](./providers/kubernetes.md)), and RabbitMQ over its management HTTP API, with stream reads through the provider's own AMQP 0-9-1 client ([rabbitmq.md](./providers/rabbitmq.md)).",
     );
   });
 });
@@ -1971,11 +1972,14 @@ describe("the complete engine lists outside the agent docs", () => {
     expect(read("README_ko.md")).toContain(
       "InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes에 연결할 수 있으며",
     );
-    // The newest-engine history names MQTT as the newest, Kubernetes one step back, S3 before that and Databend
-    // before S3, in every README that carries it. The chain is a claim about ORDER, so each link is pinned at both
-    // ends: an engine added without moving the head leaves the previous head claiming a title it no longer holds,
-    // which is exactly what this change did to Kubernetes until the `not` assertions below were added.
-    expect(readme).toContain("MQTT is the newest: one subscription reads");
+    // The newest-engine history names RabbitMQ as the newest in README.md, MQTT one step back, Kubernetes before MQTT,
+    // S3 before that and Databend before S3. The chain is a claim about ORDER, so each link is pinned at both ends: an
+    // engine added without moving the head leaves the previous head claiming a title it no longer holds, which is
+    // exactly what this change did to Kubernetes until the `not` assertions below were added. The Chinese and Korean
+    // READMEs still end their chain at MQTT.
+    expect(readme).toContain("RabbitMQ is the newest: the management API browses");
+    expect(readme).not.toContain("MQTT is the newest");
+    expect(readme).toContain("MQTT came before RabbitMQ: one subscription reads");
     expect(readme).not.toContain("Kubernetes is the newest");
     expect(readme).toContain("Kubernetes came before MQTT: kubectl read commands");
     expect(readme).toContain("S3-compatible object storage came before Kubernetes: AWS CLI read commands");
