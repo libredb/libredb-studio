@@ -3424,6 +3424,58 @@ services:
           memory: 1536M
     memswap_limit: 1536M
 
+  # ---------------------------------------------------------------------------------------
+  # Firestore (the firestore provider). The official Cloud SDK emulators image runs the
+  # Firestore emulator, which speaks plain HTTP and keeps everything in memory: removing the
+  # container resets it. A one-shot seeder on the same image writes docker/firestore/seed.json
+  # over REST. Studio reaches the emulator only through FIRESTORE_EMULATOR_HOST on the server,
+  # never through a connection field: firestore:8080 inside this network, 127.0.0.1:8380 from
+  # the host, because Trino holds host port 8080. docker/firestore/README.md describes the data.
+  # ---------------------------------------------------------------------------------------
+  firestore:
+    # Cloud SDK 587.0.0, whose cloud-firestore-emulator component is 1.22.0, the version the
+    # captures under tests/fixtures/firestore/ were recorded from.
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:587.0.0-emulators@sha256:8d8573471c489a409f03891d2c24d177fa531276184f7002b9a2d853d1b3ed54
+    container_name: libredb-firestore
+    restart: unless-stopped
+    command: ["gcloud", "emulators", "firestore", "start", "--host-port=0.0.0.0:8080", "--project=demo-libredb"]
+    ports:
+      - "127.0.0.1:8380:8080"
+    healthcheck:
+      # The emulator answers "Ok" on its root once it serves requests.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/"]
+      start_period: 60s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+    memswap_limit: 2G
+
+  firestore-seed:
+    # One-shot seed (docker/firestore/seed.py), standard-library Python on the same image, so
+    # nothing else is pulled. It rewrites the same documents on every run.
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:587.0.0-emulators@sha256:8d8573471c489a409f03891d2c24d177fa531276184f7002b9a2d853d1b3ed54
+    container_name: libredb-firestore-seed
+    restart: "no"
+    depends_on:
+      firestore:
+        condition: service_healthy
+    volumes:
+      - ./docker/firestore:/seed:ro
+    entrypoint: ["python3", "/seed/seed.py"]
+    command: ["--host", "firestore:8080"]
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 256M
+    memswap_limit: 256M
+
   # Kubernetes has no service here: a cluster is not a compose service. docker/kubernetes/README.md makes the
   # throwaway k3s clusters its fixtures and its live pass use, and docs/providers/kubernetes.md connects to them.
 
