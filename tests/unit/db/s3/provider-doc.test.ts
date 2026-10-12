@@ -2022,10 +2022,12 @@ describe("the complete engine lists outside the agent docs", () => {
     );
     expect(provider.getCapabilities().supportsInlineRowEdit).toBe(false);
     const guide = read("docs/ADDING_A_PROVIDER.md");
-    expect(guide).toContain("'oxia' | 'databend' | 's3' | 'kubernetes' | 'bigquery' | 'mqtt' | 'firestore';");
     expect(guide).toContain(
-      "'oxia' | 'databend' | 's3' | 'kubernetes' | 'bigquery' | 'mqtt' | 'firestore' | 'cockroachdb';",
+      "'oxia' | 'databend' | 's3' | 'kubernetes' | 'bigquery' | 'mqtt' | 'firestore' | 'rabbitmq';",
     );
-    expect(guide).toContain("· oxia · databend · s3 · kubernetes · mqtt · firestore · libredb");
+    expect(guide).toContain(
+      "'oxia' | 'databend' | 's3' | 'kubernetes' | 'bigquery' | 'mqtt' | 'firestore' | 'rabbitmq' | 'cockroachdb';",
+    );
+    expect(guide).toContain("· oxia · databend · s3 · kubernetes · mqtt · firestore · rabbitmq · libredb");
   });
 });
