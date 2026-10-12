@@ -7,7 +7,7 @@
  */
 import { exceedsUtf8Bytes } from "@/lib/db/console/bounds";
 import { QueryError } from "@/lib/db/errors";
-import { FIRESTORE_ERROR_PROVIDER, LIMITS } from "../constants";
+import { FIRESTORE_TYPE, LIMITS } from "../constants";
 
 export type TokenKind = "identifier" | "string" | "number" | "punctuation" | "eof";
 
@@ -91,7 +91,7 @@ export function describePosition(text: string, offset: number): string {
 /** The QueryError every console refusal is raised as: the sentence, then where it applies. */
 export function firestoreQueryError(text: string, offset: number, sentence: string): QueryError {
   const position = Math.max(0, Math.min(offset, text.length));
-  return new QueryError(`${sentence} (${describePosition(text, position)})`, FIRESTORE_ERROR_PROVIDER, text, position);
+  return new QueryError(`${sentence} (${describePosition(text, position)})`, FIRESTORE_TYPE, text, position);
 }
 
 function readEscape(text: string, at: number): { readonly end: number; readonly value: string } {

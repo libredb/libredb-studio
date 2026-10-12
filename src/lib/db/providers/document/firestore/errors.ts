@@ -14,7 +14,7 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { FIRESTORE_ERROR_PROVIDER, type FirestoreTarget, LIMITS, SENTENCES } from "./constants";
+import { FIRESTORE_TYPE, type FirestoreTarget, LIMITS, SENTENCES } from "./constants";
 
 /** `FirestoreRequest["kind"]`, spelt here because `requests.ts` lands after this module; T1.7's test pins the two equal. */
 export type RequestKind =
@@ -152,7 +152,7 @@ function mapGoogleErrorRow(error: GoogleError, context: ErrorContext): Error {
     error.httpStatus >= 200 && error.httpStatus < 300 && error.code !== undefined ? error.code : error.httpStatus;
   const head = lead(error, status, context.secretForms ?? []);
   const connect = context.phase === "connect";
-  const P = FIRESTORE_ERROR_PROVIDER;
+  const P = FIRESTORE_TYPE;
   if (context.credential === "emulator" && (error.message ?? "").includes(EMULATOR_DATASTORE_MODE))
     return new DatabaseConfigError(compose(head, ERROR_SENTENCES.emulatorDatastoreMode), P);
   if (status === 404 && connect)
@@ -194,10 +194,9 @@ function mapGoogleErrorRow(error: GoogleError, context: ErrorContext): Error {
 
 export function mapTransportFailure(error: unknown, context: ErrorContext): Error {
   if (isTransportFailure(error)) {
-    if (error.kind === "timeout") return new TimeoutError(`${timeoutSentence(context)}.`, FIRESTORE_ERROR_PROVIDER);
-    if (error.kind === "too-large") return new QueryError(`${tooLargeSentence(context)}.`, FIRESTORE_ERROR_PROVIDER);
-    if (error.kind === "aborted")
-      return new QueryCancelledError(`${ERROR_SENTENCES.cancelled}.`, FIRESTORE_ERROR_PROVIDER);
+    if (error.kind === "timeout") return new TimeoutError(`${timeoutSentence(context)}.`, FIRESTORE_TYPE);
+    if (error.kind === "too-large") return new QueryError(`${tooLargeSentence(context)}.`, FIRESTORE_TYPE);
+    if (error.kind === "aborted") return new QueryCancelledError(`${ERROR_SENTENCES.cancelled}.`, FIRESTORE_TYPE);
     return error;
   }
   if (error instanceof Error) return error;
@@ -206,12 +205,11 @@ export function mapTransportFailure(error: unknown, context: ErrorContext): Erro
 
 /** The probe's two refusals of a database resource Google did answer (spec 4.4); null for a Firestore database. */
 export function databaseResourceRefusal(resource: unknown): DatabaseConfigError | null {
-  if (!isRecord(resource))
-    return new DatabaseConfigError(`${ERROR_SENTENCES.probeUnreadable}.`, FIRESTORE_ERROR_PROVIDER);
+  if (!isRecord(resource)) return new DatabaseConfigError(`${ERROR_SENTENCES.probeUnreadable}.`, FIRESTORE_TYPE);
   if (resource.type === "DATASTORE_MODE")
-    return new DatabaseConfigError(`${ERROR_SENTENCES.datastoreMode}.`, FIRESTORE_ERROR_PROVIDER);
+    return new DatabaseConfigError(`${ERROR_SENTENCES.datastoreMode}.`, FIRESTORE_TYPE);
   if (resource.firestoreDataAccessMode === "DATA_ACCESS_MODE_DISABLED")
-    return new DatabaseConfigError(`${ERROR_SENTENCES.dataAccessDisabled}.`, FIRESTORE_ERROR_PROVIDER);
+    return new DatabaseConfigError(`${ERROR_SENTENCES.dataAccessDisabled}.`, FIRESTORE_TYPE);
   return null;
 }
 

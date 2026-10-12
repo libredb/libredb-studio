@@ -10,7 +10,7 @@ import {
   LEXER_SENTENCES,
   lex,
 } from "@/lib/db/providers/document/firestore/console/lexer";
-import { FIRESTORE_ERROR_PROVIDER, LIMITS } from "@/lib/db/providers/document/firestore/constants";
+import { FIRESTORE_TYPE, LIMITS } from "@/lib/db/providers/document/firestore/constants";
 import { refusal } from "../../../helpers/firestore-console";
 
 const kinds = (text: string): [string, string][] => lex(text).map((token) => [token.kind, token.text]);
@@ -163,7 +163,7 @@ describe("positions", () => {
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toBe('Some sentence (line 1, column 4: "x")');
     expect(error.position).toBe(3);
-    expect(error.provider).toBe(FIRESTORE_ERROR_PROVIDER);
+    expect(error.provider).toBe(FIRESTORE_TYPE);
     expect(firestoreQueryError("db", 99, "S").position).toBe(2);
   });
 });

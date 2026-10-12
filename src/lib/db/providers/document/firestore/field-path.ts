@@ -4,7 +4,7 @@
  * Browser-safe.
  */
 import { QueryError } from "@/lib/db/errors";
-import { FIRESTORE_ERROR_PROVIDER } from "./constants";
+import { FIRESTORE_TYPE } from "./constants";
 
 export type FieldPathSegments = readonly string[];
 
@@ -53,5 +53,5 @@ export function isDocumentId(path: FieldPathSegments): boolean {
 }
 
 function refuse(message: string): QueryError {
-  return new QueryError(message, FIRESTORE_ERROR_PROVIDER);
+  return new QueryError(message, FIRESTORE_TYPE);
 }

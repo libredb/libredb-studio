@@ -6,7 +6,7 @@
  * and the transport encodes them. Browser-safe.
  */
 import { QueryError } from "@/lib/db/errors";
-import { FIRESTORE_ERROR_PROVIDER, LIMITS, SENTENCES } from "./constants";
+import { FIRESTORE_TYPE, LIMITS, SENTENCES } from "./constants";
 import {
   databaseIdRefusal,
   encodeSegment,
@@ -248,5 +248,5 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 function refuse(message: string): QueryError {
-  return new QueryError(message, FIRESTORE_ERROR_PROVIDER);
+  return new QueryError(message, FIRESTORE_TYPE);
 }

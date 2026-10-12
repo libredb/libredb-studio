@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { FIRESTORE_ERROR_PROVIDER } from "@/lib/db/providers/document/firestore/constants";
+import { FIRESTORE_TYPE } from "@/lib/db/providers/document/firestore/constants";
 import {
   emulatorAddressOf,
   FIRESTORE_CREDENTIAL_RULES,
@@ -45,7 +45,7 @@ describe("firestore credential sentences", () => {
   });
 
   test("the rules carry the provider and the project id rule", () => {
-    expect(FIRESTORE_CREDENTIAL_RULES.provider).toBe(FIRESTORE_ERROR_PROVIDER);
+    expect(FIRESTORE_CREDENTIAL_RULES.provider).toBe(FIRESTORE_TYPE);
     expect(FIRESTORE_CREDENTIAL_RULES.quotaProjectRefusal).toBe(projectIdRefusal);
   });
 });
@@ -91,7 +91,7 @@ describe("firestore parseEmulatorHost", () => {
     for (const shape of shapes) {
       const error = refusal(() => parseEmulatorHost(shape));
       expect(error.message).toBe(S.emulatorHost);
-      expect(error.provider).toBe(FIRESTORE_ERROR_PROVIDER);
+      expect(error.provider).toBe(FIRESTORE_TYPE);
     }
   });
 });
@@ -113,7 +113,7 @@ describe("firestore emulatorAddressOf", () => {
   test("a value with a scheme is refused with the variable's sentence", () => {
     const error = refusal(() => emulatorAddressOf({ FIRESTORE_EMULATOR_HOST: "http://127.0.0.1:8080" }));
     expect(error.message).toBe(S.emulatorHost);
-    expect(error.provider).toBe(FIRESTORE_ERROR_PROVIDER);
+    expect(error.provider).toBe(FIRESTORE_TYPE);
   });
 });
 

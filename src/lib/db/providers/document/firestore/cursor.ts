@@ -9,7 +9,7 @@
  * bytes, and only the canonical base64url spelling is read. Browser-safe: no `Buffer`.
  */
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
-import { FIRESTORE_ERROR_PROVIDER, LIMITS } from "./constants";
+import { FIRESTORE_TYPE, LIMITS } from "./constants";
 
 export type LevelCursor =
   | { readonly v: 1; readonly p: string; readonly a: string }
@@ -44,7 +44,7 @@ function fromBase64Url(text: string): Uint8Array | null {
 }
 
 function refuse(message: string): DatabaseConfigError {
-  return new DatabaseConfigError(message, FIRESTORE_ERROR_PROVIDER);
+  return new DatabaseConfigError(message, FIRESTORE_TYPE);
 }
 
 /** A non-empty string with no lone surrogate, which no request path can spell. */
@@ -68,7 +68,7 @@ export function encodeLevelCursor(cursor: LevelCursor): string {
   const bytes = new TextEncoder().encode(JSON.stringify(cursor));
   const spelled = `${SPELLING}${toBase64Url(bytes)}`;
   if (bytes.length > LIMITS.cursorMaxDecodedBytes || spelled.length > LIMITS.cursorMaxChars)
-    throw new QueryError(FIRESTORE_CURSOR_SENTENCES.tooLong, FIRESTORE_ERROR_PROVIDER);
+    throw new QueryError(FIRESTORE_CURSOR_SENTENCES.tooLong, FIRESTORE_TYPE);
   return spelled;
 }
 

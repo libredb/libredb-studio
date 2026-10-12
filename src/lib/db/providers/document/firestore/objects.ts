@@ -23,7 +23,7 @@ import type {
   ObjectSourceDocument,
   ObjectSourcePart,
 } from "@/lib/db/types";
-import { FIRESTORE_ERROR_PROVIDER, LIMITS, SENTENCES } from "./constants";
+import { FIRESTORE_TYPE, LIMITS, SENTENCES } from "./constants";
 import { type CallPhase, type ErrorContext, googleErrorOf } from "./errors";
 import { compareUtf8, fullDocumentName, idRefusal, isDocumentPath, splitPath, verbParentHasColon } from "./names";
 import { readQueryStream } from "./results";
@@ -66,7 +66,7 @@ export function callContext(
 }
 
 function malformedListing(): QueryError {
-  return new QueryError(FIRESTORE_LISTING_SENTENCES.malformed, FIRESTORE_ERROR_PROVIDER);
+  return new QueryError(FIRESTORE_LISTING_SENTENCES.malformed, FIRESTORE_TYPE);
 }
 
 function readIdPage(answer: unknown): { readonly ids: readonly string[]; readonly next: string | undefined } {
@@ -160,7 +160,7 @@ export const FIRESTORE_OBJECT_SENTENCES = Object.freeze({
 const O = FIRESTORE_OBJECT_SENTENCES;
 
 function refuse(message: string): QueryError {
-  return new QueryError(message, FIRESTORE_ERROR_PROVIDER);
+  return new QueryError(message, FIRESTORE_TYPE);
 }
 
 function requireRoot(container: readonly string[]): void {

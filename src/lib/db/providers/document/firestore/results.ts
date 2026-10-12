@@ -7,7 +7,7 @@ import { QueryError } from "@/lib/db/errors";
 import type { VectorColumn } from "@/lib/db/vector/types";
 import type { QueryResult } from "@/lib/types";
 import type { ResultShape } from "./console/compile";
-import { FIRESTORE_ERROR_PROVIDER, LIMITS } from "./constants";
+import { FIRESTORE_TYPE, LIMITS } from "./constants";
 import { displayFieldPath, type FieldPathSegments, isDocumentId } from "./field-path";
 import { compareUtf8, type FirestoreTarget, idRefusal, relativeSegments } from "./names";
 import {
@@ -57,8 +57,7 @@ interface Column {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-const malformed = (what: string): QueryError =>
-  new QueryError(RESULT_SENTENCES.malformed(what), FIRESTORE_ERROR_PROVIDER);
+const malformed = (what: string): QueryError => new QueryError(RESULT_SENTENCES.malformed(what), FIRESTORE_TYPE);
 
 function readDocument(value: unknown): RestDocument {
   if (!isRecord(value) || typeof value.name !== "string" || (value.fields !== undefined && !isRecord(value.fields))) {
@@ -69,7 +68,7 @@ function readDocument(value: unknown): RestDocument {
 
 function relativeName(name: string, target: FirestoreTarget): string {
   const segments = relativeSegments(target, name);
-  if (segments === null) throw new QueryError(RESULT_SENTENCES.foreignName(name), FIRESTORE_ERROR_PROVIDER);
+  if (segments === null) throw new QueryError(RESULT_SENTENCES.foreignName(name), FIRESTORE_TYPE);
   return segments.join("/");
 }
 
@@ -80,13 +79,13 @@ export function readQueryStream(json: unknown): {
   explainMetrics?: unknown;
   skippedResults: number;
 } {
-  if (!Array.isArray(json)) throw new QueryError(RESULT_SENTENCES.notList, FIRESTORE_ERROR_PROVIDER);
+  if (!Array.isArray(json)) throw new QueryError(RESULT_SENTENCES.notList, FIRESTORE_TYPE);
   const documents: RestDocument[] = [];
   const aggregates: Record<string, RestValue>[] = [];
   let explainMetrics: unknown;
   let skippedResults = 0;
   for (const element of json) {
-    if (!isRecord(element)) throw new QueryError(RESULT_SENTENCES.notList, FIRESTORE_ERROR_PROVIDER);
+    if (!isRecord(element)) throw new QueryError(RESULT_SENTENCES.notList, FIRESTORE_TYPE);
     if (element.document !== undefined) documents.push(readDocument(element.document));
     if (element.result !== undefined) {
       const fields = isRecord(element.result) ? (element.result.aggregateFields ?? {}) : undefined;
@@ -184,7 +183,7 @@ function aggregationRows(
 ): ShapedResult {
   const { aggregates } = readQueryStream(json);
   if (aggregates.length !== 1)
-    throw new QueryError(RESULT_SENTENCES.aggregationCount(aggregates.length), FIRESTORE_ERROR_PROVIDER);
+    throw new QueryError(RESULT_SENTENCES.aggregationCount(aggregates.length), FIRESTORE_TYPE);
   const row: Record<string, unknown> = {};
   const columnTypes: Record<string, string> = {};
   for (const key of keys) {
@@ -277,7 +276,7 @@ function getAllShape(json: unknown, order: readonly string[], target: FirestoreT
 
 function explainShape(json: unknown): ShapedResult {
   const stream = readQueryStream(json);
-  if (!isRecord(stream.explainMetrics)) throw new QueryError(RESULT_SENTENCES.noPlan, FIRESTORE_ERROR_PROVIDER);
+  if (!isRecord(stream.explainMetrics)) throw new QueryError(RESULT_SENTENCES.noPlan, FIRESTORE_TYPE);
   const { planSummary, executionStats } = stream.explainMetrics;
   const indexesUsed = isRecord(planSummary) && Array.isArray(planSummary.indexesUsed) ? planSummary.indexesUsed : [];
   return {

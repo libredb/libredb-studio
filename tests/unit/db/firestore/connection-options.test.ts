@@ -9,7 +9,7 @@ import {
   firestoreTargetOf,
   validateFirestoreConnection,
 } from "@/lib/db/providers/document/firestore/connection-options";
-import { FIRESTORE_ERROR_PROVIDER } from "@/lib/db/providers/document/firestore/constants";
+import { FIRESTORE_TYPE } from "@/lib/db/providers/document/firestore/constants";
 import { NAME_SENTENCES as N } from "@/lib/db/providers/document/firestore/names";
 
 describe("validateFirestoreConnection", () => {
@@ -62,7 +62,7 @@ describe("firestoreTargetOf", () => {
       caught = error;
     }
     expect(caught).toBeInstanceOf(DatabaseConfigError);
-    expect((caught as DatabaseConfigError).provider).toBe(FIRESTORE_ERROR_PROVIDER);
+    expect((caught as DatabaseConfigError).provider).toBe(FIRESTORE_TYPE);
     expect((caught as Error).message).toBe(N.projectId);
   });
 });

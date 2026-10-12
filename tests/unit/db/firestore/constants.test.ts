@@ -7,9 +7,8 @@ import {
   DEFAULT_DATABASE_ID,
   ENV,
   FIRESTORE_API_ORIGIN,
-  FIRESTORE_ERROR_PROVIDER,
-  FIRESTORE_SCOPE,
   FIRESTORE_TYPE,
+  FIRESTORE_SCOPE,
   GOOGLE_TOKEN_URL,
   LIMITS,
   SENTENCES,
@@ -32,10 +31,6 @@ describe("Firestore constants", () => {
       metadataHost: "GCE_METADATA_HOST",
     });
     expect(Object.isFrozen(ENV)).toBe(true);
-  });
-
-  test("every Firestore error carries the provider tag firestore", () => {
-    expect(FIRESTORE_ERROR_PROVIDER).toBe("firestore");
   });
 
   test("every limit of spec 8.2, by name", () => {

@@ -76,7 +76,7 @@ const isDirectChild = (segments: readonly string[], parent: readonly string[]): 
   segments.length === parent.length + 1 && parent.every((segment, index) => segments[index] === segment);
 
 /** encodeLiteral, its position-free refusal re-raised at the literal's offset, so every refusal names a position (S11). */
-export function encodeAt(literal: Literal, scope: CompileScope, at: number): RestValue {
+function encodeAt(literal: Literal, scope: CompileScope, at: number): RestValue {
   try {
     return encodeLiteral(literal, scope.target);
   } catch (error) {
@@ -89,7 +89,7 @@ export function encodeAt(literal: Literal, scope: CompileScope, at: number): Res
  * queried collection, an even-segment path on a collection group, or a db.doc() reference that lies where the
  * query can find it.
  */
-export function documentIdValue(literal: Literal, scope: CompileScope, at: number): RestValue {
+function documentIdValue(literal: Literal, scope: CompileScope, at: number): RestValue {
   const { source } = scope;
   let segments: readonly string[];
   if (literal.kind === "string" && source.kind === "collection") {
@@ -160,7 +160,7 @@ const inRange = (value: number, low: number, high: number): boolean =>
   Number.isInteger(value) && value >= low && value <= high;
 
 /** One cursor: at most one value per explicit orderBy, a position ordered by __name__ as a reference. */
-export function compileCursor(
+function compileCursor(
   bound: CursorBound,
   ops: QueryOps,
   scope: CompileScope,

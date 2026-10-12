@@ -2,15 +2,11 @@
  * Every number and fixed name of the Firestore provider, in one pure, browser-safe module.
  *
  * The other modules import their limits from here and restate none. A sentence lives here only when more than one
- * module raises it; a sentence one module raises lives in that module. The module imports nothing but a type.
+ * module raises it; a sentence one module raises lives in that module. The module imports nothing.
  */
-import type { DatabaseType } from "@/lib/types";
 
 /** The provider's type id. */
 export const FIRESTORE_TYPE = "firestore" as const;
-
-/** The provider tag every Firestore error carries; every module tags its errors through this one name. */
-export const FIRESTORE_ERROR_PROVIDER: DatabaseType = FIRESTORE_TYPE;
 
 /** One connection's database: `databaseId` is "(default)" or a named database id. */
 export interface FirestoreTarget {

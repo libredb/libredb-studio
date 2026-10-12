@@ -6,7 +6,7 @@
  * Browser-safe.
  */
 import { QueryError } from "@/lib/db/errors";
-import { FIRESTORE_ERROR_PROVIDER, LIMITS } from "./constants";
+import { FIRESTORE_TYPE, LIMITS } from "./constants";
 import { type FirestoreTarget, fullDocumentName, isDocumentPath, relativeSegments, segmentsRefusal } from "./names";
 
 /** A REST `Value`: exactly one key. */
@@ -251,7 +251,7 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 function refuse(message: string): QueryError {
-  return new QueryError(message, FIRESTORE_ERROR_PROVIDER);
+  return new QueryError(message, FIRESTORE_TYPE);
 }
 
 export function encodeLiteral(literal: Literal, target: FirestoreTarget): RestValue {

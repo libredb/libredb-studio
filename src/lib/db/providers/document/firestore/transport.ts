@@ -19,7 +19,7 @@ import { type NodeResponse, type NodeTransport, TransportError } from "@/lib/db/
 import {
   DEFAULT_DATABASE_ID,
   FIRESTORE_API_ORIGIN,
-  FIRESTORE_ERROR_PROVIDER,
+  FIRESTORE_TYPE,
   FIRESTORE_SCOPE,
   GOOGLE_TOKEN_URL,
   LIMITS,
@@ -118,7 +118,7 @@ export function createFirestoreClient(
       ? null
       : createTokenSource(auth.credentials, {
           scope: FIRESTORE_SCOPE,
-          provider: FIRESTORE_ERROR_PROVIDER,
+          provider: FIRESTORE_TYPE,
           maxResponseBytes: LIMITS.tokenResponseBytes,
           now: () => seams.now(),
           timeoutSignal: (ms) => seams.timeoutSignal(ms),
@@ -137,7 +137,7 @@ export function createFirestoreClient(
           metadataTransport: (host) =>
             seams.createTransport(
               {
-                origin: parseMetadataHost(host, FIRESTORE_ERROR_PROVIDER),
+                origin: parseMetadataHost(host, FIRESTORE_TYPE),
                 tls: null,
                 maxSockets: TOKEN_MAX_SOCKETS,
                 // The metadata server answers only requests that carry this header.
@@ -237,7 +237,7 @@ export function createFirestoreClient(
       try {
         return JSON.parse(response.text) as unknown;
       } catch {
-        throw new QueryError(S.notJson, FIRESTORE_ERROR_PROVIDER);
+        throw new QueryError(S.notJson, FIRESTORE_TYPE);
       }
     },
     close() {

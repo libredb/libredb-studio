@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { FIRESTORE_ERROR_PROVIDER } from "@/lib/db/providers/document/firestore/constants";
+import { FIRESTORE_TYPE } from "@/lib/db/providers/document/firestore/constants";
 import {
   type CredentialRules,
   GOOGLE_CREDENTIAL_SENTENCES as S,
@@ -12,7 +12,7 @@ import { fakeSeams } from "../../../helpers/firestore-seams";
 
 const QUOTA_RULE = "6 to 30 lowercase letters, digits or hyphens";
 const rules: CredentialRules = {
-  provider: FIRESTORE_ERROR_PROVIDER,
+  provider: FIRESTORE_TYPE,
   quotaProjectRefusal: (id) => (/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(id) ? null : QUOTA_RULE),
 };
 
@@ -176,7 +176,7 @@ describe("firestore parseCredentialText refuses", () => {
     test(`${label}, with its own sentence and no secret in it`, () => {
       const error = refusal(() => parseCredentialText(text, rules));
       expect(error.message).toBe(sentence);
-      expect(error.provider).toBe(FIRESTORE_ERROR_PROVIDER);
+      expect(error.provider).toBe(FIRESTORE_TYPE);
       for (const secret of SECRETS) expect(error.message).not.toContain(secret);
       expect(error.message).not.toContain("evil.example");
     });
@@ -263,7 +263,7 @@ describe("firestore readServerIdentity", () => {
   test("a GCE_METADATA_HOST that is not a host and optional port is refused before any token request", () => {
     const io = fakeSeams({ env: { GCE_METADATA_HOST: "http://evil.example" } });
     expect(refusal(() => readServerIdentity(io, rules)).message).toBe(S.metadataHost);
-    // A label that is a DatabaseType member today, so the assertion bites before T5.0 makes FIRESTORE_ERROR_PROVIDER one.
+    // Another provider's label, so the assertion proves the label is passed through rather than defaulted.
     expect(refusal(() => readServerIdentity(io, { ...rules, provider: "bigquery" })).provider).toBe("bigquery");
   });
 });

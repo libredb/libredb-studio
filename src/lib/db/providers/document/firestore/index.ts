@@ -49,7 +49,7 @@ import { secretForms } from "@/lib/db/utils/server-text";
 import type { DatabaseConnection, QueryWarning } from "@/lib/types";
 import { validateFirestoreConnection } from "./connection-options";
 import { executeStatement } from "./console/execute";
-import { DEFAULT_DATABASE_ID, FIRESTORE_ERROR_PROVIDER, LIMITS } from "./constants";
+import { DEFAULT_DATABASE_ID, FIRESTORE_TYPE, LIMITS } from "./constants";
 import { type EmulatorAddress, emulatorAddressOf, type FirestoreAuth, resolveFirestoreAuth } from "./credential-policy";
 import { databaseResourceRefusal, ERROR_SENTENCES } from "./errors";
 import { FIRESTORE_KEY_SCAN, scanFirestoreLevel } from "./key-scan";
@@ -148,7 +148,7 @@ async function probeEmulator(
     { kind: "listCollectionIds", parent: [], pageSize: 1 },
     { signal, context: callContext(client, base, "connect") },
   );
-  if (!isRecord(answer)) throw new DatabaseConfigError(`${ERROR_SENTENCES.probeUnreadable}.`, FIRESTORE_ERROR_PROVIDER);
+  if (!isRecord(answer)) throw new DatabaseConfigError(`${ERROR_SENTENCES.probeUnreadable}.`, FIRESTORE_TYPE);
   const listed = Array.isArray(answer.collectionIds) && answer.collectionIds.length > 0;
   return {
     version: `Firestore emulator at ${emulator.display}`,
@@ -229,7 +229,7 @@ export class FirestoreProvider extends BaseDatabaseProvider {
   public override validate(): void {
     super.validate();
     const refusals = validateFirestoreConnection(this.config);
-    if (refusals.length > 0) throw new DatabaseConfigError(refusals.join(" "), FIRESTORE_ERROR_PROVIDER);
+    if (refusals.length > 0) throw new DatabaseConfigError(refusals.join(" "), FIRESTORE_TYPE);
   }
 
   // ==========================================================================
@@ -293,8 +293,7 @@ export class FirestoreProvider extends BaseDatabaseProvider {
    * cancel aborts its request and the run answers the registry's cancel, whatever the aborted request raised.
    */
   public async query(text: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
-    if (params !== undefined && params.length > 0)
-      throw new DatabaseConfigError(S.parameters, FIRESTORE_ERROR_PROVIDER);
+    if (params !== undefined && params.length > 0) throw new DatabaseConfigError(S.parameters, FIRESTORE_TYPE);
     const session = this.requireSession();
     const run = this.runs.begin(queryId, session.lifetime.signal);
     try {
@@ -406,6 +405,6 @@ export class FirestoreProvider extends BaseDatabaseProvider {
 
   /** `supportsMaintenance: false`: nothing sends maintenance, and a direct call is refused. */
   public async runMaintenance(): Promise<MaintenanceResult> {
-    throw new QueryError(S.maintenance, FIRESTORE_ERROR_PROVIDER);
+    throw new QueryError(S.maintenance, FIRESTORE_TYPE);
   }
 }

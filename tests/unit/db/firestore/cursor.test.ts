@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
-import { FIRESTORE_ERROR_PROVIDER } from "@/lib/db/providers/document/firestore/constants";
+import { FIRESTORE_TYPE } from "@/lib/db/providers/document/firestore/constants";
 import {
   decodeLevelCursor,
   encodeLevelCursor,
@@ -21,7 +21,7 @@ function refusal(text: string, pattern = ""): string {
     decodeLevelCursor(text, pattern);
   } catch (error) {
     expect(error).toBeInstanceOf(DatabaseConfigError);
-    expect((error as DatabaseConfigError).provider).toBe(FIRESTORE_ERROR_PROVIDER);
+    expect((error as DatabaseConfigError).provider).toBe(FIRESTORE_TYPE);
     return (error as Error).message;
   }
   throw new Error(`decodeLevelCursor accepted ${text}`);

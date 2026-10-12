@@ -14,7 +14,7 @@
 import { QueryError } from "@/lib/db/errors";
 import type { ColumnSchema } from "@/lib/types";
 import { jsString } from "./console/generators";
-import { FIRESTORE_ERROR_PROVIDER, LIMITS } from "./constants";
+import { FIRESTORE_TYPE, LIMITS } from "./constants";
 import { displayFieldPath } from "./field-path";
 import { compareUtf8, type FirestoreTarget, relativeSegments } from "./names";
 import { type FirestoreTypeName, type RestDocument, type RestValue, typeNameOf } from "./values";
@@ -43,7 +43,7 @@ export function columnName(segments: readonly string[]): string {
 export function documentSegments(target: FirestoreTarget, name: string): string[] {
   const segments = relativeSegments(target, name);
   if (segments === null || segments.length === 0 || segments.length % 2 !== 0)
-    throw new QueryError(foreignDocumentSentence(name), FIRESTORE_ERROR_PROVIDER);
+    throw new QueryError(foreignDocumentSentence(name), FIRESTORE_TYPE);
   return segments;
 }
 
@@ -52,7 +52,7 @@ export function collectionChildId(target: FirestoreTarget, collection: readonly 
   const segments = documentSegments(target, name);
   const inCollection =
     segments.length === collection.length + 1 && collection.every((segment, index) => segments[index] === segment);
-  if (!inCollection) throw new QueryError(outsideCollectionSentence(name), FIRESTORE_ERROR_PROVIDER);
+  if (!inCollection) throw new QueryError(outsideCollectionSentence(name), FIRESTORE_TYPE);
   return segments[segments.length - 1];
 }
 

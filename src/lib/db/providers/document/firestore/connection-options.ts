@@ -9,7 +9,7 @@
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
-import { DEFAULT_DATABASE_ID, FIRESTORE_ERROR_PROVIDER, type FirestoreTarget } from "./constants";
+import { DEFAULT_DATABASE_ID, FIRESTORE_TYPE, type FirestoreTarget } from "./constants";
 import { databaseIdRefusal, projectIdRefusal } from "./names";
 
 type FirestoreFields = Pick<DatabaseConnection, "database" | "schema">;
@@ -37,7 +37,7 @@ export function validateFirestoreConnection(config: FirestoreFields): string[] {
 /** The connection's target; throws DatabaseConfigError with the first refusal. */
 export function firestoreTargetOf(config: FirestoreFields): FirestoreTarget {
   const [first] = validateFirestoreConnection(config);
-  if (first !== undefined) throw new DatabaseConfigError(first, FIRESTORE_ERROR_PROVIDER);
+  if (first !== undefined) throw new DatabaseConfigError(first, FIRESTORE_TYPE);
   const schema: unknown = config.schema;
   return {
     projectId: String(config.database),

@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
-import { FIRESTORE_ERROR_PROVIDER } from "@/lib/db/providers/document/firestore/constants";
+import { FIRESTORE_TYPE } from "@/lib/db/providers/document/firestore/constants";
 import type { FirestoreTarget } from "@/lib/db/providers/document/firestore/names";
 import {
   collectionChildId,
@@ -45,7 +45,7 @@ function refusal(run: () => unknown): QueryError {
     run();
   } catch (error) {
     expect(error).toBeInstanceOf(QueryError);
-    expect((error as QueryError).provider).toBe(FIRESTORE_ERROR_PROVIDER);
+    expect((error as QueryError).provider).toBe(FIRESTORE_TYPE);
     return error as QueryError;
   }
   throw new Error("nothing was refused");

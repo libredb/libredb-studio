@@ -18,7 +18,7 @@
  */
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type { KeyScanCapability, KeyScanOptions, KeyScanPage } from "@/lib/db/types";
-import { FIRESTORE_ERROR_PROVIDER, LIMITS, SENTENCES } from "./constants";
+import { FIRESTORE_TYPE, LIMITS, SENTENCES } from "./constants";
 import { decodeLevelCursor, encodeLevelCursor, FIRESTORE_CURSOR_SENTENCES, type LevelCursor } from "./cursor";
 import { googleErrorOf } from "./errors";
 import { compareUtf8, fullDocumentName, idRefusal, verbParentHasColon } from "./names";
@@ -65,7 +65,7 @@ export interface LevelRequest {
 }
 
 function refuse(message: string): DatabaseConfigError {
-  return new DatabaseConfigError(message, FIRESTORE_ERROR_PROVIDER);
+  return new DatabaseConfigError(message, FIRESTORE_TYPE);
 }
 
 /** The level a pattern names and the partial id filtering it; a segment the id rules refuse is refused by its sentence. */
@@ -144,7 +144,7 @@ export function idSuccessor(partial: string): string | null {
 }
 
 function malformedListing(): QueryError {
-  return new QueryError(FIRESTORE_LISTING_SENTENCES.malformed, FIRESTORE_ERROR_PROVIDER);
+  return new QueryError(FIRESTORE_LISTING_SENTENCES.malformed, FIRESTORE_TYPE);
 }
 
 /** The expired-listing sentence for a page token Google no longer takes; every other failure stays as mapped. */

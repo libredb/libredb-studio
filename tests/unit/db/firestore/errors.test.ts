@@ -11,11 +11,7 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
-import {
-  FIRESTORE_ERROR_PROVIDER,
-  type FirestoreTarget,
-  SENTENCES,
-} from "@/lib/db/providers/document/firestore/constants";
+import { FIRESTORE_TYPE, type FirestoreTarget, SENTENCES } from "@/lib/db/providers/document/firestore/constants";
 import {
   databaseResourceRefusal,
   ERROR_SENTENCES as E,
@@ -35,7 +31,7 @@ const ACTIVATION =
 
 function mapped(error: GoogleError, context: ErrorContext): Error {
   const result = mapGoogleError(error, context);
-  expect((result as QueryError).provider).toBe(FIRESTORE_ERROR_PROVIDER);
+  expect((result as QueryError).provider).toBe(FIRESTORE_TYPE);
   return result;
 }
 

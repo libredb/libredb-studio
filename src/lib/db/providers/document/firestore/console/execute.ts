@@ -6,7 +6,7 @@
 import { QueryError } from "@/lib/db/errors";
 import { FIRESTORE_EXPLAIN_MARKER } from "@/lib/explain/firestore-explain";
 import type { QueryResult } from "@/lib/types";
-import { FIRESTORE_ERROR_PROVIDER, LIMITS, SENTENCES } from "../constants";
+import { FIRESTORE_TYPE, LIMITS, SENTENCES } from "../constants";
 import type { ErrorContext } from "../errors";
 import type { FirestoreRequest } from "../requests";
 import { RESULT_SENTENCES, readQueryStream, shapeResult } from "../results";
@@ -50,7 +50,7 @@ async function readPages(request: Listing, deps: ExecuteDeps, context: ErrorCont
       context,
     });
     const listed = isRecord(answer) ? (answer[key] ?? []) : undefined;
-    if (!Array.isArray(listed)) throw new QueryError(RESULT_SENTENCES.malformed(what), FIRESTORE_ERROR_PROVIDER);
+    if (!Array.isArray(listed)) throw new QueryError(RESULT_SENTENCES.malformed(what), FIRESTORE_TYPE);
     items.push(...listed);
     const next = isRecord(answer) && typeof answer.nextPageToken === "string" ? answer.nextPageToken : "";
     if (next === "") return { [key]: items };
@@ -68,7 +68,7 @@ export async function executeStatement(text: string, deps: ExecuteDeps): Promise
   const { request, shape, warnings } = compileStatement(parseStatement(body), body, { target, explainButton });
   // The emulator ignores Query Explain (spec 4.3, O8): refused before any request, in Part 1's words.
   if (shape.kind === "explain" && deps.client.mode === "emulator") {
-    throw new QueryError(SENTENCES.emulatorExplain, FIRESTORE_ERROR_PROVIDER, body);
+    throw new QueryError(SENTENCES.emulatorExplain, FIRESTORE_TYPE, body);
   }
   const context: ErrorContext = {
     phase: "statement",
@@ -83,7 +83,7 @@ export async function executeStatement(text: string, deps: ExecuteDeps): Promise
       ? await readPages(request, deps, context)
       : await deps.client.send(request, { signal: deps.signal, context });
   if (shape.kind === "explain" && readQueryStream(answer).explainMetrics === undefined) {
-    throw new QueryError(RESULT_SENTENCES.noPlan, FIRESTORE_ERROR_PROVIDER, body);
+    throw new QueryError(RESULT_SENTENCES.noPlan, FIRESTORE_TYPE, body);
   }
   const shaped = shapeResult(answer, shape, target);
   const messages = [...warnings, ...shaped.warnings];

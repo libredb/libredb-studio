@@ -9,7 +9,7 @@ import { TransportError } from "@/lib/db/http/node-transport";
 import { COMPILE_SENTENCES, COMPILE_WARNINGS } from "@/lib/db/providers/document/firestore/console/compile";
 import { type ExecuteDeps, executeStatement } from "@/lib/db/providers/document/firestore/console/execute";
 import { PARSER_SENTENCES } from "@/lib/db/providers/document/firestore/console/parser";
-import { FIRESTORE_ERROR_PROVIDER, LIMITS, SENTENCES } from "@/lib/db/providers/document/firestore/constants";
+import { FIRESTORE_TYPE, LIMITS, SENTENCES } from "@/lib/db/providers/document/firestore/constants";
 import { mapTransportFailure } from "@/lib/db/providers/document/firestore/errors";
 import type { FirestoreRequest } from "@/lib/db/providers/document/firestore/requests";
 import { RESULT_SENTENCES } from "@/lib/db/providers/document/firestore/results";
@@ -193,7 +193,7 @@ describe("explain", () => {
       // oxlint-disable-next-line no-await-in-loop -- each statement gets its own client, checked in turn.
       const error = await refusalAsync(() => executeStatement(text, deps(emulator.client)));
       expect(error.message).toBe(SENTENCES.emulatorExplain);
-      expect(error.provider).toBe(FIRESTORE_ERROR_PROVIDER);
+      expect(error.provider).toBe(FIRESTORE_TYPE);
       expect(emulator.sent).toHaveLength(0);
     }
   });

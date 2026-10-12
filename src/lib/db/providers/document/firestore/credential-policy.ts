@@ -11,7 +11,7 @@
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { validateHost, validatePort } from "@/lib/db/http/endpoint";
 import type { DatabaseConnection } from "@/lib/types";
-import { ENV, FIRESTORE_ERROR_PROVIDER } from "./constants";
+import { ENV, FIRESTORE_TYPE } from "./constants";
 import {
   type CredentialRules,
   type GoogleCredentials,
@@ -36,7 +36,7 @@ export type FirestoreAuth =
   | { readonly mode: "google"; readonly credentials: GoogleCredentials };
 
 export const FIRESTORE_CREDENTIAL_RULES: CredentialRules = Object.freeze({
-  provider: FIRESTORE_ERROR_PROVIDER,
+  provider: FIRESTORE_TYPE,
   quotaProjectRefusal: projectIdRefusal,
 });
 
@@ -55,14 +55,14 @@ const EMULATOR_HOST = /^(\[[^\]]+\]|[^:[\]/@?#\s]+):(\d{1,5})$/;
 
 export function parseEmulatorHost(value: string): EmulatorAddress {
   const match = EMULATOR_HOST.exec(value.trim());
-  if (match === null) throw new DatabaseConfigError(S.emulatorHost, FIRESTORE_ERROR_PROVIDER);
+  if (match === null) throw new DatabaseConfigError(S.emulatorHost, FIRESTORE_TYPE);
   let host: string;
   let port: number;
   try {
     host = validateHost(match[1]);
     port = validatePort(match[2]);
   } catch {
-    throw new DatabaseConfigError(S.emulatorHost, FIRESTORE_ERROR_PROVIDER);
+    throw new DatabaseConfigError(S.emulatorHost, FIRESTORE_TYPE);
   }
   return { host, port, origin: `http://${host}:${port}`, display: `${host}:${port}` };
 }
@@ -83,14 +83,12 @@ export function resolveFirestoreAuth(
   const password = connection.password?.trim() ?? "";
   const emulator = emulatorAddressOf(seams.env);
   if (emulator !== null) {
-    if (password !== "")
-      throw new DatabaseConfigError(S.emulatorCredential(emulator.display), FIRESTORE_ERROR_PROVIDER);
+    if (password !== "") throw new DatabaseConfigError(S.emulatorCredential(emulator.display), FIRESTORE_TYPE);
     return { mode: "emulator", emulator };
   }
   if (password !== "")
     return { mode: "google", credentials: parseCredentialText(password, FIRESTORE_CREDENTIAL_RULES) };
-  if (connection.managed !== true) throw new DatabaseConfigError(S.browserEmpty, FIRESTORE_ERROR_PROVIDER);
-  if (seams.env[ENV.serverCredentials] !== "true")
-    throw new DatabaseConfigError(S.seedWithoutOptIn, FIRESTORE_ERROR_PROVIDER);
+  if (connection.managed !== true) throw new DatabaseConfigError(S.browserEmpty, FIRESTORE_TYPE);
+  if (seams.env[ENV.serverCredentials] !== "true") throw new DatabaseConfigError(S.seedWithoutOptIn, FIRESTORE_TYPE);
   return { mode: "google", credentials: readServerIdentity(seams, FIRESTORE_CREDENTIAL_RULES) };
 }

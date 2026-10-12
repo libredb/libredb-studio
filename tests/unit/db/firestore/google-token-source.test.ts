@@ -4,7 +4,7 @@ import { decodeProtectedHeader, importSPKI, jwtVerify } from "jose";
 import { AuthenticationError } from "@/lib/db/errors";
 import { type NodeTransportOptions, TransportError } from "@/lib/db/http/node-transport";
 import {
-  FIRESTORE_ERROR_PROVIDER,
+  FIRESTORE_TYPE,
   FIRESTORE_SCOPE,
   GOOGLE_TOKEN_URL,
   LIMITS,
@@ -57,7 +57,7 @@ const METADATA_URL =
 function depsOf(seams: FakeFirestoreSeams): TokenSourceDeps {
   return {
     scope: FIRESTORE_SCOPE,
-    provider: FIRESTORE_ERROR_PROVIDER,
+    provider: FIRESTORE_TYPE,
     maxResponseBytes: LIMITS.tokenResponseBytes,
     now: () => seams.now(),
     timeoutSignal: (ms) => seams.timeoutSignal(ms),
@@ -171,7 +171,7 @@ describe("firestore token source grants", () => {
         token_uri: "https://evil.example/token",
         universe_domain: "evil.example",
       }),
-      { provider: FIRESTORE_ERROR_PROVIDER, quotaProjectRefusal: () => null },
+      { provider: FIRESTORE_TYPE, quotaProjectRefusal: () => null },
     );
     const { seams, source } = sourceOf(hostile, () => tokenAnswer("sa-token"));
     await source.token(signal);
@@ -257,7 +257,7 @@ describe("firestore token source errors", () => {
         expect(error).toBeInstanceOf(AuthenticationError);
         const message = (error as Error).message;
         expect(message).toBe(sentence);
-        expect((error as AuthenticationError).provider).toBe(FIRESTORE_ERROR_PROVIDER);
+        expect((error as AuthenticationError).provider).toBe(FIRESTORE_TYPE);
         const sent = seams.lanes[0].requests[0].form ?? {};
         for (const secret of [
           sent.assertion,

@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import { rfc3986Encode } from "@/lib/db/http/endpoint";
-import { FIRESTORE_ERROR_PROVIDER } from "@/lib/db/providers/document/firestore/constants";
+import { FIRESTORE_TYPE } from "@/lib/db/providers/document/firestore/constants";
 import {
   compareUtf8,
   databaseIdRefusal,
@@ -78,7 +78,7 @@ function queryRefusal(run: () => unknown): string {
     caught = error;
   }
   expect(caught).toBeInstanceOf(QueryError);
-  expect((caught as QueryError).provider).toBe(FIRESTORE_ERROR_PROVIDER);
+  expect((caught as QueryError).provider).toBe(FIRESTORE_TYPE);
   return (caught as Error).message;
 }
 

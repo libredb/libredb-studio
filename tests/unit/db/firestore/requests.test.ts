@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
-import { FIRESTORE_ERROR_PROVIDER, SENTENCES } from "@/lib/db/providers/document/firestore/constants";
+import { FIRESTORE_TYPE, SENTENCES } from "@/lib/db/providers/document/firestore/constants";
 import type { RequestKind } from "@/lib/db/providers/document/firestore/errors";
 import { type FirestoreTarget, NAME_SENTENCES as N } from "@/lib/db/providers/document/firestore/names";
 import {
@@ -38,7 +38,7 @@ function refusal(request: unknown, target: FirestoreTarget = T): string {
     caught = error;
   }
   expect(caught).toBeInstanceOf(QueryError);
-  expect((caught as QueryError).provider).toBe(FIRESTORE_ERROR_PROVIDER);
+  expect((caught as QueryError).provider).toBe(FIRESTORE_TYPE);
   return (caught as Error).message;
 }
 

@@ -9,7 +9,7 @@
  * built-in, no `Buffer`, no server module.
  */
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
-import { DEFAULT_DATABASE_ID, FIRESTORE_ERROR_PROVIDER, type FirestoreTarget, LIMITS } from "./constants";
+import { DEFAULT_DATABASE_ID, FIRESTORE_TYPE, type FirestoreTarget, LIMITS } from "./constants";
 
 export type { FirestoreTarget } from "./constants";
 
@@ -118,7 +118,7 @@ export function relativeSegments(target: FirestoreTarget, name: string): string[
 
 /** One path segment, every UTF-8 byte outside A-Z a-z 0-9 - . _ ~ as %XX with upper-case hex. */
 export function encodeSegment(text: string): string {
-  if (!text.isWellFormed()) throw new DatabaseConfigError(NAME_SENTENCES.invalidText, FIRESTORE_ERROR_PROVIDER);
+  if (!text.isWellFormed()) throw new DatabaseConfigError(NAME_SENTENCES.invalidText, FIRESTORE_TYPE);
   return encodeURIComponent(text).replace(/[!'()*]/g, (mark) => `%${mark.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
@@ -150,5 +150,5 @@ export function verbParentHasColon(segments: readonly string[]): boolean {
 }
 
 function refuse(message: string): QueryError {
-  return new QueryError(message, FIRESTORE_ERROR_PROVIDER);
+  return new QueryError(message, FIRESTORE_TYPE);
 }
