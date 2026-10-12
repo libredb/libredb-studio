@@ -24,6 +24,7 @@ const SECOND_SERVER_SPECS = [
   "databend-provider.spec.ts",
   "s3-provider.spec.ts",
   "kubernetes-provider.spec.ts",
+  "rabbitmq-provider.spec.ts",
 ];
 
 type Project = NonNullable<typeof config.projects>[number];
