@@ -39,7 +39,7 @@ const ALPHABET = [
   "é",
   "中",
   "𠀀",
-  " ",
+  String.fromCharCode(0x2028),
   "\u0001",
   "\ud800",
 ];
@@ -61,7 +61,7 @@ describe("generated statements", () => {
 
   test("jsString escapes what a double-quoted string cannot hold and keeps the rest", () => {
     expect(jsString('a"b\\c\n\r\t')).toBe('"a\\"b\\\\c\\n\\r\\t"');
-    expect(jsString("\u0001\u007f  ")).toBe('"\\u0001\\u007f\\u2028\\u2029"');
+    expect(jsString(`\u0001\u007f${String.fromCharCode(0x2028, 0x2029)}`)).toBe('"\\u0001\\u007f\\u2028\\u2029"');
     expect(jsString("\ud800x")).toBe('"\\ud800x"');
     expect(jsString("\udc00")).toBe('"\\udc00"');
     expect(jsString("é𠀀`${'")).toBe('"é𠀀`${\'"');
