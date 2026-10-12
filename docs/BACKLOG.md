@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D316, U17 · 216
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U121 · 112
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U122 · 113
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC24 · 21
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -4938,6 +4938,15 @@ It is older than the object source statement change, which adds one more sentenc
 Found 2026-10-12 in an embedded browser pass of the object source statement change; pre-existing.
 
 **Done when:** the view's secondary text is muted in an embedded host that brings no shadcn variables, by a colour the package's own stylesheet defines, with a test that the packaged stylesheet defines every colour variable the view's classes read, and an embedded browser pass that measures it.
+
+### U122. A Source tab names an object by its dotted path, so an empty segment shows as "/."
+
+`sourceTab` in `src/hooks/use-tab-manager.ts` names the tab and its header `Source: ` plus the object's path joined with dots, not the label the tree draws.
+On RabbitMQ the default exchange's name is the empty string, so its tab reads `/.` while the tree labels it `(AMQP default)`, and a queue's tab reads `/.q-quorum-payments`.
+
+Found 2026-10-12 in a browser pass of the RabbitMQ provider.
+
+**Done when:** a Source tab names an object whose own segment is empty, or whose container is `/`, in words a reader can match to the tree row it was opened from, with a test over the default exchange's path and a browser pass.
 
 ## Dependencies
 
