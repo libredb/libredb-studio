@@ -1,9 +1,11 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { DatabaseConfigError, TimeoutError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { logger } from "@/lib/logger";
+import type { QueryWarning } from "@/lib/types";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -219,6 +221,208 @@ describe("POST /api/db/test-connection", () => {
         createMockRequest("/api/db/test-connection", { method: "POST", body: validConnection }) as never,
       );
       expect("warnings" in (await parseResponseJSON<Record<string, unknown>>(res))).toBe(false);
+    });
+  });
+
+  describe("the extra checks a provider runs only on Test Connection", () => {
+    // Shapes, not any engine's words: the route carries whatever the provider hands it.
+    const connectCaution = { message: "a fact connect() learned" };
+    const probeCaution = { message: "a fact only a Test Connection probe finds" };
+    const probing = mockProvider as typeof mockProvider & {
+      connectWarnings?: () => QueryWarning[];
+      testConnectionWarnings?: () => Promise<QueryWarning[]>;
+    };
+    const lending = borrowedProvider as typeof borrowedProvider & {
+      testConnectionWarnings?: () => Promise<QueryWarning[]>;
+    };
+    const CHECKS_DID_NOT_FINISH =
+      "The extra checks Test Connection runs for this connection did not finish, so a caution they would give may be missing.";
+    const post = async () =>
+      parseResponseJSON<{
+        success: boolean;
+        degraded?: boolean;
+        message: string;
+        latency?: number;
+        warnings?: unknown[];
+      }>(await POST(createMockRequest("/api/db/test-connection", { method: "POST", body: validConnection }) as never));
+    // A rejection is logged; the spy keeps that log out of the run's output and is restored
+    // even when an assertion fails.
+    let logged: ReturnType<typeof spyOn<typeof logger, "error">>;
+
+    beforeEach(() => {
+      logged = spyOn(logger, "error").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      logged.mockRestore();
+      delete probing.connectWarnings;
+      delete probing.testConnectionWarnings;
+      delete lending.testConnectionWarnings;
+    });
+
+    test("appends its cautions after connectWarnings()'s, on a successful answer", async () => {
+      probing.connectWarnings = () => [connectCaution];
+      probing.testConnectionWarnings = async () => [probeCaution];
+
+      const data = await post();
+
+      expect(data.success).toBe(true);
+      expect(data.message).toBe("Connection successful");
+      expect(data.warnings).toEqual([connectCaution, probeCaution]);
+    });
+
+    test("runs after connect() and connectWarnings() and before getHealth(), once", async () => {
+      const order: string[] = [];
+      (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(async () => {
+        order.push("connect");
+      });
+      probing.connectWarnings = () => {
+        order.push("connectWarnings");
+        return [];
+      };
+      probing.testConnectionWarnings = async () => {
+        order.push("testConnectionWarnings");
+        return [];
+      };
+      (mockProvider.getHealth as ReturnType<typeof mock>).mockImplementation(async () => {
+        order.push("getHealth");
+        return {
+          activeConnections: 1,
+          databaseSize: "1 KB",
+          cacheHitRatio: "N/A",
+          slowQueries: [],
+          activeSessions: [],
+        };
+      });
+
+      await post();
+
+      expect(order).toEqual(["connect", "connectWarnings", "testConnectionWarnings", "getHealth"]);
+    });
+
+    test("a method that finds nothing adds no warnings key, so the dialog stays green", async () => {
+      probing.connectWarnings = () => [];
+      probing.testConnectionWarnings = async () => [];
+
+      const data = await post();
+
+      expect(data.success).toBe(true);
+      expect("warnings" in data).toBe(false);
+    });
+
+    test("its cautions alone make the warnings key, with no connectWarnings() declared", async () => {
+      probing.testConnectionWarnings = async () => [probeCaution];
+
+      expect((await post()).warnings).toEqual([probeCaution]);
+    });
+
+    test("its cautions ride along with a degraded answer too", async () => {
+      probing.connectWarnings = () => [connectCaution];
+      probing.testConnectionWarnings = async () => [probeCaution];
+      (mockProvider.getHealth as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw new Error("no health here");
+      });
+
+      const data = await post();
+
+      expect(data.success).toBe(true);
+      expect(data.degraded).toBe(true);
+      expect(data.warnings).toEqual([connectCaution, probeCaution]);
+    });
+
+    test("a rejection becomes one caution of the route's own and the connection still counts as tested", async () => {
+      probing.connectWarnings = () => [connectCaution];
+      probing.testConnectionWarnings = async () => {
+        throw new Error("socket hang up at 10.0.0.7:8443");
+      };
+
+      const data = await post();
+
+      expect(data.success).toBe(true);
+      expect(data.message).toBe("Connection successful");
+      expect(typeof data.latency).toBe("number");
+      // The route's own sentence, never the thrown text: a rejection here is a provider
+      // defect, and its message is not a caution the provider chose to show.
+      expect(data.warnings).toEqual([connectCaution, { message: CHECKS_DID_NOT_FINISH }]);
+      expect(JSON.stringify(data)).not.toContain("socket hang up");
+      expect(mockProvider.getHealth).toHaveBeenCalledTimes(1);
+      expect(mockProvider.disconnect).toHaveBeenCalledTimes(1);
+      // The log is the only place the thrown text survives, and it carries no connection field.
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(logged.mock.calls[0][0]).toBe("Test Connection checks rejected");
+      expect(logged.mock.calls[0][2]).toEqual({ route: "api/db/test-connection", provider: mockProvider.type });
+    });
+
+    test("a rejection with a non-Error is the same one caution", async () => {
+      probing.testConnectionWarnings = () => Promise.reject("not an Error");
+
+      const data = await post();
+
+      expect(data.success).toBe(true);
+      expect(data.warnings).toEqual([{ message: CHECKS_DID_NOT_FINISH }]);
+    });
+
+    test("a rejection followed by a failed health read is a degraded success carrying the caution", async () => {
+      probing.testConnectionWarnings = async () => {
+        throw new Error("probe failed");
+      };
+      (mockProvider.getHealth as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw new Error("no health here");
+      });
+
+      const data = await post();
+
+      expect(data.success).toBe(true);
+      expect(data.degraded).toBe(true);
+      expect(data.warnings).toEqual([{ message: CHECKS_DID_NOT_FINISH }]);
+      expect(mockProvider.disconnect).toHaveBeenCalledTimes(1);
+    });
+
+    test("is never called when connect() fails", async () => {
+      const probe = mock(async () => [probeCaution]);
+      probing.testConnectionWarnings = probe;
+      (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw new Error("ECONNREFUSED");
+      });
+
+      const res = await POST(
+        createMockRequest("/api/db/test-connection", { method: "POST", body: validConnection }) as never,
+      );
+
+      expect(res.status).toBe(500);
+      expect(probe).not.toHaveBeenCalled();
+    });
+
+    test("is never called on a borrowed provider, which is not this route's fresh one", async () => {
+      // The live handle of a single-writer file is the editor's own session, not a provider
+      // this click built, so its probes are not this route's to run.
+      mockFindOpenSingleWriterProvider.mockImplementation(() => borrowedProvider);
+      const probe = mock(async () => [probeCaution]);
+      lending.testConnectionWarnings = probe;
+
+      const data = await parseResponseJSON<{ success: boolean; warnings?: unknown[] }>(
+        await POST(
+          createMockRequest("/api/db/test-connection", {
+            method: "POST",
+            body: { ...validConnection, type: "libredb", database: "/data/sample.libredb" },
+          }) as never,
+        ),
+      );
+
+      expect(data.success).toBe(true);
+      expect(probe).not.toHaveBeenCalled();
+      expect("warnings" in data).toBe(false);
+    });
+
+    test("a provider without the method answers exactly as before", async () => {
+      const data = await post();
+
+      expect(data.success).toBe(true);
+      expect(data.message).toBe("Connection successful");
+      expect("warnings" in data).toBe(false);
+      expect(mockProvider.connect).toHaveBeenCalledTimes(1);
+      expect(mockProvider.getHealth).toHaveBeenCalledTimes(1);
+      expect(mockProvider.disconnect).toHaveBeenCalledTimes(1);
     });
   });
 
