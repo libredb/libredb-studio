@@ -74,7 +74,7 @@ import {
 } from "node:http";
 import { Agent as HttpsAgent, type AgentOptions as HttpsAgentOptions, request as httpsRequest } from "node:https";
 import { isIP, type LookupFunction, type Socket } from "node:net";
-import { checkServerIdentity, type PeerCertificate } from "node:tls";
+import { type ConnectionOptions, checkServerIdentity, type PeerCertificate } from "node:tls";
 import { urlToHttpOptions } from "node:url";
 import { ConnectionError, DatabaseConfigError, waitedSeconds } from "@/lib/db/errors";
 import {
@@ -960,13 +960,19 @@ function signedHeaders(checked: CheckedSigner, input: SigningInput): Readonly<Re
   return checkedHeaderRecord(record, checked.names, SIGNATURE_HEADER_REFUSALS);
 }
 
+/** The TLS options a socket dial takes: the subset of node:tls's own that both `tls.connect` and the HTTPS Agent read. */
+export type NodeTlsConnectOptions = Pick<
+  ConnectionOptions,
+  "rejectUnauthorized" | "ca" | "cert" | "key" | "servername" | "checkServerIdentity"
+>;
+
 /**
- * The TLS options of node:https under its own names, set once on the connection's Agent. The server name is the
- * identity when it is a DNS name; for an IP literal none is sent. Every certificate is checked against the identity,
- * which through an SSH tunnel is the far end, never the local forward the socket dials; for an IP identity Node's own
- * check reads the certificate's IP SAN.
+ * The TLS options of the SSL / TLS panel under node:tls's own names, for `tls.connect` or an HTTPS Agent alike. The
+ * server name is the identity when it is a DNS name; for an IP literal none is sent. Every certificate is checked
+ * against the identity, which through an SSH tunnel is the far end, never the local forward the socket dials; for an IP
+ * identity Node's own check reads the certificate's IP SAN.
  */
-function tlsAgentOptions(tls: NodeTlsMaterial): HttpsAgentOptions {
+export function nodeTlsConnectOptions(tls: NodeTlsMaterial): NodeTlsConnectOptions {
   const { identity } = tls;
   return {
     rejectUnauthorized: tls.rejectUnauthorized,
@@ -976,6 +982,11 @@ function tlsAgentOptions(tls: NodeTlsMaterial): HttpsAgentOptions {
     ...(isIP(identity) === 0 ? { servername: identity } : {}),
     checkServerIdentity: (_dialled: string, certificate: PeerCertificate) => checkServerIdentity(identity, certificate),
   };
+}
+
+/** The TLS options set once on the connection's Agent: nodeTlsConnectOptions, which the Agent takes as they are. */
+function tlsAgentOptions(tls: NodeTlsMaterial): HttpsAgentOptions {
+  return nodeTlsConnectOptions(tls);
 }
 
 /**
