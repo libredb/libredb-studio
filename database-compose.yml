@@ -1189,6 +1189,236 @@ services:
     memswap_limit: 1G
 
   # ---------------------------------------------------------------------------------------
+  # RabbitMQ (issue #1656). One 4.3.6 node is the default fixture, seeded by a one-shot that
+  # runs tests/live/rabbitmq-seed.ts. Three more sit behind profiles: `rabbitmq-42`, a 4.2.9
+  # node, the permanent home of the broker's 541 conversion close; `rabbitmq-cluster`, three
+  # 4.3.6 nodes, for the stream read with no running replica; and `rabbitmq-tls`, a node whose
+  # AMQP and management listeners take TLS from certificates generated at start. The image
+  # reference below is the one the CI step runs; tests/unit/db/rabbitmq/live-environment.test.ts
+  # holds every rule of this block. docker/rabbitmq/README.md lists the files.
+  # ---------------------------------------------------------------------------------------
+  rabbitmq:
+    # Pinned by digest: the expected outcomes of the live check and the captures under
+    # tests/fixtures/rabbitmq are keyed by this digest, never by a version the broker reports.
+    image: &rabbitmq-436 rabbitmq:4.3.6-management@sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd
+    container_name: libredb-rabbitmq
+    hostname: libredb-rabbitmq
+    restart: unless-stopped
+    environment: &rabbitmq-admin
+      # The fixture's administrator; the seed creates the four Studio users. No password is
+      # written here: both come from the shell, with no default, and
+      #   eval "$(bun tests/live/rabbitmq-seed.ts --env)"
+      # exports the ones the seed builds. RabbitMQ would take an empty one as unset and fall back
+      # to its default password, so each broker's entrypoint refuses to start without one.
+      RABBITMQ_DEFAULT_USER: libredb-admin
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_LIVE_ADMIN_PASSWORD}
+    entrypoint: &rabbitmq-entry
+      - /bin/sh
+      - -c
+      - test -n "$$RABBITMQ_DEFAULT_PASS" || { echo "RABBITMQ_LIVE_ADMIN_PASSWORD is not set, see docker/rabbitmq/README.md" >&2; exit 1; }; exec docker-entrypoint.sh rabbitmq-server
+    volumes:
+      # The image enables rabbitmq_management and rabbitmq_prometheus only; the Test Connection
+      # queue check needs rabbitmq_stream_management, so the plugin list is mounted.
+      - ./docker/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    ports:
+      # Loopback only. 15692 is the Prometheus endpoint the read-only check's oracle scrapes.
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+      - "127.0.0.1:15692:15692"
+    # Each stream holds file descriptors for its segment and index; at the image's 1,024 a broker
+    # with about 500 streams fails to open one and its metadata store stops, so every login is
+    # then refused. The listing captures declare more than 500 streams.
+    ulimits: &rabbitmq-nofile
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck: &rabbitmq-health
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      start_period: 60s
+      start_interval: 1s
+      interval: 60s
+      timeout: 15s
+      retries: 3
+    deploy: &rabbitmq-limits
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1G
+    memswap_limit: 1G
+
+  rabbitmq-init:
+    # One-shot seed on the repository's own Bun, with the repository mounted read-only. The seed
+    # talks to the broker over the network only, and refuses a broker that is already seeded:
+    # a stream publish appends, so removing the two containers resets the fixture.
+    image: &rabbitmq-seed oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895
+    container_name: libredb-rabbitmq-init
+    restart: "no"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes: &rabbitmq-seed-mounts ["./tests:/repo/tests:ro", "./tsconfig.json:/repo/tsconfig.json:ro"]
+    working_dir: /repo
+    environment:
+      RABBITMQ_LIVE_HOST: rabbitmq
+      RABBITMQ_LIVE_DIGEST: sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd
+      RABBITMQ_LIVE_ADMIN_USER: libredb-admin
+      RABBITMQ_LIVE_ADMIN_PASSWORD: ${RABBITMQ_LIVE_ADMIN_PASSWORD}
+      RABBITMQ_LIVE_FIXTURE_PASSWORD: ${RABBITMQ_LIVE_FIXTURE_PASSWORD}
+    entrypoint: ["bun", "tests/live/rabbitmq-seed.ts"]
+    deploy: &rabbitmq-seed-limits
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    memswap_limit: 512M
+
+  rabbitmq-42:
+    # 4.2 receives no further community release, so the 541 close of a message the broker cannot
+    # convert to AMQP 0-9-1 stays reproducible here. Start it with
+    #   docker compose -f database-compose.yml --profile rabbitmq-42 up -d rabbitmq-42 rabbitmq-42-init
+    image: rabbitmq:4.2.9-management@sha256:9e9fd21d60f060acc9ecbd847cd1dcb87e6550bdb0297c27e79a40bfe1766ce4
+    container_name: libredb-rabbitmq-42
+    hostname: libredb-rabbitmq-42
+    profiles: ["rabbitmq-42"]
+    restart: unless-stopped
+    environment: *rabbitmq-admin
+    entrypoint: *rabbitmq-entry
+    volumes:
+      - ./docker/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    ports:
+      - "127.0.0.1:5682:5672"
+      - "127.0.0.1:15682:15672"
+      - "127.0.0.1:15702:15692"
+    ulimits: *rabbitmq-nofile
+    healthcheck: *rabbitmq-health
+    deploy: *rabbitmq-limits
+    memswap_limit: 1G
+
+  rabbitmq-42-init:
+    image: *rabbitmq-seed
+    container_name: libredb-rabbitmq-42-init
+    profiles: ["rabbitmq-42"]
+    restart: "no"
+    depends_on:
+      rabbitmq-42:
+        condition: service_healthy
+    volumes: *rabbitmq-seed-mounts
+    working_dir: /repo
+    environment:
+      RABBITMQ_LIVE_HOST: rabbitmq-42
+      RABBITMQ_LIVE_DIGEST: sha256:9e9fd21d60f060acc9ecbd847cd1dcb87e6550bdb0297c27e79a40bfe1766ce4
+      RABBITMQ_LIVE_ADMIN_USER: libredb-admin
+      RABBITMQ_LIVE_ADMIN_PASSWORD: ${RABBITMQ_LIVE_ADMIN_PASSWORD}
+      RABBITMQ_LIVE_FIXTURE_PASSWORD: ${RABBITMQ_LIVE_FIXTURE_PASSWORD}
+    entrypoint: ["bun", "tests/live/rabbitmq-seed.ts"]
+    deploy: *rabbitmq-seed-limits
+    memswap_limit: 512M
+
+  # -- RabbitMQ, three-node cluster -------------------------------------------------------
+
+  rabbitmq-cluster-1:
+    # Three 4.3.6 nodes formed by classic peer discovery, one host port each, for the stream
+    # read whose replicas are all down. The Erlang cookie is a fixture value written at start.
+    # Name the services: with a profile and no names, compose starts every default service too.
+    #   docker compose -f database-compose.yml --profile rabbitmq-cluster up -d --wait \
+    #     rabbitmq-cluster-1 rabbitmq-cluster-2 rabbitmq-cluster-3
+    image: *rabbitmq-436
+    container_name: libredb-rabbitmq-cluster-1
+    hostname: libredb-rabbitmq-cluster-1
+    profiles: ["rabbitmq-cluster"]
+    restart: unless-stopped
+    environment: &rabbitmq-cluster-env
+      RABBITMQ_DEFAULT_USER: libredb-admin
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_LIVE_ADMIN_PASSWORD}
+      RABBITMQ_FIXTURE_COOKIE: libredb-rabbitmq-cluster-fixture
+    entrypoint: &rabbitmq-cluster-entry
+      - /bin/sh
+      - -c
+      - test -n "$$RABBITMQ_DEFAULT_PASS" || { echo "RABBITMQ_LIVE_ADMIN_PASSWORD is not set, see docker/rabbitmq/README.md" >&2; exit 1; }; printf '%s' "$$RABBITMQ_FIXTURE_COOKIE" > /var/lib/rabbitmq/.erlang.cookie && chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie && chmod 400 /var/lib/rabbitmq/.erlang.cookie && exec docker-entrypoint.sh rabbitmq-server
+    volumes: &rabbitmq-cluster-mounts
+      - ./docker/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./docker/rabbitmq/cluster.conf:/etc/rabbitmq/conf.d/20-cluster.conf:ro
+    ports:
+      - "127.0.0.1:5695:5672"
+      - "127.0.0.1:15695:15672"
+    ulimits: *rabbitmq-nofile
+    healthcheck: *rabbitmq-health
+    deploy: *rabbitmq-limits
+    memswap_limit: 1G
+
+  rabbitmq-cluster-2:
+    image: *rabbitmq-436
+    container_name: libredb-rabbitmq-cluster-2
+    hostname: libredb-rabbitmq-cluster-2
+    profiles: ["rabbitmq-cluster"]
+    restart: unless-stopped
+    environment: *rabbitmq-cluster-env
+    entrypoint: *rabbitmq-cluster-entry
+    volumes: *rabbitmq-cluster-mounts
+    ports:
+      - "127.0.0.1:5696:5672"
+      - "127.0.0.1:15696:15672"
+    ulimits: *rabbitmq-nofile
+    healthcheck: *rabbitmq-health
+    deploy: *rabbitmq-limits
+    memswap_limit: 1G
+
+  rabbitmq-cluster-3:
+    image: *rabbitmq-436
+    container_name: libredb-rabbitmq-cluster-3
+    hostname: libredb-rabbitmq-cluster-3
+    profiles: ["rabbitmq-cluster"]
+    restart: unless-stopped
+    environment: *rabbitmq-cluster-env
+    entrypoint: *rabbitmq-cluster-entry
+    volumes: *rabbitmq-cluster-mounts
+    ports:
+      - "127.0.0.1:5697:5672"
+      - "127.0.0.1:15697:15672"
+    ulimits: *rabbitmq-nofile
+    healthcheck: *rabbitmq-health
+    deploy: *rabbitmq-limits
+    memswap_limit: 1G
+
+  # -- RabbitMQ, TLS on both listeners ----------------------------------------------------
+
+  rabbitmq-tls-certs:
+    # One-shot: a CA and a server certificate for localhost and 127.0.0.1, generated into
+    # rabbitmq-tls-certs when missing, so no key is ever committed. Start both by name, then copy
+    # the CA out:
+    #   docker compose -f database-compose.yml --profile rabbitmq-tls up -d --wait rabbitmq-tls-certs rabbitmq-tls
+    #   docker compose -f database-compose.yml cp rabbitmq-tls:/etc/rabbitmq/certs/ca.pem .
+    image: alpine/openssl:3.5.8@sha256:3f25da71f70eba788067daac3f3df03bd1de7a7c52ed89fa93b94ad2c92d986b
+    container_name: libredb-rabbitmq-tls-certs
+    profiles: ["rabbitmq-tls"]
+    restart: "no"
+    volumes: ["./docker/rabbitmq:/rabbitmq:ro", "rabbitmq-tls-certs:/certs"]
+    entrypoint: ["sh", "/rabbitmq/certs.sh", "/certs"]
+    deploy: *rabbitmq-seed-limits
+    memswap_limit: 512M
+
+  rabbitmq-tls:
+    image: *rabbitmq-436
+    container_name: libredb-rabbitmq-tls
+    hostname: libredb-rabbitmq-tls
+    profiles: ["rabbitmq-tls"]
+    restart: unless-stopped
+    depends_on: { rabbitmq-tls-certs: { condition: service_completed_successfully } }
+    environment: *rabbitmq-admin
+    entrypoint: *rabbitmq-entry
+    volumes:
+      - ./docker/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./docker/rabbitmq/tls.conf:/etc/rabbitmq/conf.d/20-tls.conf:ro
+      - rabbitmq-tls-certs:/etc/rabbitmq/certs:ro
+    ports:
+      - "127.0.0.1:5671:5671"
+      - "127.0.0.1:15671:15671"
+    ulimits: *rabbitmq-nofile
+    healthcheck: *rabbitmq-health
+    deploy: *rabbitmq-limits
+    memswap_limit: 1G
+
+  # ---------------------------------------------------------------------------------------
   # etcd (the etcd provider). One member is the default fixture, seeded by a one-shot sidecar
   # through etcd's own gRPC gateway. Two more fixtures sit behind profiles: `etcd-cluster`,
   # three members for member list, a leader change, one member's defragmentation, a stopped
@@ -3463,3 +3693,4 @@ volumes:
   influxdb2-read-token: {}
   s3-garage-keys: {}
   s3-certs: {}
+  rabbitmq-tls-certs: {}
