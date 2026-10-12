@@ -220,6 +220,8 @@ export const CONNECTION_FORM_DEFAULTS = {
   namespaces: "",
   // A leftover TLS server name would check the next connection's certificate against the previous cluster's name.
   tlsServerName: "",
+  // A leftover AMQP port would send the next connection's reads to the previous server's listener.
+  amqpPort: "",
   // SSH tunnel. A leftover tunnel sends the next connection through the previous one's
   // bastion, with that bastion's password or private key.
   showSSH: false,
@@ -550,6 +552,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   const [apiPath, setApiPath] = useState(D.apiPath);
   const [namespaces, setNamespaces] = useState(D.namespaces);
   const [tlsServerName, setTlsServerName] = useState(D.tlsServerName);
+  /**
+   * The AMQP port, as typed. Drawn only for an engine that takes the field; stored as typed, because the provider checks
+   * it and names the field when it refuses it.
+   */
+  const [amqpPort, setAmqpPort] = useState(D.amqpPort);
 
   // SSH Tunnel
   const [showSSH, setShowSSH] = useState(D.showSSH);
@@ -605,6 +612,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       apiPath: setApiPath,
       namespaces: setNamespaces,
       tlsServerName: setTlsServerName,
+      amqpPort: setAmqpPort,
       showSSH: setShowSSH,
       sshEnabled: setSSHEnabled,
       sshHost: setSSHHost,
@@ -657,6 +665,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       namespaces: setNamespaces,
       tlsServerName: setTlsServerName,
       location: setLocation,
+      amqpPort: setAmqpPort,
     }),
     [],
   );
@@ -769,6 +778,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       setApiPath(editConnection.apiPath ?? "");
       setNamespaces(editConnection.namespaces ?? "");
       setTlsServerName(editConnection.tlsServerName ?? "");
+      // The reset above already empties the box for a connection that names no AMQP port; this sets the stored one.
+      setAmqpPort(editConnection.amqpPort ?? "");
       // SSL
       if (editConnection.ssl) {
         setSSLMode(editConnection.ssl.mode);
@@ -1001,6 +1012,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       ...(addressedFields.has("apiPath") && apiPath.trim() !== "" ? { apiPath } : {}),
       ...(addressedFields.has("namespaces") && namespaces.trim() !== "" ? { namespaces } : {}),
       ...(addressedFields.has("tlsServerName") && tlsServerName.trim() !== "" ? { tlsServerName } : {}),
+      // The dataServers rule for the AMQP port: only for an engine that takes it, only when typed.
+      ...(addressedFields.has("amqpPort") && amqpPort.trim() !== "" ? { amqpPort } : {}),
     };
   }, [
     sslMode,
@@ -1045,6 +1058,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     apiPath,
     namespaces,
     tlsServerName,
+    amqpPort,
   ]);
 
   /**
@@ -1550,6 +1564,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setNamespaces,
     tlsServerName,
     setTlsServerName,
+    amqpPort,
+    setAmqpPort,
 
     // SSH Tunnel
     showSSH,

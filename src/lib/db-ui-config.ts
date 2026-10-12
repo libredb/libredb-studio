@@ -87,6 +87,8 @@ export interface DatabaseUIConfig {
     | "apiPath"
     | "namespaces"
     | "tlsServerName"
+    // An AMQP 0-9-1 port, one text box of digits; no engine declares it yet.
+    | "amqpPort"
   )[];
   /**
    * The connection dialog's label for a field, where this engine names the field differently from
