@@ -145,7 +145,7 @@ LibreDB Studio는 다른 방식으로 접근합니다. **데이터를 도구가 
 
 LibreDB Studio는 데이터가 있는 환경에 직접 배포하는 방식을 지향합니다. Container, Helm chart, Operator, PaaS One-click template을 이용해 배포하거나, `npm i @libredb/studio`를 사용해 자신의 제품에 직접 임베드할 수도 있습니다. 데이터베이스를 외부에 노출할 필요도 없습니다.
 
-31개의 엔진을 하나의 인터페이스에서 사용할 수 있습니다. PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Apache Cassandra, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, MQTT를 모두 동일한 브라우저 환경에서 다룰 수 있으며, 각 엔진이 제공하는 정보에 따라 ER 다이어그램, schema 비교, 모니터링 기능도 사용할 수 있습니다. 이 가운데 Druid, Elasticsearch, OpenSearch는 SQL 인터페이스에서 데이터 조회만 지원하므로 LibreDB Studio에서도 읽기 전용으로 제공됩니다. 이들 엔진에서는 `UPDATE`나 `CREATE TABLE` 같은 명령을 지원하지 않기 때문에, LibreDB Studio에서도 해당 기능을 사용할 수 없는 것으로 명확하게 표시합니다. Cassandra의 경우 제공하는 행 수와 용량 정보가 정확하지 않아 객체 브라우저에 해당 정보를 표시하지 않습니다. 부정확한 값을 보여주는 것보다 아예 표시하지 않는 방식을 택한 것입니다. Cassandra에서 제공하는 파티션 수 추정치는 디스크에 기록된 파일을 기반으로 하는데, 실제 테스트에서는 500개의 행이 있는 테이블이 143개로 추정되기도 했습니다. Trino는 데이터베이스가 아니라 쿼리 엔진이라는 점에서 또 다른 차이가 있습니다. 따라서 primary key나 index 정보를 제공하지 않으며, 표시되는 데이터 크기 역시 Trino 자체가 아닌 연결된 각 connector의 시스템을 기준으로 합니다.
+31개의 엔진을 하나의 인터페이스에서 사용할 수 있습니다. PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Apache Cassandra, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ를 모두 동일한 브라우저 환경에서 다룰 수 있으며, 각 엔진이 제공하는 정보에 따라 ER 다이어그램, schema 비교, 모니터링 기능도 사용할 수 있습니다. 이 가운데 Druid, Elasticsearch, OpenSearch는 SQL 인터페이스에서 데이터 조회만 지원하므로 LibreDB Studio에서도 읽기 전용으로 제공됩니다. 이들 엔진에서는 `UPDATE`나 `CREATE TABLE` 같은 명령을 지원하지 않기 때문에, LibreDB Studio에서도 해당 기능을 사용할 수 없는 것으로 명확하게 표시합니다. Cassandra의 경우 제공하는 행 수와 용량 정보가 정확하지 않아 객체 브라우저에 해당 정보를 표시하지 않습니다. 부정확한 값을 보여주는 것보다 아예 표시하지 않는 방식을 택한 것입니다. Cassandra에서 제공하는 파티션 수 추정치는 디스크에 기록된 파일을 기반으로 하는데, 실제 테스트에서는 500개의 행이 있는 테이블이 143개로 추정되기도 했습니다. Trino는 데이터베이스가 아니라 쿼리 엔진이라는 점에서 또 다른 차이가 있습니다. 따라서 primary key나 index 정보를 제공하지 않으며, 표시되는 데이터 크기 역시 Trino 자체가 아닌 연결된 각 connector의 시스템을 기준으로 합니다.
 
 가장 최근에 추가된 엔진은 MQTT입니다. 한 번의 구독으로 broker의 topic 트리를 Keys 패널에 읽어 들이며, 각 행 옆에는 서버가 직접 알려준 잔여 수명이 표시되고 topic의 payload는 Source 탭에서 열립니다. 내보내는 패킷이 CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ, DISCONNECT뿐이고 PUBLISH를 쓰는 함수가 아예 없으며 CONNECT에 Will도 담기지 않기 때문에, 설정이 아니라 구조상 읽기 전용입니다. MQTT에는 topic을 열거하는 명령이 없으므로 어떤 읽기도 스스로 완전하다고 말하지 않습니다. 대신 무엇을 보았는지, 왜 멈췄는지, 무엇을 놓쳤다고 증명할 수 있는지를 매번 보고합니다. `$share/`, `$queue/`, `$exclusive/` 필터는 SUBSCRIBE 전에 거부됩니다. 옵으로 구독 중인 기기가 받아야 할 메시지를 가져가기 때문입니다.
 MQTT 이전에 추가된 엔진은 Kubernetes입니다. 에디터에 입력한 kubectl 읽기 명령은 드라이버 없이 API 서버의 REST API로 하나의 클러스터를 읽습니다. 트리에는 `Cluster`와 네임스페이스, 그 안의 리소스 종류가 표시되고 모든 객체를 YAML로 볼 수 있으며, Connection 대화상자에 kubeconfig를 붙여 넣을 수 있습니다. Studio가 보낼 수 있는 요청은 어떤 것도 데이터를 쓰거나 프로그램을 실행하거나 Secret 값을 보여 주지 않습니다.
@@ -168,7 +168,7 @@ etcd는 etcd gRPC API를 통해 etcdctl의 일부 명령으로 key를 읽고 쓸
 
 Apache Kafka는 JSON 읽기 요청을 통해 Kafka protocol로 partition, offset 또는 timestamp를 기준으로 topic의 message를 조회할 수 있습니다. 브라우저에서는 topic, lag가 포함된 consumer group, broker를 확인할 수 있습니다. Kafka는 읽기 전용으로 지원되며 Studio에서는 message를 produce하거나 offset을 commit하지 않고, consumer group에 join하거나 topic을 생성하지도 않습니다.
 
-Oxia, InfluxDB (InfluxQL), Milvus, Qdrant, Neo4j, etcd, Apache Kafka, MQTT, Prometheus는 MongoDB나 Redis와 마찬가지로 SQL을 사용하지 않습니다. InfluxQL은 SQL과 비슷해 보이지만 별도의 query language이며 한 번에 하나의 `SELECT`, `SHOW`, `EXPLAIN`을 실행합니다. 반면 InfluxDB 3 (SQL)은 SQL을 사용합니다. Prometheus는 Prometheus HTTP API와 PromQL을 사용해 metric, rule, scrape target을 조회할 수 있으며, Studio에서 서버의 write 또는 관리 endpoint를 호출하지 않기 때문에 읽기 전용으로 지원됩니다.
+Oxia, InfluxDB (InfluxQL), Milvus, Qdrant, Neo4j, etcd, Apache Kafka, MQTT, RabbitMQ, Prometheus는 MongoDB나 Redis와 마찬가지로 SQL을 사용하지 않습니다. InfluxQL은 SQL과 비슷해 보이지만 별도의 query language이며 한 번에 하나의 `SELECT`, `SHOW`, `EXPLAIN`을 실행합니다. 반면 InfluxDB 3 (SQL)은 SQL을 사용합니다. Prometheus는 Prometheus HTTP API와 PromQL을 사용해 metric, rule, scrape target을 조회할 수 있으며, Studio에서 서버의 write 또는 관리 endpoint를 호출하지 않기 때문에 읽기 전용으로 지원됩니다.
 
 주요 기능을 별도의 유료 기능으로 제한하지도 않습니다. SSO, ER 다이어그램, AI 기능을 비롯한 모든 NoSQL 엔진이 MIT 라이선스로 제공되는 버전에 포함되어 있습니다. MIT 라이선스는 이러한 아키텍처를 가능하게 하기 위한 필수 조건입니다. 사용자 단위로 라이선스 비용을 부과하거나 요금제에 따라 기능을 제한한다면 필요한 모든 환경에 자유롭게 배포하기 어렵기 때문입니다.
 
@@ -176,7 +176,7 @@ Oxia, InfluxDB (InfluxQL), Milvus, Qdrant, Neo4j, etcd, Apache Kafka, MQTT, Prom
 
 * **데이터가 있는 환경에 직접 배포**: Container, Helm chart, Rancher, OpenShift Operator, PaaS One-click template을 사용하거나 npm으로 직접 임베드할 수 있습니다.
 
-* **31개의 엔진, 하나의 인터페이스**: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Cassandra, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, MQTT.
+* **31개의 엔진, 하나의 인터페이스**: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Cassandra, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ.
 
 * **어디서든 사용 가능**: 브라우저와 모바일은 물론 Windows, macOS, Linux 데스크톱에서도 사용할 수 있습니다.
 
@@ -186,7 +186,7 @@ Oxia, InfluxDB (InfluxQL), Milvus, Qdrant, Neo4j, etcd, Apache Kafka, MQTT, Prom
 
 
 <p align="center">
-  <img src="public/screenshots/connection-modal.png" alt="다중 데이터베이스 Connection 관리" width="100%" />  <br/><em>PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Cassandra, Redis, SQLite, DuckDB, libSQL, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes에 연결할 수 있으며, SSL/TLS와 SSH 터널을 지원합니다. 단, Kafka는 TLS만 지원하며 SSH 터널은 지원하지 않습니다.</em>
+  <img src="public/screenshots/connection-modal.png" alt="다중 데이터베이스 Connection 관리" width="100%" />  <br/><em>PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Cassandra, Redis, SQLite, DuckDB, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes에 연결할 수 있으며, SSL/TLS와 SSH 터널을 지원합니다. 단, Kafka는 TLS만 지원하며 SSH 터널은 지원하지 않습니다.</em>
 </p>
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/libredb/libredb-studio)
@@ -345,6 +345,7 @@ Standalone 애플리케이션에서만 사용할 수 있습니다. 임베드용 
 | **Oxia**              | `@grpc/grpc-js`(순수 JavaScript, gRPC, 포트 6648) | 읽기 전용 `oxia client` 명령(`get`, `list`, `range-scan`)을 지원합니다. 트리에는 shard가 표시되고 key browser에서는 각 key를 확인할 수 있습니다. |
 | **S3-compatible object storage** | Driver 없음, HTTP 사용(S3 REST API, path style, Studio 자체 SigV4 코드로 서명, Parquet 미리보기에는 `hyparquet`) | 읽기 전용 AWS CLI 읽기 명령(`aws s3 ls`, `aws s3api list-buckets`, `aws s3api head-object`, `aws s3api list-object-versions`)과 Studio 자체 `preview`를 지원합니다. 트리에는 bucket이, Keys 패널에는 folder가 한 단계씩 표시되며, object의 metadata와 text, JSON, CSV, Parquet의 상한이 있는 미리보기를 제공합니다. MinIO, Silo, Garage, RustFS에서 검증했으며 AWS S3와 호스팅 서비스에서는 검증하지 않았습니다 |
 | **MQTT** | `mqtt-packet`(파서만 사용. Studio가 보내는 다섯 가지 패킷, 연결 관리자, 단방향 밸브는 Studio 자체 코드) | 구조적으로 읽기 전용입니다. 송신 경로는 CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ, DISCONNECT만 인코딩할 수 있고, PUBLISH를 쓰는 함수가 없으며, CONNECT는 Will을 담지 않습니다. 키 패널은 한 번의 구독으로 토픽 트리를 만들고 각 행 옆에 서버가 보고한 남은 수명을 표시하며, 토픽을 열면 페이로드와 메타데이터가 나옵니다. MQTT에는 토픽을 나열하는 명령이 없으므로 어떤 읽기도 완전하다고 주장하지 않습니다. 각 읽기는 무엇을 보았는지, 왜 멈추었는지, 무엇을 잃었다고 증명할 수 있는지를 보고합니다. `$share/`, `$queue/`, `$exclusive/` 필터는 SUBSCRIBE를 보내기 전에 거부됩니다. 각각 Studio와 함께 구독한 기기에서 메시지를 가져가기 때문입니다. Mosquitto, EMQX, HiveMQ CE, NanoMQ, RabbitMQ 4에서 검증했습니다 |
+| **RabbitMQ** | 없음: 관리 HTTP API(포트 15672)와 Studio 자체 AMQP 0-9-1 읽기 클라이언트(포트 5672) | 구조적으로 읽기 전용입니다. 읽기 클라이언트는 publish, 메시지 가져가기, 선언을 인코딩하지 못합니다. 트리에는 가상 호스트, 스트림, 큐, 익스체인지가 표시되고, JSON 읽기 요청은 스트림의 메시지를 읽으며 큐의 메시지는 읽지 않습니다 |
 | **Kubernetes**        | 드라이버 없음, HTTP (API 서버의 REST API, 포트 6443) | 읽기 전용: 에디터에서 kubectl 하위 집합(`get`, `describe`, `logs`, `top`, `events`, `explain`, `auth can-i`)을 지원합니다. 트리에는 네임스페이스와 리소스 종류, 각 객체의 YAML 보기가 표시되며, 연결 대화상자에서 kubeconfig를 가져올 수 있습니다. Secret 값은 표시되지 않습니다 |
 | **Redis**            | `ioredis`                                                               | Command Editor, key 브라우저, INFO 기반 모니터링                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
@@ -368,7 +369,7 @@ Standalone 애플리케이션에서만 사용할 수 있습니다. 임베드용 
 | **Editor**     | Monaco Editor(VS Code 엔진)                                                                                                                                                                        | Web      |
 | **AI**         | 멀티 모델(Gemini, OpenAI, Ollama, custom)                                                                                                                                                            | Web, 모바일 |
 | **인증**         | JWT(`jose`) + OIDC(`openid-client`), PKCE, 역할 매핑                                                                                                                                                 | Web, 모바일 |
-| **데이터베이스**     | PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia | Web, 모바일 |
+| **데이터베이스**     | PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia | Web, 모바일 |
 | **Chart**      | Recharts(Bar, Line, Pie, Area, Scatter, Histogram, Stacked Chart)                                                                                                                                | Web, 모바일 |
 | **ERD**        | React Flow, ELK.js(자동 layout)                                                                                                                                                                    | Web      |
 | **상태 및 Table** | TanStack Table 및 Virtual                                                                                                                                                                         | Web, 모바일 |
@@ -451,7 +452,7 @@ journalctl -u libredb-studio
 ### 사전 요구 사항
 
 * [Bun](https://bun.sh/)(권장) 또는 Node.js 24+
-* 쿼리를 실행할 수 있는 대상 데이터베이스(PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL) 또는 Oxia)
+* 쿼리를 실행할 수 있는 대상 데이터베이스(PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL) 또는 Oxia)
 
 ### 빠른 시작 (로컬)
 

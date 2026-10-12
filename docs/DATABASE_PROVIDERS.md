@@ -123,19 +123,25 @@ src/lib/db/
 │   │       ├── errors.ts       #   every measured failure -> the repository's error classes
 │   │       └── labels.ts       #   the two label sets
 │   ├── stream/                 # Stream Providers
-│   │   └── kafka/              # Kafka Strategy (JSON read requests over the Kafka protocol, @platformatic/kafka)
-│   │       ├── index.ts        #   KafkaProvider: lifecycle and composition only
-│   │       ├── client.ts       #   KafkaReadClient seam (read methods only) + KafkaError categories
-│   │       ├── platformatic-client.ts # The only file that imports @platformatic/kafka
-│   │       ├── connection-options.ts #  bootstrap address, tls and sasl, validated first
-│   │       ├── request.ts      #   the editor JSON -> a read request
-│   │       ├── read.ts         #   start offsets and the bounded fetch loop
-│   │       ├── decode.ts       #   key, value and header decoding
-│   │       ├── results.ts      #   decoded records -> rows and fields
-│   │       ├── groups.ts       #   consumer groups and lag
-│   │       ├── objects.ts      #   kinds and the object surface: topics, groups, brokers
-│   │       ├── monitoring.ts   #   metadata, configs, log dirs -> monitoring
-│   │       └── errors.ts       #   KafkaError category -> the repository's error classes
+│   │   ├── kafka/              # Kafka Strategy (JSON read requests over the Kafka protocol, @platformatic/kafka)
+│   │   │   ├── index.ts        #   KafkaProvider: lifecycle and composition only
+│   │   │   ├── client.ts       #   KafkaReadClient seam (read methods only) + KafkaError categories
+│   │   │   ├── platformatic-client.ts # The only file that imports @platformatic/kafka
+│   │   │   ├── connection-options.ts #  bootstrap address, tls and sasl, validated first
+│   │   │   ├── request.ts      #   the editor JSON -> a read request
+│   │   │   ├── read.ts         #   start offsets and the bounded fetch loop
+│   │   │   ├── decode.ts       #   key, value and header decoding
+│   │   │   ├── results.ts      #   decoded records -> rows and fields
+│   │   │   ├── groups.ts       #   consumer groups and lag
+│   │   │   ├── objects.ts      #   kinds and the object surface: topics, groups, brokers
+│   │   │   ├── monitoring.ts   #   metadata, configs, log dirs -> monitoring
+│   │   │   └── errors.ts       #   KafkaError category -> the repository's error classes
+│   │   └── rabbitmq/           # RabbitMQ Strategy (JSON stream reads over its own AMQP 0-9-1 client; management HTTP API)
+│   │       ├── index.ts        #   RabbitMQProvider: lifecycle, seams and composition
+│   │       ├── management/     #   the closed GET route table, byte caps, depth check, typed decoders
+│   │       ├── amqp/           #   the read client: codec, field tables, frame reader, connection, read loop, dial
+│   │       ├── request.ts, read.ts, results.ts, render.ts # the read request, the read path, rows and rendering
+│   │       └── errors.ts       #   every sentence and the one error boundary
 │   ├── graph/                  # Graph Providers, on the graph layer above
 │   │   └── neo4j/              # Neo4j Strategy (read-only Cypher over Bolt)
 │   │       ├── index.ts        #   Neo4jProvider: declarations, version read and monitoring delegation
@@ -186,6 +192,7 @@ BaseDatabaseProvider (abstract)
 ├── PrometheusProvider ─────────────────────┤ Time series (PromQL over HTTP)
 ├── InfluxDBProvider ───────────────────────┤ Time series (InfluxQL over HTTP, read-only)
 ├── KafkaProvider ──────────────────────────┤ Stream (JSON read requests over the Kafka protocol)
+├── RabbitMQProvider ───────────────────────┤ Stream (JSON stream read requests over AMQP 0-9-1, read-only)
 ├── EtcdProvider ───────────────────────────┤ Key-Value Store (etcdctl commands over gRPC)
 ├── OxiaProvider ───────────────────────────┤ Key-Value Store (oxia client read commands over gRPC)
 ├── GraphBaseProvider (abstract)
@@ -285,6 +292,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | InfluxDB (InfluxQL) | `influxdb` | Time series (InfluxQL over HTTP, read-only) | [providers/influxdb.md](./providers/influxdb.md) |
 | InfluxDB 3 (SQL) | `influxdb3` | Time series (SQL, Apache DataFusion, read-only) | [providers/influxdb3.md](./providers/influxdb3.md) |
 | Apache Kafka | `kafka` | Stream (JSON read requests over the Kafka protocol, read-only) | [providers/kafka.md](./providers/kafka.md) |
+| RabbitMQ | `rabbitmq` | Stream (JSON stream read requests over AMQP 0-9-1, read-only) | [providers/rabbitmq.md](./providers/rabbitmq.md) |
 | etcd | `etcd` | Key-Value (etcdctl commands over gRPC) | [providers/etcd.md](./providers/etcd.md) |
 | Neo4j | `neo4j` | Graph (Cypher over Bolt, read-only) | [providers/neo4j.md](./providers/neo4j.md) |
 | Milvus | `milvus` | Vector (Milvus REST v2 requests over gRPC) | [providers/milvus.md](./providers/milvus.md) |
@@ -418,6 +426,7 @@ examples live in their prime docs:
 - **Prometheus** (a PromQL expression): [providers/prometheus.md](./providers/prometheus.md).
 - **InfluxDB (InfluxQL)** (one read-only InfluxQL statement): [providers/influxdb.md](./providers/influxdb.md).
 - **Apache Kafka** (a JSON read request): [providers/kafka.md](./providers/kafka.md).
+- **RabbitMQ** (a JSON stream read request): [providers/rabbitmq.md](./providers/rabbitmq.md).
 - **etcd** (one etcdctl command): [providers/etcd.md](./providers/etcd.md).
 - **Neo4j** (one read-only Cypher statement): [providers/neo4j.md](./providers/neo4j.md).
 - **Milvus** (one Milvus REST v2 request): [providers/milvus.md](./providers/milvus.md).
@@ -504,7 +513,7 @@ maintenance operations, and known limitations — is documented per provider und
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
 Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid,
 Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL),
-Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, or LibreDB.
+Apache Kafka, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, or LibreDB.
 
 Not every provider has every feature, and the docs record the absences rather than glossing over
 them. Druid is the sharpest case: its SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, no

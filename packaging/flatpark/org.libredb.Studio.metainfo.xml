@@ -70,6 +70,7 @@
       <li>S3-compatible object storage (read-only)</li>
       <li>Kubernetes (read-only)</li>
       <li>MQTT (read-only)</li>
+      <li>RabbitMQ (read-only)</li>
     </ul>
     <p>What you get:</p>
     <ul>

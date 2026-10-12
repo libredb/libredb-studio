@@ -33,7 +33,8 @@ Three decisions. The first is the consequential one, which is why it is first.
    `/api/v3/query_sql` ([influxdb.md](./providers/influxdb.md) · [influxdb3.md](./providers/influxdb3.md)),
    Databend over its own HTTP query API, `POST /v1/query` ([databend.md](./providers/databend.md)),
    S3-compatible object storage over the S3 REST API, signed by Studio's own SigV4 code ([s3.md](./providers/s3.md)),
-   and Kubernetes over the API server's REST API ([kubernetes.md](./providers/kubernetes.md)).
+   Kubernetes over the API server's REST API ([kubernetes.md](./providers/kubernetes.md)),
+   and RabbitMQ over its management HTTP API, with stream reads through the provider's own AMQP 0-9-1 client ([rabbitmq.md](./providers/rabbitmq.md)).
    If it does need one, it will be something like `pg`, `mysql2`, `mongodb`, `ioredis`, `oracledb`,
    `mssql` or `db2-node`.
 

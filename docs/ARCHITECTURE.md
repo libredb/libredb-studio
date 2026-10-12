@@ -73,6 +73,7 @@ graph TD
         TimeSeries --> Prometheus[(Prometheus)]
         TimeSeries --> InfluxDB[(InfluxDB / InfluxDB 3)]
         Stream --> Kafka[(Apache Kafka)]
+        Stream --> RabbitMQ[(RabbitMQ)]
         Graph --> Neo4j[(Neo4j)]
         Vector --> Milvus[(Milvus)]
         Vector --> Qdrant[(Qdrant)]
@@ -144,6 +145,7 @@ classDiagram
     BaseDatabaseProvider <|-- QdrantProvider
     BaseDatabaseProvider <|-- S3Provider
     BaseDatabaseProvider <|-- KubernetesProvider
+    BaseDatabaseProvider <|-- RabbitMQProvider
     BaseDatabaseProvider <|-- LibreDBProvider
 
     SQLBaseProvider <|-- PostgresProvider

@@ -96,9 +96,10 @@ keywords:
   # One keyword, like kubernetes above: `mqtt` is the type-id and the protocol an evaluator looking
   # for a broker browser types; no product name to catch, because every broker speaks the same standard.
   - mqtt
-  # One keyword, like mqtt above: `rabbitmq` is the type-id and the product name an evaluator looking for a
-  # RabbitMQ browser types.
+  # Two keywords, like the prometheus pair above: `rabbitmq` is the type-id and the product, and
+  # `amqp` the protocol an evaluator looking for a broker browser types.
   - rabbitmq
+  - amqp
   - web-ide
 maintainers:
   - name: cevheri

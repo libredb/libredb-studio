@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Apache Cassandra, Prometheus, InfluxDB, Apache Kafka, MQTT, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes** from your browser, with AI query assistance, RBAC and OIDC SSO.
+Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Databend, Apache Cassandra, Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes** from your browser, with AI query assistance, RBAC and OIDC SSO.
 
 ---
 
@@ -103,7 +103,7 @@ Every one of those tags is published on three bases, and the suffix is appended 
 `-alpine` is the same product as the default image. `-alpine-slim` is the only variant that trades features for size: opening a DuckDB connection on it answers with a message naming the tags that do ship that driver. Oracle Thick mode needs Oracle Instant Client, which has no musl build, so it stays on the default tag. None of the three carries the application source.
 
 - **Architectures:** `linux/amd64` and `linux/arm64` as a multi-arch manifest for `latest`, `X.Y.Z`, `main` and their `sha-` tags. Preview builds from `feat/**` / `fix/**` branches (`dev` and their `sha-` tags) are `linux/amd64` only: CI has no native arm64 runner for this job.
-- **Primary registry:** `ghcr.io/libredb/libredb-studio` (GitHub Container Registry), where CI publishes with build provenance. This Docker Hub repository is a mirror of the identical multi-arch image; the `libredb` namespace is in the [Docker-Sponsored Open Source](https://www.docker.com/community/open-source/) programme, so `docker pull libredb/libredb-studio` is rate-limit-free and needs no account.
+- **Primary registry:** `ghcr.io/libredb/libredb-studio`, where CI publishes with build provenance. This Docker Hub repository is a mirror of the identical multi-arch image; the `libredb` namespace is in the [Docker-Sponsored Open Source](https://www.docker.com/community/open-source/) programme, so `docker pull libredb/libredb-studio` is rate-limit-free and needs no account.
 
 ---
 
@@ -145,10 +145,11 @@ The thirty-third row is the embedded LibreDB store: it ships inside the image, n
 | **S3-compatible object storage** | none, HTTP | Read-only AWS CLI commands, bucket and folder browser, object preview |
 | **Kubernetes** | none, HTTP | Read-only kubectl subset |
 | **MQTT** | `mqtt-packet` | Read-only topic tree browser |
+| **RabbitMQ** | none | Read-only stream reader |
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
 **Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing when used.
-Prometheus, InfluxDB, Apache Kafka, MQTT, Oxia, S3-compatible object storage and Kubernetes are read-only too: Studio calls only read APIs.
+Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, Oxia, S3-compatible object storage and Kubernetes are read-only too: Studio calls only read APIs.
 
 ### Engines with no provider of their own
 
@@ -170,7 +171,7 @@ Twenty-seven further engines speak the wire protocol of one of the thirty-two dr
 | Garnet | `redis` | Full — every Redis surface answers, and the overview names the engine ahead of the compat level, as `Garnet 2.1.5 (Redis 7.4.3)`. Three readings are absences wearing a value: every size shows 0 B, the cache hit ratio shows 100% and max connections reads 0, because Garnet publishes neither `used_memory` nor keyspace counters |
 | FerretDB | `mongodb` | Full — sign in with the backend PostgreSQL credentials |
 | StarRocks | `mysql` | Partial — the editor, object browser, metrics, slow queries and Explain work; the health and session panels do not, because the engine has no `information_schema.PROCESSLIST`. The version reads MySQL 5.1, and row counts, sizes and indexes are empty |
-| Apache Doris | `mysql` | Full — the engine StarRocks was forked from, and the more trustworthy of the two: every surface answers, row counts and sizes are correct, cancellation genuinely cancels, and Explain shows the engine's own plan. A freshly loaded table reads 0 for about a minute until its background statistics land, no index is ever reported, and a foreign key is accepted but invisible and unenforced |
+| Apache Doris | `mysql` | Full — the more trustworthy of the two: every surface answers, row counts and sizes are correct, cancellation genuinely cancels, and Explain shows the engine's own plan. A freshly loaded table reads 0 for about a minute until its background statistics land, no index is ever reported, and a foreign key is accepted but invisible and unenforced |
 | CockroachDB | `postgres` | Partial — editor, metrics, slow queries and sessions work; the object browser and size panels are blank |
 | Apache Cloudberry (incubating) | `postgres` | Partial. Row counts and sizes are correct after `ANALYZE`, but the monitoring dashboard and the table and index statistics all fail on one MPP planner restriction, and a foreign key is read back as though enforced when it is not |
 | OceanBase | `mysql` | Partial - health fails outright because the tenant has no `performance_schema` database at all, every size reads 0 B, and row counts are correct only once `ANALYZE TABLE` has run |

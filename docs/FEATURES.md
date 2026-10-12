@@ -106,6 +106,8 @@
         TLS with a custom CA and client certificates, and SASL PLAIN, SCRAM-SHA-256 and SCRAM-SHA-512 over TLS only.
         Read-only by construction: the provider never produces, commits an offset, joins a consumer group or creates a topic.
         See [`providers/kafka.md`](providers/kafka.md).
+    *   **RabbitMQ:** Read-only, with **no driver dependency**: the management HTTP API lists virtual hosts with their streams, queues and exchanges, their details, bindings and policies, and a JSON read request in the editor (`queryDialect: "rabbitmq"`) reads a stream's messages over Studio's own AMQP 0-9-1 client from its first or last chunk, an offset or a time.
+        The read client encodes no publish, take or declare, and a read is sent only to an object the broker reports as a stream, so no message is ever taken from a queue ([providers/rabbitmq.md](./providers/rabbitmq.md)).
 *   **Graph Databases:**
     *   **Neo4j:** Read-only Cypher over Bolt through `neo4j-driver-lite`, tested on Neo4j 5.26 LTS, on a shared graph layer a second Cypher engine can join.
         Node labels and relationship types with their properties as columns, indexes and constraints are browsable, and a click on a label or a relationship type writes a bounded sample read.
@@ -160,7 +162,7 @@ Two components are described below and a claim true of one can be false of the o
 *   **Contextual Actions (schema tab):** Quick access menus for each table including "Select Top 50", "Generate Query", "Generate Count Query", and "Copy Name". Action labels adapt per provider (e.g. "Scan Keys" for Redis, "Find Documents" for MongoDB).
 *   **Generate Count Query (both explorers):** Opens an editable count statement in a new tab without running it, so a filter can be added before Run.
     SQL engines get a qualified, dialect-quoted `SELECT COUNT(*)` (`COUNT_BIG(*)` on SQL Server), and MongoDB gets its `count` document.
-    Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes have no count grammar here, and a derived key-prefix grouping has nothing to count, so they are not offered it.
+    Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Apache Kafka, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage and Kubernetes have no count grammar here, and a derived key-prefix grouping has nothing to count, so they are not offered it.
 *   **DBA Quick Tools:** (Admin Only) Instant access to "Analyze Table" and "Vacuum Table" directly from the table context menu, on the providers whose rows are real objects. A key-value provider such as Redis, whose rows are derived key-prefix groupings, offers neither -- there is no table for the maintenance page to act on.
 *   **Visual Clarity:** Modern glassmorphic design with Framer Motion animations for smooth transitions.
 *   **Database Stats:** Integrated table counts and connection health monitoring directly in the sidebar.

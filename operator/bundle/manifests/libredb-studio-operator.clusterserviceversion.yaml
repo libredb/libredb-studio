@@ -22,7 +22,7 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.18.3
-    createdAt: "2026-10-12T09:11:51Z"
+    createdAt: "2026-10-12T10:48:40Z"
     description: Open-source web-based SQL IDE for thirty-two engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
       ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Apache

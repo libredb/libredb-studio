@@ -38,7 +38,7 @@ description: |
   Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
   Elasticsearch, OpenSearch, Trino, Databend, Apache Cassandra, Prometheus,
   InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage,
-  Kubernetes and MQTT with AI query assistance.
+  Kubernetes, MQTT and RabbitMQ with AI query assistance.
 
   Installing the snap starts a background service that serves the app on
   port 3000 (http://localhost:3000). State (SQLite storage, generated
