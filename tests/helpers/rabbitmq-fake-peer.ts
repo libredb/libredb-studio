@@ -5,6 +5,7 @@
  * test can build what a real broker sends and what a hostile one might: tables with any tag, frames of any size, and
  * frames out of sequence. Nothing under src/ imports this file.
  */
+import { type AddressInfo, createServer } from "node:net";
 import type { BasicProperties, FieldEntry, FieldValue } from "@/lib/db/providers/stream/rabbitmq/amqp/field-table";
 
 const utf8 = new TextEncoder();
@@ -280,4 +281,24 @@ export function message(options: {
   ];
   for (let at = 0; at < body.length; at += step) parts.push(serverFrames.body(body.subarray(at, at + step)));
   return bytesOf(...parts);
+}
+
+export const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** A port nothing listens on: bound once, then closed. */
+export async function closedPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
+
+/** Waits until `check` holds, polling every 5 ms, or fails naming `what` after `ms`. */
+export async function until(check: () => boolean, what: string, ms = 3000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await sleep(5);
+  }
 }
