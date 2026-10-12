@@ -16,6 +16,8 @@ import {
   isFileBased,
   KUBERNETES_FIELD_HINTS,
   KUBERNETES_FIELD_RULES,
+  RABBITMQ_FIELD_HINTS,
+  RABBITMQ_FIELD_RULES,
   offersSshTunnel,
   offersSslPanel,
   readOnlyHint,
@@ -26,6 +28,8 @@ import {
   type DatabaseUIConfig,
 } from "@/lib/db-ui-config";
 import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@/lib/db-showcase";
+import { readAmqpPort, readPathPrefix } from "@/lib/db/providers/stream/rabbitmq/connection-options";
+import { AMQP_PORT_SHAPE } from "@/lib/db/providers/stream/rabbitmq/errors";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import {
   buildDatabendConnectionOptions,
@@ -1041,6 +1045,88 @@ describe("declared field rules (Databend design 6.3)", () => {
     expect(DATABEND_FIELD_RULES.warehouse?.format?.sentence).toStartWith("Warehouse ");
   });
 
+  test("RabbitMQ's form rules accept exactly what the provider's rules accept, which the dialog cannot import", () => {
+    const config = getDBConfig("rabbitmq");
+    expect(config.fieldRules).toBe(RABBITMQ_FIELD_RULES);
+    expect(config.fieldHints).toBe(RABBITMQ_FIELD_HINTS);
+    expect(RABBITMQ_FIELD_RULES.amqpPort?.format?.sentence).toBe(AMQP_PORT_SHAPE);
+    expect(RABBITMQ_FIELD_RULES.apiPath?.format?.sentence).toStartWith("Path prefix ");
+    const accepts = (read: (value: string) => unknown, value: string): boolean => {
+      try {
+        read(value);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const ports = ["1", "5672", "5671", "9999", "10000", "59999", "64999", "65499", "65529", "65535"];
+    const notPorts = ["0", "00", "05672", "65536", "65540", "70000", "123456", "-1", "+1", "1e3", " 1", "56 72", "x"];
+    for (const value of [...ports, ...notPorts]) {
+      expect({ value, dialog: RABBITMQ_FIELD_RULES.amqpPort?.format?.pattern.test(value) }).toEqual({
+        value,
+        dialog: accepts(readAmqpPort, value),
+      });
+    }
+    const prefixes = [
+      "/",
+      "/rabbitmq",
+      "/rabbitmq/",
+      "/a/b-c",
+      "/apis",
+      "/v1/api-x",
+      "/.a",
+      "/a..",
+      "/~u:@!$&'()*+,;=",
+      "/A_b.c",
+    ];
+    const notPrefixes = [
+      "rabbitmq",
+      "//",
+      "/a//b",
+      "/rabbitmq//",
+      "/.",
+      "/..",
+      "/a/./b",
+      "/api",
+      "/x/api",
+      "/api/",
+      "/a%2F",
+      "/a?b",
+      "/a#b",
+      "/a b",
+      "/é",
+    ];
+    for (const value of [...prefixes, ...notPrefixes]) {
+      expect({ value, dialog: RABBITMQ_FIELD_RULES.apiPath?.format?.pattern.test(value) }).toEqual({
+        value,
+        dialog: accepts(readPathPrefix, value),
+      });
+    }
+  });
+
+  test("RabbitMQ labels its port as the management port, offers no tunnel, and states its read-only mode", () => {
+    const config = getDBConfig("rabbitmq");
+    expect(config).toMatchObject({
+      label: "RabbitMQ",
+      defaultPort: "15672",
+      color: "text-hue-lime",
+      showSshTunnel: false,
+      showConnectionStringToggle: false,
+      hostAcceptsUri: ["http", "https"],
+    });
+    expect(config.connectionFields).toEqual(["host", "port", "user", "password", "amqpPort", "apiPath"]);
+    expect(connectionFieldLabel(config, "port", "Port")).toBe("Management port");
+    expect(connectionFieldLabel(config, "amqpPort", "x")).toBe("AMQP port");
+    expect(connectionFieldLabel(config, "apiPath", "x")).toBe("Path prefix");
+    expect(connectionFieldPlaceholder(config, "amqpPort", "5672")).toBe("Empty: browse only");
+    expect(connectionFieldHint(config, "amqpPort")).toBe(
+      "5672, or 5671 with TLS. Only for stream reads; leave empty to browse only. Test Connection checks the management API only; the AMQP port is checked on the first read.",
+    );
+    expect(connectionFieldHint(config, "port")).toBe("15671 with TLS; 443 when a TLS proxy serves the management API");
+    expect(connectionFieldHint(config, "host")).toContain("A path such as /rabbitmq goes in Path prefix.");
+    expect(readOnlyHint(config)).toContain("read-only whether or not this is ticked");
+  });
+
   test("Kubernetes' form rules are the provider's patterns and sentences, which the dialog cannot import", () => {
     const rules = getDBConfig("kubernetes").fieldRules;
     expect(rules).toBe(KUBERNETES_FIELD_RULES);
@@ -1119,11 +1205,11 @@ describe("declared field rules (Databend design 6.3)", () => {
     );
   });
 
-  test("only databend, s3 and kubernetes declare field rules, so no other engine's Test Connection or Save is checked", () => {
+  test("only databend, s3, kubernetes and rabbitmq declare field rules, so no other engine's Test Connection or Save is checked", () => {
     const declaring = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldRules !== undefined)
       .map(([type]) => type);
-    expect(declaring).toEqual(["databend", "s3", "kubernetes"]);
+    expect(declaring).toEqual(["databend", "s3", "kubernetes", "rabbitmq"]);
     for (const type of ALL_TYPES.filter((candidate) => !declaring.includes(candidate))) {
       expect(
         connectionFieldRefusal(

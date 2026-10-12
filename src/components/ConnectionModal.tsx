@@ -211,6 +211,8 @@ export function ConnectionModal({
     setNamespaces,
     tlsServerName,
     setTlsServerName,
+    amqpPort,
+    setAmqpPort,
     connectionString,
     setConnectionString,
     mongoConnectionMode,
@@ -963,6 +965,32 @@ export function ConnectionModal({
                     </div>
                   )}
 
+                  {/*
+                    RabbitMQ's AMQP port, the one port stream reads use, drawn where the engine takes the field. Its
+                    placeholder says what an empty box means, because a greyed port number would read as a default.
+                  */}
+                  {takesConnectionField(type, "amqpPort") && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Server strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="amqpPort" className="text-xs font-medium text-fg-muted">
+                          {connectionFieldLabel(uiConfig, "amqpPort", "AMQP port")}
+                        </Label>
+                      </div>
+                      <Input
+                        id="amqpPort"
+                        value={amqpPort}
+                        onChange={(e) => setAmqpPort(e.target.value)}
+                        placeholder={connectionFieldPlaceholder(uiConfig, "amqpPort", "")}
+                        inputMode="numeric"
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-describedby={describedByHint(uiConfig, "amqpPort")}
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
+                      />
+                      <DeclaredFieldHint config={uiConfig} field="amqpPort" />
+                    </div>
+                  )}
                   {takesConnectionField(type, "apiPath") && (
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 mb-1">

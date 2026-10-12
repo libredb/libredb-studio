@@ -106,7 +106,7 @@ export interface DatabaseUIConfig {
   fieldHints?: Partial<Record<ConnectionField, string>>;
   /**
    * The connection dialog's placeholder for a field, where this engine's example differs from the dialog's own.
-   * Read through `connectionFieldPlaceholder`; the `database` and `region` boxes read it.
+   * Read through `connectionFieldPlaceholder`; the `database`, `location`, `region` and `amqpPort` boxes read it.
    */
   fieldPlaceholders?: Partial<Record<ConnectionField, string>>;
   /**
@@ -298,6 +298,39 @@ export const KUBERNETES_FIELD_HINTS: Readonly<Partial<Record<ConnectionField, st
   apiPath: "Optional: a path every request goes under, such as /k8s/clusters/c-m-abc12 for a cluster behind Rancher.",
   tlsServerName:
     "Optional: the name the API server's certificate is checked against, when it differs from Host (kubeconfig tls-server-name).",
+});
+
+/**
+ * RabbitMQ's form checks, in the provider's own sentences. The provider module is server code the dialog cannot
+ * import, so each pattern is a copy of `readAmqpPort` and `readPathPrefix` in
+ * src/lib/db/providers/stream/rabbitmq/connection-options.ts, and tests/unit/lib/db-ui-config.test.ts holds each copy to
+ * the provider's rule over the same values. The provider names the exact Path prefix shape it refuses; the dialog's
+ * one pattern names all of them at once.
+ */
+export const RABBITMQ_FIELD_RULES: Readonly<Partial<Record<ConnectionField, ConnectionFieldRule>>> = Object.freeze({
+  amqpPort: {
+    format: {
+      pattern: /^(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$/,
+      sentence: "AMQP port must be a whole number from 1 to 65535, such as 5672. Nothing was sent.",
+    },
+  },
+  apiPath: {
+    format: {
+      pattern: /^(?:\/|(?:\/(?!api(?:\/|$))(?!\.{1,2}(?:\/|$))[A-Za-z0-9._~!$&'()*+,;=:@-]+)+\/?)$/,
+      sentence:
+        "Path prefix starts with / and takes a plain path such as /rabbitmq: no empty, . or .. segment, no %, ? or #, and no segment named api. Nothing was sent.",
+    },
+  },
+});
+
+/** The sentences the connection dialog draws under RabbitMQ's fields, exported so the docs can be held to them. */
+export const RABBITMQ_FIELD_HINTS: Readonly<Partial<Record<ConnectionField, string>>> = Object.freeze({
+  host: "A host name, or a pasted https:// management address. A path such as /rabbitmq goes in Path prefix. An amqp:// or amqps:// URL is not taken here: enter its host, its port as AMQP port, and its user and password in their own fields.",
+  port: "15671 with TLS; 443 when a TLS proxy serves the management API",
+  amqpPort:
+    "5672, or 5671 with TLS. Only for stream reads; leave empty to browse only. Test Connection checks the management API only; the AMQP port is checked on the first read.",
+  apiPath:
+    "The path the management API is served under, for management.path_prefix or a reverse proxy location, such as /rabbitmq. Empty for a direct connection.",
 });
 
 export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
@@ -951,8 +984,12 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // One tunnel carries one port, and the management API and AMQP use two, so the provider refuses a tunnel.
     showSshTunnel: false,
     hostAcceptsUri: ["http", "https"],
-    connectionFields: ["host", "port", "user", "password", "apiPath"],
-    fieldLabels: { port: "Management port", apiPath: "Path prefix" },
+    connectionFields: ["host", "port", "user", "password", "amqpPort", "apiPath"],
+    fieldLabels: { port: "Management port", amqpPort: "AMQP port", apiPath: "Path prefix" },
+    // A greyed port number would read as a default the field does not have.
+    fieldPlaceholders: { amqpPort: "Empty: browse only" },
+    fieldHints: RABBITMQ_FIELD_HINTS,
+    fieldRules: RABBITMQ_FIELD_RULES,
     // The dialog's own sentence says the mode can be turned off, which is false here.
     readOnlyHint:
       "RabbitMQ connections are read-only whether or not this is ticked: Studio sends the broker GET requests and stream reads only, never a publish or a take.",
