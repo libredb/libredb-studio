@@ -10,6 +10,7 @@ import {
   assertContainerPathShape,
   assertObjectPathShape,
   callerBoundTruncationReason,
+  type ContainerPathShapeEngine,
   findKind,
 } from "@/lib/db/object-kinds";
 import type {
@@ -104,7 +105,11 @@ export function createStreamListingMemo(): StreamListingMemo {
   };
 }
 
-const SHAPE_ENGINE = { code: "rabbitmq", label: "A RabbitMQ", shapeNames: "label" } as const;
+const RABBITMQ_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "rabbitmq",
+  label: "A RabbitMQ",
+  shapeNames: "label",
+};
 const PATH_ENGINE = { code: "rabbitmq", label: "A RabbitMQ", attachedSegment: "required" } as const;
 const QUEUE_TYPES: ReadonlySet<string> = new Set(["classic", "quorum"]);
 const STREAM = "stream";
@@ -121,7 +126,7 @@ function ownRefusal(check: () => void): void {
 }
 
 function vhostOf(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  ownRefusal(() => assertContainerPathShape(capabilities, container, SHAPE_ENGINE));
+  ownRefusal(() => assertContainerPathShape(capabilities, container, RABBITMQ_CONTAINER_PATH_ENGINE));
   return container[0];
 }
 
