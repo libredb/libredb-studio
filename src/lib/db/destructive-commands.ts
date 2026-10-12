@@ -5,6 +5,8 @@ import {
   etcdTypedConfirmation,
   readEtcdOperations,
 } from "@/lib/db/providers/keyvalue/etcd/guard";
+import { LIMITS as FIRESTORE_LIMITS } from "@/lib/db/providers/document/firestore/constants";
+import { firestoreRefusal } from "@/lib/db/providers/document/firestore/console/guard";
 import { OXIA_MAX_TEXT_BYTES } from "@/lib/db/providers/keyvalue/oxia/constants";
 import { OXIA_DESTRUCTIVE_OPERATIONS, oxiaRefusal, readOxiaOperations } from "@/lib/db/providers/keyvalue/oxia/guard";
 import { readRedisCommandText, redisRefusal } from "@/lib/db/providers/keyvalue/redis-command-text";
@@ -515,6 +517,19 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
   // exists because the record is exhaustive over every engine whose text is not SQL, and its operations list is
   // empty by construction: this provider has no code that can write to a broker.
   mqtt: { operations: new Set<string>(), read: () => [], decidesAlone: true, safetyAnalysis: false },
+  // Firestore (spec 3.2): the S3 and Kubernetes model. The console's own guard reads the text with the parser the
+  // provider runs, so what is refused and what runs are one parse. A statement only reads, so nothing asks; what the
+  // guard refuses (a write method, a second statement, the modular API, a `${` in a template string) the editor refuses
+  // before anything is sent, past the console's 64 KiB bound. A statement names collections, ids and values, so none is
+  // posted for an AI analysis.
+  firestore: {
+    operations: new Set<string>(),
+    read: () => [],
+    decidesAlone: true,
+    safetyAnalysis: false,
+    refuse: (text) => firestoreRefusal(text) ?? undefined,
+    maxTextBytes: FIRESTORE_LIMITS.maxConsoleBytes,
+  },
   kubernetes: {
     operations: KUBERNETES_DESTRUCTIVE_OPERATIONS,
     read: readKubernetesOperations,

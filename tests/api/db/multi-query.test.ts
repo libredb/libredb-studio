@@ -966,6 +966,21 @@ describe("POST /api/db/multi-query: a type that declares a console text bound", 
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
   });
 
+  test("the real firestore row declares a bound, so a Firestore text is refused instead of split (Firestore spec 3.2)", async () => {
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: {
+          connection: { id: "firestore-1", name: "Orders", type: "firestore", database: "acme-orders" },
+          sql: 'db.collection("a").get(); db.collection("b").get()',
+        },
+      }) as never,
+    );
+    expect(res.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(REFUSAL);
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
   test("influxdb3 declares no bound: its SQL is split under the DataFusion row and run as before", async () => {
     const res = await POST(
       createMockRequest("/api/db/multi-query", {

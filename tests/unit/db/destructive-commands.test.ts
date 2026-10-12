@@ -22,6 +22,8 @@ import { OXIA_MAX_TEXT_BYTES } from "@/lib/db/providers/keyvalue/oxia/constants"
 import { oxiaRefusal, OXIA_DESTRUCTIVE_OPERATIONS, readOxiaOperations } from "@/lib/db/providers/keyvalue/oxia/guard";
 import { KUBECTL_MAX_TEXT_BYTES } from "@/lib/db/providers/platform/kubernetes/console/commands";
 import { kubectlRefusal } from "@/lib/db/providers/platform/kubernetes/console/guard";
+import { firestoreRefusal } from "@/lib/db/providers/document/firestore/console/guard";
+import { LIMITS as FIRESTORE_LIMITS } from "@/lib/db/providers/document/firestore/constants";
 import { milvusRefusal } from "@/lib/db/providers/vector/milvus/guard";
 import { MILVUS_CONSOLE } from "@/lib/db/providers/vector/milvus/routes";
 import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
@@ -362,7 +364,7 @@ describe("isDestructiveNonSqlQuery", () => {
 describe("vocabularyDecidesAlone", () => {
   // The rows the gate reads without its SQL keyword test in front. MongoDB and Redis keep that
   // test as a backstop; a type with no row is read by the SQL half entirely.
-  test("is true for prometheus, kafka, etcd, neo4j, milvus, qdrant, influxdb, oxia, s3, kubernetes and mqtt and for no other type", () => {
+  test("is true for prometheus, kafka, etcd, neo4j, milvus, qdrant, influxdb, oxia, s3, kubernetes, mqtt and firestore and for no other type", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual([
       "prometheus",
       "kafka",
@@ -375,6 +377,7 @@ describe("vocabularyDecidesAlone", () => {
       "s3",
       "kubernetes",
       "mqtt",
+      "firestore",
     ]);
   });
 
@@ -384,9 +387,10 @@ describe("vocabularyDecidesAlone", () => {
 });
 
 describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
-  test("carries a row for exactly the thirteen types whose text is not SQL", () => {
+  test("carries a row for exactly the fourteen types whose text is not SQL", () => {
     expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual([
       "etcd",
+      "firestore",
       "influxdb",
       "kafka",
       "kubernetes",
@@ -504,7 +508,7 @@ describe("vocabularySendsToModel", () => {
 
   // What the dialog did for every engine before the field existed, but for etcd, whose row keeps its statements,
   // values included, on this deployment (#1089 E10).
-  test("keeps etcd's, Milvus's, Qdrant's, InfluxDB's, Oxia's, S3's, Kubernetes's and MQTT's statements from the AI analysis, and no other shipped type's", () => {
+  test("keeps etcd's, Milvus's, Qdrant's, InfluxDB's, Oxia's, S3's, Kubernetes's, MQTT's and Firestore's statements from the AI analysis, and no other shipped type's", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => !vocabularySendsToModel(type))).toEqual([
       "etcd",
       "milvus",
@@ -514,6 +518,7 @@ describe("vocabularySendsToModel", () => {
       "s3",
       "kubernetes",
       "mqtt",
+      "firestore",
     ]);
   });
 
@@ -606,8 +611,8 @@ describe("statementRefusal and the console text bound", () => {
     remove = () => {};
   });
 
-  test("only milvus's, qdrant's, influxdb's, oxia's, s3's and kubernetes's rows declare a refusal and a bound, and redis's a refusal alone", () => {
-    const declaring: readonly string[] = ["milvus", "qdrant", "influxdb", "oxia", "s3", "kubernetes"];
+  test("only milvus's, qdrant's, influxdb's, oxia's, s3's, kubernetes's and firestore's rows declare a refusal and a bound, and redis's a refusal alone", () => {
+    const declaring: readonly string[] = ["milvus", "qdrant", "influxdb", "oxia", "s3", "kubernetes", "firestore"];
     for (const [type, row] of Object.entries(NON_SQL_DESTRUCTIVE_VOCABULARY)) {
       if (declaring.includes(type)) continue;
       expect(row?.maxTextBytes).toBeUndefined();
@@ -904,6 +909,43 @@ describe("the kubernetes row", () => {
   test("refuses a text one byte past the bound before the parser reads it", () => {
     const over = `${READ} # ${"x".repeat(KUBECTL_MAX_TEXT_BYTES)}`.slice(0, KUBECTL_MAX_TEXT_BYTES + 1);
     expect(statementRefusal(over, "kubernetes")).toBe(
+      "The statement is 65537 bytes in UTF-8, over the 65536-byte limit for this connection type. Shorten it to run it.",
+    );
+  });
+});
+
+/**
+ * Firestore's row (Firestore spec 3.2): the S3 and Kubernetes model. The console's own guard reads the text with the
+ * parser the provider runs, so what is refused and what runs are one parse; a statement only reads, so nothing asks,
+ * and no statement is posted for an AI analysis because a statement names collections, ids and values.
+ */
+describe("the firestore row", () => {
+  const READ = 'db.collection("users").where("age", ">=", 18).limit(10)';
+  const WRITE = 'db.collection("users").doc("alice").set({ age: 31 })';
+
+  test("decides alone, names no destructive operation, asks about nothing and keeps statements from the AI analysis", () => {
+    const row = NON_SQL_DESTRUCTIVE_VOCABULARY.firestore;
+    expect(row?.decidesAlone).toBe(true);
+    expect(row?.operations.size).toBe(0);
+    expect(row?.read(READ)).toEqual([]);
+    expect(row?.read(WRITE)).toEqual([]);
+    expect(isDestructiveNonSqlQuery(WRITE, "firestore")).toBe(false);
+    expect(isDangerousQuery('db.collection("drop").where("delete", "==", "truncate")', "firestore")).toBe(false);
+    expect(vocabularySendsToModel("firestore")).toBe(false);
+  });
+
+  test("refuses with the console guard's own sentence and declares the 65536-byte bound", () => {
+    // The editor's bound is the lexer's own constant, so the two cannot drift; the literal pins spec 8.2's 64 KiB.
+    expect(consoleTextByteLimit("firestore")).toBe(FIRESTORE_LIMITS.maxConsoleBytes);
+    expect(consoleTextByteLimit("firestore")).toBe(65536);
+    expect(statementRefusal(WRITE, "firestore")).toBe(firestoreRefusal(WRITE) ?? undefined);
+    expect(statementRefusal(WRITE, "firestore")).toContain("Studio is read-only for Firestore in this version");
+    expect(statementRefusal(READ, "firestore")).toBeUndefined();
+  });
+
+  test("refuses a text one byte past the bound before the guard reads it", () => {
+    const over = `${READ} // ${"x".repeat(65536)}`.slice(0, 65537);
+    expect(statementRefusal(over, "firestore")).toBe(
       "The statement is 65537 bytes in UTF-8, over the 65536-byte limit for this connection type. Shorten it to run it.",
     );
   });
