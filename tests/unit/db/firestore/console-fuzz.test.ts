@@ -231,7 +231,13 @@ describe("the console is total", () => {
   test(
     "only positioned QueryErrors over the mutated corpus and random code units",
     () => {
-      for (const [input, explainButton] of generated()) check(input, explainButton, PIPELINE);
+      let checked = 0;
+      for (const [input, explainButton] of generated()) {
+        check(input, explainButton, PIPELINE);
+        checked++;
+      }
+      // check() throws on the first input that breaks the property, naming it; reaching here checked them all.
+      expect(checked).toBe(ITERATIONS);
     },
     BUDGET_MS,
   );
