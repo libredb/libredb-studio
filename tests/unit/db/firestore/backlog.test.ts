@@ -27,7 +27,6 @@ const ENTRIES = [
   "### D304. Firestore's Enterprise BSON types are shown but not typed for editing or filtering",
   "### D305. No CI job runs the Firestore emulator",
   "### D306. A BigQuery connection sends its access token to the BigQuery emulator host",
-  "### D307. Production's answer to an undecodable Firestore listing page token is unmeasured",
   "### U115. A billed engine has no read budget meter",
   "### U116. The grid shows an absent field and a stored null alike",
   "### U117. The Keys panel counts a key and its folder as two entries",

@@ -365,12 +365,15 @@ A cursor from a listing Google no longer honours is refused with:
 
 > This listing expired; list the level again
 
+Google answers a page token it no longer honours, or one it cannot decode, with 400 `INVALID_ARGUMENT` and "invalid page token" (measured 2026-10-12 against a real project).
+The emulator 1.22.0 answers a token it cannot decode with 500 `UNKNOWN` instead, and the panel shows that error as the emulator words it.
+
 The panel counts a key and its folder as two entries, so "Listed n" reads twice the number of documents.
 
 ### 6.4 The Source tab
 
 A document opens in three parts: "Data", its fields decoded as in section 5.6; "Document", the REST document verbatim; and "Subcollections", its subcollection ids.
-A document whose id contains `:` shows the first two parts and says why the third is not listed.
+A document whose id contains `:` shows the first two parts, and in place of the third a neutral statement, without the failure heading, of why its subcollections are not listed.
 
 ### 6.5 Generated statements
 
@@ -389,6 +392,7 @@ The provider opens no transaction, so it has none to end, and it does not implem
 The Explain button sends the statement with `explainOptions: { analyze: false }`: the plan only, billed as one read, and no query runs.
 A console `.explain({ analyze: true })` runs the query and returns its execution statistics, billed as the query.
 The panel draws one node per index used and the execution statistics as metrics, and shows every key it does not know rather than dropping it.
+On a real project the plan names each index by `properties` and `query_scope`, and `analyze` adds `resultsReturned`, `executionDuration`, `readOperations` and `debugStats` with its billing details (measured 2026-10-12).
 An ordinary run sends no background plan.
 Explain is offered for queries, vector queries and aggregations; a document get, `getAll`, `listCollections`, `listDocuments` and a statement that already calls `explain` each answer their own sentence.
 
@@ -504,6 +508,7 @@ Studio maps that error by its own code, as the table does, and never shows the d
 
 Unit tests under `tests/unit/db/firestore/` drive every module through its seams with fakes.
 `tests/integration/db/firestore-provider.test.ts` runs the real provider over captures of emulator 1.22.0 (`tests/fixtures/firestore/`, recorded by `tests/live/firestore-evidence.ts` from the plan `tests/live/firestore-evidence-plan.ts`) and over built answers for what the emulator cannot give: tokens, IAM, the database resource, index errors and Query Explain.
+On 2026-10-12 a real project's `(default)` database answered as those built answers expect, checked by hand: the database probe, a token grant from a pasted service-account key and from the server's own identity, listings, queries, aggregations, Query Explain with and without `analyze`, an index error and an undecodable page token.
 `e2e/firestore-connection.spec.ts` drives the dialog and `e2e/firestore-provider.spec.ts` browses a stub that replays the captures.
 `tests/live/firestore-live-check.ts` runs the same plan against a running emulator:
 

@@ -301,11 +301,13 @@ async function subcollectionPart(
   signal: AbortSignal,
   base: CallBase,
 ): Promise<ObjectSourcePart> {
+  // The document itself read fine: why its subcollections are not listed is a statement about it, not a failure.
   if (verbParentHasColon(segments))
     return {
       id: "subcollections",
       label: "Subcollections",
       unavailable: SENTENCES.colonSubcollections(segments.join("/")),
+      statement: true,
     };
   const listing = await listCollectionIdsSorted(client, segments, signal, base, "source");
   const part = rendered("subcollections", "Subcollections", listing.ids, limit);
