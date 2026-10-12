@@ -1,8 +1,9 @@
 /**
  * The console's totality (spec S11, 9). Over a corpus derived from the grammar's productions, mutated by token
- * insertions, deletions, swaps and truncations, and over random code units, the lexer, parser and compiler either
- * answer a statement or throw a QueryError positioned inside the text; and each bound fails with its own sentence
- * wherever the excess lands. The seed and the iteration count are fixed, so a failure replays.
+ * insertions, deletions, swaps and truncations, by control and rare code units placed inside its string literals and
+ * comments, and over random code units, the lexer, parser and compiler either answer a statement or throw a QueryError
+ * positioned inside the text; and each bound fails with its own sentence wherever the excess lands. The seed and the
+ * iteration count are fixed, so a failure replays, and a planted lexer class bug proves the property can fail.
  */
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
@@ -37,7 +38,7 @@ const CORPUS: readonly string[] = [
   'db.collection("c").where("m", "==", { a: [1, "x", true, false], "b c": `t` }) // c\n/* d */',
 ];
 
-/** Tokens a mutation inserts: grammar words, near-miss words, bad numbers, comment openers and stray characters. */
+/** Tokens a mutation inserts, with RARE: grammar and near-miss words, bad numbers, comment openers, stray characters. */
 const POOL: readonly string[] = [
   "db",
   ".",
@@ -97,15 +98,55 @@ const POOL: readonly string[] = [
   "\u2028",
 ];
 
+/** Control and rare code units that random strings rarely carry past their first character. */
+const RARE: readonly string[] = [
+  "\u0000",
+  "\u0007",
+  "\u001f",
+  "\u007f",
+  "\u0085",
+  "\u00a0",
+  "\ufeff",
+  "\u2028",
+  "\u2029",
+  "\u{1f600}",
+  "\udc00",
+];
+
+const INSERTED: readonly string[] = [...POOL, ...RARE];
+
 const CORPUS_TOKENS = CORPUS.map((text) =>
   lex(text)
     .filter((token) => token.kind !== "eof")
     .map((token) => token.text),
 );
 
+/** Each corpus statement with the offsets inside its string literals and comments, where a code unit can land. */
+const CORPUS_SLOTS = CORPUS.map((text) => {
+  const slots: number[] = [];
+  let previous = 0;
+  for (const token of lex(text)) {
+    for (const comment of text.slice(previous, token.start).matchAll(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g)) {
+      const open = previous + comment.index + 2;
+      const close = previous + comment.index + comment[0].length - (comment[0].startsWith("/*") ? 2 : 0);
+      for (let at = open; at <= close; at++) slots.push(at);
+    }
+    if (token.kind === "string") for (let at = token.start + 1; at < token.end; at++) slots.push(at);
+    previous = token.end;
+  }
+  return { text, slots };
+}).filter(({ slots }) => slots.length > 0);
+
 function mutate(random: () => number): string {
   const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)];
-  if (random() < 0.1) {
+  const unit = (): string => (random() < 0.5 ? pick(RARE) : String.fromCharCode(Math.floor(random() * 0x10000)));
+  const branch = random();
+  if (branch < 0.15) {
+    const { text, slots } = pick(CORPUS_SLOTS);
+    const at = pick(slots);
+    return `${text.slice(0, at)}${unit()}${text.slice(at)}`;
+  }
+  if (branch < 0.25) {
     return Array.from({ length: Math.floor(random() * 64) }, () =>
       String.fromCharCode(Math.floor(random() * 0x10000)),
     ).join("");
@@ -115,7 +156,7 @@ function mutate(random: () => number): string {
   for (let edit = 0; edit < edits; edit++) {
     const at = Math.floor(random() * (tokens.length + 1));
     const kind = random();
-    if (kind < 0.35) tokens.splice(at, 0, pick(POOL));
+    if (kind < 0.35) tokens.splice(at, 0, pick(INSERTED));
     else if (kind < 0.6) tokens.splice(at, 1);
     else if (kind < 0.85 && tokens.length > 1) {
       const other = Math.floor(random() * tokens.length);
@@ -128,10 +169,16 @@ function mutate(random: () => number): string {
   return random() < 0.2 ? joined.slice(0, Math.floor(random() * (joined.length + 1))) : joined;
 }
 
+/** The statement pipeline the property runs: lex and parse, then compile. */
+type Pipeline = (input: string, explainButton: boolean) => unknown;
+
+const PIPELINE: Pipeline = (input, explainButton) =>
+  compileStatement(parseStatement(input), input, { target: TARGET, explainButton });
+
 /** The property: a statement, or a QueryError whose position lies inside the text and whose message names it. */
-function check(input: string, explainButton: boolean): void {
+function check(input: string, explainButton: boolean, pipeline: Pipeline): void {
   try {
-    compileStatement(parseStatement(input), input, { target: TARGET, explainButton });
+    pipeline(input, explainButton);
   } catch (error) {
     if (!(error instanceof QueryError))
       throw new Error(`not a QueryError (${String(error)}) for ${JSON.stringify(input)}`, { cause: error });
@@ -146,6 +193,32 @@ function check(input: string, explainButton: boolean): void {
   }
 }
 
+/** The fixed inputs: ITERATIONS mutated statements from SEED, each with its explain-button flag. */
+function* generated(): Generator<readonly [string, boolean]> {
+  const random = seededRandom(SEED);
+  for (let iteration = 0; iteration < ITERATIONS; iteration++) yield [mutate(random), random() < 0.5];
+}
+
+/** How many of the inputs break the property under this pipeline. */
+function violations(inputs: Iterable<readonly [string, boolean]>, pipeline: Pipeline): number {
+  let count = 0;
+  for (const [input, explainButton] of inputs) {
+    try {
+      check(input, explainButton, pipeline);
+    } catch {
+      count++;
+    }
+  }
+  return count;
+}
+
+/** A planted lexer class bug: a TypeError for U+0007 inside a string literal, every other text lexed as written. */
+const PLANTED: Pipeline = (input, explainButton) => {
+  if (lex(input).some((token) => token.kind === "string" && token.text.includes("\u0007")))
+    throw new TypeError("planted: U+0007 inside a string literal");
+  return PIPELINE(input, explainButton);
+};
+
 describe("the console is total", () => {
   test("the corpus compiles as written", () => {
     for (const text of CORPUS) {
@@ -158,8 +231,16 @@ describe("the console is total", () => {
   test(
     "only positioned QueryErrors over the mutated corpus and random code units",
     () => {
-      const random = seededRandom(SEED);
-      for (let iteration = 0; iteration < ITERATIONS; iteration++) check(mutate(random), random() < 0.5);
+      for (const [input, explainButton] of generated()) check(input, explainButton, PIPELINE);
+    },
+    BUDGET_MS,
+  );
+
+  test(
+    "the property catches a planted lexer class bug inside a string literal",
+    () => {
+      expect(violations([['db.collection("c\u0007")', false]], PLANTED)).toBe(1);
+      expect(violations(generated(), PLANTED)).toBeGreaterThan(0);
     },
     BUDGET_MS,
   );
