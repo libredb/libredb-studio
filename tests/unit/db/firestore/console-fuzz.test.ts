@@ -2,7 +2,7 @@
  * The console's totality (spec S11, 9). Over a corpus derived from the grammar's productions, mutated by token
  * insertions, deletions, swaps and truncations, by control and rare code units placed inside its string literals and
  * comments, and over random code units, the lexer, parser and compiler either answer a statement or throw a QueryError
- * positioned inside the text; and each bound fails with its own sentence wherever the excess lands. The seed and the
+ * positioned inside the text; and each bound fails with its own sentence for any size of excess. The seed and the
  * iteration count are fixed, so a failure replays, and a planted lexer class bug proves the property can fail.
  */
 import { describe, expect, test } from "bun:test";
