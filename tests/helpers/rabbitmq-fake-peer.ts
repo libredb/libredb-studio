@@ -5,8 +5,10 @@
  * test can build what a real broker sends and what a hostile one might: tables with any tag, frames of any size, and
  * frames out of sequence. Nothing under src/ imports this file.
  */
-import { type AddressInfo, createServer } from "node:net";
+import { type AddressInfo, createServer, type Socket } from "node:net";
+import { createServer as createTlsServer } from "node:tls";
 import type { BasicProperties, FieldEntry, FieldValue } from "@/lib/db/providers/stream/rabbitmq/amqp/field-table";
+import type { RabbitMQClock } from "@/lib/db/providers/stream/rabbitmq/limits";
 
 const utf8 = new TextEncoder();
 
@@ -301,4 +303,238 @@ export async function until(check: () => boolean, what: string, ms = 3000): Prom
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await sleep(5);
   }
+}
+
+export type PeerStep =
+  | { readonly send: Uint8Array }
+  | { readonly expect: "protocol-header" | { readonly classId: number; readonly methodId: number } }
+  | { readonly waitMs: number }
+  | { readonly end: "close" | "destroy" | "half-close" }
+  /** `bytes` written `times` times, waiting for drain between writes, so a flood never sits in memory. */
+  | { readonly repeat: Uint8Array; readonly times: number }
+  /** One byte of `bytes` every `everyMs`. */
+  | { readonly trickle: Uint8Array; readonly everyMs: number };
+
+export interface ReceivedFrame {
+  /** The frame type, or 0 for the protocol header. */
+  readonly type: number;
+  readonly channel: number;
+  readonly classId?: number;
+  readonly methodId?: number;
+  readonly payload: Uint8Array;
+}
+
+export interface FakePeer {
+  readonly host: "127.0.0.1";
+  readonly port: number;
+  /** Connections accepted so far. */
+  readonly dials: number;
+  /** Every frame the client sent, across connections, in arrival order. */
+  readonly received: readonly ReceivedFrame[];
+  /** Accepted sockets not closed yet. */
+  openSockets(): number;
+  stop(): Promise<void>;
+}
+
+export interface FakePeerOptions {
+  readonly tls?: { readonly key: string; readonly cert: string };
+}
+
+/** Splits what a client sends into the protocol header and frames, as they complete. */
+function clientFrames(onFrame: (frame: ReceivedFrame) => void): (chunk: Uint8Array) => void {
+  let pending: Uint8Array = new Uint8Array(0);
+  let headerSeen = false;
+  return (chunk) => {
+    pending = bytesOf(pending, chunk);
+    for (;;) {
+      if (!headerSeen) {
+        if (pending.length < 8) return;
+        onFrame({ type: 0, channel: 0, payload: pending.slice(0, 8) });
+        pending = pending.slice(8);
+        headerSeen = true;
+        continue;
+      }
+      if (pending.length < 7) return;
+      const view = new DataView(pending.buffer, pending.byteOffset, pending.byteLength);
+      const size = view.getUint32(3);
+      if (pending.length < size + 8) return;
+      const payload = pending.slice(7, 7 + size);
+      const type = view.getUint8(0);
+      const ids = type === 1 && size >= 4 ? new DataView(payload.buffer, 0, 4) : null;
+      onFrame({
+        type,
+        channel: view.getUint16(1),
+        payload,
+        ...(ids ? { classId: ids.getUint16(0), methodId: ids.getUint16(2) } : {}),
+      });
+      pending = pending.slice(size + 8);
+    }
+  };
+}
+
+/**
+ * A broker on 127.0.0.1 that plays `script` on every connection, or hands the raw socket to `script` when it is a
+ * function. Every client frame is recorded in `received`.
+ */
+export async function startFakePeer(
+  script: readonly PeerStep[] | ((socket: Socket) => void),
+  options: FakePeerOptions = {},
+): Promise<FakePeer> {
+  const received: ReceivedFrame[] = [];
+  const sockets = new Set<Socket>();
+  let dials = 0;
+  let stopped = false;
+  const handle = (socket: Socket): void => {
+    dials += 1;
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.on("error", () => {});
+    const own: ReceivedFrame[] = [];
+    let wake: (() => void) | null = null;
+    const parse = clientFrames((frame) => {
+      own.push(frame);
+      received.push(frame);
+      wake?.();
+    });
+    socket.on("data", (chunk: Uint8Array) => parse(chunk));
+    if (typeof script === "function") {
+      script(socket);
+      return;
+    }
+    const closed = new Promise<void>((resolve) => socket.once("close", resolve));
+    void (async () => {
+      let cursor = 0;
+      const arrived = (step: Extract<PeerStep, { expect: unknown }>): boolean => {
+        for (; cursor < own.length; cursor++) {
+          const frame = own[cursor] as ReceivedFrame;
+          const match =
+            step.expect === "protocol-header"
+              ? frame.type === 0
+              : frame.classId === step.expect.classId && frame.methodId === step.expect.methodId;
+          if (match) {
+            cursor += 1;
+            return true;
+          }
+        }
+        return false;
+      };
+      for (const step of script) {
+        if (socket.destroyed || stopped) return;
+        if ("send" in step) socket.write(step.send);
+        else if ("expect" in step) {
+          while (!arrived(step)) {
+            if (socket.destroyed || stopped) return;
+            await Promise.race([
+              new Promise<void>((resolve) => {
+                wake = resolve;
+              }),
+              closed,
+            ]);
+            wake = null;
+          }
+        } else if ("waitMs" in step) await sleep(step.waitMs);
+        else if ("repeat" in step) {
+          for (let sent = 0; sent < step.times && !socket.destroyed; sent++) {
+            if (!socket.write(step.repeat)) {
+              await Promise.race([new Promise<void>((resolve) => socket.once("drain", resolve)), closed]);
+            }
+          }
+        } else if ("trickle" in step) {
+          for (const byte of step.trickle) {
+            if (socket.destroyed || stopped) return;
+            socket.write(Uint8Array.of(byte));
+            await sleep(step.everyMs);
+          }
+        } else if (step.end === "destroy") socket.destroy();
+        else socket.end();
+      }
+    })();
+  };
+  const server = options.tls
+    ? createTlsServer({ key: options.tls.key, cert: options.tls.cert }, handle)
+    : createServer(handle);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    host: "127.0.0.1",
+    port,
+    get dials() {
+      return dials;
+    },
+    received,
+    openSockets: () => sockets.size,
+    async stop() {
+      stopped = true;
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+/** The steps from the protocol header to consume-ok. */
+export function handshakeSteps(options: { readonly frameMax?: number; readonly heartbeat?: number } = {}): PeerStep[] {
+  return [
+    { expect: "protocol-header" },
+    { send: serverFrames.connectionStart() },
+    { expect: { classId: 10, methodId: 11 } },
+    { send: serverFrames.tune(options) },
+    { expect: { classId: 10, methodId: 31 } },
+    { expect: { classId: 10, methodId: 40 } },
+    { send: serverFrames.openOk() },
+    { expect: { classId: 20, methodId: 10 } },
+    { send: serverFrames.channelOpenOk() },
+    { expect: { classId: 60, methodId: 10 } },
+    { send: serverFrames.qosOk() },
+    { expect: { classId: 60, methodId: 20 } },
+    { send: serverFrames.consumeOk() },
+  ];
+}
+
+/** After the handshake, answers the client's connection.close with close-ok and ends, as a broker does. */
+export const closeSteps: readonly PeerStep[] = [
+  { expect: { classId: 10, methodId: 50 } },
+  { send: serverFrames.closeOk() },
+  { end: "close" },
+];
+
+/** A peer that replays recorded server bytes after the handshake. */
+export function startReplayPeer(serverBytes: Uint8Array, options: FakePeerOptions = {}): Promise<FakePeer> {
+  return startFakePeer([...handshakeSteps(), { send: serverBytes }, ...closeSteps], options);
+}
+
+export interface ManualClock extends RabbitMQClock {
+  /** Moves time forward by `ms`, running every timer due on the way, in order. */
+  advance(ms: number): void;
+  /** Timers armed and not yet run or cancelled. */
+  pending(): number;
+}
+
+export function createManualClock(start = 0): ManualClock {
+  let now = start;
+  let sequence = 0;
+  const timers = new Map<number, { at: number; callback: () => void }>();
+  return {
+    now: () => now,
+    setTimer(callback, ms) {
+      const id = sequence++;
+      timers.set(id, { at: now + ms, callback });
+      return () => {
+        timers.delete(id);
+      };
+    },
+    advance(ms) {
+      const until = now + ms;
+      for (;;) {
+        let next: [number, { at: number; callback: () => void }] | undefined;
+        for (const entry of timers)
+          if (entry[1].at <= until && (next === undefined || entry[1].at < next[1].at)) next = entry;
+        if (next === undefined) break;
+        timers.delete(next[0]);
+        now = next[1].at;
+        next[1].callback();
+      }
+      now = until;
+    },
+    pending: () => timers.size,
+  };
 }
