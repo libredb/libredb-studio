@@ -124,6 +124,8 @@ data-e2e-offline/
 data-e2e-passkey/
 # e2e/launch.spec.ts's store-mode server (playwright.config.ts) keeps the accounts its launches create here.
 data-e2e-launch/
+# e2e/firestore-provider.spec.ts's server (playwright.config.ts), whose Firestore connections go to the spec's stub.
+data-e2e-firestore/
 # Local Docker test volumes and any stray embedded-db files
 .docker-data*/
 # The agent runtime's durable ledger: with WORKFLOW_LOCAL_DATA_DIR unset it resolves

@@ -2,8 +2,9 @@ import { defineConfig, devices } from "@playwright/test";
 import { LAUNCH_E2E_ENV } from "./e2e/helpers/launch-token";
 
 // Ports of every Playwright configuration, so none collides with another: this file's main server
-// 3000 (E2E_PORT), offline server 3010 (E2E_OFFLINE_PORT), passkey server 3011 (E2E_PASSKEY_PORT) and
-// launch server 3012 (E2E_LAUNCH_PORT); playwright.base-path.config.ts's app 3020 and proxy 3021.
+// 3000 (E2E_PORT), offline server 3010 (E2E_OFFLINE_PORT), passkey server 3011 (E2E_PASSKEY_PORT),
+// launch server 3012 (E2E_LAUNCH_PORT) and Firestore server 3013 (E2E_FIRESTORE_PORT), whose stub listens on 3014
+// (E2E_FIRESTORE_STUB_PORT); playwright.base-path.config.ts's app 3020 and proxy 3021.
 // Override one with its variable when that port is occupied by another instance.
 const port = Number(process.env.E2E_PORT ?? 3000);
 
@@ -18,6 +19,11 @@ const passkeyPort = Number(process.env.E2E_PASSKEY_PORT ?? 3011);
 
 // launch.spec.ts gets a fourth server process: see the chromium-launch project for why.
 const launchPort = Number(process.env.E2E_LAUNCH_PORT ?? 3012);
+
+// firestore-provider.spec.ts gets a fifth server process, whose FIRESTORE_EMULATOR_HOST points at the spec's own stub on a
+// fixed loopback port: see the chromium-firestore project for why.
+const firestorePort = Number(process.env.E2E_FIRESTORE_PORT ?? 3013);
+const firestoreStubPort = Number(process.env.E2E_FIRESTORE_STUB_PORT ?? 3014);
 
 const testCredentials = {
   JWT_SECRET: "test-jwt-secret-for-e2e-tests-32ch",
@@ -57,10 +63,11 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
       // offline-editor.spec.ts, the kafka, etcd, neo4j, milvus and qdrant provider specs, the influxdb providers
-      // spec and the oxia, databend, s3 and kubernetes provider specs run under their own projects below, against
-      // the second server, passkey.spec.ts against the third and launch.spec.ts against the fourth.
+      // spec, the oxia, databend, s3 and kubernetes provider specs and the firestore dialog spec run under their own
+      // projects below, against the second server, passkey.spec.ts against the third, launch.spec.ts against the fourth
+      // and the firestore browse spec against the fifth.
       testIgnore:
-        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|influxdb-providers|oxia-provider|databend-provider|s3-provider|kubernetes-provider|passkey|launch)\.spec\.ts/,
+        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|influxdb-providers|oxia-provider|databend-provider|s3-provider|kubernetes-provider|firestore-connection|firestore-provider|passkey|launch)\.spec\.ts/,
     },
     {
       // Every other spec in this suite signs in as the same shared user@libredb.org account
@@ -154,6 +161,22 @@ export default defineConfig({
       name: "chromium-kubernetes",
       use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
       testMatch: /kubernetes-provider\.spec\.ts/,
+    },
+    {
+      // firestore-connection.spec.ts drives Test Connection for each refusal it asserts, so it takes the second server for
+      // the reason kafka-provider.spec.ts does. That server sets no FIRESTORE_EMULATOR_HOST, so the refusals are the ones
+      // a Google connection meets before any socket.
+      name: "chromium-firestore-dialog",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
+      testMatch: /firestore-connection\.spec\.ts/,
+    },
+    {
+      // firestore-provider.spec.ts browses a Firestore through a stub that replays the emulator captures of
+      // tests/fixtures/firestore/. FIRESTORE_EMULATOR_HOST is read from the server environment only and sends every
+      // Firestore connection on that server to it, so this spec has a server of its own and no other spec shares it.
+      name: "chromium-firestore",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${firestorePort}` },
+      testMatch: /firestore-provider\.spec\.ts/,
     },
     {
       // Passkeys need an account registry, so this server runs in store mode (STORAGE_PROVIDER=sqlite)
@@ -263,6 +286,24 @@ export default defineConfig({
         // provokes shares one client budget with every retry.
         RATE_LIMIT_LOGIN_MAX: "100",
         ...LAUNCH_E2E_ENV,
+        ...testCredentials,
+      },
+    },
+    {
+      // The same shared build. The stub of e2e/helpers/firestore-stub.ts listens on firestoreStubPort while the spec runs;
+      // the provider dials it only when a Firestore connection connects. Its own data dir, a raised query bucket for
+      // the reason the second server raises it, and both embedded samples off, since no spec here reads them.
+      command: "rm -rf data-e2e-firestore && until [ -f .next/BUILD_ID ]; do sleep 1; done; bun start",
+      url: `http://localhost:${firestorePort}`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+      env: {
+        PORT: String(firestorePort),
+        STORAGE_SQLITE_PATH: "./data-e2e-firestore/libredb-storage.db",
+        RATE_LIMIT_QUERY_MAX: "10000",
+        LIBREDB_EMBEDDED_SAMPLE: "false",
+        SQLITE_EMBEDDED_SAMPLE: "false",
+        FIRESTORE_EMULATOR_HOST: `127.0.0.1:${firestoreStubPort}`,
         ...testCredentials,
       },
     },
