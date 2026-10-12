@@ -48,7 +48,7 @@ import {
   readClusterEndpoint,
 } from "@/lib/db/providers/platform/kubernetes/connection-options";
 import { S3_ACCESS_KEY_ID_MAX_CHARS, S3_ACCESS_KEY_ID_MIN_CHARS } from "@/lib/db/providers/objectstore/s3/constants";
-import { DatabendIcon, InfluxDBIcon, S3Icon } from "@/components/icons/db-icons";
+import { DatabendIcon, FirestoreIcon, InfluxDBIcon, S3Icon } from "@/components/icons/db-icons";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { declareHostUri } from "../../helpers/synthetic-host-uri";
 import { providerDirectoryFiles } from "../../helpers/provider-directory-map";
@@ -93,6 +93,7 @@ const ALL_TYPES: DatabaseType[] = [
   "s3",
   "kubernetes",
   "mqtt",
+  "firestore",
   "rabbitmq",
 ];
 
@@ -306,7 +307,7 @@ describe("db-ui-config", () => {
       expect(offersSshTunnel("postgres")).toBe(true);
     });
 
-    test("only kafka's, bigquery's and rabbitmq's connections refuse an SSH tunnel, and only because their entries declare it", () => {
+    test("only kafka's, bigquery's, firestore's and rabbitmq's connections refuse an SSH tunnel, and only because their entries declare it", () => {
       // Derived from the declaration rather than typed out: a tunnel forwards one address, and a
       // Kafka client reaches every broker at the address the broker advertises (docs/providers/kafka.md).
       for (const type of ALL_TYPES) {
@@ -316,12 +317,12 @@ describe("db-ui-config", () => {
         });
       }
       const refusing = ALL_TYPES.filter((type) => !offersSshTunnel(type));
-      expect(refusing.sort()).toEqual(["bigquery", "kafka", "rabbitmq"]);
+      expect(refusing.sort()).toEqual(["bigquery", "firestore", "kafka", "rabbitmq"]);
       // A file-based engine still answers true: its panel is hidden by isFileBased instead.
       expect(offersSshTunnel("sqlite")).toBe(true);
     });
 
-    test("only bigquery's connections withhold the SSL panel, and only because its entry declares it", () => {
+    test("only bigquery's and firestore's connections withhold the SSL panel, and only because their entries declare it", () => {
       // BigQuery always speaks HTTPS to googleapis.com with the system trust store, so an SSL mode is read by nothing.
       for (const type of ALL_TYPES) {
         expect({ type, offered: offersSslPanel(type) }).toEqual({
@@ -329,7 +330,7 @@ describe("db-ui-config", () => {
           offered: getDBConfig(type).showSslPanel !== false,
         });
       }
-      expect(ALL_TYPES.filter((type) => !offersSslPanel(type))).toEqual(["bigquery"]);
+      expect(ALL_TYPES.filter((type) => !offersSslPanel(type))).toEqual(["bigquery", "firestore"]);
     });
 
     test("a field an engine draws as a select is a field it takes, and the SASL select is drawn exactly where the field is taken", () => {
@@ -961,7 +962,7 @@ describe("declared connection-field copy (#1085)", () => {
     }
   });
 
-  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, bigquery, s3, kubernetes, mqtt and rabbitmq declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only libsql, db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types, oxia, databend, bigquery, s3, kubernetes, mqtt, firestore and rabbitmq declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
@@ -982,6 +983,7 @@ describe("declared connection-field copy (#1085)", () => {
       "s3",
       "kubernetes",
       "mqtt",
+      "firestore",
       "rabbitmq",
     ]);
     // The control that the walk saw the whole table rather than nothing.
@@ -1109,7 +1111,7 @@ describe("declared field rules (Databend design 6.3)", () => {
     expect(config).toMatchObject({
       label: "RabbitMQ",
       defaultPort: "15672",
-      color: "text-hue-lime",
+      color: "text-hue-lime-alt",
       showSshTunnel: false,
       showConnectionStringToggle: false,
       hostAcceptsUri: ["http", "https"],
@@ -1487,7 +1489,9 @@ describe("db-showcase", () => {
         "libredb",
         // Last (rank 28): the newest name on this page, so no existing engine moves.
         "bigquery",
-        // Last (#1656), for BigQuery's reason.
+        // Rank 32: the newest name on this page when it joined, so no existing engine moved (the BigQuery precedent).
+        "firestore",
+        // Last (rank 33, #1656), for BigQuery's reason.
         "rabbitmq",
       ]);
     });
@@ -1557,5 +1561,50 @@ describe("Host box addresses and credential warnings", () => {
       restore();
     }
     expect(getDBConfig("etcd").credentialWarnings).toBeUndefined();
+  });
+});
+
+describe("the Firestore connection form (Firestore spec 4.1)", () => {
+  const config = getDBConfig("firestore");
+
+  test("asks for the project, the database and one credential, with no host, port, SSL panel, tunnel or URI mode", () => {
+    expect(config.label).toBe("Firestore");
+    expect(config.icon).toBe(FirestoreIcon);
+    expect(config.color).toBe("text-hue-lime");
+    expect(config.connectionFields).toEqual(["database", "schema", "password"]);
+    expect(config.defaultPort).toBe("");
+    expect(config.showConnectionStringToggle).toBe(false);
+    expect(offersSshTunnel("firestore")).toBe(false);
+    expect(offersSslPanel("firestore")).toBe(false);
+  });
+
+  test("labels the three fields by what they hold", () => {
+    expect(connectionFieldLabel(config, "database", "Database")).toBe("Project ID");
+    expect(connectionFieldLabel(config, "schema", "Schema")).toBe("Database ID");
+    expect(connectionFieldLabel(config, "password", "Password")).toBe("Service-account key, ADC JSON or access token");
+  });
+
+  test("the credential hint says, in this order: identity and rules, the grant, billing, the token's life, when to leave it empty", () => {
+    const hint = connectionFieldHint(config, "password") ?? "";
+    const positions = [
+      "IAM identity",
+      "Firebase Security Rules do not apply",
+      "roles/datastore.viewer",
+      "billed to the project",
+      "about an hour",
+      "emulator server",
+      "operator-seeded",
+    ].map((phrase) => hint.indexOf(phrase));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    expect(connectionFieldHint(config, "database")).toContain("6 to 30 lowercase letters");
+    expect(connectionFieldHint(config, "schema")).toContain("(default)");
+  });
+
+  test("declares a placeholder only for the box that draws one, and says the read-only mode is structural", () => {
+    expect(connectionFieldPlaceholder(config, "database", "")).toBe("my-project");
+    // The dialog draws its own `default` and `***` in these two boxes, so a declared value would be drawn nowhere.
+    expect(config.fieldPlaceholders).toEqual({ database: "my-project" });
+    expect(readOnlyHint(config)).toContain("read-only whether or not this is ticked");
   });
 });

@@ -104,8 +104,10 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   // contradict the app (issue #425, step 2).
   libredb: 30,
   bigquery: 31,
-  // Last (#1656): the newest name on this page, so no existing engine moves, as for BigQuery.
-  rabbitmq: 32,
+  // Rank 32: the newest name on this page when it joined, so no existing engine moved (the BigQuery precedent).
+  firestore: 32,
+  // Last (rank 33, #1656): the newest name on this page, so no existing engine moves, as for BigQuery and Firestore.
+  rabbitmq: 33,
 };
 
 /**

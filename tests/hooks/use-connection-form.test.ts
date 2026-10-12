@@ -74,6 +74,8 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   // send that credential without TLS. No namespaces, no API path, no TLS server name: those are Kubernetes'
   // fields, and this row was a copy of its neighbour until an audit read it.
   mqtt: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+  // The project, the database and one credential; no host, port, user or connection string (Firestore spec 4.1).
+  firestore: ["database", "schema", "password"],
   rabbitmq: ["host", "port", "user", "password", "amqpPort", "apiPath", "allowInsecureAuth"],
 };
 const mockFields = (type: string): string[] =>
@@ -122,8 +124,8 @@ mock.module("@/lib/db-ui-config", () => ({
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
   connectionFieldRefusal: mockFieldRefusal,
   // Mirrors the real table: `kafka` is the one entry that declares `showSshTunnel: false`.
-  offersSshTunnel: (type: string) => type !== "kafka" && type !== "bigquery",
-  offersSslPanel: (type: string) => type !== "bigquery",
+  offersSshTunnel: (type: string) => type !== "kafka" && type !== "bigquery" && type !== "firestore",
+  offersSslPanel: (type: string) => type !== "bigquery" && type !== "firestore",
 }));
 
 import { CONNECTION_FORM_DEFAULTS, offersReadOnlyToggle, useConnectionForm } from "@/hooks/use-connection-form";
@@ -1980,6 +1982,7 @@ describe("useConnectionForm", () => {
     s3: true,
     kubernetes: true,
     mqtt: true,
+    firestore: true,
     rabbitmq: true,
   };
 

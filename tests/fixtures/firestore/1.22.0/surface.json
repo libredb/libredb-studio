@@ -1,0 +1,178 @@
+{
+  "scenario": "surface",
+  "lanes": [
+    {
+      "lane": "emulator",
+      "origin": "http://127.0.0.1:28380",
+      "headerNames": [
+        "authorization"
+      ],
+      "authorization": "Bearer owner",
+      "refusesLinkLocal": true
+    }
+  ],
+  "exchanges": [
+    {
+      "lane": "emulator",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:listCollectionIds",
+        "body": "{\"pageSize\":1}",
+        "maxResponseBytes": 4194304
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"collectionIds\":[\"ids\"],\"nextPageToken\":\"CgNpZHMSCPTpbJliP1Qq\"}"
+      }
+    },
+    {
+      "lane": "emulator",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:listCollectionIds",
+        "body": "{\"pageSize\":1000}",
+        "maxResponseBytes": 4194304
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"collectionIds\":[\"ids\",\"orders\",\"orphans\",\"products\",\"users\",\"𐐀-col\",\"Ａ-col\"]}"
+      }
+    },
+    {
+      "lane": "emulator",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:listCollectionIds",
+        "body": "{\"pageSize\":1000}",
+        "maxResponseBytes": 4194304
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"collectionIds\":[\"ids\",\"orders\",\"orphans\",\"products\",\"users\",\"𐐀-col\",\"Ａ-col\"]}"
+      }
+    },
+    {
+      "lane": "emulator",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:runQuery",
+        "body": "{\"structuredQuery\":{\"from\":[{\"collectionId\":\"users\"}],\"orderBy\":[{\"field\":{\"fieldPath\":\"__name__\"},\"direction\":\"ASCENDING\"}],\"limit\":20}}",
+        "maxResponseBytes": 67108864
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "[{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/a:b\",\"fields\":{\"name\":{\"stringValue\":\"Colon\"}},\"createTime\":\"2026-10-12T03:48:49.628810Z\",\"updateTime\":\"2026-10-12T03:48:49.628810Z\"},\"readTime\":\"2026-10-12T03:48:49.647793Z\"},{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/alice\",\"fields\":{\"name\":{\"stringValue\":\"Alice\"},\"age\":{\"integerValue\":\"34\"},\"big\":{\"integerValue\":\"9007199254740993\"},\"score\":{\"doubleValue\":4.5},\"ratio\":{\"doubleValue\":\"NaN\"},\"active\":{\"booleanValue\":true},\"nickname\":{\"nullValue\":null},\"joined\":{\"timestampValue\":\"2026-01-02T03:04:05.123456Z\"},\"avatar\":{\"bytesValue\":\"AAEC/w==\"},\"manager\":{\"referenceValue\":\"projects/demo-libredb/databases/(default)/documents/users/bob\"},\"home\":{\"geoPointValue\":{\"latitude\":41.0082,\"longitude\":28.9784}},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"admin\"},{\"stringValue\":\"beta\"}]}},\"address\":{\"mapValue\":{\"fields\":{\"city\":{\"stringValue\":\"Istanbul\"},\"geo\":{\"mapValue\":{\"fields\":{\"zone\":{\"stringValue\":\"eu\"}}}}}}},\"emptyList\":{\"arrayValue\":{}},\"emptyMap\":{\"mapValue\":{}},\"embedding\":{\"mapValue\":{\"fields\":{\"__type__\":{\"stringValue\":\"__vector__\"},\"value\":{\"arrayValue\":{\"values\":[{\"doubleValue\":0.1},{\"doubleValue\":0.2},{\"doubleValue\":0.3}]}}}}},\"dotted.key\":{\"stringValue\":\"a field whose name holds a dot\"}},\"createTime\":\"2026-10-12T03:48:49.628810Z\",\"updateTime\":\"2026-10-12T03:48:49.628810Z\"},\"readTime\":\"2026-10-12T03:48:49.647793Z\"},{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/bob\",\"fields\":{\"name\":{\"stringValue\":\"Bob\"},\"age\":{\"integerValue\":\"41\"},\"score\":{\"doubleValue\":3.5},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"ops\"}]}}},\"createTime\":\"2026-10-12T03:48:49.628810Z\",\"updateTime\":\"2026-10-12T03:48:49.628810Z\"},\"readTime\":\"2026-10-12T03:48:49.647793Z\"},{\"document\":{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/carol\",\"fields\":{\"name\":{\"stringValue\":\"Carol\"},\"age\":{\"stringValue\":\"unknown\"}},\"createTime\":\"2026-10-12T03:48:49.628810Z\",\"updateTime\":\"2026-10-12T03:48:49.628810Z\"},\"readTime\":\"2026-10-12T03:48:49.647793Z\",\"done\":true}]"
+      }
+    },
+    {
+      "lane": "emulator",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:listCollectionIds",
+        "body": "{\"pageSize\":1000}",
+        "maxResponseBytes": 4194304
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"collectionIds\":[\"ids\",\"orders\",\"orphans\",\"products\",\"users\",\"𐐀-col\",\"Ａ-col\"]}"
+      }
+    },
+    {
+      "lane": "emulator",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:listCollectionIds",
+        "body": "{\"pageSize\":1000}",
+        "maxResponseBytes": 4194304
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"collectionIds\":[\"ids\",\"orders\",\"orphans\",\"products\",\"users\",\"𐐀-col\",\"Ａ-col\"]}"
+      }
+    },
+    {
+      "lane": "emulator",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/users/alice",
+        "maxResponseBytes": 4194304
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/alice\",\"fields\":{\"name\":{\"stringValue\":\"Alice\"},\"age\":{\"integerValue\":\"34\"},\"big\":{\"integerValue\":\"9007199254740993\"},\"score\":{\"doubleValue\":4.5},\"ratio\":{\"doubleValue\":\"NaN\"},\"active\":{\"booleanValue\":true},\"nickname\":{\"nullValue\":null},\"joined\":{\"timestampValue\":\"2026-01-02T03:04:05.123456Z\"},\"avatar\":{\"bytesValue\":\"AAEC/w==\"},\"manager\":{\"referenceValue\":\"projects/demo-libredb/databases/(default)/documents/users/bob\"},\"home\":{\"geoPointValue\":{\"latitude\":41.0082,\"longitude\":28.9784}},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"admin\"},{\"stringValue\":\"beta\"}]}},\"address\":{\"mapValue\":{\"fields\":{\"city\":{\"stringValue\":\"Istanbul\"},\"geo\":{\"mapValue\":{\"fields\":{\"zone\":{\"stringValue\":\"eu\"}}}}}}},\"emptyList\":{\"arrayValue\":{}},\"emptyMap\":{\"mapValue\":{}},\"embedding\":{\"mapValue\":{\"fields\":{\"__type__\":{\"stringValue\":\"__vector__\"},\"value\":{\"arrayValue\":{\"values\":[{\"doubleValue\":0.1},{\"doubleValue\":0.2},{\"doubleValue\":0.3}]}}}}},\"dotted.key\":{\"stringValue\":\"a field whose name holds a dot\"}},\"createTime\":\"2026-10-12T03:48:49.628810Z\",\"updateTime\":\"2026-10-12T03:48:49.628810Z\"}"
+      }
+    },
+    {
+      "lane": "emulator",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/users/alice:listCollectionIds",
+        "body": "{\"pageSize\":1000}",
+        "maxResponseBytes": 4194304
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"collectionIds\":[\"orders\"]}"
+      }
+    },
+    {
+      "lane": "emulator",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/users/alice",
+        "maxResponseBytes": 4194304
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"name\":\"projects/demo-libredb/databases/(default)/documents/users/alice\",\"fields\":{\"name\":{\"stringValue\":\"Alice\"},\"age\":{\"integerValue\":\"34\"},\"big\":{\"integerValue\":\"9007199254740993\"},\"score\":{\"doubleValue\":4.5},\"ratio\":{\"doubleValue\":\"NaN\"},\"active\":{\"booleanValue\":true},\"nickname\":{\"nullValue\":null},\"joined\":{\"timestampValue\":\"2026-01-02T03:04:05.123456Z\"},\"avatar\":{\"bytesValue\":\"AAEC/w==\"},\"manager\":{\"referenceValue\":\"projects/demo-libredb/databases/(default)/documents/users/bob\"},\"home\":{\"geoPointValue\":{\"latitude\":41.0082,\"longitude\":28.9784}},\"tags\":{\"arrayValue\":{\"values\":[{\"stringValue\":\"admin\"},{\"stringValue\":\"beta\"}]}},\"address\":{\"mapValue\":{\"fields\":{\"city\":{\"stringValue\":\"Istanbul\"},\"geo\":{\"mapValue\":{\"fields\":{\"zone\":{\"stringValue\":\"eu\"}}}}}}},\"emptyList\":{\"arrayValue\":{}},\"emptyMap\":{\"mapValue\":{}},\"embedding\":{\"mapValue\":{\"fields\":{\"__type__\":{\"stringValue\":\"__vector__\"},\"value\":{\"arrayValue\":{\"values\":[{\"doubleValue\":0.1},{\"doubleValue\":0.2},{\"doubleValue\":0.3}]}}}}},\"dotted.key\":{\"stringValue\":\"a field whose name holds a dot\"}},\"createTime\":\"2026-10-12T03:48:49.628810Z\",\"updateTime\":\"2026-10-12T03:48:49.628810Z\"}"
+      }
+    },
+    {
+      "lane": "emulator",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/users/alice:listCollectionIds",
+        "body": "{\"pageSize\":1000}",
+        "maxResponseBytes": 4194304
+      },
+      "response": {
+        "status": 200,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"collectionIds\":[\"orders\"]}"
+      }
+    },
+    {
+      "lane": "emulator",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/users/ghost",
+        "maxResponseBytes": 4194304
+      },
+      "response": {
+        "status": 404,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"error\":{\"code\":404,\"message\":\"Document (projects/demo-libredb/databases/(default)/documents/users/ghost) not found.\",\"status\":\"NOT_FOUND\"}}"
+      }
+    }
+  ]
+}

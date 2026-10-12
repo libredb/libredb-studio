@@ -1,0 +1,31 @@
+{
+  "scenario": "datastore",
+  "lanes": [
+    {
+      "lane": "emulator",
+      "origin": "http://127.0.0.1:28380",
+      "headerNames": [
+        "authorization"
+      ],
+      "authorization": "Bearer owner",
+      "refusesLinkLocal": true
+    }
+  ],
+  "exchanges": [
+    {
+      "lane": "emulator",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:listCollectionIds",
+        "body": "{\"pageSize\":1}",
+        "maxResponseBytes": 4194304
+      },
+      "response": {
+        "status": 400,
+        "contentType": "application/json",
+        "retryAfter": null,
+        "text": "{\"error\":{\"code\":400,\"message\":\"Database mode not set to Firestore Mode. If using the gCloud CLI, please specify the --database-mode flag.\",\"status\":\"INVALID_ARGUMENT\"}}"
+      }
+    }
+  ]
+}

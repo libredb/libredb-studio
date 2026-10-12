@@ -1,0 +1,35 @@
+{
+  "emulator": "cloud-firestore-emulator 1.22.0",
+  "jarSha256": "9b6498b7f62714d67f48f59b3818883cd682dbcd46b9f59511de81c97bb5166c",
+  "java": "openjdk version \"25.0.4.1\" 2026-08-18",
+  "studioCommit": "3a1e39a7378b8de36739edc18407658393286405",
+  "uncommitted": [],
+  "date": "2026-10-12",
+  "scenarios": [
+    {
+      "name": "browse",
+      "steps": 18,
+      "exchanges": 23
+    },
+    {
+      "name": "console",
+      "steps": 22,
+      "exchanges": 19
+    },
+    {
+      "name": "surface",
+      "steps": 2,
+      "exchanges": 11
+    },
+    {
+      "name": "empty",
+      "steps": 1,
+      "exchanges": 1
+    },
+    {
+      "name": "datastore",
+      "steps": 1,
+      "exchanges": 1
+    }
+  ]
+}

@@ -1463,6 +1463,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "s3",
     "kubernetes",
     "mqtt",
+    "firestore",
     "rabbitmq",
   ];
   const dbTypes = selectableTypes.map((t) => {

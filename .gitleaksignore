@@ -142,3 +142,11 @@ eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/silo-2026-10
 # `x-amz-security-token` and expected signature are the example values AWS
 # ships with the suite (AKIDEXAMPLE), checked by the signer's tests.
 11717b7e56f0dc8d293e834a1327b01aa2a4e342:tests/fixtures/s3/sigv4-suite.json:generic-api-key:252
+
+# The Firestore branch's commit 6ec99b39, before its squash: an error sentence
+# that quoted the PKCS #8 PEM header 18 lines above the header constant, which
+# the private-key rule read as one key between the two, and a broken-JSON test
+# value cut from a key's first characters. Both lines were rewritten in a later
+# commit of the branch, so these two go when its squash lands.
+6ec99b391b4fd56617cc4cff193193a5f6f83061:src/lib/db/providers/document/firestore/google-credentials.ts:private-key:62
+6ec99b391b4fd56617cc4cff193193a5f6f83061:tests/unit/db/firestore/google-credentials.test.ts:generic-api-key:132

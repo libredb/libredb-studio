@@ -24,6 +24,7 @@ const SECOND_SERVER_SPECS = [
   "databend-provider.spec.ts",
   "s3-provider.spec.ts",
   "kubernetes-provider.spec.ts",
+  "firestore-connection.spec.ts",
   "rabbitmq-provider.spec.ts",
 ];
 
@@ -78,5 +79,73 @@ describe("the second server raises the query bucket its specs share", () => {
     const source = readFileSync(path.join(import.meta.dir, "../../e2e", file), "utf8");
     const assertions = source.split("\n").filter((line) => /\bexpect\b/.test(line) && /Too many requests/.test(line));
     expect(assertions).toEqual([]);
+  });
+});
+
+// e2e/firestore-provider.spec.ts needs a server whose every Firestore connection goes to a stub: FIRESTORE_EMULATOR_HOST
+// is read from the server environment only and applies to every connection on that server (spec 4.3), so no other
+// spec may share it, and no other server may set the variable.
+describe("the Firestore browse spec runs against a server of its own that sends Firestore to the stub", () => {
+  const FIRESTORE_SERVER = `http://localhost:${Number(process.env.E2E_FIRESTORE_PORT ?? 3013)}`;
+  const STUB = `127.0.0.1:${Number(process.env.E2E_FIRESTORE_STUB_PORT ?? 3014)}`;
+  const projects = config.projects ?? [];
+  const servers = Array.isArray(config.webServer) ? config.webServer : [];
+
+  test("it is left out of the shared chromium project and runs only on the Firestore server", () => {
+    const shared = projects.find((project) => project.name === "chromium");
+    expect(matches(shared?.testIgnore, "firestore-provider.spec.ts")).toBe(true);
+    const owners = projects.filter((project) => matches(project.testMatch, "firestore-provider.spec.ts"));
+    expect(owners.map((project) => [project.name, project.use?.baseURL])).toEqual([
+      ["chromium-firestore", FIRESTORE_SERVER],
+    ]);
+  });
+
+  test("no other spec runs on the Firestore server", () => {
+    const others = projects.filter(
+      (project) => project.use?.baseURL === FIRESTORE_SERVER && project.name !== "chromium-firestore",
+    );
+    expect(others).toEqual([]);
+  });
+
+  test("that server alone sets FIRESTORE_EMULATOR_HOST, to the stub's loopback port", () => {
+    const setting = servers
+      .filter((server) => server.env?.FIRESTORE_EMULATOR_HOST !== undefined)
+      .map((server) => [server.url, server.env?.FIRESTORE_EMULATOR_HOST]);
+    expect(setting).toEqual([[FIRESTORE_SERVER, STUB]]);
+  });
+
+  test("it raises the query bucket and keeps its own data dir, and the spec asserts no rate-limit refusal", () => {
+    const server = servers.find((candidate) => candidate.url === FIRESTORE_SERVER);
+    expect(Number(server?.env?.RATE_LIMIT_QUERY_MAX)).toBeGreaterThanOrEqual(10_000);
+    expect(server?.env?.STORAGE_SQLITE_PATH).toBe("./data-e2e-firestore/libredb-storage.db");
+    const source = readFileSync(path.join(import.meta.dir, "../../e2e", "firestore-provider.spec.ts"), "utf8");
+    expect(source.split("\n").filter((line) => /\bexpect\b/.test(line) && /Too many requests/.test(line))).toEqual([]);
+  });
+});
+
+describe("every server waits for the one cold build with a budget sized for a CI runner", () => {
+  // The first server runs `next build` before `next start`, and every other server waits for its .next/BUILD_ID,
+  // so each timeout has to cover a cold production build. Measured 2026-10-12 on GitHub runners: that build's
+  // first output came 65 to 114 s after the command started in ten runs of main, and two runs (main 68a7d19e4,
+  // #1695 cd04e6e03) were stopped at the 120 s timeout before the build finished.
+  const servers = Array.isArray(config.webServer) ? config.webServer : [];
+
+  test("every server builds or waits for the build, so the budget below applies to each", () => {
+    expect(servers.length).toBeGreaterThan(0);
+    for (const server of servers) {
+      expect({ command: server.command, waits: /bun run build|\.next\/BUILD_ID/.test(server.command ?? "") }).toEqual({
+        command: server.command,
+        waits: true,
+      });
+    }
+  });
+
+  test("each allows five minutes, past twice the slowest build measured", () => {
+    for (const server of servers) {
+      expect({ command: server.command, timeout: server.timeout }).toEqual({
+        command: server.command,
+        timeout: 300_000,
+      });
+    }
   });
 });

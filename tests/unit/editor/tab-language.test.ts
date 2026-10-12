@@ -74,6 +74,10 @@ describe("resolveTabType", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "s3" }))).toBe("s3");
   });
 
+  test("Firestore gets a firestore tab, not the MongoDB one its queryLanguage json would give", () => {
+    expect(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "firestore" }))).toBe("firestore");
+  });
+
   test("Neo4j (queryLanguage cypher, no dialect) gets a cypher tab, not the SQL fallback (Neo4j spec 6.5)", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "cypher" }))).toBe("cypher");
   });
@@ -141,5 +145,9 @@ describe("editorLanguageForTabType", () => {
     expect(editorLanguageForTabType(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "s3" })))).toBe(
       "s3",
     );
+  });
+
+  test("a firestore tab renders in the firestore language, restored with no capabilities", () => {
+    expect(editorLanguageForTabType("firestore")).toBe("firestore");
   });
 });

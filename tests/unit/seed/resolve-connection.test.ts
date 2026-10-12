@@ -52,6 +52,20 @@ describe("resolve-connection", () => {
     expect(result.location).toBe("EU");
   });
 
+  it("strips a client's managed claim from an inline Firestore connection, which would otherwise reach the server's identity", async () => {
+    const conn = {
+      id: "user-fs",
+      name: "User FS",
+      type: "firestore",
+      database: "acme-orders",
+      managed: true,
+      createdAt: new Date(),
+    } as DatabaseConnection;
+    const result = await resolveConnection({ connection: conn }, { role: "user", username: "test" });
+    expect(result.managed).toBe(false);
+    expect(result.database).toBe("acme-orders");
+  });
+
   /*
    * The `seed:` namespace belongs to the operator's config, and an inline `connection` used to
    * be handed back verbatim, id included (GHSA-3wh2-8x78-jfw4 root cause 2). So a `user` account

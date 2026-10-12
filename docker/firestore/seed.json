@@ -1,0 +1,128 @@
+{
+  "project": "demo-libredb",
+  "documents": [
+    {
+      "path": "users/alice",
+      "fields": {
+        "name": { "stringValue": "Alice" },
+        "age": { "integerValue": "34" },
+        "big": { "integerValue": "9007199254740993" },
+        "score": { "doubleValue": 4.5 },
+        "ratio": { "doubleValue": "NaN" },
+        "active": { "booleanValue": true },
+        "nickname": { "nullValue": null },
+        "joined": { "timestampValue": "2026-01-02T03:04:05.123456Z" },
+        "avatar": { "bytesValue": "AAEC/w==" },
+        "manager": { "referenceValue": "projects/demo-libredb/databases/(default)/documents/users/bob" },
+        "home": { "geoPointValue": { "latitude": 41.0082, "longitude": 28.9784 } },
+        "tags": { "arrayValue": { "values": [{ "stringValue": "admin" }, { "stringValue": "beta" }] } },
+        "address": {
+          "mapValue": {
+            "fields": {
+              "city": { "stringValue": "Istanbul" },
+              "geo": { "mapValue": { "fields": { "zone": { "stringValue": "eu" } } } }
+            }
+          }
+        },
+        "emptyList": { "arrayValue": {} },
+        "emptyMap": { "mapValue": {} },
+        "embedding": {
+          "mapValue": {
+            "fields": {
+              "__type__": { "stringValue": "__vector__" },
+              "value": {
+                "arrayValue": { "values": [{ "doubleValue": 0.1 }, { "doubleValue": 0.2 }, { "doubleValue": 0.3 }] }
+              }
+            }
+          }
+        },
+        "dotted.key": { "stringValue": "a field whose name holds a dot" }
+      }
+    },
+    {
+      "path": "users/bob",
+      "fields": {
+        "name": { "stringValue": "Bob" },
+        "age": { "integerValue": "41" },
+        "score": { "doubleValue": 3.5 },
+        "tags": { "arrayValue": { "values": [{ "stringValue": "ops" }] } }
+      }
+    },
+    {
+      "path": "users/carol",
+      "fields": { "name": { "stringValue": "Carol" }, "age": { "stringValue": "unknown" } }
+    },
+    { "path": "users/a:b", "fields": { "name": { "stringValue": "Colon" } } },
+    {
+      "path": "users/alice/orders/o1",
+      "fields": { "total": { "integerValue": "120" }, "status": { "stringValue": "shipped" } }
+    },
+    {
+      "path": "users/alice/orders/o2",
+      "fields": { "total": { "integerValue": "80" }, "status": { "stringValue": "open" } }
+    },
+    { "path": "users/a:b/notes/n1", "fields": { "text": { "stringValue": "under a colon id" } } },
+    { "path": "orphans/ghost/notes/n1", "fields": { "text": { "stringValue": "the parent document was never written" } } },
+    { "path": "orders/0001", "fields": { "total": { "integerValue": "10" } } },
+    { "path": "orders/0002", "fields": { "total": { "integerValue": "20" } } },
+    { "path": "orders/0003", "fields": { "total": { "integerValue": "30" } } },
+    { "path": "orders/0004", "fields": { "total": { "integerValue": "40" } } },
+    { "path": "orders/0005", "fields": { "total": { "integerValue": "50" } } },
+    {
+      "path": "products/p1",
+      "fields": {
+        "name": { "stringValue": "Lamp" },
+        "price": { "doubleValue": 10.5 },
+        "embedding": {
+          "mapValue": {
+            "fields": {
+              "__type__": { "stringValue": "__vector__" },
+              "value": {
+                "arrayValue": { "values": [{ "doubleValue": 0.1 }, { "doubleValue": 0.2 }, { "doubleValue": 0.3 }] }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "path": "products/p2",
+      "fields": {
+        "name": { "stringValue": "Desk" },
+        "price": { "doubleValue": 20.5 },
+        "embedding": {
+          "mapValue": {
+            "fields": {
+              "__type__": { "stringValue": "__vector__" },
+              "value": {
+                "arrayValue": { "values": [{ "doubleValue": 0.9 }, { "doubleValue": 0.8 }, { "doubleValue": 0.7 }] }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "path": "products/p3",
+      "fields": {
+        "name": { "stringValue": "Chair" },
+        "price": { "doubleValue": 30.5 },
+        "embedding": {
+          "mapValue": {
+            "fields": {
+              "__type__": { "stringValue": "__vector__" },
+              "value": {
+                "arrayValue": { "values": [{ "doubleValue": 0.2 }, { "doubleValue": 0.1 }, { "doubleValue": 0.4 }] }
+              }
+            }
+          }
+        }
+      }
+    },
+    { "path": "ids/z", "fields": { "label": { "stringValue": "ASCII" } } },
+    { "path": "ids/Ａ", "fields": { "label": { "stringValue": "fullwidth A" } } },
+    { "path": "ids/𐐀", "fields": { "label": { "stringValue": "Deseret long I" } } },
+    { "path": "Ａ-col/d1", "fields": { "label": { "stringValue": "a top-level collection in the BMP" } } },
+    { "path": "𐐀-col/d1", "fields": { "label": { "stringValue": "a top-level collection past the BMP" } } }
+  ]
+}

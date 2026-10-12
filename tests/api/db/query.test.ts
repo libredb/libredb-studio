@@ -1106,6 +1106,25 @@ describe("POST /api/db/query with an explain request", () => {
     expect(mockProvider.query).not.toHaveBeenCalled();
   });
 
+  test("an explain on an engine whose text is not SQL is not counted as SQL statements: the provider's own gate answers", async () => {
+    // A Firestore statement enforces one statement in its own parser; the SQL counter would read a `;` in its comment as a
+    // second statement. On every other non-SQL engine no EXPLAIN is declared, so the answer moves from the statement-count
+    // sentence to this one, and no UI path sends such a request (Firestore spec 3.2).
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: {
+        connection: { ...validConnection, type: "mongodb" },
+        sql: "first; second",
+        explain: { mode: "estimate" },
+      },
+    });
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("This server does not support EXPLAIN");
+    expect(mockProvider.query).not.toHaveBeenCalled();
+  });
+
   test("returns 400 and runs nothing when the provider names a format this build does not register", async () => {
     // `getExplainStrategy` indexes a Record, so a format outside the union comes back as
     // undefined rather than null. A strict null check let that fall through to

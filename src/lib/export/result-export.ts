@@ -581,6 +581,8 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
   // Kubernetes has no statement form for an export.
   kubernetes: NOTHING_STANDS_ALONE,
   mqtt: NOTHING_STANDS_ALONE,
+  // Firestore has no statement form for an export.
+  firestore: NOTHING_STANDS_ALONE,
   // RabbitMQ has no statement form for an export.
   rabbitmq: NOTHING_STANDS_ALONE,
   // Measured by M08a and M08c on the pinned image: each was created and read back unbounded (`String`, `Timestamp`
@@ -785,6 +787,8 @@ const BINARY_LITERAL: Record<DatabaseType, BinaryLiteral> = {
   // Kubernetes has no statement language for a value either; the inert default, as Oxia's.
   kubernetes: "standard-hex",
   mqtt: "standard-hex",
+  // Firestore has no statement language for a value either; the inert default, as Oxia's.
+  firestore: "standard-hex",
   // RabbitMQ has no statement language for a value; the inert default, as Kafka's.
   rabbitmq: "standard-hex",
   // Measured on SQL Server 2022: `SELECT CONVERT(varchar(64), 0x0102deadbeef, 2)`

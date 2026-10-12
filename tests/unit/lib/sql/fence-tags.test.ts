@@ -41,6 +41,7 @@ describe("fenceTagEngine", () => {
       "oxia",
       "databend",
       "s3",
+      "firestore",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);
@@ -63,6 +64,12 @@ describe("fenceTagEngine", () => {
     // `aws` names every AWS service, and the shell tags name no engine.
     for (const tag of ["aws", "sh", "bash", "shell"]) expect(fenceTagEngine(tag)).toBeNull();
     expect(fenceTagEngine("s3")).toBe("s3");
+  });
+
+  test("firestore has no alias: firebase, js and javascript name no engine", () => {
+    // `firebase` names a platform of many products, and `js` and `javascript` name a language.
+    for (const tag of ["firebase", "js", "javascript"]) expect(fenceTagEngine(tag)).toBeNull();
+    expect(fenceTagEngine("firestore")).toBe("firestore");
   });
 
   test("an alias names the engine it is an alias for", () => {

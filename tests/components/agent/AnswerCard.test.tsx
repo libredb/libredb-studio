@@ -85,7 +85,7 @@ const STATEMENT = "SELECT count(*) FROM orders";
 
 const capabilitiesFor = (
   queryLanguage: ProviderCapabilities["queryLanguage"],
-  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant" | "oxia" | "s3",
+  queryDialect?: ProviderCapabilities["queryDialect"],
 ): ProviderCapabilities => ({
   queryLanguage,
   supportsExplain: false,
@@ -143,7 +143,8 @@ function draftEvent(options: {
     | "qdrant"
     | "influxql"
     | "oxia"
-    | "s3";
+    | "s3"
+    | "firestore";
 }): AgentLedgerEntry {
   return event({
     kind: "plan-statement-drafted",
@@ -548,6 +549,51 @@ describe("AnswerCard — a plan run's statement", () => {
     ] as const) {
       const other = render(<AnswerCard timeline={s3Draft} capabilities={capabilitiesFor(language, dialect)} />);
       expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-indigo-alt/40");
+      cleanup();
+    }
+  });
+
+  test("tints a Firestore statement in the firestore language its tab renders in, in pink's -alt step", () => {
+    // No guard here reads a Firestore statement, so the draft is shown beside the "not checked" chip, as an S3 one is.
+    const draft = planTimeline({
+      sql: 'db.collection("orders").where("total", ">", 100).limit(10)',
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const firestore = render(<AnswerCard timeline={draft} capabilities={capabilitiesFor("json", "firestore")} />);
+    const block = firestore.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("firestore");
+    expect(block.className).toContain("border-hue-pink-alt/40");
+    cleanup();
+
+    const recorded = render(
+      <AnswerCard
+        timeline={planTimeline({
+          sql: 'db.collection("orders").count()',
+          readOnly: false,
+          guardApplicable: false,
+          identifiers: { kind: "not-applicable" },
+          language: "firestore",
+        })}
+      />,
+    );
+    expect(recorded.getByTestId("agent-answer-statement").className).toContain("border-hue-pink-alt/40");
+    cleanup();
+
+    // The controls: no other language's block carries it, Qdrant's pink base included.
+    for (const [language, dialect] of [
+      ["sql", undefined],
+      ["json", undefined],
+      ["promql", undefined],
+      ["cypher", undefined],
+      ["json", "qdrant"],
+      ["json", "s3"],
+      ["json", "kubectl"],
+      ["influxql", undefined],
+    ] as const) {
+      const other = render(<AnswerCard timeline={draft} capabilities={capabilitiesFor(language, dialect)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-pink-alt/40");
       cleanup();
     }
   });

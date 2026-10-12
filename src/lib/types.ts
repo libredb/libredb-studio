@@ -166,6 +166,13 @@ export type DatabaseType =
   // than a mode: the outbound path can encode only CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and DISCONNECT, so
   // no PUBLISH and no Will exists to send.
   | "mqtt"
+  // Google Cloud Firestore in Native mode, read only, over Firestore REST v1 by a client of this repository's own on
+  // the shared node transport (`src/lib/db/providers/document/firestore/`). The editor text is one statement of a
+  // read-only subset of the Admin SDK's query chain. Read-only whatever `readOnly` says: the client builds only the
+  // read requests of its closed request table. The connection's Database field is the project id, Schema the
+  // database id (empty for `(default)`), and Password a service-account key, an ADC JSON or an access token; empty,
+  // the credential comes from an emulator server or an operator-seeded server identity.
+  | "firestore"
   // RabbitMQ (#1656), one broker read only: virtual hosts, streams, queues and exchanges from the management HTTP API,
   // and a bounded, non-destructive read of a stream's messages over AMQP 0-9-1 by a client of this repository's own
   // (`src/lib/db/providers/stream/rabbitmq/`). Never takes a message from a queue and never writes to the broker. The
@@ -847,6 +854,7 @@ export interface QueryTab {
     | "s3"
     | "kubectl"
     | "mqtt"
+    | "firestore"
     | "rabbitmq";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;

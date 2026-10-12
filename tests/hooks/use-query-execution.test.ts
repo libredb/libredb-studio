@@ -33,6 +33,8 @@ import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import * as explainModule from "@/lib/explain";
+import type { ExplainStrategy } from "@/lib/explain";
 
 /** What the hook says when the server did not confirm a cancel (#1364). */
 const CANCEL_NOT_CONFIRMED_TEXT =
@@ -5967,4 +5969,89 @@ describe("useQueryExecution: the kubectl history mask", () => {
       expect(historySpy).not.toHaveBeenCalled();
     },
   );
+});
+
+/**
+ * The explain gates for a strategy that sends no background plan, and for an engine whose text is not SQL
+ * (Firestore spec 3.2). Each test stands a stub strategy in for the registry's answer, so the rule is pinned apart from
+ * any engine's own strategy.
+ */
+describe("the background plan opt-out and the non-SQL explain gate", () => {
+  let strategySpy: { mockRestore(): void } | undefined;
+
+  beforeEach(() => {
+    mockToastError.mockClear();
+    addToHistorySpy = spyOn(storage, "addToHistory").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    strategySpy?.mockRestore();
+    strategySpy = undefined;
+    addToHistorySpy.mockRestore();
+    restoreGlobalFetch();
+  });
+
+  const stub = (extra: Partial<ExplainStrategy> = {}): ExplainStrategy => ({
+    format: "postgres-json",
+    buildSql: (sql) => sql,
+    extractPlan: () => null,
+    toRenderModel: () => null,
+    ...extra,
+  });
+
+  const queryBodies = (fetchMock: ReturnType<typeof mockGlobalFetch>) =>
+    fetchMock.mock.calls
+      .filter((call) => typeof call[0] === "string" && call[0].includes("/api/db/query"))
+      .map((call) => JSON.parse((call[1] as RequestInit).body as string) as { sql: string; explain?: unknown });
+
+  test("an ordinary run asks for no plan when the strategy declares backgroundPlan: false", async () => {
+    strategySpy = spyOn(explainModule, "getExplainStrategy").mockImplementation(() => stub({ backgroundPlan: false }));
+    const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+    const bodies = queryBodies(fetchMock);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].explain).toBeUndefined();
+  });
+
+  test("the same strategy without the field still asks for the estimate plan beside the run", async () => {
+    strategySpy = spyOn(explainModule, "getExplainStrategy").mockImplementation(() => stub());
+    const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+    expect(queryBodies(fetchMock).map((body) => body.explain ?? null)).toEqual([null, { mode: "estimate" }]);
+  });
+
+  test("an Explain on an engine whose text is not SQL is not counted by the SQL splitter: it is sent", async () => {
+    strategySpy = spyOn(explainModule, "getExplainStrategy").mockImplementation(() => stub());
+    const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+    const mongo = { ...mockConnection, type: "mongodb" as const };
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams({ activeConnection: mongo })));
+    await act(async () => {
+      await result.current.executeQuery("first; second; third", undefined, true);
+    });
+    expect(queryBodies(fetchMock)).toEqual([
+      expect.objectContaining({ sql: "first; second; third", explain: { mode: "analyze" } }),
+    ]);
+    expect(mockToastError).not.toHaveBeenCalledWith("Not Supported", {
+      description: "Only a single statement can be explained.",
+    });
+  });
+
+  test("a SQL engine's multi-statement Explain is still refused before anything is sent", async () => {
+    strategySpy = spyOn(explainModule, "getExplainStrategy").mockImplementation(() => stub());
+    const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+    await act(async () => {
+      await result.current.executeQuery("first; second; third", undefined, true);
+    });
+    expect(queryBodies(fetchMock)).toEqual([]);
+    expect(mockToastError).toHaveBeenCalledWith("Not Supported", {
+      description: "Only a single statement can be explained.",
+    });
+  });
 });

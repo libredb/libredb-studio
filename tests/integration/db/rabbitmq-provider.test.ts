@@ -308,7 +308,7 @@ describe.each([...PINNED])("RabbitMQ %s, replayed", (set) => {
     const { result } = await replayRead(set, "read-st-buffer-shape");
     const [row] = result?.rows ?? [];
     expect(row).toMatchObject({ payload_encoding: "json", payload: { type: "Buffer", data: [1, 2, 3], note: "json" } });
-    // Today's grid behaviour, pinned as the spec asks: U116 in docs/BACKLOG.md. When U116 lands this becomes "json".
+    // Today's grid behaviour, pinned as the spec asks: U119 in docs/BACKLOG.md. When U119 lands this becomes "json".
     expect(classifyValue(row.payload)).toBe("binary");
   });
 

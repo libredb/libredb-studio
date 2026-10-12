@@ -18,6 +18,11 @@ import { registerOxiaLanguage } from "@/lib/editor/oxia-language";
 import { registerKubectlLanguage } from "@/lib/editor/kubectl-language";
 import { registerS3Language, S3_LANGUAGE_ID } from "@/lib/editor/s3-language";
 import { registerS3CompletionProvider, s3CompletionBucketsOf } from "@/lib/editor/s3-completions";
+import { FIRESTORE_LANGUAGE_ID, registerFirestoreLanguage } from "@/lib/editor/firestore-language";
+import {
+  firestoreCompletionCollectionsOf,
+  registerFirestoreCompletionProvider,
+} from "@/lib/editor/firestore-completions";
 import { registerPromqlLanguage } from "@/lib/editor/promql-language";
 import { CYPHER_LANGUAGE_ID, registerCypherLanguage } from "@/lib/editor/cypher-language";
 import { cypherCompletionSchemaOf, registerCypherCompletionProvider } from "@/lib/editor/cypher-completions";
@@ -95,7 +100,8 @@ interface QueryEditorProps {
     | "influxql"
     | "oxia"
     | "s3"
-    | "kubectl";
+    | "kubectl"
+    | "firestore";
   /**
    * The connected engine, whose grammar decides where a statement ends.
    *
@@ -572,8 +578,8 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     }, []);
 
     const handleBeforeMount = (monacoInstance: typeof Monaco) => {
-      // Register the LibreDB, Redis, etcd, Oxia, S3 and kubectl command languages, PromQL, Cypher and InfluxQL (each
-      // idempotent) so their tabs highlight correctly instead of being treated as JSON or SQL
+      // Register the LibreDB, Redis, etcd, Oxia, S3, kubectl and Firestore command languages, PromQL, Cypher and
+      // InfluxQL (each idempotent) so their tabs highlight correctly instead of being treated as JSON or SQL
       // (#427, #1085, #1089, #424, Neo4j spec 6.5, InfluxDB spec 6.7).
       registerLibreDBLanguage(monacoInstance);
       registerRedisLanguage(monacoInstance);
@@ -582,6 +588,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       registerOxiaLanguage(monacoInstance);
       registerS3Language(monacoInstance);
       registerKubectlLanguage(monacoInstance);
+      registerFirestoreLanguage(monacoInstance);
       registerCypherLanguage(monacoInstance);
       registerInfluxqlLanguage(monacoInstance);
       // Every console dialect's language, from its editor record (vector-family spec 3.5): the records are the
@@ -660,6 +667,17 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     useEffect(() => {
       if (monaco && language === S3_LANGUAGE_ID) {
         const disposable = registerS3CompletionProvider(monaco, s3CompletionBucketsOf(parsedSchema));
+        return () => disposable.dispose();
+      }
+    }, [monaco, language, parsedSchema]);
+
+    // Firestore completion provider (Firestore spec 5.4): the chain's method names by state, the operator strings, and
+    // the collection ids the tree has already listed, read from the schema context on each request, so it sends no request.
+    useEffect(() => {
+      if (monaco && language === FIRESTORE_LANGUAGE_ID) {
+        const disposable = registerFirestoreCompletionProvider(monaco, () =>
+          firestoreCompletionCollectionsOf(parsedSchema),
+        );
         return () => disposable.dispose();
       }
     }, [monaco, language, parsedSchema]);

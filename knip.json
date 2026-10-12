@@ -21,6 +21,7 @@
   ],
   "ignoreBinaries": [
     "genhtml",
+    "java",
     "ss"
   ],
   "ignoreExportsUsedInFile": {

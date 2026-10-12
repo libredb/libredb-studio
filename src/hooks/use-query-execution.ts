@@ -11,7 +11,7 @@ import { storage } from "@/lib/storage";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { consoleTextByteLimit, statementRefusal } from "@/lib/db/destructive-commands";
 import { countCodeStatements, isMultiStatement } from "@/lib/sql/statement-splitter";
-import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { shouldRefreshSchema } from "@/lib/query-generators";
@@ -517,8 +517,11 @@ export function useQueryExecution({
       // is not one statement either: the splitter finds no boundary in it, yet
       // `SELECT E'\''; INSERT ...` is two statements to PostgreSQL.
       const grammar = resolveSqlGrammar(activeConnection.type);
+      // An engine whose text is not SQL enforces one statement in its own parser, where the SQL counter would read a `;`
+      // inside its comment or string as a boundary, so only SQL text is counted here.
       const oneStatement =
-        countCodeStatements(queryToExecute, grammar) <= 1 && !hasUnterminatedSpan(queryToExecute, grammar);
+        !readsSqlText(activeConnection.type) ||
+        (countCodeStatements(queryToExecute, grammar) <= 1 && !hasUnterminatedSpan(queryToExecute, grammar));
       const explainSupported = !metadata || metadata.capabilities.supportsExplain;
       const explainAccepted =
         isExplain &&
@@ -564,11 +567,13 @@ export function useQueryExecution({
       // without one, measured on PostgreSQL 18.6, Cancel left the plan statement
       // `active` after the run's own backend went idle (#1311). Its own rather than the
       // run's, because a provider tracks one statement per id.
+      // A strategy that declares backgroundPlan: false is never asked beside a run: its engine bills the plan.
       const sendsPlan =
         !isExplain &&
         !isLoadMore &&
         oneStatement &&
         explainStrategy !== null &&
+        explainStrategy.backgroundPlan !== false &&
         explainStrategy.buildSql(queryToExecute, "estimate") !== null;
       const planQueryId = sendsPlan ? `${queryId}-plan` : undefined;
       const run = { controller: abortController, queryId, planQueryId, serverCancellable: false };

@@ -1113,6 +1113,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     s3: "engine-has-no-foreign-key",
     kubernetes: "engine-has-no-foreign-key",
     mqtt: "engine-has-no-foreign-key",
+    firestore: "engine-has-no-foreign-key",
     rabbitmq: "engine-has-no-foreign-key",
   };
 
@@ -1260,6 +1261,11 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   mqtt: {
     label: "MQTT",
     reason: "A broker keeps no schema and no catalog, so there is no column definition to change.",
+  },
+  // A document store (Firestore spec 3.3): documents carry their own fields, so there is no column definition.
+  firestore: {
+    label: "Firestore",
+    reason: "A document store keeps no schema, so there is no column definition to change.",
   },
   // Not a table store (#1656): a stream holds messages, and the columns a read shows are the fixed shape of a message.
   rabbitmq: {
@@ -1548,6 +1554,7 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "s3",
           "kubernetes",
           "mqtt",
+          "firestore",
           "rabbitmq",
         ].includes(dialect)
       ) {
@@ -1591,10 +1598,10 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   sqlite: false, // runs its own transaction (module docstring)
   libsql: false, // SQLite fork, same reasoning, plus its own Hrana-stream note (module docstring)
   cassandra: false, // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
-  // The remaining twenty-two each have a recorded reason for having no `BEGIN;` to emit, in this
+  // The remaining twenty-four each have a recorded reason for having no `BEGIN;` to emit, in this
   // same module (`NO_COLUMN_MODIFICATION`), in `src/lib/sql/grammar.ts` (`NON_SQL_DIALECTS`)
   // or in the provider doc named on the line — this table applies those established facts to
-  // the wrapper fallback rather than asserting fresh ones, so none of the twenty-two needs a new
+  // the wrapper fallback rather than asserting fresh ones, so none of the twenty-four needs a new
   // live probe. What none of them means is "the wrapper bracketed nothing": see the
   // added-table fixture below.
   mongodb: false, // not SQL text at all (`NON_SQL_DIALECTS`); wrapping non-SQL in SQL statements is wrong regardless of Mongo's own transaction API
@@ -1620,6 +1627,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   s3: false, // one AWS CLI subset command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   kubernetes: false, // one kubectl statement, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   mqtt: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  firestore: false, // one read-only query chain, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   rabbitmq: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
@@ -1659,6 +1667,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "s3",
             "kubernetes",
             "mqtt",
+            "firestore",
             "rabbitmq",
           ].includes(dialect)
         ) {

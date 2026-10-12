@@ -40,7 +40,7 @@ jobs:
         # runner image's default Node. ci.yml's test job was pinned for exactly this in
         # #709 and #737; this job runs the same suite before every npm release and was
         # not, and the tests that need it arrived after the last release it validated.
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
@@ -114,7 +114,7 @@ jobs:
           bun-version: "1.4.2"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: '24.16.0'
           registry-url: 'https://registry.npmjs.org'

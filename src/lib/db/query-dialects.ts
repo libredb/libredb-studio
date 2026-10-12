@@ -43,8 +43,9 @@ export interface DialectSpec {
 /**
  * Today's answers, each exactly what the per-dialect arms gave before the registry: Redis and LibreDB keep the
  * code generator because it names a row rather than addressing it (#427), Kafka's topic columns and etcd's group
- * columns are the fixed shape of a read result and model nothing an application stores (#1088, #1089), and no
- * dialect has a profile statement or a count statement in its grammar. Kafka renders in Monaco's built-in `json`
+ * columns are the fixed shape of a read result and model nothing an application stores (#1088, #1089), no
+ * dialect has a profile statement in its grammar, and Firestore's alone has a count statement, written by its
+ * `DIALECT_GENERATORS` record. Kafka renders in Monaco's built-in `json`
  * mode, which `DIALECT_EDITORS` says, and not here: this record is keyed by dialect, that one by tab type.
  */
 export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Object.freeze({
@@ -122,6 +123,17 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersColumnProfiling: false,
     offersCodeGeneration: false,
     offersCountQuery: false,
+  }),
+  // Firestore: one statement of a read-only Admin SDK query chain. A collection's columns are sampled field paths, so
+  // no profile statement or model applies, and its rows are documents rather than rows of a SQL table, so neither SQL
+  // export format applies. Generate Count Query writes `db.collection("<id>").count()` into a tab, which the user
+  // runs: one aggregation, which Firestore bills one read per 1,000 index entries it scans.
+  firestore: Object.freeze({
+    tabType: "firestore",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: true,
+    offersSqlExport: false,
   }),
   // RabbitMQ (#1656): a JSON read request of the provider's own schema. A stream's columns are the fixed shape of a
   // read result, so no profile, model or count statement applies, and neither SQL export format does.

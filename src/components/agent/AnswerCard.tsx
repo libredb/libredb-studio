@@ -126,6 +126,7 @@ type StatementLanguage =
   | "oxia"
   | "s3"
   | "kubectl"
+  | "firestore"
   | "unknown";
 
 /**
@@ -171,6 +172,11 @@ type StatementLanguage =
  * checked" chip, which rules out amber itself, yellow and orange, and red is ruled out as a failure hue. Of the declared
  * `-alt` steps left, teal's stands furthest from every status hue and every other language here in both palettes (0.071
  * in OKLab from Milvus's teal, its nearest), measured.
+ *
+ * Firestore takes pink's `-alt` step: no guard here reads a Firestore statement, so its draft stands beside the amber
+ * "not checked" chip, which rules out amber itself, yellow and orange, and red is ruled out as a failure hue. Of the
+ * declared `-alt` steps left, pink's stands furthest from every status hue and every other language here in both
+ * palettes (0.062 in OKLab from Qdrant's pink, its nearest), measured.
  */
 const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.freeze({
   sql: "border-hue-blue/40",
@@ -186,6 +192,7 @@ const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.fre
   oxia: "border-hue-purple-alt/40",
   s3: "border-hue-indigo-alt/40",
   kubectl: "border-hue-teal-alt/40",
+  firestore: "border-hue-pink-alt/40",
   unknown: "border-hairline-strong",
 });
 

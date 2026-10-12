@@ -45,7 +45,7 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
-import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
+import { createCanonicalOperationRegistry, sqlExplainAnalyzeDescriptor } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, QueryResult } from "@/lib/db/types";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -523,6 +523,44 @@ describe("createDatabaseProvider", () => {
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
     expect(provider.type).toBe("couchbase");
+  });
+
+  test('creates provider for type "firestore", unconnected, with its own dialect and its read-only enforcement', async () => {
+    // No host, port, user or credential: the constructor reads no credential and opens nothing (Firestore spec 3.3).
+    const conn = makeConnection("firestore", {
+      host: undefined,
+      port: undefined,
+      user: undefined,
+      password: undefined,
+      database: "demo-studio",
+    });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider.type).toBe("firestore");
+    expect(provider.getCapabilities().queryLanguage).toBe("json");
+    expect(provider.getCapabilities().queryDialect).toBe("firestore");
+    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("a firestore connection with readOnly: true is built, since its provider keeps the mode", async () => {
+    const conn = {
+      ...makeConnection("firestore", {
+        host: undefined,
+        port: undefined,
+        password: undefined,
+        database: "demo-studio",
+      }),
+      readOnly: true,
+    };
+    expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
+    expect((await createDatabaseProvider(conn)).type).toBe("firestore");
+  });
+
+  test("the factory error lists firestore between couchbase and redis, the order of the cases", async () => {
+    const conn = makeConnection("not-an-engine");
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(
+      /Supported types: .*\bmongodb, couchbase, firestore, redis\b/,
+    );
   });
 
   test('creates provider for type "elasticsearch"', async () => {
@@ -1753,6 +1791,25 @@ describe("acquireExecutionProfileProvider", () => {
       "agent-read-only",
     ).catch((e: unknown) => e);
 
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("refuses firestore the agent's read-only profile, the gate the explain-analyze descriptor's capability check is not", async () => {
+    // `sql.explain.analyze` requires only `supportsExplain`, which Firestore declares for the editor's Explain button
+    // (Firestore spec 5.7), so the refusal of a plan execution on Firestore is this profile gate: no `queryReadOnly`.
+    expect(sqlExplainAnalyzeDescriptor.requiredCapabilities).toEqual(["supportsExplain"]);
+    const error: unknown = await acquireExecutionProfileProvider(
+      makeConnection("firestore", {
+        id: "firestore-profile",
+        host: undefined,
+        port: undefined,
+        password: undefined,
+        database: "demo-studio",
+      }),
+      "agent-read-only",
+    ).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ExecutionProfileError);
     expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
     expect(getExecutionProfileCacheStats().size).toBe(0);

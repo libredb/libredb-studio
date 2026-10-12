@@ -102,6 +102,9 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   // which no census reaches.
   kubernetes: unconnected("kubernetes"),
   mqtt: unconnected("mqtt"),
+  // No field beyond UNCONNECTED: `census` is a well-formed project id, and the constructor reads no credential and
+  // opens nothing; the credential is resolved at connect, which no census reaches.
+  firestore: unconnected("firestore"),
   // The shared test connection: the constructor validates nothing and opens nothing.
   rabbitmq: rabbitmqConnection(),
   libredb: unconnected("libredb"),

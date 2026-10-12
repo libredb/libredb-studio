@@ -29,6 +29,7 @@ import {
   OxiaIcon,
   DatabendIcon,
   S3Icon,
+  FirestoreIcon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -62,6 +63,7 @@ describe("db-icons", () => {
     // Databend's published icon rather than a drawn mark: fixed fills, no stroke (see its own test below).
     { name: "DatabendIcon", Component: DatabendIcon, brandAsset: true },
     { name: "S3Icon", Component: S3Icon },
+    { name: "FirestoreIcon", Component: FirestoreIcon },
   ];
 
   for (const { name, Component, brandAsset } of icons) {
@@ -132,5 +134,14 @@ describe("db-icons", () => {
     expect(html).toContain('viewBox="0 0 24 24"');
     expect(html).toContain('fill="none"');
     expect(html).toContain('stroke="currentColor"');
+  });
+
+  test("FirestoreIcon is a stroked mark on the house 24-unit grid, drawn for Studio", () => {
+    // A document with a second one behind it, drawn for Studio: never the Firebase or Google Cloud logo.
+    const html = renderToStaticMarkup(React.createElement(FirestoreIcon));
+    expect(html).toContain('viewBox="0 0 24 24"');
+    expect(html).toContain('fill="none"');
+    expect(html).toContain('stroke="currentColor"');
+    expect([...html.matchAll(/<path /g)]).toHaveLength(5);
   });
 });

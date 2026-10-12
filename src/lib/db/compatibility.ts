@@ -112,6 +112,9 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // hiding. No relative is recorded: every broker speaks the same standard, and a standard is not a
   // compatibility claim about a product.
   mqtt: true,
+  // Firestore: its own provider, doc and integration test, read over Firestore REST v1 by a client of this
+  // repository's own. Native mode only; no relative is recorded.
+  firestore: true,
   // RabbitMQ (#1656): its own provider, doc and integration test, the second member of the `stream/` family. A
   // service that speaks the same management API is recorded below as a relative only once a gate-4 probe has measured
   // one, never because the API answers.
@@ -190,6 +193,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   // A cluster the user already runs, reached over the Kubernetes API server's REST API.
   kubernetes: true,
   mqtt: true,
+  // A Firestore database the user already runs in Google Cloud, or the emulator the server names.
+  firestore: true,
   // A broker the user already runs, reached over its management API and AMQP 0-9-1.
   rabbitmq: true,
   // The one false entry. SQLite is a file rather than a server and is still
@@ -286,6 +291,9 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   // Structural rather than a mode: the encoder has no function that writes a PUBLISH, so there is no
   // write to enforce against. The valve repeats the check on the bytes.
   mqtt: true,
+  // Read-only whatever the flag says: the client builds only the read requests of its closed table, before any
+  // socket, and the provider offers no object edit and no maintenance operation.
+  firestore: true,
   // Read-only whatever the flag says: the management client's closed route table holds GET routes only, and the AMQP
   // client has no encoder for a publish, a get, a reject or any queue or exchange method, so no request path writes.
   rabbitmq: true,
@@ -344,6 +352,7 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
   s3: false,
   kubernetes: false,
   mqtt: false,
+  firestore: false,
   rabbitmq: false,
   libredb: false,
 });
@@ -409,6 +418,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Outside this version, as for etcd, Oxia and S3: a read whose completeness cannot be proved is not a
   // read an agent should be handed without a reader looking at it.
   mqtt: false,
+  // Outside this version, as for etcd, Oxia, S3, Kubernetes and MQTT: the provider implements no read-only query
+  // path an MCP client could drive, and every read is billed to the user's project.
+  firestore: false,
   // Offered for the two metadata tools, carrying stream names and the fixed read columns only; `run_read_query` does
   // not serve it, because the provider implements no `queryReadOnly`.
   rabbitmq: true,
@@ -458,6 +470,7 @@ export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> =
   s3: false,
   kubernetes: false,
   mqtt: false,
+  firestore: false,
   rabbitmq: false,
   libredb: false,
 });
@@ -511,6 +524,7 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
   s3: false,
   kubernetes: false,
   mqtt: false,
+  firestore: false,
   rabbitmq: false,
   libredb: false,
 });

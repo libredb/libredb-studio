@@ -79,6 +79,7 @@ const SeedDatabaseType = z.enum([
   "s3",
   "kubernetes",
   "mqtt",
+  "firestore",
   "rabbitmq",
 ]);
 

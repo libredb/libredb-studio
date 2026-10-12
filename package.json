@@ -226,7 +226,7 @@
     "db2-node": "1.0.25",
     "elkjs": "^0.12.0",
     "embla-carousel-react": "^8.6.0",
-    "framer-motion": "^13.2.0",
+    "framer-motion": "^14.0.0",
     "geist": "^1.7.2",
     "hyparquet": "1.31.1",
     "hyparquet-compressors": "1.1.2",

@@ -270,6 +270,12 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     label: "MQTT",
     reason: "A broker keeps no schema and no catalog, so there is no column definition to change.",
   },
+  // A document store (Firestore spec 3.3): documents carry their own fields, and the columns a read shows are sampled
+  // from them, so there is no column definition to change. The sentence is the one `NO_TABLE_DDL` below prints.
+  firestore: {
+    label: "Firestore",
+    reason: "A document store keeps no schema, so there is no column definition to change.",
+  },
   // Not a table store (#1656): a stream holds messages, and the columns a read shows are the fixed shape of a message.
   // The sentence is the one `NO_TABLE_DDL` below prints when it declines the whole diff.
   rabbitmq: {
@@ -371,6 +377,8 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "kubernetes",
   // No table DDL to wrap either (#1635): a broker keeps no schema.
   "mqtt",
+  // No table DDL to wrap either: a document store keeps no schema.
+  "firestore",
   // No table DDL to wrap either (#1656): a broker keeps no schema.
   "rabbitmq",
 ]);
@@ -399,6 +407,8 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "kubernetes",
   // No schema and no catalog (#1635), so no table DDL to decline.
   "mqtt",
+  // No schema and no catalog, so no table DDL to decline.
+  "firestore",
   // No schema and no catalog (#1656), so no table DDL to decline.
   "rabbitmq",
 ]);

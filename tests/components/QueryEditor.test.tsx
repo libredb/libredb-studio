@@ -2030,6 +2030,15 @@ describe("QueryEditor", () => {
     expect(capturedLanguageRegistrations).toContain("kubectl");
   });
 
+  test("registers the firestore language before the editor mounts, beside Oxia", () => {
+    render(
+      React.createElement(QueryEditor, createDefaultProps({ language: "firestore", value: 'db.collection("users")' })),
+    );
+    // Oxia's registration is the control: it reaches the same capture, so a missing "firestore" is the component.
+    expect(capturedLanguageRegistrations).toContain("oxia");
+    expect(capturedLanguageRegistrations).toContain("firestore");
+  });
+
   test("registers the etcd language before the editor mounts, beside LibreDB, Redis and PromQL (#1089)", () => {
     render(React.createElement(QueryEditor, createDefaultProps({ language: "etcd", value: "get /app/ --prefix" })));
 
@@ -2067,6 +2076,7 @@ describe("QueryEditor", () => {
       "oxia",
       "s3",
       "kubectl",
+      "firestore",
       "graph-cypher",
       "influxql",
       "milvus",
@@ -2196,6 +2206,64 @@ describe("QueryEditor", () => {
     test("a sql editor registers no S3 completion", () => {
       render(React.createElement(QueryEditor, createDefaultProps({ language: "sql" })));
       expect(s3Registrations).toEqual([]);
+    });
+  });
+
+  describe("the Firestore completion provider registers for a firestore editor only", () => {
+    type Provider = {
+      triggerCharacters?: string[];
+      provideCompletionItems: (model: unknown, position: unknown) => { suggestions: Array<{ label: string }> };
+    };
+    let registrations: Array<{ languageId: string; provider: Provider; dispose: Mock<() => void> }> = [];
+    const collectionSchema = JSON.stringify([
+      { name: "users", kind: "collection", path: ["users"], columns: [] },
+      { name: "orders", kind: "collection", path: ["orders"], columns: [] },
+    ]);
+    const modelOf = (text: string) => ({ getValue: () => text, getOffsetAt: () => text.length });
+
+    beforeEach(() => {
+      registrations = [];
+      mockRegisterSQLCompletionProvider.mockClear();
+      mockRegisterMongoDBCompletionProvider.mockClear();
+      mockUseMonacoReturn = {
+        Range: class {},
+        languages: {
+          CompletionItemKind: { Keyword: 17, Method: 0, Folder: 23, Operator: 11 },
+          registerCompletionItemProvider: (languageId: string, provider: Provider) => {
+            const dispose = mock(() => {});
+            registrations.push({ languageId, provider, dispose });
+            return { dispose };
+          },
+        },
+      };
+    });
+
+    test("a firestore editor completes collection ids from the schema it holds, and disposes the provider on unmount", () => {
+      const { unmount } = render(
+        React.createElement(
+          QueryEditor,
+          createDefaultProps({
+            language: "firestore",
+            schemaContext: collectionSchema,
+            capabilities: { queryLanguage: "json", queryDialect: "firestore" } as never,
+          }),
+        ),
+      );
+      expect(registrations.map((entry) => entry.languageId)).toEqual(["firestore"]);
+      expect(mockRegisterSQLCompletionProvider).not.toHaveBeenCalled();
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+      const text = 'db.collection("';
+      const labels = registrations[0]!.provider
+        .provideCompletionItems(modelOf(text), { lineNumber: 1, column: text.length + 1 })
+        .suggestions.map((item) => item.label);
+      expect(labels).toEqual(["users", "orders"]);
+      unmount();
+      expect(registrations[0]!.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    test("a sql editor registers no Firestore completion", () => {
+      render(React.createElement(QueryEditor, createDefaultProps({ language: "sql" })));
+      expect(registrations).toEqual([]);
     });
   });
 
@@ -2487,6 +2555,7 @@ describe("QueryEditor", () => {
       ["oxia", false],
       ["s3", false],
       ["kubectl", false],
+      ["firestore", false],
       ["graph-cypher", false],
       ["influxql", false],
       ["sql", true],
