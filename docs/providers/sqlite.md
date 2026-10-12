@@ -537,7 +537,7 @@ Both drivers publish the declaration and spell it differently — bun:sqlite `co
 [`sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts) bridges them into a single
 `declaredColumns()`, exactly as it bridges `inTransaction` and the big-integer flag, and
 `declaredColumnTypes()` ([column-types.ts](../../src/lib/db/providers/sql/column-types.ts)) turns
-that into the field the way the four code-reporting drivers already do.
+that into the field, as it already does for several other SQL providers.
 
 **It is read AFTER the rows.** Measured 2026-09-18: bun:sqlite THROWS *Statement must be executed
 before accessing declaredTypes* until the statement has run, while node:sqlite answers either way — so
@@ -632,7 +632,7 @@ The five container-aware methods (`listContainers`, `countObjects`, `listObjects
 [`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts). They are the only reading of this engine's
 objects.
 
-#### SQLite is the ZERO-CONTAINER engine, and `[]` is an answer
+#### SQLite is a ZERO-CONTAINER engine, and `[]` is an answer
 
 `containerLevels` is `[]`, `containerDepth()` answers 0, and `listContainers()` answers `[]`. That
 is the engine speaking, not a refusal and not a gap: a SQLite connection opens one database file and
@@ -641,7 +641,7 @@ and for a trigger `['orders', 'orders_stamp']`. The tree reads the same declarat
 draws the kind folders at the ROOT under the empty container path; `enumerateContainers()` in
 [`object-route.ts`](../../src/lib/api/object-route.ts) answers `[[]]` for the same engines.
 
-No synthetic `main` container is invented to make the shape match the other sixteen engines. A
+No synthetic `main` container is invented to make the shape match the engines that do have a container level, such as PostgreSQL's schemas. A
 container row that names nothing a user can act on is a row in the way.
 
 #### `main`, `temp` and ATTACH: what is in scope, and why
@@ -678,7 +678,7 @@ The restriction is expressed differently in the two catalogs, and both are measu
 |---|---|---|---|---|
 | `table` | `relation` | `PRAGMA table_list` | `type IN ('table','virtual')` | `acceptsRowWrites: true` |
 | `view` | `relation` | `PRAGMA table_list` | `type = 'view'` | not a row-write target |
-| `index` | `config` | `sqlite_schema` | `type = 'index'` | first-class here, unlike on four other engines |
+| `index` | `config` | `sqlite_schema` | `type = 'index'` | first-class here, which most other engines do not declare |
 | `trigger` | `attached` | `sqlite_schema` | `type = 'trigger'` | `attachedTo: 'table'`, path `[parent, name]` |
 
 **No `procedure` and no `function`, in any spelling.** An application-defined SQLite function is
