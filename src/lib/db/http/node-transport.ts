@@ -1222,7 +1222,7 @@ function connectionOf<A>(
   // (R44 QM1).
   // With refusesLinkLocal, and whatever the flag says, a link-local or metadata literal is refused next, so the guard's
   // sentence wins when it is on, and every socket is opened through a lookup that checks the answer it dials: with the
-  // guard on, its check and then the link-local check, because the guard's has no zone rule; with it off,
+  // guard on, its check and then the link-local check, so the guard's sentence wins where both refuse; with it off,
   // linkLocalRefusingLookup (byte transport design 3.9). Without refusesLinkLocal the guard's lookup is kept alone.
   // socketEgress holds that rule, so a socket dial outside this transport applies the same one.
   const lookup = socketEgress(origin.host, { refusesLinkLocal });
