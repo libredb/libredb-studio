@@ -19,18 +19,26 @@ const CHECKS_DID_NOT_FINISH =
   "The extra checks Test Connection runs for this connection did not finish, so a caution they would give may be missing.";
 
 /**
- * The cautions of the probes a provider runs only on a user's Test Connection, or none when it
- * declares no such probes.
+ * The cautions of the probes a provider runs only when a user tests the connection (Test
+ * Connection or the dialog's Save), or none when it declares no such probes.
  *
  * The method's contract is cautions, never an error, so a rejection is a defect in the provider
  * and not a fact about the connection: `connect()` already succeeded, and the answer stays a
  * success. The thrown text is logged and not shown, because it was not a caution the provider
  * chose to give, and the user is told in the route's own words that a caution may be missing.
+ * A resolution that is not an array is the same defect and gets the same answer.
+ *
+ * The route puts no deadline of its own on the call: the provider bounds its probes, as its
+ * contract says, the same way `getHealth()` below is awaited unbounded.
  */
 async function testConnectionCautions(provider: DatabaseProvider): Promise<QueryWarning[]> {
   if (!provider.testConnectionWarnings) return [];
   try {
-    return await provider.testConnectionWarnings();
+    const found = await provider.testConnectionWarnings();
+    // The published type forbids it, but an untyped implementer can resolve something else,
+    // and spreading it outside this try would turn a tested connection into a failed one.
+    if (!Array.isArray(found)) throw new TypeError("testConnectionWarnings() resolved a value that is not an array");
+    return found;
   } catch (error) {
     logger.error("Test Connection checks rejected", error, {
       route: "api/db/test-connection",
@@ -124,7 +132,8 @@ export async function POST(req: NextRequest) {
         // server's own caution is the only sign: Materialize opens a session on a database
         // that does not exist and says so in a startup NOTICE (#1401). Carried on both
         // answers below, so a plain "Connection successful" no longer hides it.
-        // Then the probes a provider runs only for this click, after connectWarnings()'s cautions.
+        // Then the probes a provider runs only for this click (Test Connection or the dialog's
+        // Save, which posts here too), after connectWarnings()'s cautions.
         // Only on a provider this route built: a borrowed handle is the editor's live session,
         // not the connection under test.
         const cautions = [
