@@ -215,7 +215,8 @@ export function databaseResourceRefusal(resource: unknown): DatabaseConfigError 
 
 /**
  * Google's message without its closing full stop, then the reason (or status) in parentheses, then a full stop.
- * The secret forms are checked against the whole message before it is cut, so a form straddling the cut is caught.
+ * The secret forms are checked against the whole message before it is cut, so a form straddling the cut is caught;
+ * a high surrogate the cut leaves at the end is dropped, so an astral character is never split.
  */
 function lead(error: GoogleError, status: number, forms: readonly string[]): string {
   const code = error.reason ?? error.status;
@@ -224,7 +225,7 @@ function lead(error: GoogleError, status: number, forms: readonly string[]): str
   const raw = (error.message ?? "").trim();
   const message = forms.some((form) => form !== "" && raw.includes(form))
     ? ERROR_SENTENCES.withheld
-    : raw.slice(0, GOOGLE_MESSAGE_MAX_CHARS);
+    : raw.slice(0, GOOGLE_MESSAGE_MAX_CHARS).replace(/[\ud800-\udbff]$/, "");
   return `${message.replace(/[.\s]+$/u, "")}${suffix}`;
 }
 

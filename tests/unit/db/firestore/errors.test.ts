@@ -373,6 +373,17 @@ describe("mapGoogleError: the rows of spec 8.1 in order", () => {
     expect(mapped(long, STATEMENT).message).toBe(`${"m".repeat(2_000)}.`);
   });
 
+  test("the cut never splits an astral character that straddles it", () => {
+    const astral = String.fromCodePoint(0x1f600);
+    const straddling = readGoogleError(
+      400,
+      JSON.stringify({ error: { message: `${"m".repeat(1_999)}${astral}tail` } }),
+    );
+    const message = mapped(straddling, STATEMENT).message;
+    expect(message).toBe(`${"m".repeat(1_999)}.`);
+    expect(message.isWellFormed()).toBe(true);
+  });
+
   test("a secret form that straddles the cut is still withheld", () => {
     const result = mapped(
       { httpStatus: 401, status: "UNAUTHENTICATED", message: `${"m".repeat(1_995)}ya29.secret-token` },
