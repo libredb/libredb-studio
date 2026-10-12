@@ -7,6 +7,8 @@
  * authorized-user credential with a quota project, x-goog-user-project. The API and token lanes refuse link-local
  * addresses; the metadata lane cannot, since the metadata server lives at one. A non-2xx answer is read as Google's
  * error envelope and mapped by errors.ts; a 2xx body that is not JSON is an explicit error.
+ * Against the emulator, one plain-HTTP lane whose only authorization header is the literal `Bearer owner` serves every
+ * request, and no token source, token request or metadata request is ever built.
  */
 import { DatabaseError, QueryError } from "@/lib/db/errors";
 import { endpointUrl, type HttpOrigin, httpOrigin } from "@/lib/db/http/endpoint";
@@ -47,6 +49,7 @@ export const FIRESTORE_TRANSPORT_SENTENCES = Object.freeze({
 
 const S = FIRESTORE_TRANSPORT_SENTENCES;
 const API_MAX_SOCKETS = 8;
+const EMULATOR_BEARER = "owner";
 const TOKEN_MAX_SOCKETS = 1;
 
 interface Lane {
@@ -90,47 +93,58 @@ function failure(error: unknown, context: ErrorContext): unknown {
 
 export function createFirestoreClient(
   target: FirestoreTarget,
-  auth: Extract<FirestoreAuth, { mode: "google" }>,
+  auth: FirestoreAuth,
   seams: FirestoreSeams,
 ): FirestoreClient {
-  const origin = httpsOrigin(FIRESTORE_API_ORIGIN);
+  const origin =
+    auth.mode === "emulator"
+      ? httpOrigin("http", auth.emulator.host, auth.emulator.port)
+      : httpsOrigin(FIRESTORE_API_ORIGIN);
   const tokenOrigin = httpsOrigin(GOOGLE_TOKEN_URL);
-  const { credentials } = auth;
-  const tokens = createTokenSource(credentials, {
-    scope: FIRESTORE_SCOPE,
-    provider: FIRESTORE_ERROR_PROVIDER,
-    maxResponseBytes: LIMITS.tokenResponseBytes,
-    now: () => seams.now(),
-    timeoutSignal: (ms) => seams.timeoutSignal(ms),
-    tokenTransport: () =>
-      seams.createTransport(
-        {
-          origin: tokenOrigin,
-          tls: tlsFor(tokenOrigin),
-          maxSockets: TOKEN_MAX_SOCKETS,
-          headers: {},
-          refusesLinkLocal: true,
-          refusesUpgrade: true,
-        },
-        "token",
-      ),
-    metadataTransport: (host) =>
-      seams.createTransport(
-        {
-          origin: parseMetadataHost(host, FIRESTORE_ERROR_PROVIDER),
-          tls: null,
-          maxSockets: TOKEN_MAX_SOCKETS,
-          // The metadata server answers only requests that carry this header.
-          headers: { "metadata-flavor": "Google" },
-          refusesUpgrade: true,
-        },
-        "metadata",
-      ),
-  });
-  const quota: Readonly<Record<string, string>> =
-    credentials.type === "authorized_user" && credentials.quotaProjectId !== undefined
-      ? { "x-goog-user-project": credentials.quotaProjectId }
-      : {};
+  const tokens =
+    auth.mode === "emulator"
+      ? null
+      : createTokenSource(auth.credentials, {
+          scope: FIRESTORE_SCOPE,
+          provider: FIRESTORE_ERROR_PROVIDER,
+          maxResponseBytes: LIMITS.tokenResponseBytes,
+          now: () => seams.now(),
+          timeoutSignal: (ms) => seams.timeoutSignal(ms),
+          tokenTransport: () =>
+            seams.createTransport(
+              {
+                origin: tokenOrigin,
+                tls: tlsFor(tokenOrigin),
+                maxSockets: TOKEN_MAX_SOCKETS,
+                headers: {},
+                refusesLinkLocal: true,
+                refusesUpgrade: true,
+              },
+              "token",
+            ),
+          metadataTransport: (host) =>
+            seams.createTransport(
+              {
+                origin: parseMetadataHost(host, FIRESTORE_ERROR_PROVIDER),
+                tls: null,
+                maxSockets: TOKEN_MAX_SOCKETS,
+                // The metadata server answers only requests that carry this header.
+                headers: { "metadata-flavor": "Google" },
+                refusesUpgrade: true,
+              },
+              "metadata",
+            ),
+        });
+  // The emulator lane carries Bearer owner alone: no routing header and no quota project, since no credential exists.
+  const extraHeaders: Readonly<Record<string, string>> =
+    auth.mode === "emulator"
+      ? {}
+      : {
+          ...routingHeaders(target),
+          ...(auth.credentials.type === "authorized_user" && auth.credentials.quotaProjectId !== undefined
+            ? { "x-goog-user-project": auth.credentials.quotaProjectId }
+            : {}),
+        };
   const lanes = new Set<Lane>();
   let current: Lane | null = null;
 
@@ -142,7 +156,7 @@ export function createFirestoreClient(
   };
 
   async function laneFor(signal: AbortSignal): Promise<Lane> {
-    const bearer = await tokens.token(signal);
+    const bearer = tokens === null ? EMULATOR_BEARER : await tokens.token(signal);
     if (current?.bearer !== bearer) {
       const previous = current;
       current = {
@@ -152,11 +166,11 @@ export function createFirestoreClient(
             origin,
             tls: tlsFor(origin),
             maxSockets: API_MAX_SOCKETS,
-            headers: { authorization: `Bearer ${bearer}`, ...routingHeaders(target), ...quota },
+            headers: { authorization: `Bearer ${bearer}`, ...extraHeaders },
             refusesLinkLocal: true,
             refusesUpgrade: true,
           },
-          "api",
+          tokens === null ? "emulator" : "api",
         ),
         inFlight: 0,
       };
@@ -188,7 +202,7 @@ export function createFirestoreClient(
   }
 
   return {
-    mode: "google",
+    mode: auth.mode,
     target,
     async send(request, { signal, context }) {
       let response: NodeResponse;
@@ -211,7 +225,7 @@ export function createFirestoreClient(
       current = null;
       for (const lane of lanes) lane.node.close();
       lanes.clear();
-      tokens.close();
+      tokens?.close();
     },
   };
 }
