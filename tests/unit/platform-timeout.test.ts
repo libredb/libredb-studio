@@ -12,7 +12,7 @@ import { platformTimeoutMs, WINDOWS_SLOW_FACTOR } from "../helpers/platform-time
 import { DEFAULT_FILE_TIMEOUT_MS, WINDOWS_PER_TEST_TIMEOUT_MS } from "../runner/options";
 
 /** The bounds that actually pass through the helper today, as a per-test millisecond value. */
-const BOUNDS_IN_USE = [120_000];
+const BOUNDS_IN_USE = [40_000, 120_000];
 
 describe("the Windows raise a self-bounded test applies", () => {
   test("Windows multiplies the bound, because its temp I/O costs an order of magnitude more", () => {
