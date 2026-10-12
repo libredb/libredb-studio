@@ -307,7 +307,7 @@ function serverError(context: ManagementFailureContext, status: number): Connect
   return connectionError(`The management API at ${context.endpoint} answered with a server error (${status}).`);
 }
 
-/** The code the shared transport puts in brackets at the end of its own sentence; P2's client reads it too. */
+/** The code the shared transport puts in brackets at the end of its own sentence; the management client reads it too. */
 export function transportCode(error: TransportError): string | undefined {
   return /\(([A-Z][A-Z0-9_]*)\)$/.exec(error.message)?.[1];
 }
