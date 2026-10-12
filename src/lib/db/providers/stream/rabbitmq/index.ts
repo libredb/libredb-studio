@@ -14,6 +14,7 @@
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { createNodeTransport } from "@/lib/db/http/node-transport";
 import type {
   ActiveSessionDetails,
   Container,
@@ -37,8 +38,18 @@ import type {
   TableStats,
 } from "@/lib/db/types";
 import type { DatabaseConnection, QueryWarning } from "@/lib/types";
-import { readConnectionOptions } from "./connection-options";
-import { AMQP_PORT_EMPTY_CAUTION, cancelledError, PROVIDER_CLOSED } from "./errors";
+import { testConnectionCautions } from "./access-check";
+import { type RabbitMQEndpoints, readConnectionOptions } from "./connection-options";
+import {
+  AMQP_PORT_EMPTY_CAUTION,
+  cancelledError,
+  configError,
+  type ErrorSite,
+  isOwnError,
+  NOT_CONNECTED,
+  PROVIDER_CLOSED,
+  rabbitmqBoundary,
+} from "./errors";
 import { RABBITMQ_LABELS } from "./labels";
 import {
   type DeadlineSignalFactory,
@@ -48,15 +59,57 @@ import {
   SYSTEM_CLOCK,
   systemDeadlineSignal,
 } from "./limits";
-import { RABBITMQ_OBJECT_KINDS } from "./objects";
+import {
+  createManagementClient,
+  type ManagementClient,
+  type ManagementTransportFactory,
+  rabbitmqBindingsLimiter,
+  rabbitmqManagementLimiter,
+} from "./management/client";
+import { MANAGEMENT_ROUTES, type ManagementRouteId } from "./management/routes";
+import { readHealth, readOverview, refuseMaintenance, supportedVersion } from "./monitoring";
+import {
+  countKinds,
+  createStreamListingMemo,
+  describeKind,
+  describeKindBatch,
+  listKind,
+  listVhosts,
+  RABBITMQ_OBJECT_KINDS,
+  type StreamListingMemo,
+} from "./objects";
+import { readSource } from "./source";
+import { createTrackingProbe, type TrackingProbe } from "./tracking-probe";
 
 /** The test seams; the factory passes none, so a built provider always runs on these defaults. */
 export interface RabbitMQSeams {
+  readonly managementTransport: ManagementTransportFactory;
   readonly clock: RabbitMQClock;
   readonly deadlineSignal: DeadlineSignalFactory;
 }
 
-const DEFAULT_SEAMS: RabbitMQSeams = Object.freeze({ clock: SYSTEM_CLOCK, deadlineSignal: systemDeadlineSignal });
+const DEFAULT_SEAMS: RabbitMQSeams = Object.freeze({
+  managementTransport: createNodeTransport,
+  clock: SYSTEM_CLOCK,
+  deadlineSignal: systemDeadlineSignal,
+});
+
+/** What connect() establishes and disconnect() ends: the endpoints, the management client and what hangs off it. */
+interface RabbitMQSession {
+  readonly endpoints: RabbitMQEndpoints;
+  readonly management: ManagementClient;
+  readonly tracking: TrackingProbe;
+  readonly streams: StreamListingMemo;
+}
+
+/** The route a member names when an unexpected failure is reported: its main GET's label. */
+const label = (id: ManagementRouteId) => MANAGEMENT_ROUTES[id].label;
+/** Own keys only: a kind named like a prototype member ("toString", "__proto__") finds no listing here. */
+const KIND_LISTING: ReadonlyMap<string, ManagementRouteId> = new Map([
+  ["stream", "streams-page"],
+  ["queue", "queues-page"],
+  ["exchange", "exchanges-page"],
+]);
 
 /** One container level: the virtual host, discovered from the management API. */
 export const RABBITMQ_CONTAINER_LEVELS: ContainerLevels = [
@@ -64,8 +117,8 @@ export const RABBITMQ_CONTAINER_LEVELS: ContainerLevels = [
 ];
 
 /**
- * The refusal of every member that would reach the broker while the provider is still being built: the type is
- * registered, so the census and the dialog work, and nothing is sent.
+ * The refusal of query() while the read path is still being built: the type is registered and the management
+ * surfaces work, so the tree and the dialog work, and no read is sent.
  */
 export const RABBITMQ_PROVIDER_PENDING = "The RabbitMQ provider is not complete in this build.";
 
@@ -74,6 +127,10 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
   protected readonly seams: RabbitMQSeams;
   /** One per instance; `disconnect()` aborts it, so nothing started on this instance outlives it. */
   protected readonly lifetime = new AbortController();
+  /** This instance's own permits: 4 management GETs and 1 bindings GET at once, within the process's bounds. */
+  private readonly managementLimiter = rabbitmqManagementLimiter();
+  private readonly bindingsLimiter = rabbitmqBindingsLimiter();
+  private session: RabbitMQSession | null = null;
 
   /**
    * Validates nothing and opens nothing: the connection's rules run in `connect()`, so a provider built only for its
@@ -129,19 +186,90 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
     throw new DatabaseConfigError(RABBITMQ_PROVIDER_PENDING, RABBITMQ_TYPE);
   }
 
+  /**
+   * The connected session, or this provider's own refusal: the closed sentence after disconnect(), and before
+   * connect() the not-connected one. The read path takes its management client from here too.
+   */
+  private requireConnected(): RabbitMQSession {
+    if (this.lifetime.signal.aborted) throw this.closedError();
+    if (this.session === null) throw configError(NOT_CONNECTED);
+    return this.session;
+  }
+
+  private closedError(): Error {
+    const reason: unknown = this.lifetime.signal.reason;
+    return isOwnError(reason) ? (reason as Error) : cancelledError(PROVIDER_CLOSED);
+  }
+
+  /** One member's work on the connected session, ending in the provider's one boundary. */
+  private async browse<T>(
+    route: string,
+    work: (session: RabbitMQSession) => Promise<T>,
+    site: ErrorSite = "browse",
+  ): Promise<T> {
+    const session = this.requireConnected();
+    try {
+      return await work(session);
+    } catch (error) {
+      throw rabbitmqBoundary(error, { site, endpoint: session.endpoints.management.display, route });
+    }
+  }
+
   // ==========================================================================
   // Lifecycle
   // ==========================================================================
 
-  /** The connection rules refuse before any socket; then the interim refusal. */
+  /**
+   * Exactly two management GETs and no AMQP connection: who this user is to the management API, then the broker's
+   * version, which must be 4.2 or later. A refusal at either closes the client and leaves the provider unconnected.
+   * A connected instance keeps its session, and a disconnect() that lands while connect() awaits wins.
+   */
   public async connect(): Promise<void> {
-    readConnectionOptions(this.config);
-    this.pending();
+    if (this.lifetime.signal.aborted) throw this.closedError();
+    if (this.session !== null) return;
+    let endpoints: RabbitMQEndpoints;
+    try {
+      endpoints = readConnectionOptions(this.config);
+    } catch (error) {
+      throw rabbitmqBoundary(error, { site: "connect", endpoint: "", route: label("whoami") });
+    }
+    const display = endpoints.management.display;
+    let management: ManagementClient | undefined;
+    try {
+      management = createManagementClient({
+        endpoint: endpoints.management,
+        transport: this.seams.managementTransport,
+        deadlineSignal: this.seams.deadlineSignal,
+        queryTimeoutMs: this.queryTimeout,
+        lifetime: this.lifetime.signal,
+        limiters: { management: this.managementLimiter, bindings: this.bindingsLimiter },
+      });
+      await management.get("whoami", {}, { site: "connect" });
+      supportedVersion((await management.get("overview-version", {}, { site: "connect" })).version);
+    } catch (error) {
+      management?.close();
+      const failure = rabbitmqBoundary(error, { site: "connect", endpoint: display, route: label("whoami") });
+      this.setError(failure);
+      throw failure;
+    }
+    if (this.lifetime.signal.aborted) {
+      management.close();
+      throw this.closedError();
+    }
+    this.session = {
+      endpoints,
+      management,
+      tracking: createTrackingProbe(management),
+      streams: createStreamListingMemo(),
+    };
+    this.setConnected(true);
   }
 
-  /** Aborts everything started on this instance with the closed sentence; safe to call twice. */
+  /** Aborts everything started on this instance with the closed sentence and closes the client; safe to call twice. */
   public async disconnect(): Promise<void> {
     if (!this.lifetime.signal.aborted) this.lifetime.abort(cancelledError(PROVIDER_CLOSED));
+    this.session?.management.close();
+    this.session = null;
     this.setConnected(false);
   }
 
@@ -152,6 +280,15 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
   public connectWarnings(): QueryWarning[] {
     const amqpPort: unknown = this.config.amqpPort;
     return amqpPort === undefined || amqpPort === null || amqpPort === "" ? [{ message: AMQP_PORT_EMPTY_CAUTION }] : [];
+  }
+
+  /** Cautions for a user's Test Connection only: alarms, no virtual host, readable classic or quorum queues. */
+  public testConnectionWarnings(): Promise<QueryWarning[]> {
+    return this.browse(
+      label("alarms"),
+      (s) => testConnectionCautions(s.management, s.tracking, this.seams.deadlineSignal),
+      "test-connection",
+    );
   }
 
   // ==========================================================================
@@ -166,67 +303,98 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
   // Object surface
   // ==========================================================================
 
-  public async listContainers(): Promise<Container[]> {
-    this.pending();
+  /** The virtual hosts; "/" is marked as plan mode's walk default, not as a session the broker holds. */
+  public listContainers(): Promise<Container[]> {
+    return this.browse(label("vhosts"), (s) => listVhosts(s.management));
   }
 
-  public async countObjects(): Promise<Record<string, KindCount>> {
-    this.pending();
+  public countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    return this.browse(label("queues-page"), (s) => countKinds(s.management, this.getCapabilities(), container));
   }
 
-  public async listObjects(): Promise<DatabaseObject[]> {
-    this.pending();
+  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    return this.browse(label(KIND_LISTING.get(kind) ?? "streams-page"), (s) =>
+      listKind(s.management, this.getCapabilities(), s.streams, container, kind),
+    );
   }
 
-  public async describeObject(): Promise<ObjectDetail> {
-    this.pending();
+  public describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    return this.browse(label("streams-page"), async () => describeKind(this.getCapabilities(), path, kind));
   }
 
-  public async describeObjects(): Promise<ObjectDetailBatch> {
-    this.pending();
+  public describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    return this.browse(label("streams-page"), (s) =>
+      describeKindBatch(s.management, this.getCapabilities(), s.streams, container, kind, limit),
+    );
   }
 
-  public async readObjectSource(): Promise<ObjectSourceDocument> {
-    this.pending();
+  public readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    return this.browse(label(kind === "exchange" ? "exchange" : "queue"), (s) =>
+      readSource(
+        {
+          client: s.management,
+          tracking: s.tracking,
+          capabilities: this.getCapabilities(),
+          now: () => this.seams.clock.now(),
+        },
+        path,
+        kind,
+        limit,
+      ),
+    );
   }
 
   // ==========================================================================
   // Monitoring
   // ==========================================================================
 
-  public async getHealth(): Promise<HealthInfo> {
-    this.pending();
+  public getHealth(): Promise<HealthInfo> {
+    return this.browse(label("overview-version"), (s) => readHealth(s.management));
   }
 
-  public async getOverview(): Promise<DatabaseOverview> {
-    this.pending();
+  public getOverview(): Promise<DatabaseOverview> {
+    return this.browse(label("overview-full"), (s) => readOverview(s.management));
   }
 
+  /** Every metric is optional, so an empty object is the honest answer. No GET. */
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
-    this.pending();
+    this.requireConnected();
+    return {};
   }
 
+  /** Empty: RabbitMQ keeps no query log. No GET. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
-    this.pending();
+    this.requireConnected();
+    return [];
   }
 
+  /** Empty: broker connections name other users and client addresses, so Studio does not list them. No GET. */
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
-    this.pending();
+    this.requireConnected();
+    return [];
   }
 
+  /** Empty: counts are sampled per folder in the tree, never a row count. No GET. */
   public async getTableStats(): Promise<TableStats[]> {
-    this.pending();
+    this.requireConnected();
+    return [];
   }
 
+  /** Empty: a stream has no index. No GET. */
   public async getIndexStats(): Promise<IndexStats[]> {
-    this.pending();
+    this.requireConnected();
+    return [];
   }
 
+  /** Empty: the management API a management user may read reports no storage per object. No GET. */
   public async getStorageStats(): Promise<StorageStats[]> {
-    this.pending();
+    this.requireConnected();
+    return [];
   }
 
+  /** Unreachable behind supportsMaintenance: false; a direct call is refused with its sentence. */
   public async runMaintenance(): Promise<MaintenanceResult> {
-    this.pending();
+    this.requireConnected();
+    return refuseMaintenance();
   }
 }

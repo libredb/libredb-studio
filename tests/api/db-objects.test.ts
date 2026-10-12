@@ -3,6 +3,9 @@ import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 import { createMockProvider } from "../helpers/mock-provider";
+import { rabbitmqConnection } from "../helpers/rabbitmq-connection";
+import { answerBroker, createManagementStub, manualDeadlines, segment } from "../helpers/rabbitmq-management-stub";
+import { RabbitMQProvider } from "@/lib/db/providers/stream/rabbitmq/index";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import {
   INVENTORY_LIMIT,
@@ -2103,6 +2106,72 @@ describe("a kind the Keys panel enumerates, on the inventory and search routes",
 // ============================================================================
 // source
 // ============================================================================
+
+// ============================================================================
+// RabbitMQ over a recorded management API: the routes' own GET order (#1656, R-S14)
+// ============================================================================
+
+// The one case of this file that builds a real provider: the provider-management test drives the shared walk the
+// two routes run, and this pins the order the route handlers themselves issue, so a change inside either route that
+// reorders or adds a listing fails here. It adds no mock.module() of its own: the mocked getOrCreateProvider hands
+// the routes a real provider built on the recording management API.
+describe("the inventory and search routes over RabbitMQ's management API", () => {
+  const STREAMS = (vhost: string) =>
+    `GET /api/queues/${segment(vhost)}?columns=name,type,state&disable_stats=true&page=1&page_size=500&sort=type&sort_reverse=true`;
+  const QUEUES = (vhost: string) =>
+    `GET /api/queues/${segment(vhost)}?columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name`;
+  const EXCHANGES = (vhost: string) =>
+    `GET /api/exchanges/${segment(vhost)}?columns=name,type,durable,auto_delete,internal&page=1&page_size=500&sort=name`;
+
+  async function rabbitmq() {
+    const stub = createManagementStub();
+    answerBroker(stub, {
+      vhosts: {
+        "/": { streams: ["st-orders"], queues: [["orders", "classic"]], exchanges: ["ex-topic"] },
+        billing: { streams: ["st-audit"], queues: [["ledger", "quorum"]] },
+      },
+    });
+    const provider = new RabbitMQProvider(
+      rabbitmqConnection(),
+      { queryTimeout: 60_000 },
+      { managementTransport: stub.factory, deadlineSignal: manualDeadlines().factory },
+    );
+    await provider.connect();
+    const mark = stub.requests.length;
+    return { provider, since: () => stub.keys().slice(mark) };
+  }
+
+  test("the connection select's inventory: the virtual hosts, then one Streams page per virtual host", async () => {
+    const { provider, since } = await rabbitmq();
+    activeProvider = provider;
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, kinds: ["stream"], includeColumns: true },
+      }) as never,
+    );
+    expect(response.status).toBe(200);
+    expect(since()).toEqual(["GET /api/vhosts", STREAMS("/"), STREAMS("billing")]);
+  });
+
+  test("the tree search: the virtual hosts, then the three pages per virtual host", async () => {
+    const { provider, since } = await rabbitmq();
+    activeProvider = provider;
+    const response = await searchRoute.POST(
+      createMockRequest("/api/db/objects/search", { method: "POST", body: { connection, term: "orders" } }) as never,
+    );
+    expect(response.status).toBe(200);
+    expect(since()).toEqual([
+      "GET /api/vhosts",
+      STREAMS("/"),
+      QUEUES("/"),
+      EXCHANGES("/"),
+      STREAMS("billing"),
+      QUEUES("billing"),
+      EXCHANGES("billing"),
+    ]);
+  });
+});
 
 describe("POST /api/db/objects/source", () => {
   const FUNCTION_KIND: ObjectKindSpec = {

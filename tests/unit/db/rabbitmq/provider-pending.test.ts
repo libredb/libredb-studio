@@ -1,6 +1,6 @@
 /**
- * While the provider is incomplete, every member that would reach the broker refuses with one sentence before any
- * I/O, and disconnect() always succeeds. Later work replaces these members one by one and deletes their cases here.
+ * While the read path is incomplete, query() refuses with one sentence before any I/O, and disconnect() always
+ * succeeds. Later work replaces query() and deletes this file.
  */
 import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError, QueryCancelledError } from "@/lib/db/errors";
@@ -11,25 +11,9 @@ import { rabbitmqConnection } from "../../../helpers/rabbitmq-connection";
 
 const provider = (): RabbitMQProvider => new RabbitMQProvider(rabbitmqConnection());
 
-/** Called through the provider contract, as the routes call it: the interim members take no arguments of their own. */
+/** Called through the provider contract, as the routes call it: the interim member takes no arguments of its own. */
 const PENDING_MEMBERS: ReadonlyArray<readonly [string, (p: DatabaseProvider) => Promise<unknown>]> = [
-  ["connect", (p) => p.connect()],
   ["query", (p) => p.query('{"vhost": "/", "stream": "orders"}')],
-  ["listContainers", (p) => p.listContainers()],
-  ["countObjects", (p) => p.countObjects(["/"])],
-  ["listObjects", (p) => p.listObjects(["/"], "stream")],
-  ["describeObject", (p) => p.describeObject(["/", "orders"], "stream")],
-  ["describeObjects", (p) => p.describeObjects(["/"], "stream")],
-  ["readObjectSource", (p) => p.readObjectSource!(["/", "orders"], "stream")],
-  ["getHealth", (p) => p.getHealth()],
-  ["getOverview", (p) => p.getOverview()],
-  ["getPerformanceMetrics", (p) => p.getPerformanceMetrics()],
-  ["getSlowQueries", (p) => p.getSlowQueries()],
-  ["getActiveSessions", (p) => p.getActiveSessions()],
-  ["getTableStats", (p) => p.getTableStats()],
-  ["getIndexStats", (p) => p.getIndexStats()],
-  ["getStorageStats", (p) => p.getStorageStats()],
-  ["runMaintenance", (p) => p.runMaintenance("analyze")],
 ];
 
 describe("the interim refusal", () => {
@@ -49,7 +33,7 @@ describe("the interim refusal", () => {
     expect(instance.isConnected()).toBe(false);
   });
 
-  test("connect() runs the connection rules first: a record they refuse never reaches the interim refusal", async () => {
+  test("connect() runs the connection rules first: a tunnelled record is refused with their sentence", async () => {
     const tunnelled = new RabbitMQProvider(
       rabbitmqConnection({
         sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password" },

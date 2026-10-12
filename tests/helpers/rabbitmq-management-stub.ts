@@ -349,3 +349,84 @@ export const SAMPLE_BODIES = {
   alarms: { status: "ok" },
   extensions: [{ javascript: "dispatcher.js" }, [], { javascript: ["stream_management-ejs.js", "stream.js"] }],
 } as const;
+
+/** One virtual host's objects as the listing pages show them. */
+export interface StubVhost {
+  readonly streams?: readonly string[];
+  /** Name and type, classic or quorum. */
+  readonly queues?: readonly (readonly [string, "classic" | "quorum"])[];
+  readonly exchanges?: readonly string[];
+}
+
+export interface StubBroker {
+  readonly version?: string;
+  readonly vhosts: Readonly<Record<string, StubVhost>>;
+  /** The plugin list names stream.js; true when absent. */
+  readonly streamManagement?: boolean;
+}
+
+/** The path segment the client sends for a name: RFC 3986 unreserved characters kept, everything else %XX. */
+export function segment(name: string): string {
+  return encodeURIComponent(name).replace(/[!'()*]/g, (mark) => `%${mark.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+/**
+ * Answers every route a browse makes on a broker of these virtual hosts: whoami, the version, the overview, the
+ * alarms, the plugin list, the virtual host listing and each virtual host's three pages. Streams page rows come in
+ * the broker's order for sort=type reversed: streams by descending name, then quorum, then classic.
+ */
+export function answerBroker(stub: ManagementStub, broker: StubBroker, prefix = ""): void {
+  const version = broker.version ?? "4.3.6";
+  stub.answer(`GET ${prefix}/api/whoami`, jsonOk(SAMPLE_BODIES.whoami));
+  stub.answer(
+    `GET ${prefix}/api/overview?columns=rabbitmq_version,product_name`,
+    jsonOk({ rabbitmq_version: version }),
+  );
+  stub.answer(
+    `GET ${prefix}/api/overview?columns=rabbitmq_version,product_name,management_version`,
+    jsonOk({ rabbitmq_version: version, management_version: version }),
+  );
+  stub.answer(`GET ${prefix}/api/health/checks/alarms`, jsonOk({ status: "ok" }));
+  stub.answer(
+    `GET ${prefix}/api/extensions`,
+    jsonOk(broker.streamManagement === false ? [{ javascript: "dispatcher.js" }] : SAMPLE_BODIES.extensions),
+  );
+  stub.answer(
+    `GET ${prefix}/api/vhosts`,
+    jsonOk(Object.keys(broker.vhosts).map((name) => ({ name, cluster_state: { [SAMPLE_NODE]: "running" } }))),
+  );
+  const byteOrder = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+  for (const [vhost, objects] of Object.entries(broker.vhosts)) {
+    const v = segment(vhost);
+    const streams = [...(objects.streams ?? [])].sort(byteOrder);
+    const queues = [...(objects.queues ?? [])].sort((a, b) => byteOrder(a[0], b[0]));
+    const all = [
+      ...streams.map((name) => ({ name, type: "stream", state: "running" })),
+      ...queues.map(([name, type]) => ({ name, type, state: "running" })),
+    ];
+    const byName = [...all].sort((a, b) => byteOrder(a.name, b.name));
+    const typeRank = (type: string) => (type === "stream" ? 0 : type === "quorum" ? 1 : 2);
+    const byTypeReversed = [...all].sort((a, b) => typeRank(a.type) - typeRank(b.type) || byteOrder(b.name, a.name));
+    stub.answer(
+      `GET ${prefix}/api/queues/${v}?columns=name,type,state,messages,messages_ready,messages_unacknowledged&disable_stats=true&enable_queue_totals=true&page=1&page_size=500&sort=name`,
+      jsonOk({ filtered_count: all.length, items: byName.slice(0, 500) }),
+    );
+    stub.answer(
+      `GET ${prefix}/api/queues/${v}?columns=name,type,state&disable_stats=true&page=1&page_size=500&sort=type&sort_reverse=true`,
+      jsonOk({ filtered_count: all.length, items: byTypeReversed.slice(0, 500) }),
+    );
+    // Not readable by default: a test that wants the Access caution answers 503 for its queue.
+    for (const [name] of queues)
+      stub.answer(`GET ${prefix}/api/stream/${v}/${segment(name)}/tracking`, { status: 401, body: "{}" });
+    const exchanges = ["", ...(objects.exchanges ?? [])].sort(byteOrder);
+    stub.answer(
+      `GET ${prefix}/api/exchanges/${v}?columns=name,type,durable,auto_delete,internal&page=1&page_size=500&sort=name`,
+      jsonOk({
+        filtered_count: exchanges.length,
+        items: exchanges
+          .slice(0, 500)
+          .map((name) => ({ name, type: "direct", durable: true, auto_delete: false, internal: false })),
+      }),
+    );
+  }
+}
