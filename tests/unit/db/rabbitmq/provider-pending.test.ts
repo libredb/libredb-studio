@@ -3,7 +3,8 @@
  * I/O, and disconnect() always succeeds. Later work replaces these members one by one and deletes their cases here.
  */
 import { describe, expect, test } from "bun:test";
-import { DatabaseConfigError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryCancelledError } from "@/lib/db/errors";
+import { PROVIDER_CLOSED, TUNNEL_REFUSED } from "@/lib/db/providers/stream/rabbitmq/errors";
 import { RABBITMQ_PROVIDER_PENDING, RabbitMQProvider } from "@/lib/db/providers/stream/rabbitmq/index";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { rabbitmqConnection } from "../../../helpers/rabbitmq-connection";
@@ -48,11 +49,23 @@ describe("the interim refusal", () => {
     expect(instance.isConnected()).toBe(false);
   });
 
-  test("disconnect() succeeds on a provider that never connected, and aborts its lifetime", async () => {
+  test("connect() runs the connection rules first: a record they refuse never reaches the interim refusal", async () => {
+    const tunnelled = new RabbitMQProvider(
+      rabbitmqConnection({
+        sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password" },
+      }),
+    );
+    await expect(tunnelled.connect()).rejects.toThrow(TUNNEL_REFUSED);
+  });
+
+  test("disconnect() succeeds on a provider that never connected, and aborts its lifetime with the closed sentence", async () => {
     const instance = provider();
     await instance.disconnect();
     await instance.disconnect();
     expect(instance.isConnected()).toBe(false);
-    expect((Reflect.get(instance, "lifetime") as AbortController).signal.aborted).toBe(true);
+    const signal = (Reflect.get(instance, "lifetime") as AbortController).signal;
+    expect(signal.aborted).toBe(true);
+    expect(signal.reason).toBeInstanceOf(QueryCancelledError);
+    expect((signal.reason as Error).message).toBe(PROVIDER_CLOSED);
   });
 });

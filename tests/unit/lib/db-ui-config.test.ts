@@ -472,12 +472,13 @@ describe("db-ui-config", () => {
      * token is the password, and the connection layer it shares with the InfluxQL type refuses a user on it (InfluxDB
      * spec A.3). Oxia has no user name either, and its provider refuses a non-empty `config.user` with "Oxia has no
      * user name: clear User. A bearer token goes under Token." (SB1-4.3) Kubernetes has no user name either: basic
-     * authentication is refused, and its provider refuses a non-empty `config.user` naming the field. Listed by name,
-     * so the read stays visible.
+     * authentication is refused, and its provider refuses a non-empty `config.user` naming the field. RabbitMQ has no
+     * database: virtual hosts are discovered, and its provider refuses a non-empty `config.database` naming the field.
+     * Listed by name, so the read stays visible.
      */
     const READ_ONLY_TO_REFUSE: Readonly<Record<"user" | "database", readonly DatabaseType[]>> = {
       user: ["qdrant", "influxdb3", "oxia", "kubernetes"],
-      database: [],
+      database: ["rabbitmq"],
     };
 
     test("every field read only to refuse it is really read and really not offered", () => {

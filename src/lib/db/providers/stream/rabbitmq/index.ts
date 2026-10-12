@@ -36,7 +36,9 @@ import type {
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
-import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseConnection, QueryWarning } from "@/lib/types";
+import { readConnectionOptions } from "./connection-options";
+import { AMQP_PORT_EMPTY_CAUTION, cancelledError, PROVIDER_CLOSED } from "./errors";
 import { RABBITMQ_LABELS } from "./labels";
 import {
   type DeadlineSignalFactory,
@@ -130,14 +132,25 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
   // Lifecycle
   // ==========================================================================
 
+  /** The connection rules refuse before any socket; then the interim refusal. */
   public async connect(): Promise<void> {
+    readConnectionOptions(this.config);
     this.pending();
   }
 
-  /** Aborts everything started on this instance; safe to call twice. */
+  /** Aborts everything started on this instance with the closed sentence; safe to call twice. */
   public async disconnect(): Promise<void> {
-    if (!this.lifetime.signal.aborted) this.lifetime.abort();
+    if (!this.lifetime.signal.aborted) this.lifetime.abort(cancelledError(PROVIDER_CLOSED));
     this.setConnected(false);
+  }
+
+  /**
+   * A fact of the configuration, read without I/O: an empty AMQP port browses only, which Test Connection states
+   * as its one caution. Synchronous, and empty for every other record.
+   */
+  public connectWarnings(): QueryWarning[] {
+    const amqpPort: unknown = this.config.amqpPort;
+    return amqpPort === undefined || amqpPort === null || amqpPort === "" ? [{ message: AMQP_PORT_EMPTY_CAUTION }] : [];
   }
 
   // ==========================================================================

@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
+import { AMQP_PORT_EMPTY_CAUTION } from "@/lib/db/providers/stream/rabbitmq/errors";
 import {
   RABBITMQ_CONTAINER_LEVELS,
   RabbitMQProvider,
@@ -118,5 +119,22 @@ describe("seams", () => {
   test("the factory keeps a read-only connection's mode, because the provider enforces it", async () => {
     const provider = await createDatabaseProvider(rabbitmqConnection({ readOnly: true }));
     expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+  });
+});
+
+describe("connectWarnings", () => {
+  test("an empty or absent AMQP port is the one caution, worded as the user's choice; a set port is none", () => {
+    for (const amqpPort of ["", undefined]) {
+      expect(new RabbitMQProvider(rabbitmqConnection({ amqpPort })).connectWarnings()).toEqual([
+        { message: AMQP_PORT_EMPTY_CAUTION },
+      ]);
+    }
+    expect(new RabbitMQProvider(rabbitmqConnection({ amqpPort: "5672" })).connectWarnings()).toEqual([]);
+  });
+
+  test("it reads no I/O: a provider that never connected answers it", () => {
+    const provider = new RabbitMQProvider(rabbitmqConnection({ amqpPort: "" }));
+    expect(provider.isConnected()).toBe(false);
+    expect(provider.connectWarnings()).toHaveLength(1);
   });
 });

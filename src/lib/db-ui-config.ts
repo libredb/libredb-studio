@@ -951,7 +951,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // One tunnel carries one port, and the management API and AMQP use two, so the provider refuses a tunnel.
     showSshTunnel: false,
     hostAcceptsUri: ["http", "https"],
-    connectionFields: ["host", "port", "apiPath"],
+    connectionFields: ["host", "port", "user", "password", "apiPath"],
     fieldLabels: { port: "Management port", apiPath: "Path prefix" },
     // The dialog's own sentence says the mode can be turned off, which is false here.
     readOnlyHint:
