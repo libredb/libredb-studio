@@ -45,6 +45,8 @@ const PAGED_STATEMENT: Readonly<Partial<Record<DatabaseType, string>>> = Object.
  *   carries its own `--limit`, and no offset can page it.
  * - `false` for `mqtt` (#1635), whose own `prepareQuery` hands the statement on with `wasLimited: false`: one
  *   subscribe returns the messages it saw while it ran, and no offset can ask the broker for the ones it did not.
+ * - `false` for `firestore`, whose own `prepareQuery` hands the statement on with `offset: 0`: a page is the statement's
+ *   own `.limit(n)` and `.startAfter(...)`, and no offset of the route's can ask Firestore for the next one.
  * - `false` for `neo4j`, whose `prepareQuery` (`GraphBaseProvider`) hands the statement on untouched:
  *   the provider bounds a read by the rows it takes from the server, and no offset can page it.
  * - `false` for `influxdb` (InfluxDB spec I19), whose `prepareQuery` hands the InfluxQL text on untouched: the

@@ -46,6 +46,9 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   "druid",
   "duckdb",
   "elasticsearch",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this version reads only, whatever `readOnly` says,
+  // which docs/providers/firestore.md names under "Object edit (#789)".
+  "firestore",
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 is read-only (InfluxDB spec I1), which docs/providers/influxdb.md names.
   "influxdb",
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 is read-only (InfluxDB spec I1), which docs/providers/influxdb3.md names.

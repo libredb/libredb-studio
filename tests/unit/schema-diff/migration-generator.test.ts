@@ -1548,6 +1548,7 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "s3",
           "kubernetes",
           "mqtt",
+          "firestore",
         ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
@@ -1658,6 +1659,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "s3",
             "kubernetes",
             "mqtt",
+            "firestore",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);

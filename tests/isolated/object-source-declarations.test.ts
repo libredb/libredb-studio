@@ -296,9 +296,9 @@ describe("the fleet census of object source declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    // EXTERNAL_DATABASE_TYPES.length (30 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend, bigquery, s3 and
-    // kubernetes) plus the embedded store.
-    expect(CENSUS_TYPES).toHaveLength(32);
+    // EXTERNAL_DATABASE_TYPES.length (32 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend, bigquery, s3,
+    // kubernetes, mqtt and firestore) plus the embedded store.
+    expect(CENSUS_TYPES).toHaveLength(33);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -316,14 +316,14 @@ describe("the fleet census of object source declarations", () => {
     // `hasSource` moves between the two halves, so both halves must be pinned or the total alone
     // would still be satisfied. Neither half may be edited to match a build: if this fails, the
     // DECLARATION is wrong or the design's table is, and the repair is one of those two.
-    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(125);
-    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(125);
+    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(126);
+    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(126);
     // neo4j added four kinds, none source-bearing, db2 five source-bearing kinds and four others, milvus and
     // qdrant one source-bearing kind each, influxdb and influxdb3 one kind each, neither source-bearing, oxia
     // two source-bearing kinds, databend four source-bearing kinds, bigquery three kinds, s3 two source-bearing kinds, and kubernetes 37
-    // source-bearing kinds and its Custom Resources kind.
-    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(37);
-    expect(rows).toHaveLength(162);
+    // source-bearing kinds and its Custom Resources kind, firestore one source-bearing kind and one other.
+    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(38);
+    expect(rows).toHaveLength(164);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -352,7 +352,7 @@ describe("the fleet census of object source declarations", () => {
     // 126 on a MariaDB connection against 124 unconnected: the design states both numbers because
     // criterion 2's evidence method reads an unconnected provider and would otherwise
     // structurally exclude the two riskiest declarations in the phase.
-    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(127);
+    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(128);
   });
 
   /*
@@ -438,8 +438,8 @@ describe("the fleet census of object source declarations", () => {
         throw new Error(`the half-declaration guard never reached ${extra}, so it does not cover the MariaDB branch`);
       }
     }
-    // 162 unconnected kinds plus the MariaDB branch's eight.
-    expect(rows).toHaveLength(170);
+    // 164 unconnected kinds plus the MariaDB branch's eight.
+    expect(rows).toHaveLength(172);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)
@@ -475,7 +475,13 @@ describe("the fleet census of object source declarations", () => {
  * registration of an engine that declares one moves it. etcd's `key` (#1089 4.1), Oxia's `key` (SB2-7.1) and S3's
  * `object` are the three such kinds, and the planted declarations are what show each rule refuses what it names.
  */
-const KEY_BROWSER_KINDS: readonly string[] = Object.freeze(["etcd/key", "oxia/key", "s3/object", "mqtt/topic"]);
+const KEY_BROWSER_KINDS: readonly string[] = Object.freeze([
+  "etcd/key",
+  "oxia/key",
+  "s3/object",
+  "mqtt/topic",
+  "firestore/document",
+]);
 
 /** The breaches of the three conditions above in one declaration, one sentence each. */
 function keyBrowserBreaches(type: string, capabilities: ProviderCapabilities): readonly string[] {
@@ -513,7 +519,7 @@ function keyBrowserBreaches(type: string, capabilities: ProviderCapabilities): r
  * engine that declares it moves the list. The planted declarations, in the key-browser block below so
  * they share its key-browser kind, show each rule refuses what it names.
  */
-const LEVEL_SCAN_TYPES: readonly string[] = Object.freeze(["s3"]);
+const LEVEL_SCAN_TYPES: readonly string[] = Object.freeze(["s3", "firestore"]);
 
 /** The breaches of the level rules in one declaration, one sentence each. */
 function levelBreaches(type: string, capabilities: ProviderCapabilities): readonly string[] {
