@@ -564,3 +564,64 @@ describe("the captures", () => {
     expect(sizes.reduce((sum, { size }) => sum + size, 0)).toBeLessThanOrEqual(8 * 1_048_576);
   });
 });
+
+describe("the CI step", () => {
+  interface Step {
+    readonly name?: string;
+    readonly run?: string;
+    readonly if?: string;
+  }
+  const CI = parseYaml(read(".github/workflows/ci.yml")) as {
+    jobs: Record<string, { name?: string; steps: Step[] }>;
+  };
+  const smoke = CI.jobs["functional-smoke"];
+  const names = smoke.steps.map((step) => step.name);
+  const step = smoke.steps.find((s) => s.name === "RabbitMQ read-only check");
+  const run = step?.run ?? "";
+
+  test("the job keeps its id and names both engines, so a red oracle never shows under a PostgreSQL label", () => {
+    expect(smoke.name).toBe("Functional Smoke (PostgreSQL, RabbitMQ)");
+  });
+
+  test("the step runs after the functional smoke, with no condition, so it cannot hide that result", () => {
+    expect(names.indexOf("RabbitMQ read-only check")).toBeGreaterThan(names.indexOf("Run functional smoke"));
+    expect(names.indexOf("Run functional smoke")).toBeGreaterThan(-1);
+    expect(step?.if).toBeUndefined();
+  });
+
+  test("the step runs the compose fixture's image with its plugin list and file limit, on loopback ports only", () => {
+    expect(run).toContain(`image="${RABBITMQ_FIXTURE_IMAGE}"`);
+    expect(run).toContain("--ulimit nofile=65536:65536");
+    expect(run).toContain('-v "$PWD/docker/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro"');
+    const published = run.match(/-p \S+/g) ?? [];
+    expect(published.length).toBe(3);
+    for (const port of published) expect(port.startsWith("-p 127.0.0.1:")).toBe(true);
+  });
+
+  test("the broker is removed on every exit, the wait is bounded at 60 s, and the seed and the check both run", () => {
+    expect(run).toContain("trap 'docker rm -f libredb-ci-rabbitmq > /dev/null' EXIT");
+    expect(run).toContain("end=$((SECONDS + 60))");
+    expect(run).toContain('while [ "$SECONDS" -lt "$end" ]; do');
+    expect(run).toContain("The RabbitMQ broker was not ready within 60 s.");
+    expect(run.indexOf("bun tests/live/rabbitmq-seed.ts")).toBeLessThan(
+      run.indexOf("bun tests/live/rabbitmq-read-only.ts --dedicated"),
+    );
+    expect(run).not.toMatch(/RABBITMQ_LIVE_[A-Z_]*PASSWORD="?[A-Za-z0-9]/);
+  });
+
+  test("the wait asks the management API before any CLI call, so a CLI run as root cannot write the Erlang cookie first", () => {
+    // The image's HOME is /var/lib/rabbitmq: a `docker exec` CLI that starts before the server creates the cookie
+    // there as root with mode 0400, and the server, which runs as rabbitmq, then dies reading it (eacces).
+    const wait = run.slice(run.indexOf("while"), run.indexOf("done"));
+    expect(wait.indexOf("curl -fsS")).toBeGreaterThan(-1);
+    expect(wait.indexOf("curl -fsS")).toBeLessThan(wait.indexOf("docker exec"));
+    expect(run.slice(0, run.indexOf("while")).includes("docker exec")).toBe(false);
+  });
+
+  test("the AMQP dial's runtime cases join the Node 26.10.0 step", () => {
+    const node26 = CI.jobs.test.steps.find(
+      (s) => s.name?.includes("on Node 26.10.0") && s.run?.includes("NODE_TRANSPORT_NODES"),
+    );
+    expect(node26?.run).toContain("tests/unit/db/rabbitmq/dial-runtimes.test.ts");
+  });
+});

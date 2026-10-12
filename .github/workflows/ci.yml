@@ -179,17 +179,18 @@ jobs:
 
       # Production runs on Node 26.10.0 (the Dockerfile's runner stage), and the byte transport's refusal of a
       # link-local DNS answer with DB_HTTP_BLOCK_PRIVATE_HOSTS off rests on that runtime's Agent using the
-      # transport's own lookup, so the transport's runtime cases run once more on exactly that version. The suite
-      # and its coverage above stay on Node 24.
+      # transport's own lookup, so the transport's runtime cases run once more on exactly that version, and so do
+      # the RabbitMQ AMQP dial's, whose egress rests on the same runtime's lookup handling. The suite and its
+      # coverage above stay on Node 24.
       - name: Setup Node 26.10.0 for the transport runtime cases
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "26.10.0"
 
-      - name: Run the transport runtime cases and the S3 client wire cases on Node 26.10.0
+      - name: Run the transport runtime cases, the S3 client wire cases and the RabbitMQ dial cases on Node 26.10.0
         run: |
           test "$(node --version)" = "v26.10.0"
-          NODE_TRANSPORT_NODES="$(command -v node)" bun tests/run-tests.ts tests/unit/db/http/node-transport-runtimes.test.ts tests/unit/db/s3/client-wire.test.ts
+          NODE_TRANSPORT_NODES="$(command -v node)" bun tests/run-tests.ts tests/unit/db/http/node-transport-runtimes.test.ts tests/unit/db/s3/client-wire.test.ts tests/unit/db/rabbitmq/dial-runtimes.test.ts
 
       - name: Upload coverage artifact
         # always(): keep the lcov available for debugging when coverage:check
@@ -386,7 +387,7 @@ jobs:
   # branch, which is the whole point of a test that claims to exercise the real
   # path.
   functional-smoke:
-    name: Functional Smoke (PostgreSQL)
+    name: Functional Smoke (PostgreSQL, RabbitMQ)
     needs: [lint-and-build]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -433,6 +434,43 @@ jobs:
           ADMIN_PASSWORD: test-admin
           USER_EMAIL: user@libredb.org
           USER_PASSWORD: test-user
+
+      # The RabbitMQ provider's read-only check (#1656): every provider surface against a fresh 4.3.6 broker, the
+      # broker's own take counters compared before and after, and one control take that must move them. It runs after
+      # the functional smoke on purpose: the steps run in order with no `if:`, so a red oracle cannot hide the
+      # PostgreSQL result. The broker serves this run alone, so the broker-wide counters are compared too. The image
+      # reference is database-compose.yml's `rabbitmq` service's, and tests/unit/db/rabbitmq/live-environment.test.ts
+      # holds the two equal. The passwords are made for this run and never leave it. The wait asks the management API
+      # before it runs the CLI: the image's HOME is /var/lib/rabbitmq, so a `docker exec` CLI that ran before the
+      # server would write the Erlang cookie there as root, and the server, running as rabbitmq, could not read it.
+      - name: RabbitMQ read-only check
+        run: |
+          image="rabbitmq:4.3.6-management@sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd"
+          export RABBITMQ_LIVE_DIGEST="${image#*@}"
+          export RABBITMQ_LIVE_ADMIN_PASSWORD="$(openssl rand -hex 16)"
+          export RABBITMQ_LIVE_FIXTURE_PASSWORD="$(openssl rand -hex 16)"
+          trap 'docker rm -f libredb-ci-rabbitmq > /dev/null' EXIT
+          docker run -d --name libredb-ci-rabbitmq --ulimit nofile=65536:65536 \
+            -e RABBITMQ_DEFAULT_USER=libredb-admin -e RABBITMQ_DEFAULT_PASS="$RABBITMQ_LIVE_ADMIN_PASSWORD" \
+            -v "$PWD/docker/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro" \
+            -p 127.0.0.1:5672:5672 -p 127.0.0.1:15672:15672 -p 127.0.0.1:15692:15692 "$image"
+          ready=""
+          end=$((SECONDS + 60))
+          while [ "$SECONDS" -lt "$end" ]; do
+            if curl -fsS -o /dev/null -u "libredb-admin:$RABBITMQ_LIVE_ADMIN_PASSWORD" http://127.0.0.1:15672/api/overview \
+              && docker exec libredb-ci-rabbitmq rabbitmq-diagnostics -q check_port_connectivity > /dev/null 2>&1; then
+              ready=yes
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "The RabbitMQ broker was not ready within 60 s."
+            docker logs --tail 50 libredb-ci-rabbitmq
+            exit 1
+          fi
+          bun tests/live/rabbitmq-seed.ts
+          bun tests/live/rabbitmq-read-only.ts --dedicated
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

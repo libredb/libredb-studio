@@ -98,7 +98,7 @@ its `.loop/PROGRESS.md` entry and its commit; a trace line is not evidence that 
 2. **Functional** — `scripts/functional-smoke.sh`: boot the built app, create a real
    PostgreSQL connection through the UI, run a SQL query, assert the rows render. Mandatory
    before a milestone may complete. (CI covers the same flow by running the underlying spec,
-   `e2e/functional-smoke.spec.ts`, in its own bare-runner job `Functional Smoke (PostgreSQL)`
+   `e2e/functional-smoke.spec.ts`, in its own bare-runner job `Functional Smoke (PostgreSQL, RabbitMQ)`
    — the containerised E2E job excludes it with `--grep-invert "Functional smoke"` because it
    cannot reach the spec's host-loopback postgres. Neither job runs this wrapper; the wrapper
    additionally hard-fails when Docker is missing, where the spec skips.)
