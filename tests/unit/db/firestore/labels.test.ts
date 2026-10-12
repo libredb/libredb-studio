@@ -26,7 +26,7 @@ describe("FIRESTORE_LABELS", () => {
 
   test("no sentence carries an em dash or an en dash", () => {
     for (const value of Object.values(FIRESTORE_LABELS)) {
-      if (typeof value === "string") expect(value).not.toMatch(/[–—]/);
+      if (typeof value === "string") expect(value).not.toMatch(/[\u2013\u2014]/);
     }
   });
 });
