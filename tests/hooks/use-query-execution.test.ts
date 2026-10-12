@@ -4174,7 +4174,52 @@ describe("useQueryExecution", () => {
         expect(cancelled).toEqual([]);
         expect(mockToastError).toHaveBeenCalledWith("Stopped Waiting", {
           description:
-            "A multi-statement script or a statement inside a transaction cannot be cancelled on the server, so it keeps running there until it ends.",
+            "A statement inside a transaction cannot be cancelled on the server, so it keeps running there until it ends.",
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    // A script goes to /api/db/multi-query with the run's id, which the route binds to each unit in turn, so Stop
+    // posts one cancel with that id and it reaches the unit in flight.
+    test("Stop on a script posts one cancel with the run's id", async () => {
+      const bodies: Record<string, unknown>[] = [];
+      const cancels: string[] = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.includes("/api/db/multi-query")) {
+          bodies.push(JSON.parse(init?.body as string));
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("The operation was aborted.", "AbortError")),
+            );
+          });
+        }
+        if (url.includes("/api/db/cancel")) {
+          cancels.push(JSON.parse(init?.body as string).queryId as string);
+          return json({ cancelled: true });
+        }
+        return json({ error: "Not found" }, 404);
+      }) as typeof fetch;
+      try {
+        const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+        const running = act(async () => {
+          await result.current.executeQuery("SELECT 1; SELECT 2");
+        });
+        await act(async () => {
+          await result.current.cancelQuery();
+        });
+        await running;
+
+        expect(bodies).toHaveLength(1);
+        expect(typeof bodies[0].queryId).toBe("string");
+        expect(bodies[0].queryId as string).toMatch(/^q-\d+-/);
+        expect(cancels).toEqual([bodies[0].queryId as string]);
+        expect(mockToastSuccess).toHaveBeenCalledWith("Query Cancelled", {
+          description: "Query execution was cancelled.",
+          id: "loading-toast",
         });
       } finally {
         globalThis.fetch = originalFetch;

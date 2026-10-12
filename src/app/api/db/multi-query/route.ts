@@ -4,6 +4,9 @@ import { splitExecutionUnits, unitIsModuleBody, type ExecutionUnit } from "@/lib
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { isSelectQuery } from "@/lib/db/utils/query-limiter";
 import { createErrorResponse } from "@/lib/api/errors";
+import { bridgeAbortToCancel } from "@/lib/api/abort-cancel";
+import { supportsQueryCancel } from "@/lib/db/query-cancel";
+import { QueryCancelledError } from "@/lib/db/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
@@ -111,6 +114,7 @@ async function runStatement(
   dialect: DatabaseType,
   options: Record<string, unknown>,
   scope: string,
+  queryId: string | undefined,
 ): Promise<StatementResult> {
   const startTime = performance.now();
   const identity = { index, sql: stmt.sql, startLine: stmt.startLine };
@@ -130,8 +134,9 @@ async function runStatement(
     // Every statement of the script runs under the SAME scope, which is what lets the
     // `finally` below end a transaction any of them left open — including one opened by a
     // statement whose own client is not the last one the script borrowed (D87). No params
-    // and no queryId here: this route binds nothing and cancels nothing.
-    const result = await provider.query(query, undefined, undefined, scope);
+    // here; the request's `queryId` is bound to each unit in turn, so at most one run is
+    // registered under it at a time.
+    const result = await provider.query(query, undefined, queryId, scope);
     const { columnTypes, ...shown } = shownSet(result, stmt);
 
     return {
@@ -154,18 +159,33 @@ async function runStatement(
   }
 }
 
+/**
+ * Run a script, one execution unit at a time, and answer every unit's outcome.
+ *
+ * A dropped request stops the script: once `request.signal` aborts, no further unit starts, and the unit in flight is
+ * cancelled once through `bridgeAbortToCancel`. The request's one `queryId` is bound to each unit in turn, and a unit
+ * ends before the next begins, so at most one run is registered under it at a time; that is also the id Stop posts to
+ * `POST /api/db/cancel`. A cancel is idempotent: a second cancel of one id answers the run's end as the first did.
+ *
+ * The bridge cancels only the id this request bound, so it needs no owner check. `POST /api/db/cancel` keeps its
+ * no-owner-check rule because a run id is a client-chosen value scoped to one provider instance, and adding an owner
+ * to the run registry would change every cancel-capable engine.
+ */
 export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/multi-query", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
   try {
     const body = await req.json();
-    const { sql, options = {} } = body;
+    const { sql, options = {}, queryId } = body;
 
     const connection = await resolveConnection(body, guard.session);
 
     if (!sql) {
       return NextResponse.json({ error: "Connection and query are required" }, { status: 400 });
+    }
+    if (queryId !== undefined && typeof queryId !== "string") {
+      return NextResponse.json({ error: "queryId must be a string" }, { status: 400 });
     }
 
     // A type that declares a console text bound runs one statement per request. The SQL splitter below would turn
@@ -197,6 +217,10 @@ export async function POST(req: NextRequest) {
     }
 
     const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    // A request already gone, before or while the provider was acquired, starts nothing.
+    if (req.signal.aborted) throw new QueryCancelledError("The query was cancelled.");
+    const bound = supportsQueryCancel(provider) ? queryId : undefined;
+    const release = bridgeAbortToCancel(req.signal, provider, bound, "api/db/multi-query");
     const results: StatementResult[] = [];
     let totalExecutionTime = 0;
     let openTransaction: OpenQueryTransactionOutcome = "none";
@@ -235,6 +259,7 @@ export async function POST(req: NextRequest) {
     // active raises, so the provider is asked rather than told.
     try {
       for (let i = 0; i < statements.length; i++) {
+        if (i > 0 && req.signal.aborted) break;
         const outcome = await runStatement(
           provider,
           statements[i],
@@ -243,6 +268,7 @@ export async function POST(req: NextRequest) {
           connection.type,
           options,
           scope,
+          bound,
         );
         totalExecutionTime += outcome.executionTime;
         results.push(outcome);
@@ -251,6 +277,7 @@ export async function POST(req: NextRequest) {
         if (outcome.status === "error") break;
       }
     } finally {
+      release();
       if (endsOpenQueryTransactions(provider)) {
         openTransaction = await provider.endOpenQueryTransaction(scope);
       }

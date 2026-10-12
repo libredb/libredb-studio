@@ -1,10 +1,11 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import {
   QueryError,
+  QueryCancelledError,
   TimeoutError,
   DatabaseError,
   DatabaseConfigError,
@@ -66,6 +67,7 @@ mock.module("@/lib/db", () => ({
   clearProviderCache: mock(async () => {}),
   getProviderCacheStats: mock(() => ({ size: 0, connections: [] })),
   QueryError,
+  QueryCancelledError,
   TimeoutError,
   DatabaseError,
   DatabaseConfigError,
@@ -993,5 +995,168 @@ describe("POST /api/db/multi-query: a type that declares a console text bound", 
     );
     expect(res.status).toBe(200);
     expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("POST /api/db/multi-query: the request's abort", () => {
+  const SCRIPT = "SELECT 1; SELECT 2; SELECT 3";
+
+  function abortableRequest(body: Record<string, unknown>, signal: AbortSignal): Request {
+    return new Request("http://localhost:3000/api/db/multi-query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  }
+
+  /** A cancel-capable provider whose first unit waits until it is cancelled. */
+  function cancellableProvider() {
+    const registered: (string | undefined)[] = [];
+    let release: (() => void) | undefined;
+    const provider = createMockProvider();
+    const cancelQuery = mock(async (_id: string) => {
+      release?.();
+      return true;
+    });
+    (provider.query as ReturnType<typeof mock>).mockImplementation(
+      async (_sql: string, _params?: unknown[], queryId?: string) => {
+        registered.push(queryId);
+        if (registered.length === 1) {
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          throw new QueryCancelledError("The query was cancelled.");
+        }
+        return { rows: [{ n: 1 }], fields: ["n"], rowCount: 1, executionTime: 1 };
+      },
+    );
+    Object.assign(provider, { cancelQuery });
+    return { provider, cancelQuery, registered };
+  }
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+  });
+
+  test("an abort during unit 1 of 3 cancels the request's id once and starts no further unit", async () => {
+    const { provider, cancelQuery, registered } = cancellableProvider();
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    const controller = new AbortController();
+    const answer = POST(
+      abortableRequest({ connection: validConnection, sql: SCRIPT, queryId: "q-1-script" }, controller.signal) as never,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    controller.abort();
+    await answer;
+    expect(registered).toEqual(["q-1-script"]);
+    expect(cancelQuery).toHaveBeenCalledTimes(1);
+    expect(cancelQuery).toHaveBeenCalledWith("q-1-script");
+  });
+
+  test("a unit that ends cancelled starts no further unit, with no abort at all", async () => {
+    const provider = createMockProvider();
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new QueryCancelledError("The query was cancelled.");
+    });
+    Object.assign(provider, { cancelQuery: mock(async () => true) });
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: validConnection, sql: SCRIPT, queryId: "q-2-script" },
+      }) as never,
+    );
+    const body = await parseResponseJSON<{ executedCount: number }>(res);
+    expect(provider.query).toHaveBeenCalledTimes(1);
+    expect(body.executedCount).toBe(1);
+  });
+
+  test("a request aborted before the handler starts no statement", async () => {
+    const { provider, registered } = cancellableProvider();
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    const controller = new AbortController();
+    controller.abort();
+    const res = await POST(
+      abortableRequest({ connection: validConnection, sql: SCRIPT, queryId: "q-3-script" }, controller.signal) as never,
+    );
+    expect(registered).toEqual([]);
+    expect([400, 499]).toContain(res.status);
+  });
+
+  test("a provider without cancelQuery is asked nothing and the loop still stops", async () => {
+    const provider = createMockProvider();
+    const seen: (string | undefined)[] = [];
+    let release: (() => void) | undefined;
+    (provider.query as ReturnType<typeof mock>).mockImplementation(
+      async (_sql: string, _params?: unknown[], queryId?: string) => {
+        seen.push(queryId);
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return { rows: [], fields: [], rowCount: 0, executionTime: 1 };
+      },
+    );
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    const controller = new AbortController();
+    const answer = POST(
+      abortableRequest({ connection: validConnection, sql: SCRIPT, queryId: "q-4-script" }, controller.signal) as never,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    controller.abort();
+    release?.();
+    await answer;
+    // No id is bound for a provider that cannot cancel, and unit 2 never starts.
+    expect(seen).toEqual([undefined]);
+  });
+
+  test("a queryId that is not a string is refused before any provider work", async () => {
+    mockGetOrCreateProvider.mockClear();
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: validConnection, sql: SCRIPT, queryId: 42 },
+      }) as never,
+    );
+    expect(res.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(res)).error).toBe("queryId must be a string");
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
+  test("a cancel that rejects still lets the route answer, and logs no secret", async () => {
+    const { provider, registered } = cancellableProvider();
+    let release: (() => void) | undefined;
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async (_s: string, _p?: unknown[], id?: string) => {
+      registered.push(id);
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      throw new QueryCancelledError("The query was cancelled.");
+    });
+    Object.assign(provider, {
+      cancelQuery: mock(async () => {
+        release?.();
+        throw new Error("token sentinel-SECRET-9");
+      }),
+    });
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const controller = new AbortController();
+      const answer = POST(
+        abortableRequest(
+          { connection: validConnection, sql: SCRIPT, queryId: "q-5-script" },
+          controller.signal,
+        ) as never,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      controller.abort();
+      const res = await answer;
+      expect(res.status).toBe(200);
+      expect(warn.mock.calls.flat().join(" ")).not.toContain("sentinel-SECRET-9");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

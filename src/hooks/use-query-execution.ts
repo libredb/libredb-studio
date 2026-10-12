@@ -128,15 +128,14 @@ const STOPPED_WAITING = {
 };
 
 /**
- * Cancel of a run that has no id on the server: a multi-statement script
- * (`/api/db/multi-query`) or a statement inside a transaction or SANDBOX
- * (`/api/db/transaction`). Neither route hands the provider a `queryId`, so the cancel route
+ * Cancel of a run that has no id on the server: a statement inside a transaction or SANDBOX
+ * (`/api/db/transaction`). That route hands the provider no `queryId`, so the cancel route
  * could only answer `false`; this says why instead of "not confirmed".
  */
 const RUN_NOT_CANCELLABLE = {
   title: "Stopped Waiting",
   description:
-    "A multi-statement script or a statement inside a transaction cannot be cancelled on the server, so it keeps running there until it ends.",
+    "A statement inside a transaction cannot be cancelled on the server, so it keeps running there until it ends.",
   variant: "destructive" as const,
 };
 
@@ -685,8 +684,9 @@ export function useQueryExecution({
           : useMultiQuery
             ? "/api/db/multi-query"
             : "/api/db/query";
-        // Only this route carries the run's `queryId` to the provider (see the body below).
-        run.serverCancellable = queryEndpoint === "/api/db/query";
+        // The two routes that hand the provider the run's queryId: one statement, and a script,
+        // whose route binds it to each unit in turn.
+        run.serverCancellable = queryEndpoint !== "/api/db/transaction";
         const mainQueryPromise = appFetch(queryEndpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -705,7 +705,7 @@ export function useQueryExecution({
                   sql: queryToExecute,
                   options: isExplain ? {} : { limit, offset, unlimited },
                   ...(isExplain && { explain: { mode: "analyze" } }),
-                  ...(!useMultiQuery && { queryId }),
+                  queryId,
                 }),
           }),
           signal: abortController.signal,

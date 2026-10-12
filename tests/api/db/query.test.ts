@@ -1691,3 +1691,76 @@ describe("POST /api/db/query: an oxia buffer", () => {
     expect((mockProvider.prepareQuery as ReturnType<typeof mock>).mock.calls[0][0]).toBe(atBound);
   });
 });
+
+describe("POST /api/db/query: the request's abort", () => {
+  function abortableRequest(body: Record<string, unknown>, signal: AbortSignal): Request {
+    return new Request("http://localhost:3000/api/db/query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  }
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+  });
+
+  test("an abort during the call cancels the bound id once", async () => {
+    let release: (() => void) | undefined;
+    const cancelQuery = mock(async (_id: string) => {
+      release?.();
+      return true;
+    });
+    const provider = Object.assign(createMockProvider(), { cancelQuery });
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      throw new QueryCancelledError("The query was cancelled.");
+    });
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    const controller = new AbortController();
+    const answer = POST(
+      abortableRequest(
+        { connection: validConnection, sql: "SELECT 1", queryId: "q-9-one" },
+        controller.signal,
+      ) as never,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    controller.abort();
+    await answer;
+    expect(cancelQuery).toHaveBeenCalledTimes(1);
+    expect(cancelQuery).toHaveBeenCalledWith("q-9-one");
+  });
+
+  test("a request already aborted calls provider.query zero times", async () => {
+    const provider = Object.assign(createMockProvider(), { cancelQuery: mock(async () => true) });
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    const controller = new AbortController();
+    controller.abort();
+    await POST(
+      abortableRequest(
+        { connection: validConnection, sql: "SELECT 1", queryId: "q-9-two" },
+        controller.signal,
+      ) as never,
+    );
+    expect(provider.query).not.toHaveBeenCalled();
+  });
+
+  test("a provider without cancelQuery sees no cancel", async () => {
+    const provider = createMockProvider();
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    const controller = new AbortController();
+    const answer = POST(
+      abortableRequest(
+        { connection: validConnection, sql: "SELECT 1", queryId: "q-9-three" },
+        controller.signal,
+      ) as never,
+    );
+    controller.abort();
+    await answer;
+    expect("cancelQuery" in provider).toBe(false);
+  });
+});
