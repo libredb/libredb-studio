@@ -666,7 +666,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
   const reason = sourceBoundTruncationReason(limit);
   /*
    * ONE SLICER for the fleet, and the route was the second one (#789). It cut with a bare
-   * `part.text.slice(0, limit)` while all sixteen providers cut through `applySourceBound`,
+   * `part.text.slice(0, limit)` while every `readObjectSource` cuts through `applySourceBound`,
    * which drops an orphaned surrogate half: the bound counts UTF-16 CODE UNITS, so it can land
    * BETWEEN the two halves of an astral character, and MEASURED through this function, a text
    * holding an emoji at exactly the boundary came back ending in `\ud83d`, which is not a
@@ -711,10 +711,11 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * was the only engine that had landed; the day-one set is now three and the count was re-measured
  * rather than the digit bumped, because what it counts is what the paragraph is for.
  *
- * There are THREE producers of `edit`: `providers/sql/postgres.ts:4046`, gated on
+ * The day-one producers of `edit` are: `providers/sql/postgres.ts:4046`, gated on
  * `kindAcceptsSourceEdits(capabilities, kind)`; `providers/sql/trino/index.ts:1340` and
  * `providers/keyvalue/redis.ts:2235`, both gated on `spec.acceptsSourceEdits === true`, which is the
- * same fact read through the same declaration. All three sit on the READABLE arm, verified rather
+ * same fact read through the same declaration. Later engines may produce it too, as etcd does for a 
+ * key in `providers/keyvalue/etcd/objects.ts`. Every producer sits on the READABLE arm, verified rather
  * than assumed: no producer attaches `edit` to a part carrying `unavailable`.
  *
  * So rules 1 and 3 still have NO live producer, and for the same reason as before: the only thing
