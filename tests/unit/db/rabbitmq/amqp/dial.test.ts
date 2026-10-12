@@ -126,6 +126,8 @@ describe("plain dials", () => {
     const plain = await listen("plain");
     const socket = await dialAmqp(endpoint("127.0.0.1", plain.port), new AbortController().signal);
     expect(socket.destroyed).toBe(false);
+    // The client's connect event can run before the server's connection event: macOS runners measured accepted 0 here.
+    await until(() => plain.accepted === 1, "the server's accept");
     socket.destroy();
     expect(plain.accepted).toBe(1);
   });
@@ -139,6 +141,7 @@ describe("plain dials", () => {
   test("an IPv6 literal dials without brackets and without a lookup", async () => {
     const v6 = await listen("plain", "::1");
     const socket = await withFlag(undefined, () => dialAmqp(endpoint("::1", v6.port), new AbortController().signal));
+    await until(() => v6.accepted === 1, "the server's accept");
     socket.destroy();
     expect(v6.accepted).toBe(1);
   });
