@@ -9,6 +9,9 @@
  * error envelope and mapped by errors.ts; a 2xx body that is not JSON is an explicit error.
  * Against the emulator, one plain-HTTP lane whose only authorization header is the literal `Bearer owner` serves every
  * request, and no token source, token request or metadata request is ever built.
+ * Every request runs under one signal: the caller's cancel, the client's close and a deadline of the connection's query
+ * timeout plus LIMITS.deadlineGraceMs; close() aborts what is in flight, closes every lane and the token source, and
+ * refuses every later send.
  */
 import { DatabaseError, QueryError } from "@/lib/db/errors";
 import { endpointUrl, type HttpOrigin, httpOrigin } from "@/lib/db/http/endpoint";
@@ -28,10 +31,16 @@ import { createTokenSource } from "./google-token-source";
 import { databaseName, type FirestoreTarget } from "./names";
 import { buildRequest, type FirestoreRequest } from "./requests";
 import type { FirestoreSeams } from "./seams";
+import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
 
 export interface SendOptions {
   readonly signal: AbortSignal;
   readonly context: ErrorContext;
+}
+
+export interface FirestoreClientOptions {
+  /** The connection's query timeout; DEFAULT_QUERY_TIMEOUT when absent. */
+  readonly queryTimeoutMs?: number;
 }
 
 export interface FirestoreClient {
@@ -95,7 +104,10 @@ export function createFirestoreClient(
   target: FirestoreTarget,
   auth: FirestoreAuth,
   seams: FirestoreSeams,
+  options: FirestoreClientOptions = {},
 ): FirestoreClient {
+  const deadlineMs = (options.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT) + LIMITS.deadlineGraceMs;
+  const closer = new AbortController();
   const origin =
     auth.mode === "emulator"
       ? httpOrigin("http", auth.emulator.host, auth.emulator.port)
@@ -157,6 +169,8 @@ export function createFirestoreClient(
 
   async function laneFor(signal: AbortSignal): Promise<Lane> {
     const bearer = tokens === null ? EMULATOR_BEARER : await tokens.token(signal);
+    // Checked after the await too: close() may land while the token is on its way.
+    if (closer.signal.aborted) throw new TransportError("aborted", S.closed);
     if (current?.bearer !== bearer) {
       const previous = current;
       current = {
@@ -205,9 +219,14 @@ export function createFirestoreClient(
     mode: auth.mode,
     target,
     async send(request, { signal, context }) {
+      if (closer.signal.aborted) {
+        throw mapTransportFailure(new TransportError("aborted", S.closed), { ...context, requestKind: request.kind });
+      }
+      // One signal for the token wait and the request: the caller's cancel, this client's close, and the deadline.
+      const bounded = AbortSignal.any([signal, closer.signal, seams.timeoutSignal(deadlineMs)]);
       let response: NodeResponse;
       try {
-        response = await exchange(request, signal);
+        response = await exchange(request, bounded);
       } catch (error) {
         // The request kind lets errors.ts answer a too-large document read with its own sentence (PLAN-1 C8).
         throw failure(error, { ...context, requestKind: request.kind });
@@ -222,6 +241,8 @@ export function createFirestoreClient(
       }
     },
     close() {
+      if (closer.signal.aborted) return;
+      closer.abort();
       current = null;
       for (const lane of lanes) lane.node.close();
       lanes.clear();
