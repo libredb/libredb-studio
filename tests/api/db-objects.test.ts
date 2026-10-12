@@ -2513,6 +2513,56 @@ describe("POST /api/db/objects/source", () => {
     expect(isSourcePartStatement(body.parts[1]!)).toBe(true);
   });
 
+  test("refuses a statement part that also carries a text, with the refusal arm's hybrid sentence", async () => {
+    // The statement member inherits the refusal arm's "never a text beside it" at the route as
+    // well as at the client: a special case for `statement` in `boundPart` would let a definition
+    // ship under a sentence the viewer draws instead of it.
+    const hybrid = {
+      ...readablePart({ text: "x".repeat(SOURCE_CHARACTER_LIMIT * 2) }),
+      unavailable: "This object holds nothing that can be read without changing it.",
+      statement: true,
+    } satisfies ObjectSourcePart;
+    activeProvider = sourceProviderReading(documentWithOnePart(hybrid));
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(
+      "the source read answered a part that carries both a refusal and a text; a refusal and a definition " +
+        "are different facts and a reader must never be shown one over the other",
+    );
+  });
+
+  test("carries an over-long statement sentence whole, as it does a refusal, and the client refuses it", async () => {
+    // Never truncated at the route, for the refusal arm's reason: the sentence carries no
+    // `truncated` mark, so a cut would ship half a fact with nothing saying so. The client's bound
+    // is where the document is refused, and both ends are pinned here.
+    const statement = {
+      id: "notes",
+      label: "Notes",
+      unavailable: "s".repeat(SOURCE_CHARACTER_LIMIT + 10),
+      statement: true,
+    } satisfies ObjectSourcePart;
+    activeProvider = sourceProviderReading(documentWithOnePart(statement));
+
+    const response = await sourceRoute.POST(
+      createMockRequest("/api/db/objects/source", {
+        method: "POST",
+        body: { connection, path: ["app", "f"], kind: "function" },
+      }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await parseResponseJSON<ObjectSourceDocument>(response);
+    expect(body.parts[0]).toEqual(statement);
+    expect(isSourceDocumentShape(body)).toBe(false);
+  });
+
   test("refuses a document that carries no parts at all, by name and not by a TypeError", async () => {
     // `parts` is a NON-EMPTY tuple in the type, and a JS caller or a host is not held to it. Before
     // this guard an empty array reached `"unavailable" in part` on `undefined` and the TypeError
