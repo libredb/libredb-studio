@@ -12,13 +12,14 @@
  * The constructor opens nothing; it reads only whether this server sends Firestore to the emulator, because that
  * decides whether Explain is declared. Connect probes the database resource (database metadata, no document read),
  * or one collection id page on the emulator, which serves no database resource. The transport bounds every request
- * by the connection's query timeout plus 5 seconds; this class hands it the timeout. Each session keeps the
- * credential's kind and secret forms, which every request's error context carries, so no Google message quoting the
- * credential reaches a user. Read-only whatever a profile asks: the closed request table admits reads only. No
- * `queryReadOnly`, so no agent statement execution and no MCP read.
+ * by the connection's query timeout plus 5 seconds; this class hands it the timeout. A statement runs under the run
+ * registry, so `cancelQuery` aborts it by its id and the run answers the cancel. Each session keeps the credential's
+ * kind and secret forms, which every request's error context carries, so no Google message quoting the credential
+ * reaches a user. Read-only whatever a profile asks: the closed request table admits reads only. No `queryReadOnly`,
+ * so no agent statement execution and no MCP read.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryCancelledError, QueryError } from "@/lib/db/errors";
 import type {
   ActiveSessionDetails,
   Container,
@@ -43,6 +44,7 @@ import type {
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
+import { createRunRegistry, type RunRegistry } from "@/lib/db/utils/bounded-limiter";
 import { secretForms } from "@/lib/db/utils/server-text";
 import type { DatabaseConnection, QueryWarning } from "@/lib/types";
 import { validateFirestoreConnection } from "./connection-options";
@@ -165,6 +167,7 @@ export class FirestoreProvider extends BaseDatabaseProvider {
   private readonly seams: FirestoreSeams;
   /** Read once: the emulator switch is per server and needs a restart to change. */
   private readonly emulator: EmulatorAddress | null;
+  private readonly runs: RunRegistry = createRunRegistry();
 
   /**
    * Opens nothing, so a provider built only for its declarations (the factory's census, `POST /api/db/provider-meta`)
@@ -285,14 +288,34 @@ export class FirestoreProvider extends BaseDatabaseProvider {
   // Query path
   // ==========================================================================
 
-  /** One console statement, re-parsed and compiled on the server by `console/execute.ts`. */
-  public async query(text: string, params?: unknown[]): Promise<QueryResult> {
+  /**
+   * One console statement, re-parsed and compiled on the server by `console/execute.ts`, under the run registry: a
+   * cancel aborts its request and the run answers the registry's cancel, whatever the aborted request raised.
+   */
+  public async query(text: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     if (params !== undefined && params.length > 0)
       throw new DatabaseConfigError(S.parameters, FIRESTORE_ERROR_PROVIDER);
-    // `...base` gives ExecuteDeps its credential and its secret forms (contract change 3).
-    return this.read((client, signal, base) =>
-      executeStatement(text, { client, signal, now: () => this.seams.now(), ...base }),
-    );
+    const session = this.requireSession();
+    const run = this.runs.begin(queryId, session.lifetime.signal);
+    try {
+      // `...base` gives ExecuteDeps its credential and its secret forms (contract change 3).
+      return await executeStatement(text, {
+        client: session.client,
+        signal: run.signal,
+        now: () => this.seams.now(),
+        ...session.base,
+      });
+    } catch (error) {
+      if (run.signal.aborted && run.signal.reason instanceof QueryCancelledError) throw run.signal.reason;
+      throw error;
+    } finally {
+      run.end();
+    }
+  }
+
+  /** Stops a running statement by its id and answers true; an id that names no run answers false. */
+  public async cancelQuery(queryId: string): Promise<boolean> {
+    return this.runs.cancel(queryId);
   }
 
   // ==========================================================================
