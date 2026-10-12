@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { RESULT_SENTENCES, readQueryStream, shapeResult } from "@/lib/db/providers/document/firestore/results";
 import { decodeValue } from "@/lib/db/providers/document/firestore/values";
-import { full, refusal, TARGET } from "../../../helpers/firestore-console";
+import { DOCUMENTS, full, refusal, TARGET } from "../../../helpers/firestore-console";
 
 const TIME = "2026-10-12T00:00:00Z";
 const doc = (path: string, fields: Record<string, unknown> = {}) => ({
@@ -117,6 +117,15 @@ describe("documents", () => {
   test("a document named outside this connection's database is refused", () => {
     const foreign = "projects/other-project/databases/(default)/documents/users/a";
     refusedWith(() => documents([{ document: { name: foreign, fields: {} } }]), RESULT_SENTENCES.foreignName(foreign));
+  });
+
+  test("a name inside the database that is not a document is refused: the bare documents root and a collection", () => {
+    for (const name of [DOCUMENTS, full("users"), full("users/a/orders")]) {
+      refusedWith(() => documents([{ document: { name, fields: {} } }]), RESULT_SENTENCES.notDocument(name));
+    }
+    expect(RESULT_SENTENCES.notDocument(full("users"))).toBe(
+      `Firestore answered with a name that is not a document: ${full("users")}`,
+    );
   });
 });
 

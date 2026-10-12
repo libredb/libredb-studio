@@ -9,7 +9,7 @@ import type { QueryResult } from "@/lib/types";
 import type { ResultShape } from "./console/compile";
 import { FIRESTORE_TYPE, LIMITS } from "./constants";
 import { displayFieldPath, type FieldPathSegments, isDocumentId } from "./field-path";
-import { compareUtf8, type FirestoreTarget, idRefusal, relativeSegments } from "./names";
+import { compareUtf8, type FirestoreTarget, idRefusal, isDocumentPath, relativeSegments } from "./names";
 import {
   decodeValue,
   type FirestoreTypeName,
@@ -35,6 +35,7 @@ export const RESULT_SENTENCES = {
   malformed: (what: string): string => `Firestore answered ${what} in a shape Studio does not read`,
   foreignName: (name: string): string =>
     `Firestore answered with a document outside this connection's database: ${name}`,
+  notDocument: (name: string): string => `Firestore answered with a name that is not a document: ${name}`,
   columnCap: (count: number): string =>
     `This result has ${count} columns; Studio shows the first 500. Add .select(...) to choose them`,
   droppedIds: (count: number): string =>
@@ -69,6 +70,7 @@ function readDocument(value: unknown): RestDocument {
 function relativeName(name: string, target: FirestoreTarget): string {
   const segments = relativeSegments(target, name);
   if (segments === null) throw new QueryError(RESULT_SENTENCES.foreignName(name), FIRESTORE_TYPE);
+  if (!isDocumentPath(segments)) throw new QueryError(RESULT_SENTENCES.notDocument(name), FIRESTORE_TYPE);
   return segments.join("/");
 }
 
