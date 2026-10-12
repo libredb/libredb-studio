@@ -46,26 +46,51 @@ function clickIfPresent(name: string) {
   if (button) fireEvent.click(button);
 }
 
-describe("the connection dialog's secret fields", () => {
-  test("turn spell checking, autocorrect, autocapitalize and autocomplete off", () => {
-    render(<ConnectionModal isOpen onClose={() => {}} onConnect={() => {}} />);
-    const found = new Map<string, Field>();
+function offending(found: Map<string, Field>): string[] {
+  return [...found.values()]
+    .filter((field) => {
+      const masked = field instanceof HTMLInputElement && field.type === "password";
+      return (
+        field.getAttribute("spellcheck") !== "false" ||
+        field.getAttribute("autocorrect") !== "off" ||
+        field.getAttribute("autocapitalize") !== "off" ||
+        field.getAttribute("autocomplete") !== (masked ? "new-password" : "off")
+      );
+    })
+    .map(keyOf);
+}
 
+function renderDialog() {
+  render(<ConnectionModal isOpen onClose={() => {}} onConnect={() => {}} />);
+}
+
+// One test per engine, each on a fresh dialog: walked in one test, the thirty-odd engines ran past bun's five-second
+// timeout on a loaded CI runner. Every field any test collects also lands here, for the reach check at the end.
+const reached = new Map<string, Field>();
+
+describe("the connection dialog's secret fields turn spell checking, autocorrect, autocapitalize and autocomplete off", () => {
+  test("in the Paste URL box", () => {
+    renderDialog();
+    const found = new Map<string, Field>();
     fireEvent.click(screen.getByRole("button", { name: "Paste URL" }));
     collect(found);
+    for (const [key, field] of found) reached.set(key, field);
+    expect(offending(found)).toEqual([]);
+  });
 
-    for (const type of EXTERNAL_DATABASE_TYPES) {
-      const label = getDBConfig(type).label;
-      const button = screen.queryByRole("button", { name: label });
-      if (!button) continue;
-      fireEvent.click(button);
+  test.each([...EXTERNAL_DATABASE_TYPES])("on %s", (type) => {
+    renderDialog();
+    const found = new Map<string, Field>();
+    const button = screen.queryByRole("button", { name: getDBConfig(type).label });
+    if (!button) return;
+    fireEvent.click(button);
+    collect(found);
+    if (getDBConfig(type).showConnectionStringToggle) {
+      fireEvent.click(screen.getByRole("button", { name: "Connection String" }));
       collect(found);
-      if (getDBConfig(type).showConnectionStringToggle) {
-        fireEvent.click(screen.getByRole("button", { name: "Connection String" }));
-        collect(found);
-        fireEvent.click(screen.getByRole("button", { name: "Host / Port" }));
-      }
-      if (isFileBased(type)) continue;
+      fireEvent.click(screen.getByRole("button", { name: "Host / Port" }));
+    }
+    if (!isFileBased(type)) {
       if (offersSslPanel(type)) {
         if (!screen.queryByRole("button", { name: "verify-full" })) clickIfPresent("SSL / TLS");
         fireEvent.click(screen.getByRole("button", { name: "verify-full" }));
@@ -81,9 +106,13 @@ describe("the connection dialog's secret fields", () => {
         collect(found);
       }
     }
+    for (const [key, field] of found) reached.set(key, field);
+    expect(offending(found)).toEqual([]);
+  });
 
-    // The walk reached every kind of secret field the dialog has today.
-    const keys = [...found.keys()];
+  // Runs after the tests above, in file order: the walk reached every kind of secret field the dialog has today.
+  test("and the walk above reached every kind of secret field", () => {
+    const keys = [...reached.keys()];
     for (const expected of [
       "password",
       "apiKeySecret",
@@ -95,18 +124,5 @@ describe("the connection dialog's secret fields", () => {
     }
     expect(keys.filter((k) => k.includes("-----BEGIN")).length).toBe(4);
     expect(keys.some((k) => k.startsWith("postgres://"))).toBe(true);
-
-    const offending = [...found.values()]
-      .filter((field) => {
-        const masked = field instanceof HTMLInputElement && field.type === "password";
-        return (
-          field.getAttribute("spellcheck") !== "false" ||
-          field.getAttribute("autocorrect") !== "off" ||
-          field.getAttribute("autocapitalize") !== "off" ||
-          field.getAttribute("autocomplete") !== (masked ? "new-password" : "off")
-        );
-      })
-      .map(keyOf);
-    expect(offending).toEqual([]);
   });
 });
