@@ -13,7 +13,6 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { AmqpDial, AmqpSocket } from "@/lib/db/providers/stream/rabbitmq/amqp/dial";
 import type { ManagementTransportFactory } from "@/lib/db/providers/stream/rabbitmq/management/client";
 import { requestKey, type StubAnswer } from "./rabbitmq-management-stub";
@@ -59,8 +58,12 @@ export interface AmqpCapture {
   readonly serverBytes: string;
 }
 
-/** Resolved from this file's URL, so the e2e stub, which Playwright runs on Node, finds it as Bun does. */
-export const RABBITMQ_CAPTURES_ROOT = fileURLToPath(new URL("../fixtures/rabbitmq", import.meta.url));
+/**
+ * Resolved from this file's directory, so the e2e stub finds it as Bun does. `__dirname`, not `import.meta.url`:
+ * Playwright loads this file as CommonJS on Node, where `import.meta` is a syntax error, and Bun defines `__dirname`
+ * in every module.
+ */
+export const RABBITMQ_CAPTURES_ROOT = path.join(__dirname, "../fixtures/rabbitmq");
 
 function read<T>(set: CaptureSet, kind: "management" | "amqp", name: string): T {
   return JSON.parse(readFileSync(path.join(RABBITMQ_CAPTURES_ROOT, set, kind, `${name}.json`), "utf8")) as T;
