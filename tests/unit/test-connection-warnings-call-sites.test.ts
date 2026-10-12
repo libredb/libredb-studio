@@ -2,16 +2,16 @@
  * `DatabaseProvider.testConnectionWarnings()` has exactly one caller: `POST /api/db/test-connection`.
  *
  * The method exists so a provider can run probes that cost requests of their own, and only a
- * user who asked pays for them, through Test Connection or the connection dialog's Save. `connect()` also runs on every background cache miss,
- * where nobody reads a caution, which is why those probes are not in `connect()`. A second call
- * site, on a cached provider or a background path, would put that cost back where the split took
- * it out, and every provider's tests would stay green, because each one tests the method, not its
- * callers. So the rule is pinned on the shape of the source.
+ * user who asked pays for them, through Test Connection or the connection dialog's Save.
+ * `connect()` also runs on every background cache miss, where nobody reads a caution, which is
+ * why those probes are not in `connect()`. A second call site, on a cached provider or a
+ * background path, would put that cost back where the split took it out, and every provider's
+ * tests would stay green, because each one tests the method, not its callers. So the rule is
+ * pinned on the shape of the source.
  *
  * A source scan reads text: a call reached through a helper that takes the method by another
- * name passes, and a quote inside a regular expression literal or a string that spans lines can
- * hide what follows it on that line. It catches the careless second call site, which is the case
- * it exists for.
+ * name passes, and a quote inside a regular expression literal can hide what follows it. It
+ * catches the careless second call site, which is the case it exists for.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -26,30 +26,31 @@ const THE_CALLER = "src/app/api/db/test-connection/route.ts";
  * it: the parameter list is followed by a return annotation or a body, so a bare call is not one.
  */
 const DEFINITION = new RegExp(
-  `^\\s*(?:(?:public|protected|private|override|readonly|async)\\s+)*${METHOD}\\s*\\??\\s*\\([^)]*\\)\\s*[:{]`,
+  `^\\s*(?:(?:public|protected|private|static|abstract|declare|override|readonly|async)\\s+)*${METHOD}\\s*\\??\\s*\\([^)]*\\)\\s*[:{]`,
 );
-/** A docblock continuation line, all of which is comment. */
-const DOCBLOCK_LINE = /^\s*\*/;
 /**
- * Removes block comments that open on the line (closed there or not) and a trailing line comment,
- * stepping over string literals, so a `//` or `/*` inside a string does not hide the code after it.
+ * `source` with its comments blanked out and its newlines kept, so its lines still line up with
+ * the source's. String literals are stepped over, so a `//` or `/*` inside one hides nothing.
  */
-const withoutComments = (line: string): string => {
+const withoutComments = (source: string): string => {
   let code = "";
   let quote: string | null = null;
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
     if (quote !== null) {
       code += char;
-      if (char === "\\") code += line[++i] ?? "";
-      else if (char === quote) quote = null;
+      if (char === "\\") code += source[++i] ?? "";
+      else if (char === quote || (char === "\n" && quote !== "`")) quote = null;
     } else if (char === '"' || char === "'" || char === "`") {
       quote = char;
       code += char;
-    } else if (line.startsWith("//", i)) {
-      break;
-    } else if (line.startsWith("/*", i)) {
-      const end = line.indexOf("*/", i + 2);
+    } else if (source.startsWith("//", i)) {
+      const end = source.indexOf("\n", i);
+      if (end < 0) break;
+      i = end - 1;
+    } else if (source.startsWith("/*", i)) {
+      const end = source.indexOf("*/", i + 2);
+      code += (end < 0 ? source.slice(i) : source.slice(i, end + 2)).replace(/[^\n]/g, "");
       if (end < 0) break;
       i = end + 1;
     } else {
@@ -64,13 +65,13 @@ const withoutComments = (line: string): string => {
  * a definition at the start of the line takes away one of them, so a use that shares a line with
  * a definition or follows a block comment still counts.
  */
-const usesOf = (source: string): string[] =>
-  source.split("\n").filter((line) => {
-    if (DOCBLOCK_LINE.test(line)) return false;
-    const code = withoutComments(line);
-    const mentions = code.split(METHOD).length - 1;
-    return mentions - (DEFINITION.test(code) ? 1 : 0) > 0;
+const usesOf = (source: string): string[] => {
+  const code = withoutComments(source).split("\n");
+  return source.split("\n").filter((_, n) => {
+    const mentions = code[n].split(METHOD).length - 1;
+    return mentions - (DEFINITION.test(code[n]) ? 1 : 0) > 0;
   });
+};
 
 describe("the scan tells a use from a definition", () => {
   test.each([
@@ -94,14 +95,25 @@ describe("the scan tells a use from a definition", () => {
   test.each([
     ["the interface member", "  testConnectionWarnings?(): Promise<QueryWarning[]>;"],
     ["a class method", "  public async testConnectionWarnings(): Promise<QueryWarning[]> {"],
-    ["a docblock line", "   * the route calls `testConnectionWarnings()` once,"],
+    ["a docblock", ["  /**", "   * the route calls `testConnectionWarnings()` once,", "   */"].join("\n")],
     ["a line comment", "  // testConnectionWarnings() runs on a user's click only"],
     ["a docblock opening", "  /** testConnectionWarnings() runs on a user's click only */"],
     ["a trailing comment after code", "  const cautions = []; // filled by testConnectionWarnings()"],
     ["an object-literal method", "  async testConnectionWarnings() {"],
+    ["an abstract member", "  public abstract testConnectionWarnings(): Promise<QueryWarning[]>;"],
+    ["a static method", "  static async testConnectionWarnings(): Promise<QueryWarning[]> {"],
     ["a comment after a string that holds a quote", `  const q = "'"; // testConnectionWarnings()`],
   ])("skips %s", (_, line) => {
     expect(usesOf(line)).toEqual([]);
+  });
+
+  test("skips a line inside a block comment whose lines do not start with a star", () => {
+    expect(usesOf(["/*", "  testConnectionWarnings() runs on a user's click only", "*/"].join("\n"))).toEqual([]);
+  });
+
+  test("counts a call after a block comment that closes on its line", () => {
+    const call = "*/ await provider.testConnectionWarnings?.();";
+    expect(usesOf(["/*", "  refresh", call].join("\n"))).toEqual([call]);
   });
 });
 
