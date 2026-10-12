@@ -12,6 +12,7 @@ import { connect as netConnect, type LookupFunction } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import {
+  assertPublicDnsAnswers,
   BLOCKED_HOST,
   guardedLinkLocalRefusingLookup,
   LINK_LOCAL_HOST,
@@ -116,12 +117,43 @@ describe("a literal is checked before any lookup is chosen", () => {
     },
   );
 
+  test.each(["::1%lo", "[::1%lo]", "fe80::1%eth0", "2606:4700::1%eth0"])(
+    "flag on: the zoned literal %s is refused with the guard's sentence under either rule",
+    (host) => {
+      flag("on");
+      for (const refusesLinkLocal of [true, false]) {
+        const error = refusal(() => socketEgress(host, { refusesLinkLocal }));
+        expect(error).toBeInstanceOf(DatabaseConfigError);
+        expect(error.message).toBe(BLOCKED_HOST);
+      }
+    },
+  );
+
   test("an invalid flag value fails closed before any address is read", () => {
     process.env[FLAG] = "maybe";
     const error = refusal(() => socketEgress("db.example.test", { refusesLinkLocal: true }));
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toBe("Invalid DB_HTTP_BLOCK_PRIVATE_HOSTS: expected true or false");
   });
+});
+
+describe("a DNS answer with a zone index", () => {
+  test.each(["::1%lo", "fe80::1%eth0", "2606:4700::1%eth0"])(
+    "the guard's answer check refuses %s with the guard's sentence, alone or beside a public answer",
+    (address) => {
+      for (const answers of [
+        [{ address, family: 6 }],
+        [
+          { address: "2606:4700::1", family: 6 },
+          { address, family: 6 },
+        ],
+      ]) {
+        const error = refusal(() => assertPublicDnsAnswers(answers));
+        expect(error).toBeInstanceOf(DatabaseConfigError);
+        expect(error.message).toBe(BLOCKED_HOST);
+      }
+    },
+  );
 });
 
 /** Dials `localhost` on the listener's port with the lookup given: "connected", or the error the socket raised. */

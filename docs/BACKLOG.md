@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D292, U17 · 194
+- [Drivers and connections](#drivers-and-connections) — D1-D292, U17 · 193
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U114 · 105
@@ -2756,16 +2756,6 @@ No provider passes a form value that is not a string today, so this is hardening
 Found 2026-10-10 by the adversarial review of the S3 byte transport; pre-existing in the text transport.
 
 **Done when:** a form that cannot be serialised is refused before any socket slot is taken, with a `DatabaseConfigError` that names no value, and a node-transport test under `maxSockets: 1` asserts that refusal and that the next request completes.
-
-### D257. With the egress guard on, the text transport dials a zoned link-local DNS answer on Bun
-
-With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, the text transport's lookup is the guard's `publicAddressLookup`, whose check `assertPublicDnsAnswers` in `src/lib/db/http/egress-policy.ts` has no zone rule, and Bun's `BlockList` does not match a zoned address such as `fe80::1%lo` against `fe80::/10`, where Node's does.
-Measured 2026-10-10 on Bun 1.4.2 with `node:dns` mocked to answer `fe80::1%lo`: the text transport dialled it and failed with ECONNREFUSED instead of the guard's refusal.
-The byte transport runs the link-local check, which refuses any zoned IPv6 answer, after the guard's (`guardedLinkLocalRefusingLookup`), so it refuses the same answer.
-
-Found 2026-10-10 by the adversarial review of the S3 byte transport; pre-existing in the guard.
-
-**Done when:** the guard's answer check refuses an IPv6 answer with a zone index on every runtime, with an egress-policy test that mocks `node:dns` to answer `fe80::1%lo` and asserts the guard's sentence and that no socket is opened.
 
 ### D258. The text transport sends a queued request whose signal fired with the request ahead of it
 

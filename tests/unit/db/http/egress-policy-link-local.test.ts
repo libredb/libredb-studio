@@ -355,9 +355,9 @@ describe("a byte transport refuses every link-local form whatever the guard flag
     ["metadata.test", "on", BLOCKED],
     ["mixed.test", "on", BLOCKED],
     ["zoned.test", "off", LINK_LOCAL],
-    // The guard's own answer check has no zone rule, and Bun's BlockList does not match fe80::1%eth0 against
-    // fe80::/10, so on Bun the guard passes this answer and the link-local check, run after it, refuses it.
-    ["zoned.test", "on", LINK_LOCAL],
+    // The guard refuses any zoned answer itself, so its sentence wins on every runtime,
+    // although Bun's BlockList ignores the zone.
+    ["zoned.test", "on", BLOCKED],
   ] as const)(
     "the name %s with the guard %s is refused at the lookup, and nothing is accepted",
     async (host, guard, sentence) => {
@@ -391,11 +391,11 @@ describe("a text transport asked to refuse link-local addresses", () => {
 
   const OK = (): Buffer => rawAnswer("200 OK", ["content-length: 2"], "ok");
 
-  function send(host: string, port: number, guard: "off" | "on" = "off") {
+  function send(host: string, port: number, guard: "off" | "on" = "off", refusesLinkLocal = true) {
     if (guard === "on") process.env[FLAG] = "true";
     else delete process.env[FLAG];
     const origin = httpOrigin("http", host, port);
-    const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {}, refusesLinkLocal: true });
+    const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {}, refusesLinkLocal });
     transports.push(transport);
     return transport.request({
       method: "GET",
@@ -428,8 +428,7 @@ describe("a text transport asked to refuse link-local addresses", () => {
     expect(listener.accepted()).toBe(1);
   });
 
-  // With the guard on, the lookup is the guarded one. The guard's own answer check has no zone rule, so on Bun it
-  // passes fe80::1%eth0, and the link-local check run after it refuses the answer with its own sentence.
+  // With the guard on, the lookup is the guarded one, and the guard refuses a zoned answer with its own sentence.
   test("zoned.test with the guard on is refused at the guarded lookup, and nothing is accepted", async () => {
     const listener = await rawHttpListener(OK);
     let error: Error | undefined;
@@ -439,7 +438,23 @@ describe("a text transport asked to refuse link-local addresses", () => {
       error = caught as Error;
     }
     expect(error).toBeInstanceOf(DatabaseConfigError);
-    expect(error?.message).toBe(LINK_LOCAL);
+    expect(error?.message).toBe(BLOCKED);
+    expect(lookups).toEqual(["zoned.test"]);
+    expect(listener.accepted()).toBe(0);
+  });
+
+  // Without the link-local check, the guard's own answer check is the only one, and it refuses a zoned answer on every
+  // runtime: Bun's BlockList ignores the zone, so before this rule Bun dialled fe80::1%eth0.
+  test("zoned.test with the guard on is refused by the guard alone, without the link-local check", async () => {
+    const listener = await rawHttpListener(OK);
+    let error: Error | undefined;
+    try {
+      await send("zoned.test", listener.port, "on", false);
+    } catch (caught) {
+      error = caught as Error;
+    }
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error?.message).toBe(BLOCKED);
     expect(lookups).toEqual(["zoned.test"]);
     expect(listener.accepted()).toBe(0);
   });

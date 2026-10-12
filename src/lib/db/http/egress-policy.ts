@@ -68,12 +68,21 @@ function blockPrivateHttpHosts(): boolean {
   throw new DatabaseConfigError(BLOCKED_CONFIG);
 }
 
+/**
+ * Whether the guard refuses an address of family 4 or 6. An IPv6 address with a zone index is refused whatever its
+ * address: the zone makes it link-scoped, and Bun's BlockList ignores the zone, so ::1%lo would pass it there.
+ */
+function isBlocked(address: string, family: number): boolean {
+  if (family === 6 && address.includes("%")) return true;
+  return blocked.check(address, family === 4 ? "ipv4" : "ipv6");
+}
+
 /** Block all non-public address forms before a socket can be opened. */
 export function assertPublicLiteralHost(host: string): void {
   if (!blockPrivateHttpHosts()) return;
   const address = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const family = isIP(address);
-  if (family !== 0 && blocked.check(address, family === 4 ? "ipv4" : "ipv6")) {
+  if (family !== 0 && isBlocked(address, family)) {
     throw new DatabaseConfigError(BLOCKED_HOST);
   }
 }
@@ -85,7 +94,7 @@ export function assertPublicDnsAnswers(addresses: readonly LookupAddress[]): voi
     addresses.some(({ address, family }) => {
       if (family !== 4 && family !== 6) return true;
       if (isIP(address) !== family) return true;
-      return blocked.check(address, family === 4 ? "ipv4" : "ipv6");
+      return isBlocked(address, family);
     })
   )
     throw new DatabaseConfigError(BLOCKED_HOST);
@@ -192,8 +201,7 @@ export const linkLocalRefusingLookup: LookupFunction = checkedLookup(assertNoLin
 
 /**
  * The byte transport's lookup with DB_HTTP_BLOCK_PRIVATE_HOSTS on: both checks on every answer, the guard's first, so
- * its sentence wins where both refuse. The guard's check alone is not enough here: it has no zone rule, and Bun's
- * BlockList does not match a zoned fe80::/10 address, so fe80::1%lo passed it and was dialled.
+ * its sentence wins where both refuse, a zoned address such as fe80::1%lo included.
  */
 export const guardedLinkLocalRefusingLookup: LookupFunction = checkedLookup((addresses) => {
   assertPublicDnsAnswers(addresses);
