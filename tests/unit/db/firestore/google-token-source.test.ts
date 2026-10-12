@@ -341,6 +341,16 @@ describe("firestore token source callers and close", () => {
     expect(seams.lanes[0].requests).toHaveLength(1);
   });
 
+  test("close during a service account's key import opens no lane and refuses the call as closed", async () => {
+    const { seams, source } = sourceOf(serviceAccount, () => tokenAnswer("never"));
+    const call = source.token(signal).catch((error: unknown) => error);
+    source.close();
+    const refused = await call;
+    expect(refused).toBeInstanceOf(TransportError);
+    expect(refused).toMatchObject({ kind: "aborted", message: S.closed });
+    expect(seams.lanes).toEqual([]);
+  });
+
   test("close discards a cached token", async () => {
     const { source } = sourceOf(user, () => tokenAnswer("cached"));
     expect(await source.token(signal)).toBe("cached");

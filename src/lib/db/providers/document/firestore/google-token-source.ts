@@ -151,6 +151,7 @@ export function createTokenSource(credentials: GoogleCredentials, deps: TokenSou
       return lane().request({ method: "GET", url, signal, maxResponseBytes: deps.maxResponseBytes });
     }
     const form = await grantForm(credentials, deps);
+    if (closer.signal.aborted) throw new TransportError("aborted", S.closed);
     return lane().request({
       method: "POST",
       url: GOOGLE_TOKEN_URL,
