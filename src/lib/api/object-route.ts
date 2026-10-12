@@ -714,7 +714,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * The day-one producers of `edit` are: `providers/sql/postgres.ts:4046`, gated on
  * `kindAcceptsSourceEdits(capabilities, kind)`; `providers/sql/trino/index.ts:1340` and
  * `providers/keyvalue/redis.ts:2235`, both gated on `spec.acceptsSourceEdits === true`, which is the
- * same fact read through the same declaration. Later engines may produce it too, as etcd does for a 
+ * same fact read through the same declaration. Later engines may produce it too, as etcd does for a
  * key in `providers/keyvalue/etcd/objects.ts`. Every producer sits on the READABLE arm, verified rather
  * than assumed: no producer attaches `edit` to a part carrying `unavailable`.
  *
