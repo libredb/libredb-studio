@@ -491,6 +491,9 @@ Every sentence leads with Google's own message and reason where Google sends the
 | An answer past its cap | `QueryError` | asks for a smaller `limit` or a `select` |
 | 5xx | `QueryError` | the status and Google's message |
 
+A query, an aggregation or a batch read whose stream fails after it began still answers 2xx, with Google's error as its last element.
+Studio maps that error by its own code, as the table does, and never shows the documents before it as a whole answer.
+
 > This database is in Datastore mode, which the Firestore API does not serve
 
 > Firestore API access is off on this database; turn it on or connect through its MongoDB-compatible endpoint with the MongoDB connection type
