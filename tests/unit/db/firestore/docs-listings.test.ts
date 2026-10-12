@@ -65,15 +65,17 @@ describe("docs/ADDING_A_PROVIDER.md", () => {
   });
 
   test("the driver-free ids count bigquery and firestore", () => {
-    expect(guide).toContain("eighteen shipped ids do:");
-    expect(guide).toContain("`databend`, `kubernetes`, `bigquery` and `firestore`");
+    expect(guide).toContain("nineteen shipped ids do:");
+    expect(guide).toContain("`databend`, `kubernetes`, `bigquery`, `firestore` and `rabbitmq`");
   });
 
   test("the QueryTab example and the queryDialect row name every member of their unions", () => {
     expect(guide).toContain(
-      "| 'influxql' | 'oxia' | 's3' | 'kubectl' | 'mqtt' | 'firestore';  // Add your type here if needed",
+      "| 'influxql' | 'oxia' | 's3' | 'kubectl' | 'mqtt' | 'firestore' | 'rabbitmq';  // Add your type here if needed",
     );
-    expect(guide).toContain("\\| 'oxia' \\| 's3' \\| 'mqtt' \\| 'firestore' \\| 'kubectl' \\| undefined`");
+    expect(guide).toContain(
+      "\\| 'oxia' \\| 's3' \\| 'mqtt' \\| 'firestore' \\| 'rabbitmq' \\| 'kubectl' \\| undefined`",
+    );
   });
 
   test("the no-driver answer names BigQuery and Firestore with their docs", () => {
