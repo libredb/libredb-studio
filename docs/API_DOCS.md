@@ -2144,7 +2144,7 @@ The object is one shape on the wire. Fields the server reads from a request body
 change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
 `host`, `port`, `user`, `password`, `database`, `schema`, `connectionString`), plus `ssl`,
 `sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
-`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3, MQTT), `dataServers` (Oxia), `warehouse` (Databend), `region` (S3), `apiPath`, `namespaces` and `tlsServerName` (Kubernetes), `location` (BigQuery), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
+`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3, MQTT), `dataServers` (Oxia), `warehouse` (Databend), `region` (S3), `apiPath`, `namespaces` and `tlsServerName` (Kubernetes), `location` (BigQuery), `amqpPort` (read by no engine yet), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
 (Elasticsearch, #708), and `readOnly` (#1089). `color`, `environment`, `group`,
 `managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
 
