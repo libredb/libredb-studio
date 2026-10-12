@@ -77,6 +77,7 @@ function sourceOf(credentials: GoogleCredentials, answer: FirestoreAnswer) {
 
 /** Lets queued microtasks run, so a refresh that awaits key import or a grant reaches its transport. */
 async function settle(): Promise<void> {
+  // oxlint-disable-next-line no-await-in-loop -- each turn must drain before the next is queued.
   for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
 }
 
@@ -109,10 +110,11 @@ describe("firestore token source grants", () => {
   });
 
   test("a key without a key id signs with no kid header", async () => {
-    const { privateKeyId: _none, ...withoutKid } = serviceAccount as Extract<
-      GoogleCredentials,
-      { type: "service_account" }
-    >;
+    const withoutKid: GoogleCredentials = {
+      type: "service_account",
+      clientEmail: "reader@demo-p.iam.gserviceaccount.com",
+      privateKey,
+    };
     const { seams, source } = sourceOf(withoutKid, () => tokenAnswer("sa-token"));
     await source.token(signal);
     expect(decodeProtectedHeader(seams.lanes[0].requests[0].form?.assertion ?? "")).toEqual({
@@ -197,10 +199,13 @@ describe("firestore token source cache", () => {
     for (const expires of [undefined, "3600", -5, Number.POSITIVE_INFINITY]) {
       let issued = 0;
       const { seams, source } = sourceOf(user, () => jsonAnswer({ access_token: `t${++issued}`, expires_in: expires }));
+      // oxlint-disable-next-line no-await-in-loop -- one answer at a time, each read against the clock it set.
       await source.token(signal);
       seams.setClock(FIXED_NOW + 3_540_000 - 1);
+      // oxlint-disable-next-line no-await-in-loop -- the same source, after the first token is cached.
       expect(await source.token(signal)).toBe("t1");
       seams.setClock(FIXED_NOW + 3_540_000);
+      // oxlint-disable-next-line no-await-in-loop -- the same source, once the clock passes the refresh point.
       expect(await source.token(signal)).toBe("t2");
     }
   });
@@ -253,6 +258,7 @@ describe("firestore token source errors", () => {
     for (const credentials of [serviceAccount, user]) {
       for (const [answer, sentence] of cases) {
         const { seams, source } = sourceOf(credentials, () => answer);
+        // oxlint-disable-next-line no-await-in-loop -- one case at a time, so a failure names its answer.
         const error = await source.token(signal).catch((caught: unknown) => caught);
         expect(error).toBeInstanceOf(AuthenticationError);
         const message = (error as Error).message;

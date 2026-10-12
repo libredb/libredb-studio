@@ -100,8 +100,8 @@ describe("firestore parseCredentialText accepts", () => {
   });
 
   test("a key without private_key_id leaves privateKeyId out", () => {
-    const { private_key_id: _dropped, ...rest } = serviceAccount;
-    const { privateKeyId: _none, ...expected } = expectedServiceAccount;
+    const rest = { ...serviceAccount, private_key_id: undefined };
+    const expected = { type: "service_account", clientEmail: expectedServiceAccount.clientEmail, privateKey: PEM };
     expect(parseCredentialText(JSON.stringify(rest), rules)).toEqual(expected);
   });
 
@@ -122,8 +122,8 @@ describe("firestore parseCredentialText accepts", () => {
 });
 
 describe("firestore parseCredentialText refuses", () => {
-  const { private_key: _key, ...noKey } = serviceAccount;
-  const { refresh_token: _refresh, ...noRefresh } = authorizedUser;
+  const noKey = { ...serviceAccount, private_key: undefined };
+  const noRefresh = { ...authorizedUser, refresh_token: undefined };
   const cases: readonly (readonly [string, string, string])[] = [
     ["an empty text", "", S.notACredential],
     ["a word", "hello", S.notACredential],

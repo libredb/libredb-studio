@@ -16,11 +16,10 @@ describe("the non-SQL engines that declare an explain format", () => {
     const population = SHIPPED_DATABASE_TYPES.filter((type) => !readsSqlText(type));
     // Vacuity, by name: a population without the engine this pins would certify nothing.
     expect(population).toContain("firestore");
-    const declaring: DatabaseType[] = [];
-    for (const type of population) {
-      const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
-      if (capabilities.explainFormat !== undefined) declaring.push(type);
-    }
+    const providers = await Promise.all(population.map((type) => createDatabaseProvider(CENSUS_CONNECTION[type])));
+    const declaring: DatabaseType[] = population.filter(
+      (_type, index) => providers[index].getCapabilities().explainFormat !== undefined,
+    );
     expect(declaring).toEqual(["firestore"]);
     expect(getExplainStrategy("firestore-explain")?.backgroundPlan).toBe(false);
   });

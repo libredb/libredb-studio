@@ -32,6 +32,7 @@ function seamsOf(handler: WireHandler, env: Record<string, string> = {}): FakeFi
 }
 
 async function until(condition: () => boolean): Promise<void> {
+  // oxlint-disable-next-line no-await-in-loop -- polls one turn at a time until the condition holds.
   for (let turn = 0; turn < 200 && !condition(); turn += 1) await new Promise((resolve) => setImmediate(resolve));
   expect(condition()).toBe(true);
 }

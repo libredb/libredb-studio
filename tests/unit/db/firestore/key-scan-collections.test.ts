@@ -36,11 +36,12 @@ const listed = (documents: object[], nextPageToken?: string) => ({
 const stream = (...names: string[]) =>
   names.length === 0
     ? [{ readTime: TIME, done: true }]
-    : names.map((name, index) => ({
-        document: { name, createTime: TIME, updateTime: TIME },
-        readTime: TIME,
-        ...(index === names.length - 1 ? { done: true } : {}),
-      }));
+    : names.map((name, index) =>
+        Object.assign(
+          { document: { name, createTime: TIME, updateTime: TIME }, readTime: TIME },
+          index === names.length - 1 ? { done: true } : {},
+        ),
+      );
 
 async function scan(handler: FakeHandler, overrides: Partial<KeyScanOptions>) {
   const fake = fakeFirestore(handler);
@@ -86,6 +87,7 @@ describe("the collection level", () => {
       [100, 50],
       [1000, 50],
     ]) {
+      // oxlint-disable-next-line no-await-in-loop -- one count at a time, so a failure names its page size.
       const { fake } = await scan(() => listed([]), { pattern: "users/", count });
       expect(fake.sent[0].request).toMatchObject({ kind: "listDocuments", pageSize });
     }
@@ -134,6 +136,7 @@ describe("the collection level", () => {
       encodeLevelCursor({ v: 1, p: "users/", o: "orders/x/" }),
       encodeLevelCursor({ v: 1, p: "users/", o: "users/a/b/" }),
     ]) {
+      // oxlint-disable-next-line no-await-in-loop -- one cursor at a time, so a failure names its cursor.
       await expect(
         scanFirestoreLevel({ cursor, count: 10, level: true, pattern: "users/" }, fake.client, SIGNAL, FAKE_BASE),
       ).rejects.toThrow(C.malformed);
@@ -191,6 +194,7 @@ describe("the collection level", () => {
       scan(() => listed([present("users", "a"), present("users", "b")]), { pattern: "users/", count: 2 }),
     ).rejects.toThrow(L.malformed);
     for (const answer of [[], { documents: "x" }, { documents: [{}] }, { nextPageToken: 1 }]) {
+      // oxlint-disable-next-line no-await-in-loop -- one answer at a time, so a failure names its shape.
       await expect(scan(() => answer, { pattern: "users/" })).rejects.toThrow(L.malformed);
     }
   });
