@@ -152,6 +152,12 @@ describe("statements the provider makes, printed whole", () => {
     );
   });
 
+  test("the read request's keys, each written once", () => {
+    expect(DOC).toContain(
+      "One JSON object with the keys `vhost`, `stream`, `from` and `limit`, and no other, each written once:\n",
+    );
+  });
+
   test("the routing key column names the stream for a message stored without a routing key, as the row does", () => {
     expect(rowOf("4")).toBe(
       "| 4 | `routing_key` | string | The publisher's first routing key; the stream name for a message stored without one, as an AMQP 1.0 publish to the queue address is |",

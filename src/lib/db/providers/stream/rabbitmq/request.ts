@@ -4,7 +4,8 @@
  * Every value is checked here, before any request or socket, so a read that cannot be carried on the wire as written
  * is refused in words and never sent: a name the management API or a short string cannot address, an offset past the
  * signed 64-bit range `x-stream-offset` carries, a calendar day the month does not have, and an instant before 1970.
- * A key this parser does not know is refused by name, because ignoring it would run another read than the one written.
+ * A key this parser does not know is refused by name, because ignoring it would run another read than the one written,
+ * and so is a key written twice in one object, which JSON.parse would otherwise settle by keeping the last.
  *
  * Pure: no I/O, and the sentences come from errors.ts.
  */
@@ -17,6 +18,7 @@ import {
   OFFSET_TOO_LARGE,
   queryError,
   REQUEST_NOT_OBJECT,
+  repeatedRequestKey,
   TIMESTAMP_BEFORE_EPOCH,
   TIMESTAMP_DAY,
   TIMESTAMP_FORM,
@@ -58,6 +60,8 @@ export function parseReadRequest(text: string): ReadRequest {
     refuse(REQUEST_NOT_OBJECT);
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) refuse(REQUEST_NOT_OBJECT);
+  const repeated = repeatedKey(text);
+  if (repeated !== undefined) refuse(repeatedRequestKey(repeated));
   const request = parsed as Record<string, unknown>;
   for (const key of Object.keys(request)) {
     if (!KEYS.has(key)) refuse(unknownRequestKey(key));
@@ -71,6 +75,35 @@ export function parseReadRequest(text: string): ReadRequest {
     refuse(LIMIT_RANGE);
   }
   return { vhost, stream, from, startText, limit: limit as number };
+}
+
+/**
+ * The first key written twice in one object of `text`, which JSON.parse has already accepted, so the scan only tells
+ * keys from values: a string is a key when its object expects one, and its spelling is decoded as JSON decodes it.
+ */
+function repeatedKey(text: string): string | undefined {
+  const open: { readonly keys: Set<string> | null; expectsKey: boolean }[] = [];
+  for (let at = 0; at < text.length; at++) {
+    const char = text[at];
+    if (char === "{" || char === "[") open.push({ keys: char === "{" ? new Set() : null, expectsKey: char === "{" });
+    else if (char === "}" || char === "]") open.pop();
+    else if (char === ",") {
+      const top = open.at(-1) as { readonly keys: Set<string> | null; expectsKey: boolean };
+      top.expectsKey = top.keys !== null;
+    } else if (char === '"') {
+      let end = at + 1;
+      while (text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
+      const top = open.at(-1);
+      if (top?.keys && top.expectsKey) {
+        const key = JSON.parse(text.slice(at, end + 1)) as string;
+        if (top.keys.has(key)) return key;
+        top.keys.add(key);
+        top.expectsKey = false;
+      }
+      at = end;
+    }
+  }
+  return undefined;
 }
 
 /**

@@ -146,7 +146,7 @@ A `readOnly: true` seed with the `guest`/`guest` pair is refused, as the dialog 
 
 ### 5.1 The read request
 
-One JSON object with the keys `vhost`, `stream`, `from` and `limit`, and no other:
+One JSON object with the keys `vhost`, `stream`, `from` and `limit`, and no other, each written once:
 
 ```json
 {"vhost": "/", "stream": "orders", "from": "last", "limit": 50}

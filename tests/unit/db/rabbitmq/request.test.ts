@@ -12,6 +12,7 @@ import {
   OFFSET_NOT_WHOLE,
   OFFSET_TOO_LARGE,
   REQUEST_NOT_OBJECT,
+  repeatedRequestKey,
   TIMESTAMP_BEFORE_EPOCH,
   TIMESTAMP_DAY,
   TIMESTAMP_FORM,
@@ -96,6 +97,20 @@ describe("accepted requests", () => {
 describe("refused requests, each with its sentence", () => {
   test.each(["not json", "[]", "null", '"text"', "42"])("not one object: %s", (text) => {
     expect(refusal(text).message).toBe(REQUEST_NOT_OBJECT);
+  });
+
+  test("a key written twice is refused by name, at the top and inside from, an escaped spelling included", () => {
+    // JSON.parse keeps the last of two equal keys, so the read would run on another vhost than the first one written.
+    expect(refusal('{"vhost":"/","vhost":"a","stream":"s"}').message).toBe(repeatedRequestKey("vhost"));
+    expect(refusal('{"vhost":"/","stream":"s","st\\u0072eam":"t"}').message).toBe(repeatedRequestKey("stream"));
+    expect(refusal('{"vhost":"/","stream":"s","from":{"offset":"1","offset":"2"}}').message).toBe(
+      repeatedRequestKey("offset"),
+    );
+    expect(refusal('{"vhost":"/","stream":"s","limit":[{"a":1},{"a":2,"a":3}]}').message).toBe(repeatedRequestKey("a"));
+    // A key's spelling inside a string value is not a key, and equal keys in two objects are not a repeat.
+    expect(parseReadRequest('{"vhost":"\\"vhost\\":","stream":"s"}').vhost).toBe('"vhost":');
+    expect(refusal('{"vhost":"/","stream":"s","limit":[{"a":1},{"a":2}]}').message).toBe(LIMIT_RANGE);
+    expect(repeatedRequestKey("vhost")).toBe('The read request names "vhost" more than once; write each key once.');
   });
 
   test("an unknown key is named", () => {

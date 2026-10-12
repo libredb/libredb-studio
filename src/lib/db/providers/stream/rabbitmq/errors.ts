@@ -630,6 +630,10 @@ export function countsLabel(sampledAt: string): string {
 // =====================================================================================================================
 
 /** A key outside the four, named escaped and cut like any user text. */
+export function repeatedRequestKey(key: string): string {
+  return `The read request names ${quoteName(key)} more than once; write each key once.`;
+}
+
 export function unknownRequestKey(key: string): string {
   return `Unknown key ${quoteName(key)} in the read request; the keys are vhost, stream, from and limit.`;
 }
