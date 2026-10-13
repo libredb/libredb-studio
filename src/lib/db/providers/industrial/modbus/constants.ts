@@ -32,6 +32,19 @@ export const MBAP_HEADER_BYTES = 7;
  */
 export const MBAP_LENGTH_MIN = 3;
 export const MBAP_LENGTH_MAX = 254;
+
+/**
+ * The most bytes ONE identification object can carry, derived rather than written down.
+ *
+ * The MBAP length counts the unit id and the PDU, so the PDU is at most `MBAP_LENGTH_MAX - 1`.
+ * A 43/14 answer spends 1 byte on the function code and 6 on its own header (MEI type, read
+ * code, conformity level, More Follows, Next Object Id, object count), and each object spends 2
+ * more on its id and its length. What is left is this.
+ *
+ * Written as a literal it would be a number that stays still while the frame bound moves, and the
+ * two would disagree without either one looking wrong.
+ */
+export const MAX_IDENTIFICATION_OBJECT_BYTES = MBAP_LENGTH_MAX - 1 - 1 - 6 - 2;
 export const PROTOCOL_ID = 0;
 
 /** The four read function codes MB-S1 allows, and nothing else. */
