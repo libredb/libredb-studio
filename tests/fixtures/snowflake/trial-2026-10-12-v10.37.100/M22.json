@@ -3,6 +3,83 @@
   "step": 5,
   "asks": "What does a request from an address the network policy does not allow answer? The operator sends one from another network.",
   "rowsSummarised": "Every answer's rows are summarised: each answer that carried rows keeps its other fields and records `rows` with the byte length on the wire and decoded, the row count, and the first and the last row.",
-  "operator": "pending: the operator's answer is added to this file by hand",
+  "operator": {
+    "answeredOn": "2026-10-13",
+    "how": "The network rule the user's network policy allows pointed at a documentation address for one run, then a key pair and a token signed in from the operator's address, then the rule restored.",
+    "answer": [
+      "A key pair and a token from an address the policy does not allow are both refused with HTTP 401, code 390422.",
+      "Snowflake's message names the refused value as \"IP/Token\"; Studio does not repeat it."
+    ],
+    "steps": [
+      {
+        "step": "admin points the rule at a documentation address",
+        "at": "2026-10-12T23:34:03.619Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "key pair (reader) from the refused address",
+        "at": "2026-10-12T23:34:33.739Z",
+        "status": 401,
+        "code": "390422",
+        "sqlState": null,
+        "message": "Incoming request with IP/Token <egress-ip> is not allowed to access Snowflake. Contact your account administrator. For more information about this error, go to https://community.snowflake.com/s/ip-xxxxxxxxxxxx-is-not-allowed-to-access."
+      },
+      {
+        "step": "PAT from the refused address",
+        "at": "2026-10-12T23:34:33.894Z",
+        "status": 401,
+        "code": "390422",
+        "sqlState": null,
+        "message": "Incoming request with IP/Token <egress-ip> is not allowed to access Snowflake. Contact your account administrator. For more information about this error, go to https://community.snowflake.com/s/ip-xxxxxxxxxxxx-is-not-allowed-to-access."
+      },
+      {
+        "step": "teardown: restore the rule",
+        "at": "2026-10-12T23:34:35.291Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "reader again after the restore",
+        "at": "2026-10-12T23:35:06.705Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1791830182.609",
+            "SNOWFLAKE",
+            "N",
+            "N",
+            "SFCOGSOPS.SNOWHOUSE_LOCAL_AWS_EU_CENTRAL_2.ACCOUNT_USAGE",
+            "",
+            "",
+            "",
+            "0",
+            "APPLICATION",
+            "",
+            null,
+            null,
+            null
+          ]
+        ]
+      }
+    ]
+  },
   "exchanges": []
 }

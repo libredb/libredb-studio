@@ -4,7 +4,227 @@
   "asks": "What code ends a statement the resource monitor suspends mid-run? The operator lowers the quota for one run.",
   "rowsSummarised": "Every answer's rows are summarised: each answer that carried rows keeps its other fields and records `rows` with the byte length on the wire and decoded, the row count, and the first and the last row.",
   "stateBefore": "STARTED",
-  "operator": "pending: the operator's answer is added to this file by hand",
+  "operator": {
+    "answeredOn": "2026-10-13",
+    "how": "The resource monitor's credit quota lowered to its used credits while a statement ran on the monitored warehouse, then restored. CREDIT_QUOTA takes whole credits only (0.01 was refused with 001008), and SYSTEM$WAIT holds no warehouse (the warehouse was suspended when the wait ended), so the third run computed with GENERATOR(TIMELIMIT => 540).",
+    "answer": [
+      "The monitor suspended the warehouse 168 s into the computing statement, which ended with HTTP 422, code 000629, SQLSTATE 57014: \"Warehouse ... was suspended immediate by resource monitor ..., statement aborted.\"",
+      "A statement that needs no warehouse still ran while the quota was exceeded, and the warehouse resumed once the quota was restored."
+    ],
+    "steps": [
+      {
+        "step": "admin lowers the monitor's quota below the credits used",
+        "at": "2026-10-12T23:49:42.137Z",
+        "status": 422,
+        "code": "001008",
+        "sqlState": "22023",
+        "message": "SQL compilation error:\ninvalid value [0.01] for parameter 'CREDIT_QUOTA'"
+      },
+      {
+        "step": "rerun: admin lowers the monitor's quota to 1 credit (0.93 used) while the statement runs",
+        "at": "2026-10-12T23:58:07.557Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "rerun: the running statement's end, 541 s after it was sent",
+        "at": "2026-10-13T00:06:47.590Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "waited 540 seconds"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: monitor after",
+        "at": "2026-10-13T00:06:49.089Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_PROBE_RM",
+            "1.00",
+            "0.98",
+            "0.02"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: warehouse state after",
+        "at": "2026-10-13T00:06:50.596Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_PROBE_WH",
+            "SUSPENDED",
+            "STANDARD"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: a statement while the quota is still 1",
+        "at": "2026-10-13T00:06:51.987Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      },
+      {
+        "step": "rerun teardown: restore the quota to 50",
+        "at": "2026-10-13T00:06:53.323Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "rerun: a statement after the restore",
+        "at": "2026-10-13T00:06:54.734Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "4999950000"
+          ]
+        ]
+      },
+      {
+        "step": "third run: monitor before",
+        "at": "2026-10-13T00:17:17.617Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_PROBE_RM",
+            "50.00",
+            "1.23",
+            "48.77"
+          ]
+        ]
+      },
+      {
+        "step": "third run: admin sets the quota to 1 credit",
+        "at": "2026-10-13T00:17:18.932Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "third run: the computing statement's end, 168 s after it was sent",
+        "at": "2026-10-13T00:20:04.066Z",
+        "status": 422,
+        "code": "000629",
+        "sqlState": "57014",
+        "message": "Warehouse 'STUDIO_PROBE_WH' was suspended immediate by resource monitor 'STUDIO_PROBE_RM', statement aborted."
+      },
+      {
+        "step": "third run: monitor after",
+        "at": "2026-10-13T00:20:05.505Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_PROBE_RM",
+            "1.00",
+            "1.32",
+            "-0.32"
+          ]
+        ]
+      },
+      {
+        "step": "third run: warehouse state after",
+        "at": "2026-10-13T00:20:06.738Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_PROBE_WH",
+            "SUSPENDED",
+            "STANDARD"
+          ]
+        ]
+      },
+      {
+        "step": "third run: a statement while the quota is still 1",
+        "at": "2026-10-13T00:20:08.125Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      },
+      {
+        "step": "third run teardown: restore the quota to 50",
+        "at": "2026-10-13T00:20:09.526Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "third run: a statement after the restore",
+        "at": "2026-10-13T00:20:10.872Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      }
+    ]
+  },
   "stateAfter": "STARTED",
   "exchanges": []
 }

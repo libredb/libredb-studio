@@ -3,6 +3,388 @@
   "step": 5,
   "asks": "Does the provider doc's read-only setup recipe run as written, MATERIALIZED VIEWS as a grant type included? The operator runs it under its own placeholder names.",
   "rowsSummarised": "Every answer's rows are summarised: each answer that carried rows keeps its other fields and records `rows` with the byte length on the wire and decoded, the row count, and the first and the last row.",
-  "operator": "pending: the operator's answer is added to this file by hand",
+  "operator": {
+    "answeredOn": "2026-10-13",
+    "how": "The provider doc's read-only setup recipe run as written as ACCOUNTADMIN under placeholder names (m78_wh, m78_rm, m78_ro, m78_analytics, m78_svc), MATERIALIZED VIEWS as a grant type included; then the recipe's user selected a table, a view and a materialized view, tried a write and read its secondary roles; then everything dropped.",
+    "answer": [
+      "Every statement of the recipe ran as written.",
+      "The recipe's user read the table, the view and the materialized view, and its INSERT was refused with code 003001."
+    ],
+    "steps": [
+      {
+        "step": "CREATE WAREHOUSE m78_wh WAREHOUSE_SIZE = XSMALL GENERATION = '1' ENABLE_QUERY_ACCELERATION = FALSE AUTO_SUSPEND = 60 AUTO_RESUME = TRUE INIT",
+        "at": "2026-10-12T23:32:27.091Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Warehouse M78_WH successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "CREATE RESOURCE MONITOR m78_rm WITH CREDIT_QUOTA = 10 TRIGGERS ON 80 PERCENT DO NOTIFY ON 100 PERCENT DO SUSPEND_IMMEDIATE",
+        "at": "2026-10-12T23:32:28.373Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Resource monitor M78_RM successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "ALTER WAREHOUSE m78_wh SET RESOURCE_MONITOR = m78_rm",
+        "at": "2026-10-12T23:32:29.643Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "CREATE ROLE m78_ro",
+        "at": "2026-10-12T23:32:30.936Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Role M78_RO successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "GRANT USAGE ON WAREHOUSE m78_wh TO ROLE m78_ro",
+        "at": "2026-10-12T23:32:32.234Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "GRANT USAGE ON DATABASE m78_analytics TO ROLE m78_ro",
+        "at": "2026-10-12T23:32:33.506Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "GRANT USAGE ON ALL SCHEMAS IN DATABASE m78_analytics TO ROLE m78_ro",
+        "at": "2026-10-12T23:32:34.798Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully. 2 objects affected."
+          ]
+        ]
+      },
+      {
+        "step": "GRANT USAGE ON FUTURE SCHEMAS IN DATABASE m78_analytics TO ROLE m78_ro",
+        "at": "2026-10-12T23:32:36.073Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "GRANT SELECT ON ALL TABLES IN DATABASE m78_analytics TO ROLE m78_ro",
+        "at": "2026-10-12T23:32:37.366Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully. 1 objects affected."
+          ]
+        ]
+      },
+      {
+        "step": "GRANT SELECT ON FUTURE TABLES IN DATABASE m78_analytics TO ROLE m78_ro",
+        "at": "2026-10-12T23:32:38.631Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "GRANT SELECT ON ALL VIEWS IN DATABASE m78_analytics TO ROLE m78_ro",
+        "at": "2026-10-12T23:32:39.916Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully. 0 objects affected."
+          ]
+        ]
+      },
+      {
+        "step": "GRANT SELECT ON FUTURE VIEWS IN DATABASE m78_analytics TO ROLE m78_ro",
+        "at": "2026-10-12T23:32:41.202Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "GRANT SELECT ON ALL MATERIALIZED VIEWS IN DATABASE m78_analytics TO ROLE m78_ro",
+        "at": "2026-10-12T23:32:42.474Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully. 0 objects affected."
+          ]
+        ]
+      },
+      {
+        "step": "GRANT SELECT ON FUTURE MATERIALIZED VIEWS IN DATABASE m78_analytics TO ROLE m78_ro",
+        "at": "2026-10-12T23:32:43.777Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "CREATE USER m78_svc TYPE = SERVICE DEFAULT_ROLE = m78_ro DEFAULT_WAREHOUSE = m78_wh DEFAULT_SECONDARY_ROLES = ()",
+        "at": "2026-10-12T23:32:45.328Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "User <m78-user> successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "GRANT ROLE m78_ro TO USER m78_svc",
+        "at": "2026-10-12T23:32:46.624Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "ALTER USER m78_svc ADD KEY PAIR libredb_studio_a40d3484 PUBLIC_KEY = '<public key body>'",
+        "at": "2026-10-12T23:32:47.901Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "setup: CREATE VIEW m78_analytics.s.v AS SELECT a FROM m78_analytics.s.t",
+        "at": "2026-10-12T23:32:49.174Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "View V successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "setup: CREATE MATERIALIZED VIEW m78_analytics.s.mv AS SELECT a FROM m78_analytics.s.t",
+        "at": "2026-10-12T23:32:50.451Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Materialized view MV successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "as the recipe's user: select the table",
+        "at": "2026-10-12T23:32:51.899Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      },
+      {
+        "step": "as the recipe's user: select the view",
+        "at": "2026-10-12T23:32:53.256Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      },
+      {
+        "step": "as the recipe's user: select the materialized view",
+        "at": "2026-10-12T23:32:54.509Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      },
+      {
+        "step": "as the recipe's user: DML refused",
+        "at": "2026-10-12T23:32:55.789Z",
+        "status": 422,
+        "code": "003001",
+        "sqlState": "42501",
+        "message": "SQL access control error:\nInsufficient privileges to operate on table 'T'. Your primary role M78_RO must have INSERT granted on TABLE M78_ANALYTICS.S.T."
+      },
+      {
+        "step": "as the recipe's user: secondary roles",
+        "at": "2026-10-12T23:32:57.041Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "M78_RO",
+            "{\"roles\":\"\",\"value\":\"\"}"
+          ]
+        ]
+      },
+      {
+        "step": "teardown: DROP USER IF EXISTS m78_svc",
+        "at": "2026-10-12T23:32:58.334Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "<m78-user> successfully dropped."
+          ]
+        ]
+      },
+      {
+        "step": "teardown: DROP DATABASE IF EXISTS m78_analytics",
+        "at": "2026-10-12T23:32:59.656Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "M78_ANALYTICS successfully dropped."
+          ]
+        ]
+      },
+      {
+        "step": "teardown: DROP WAREHOUSE IF EXISTS m78_wh",
+        "at": "2026-10-12T23:33:00.937Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "M78_WH successfully dropped."
+          ]
+        ]
+      },
+      {
+        "step": "teardown: DROP RESOURCE MONITOR IF EXISTS m78_rm",
+        "at": "2026-10-12T23:33:02.255Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "M78_RM successfully dropped."
+          ]
+        ]
+      },
+      {
+        "step": "teardown: DROP ROLE IF EXISTS m78_ro",
+        "at": "2026-10-12T23:33:03.533Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "M78_RO successfully dropped."
+          ]
+        ]
+      }
+    ]
+  },
   "exchanges": []
 }

@@ -3,6 +3,325 @@
   "step": 5,
   "asks": "Confirms the default the spec records under M17; the operator follows the spec's item and notes the answer.",
   "rowsSummarised": "Every answer's rows are summarised: each answer that carried rows keeps its other fields and records `rows` with the byte length on the wire and decoded, the row count, and the first and the last row.",
-  "operator": "pending: the operator's answer is added to this file by hand",
+  "operator": {
+    "answeredOn": "2026-10-13",
+    "how": "A token whose user has a network policy, then the user's network policy unset, then an authentication policy with PAT_POLICY = (NETWORK_POLICY_EVALUATION = ENFORCED_NOT_REQUIRED) attached, then both restored. The first run waited 15 s after each change; the rerun polled every 20 s until each change showed.",
+    "answer": [
+      "A token never issued is refused with HTTP 401, code 390303.",
+      "A token whose user has no network policy is refused with HTTP 401, code 390432, \"Fail : Network policy is required.\"",
+      "Under the authentication policy that does not require one, the same token signs in.",
+      "Each change took up to about 45 s to show, which the first run's 15 s waits did not cover."
+    ],
+    "steps": [
+      {
+        "step": "baseline: PAT under its network policy",
+        "at": "2026-10-12T23:35:06.764Z",
+        "status": 401,
+        "code": "390422",
+        "sqlState": null,
+        "message": "Incoming request with IP/Token <egress-ip> is not allowed to access Snowflake. Contact your account administrator. For more information about this error, go to https://community.snowflake.com/s/ip-xxxxxxxxxxxx-is-not-allowed-to-access."
+      },
+      {
+        "step": "a token Snowflake never issued",
+        "at": "2026-10-12T23:35:06.862Z",
+        "status": 401,
+        "code": "390303",
+        "sqlState": null,
+        "message": "Invalid OAuth access token. null"
+      },
+      {
+        "step": "admin unsets the user's network policy",
+        "at": "2026-10-12T23:35:08.229Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "PAT with no network policy",
+        "at": "2026-10-12T23:35:23.290Z",
+        "status": 401,
+        "code": "390422",
+        "sqlState": null,
+        "message": "Incoming request with IP/Token <egress-ip> is not allowed to access Snowflake. Contact your account administrator. For more information about this error, go to https://community.snowflake.com/s/ip-xxxxxxxxxxxx-is-not-allowed-to-access."
+      },
+      {
+        "step": "admin creates an authentication policy with PAT network evaluation not required",
+        "at": "2026-10-12T23:35:24.567Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Authentication policy 'M17_AUTH' created successfully"
+          ]
+        ]
+      },
+      {
+        "step": "admin attaches it to the user",
+        "at": "2026-10-12T23:35:25.862Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "PAT with no network policy, ENFORCED_NOT_REQUIRED",
+        "at": "2026-10-12T23:35:42.212Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1791830182.609",
+            "SNOWFLAKE",
+            "N",
+            "N",
+            "SFCOGSOPS.SNOWHOUSE_LOCAL_AWS_EU_CENTRAL_2.ACCOUNT_USAGE",
+            "",
+            "",
+            "",
+            "0",
+            "APPLICATION",
+            "",
+            null,
+            null,
+            null
+          ]
+        ]
+      },
+      {
+        "step": "teardown: detach the authentication policy",
+        "at": "2026-10-12T23:35:43.492Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "teardown: drop it",
+        "at": "2026-10-12T23:35:45.132Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "M17_AUTH successfully dropped."
+          ]
+        ]
+      },
+      {
+        "step": "teardown: restore the network policy",
+        "at": "2026-10-12T23:35:46.417Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "PAT after the restore",
+        "at": "2026-10-12T23:36:02.706Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1791830182.609",
+            "SNOWFLAKE",
+            "N",
+            "N",
+            "SFCOGSOPS.SNOWHOUSE_LOCAL_AWS_EU_CENTRAL_2.ACCOUNT_USAGE",
+            "",
+            "",
+            "",
+            "0",
+            "APPLICATION",
+            "",
+            null,
+            null,
+            null
+          ]
+        ]
+      },
+      {
+        "step": "rerun: admin unsets the user's network policy",
+        "at": "2026-10-13T00:15:42.073Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "rerun: PAT with no network policy (after 21 s of polling for 401)",
+        "at": "2026-10-13T00:16:03.479Z",
+        "status": 401,
+        "code": "390432",
+        "sqlState": null,
+        "message": "Fail : Network policy is required."
+      },
+      {
+        "step": "rerun: admin creates the authentication policy, PAT network evaluation ENFORCED_NOT_REQUIRED",
+        "at": "2026-10-13T00:16:04.824Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Authentication policy 'M17_AUTH' created successfully"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: admin attaches it to the user",
+        "at": "2026-10-13T00:16:06.199Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "rerun: the policy as Snowflake describes it",
+        "at": "2026-10-13T00:16:07.481Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "PAT_POLICY",
+            "{DEFAULT_EXPIRY_IN_DAYS=15, MAX_EXPIRY_IN_DAYS=365, NETWORK_POLICY_EVALUATION=ENFORCED_NOT_REQUIRED, REQUIRE_ROLE_RESTRICTION_FOR_SERVICE_USERS=true, REQUIRE_ROLE_RESTRICTION_FOR_PERSON_USERS=false, BLOCKED_ROLES_LIST=[]}",
+            "null",
+            "PAT-specific configuration for the authentication policy."
+          ]
+        ]
+      },
+      {
+        "step": "rerun: PAT with no network policy under ENFORCED_NOT_REQUIRED (after 43 s of polling for 200)",
+        "at": "2026-10-13T00:16:50.099Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1791830182.609",
+            "SNOWFLAKE",
+            "N",
+            "N",
+            "SFCOGSOPS.SNOWHOUSE_LOCAL_AWS_EU_CENTRAL_2.ACCOUNT_USAGE",
+            "",
+            "",
+            "",
+            "0",
+            "APPLICATION",
+            "",
+            null,
+            null,
+            null
+          ]
+        ]
+      },
+      {
+        "step": "rerun teardown: detach the authentication policy",
+        "at": "2026-10-13T00:16:51.382Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "rerun teardown: drop it",
+        "at": "2026-10-13T00:16:52.633Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "M17_AUTH successfully dropped."
+          ]
+        ]
+      },
+      {
+        "step": "rerun teardown: restore the network policy",
+        "at": "2026-10-13T00:16:53.903Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "rerun: PAT after the restore (after 22 s of polling for 200)",
+        "at": "2026-10-13T00:17:16.314Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1791830182.609",
+            "SNOWFLAKE",
+            "N",
+            "N",
+            "SFCOGSOPS.SNOWHOUSE_LOCAL_AWS_EU_CENTRAL_2.ACCOUNT_USAGE",
+            "",
+            "",
+            "",
+            "0",
+            "APPLICATION",
+            "",
+            null,
+            null,
+            null
+          ]
+        ]
+      }
+    ]
+  },
   "exchanges": []
 }

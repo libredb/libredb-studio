@@ -3,6 +3,290 @@
   "step": 5,
   "asks": "Where does the 10,000-row ceiling of SHOW apply, with and without LIMIT? The operator creates the objects past it in a scratch schema.",
   "rowsSummarised": "Every answer's rows are summarised: each answer that carried rows keeps its other fields and records `rows` with the byte length on the wire and decoded, the row count, and the first and the last row.",
-  "operator": "pending: the operator's answer is added to this file by hand",
+  "operator": {
+    "answeredOn": "2026-10-13",
+    "how": "10,250 sequences and 10,250 tables created in two scratch schemas, then the SHOW forms the provider sends, read by the answer's resultSetMetaData.numRows and partition count, against INFORMATION_SCHEMA's count; then both schemas dropped. A first run made only 1,162 sequences before the warehouse's 600 s timeout, and a second counted partition 0 alone; neither is recorded here.",
+    "answer": [
+      "SHOW TABLES and SHOW TERSE OBJECTS with no LIMIT answered all 10,250 rows of the schema, with no error and no 10,000-row ceiling.",
+      "With LIMIT 10000 they answered 10,000, and LIMIT 10000 FROM 'T10000' answered the 250 names after T10000, so FROM starts after the name it is given.",
+      "SHOW SEQUENCES answered all 10,250 rows with no LIMIT, with LIMIT 10000 and with FROM: it ignores both."
+    ],
+    "steps": [
+      {
+        "step": "rerun: create schema m81s",
+        "at": "2026-10-13T00:20:54.864Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Schema M81S successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "rerun: sequences created in 124 s, 0 blocks not 200",
+        "at": "2026-10-13T00:22:58.920Z",
+        "status": 200,
+        "code": null,
+        "sqlState": null,
+        "message": ""
+      },
+      {
+        "step": "rerun: create schema m81t",
+        "at": "2026-10-13T00:23:00.159Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Schema M81T successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "rerun: tables created in 307 s, 0 blocks not 200",
+        "at": "2026-10-13T00:28:06.880Z",
+        "status": 200,
+        "code": null,
+        "sqlState": null,
+        "message": ""
+      },
+      {
+        "step": "rerun: INFORMATION_SCHEMA.SEQUENCES count in m81s: 10250",
+        "at": "2026-10-13T00:28:09.403Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "10250"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: INFORMATION_SCHEMA.TABLES count in m81t: 10250",
+        "at": "2026-10-13T00:28:14.366Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "10250"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: SHOW SEQUENCES no LIMIT: numRows 10250 in 2 partitions (partition 0 holds 1149)",
+        "at": "2026-10-13T00:28:16.902Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "S00001",
+            "STUDIO_DEMO",
+            "M81S"
+          ],
+          [
+            "S01149",
+            "STUDIO_DEMO",
+            "M81S"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: SHOW SEQUENCES LIMIT 10000: numRows 10250 in 2 partitions (partition 0 holds 1149)",
+        "at": "2026-10-13T00:28:19.405Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "S00001",
+            "STUDIO_DEMO",
+            "M81S"
+          ],
+          [
+            "S01149",
+            "STUDIO_DEMO",
+            "M81S"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: SHOW SEQUENCES LIMIT 10000 FROM 'S10000': numRows 10250 in 2 partitions (partition 0 holds 1149)",
+        "at": "2026-10-13T00:28:22.050Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "S00001",
+            "STUDIO_DEMO",
+            "M81S"
+          ],
+          [
+            "S01149",
+            "STUDIO_DEMO",
+            "M81S"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: SHOW TABLES no LIMIT: numRows 10250 in 3 partitions (partition 0 holds 575)",
+        "at": "2026-10-13T00:28:29.334Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1791850980.385",
+            "T00001",
+            "STUDIO_DEMO"
+          ],
+          [
+            "1791850993.855",
+            "T00575",
+            "STUDIO_DEMO"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: SHOW TABLES LIMIT 10000: numRows 10000 in 3 partitions (partition 0 holds 575)",
+        "at": "2026-10-13T00:28:35.487Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1791850980.385",
+            "T00001",
+            "STUDIO_DEMO"
+          ],
+          [
+            "1791850993.855",
+            "T00575",
+            "STUDIO_DEMO"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: SHOW TABLES LIMIT 10000 FROM 'T10000': numRows 250 in 1 partitions (partition 0 holds 250)",
+        "at": "2026-10-13T00:28:36.731Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1791851231.167",
+            "T10001",
+            "STUDIO_DEMO"
+          ],
+          [
+            "1791851285.668",
+            "T10250",
+            "STUDIO_DEMO"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: SHOW TERSE OBJECTS no LIMIT: numRows 10250 in 2 partitions (partition 0 holds 1723)",
+        "at": "2026-10-13T00:28:39.343Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1791850980.385",
+            "T00001",
+            "TABLE"
+          ],
+          [
+            "1791851028.606",
+            "T01723",
+            "TABLE"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: SHOW TERSE OBJECTS LIMIT 10000: numRows 10000 in 2 partitions (partition 0 holds 1723)",
+        "at": "2026-10-13T00:28:41.954Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1791850980.385",
+            "T00001",
+            "TABLE"
+          ],
+          [
+            "1791851028.606",
+            "T01723",
+            "TABLE"
+          ]
+        ]
+      },
+      {
+        "step": "rerun: SHOW TERSE OBJECTS LIMIT 10000 FROM 'T10000': numRows 250 in 1 partitions (partition 0 holds 250)",
+        "at": "2026-10-13T00:28:43.280Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1791851231.167",
+            "T10001",
+            "TABLE"
+          ],
+          [
+            "1791851285.668",
+            "T10250",
+            "TABLE"
+          ]
+        ]
+      },
+      {
+        "step": "rerun teardown: drop m81s",
+        "at": "2026-10-13T00:28:44.503Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "M81S successfully dropped."
+          ]
+        ]
+      },
+      {
+        "step": "rerun teardown: drop m81t",
+        "at": "2026-10-13T00:28:45.747Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "M81T successfully dropped."
+          ]
+        ]
+      }
+    ]
+  },
   "exchanges": []
 }

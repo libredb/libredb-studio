@@ -3,6 +3,112 @@
   "step": 5,
   "asks": "What code does a data movement policy refusal answer? The operator sets one for one run.",
   "rowsSummarised": "Every answer's rows are summarised: each answer that carried rows keeps its other fields and records `rows` with the byte length on the wire and decoded, the row count, and the first and the last row.",
-  "operator": "pending: the operator's answer is added to this file by hand",
+  "operator": {
+    "answeredOn": "2026-10-13",
+    "how": "A data movement policy that blocks programmatic fetch attached through a tag to one table for one run, then the service user read the tagged table and an untagged one over the SQL API.",
+    "answer": [
+      "The tagged table was refused with HTTP 422, code 001003 and the message \"Data movement policy triggered. Contact your administrator for details.\", the same code a syntax error answers; the untagged table was read."
+    ],
+    "steps": [
+      {
+        "step": "setup: CREATE TAG studio_demo.probe.m84_tag PROPAGATE = ON_DEPENDENCY_AND_DATA_MOVEMENT",
+        "at": "2026-10-12T23:33:15.778Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Tag M84_TAG successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "setup: CREATE DATA MOVEMENT RULE studio_demo.probe.m84_rule TYPE = 'PROGRAMMATIC_FETCH' MAX_ROWS AS () RETURNS INTEGER -> (0)",
+        "at": "2026-10-12T23:33:17.063Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Data Movement Rule M84_RULE is created."
+          ]
+        ]
+      },
+      {
+        "step": "setup: CREATE DATA MOVEMENT POLICY studio_demo.probe.m84_policy ENFORCE_RULES = (studio_demo.probe.m84_rule)",
+        "at": "2026-10-12T23:33:18.353Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Data Movement Policy M84_POLICY is created."
+          ]
+        ]
+      },
+      {
+        "step": "setup: ALTER TAG studio_demo.probe.m84_tag SET DATA MOVEMENT POLICY studio_demo.probe.m84_policy",
+        "at": "2026-10-12T23:33:19.633Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "setup: ALTER TABLE studio_demo.probe.wide SET TAG studio_demo.probe.m84_tag = 'blocked'",
+        "at": "2026-10-12T23:33:20.976Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "service user reads the tagged table over the SQL API",
+        "at": "2026-10-12T23:33:27.325Z",
+        "status": 422,
+        "code": "001003",
+        "sqlState": "42000",
+        "message": "SQL compilation error:\nData movement policy triggered. Contact your administrator for details."
+      },
+      {
+        "step": "service user reads an untagged table",
+        "at": "2026-10-12T23:33:28.673Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ],
+          [
+            "2"
+          ],
+          [
+            "3"
+          ],
+          [
+            "4"
+          ],
+          [
+            "5"
+          ]
+        ]
+      }
+    ]
+  },
   "exchanges": []
 }

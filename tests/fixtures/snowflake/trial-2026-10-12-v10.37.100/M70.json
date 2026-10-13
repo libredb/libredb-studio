@@ -4,7 +4,15 @@
   "asks": "Does the export of every_type replay through INSERT ... SELECT with PARSE_JSON and the explicit date masks? The live check's replay answers it.",
   "rowsSummarised": "Every answer's rows are summarised: each answer that carried rows keeps its other fields and records `rows` with the byte length on the wire and decoded, the row count, and the first and the last row.",
   "stateBefore": "STARTED",
-  "operator": "pending: the operator's answer is added to this file by hand",
+  "operator": {
+    "answeredOn": "2026-10-13",
+    "how": "The SQL INSERT export of SELECT * FROM every_type replayed on the trial into a copy of the table, statement by statement, then the copy read back and compared cell by cell with the source, on 2026-10-13 with the export of the branch that writes vectors and FLOAT infinities.",
+    "answer": [
+      "Into a copy whose structured OBJECT, ARRAY and MAP columns were semi-structured, all 5 rows came back with 0 differing cells, vector and FLOAT NaN and infinities included.",
+      "Into an exact copy, the first row was refused with code 001010, \"incompatible types: [VARIANT] and [OBJECT(city VARCHAR(16777216), zip NUMBER(38,0))]\": the SQL API reports a structured column as object or array, so the export writes semi-structured values."
+    ],
+    "steps": []
+  },
   "stateAfter": "STARTED",
   "exchanges": []
 }

@@ -3,6 +3,119 @@
   "step": 4,
   "asks": "Confirms the default the spec records under M15; the operator follows the spec's item and notes the answer.",
   "rowsSummarised": "Every answer's rows are summarised: each answer that carried rows keeps its other fields and records `rows` with the byte length on the wire and decoded, the row count, and the first and the last row.",
-  "operator": "pending: the operator's answer is added to this file by hand",
+  "operator": {
+    "answeredOn": "2026-10-13",
+    "how": "A key registered with a role restriction to STUDIO_RO beside the service user's own key, each signed in under STUDIO_RO, STUDIO_RW and no role; then the reader's RSA_PUBLIC_KEY key under STUDIO_RO, STUDIO_NOWH and no role.",
+    "answer": [
+      "A restricted key signs in under its own role and under no role, and is refused under another role with HTTP 400, code 390186.",
+      "An unrestricted RSA_PUBLIC_KEY key signs in under every role granted to its user."
+    ],
+    "steps": [
+      {
+        "step": "admin adds a key restricted to STUDIO_RO to the service user",
+        "at": "2026-10-12T23:33:04.862Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "restricted key, role STUDIO_RO",
+        "at": "2026-10-12T23:33:07.531Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_RO",
+            "{\"roles\":\"\",\"value\":\"\"}"
+          ]
+        ]
+      },
+      {
+        "step": "restricted key, role STUDIO_RW",
+        "at": "2026-10-12T23:33:07.716Z",
+        "status": 400,
+        "code": "390186",
+        "sqlState": null,
+        "message": "Role 'STUDIO_RW' specified in the connect string is not granted to this user, or is not permitted for the credentials being used. Contact your local system administrator, or attempt to login with another role, e.g. PUBLIC."
+      },
+      {
+        "step": "restricted key, role none",
+        "at": "2026-10-12T23:33:09.082Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_RO",
+            "{\"roles\":\"\",\"value\":\"\"}"
+          ]
+        ]
+      },
+      {
+        "step": "RSA_PUBLIC_KEY key (reader), role STUDIO_RO",
+        "at": "2026-10-12T23:33:10.489Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_RO",
+            "{\"roles\":\"STUDIO_NOWH\",\"value\":\"ALL\"}"
+          ]
+        ]
+      },
+      {
+        "step": "RSA_PUBLIC_KEY key (reader), role STUDIO_NOWH",
+        "at": "2026-10-12T23:33:11.874Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_NOWH",
+            "{\"roles\":\"STUDIO_RO\",\"value\":\"ALL\"}"
+          ]
+        ]
+      },
+      {
+        "step": "RSA_PUBLIC_KEY key (reader), role none",
+        "at": "2026-10-12T23:33:13.224Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_RO",
+            "{\"roles\":\"STUDIO_NOWH\",\"value\":\"ALL\"}"
+          ]
+        ]
+      },
+      {
+        "step": "teardown: remove the restricted key",
+        "at": "2026-10-12T23:33:14.509Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Key-pair 'LIBREDB_M15' successfully removed."
+          ]
+        ]
+      }
+    ]
+  },
   "exchanges": []
 }
