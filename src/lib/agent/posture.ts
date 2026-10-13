@@ -65,7 +65,7 @@ export interface AgentPosture {
  * `CATALOG_PLANS` out of its source and fails if this mirror falls behind it, which is what
  * keeps a mirror from becoming a second opinion.
  */
-const CATALOG_CAPTURE_ENGINES: readonly DatabaseType[] = ["postgres", "sqlite"];
+export const CATALOG_CAPTURE_ENGINES: readonly DatabaseType[] = ["postgres", "sqlite"];
 
 /**
  * The per-statement bounds agent mode runs under, taken from one policy row.

@@ -121,3 +121,13 @@ describe("each README's numeral and its own engine list agree", () => {
     }
   });
 });
+
+    expect(SHIPPED_NAMES).toContain("MTConnect");
+/**
+ * A NUMERAL THAT SUMMARISES A SET WITH NO LIST BESIDE IT (#1722, KURAL 109's second half).
+ *
+ * `docs/AGENT.md` carries four of these, and nothing in the sentence says what they count. Two
+ * are the shipped engines less the three `ESTIMATE_BUILDERS` serves, two are the shipped engines
+ * less the two whose grounding is a composed catalog read - and they are DIFFERENT denominators
+ * on purpose, which is exactly why a numeral here cannot be bumped by hand along with its
+ * neighbours. Measured when MTConnect was registered: all four had to move, because MTConnect

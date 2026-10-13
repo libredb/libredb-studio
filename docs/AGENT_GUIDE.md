@@ -215,7 +215,7 @@ having **no statistics**, never as empty. On SQLite the statistics exist only af
 **Every engine, read one of two ways.** On **PostgreSQL and SQLite** the server composes catalog
 statements and reads them through the same audited, read-only path an Agent run uses. On every other
 connection, which is the other thirty-five (MySQL, Oracle, Db2 LUW, SQL Server, libSQL, DuckDB, MongoDB, Redis,
-ClickHouse, Couchbase, Firestore, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes and the bundled LibreDB
+ClickHouse, Couchbase, Firestore, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes and the bundled LibreDB
 store), it asks that connection's own provider to describe its schema, which is the reading the
 sidebar already performs when it lists your tables, and composes no statement at all. Grounding is
 no longer decided by the engine, and that changed in #414; what decides it now is whether the

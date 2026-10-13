@@ -221,8 +221,24 @@ function buildMssqlEstimates(rows: readonly Record<string, unknown>[]): Map<stri
   return byTable;
 }
 
-const ESTIMATE_BUILDERS: Partial<
-  Record<DatabaseType, (rows: readonly Record<string, unknown>[]) => Map<string, AgentTableEstimate>>
+/**
+ * THE POPULATION IS DECLARED, AND THE MAP IS TYPED BY IT (KURAL 94).
+ *
+ * Three engines hold statistics this runtime knows how to read, and that three is a DENOMINATOR
+ * in prose: `docs/AGENT.md` says "the other thirty-four" twice, meaning the shipped engines less
+ * these. Under `Partial<Record<DatabaseType, …>>` a fourth could be added here without the
+ * sentences moving, which is the same half-done carry that put a wrong figure in nine READMEs.
+ * Bound this way, a name outside the list fails to typecheck, and
+ * `tests/unit/readme-numeral-names.test.ts` computes the prose figure from this list's length
+ * rather than trusting the word.
+ */
+export const ESTIMATE_BUILDER_ENGINES = ["postgres", "sqlite", "mssql"] as const satisfies readonly DatabaseType[];
+
+type EstimateBuilderEngine = (typeof ESTIMATE_BUILDER_ENGINES)[number];
+
+const ESTIMATE_BUILDERS: Record<
+  EstimateBuilderEngine,
+  (rows: readonly Record<string, unknown>[]) => Map<string, AgentTableEstimate>
 > = {
   postgres: buildPostgresEstimates,
   sqlite: buildSqliteEstimates,
@@ -242,9 +258,13 @@ const ESTIMATE_BUILDERS: Partial<
  * The cost is therefore ONE statement on PostgreSQL and TWO on SQLite, out of the
  * same per-run statement budget every other read is drawn from.
  */
+/** Whether this engine has an estimate builder, which narrows the lookup without a cast. */
+const hasEstimateBuilder = (dialect: DatabaseType): dialect is EstimateBuilderEngine =>
+  Object.hasOwn(ESTIMATE_BUILDERS, dialect);
+
 export async function readSchemaStatistics(context: AgentToolContext): Promise<AgentSchemaStatistics> {
   const dialect = context.connection.type;
-  const build = ESTIMATE_BUILDERS[dialect];
+  const build = hasEstimateBuilder(dialect) ? ESTIMATE_BUILDERS[dialect] : undefined;
 
   let probe: string | null;
   try {
