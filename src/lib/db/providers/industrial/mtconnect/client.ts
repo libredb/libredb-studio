@@ -169,8 +169,17 @@ export interface MtcAnswer {
  * One clause per reason `MTC_XML_REFUSAL_OWNER` marks `studio`, because "doctype" is our word and
  * not a fault anybody can look up in their agent. Each bound names its own figure, so the sentence
  * says what was crossed rather than that something was.
+ *
+ * `satisfies` ON THE LITERAL, not an annotation on the binding, and the difference is a whole
+ * direction of drift. MEASURED by flipping each of the sixteen ownership entries: with
+ * `const STUDIO_RULE: Record<StudioRefusal, string> = Object.freeze({...})`, only the five
+ * `document -> studio` flips failed to compile, because a MISSING clause is an error while an
+ * EXTRA one is not - an annotated binding whose value comes back from `Object.freeze` is no
+ * longer a fresh object literal, so excess-property checking never runs on it. The other eleven
+ * flips, every `studio -> document`, left a clause for a reason no longer marked `studio` and
+ * compiled silently. `satisfies` applies to the literal itself, so both directions are errors.
  */
-const STUDIO_RULE: Readonly<Record<StudioRefusal, string>> = Object.freeze({
+const STUDIO_RULE = Object.freeze({
   doctype: "it carries a DOCTYPE declaration, and Studio refuses one before any parsing so that a DTD is never expanded and an external entity is never fetched",
   "entity-declaration": "it declares an entity, and Studio refuses one before any parsing so that nothing is expanded or fetched",
   entity: "it uses an entity beyond the five XML predefines and numeric character references, and Studio resolves nothing outside the document",
@@ -182,7 +191,7 @@ const STUDIO_RULE: Readonly<Record<StudioRefusal, string>> = Object.freeze({
   "name-too-long": `a name is longer than Studio's bound of ${MTC_XML_BOUNDS.maxNameLength} characters`,
   "text-too-long": `one element's text is longer than Studio's bound of ${MTC_XML_BOUNDS.maxTextLength.toLocaleString("en-US")} characters`,
   "attribute-too-long": `one attribute value is longer than Studio's bound of ${MTC_XML_BOUNDS.maxAttributeLength.toLocaleString("en-US")} characters`,
-});
+} satisfies Record<StudioRefusal, string>);
 
 /**
  * The sentence for a reader refusal, written from WHO refused.
