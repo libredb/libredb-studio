@@ -139,13 +139,33 @@ describe("a read reaches the device and comes back", () => {
     expect((received[0] as Buffer).readUInt16BE(10)).toBe(1);
   });
 
-  test("with no map health asks the device nothing, because no point names an address", async () => {
+  test("with no map health still dials, so a wrong address cannot read as connected", async () => {
     delete process.env[FLAG];
     const port = await device([230]);
     const health = await provider(port, "[]").getHealth();
     expect(health.databaseSize).toBe("unknown");
+    // The dial claims nothing beyond reachability: the server received no ADU at all.
     expect(received).toHaveLength(0);
   });
+
+  test("with no map a closed port fails health, which is the whole point of the dial", async () => {
+    delete process.env[FLAG];
+    const port = await device([230]);
+    open?.close();
+    open = undefined;
+    await expect(provider(port, "[]").getHealth()).rejects.toThrow();
+  });
+
+  test("with a map the dial path is not taken: the read is what proves the device", async () => {
+    delete process.env[FLAG];
+    const port = await device([230, 12]);
+    await provider(port).getHealth();
+    // One ADU, the quantity-1 read. If the dial-only branch had run as well there would be two
+    // connections and still one ADU, so the assertion that holds the branches apart is this one.
+    expect(received).toHaveLength(1);
+    expect((received[0] as Buffer).readUInt16BE(10)).toBe(1);
+  });
+
 
   test("a request the parser refuses costs no connection at all", async () => {
     delete process.env[FLAG];

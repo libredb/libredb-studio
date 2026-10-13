@@ -420,8 +420,8 @@ export class ModbusProvider extends BaseDatabaseProvider {
     // a gateway), and the socket's state is not health either (§5.1: ESTABLISHED for 144 seconds
     // while no answer was coming). Health is an answer, or the absence of one.
     const point = parsed.points[0];
+    const endpoint = this.endpoint();
     if (point !== undefined) {
-      const endpoint = this.endpoint();
       const socket = await dialModbus(endpoint);
       try {
         const session = new ModbusSession(socketWire(socket, endpoint));
@@ -429,6 +429,13 @@ export class ModbusProvider extends BaseDatabaseProvider {
       } finally {
         socket.destroy();
       }
+    } else {
+      // NO MAP: a plain dial, and deliberately NOT an identification read. 43/14 is not mandatory
+      // in Modbus, so a device that refuses it is a device that does not know the function rather
+      // than a device that is not there, and reporting that as a health failure would blame the
+      // wrong side. A dial claims nothing except that the address answered a TCP connection;
+      // nothing is read, because no point names an address to read.
+      (await dialModbus(endpoint)).destroy();
     }
     return {
       databaseSize: parsed.isEmpty

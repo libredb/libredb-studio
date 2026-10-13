@@ -189,7 +189,17 @@ address the map names, and the rows carry the value those bytes answered with.
 `getHealth()` dials and reads ONE point at quantity 1. A connect alone is not health (§4.10
 measured a TCP connect succeeding against an absent unit behind a gateway) and neither is the
 socket's state (§5.1 of the issue measured ESTABLISHED for 144 seconds while no answer came).
-With no map there is no point to read, so health asks the device nothing and says so.
+With no map there is no point to read, so health makes a PLAIN DIAL instead: a TCP connection that
+is opened and closed, and nothing is sent. It is deliberately not an identification read. 43/14 is
+not mandatory in Modbus, so a device that refuses it is a device that does not know the function
+rather than a device that is not there, and reporting that as a health failure would blame the
+wrong side.
+
+What the dial measures is exactly this much: THE ADDRESS ANSWERED A TCP CONNECTION. Nothing was
+read, because no register map names a point to read, and nothing about the device's health follows
+from it. The sentence is written here rather than returned, because `HealthInfo` has no field for
+it: its one free-text field is `databaseSize`, and a sentence in a size field would be a worse
+answer than the `unknown` that is there now.
 
 What is still absent is MODBUS/TCP Security on a real device: the TLS dial exists and has never
 been run against one (§12a item 3 of the specification).
