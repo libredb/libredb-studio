@@ -37,8 +37,11 @@ import {
 import { SNOWFLAKE_ERROR_SENTENCES } from "@/lib/db/providers/sql/snowflake/errors";
 import { SnowflakeProvider } from "@/lib/db/providers/sql/snowflake/index";
 import { SNOWFLAKE_MONITORING_SENTENCES } from "@/lib/db/providers/sql/snowflake/monitoring";
+import { SNOWFLAKE_ROLE_CHECK_SQL } from "@/lib/db/providers/sql/snowflake/statements";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { buildResultExport } from "@/lib/export/result-export";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { splitStatements } from "@/lib/sql/statement-splitter";
 import type { DatabaseConnection } from "@/lib/types";
 import { type LiveArguments, liveSecrets, mask, readLiveArguments } from "../helpers/snowflake-live";
 
@@ -54,6 +57,19 @@ const say = (line: string): void => console.log(mask(line, secrets));
 const WAREHOUSE = args.warehouse;
 const REPLAY_TABLE = "STUDIO_DEMO.PROBE.EVERY_TYPE_REPLAY";
 const QUERY_TIMEOUT_MS = 120_000;
+/** A warehouse the trial account has and `STUDIO_NOWH` holds no USAGE on. */
+const UNUSABLE_WAREHOUSE = "COMPUTE_WH";
+/**
+ * The statements the provider's background reads send, none of which needs a running warehouse: every `SHOW`, the
+ * role check, `EXPLAIN`, `GET_DDL` and `DESCRIBE`.
+ */
+const BACKGROUND_STATEMENTS: readonly ((sql: string) => boolean)[] = [
+  (sql) => sql.startsWith("SHOW "),
+  (sql) => sql === SNOWFLAKE_ROLE_CHECK_SQL,
+  (sql) => sql.startsWith("EXPLAIN "),
+  (sql) => /^SELECT (?:SYSTEM\$)?GET_DDL\(/.test(sql),
+  (sql) => /^DESC(?:RIBE)? /.test(sql),
+];
 
 // ============================================================================
 // Connections and the recorder
@@ -233,7 +249,11 @@ const CHECKS: readonly (readonly [string, () => Promise<string | void>])[] = [
         const select = "SELECT * FROM STUDIO_DEMO.PROBE.EVERY_TYPE ORDER BY 1 NULLS LAST";
         const source = await provider.query(select);
         assert(source.rows.length > 0, "every_type answered no rows");
+        // The SQL API reports a structured OBJECT, ARRAY or MAP column as object or array, so the export writes
+        // semi-structured values, which a structured column refuses: the copy's SO, SA and M are semi-structured.
         await provider.query(`CREATE OR REPLACE TABLE ${REPLAY_TABLE} LIKE STUDIO_DEMO.PROBE.EVERY_TYPE`);
+        await provider.query(`ALTER TABLE ${REPLAY_TABLE} DROP COLUMN SO, SA, M`);
+        await provider.query(`ALTER TABLE ${REPLAY_TABLE} ADD COLUMN SO OBJECT, SA ARRAY, M OBJECT`);
         const file = buildResultExport("sql-insert", {
           rows: source.rows,
           fields: source.fields,
@@ -241,18 +261,32 @@ const CHECKS: readonly (readonly [string, () => Promise<string | void>])[] = [
           dialect: "snowflake",
           columnTypes: source.columnTypes,
         });
-        for (const line of file.content.split("\n")) {
-          if (line.trim() === "" || line.startsWith("-- ")) continue;
+        // Split as the editor splits, since a VARIANT, OBJECT or text literal may carry a newline inside its string.
+        for (const { sql } of splitStatements(file.content, resolveSqlGrammar("snowflake"))) {
+          const statement = sql.replace(/^(?:--[^\n]*\n\s*)+/, "").trim();
+          if (statement === "" || statement.startsWith("--")) continue;
           // A regular expression, not a string: only an INSERT into the replay table is sent.
-          const target = /^INSERT INTO (\S+) /.exec(line)?.[1];
-          assert(target === REPLAY_TABLE, `the export wrote a line whose target is ${target ?? "missing"}`);
+          const target = /^INSERT INTO (\S+) /.exec(statement)?.[1];
+          assert(target === REPLAY_TABLE, `the export wrote a statement whose target is ${target ?? "missing"}`);
           // oxlint-disable-next-line no-await-in-loop -- one statement at a time, as the file runs.
-          await provider.query(line);
+          await provider.query(statement);
         }
-        const replayed = await provider.query(select.replace("STUDIO_DEMO.PROBE.EVERY_TYPE", REPLAY_TABLE));
-        const text = (rows: readonly Record<string, unknown>[]) =>
-          JSON.stringify(rows, (_key, value) => (Buffer.isBuffer(value) ? value.toString("hex") : value));
-        assert(text(replayed.rows) === text(source.rows), "the replayed rows differ from every_type's");
+        // The copy's columns in the source's order, since dropping and adding SO, SA and M moved them to the end.
+        const columns = source.fields.map((field) => `"${field.replaceAll('"', '""')}"`).join(", ");
+        const replayed = await provider.query(`SELECT ${columns} FROM ${REPLAY_TABLE} ORDER BY 1 NULLS LAST`);
+        assert(
+          replayed.rows.length === source.rows.length,
+          `the copy holds ${replayed.rows.length} rows, every_type ${source.rows.length}`,
+        );
+        const text = (value: unknown) =>
+          JSON.stringify(value, (_key, inner) => (Buffer.isBuffer(inner) ? inner.toString("hex") : inner));
+        const differing = source.rows.flatMap((row, index) =>
+          source.fields.flatMap((field) =>
+            text(replayed.rows[index]?.[field]) === text(row[field]) ? [] : [`row ${index + 1} ${field}`],
+          ),
+        );
+        assert(differing.length === 0, `the replayed cells differ from every_type's: ${differing.join(", ")}`);
+        return `${source.rows.length} rows, ${source.rows.length * source.fields.length} cells compared`;
       } finally {
         await provider.query(`DROP TABLE IF EXISTS ${REPLAY_TABLE}`).catch(() => undefined);
         await provider.disconnect();
@@ -320,9 +354,12 @@ const CHECKS: readonly (readonly [string, () => Promise<string | void>])[] = [
   [
     "the no-warehouse refusal",
     async () => {
-      const provider = await built(connection("reader", { role: "STUDIO_NOWH", warehouse: "" }));
+      // Named, not empty: under the default secondary roles an empty Warehouse runs on the user's default warehouse.
+      // A role with no USAGE on the named one is refused compute with 391920.
+      const provider = await built(connection("reader", { role: "STUDIO_NOWH", warehouse: UNUSABLE_WAREHOUSE }));
       try {
-        const error = await refusal(provider.query("SELECT 1"));
+        // A GENERATOR bounded by time computes on a warehouse, where a constant SELECT may need none.
+        const error = await refusal(provider.query("SELECT COUNT(*) FROM TABLE(GENERATOR(TIMELIMIT => 1))"));
         assert(error instanceof QueryError, `refused as ${error.name}, not QueryError`);
         assert(error.message === SNOWFLAKE_ERROR_SENTENCES.noWarehouse, "not the no-warehouse sentence");
       } finally {
@@ -360,10 +397,8 @@ const CHECKS: readonly (readonly [string, () => Promise<string | void>])[] = [
           "the panel did not say suspended",
         );
         const sent = wire.flatMap((entry) => (entry.statement === null ? [] : [entry.statement]));
-        assert(
-          sent.every((sql) => sql.startsWith("SHOW ")),
-          "a background call sent a statement that is not a SHOW",
-        );
+        const other = sent.filter((sql) => !BACKGROUND_STATEMENTS.some((allowed) => allowed(sql)));
+        assert(other.length === 0, `a background call sent a statement outside the allow-list: ${other.join(" | ")}`);
       } finally {
         await provider.disconnect();
       }
