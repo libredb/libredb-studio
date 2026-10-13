@@ -38,6 +38,7 @@ import {
 } from "@/lib/db/providers/industrial/mtconnect/capabilities";
 import { MTC_REQUEST_HEADER_BUDGET_BYTES } from "@/lib/db/providers/industrial/mtconnect/routes";
 import type { MtcModel } from "@/lib/db/providers/industrial/mtconnect/model";
+import type { QueryResult } from "@/lib/types";
 import { guardOptionsFor, MTC_LIMITS, MTConnectProvider, ROW_CAP } from "@/lib/db/providers/industrial/mtconnect/index";
 
 const boundary = MTConnectProvider.prototype as unknown as {
@@ -217,5 +218,60 @@ describe("the settings the provider sends", () => {
     expect(MTC_LIMITS.perProvider).toBe(1);
     expect(MTC_LIMITS.perEngine).toBe(4);
     expect(MTC_LIMITS.queueDepth).toBe(64);
+  });
+});
+
+/**
+ * WHAT A CAPPED READ SAYS ABOUT ITSELF (#1722).
+ *
+ * `readObservations` has reported `capped` since it was written, and `client.test.ts` asserts both
+ * sides of it. The provider then THREW THAT RETURN VALUE AWAY: `streamed` was typed
+ * `Promise<void>`, so a `sample` of more than ROW_CAP observations came back as exactly ROW_CAP
+ * rows and nothing anywhere said the rest had been left behind. The half that was measured was the
+ * half that already worked; this is the other side of the same separation, which is where the gap
+ * was.
+ *
+ * Driven through the real `query()`, with the three seams it reaches stubbed on an instance of the
+ * real class, because the wiring between the walk and the result IS the defect - asserting
+ * `resultOf` alone would pass with `streamed` still dropping the flag.
+ */
+describe("a result says when this provider's row cap cut it", () => {
+  const MODEL: MtcModel = {
+    instanceId: "1",
+    items: new Map(),
+    devices: [{ name: "Mazak", uuid: "mazak-1", itemCount: 1 }],
+  };
+  const REQUEST = {
+    op: "current",
+    route: { op: "current" },
+    params: {},
+    query: {},
+  } as unknown as MtcRequest;
+
+  function providerWith(capped: boolean): { query(sql: string): Promise<QueryResult> } {
+    const provider = Object.create(MTConnectProvider.prototype) as Record<string, unknown>;
+    provider.require = () => ({ window: undefined });
+    provider.model = async () => MODEL;
+    provider.guard = () => REQUEST;
+    provider.streamed = async () => ({ read: capped ? ROW_CAP : 2, capped });
+    return provider as unknown as { query(sql: string): Promise<QueryResult> };
+  }
+
+  test("a cut read carries the bound the results strip renders", async () => {
+    const result = await providerWith(true).query("GET /current");
+    expect(result.pagination).toEqual({
+      limit: ROW_CAP,
+      offset: 0,
+      hasMore: false,
+      totalReturned: 0,
+      wasLimited: true,
+    });
+  });
+
+  test("a read that was not cut carries no pagination at all", async () => {
+    // Absent rather than `wasLimited: false`, because the strip decides from the field's presence
+    // and a present-but-false bound is a bound that was applied.
+    const result = await providerWith(false).query("GET /current");
+    expect(Object.hasOwn(result, "pagination")).toBe(false);
   });
 });

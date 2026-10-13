@@ -115,9 +115,24 @@ the plant's monitoring. The limiter holds one permit per agent.
 MEASURED across four models: `current` is about 164 bytes an observation, and `probe` about 110
 bytes a data item on a generated model and 190 on the richer demo one. Bytes per observation hold
 steady across a factor of a hundred in model size, while bytes per data item move with how rich the
-model is, so a cap counted in rows is quietly wrong on a rich model.
+model is, so a cap counted in rows is quietly wrong on a rich model. There IS a row cap as well,
+and it is a different thing: the byte caps bound what the transport will READ, and the row cap
+bounds what a walk will KEEP. The next section is about what the result says when it meets one.
 
-### 3.5 The request has an 8 KiB ceiling, and crossing it is silent
+### 3.5 A read that the row cap cut says so
+
+There is a row cap as well as the byte caps, and `sample` is the read that meets it: `ROW_CAP` is
+10,000 observations, and a walk that reaches it stops there. What matters is what the result then
+says about itself. The cap is reported on `QueryResult.pagination.wasLimited`, which is the field
+the house keeps for a bound a PROVIDER applied - the InfluxDB row cut uses the same one - and the
+results strip renders it as *"Studio bounded this result. Anything beyond the bound is not in it."*
+
+It is not a warning, because the warning channel carries notices the ENGINE attached and this bound
+is ours; and it is not a refusal, because the observations that did arrive are good. It was
+measured as a defect first: `readObservations` had reported the cap since it was written, and the
+provider dropped the return value, so a cut read looked whole.
+
+### 3.6 The request has an 8 KiB ceiling, and crossing it is silent
 
 MEASURED with a raw socket: a request whose whole header block was 8,153 bytes was answered, and
 one of 8,216 bytes got no answer at all, the agent writing zero bytes and closing the connection.
@@ -125,14 +140,14 @@ The limit is on the header block rather than on the path, so the provider budget
 target and leaves room for the headers. There is no error document in that case, so the sentence
 the reader gets is the provider's own.
 
-### 3.6 A non-MTConnect answer gets our own sentence
+### 3.7 A non-MTConnect answer gets our own sentence
 
 MEASURED through a reverse proxy: a 401 came back as `text/html`, nginx's own page, not as an
 `MTConnectError`. The root element is checked, and anything else is named as what it is. This holds
 whether or not authentication is ever offered, because a proxy can answer with HTML for a 401, a
 403, a 502 or a maintenance page.
 
-### 3.7 The read-only mode
+### 3.8 The read-only mode
 
 There is nothing to enforce. MEASURED: with `AllowPut = true` the agent's own Swagger grows from 15
 operations to 39, among them a PUT that sets an observation and a POST that injected a Fault which

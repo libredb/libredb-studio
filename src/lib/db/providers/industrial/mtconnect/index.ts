@@ -304,14 +304,21 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     }
   }
 
-  /** One streaming read, with every refusal converted on the way out. */
+  /**
+   * One streaming read, with every refusal converted on the way out.
+   *
+   * It hands back whether the row cap stopped the walk, and that return value is the whole point:
+   * it used to be dropped here, so a `sample` of more than ROW_CAP observations came back as
+   * exactly ROW_CAP rows with nothing anywhere saying the rest had been left behind. A bounded
+   * read that looks whole is the one failure this provider's own rules say it must not have.
+   */
   private async streamed(
     session: MtcSession,
     request: MtcRequest,
     onObservation: (observation: MtcObservation) => void,
-  ): Promise<void> {
+  ): Promise<{ readonly read: number; readonly capped: boolean }> {
     try {
-      await readObservations(this.clientOptions(session), request, ROW_CAP, onObservation);
+      return await readObservations(this.clientOptions(session), request, ROW_CAP, onObservation);
     } catch (error) {
       throw this.asQueryError(error);
     }
@@ -389,10 +396,11 @@ export class MTConnectProvider extends BaseDatabaseProvider {
 
     const rows: MtcRow[] = [];
     if (request.op === "sample" || request.op === "current") {
-      await this.streamed(session, request, (observation) => {
+      const walk = await this.streamed(session, request, (observation) => {
         const row = buildRow(observation, model);
         if (row !== undefined) rows.push(row);
       });
+      return this.resultOf(sortRows(rows), started, walk.capped);
     } else {
       const answer = await this.read(session, request);
       if (answer.isError) throw new QueryError(this.sentenceFor(answer.root));
@@ -405,7 +413,6 @@ export class MTConnectProvider extends BaseDatabaseProvider {
         executionTime: Date.now() - started,
       };
     }
-    return this.resultOf(sortRows(rows), started);
   }
 
   /**
@@ -460,7 +467,17 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     return [];
   }
 
-  private resultOf(rows: readonly MtcRow[], started: number): QueryResult {
+  /**
+   * A result, and whether this provider's own row cap cut it.
+   *
+   * A cap it applied is reported on `pagination`, the field the house keeps for exactly this and
+   * the one InfluxDB's row cut already uses: `POST /api/db/query` carries `wasLimited` through
+   * (`src/app/api/db/query/route.ts:332`) and the results strip then says "Studio bounded this
+   * result. Anything beyond the bound is not in it." It is NOT a warning, because a warning is a
+   * notice the ENGINE attached and this bound is ours; and it is not an error, because the rows
+   * that did arrive are good.
+   */
+  private resultOf(rows: readonly MtcRow[], started: number, capped = false): QueryResult {
     const fields =
       rows.length === 0
         ? ["device", "component", "dataItemId", "name", "category", "type", "value", "units", "timestamp", "sequence"]
@@ -470,6 +487,19 @@ export class MTConnectProvider extends BaseDatabaseProvider {
       fields,
       rowCount: rows.length,
       executionTime: Date.now() - started,
+      ...(capped
+        ? {
+            pagination: {
+              limit: ROW_CAP,
+              offset: 0,
+              // The walk stopped at the cap, so the agent had more to send; `hasMore` is about a
+              // NEXT PAGE this provider does not offer, and `wasLimited` is the fact being told.
+              hasMore: false,
+              totalReturned: rows.length,
+              wasLimited: true,
+            },
+          }
+        : {}),
     };
   }
 

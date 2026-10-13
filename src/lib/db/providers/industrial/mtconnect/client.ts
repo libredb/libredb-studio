@@ -80,7 +80,18 @@ const HEADER_OVERHEAD_BYTES = 512;
 /** The route and parameter budget the two constants above leave, which is what a request is held to. */
 export const MTC_TARGET_BUDGET_BYTES = MTC_REQUEST_HEADER_BUDGET_BYTES - HEADER_OVERHEAD_BYTES;
 
-export type MtcClientFailure = "request-too-long" | "not-mtconnect" | "unreadable" | "capped";
+/**
+ * What a read can fail WITH, and every member is produced somewhere in this file.
+ *
+ * `"capped"` used to be here and was never thrown: a measurement of the union found it declared,
+ * never constructed in `src`, and never read outside the tests. It was the fossil of a decision
+ * that went the other way - a row cap is not a FAILURE, because the observations that did arrive
+ * are good, so `readObservations` reports it as part of a successful return and the provider puts
+ * it on `pagination.wasLimited`. A union member nothing can produce is worse than no member at
+ * all: a reader counting the failure modes counts one that cannot happen, and a handler written
+ * for it is dead on the day it is written.
+ */
+export type MtcClientFailure = "request-too-long" | "not-mtconnect" | "unreadable";
 
 export class MtcClientError extends Error {
   constructor(
