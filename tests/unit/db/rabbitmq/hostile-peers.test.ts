@@ -18,8 +18,9 @@
  * wait. Measured on the starved core, the light wave's longest stall is under 200 ms, against the 1,000 ms an idle
  * stop needs, and every idle stop's last byte arrives by 320 ms, leaving 680 ms before the deadline could win. On a
  * starved runner the heavy pair's byte budget can lose to the wall-clock deadline instead (one of ten stretched runs
- * stopped header-heavy-bytes on deadline), so both heavy peers allow that stop, and their sockets still close inside
- * the helper's 1 s wait across all 40 stretched runs, which is why no read-loop change was needed. The
+ * stopped header-heavy-bytes on deadline), so both heavy peers allow that stop. Their sockets always close once the
+ * client drops, but a loaded macos runner under Bun can take seconds to see that close (3,540 ms worst across 30
+ * probe runs), so the helper's wait is bounded at 5 s and no read-loop change was needed. The
  * file's budget is 20 s: about 3 s per runtime, plus the bundle.
  */
 import { beforeAll, describe, expect, test } from "bun:test";

@@ -1014,7 +1014,7 @@ export interface HostileOutcome {
   readonly rows: number;
   /** From the read's start to its settling. */
   readonly ms: number;
-  /** Peer sockets still open 1 s after the read settled. */
+  /** Peer sockets still open after the bounded wait that follows the read settling. */
   readonly openAfter: number;
 }
 
@@ -1060,8 +1060,10 @@ export async function runHostilePeer(
     label = `error:${(error as Error).name}`;
   }
   const ms = performance.now() - started;
-  // The peer sees the client's socket go once its FIN or RST is read; other peers' floods can delay that by a few ms.
-  for (let waited = 0; waited < 1_000 && (fake?.openSockets() ?? 0) > 0; waited += 10) await sleep(10);
+  // The peer sees the client's socket go once its FIN or RST is read; other peers' floods can delay that by a few ms,
+  // and a loaded macos runner under Bun has been measured at 3,540 ms across 30 probe runs (common case under 230 ms),
+  // so the wait is bounded at 5 s.
+  for (let waited = 0; waited < 5_000 && (fake?.openSockets() ?? 0) > 0; waited += 10) await sleep(10);
   const openAfter = fake?.openSockets() ?? 0;
   await fake?.stop();
   return { name: peer.name, label, rows, ms, openAfter };
