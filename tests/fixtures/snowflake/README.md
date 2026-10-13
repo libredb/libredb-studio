@@ -71,12 +71,12 @@ These items are the ones the harness cannot ask alone, so their files hold an `o
 - M55: the status GET of a handle whose result has expired, rerun on an old handle.
 - M70: whether the export of `every_type` replays through `INSERT ... SELECT` with `PARSE_JSON` and the explicit date masks, which the live check's replay answers.
 - M78: whether the provider doc's read-only setup recipe runs as written, MATERIALIZED VIEWS as a grant type included, under the operator's own placeholder names.
-- M81: where the 10,000-row ceiling of `SHOW` applies, with and without `LIMIT`, over objects the operator creates past it in a scratch schema.
+- M81: whether `SHOW` stops at 10,000 rows, with and without `LIMIT`, over objects the operator creates past that count in scratch schemas.
 - M84: the code a data movement policy refusal answers, with one set for one run.
-- M98: how specific the registration statement's names must be; the operator follows the spec's item and notes the answer.
+- M98: what a key never registered on the user answers, and so how specific the key-pair refusal can be.
 
-The operator answered M15, M17, M22, M50, M70, M78, M81 and M84 by hand on 2026-10-13, each in its file's `operator` field: what was run, the answer, and each step with its time, status, code and message.
-M55 and M98 remain pending, their `operator` field still `"pending: the operator's answer is added to this file by hand"`.
+The operator answered M15, M17, M22, M50, M70, M78, M81, M84 and M98 by hand on 2026-10-13, each in its file's `operator` field: what was run, the answer, and each step with its time, status, code and message.
+M55 remains pending, its `operator` field still `"pending: the operator's answer is added to this file by hand"`.
 M58, M61, M64 and M100 also carry an `operator` field, with further probes the operator asked by hand the same day beside the harness's exchanges.
 
 Three scenarios of the plan have no file, for the reasons its `operator` field gives:

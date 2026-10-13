@@ -252,7 +252,8 @@ export function createSnowflakeMonitoring(input: {
     async getTableStats(options) {
       const qualified = statsSchema(options?.schema);
       if (qualified === null) return [];
-      // SHOW TABLES answers every row without a LIMIT; the panel reads the first 10,000 to stay bounded.
+      // SHOW TABLES answered all 10,250 rows of a schema without a LIMIT on the trial; the panel reads the first
+      // 10,000 to stay bounded.
       const result = await run(`SHOW TABLES IN SCHEMA ${qualified} LIMIT ${SNOWFLAKE_SHOW_PAGE_ROWS}`, tag);
       const schema = schemaName(options?.schema);
       return result.rows.map((row) => {

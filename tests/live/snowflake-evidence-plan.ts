@@ -567,7 +567,7 @@ export const SNOWFLAKE_EVIDENCE_PLAN: readonly EvidenceItem[] = [
   {
     id: "M98",
     step: 5,
-    asks: "How specific must the registration statement's names be? The operator follows the spec's item and notes the answer.",
+    asks: "What does a key never registered on the user answer, and so how specific can the key-pair refusal be? The operator signs with a fresh key and notes the answer.",
     principal: "svc",
     statements: [],
     warehouseSensitive: false,

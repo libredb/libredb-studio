@@ -3,6 +3,30 @@
   "step": 5,
   "asks": "How specific must the registration statement's names be? The operator follows the spec's item and notes the answer.",
   "rowsSummarised": "Every answer's rows are summarised: each answer that carried rows keeps its other fields and records `rows` with the byte length on the wire and decoded, the row count, and the first and the last row.",
-  "operator": "pending: the operator's answer is added to this file by hand",
+  "operator": {
+    "answeredOn": "2026-10-13",
+    "how": "The service user signed in once with a fresh RSA key never registered on it (role STUDIO_RW, SELECT 1), and the answer's message was read for a login-failure id to look up with SYSTEM$GET_LOGIN_FAILURE_DETAILS as the administrator.",
+    "answer": [
+      "A key never registered is refused with HTTP 401, code 390144, \"JWT token is invalid. null\": the message carries no login-failure id, so there is nothing to look up, and the refusal can name only the key Studio signed with."
+    ],
+    "steps": [
+      {
+        "step": "a key never registered on the service user",
+        "at": "2026-10-13T01:07:56.507Z",
+        "status": 401,
+        "code": "390144",
+        "sqlState": null,
+        "message": "JWT token is invalid. null"
+      },
+      {
+        "step": "the body carries no login-failure id, so there is nothing to look up",
+        "at": "2026-10-13T01:07:56.508Z",
+        "status": 0,
+        "code": null,
+        "sqlState": null,
+        "message": "no id"
+      }
+    ]
+  },
   "exchanges": []
 }
