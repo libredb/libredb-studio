@@ -13,12 +13,7 @@
  */
 import { QueryError } from "@/lib/db/errors";
 import { MAX_IDENTIFICATION_ROUNDS } from "./constants";
-import {
-  nameOfObject,
-  parseIdentificationResponse,
-  valueOfObject,
-  type IdentificationObject,
-} from "./identification";
+import { nameOfObject, parseIdentificationResponse, valueOfObject, type IdentificationObject } from "./identification";
 import { planReads, type Block } from "./plan";
 import { buildIdentification, buildRead, EXCEPTION_SENTENCES, type Table } from "./pdu";
 import type { ReadRequest } from "./request";
@@ -134,10 +129,7 @@ async function readPoints(names: readonly string[], map: ParsedMap, session: Exc
 
 const RANGE_FIELDS = ["unit", "table", "address", "raw", "value"];
 
-async function readRange(
-  request: Extract<ReadRequest, { kind: "range" }>,
-  session: Exchanger,
-): Promise<ReadRows> {
+async function readRange(request: Extract<ReadRequest, { kind: "range" }>, session: Exchanger): Promise<ReadRows> {
   const block: Block = {
     unitId: request.unitId,
     table: request.table as Table,
@@ -200,9 +192,7 @@ async function readIdentification(
       break;
     }
     const at = next;
-    const answer = await session.exchange((transactionId) =>
-      buildIdentification(transactionId, unitId, level, at),
-    );
+    const answer = await session.exchange((transactionId) => buildIdentification(transactionId, unitId, level, at));
     if (answer.kind === "exception") {
       // 01 to 43/14 means the device does not have the function (MB 6.21), which is a fact about
       // the device rather than a failed read, so a walk that already has objects keeps them.

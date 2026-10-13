@@ -429,9 +429,7 @@ describe("the error event reaches the boundary too", () => {
 
   test("the control: an allowed read DOES reach the socket, so the test above is not vacuous", () => {
     const fake = emitterSocket();
-    void exchangeOnce(fake.socket as never, request(), { expect: EXPECT, timeoutMs: 5000 }).catch(
-      () => undefined,
-    );
+    void exchangeOnce(fake.socket as never, request(), { expect: EXPECT, timeoutMs: 5000 }).catch(() => undefined);
     expect(fake.yazilanlar).toHaveLength(1);
     expect(fake.yazilanlar[0]?.[7]).toBe(3);
   });

@@ -205,7 +205,11 @@ export const dialModbus: Dialer = (endpoint, options = {}) =>
 export function socketWire(socket: ModbusSocket, endpoint: Endpoint, timeoutMs?: number): Wire {
   return {
     exchange: (adu: Buffer) =>
-      exchangeOnce(socket, adu, { expect: expectationOf(adu), endpoint, ...(timeoutMs === undefined ? {} : { timeoutMs }) }),
+      exchangeOnce(socket, adu, {
+        expect: expectationOf(adu),
+        endpoint,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      }),
     close: () => {
       socket.destroy();
     },

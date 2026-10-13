@@ -77,8 +77,7 @@ function shapeOf(body: Record<string, unknown>): "points" | "range" | "identify"
 
 function onlyKnownKeys(body: Record<string, unknown>, known: ReadonlySet<string>, shape: string): void {
   for (const key of Object.keys(body))
-    if (!known.has(key))
-      refuse(`A ${shape} read carries no key "${key}". It accepts ${[...known].sort().join(", ")}.`);
+    if (!known.has(key)) refuse(`A ${shape} read carries no key "${key}". It accepts ${[...known].sort().join(", ")}.`);
 }
 
 function wholeNumber(value: unknown, key: string): number {
@@ -136,7 +135,9 @@ function parseRange(body: Record<string, unknown>): ReadRequest {
     if (typeof type !== "string") refuse(`"type" must be text, and it is ${describe(type)}.`);
     const span = REGISTERS_OF_TYPE[type];
     if (span === undefined)
-      refuse(`"${type}" is not a type this provider decodes. It decodes ${Object.keys(REGISTERS_OF_TYPE).sort().join(", ")}.`);
+      refuse(
+        `"${type}" is not a type this provider decodes. It decodes ${Object.keys(REGISTERS_OF_TYPE).sort().join(", ")}.`,
+      );
     if (count % span !== 0)
       refuse(
         `A ${type} occupies ${span} registers and a count of ${count} does not divide by ${span}, so the last value would be cut short and dropped without a word.`,

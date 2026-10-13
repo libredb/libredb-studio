@@ -207,16 +207,14 @@ describe("one range by address", () => {
 
     for (const key of ["wordOrder", "byteOrder"] as const) {
       test(`"${key}" without a type is refused, because it orders nothing`, () => {
-        expect(() =>
-          parse(`{"unit":1,"table":"holding_register","address":0,"count":2,"${key}":"low_first"}`),
-        ).toThrow(new RegExp(`"${key}" orders the words`));
+        expect(() => parse(`{"unit":1,"table":"holding_register","address":0,"count":2,"${key}":"low_first"}`)).toThrow(
+          new RegExp(`"${key}" orders the words`),
+        );
       });
 
       test(`"${key}" takes only the two orders there are`, () => {
         expect(() =>
-          parse(
-            `{"unit":1,"table":"holding_register","address":0,"count":2,"type":"uint32","${key}":"big_endian"}`,
-          ),
+          parse(`{"unit":1,"table":"holding_register","address":0,"count":2,"type":"uint32","${key}":"big_endian"}`),
         ).toThrow(/high_first or low_first/);
       });
     }

@@ -57,7 +57,14 @@ describe("the bound is applied at the header", () => {
     // Had the refused header been kept, this push would read ITS length again and throw a
     // second time, and a device that recovers would never be heard.
     expect(reader.push(readOf(2))).toEqual([
-      { transactionId: 1, unitId: 1, functionCode: 3, body: Buffer.concat([Buffer.from([4]), Buffer.alloc(4)]), isException: false, exceptionCode: undefined },
+      {
+        transactionId: 1,
+        unitId: 1,
+        functionCode: 3,
+        body: Buffer.concat([Buffer.from([4]), Buffer.alloc(4)]),
+        isException: false,
+        exceptionCode: undefined,
+      },
     ]);
   });
 

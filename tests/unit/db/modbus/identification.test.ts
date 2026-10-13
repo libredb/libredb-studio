@@ -35,9 +35,7 @@ function body(
     options.nextObjectId ?? 0x00,
     options.declared ?? objects.length,
   ]);
-  const tail = objects.map((o) =>
-    Buffer.concat([Buffer.from([o.id, o.declareLength ?? o.bytes.length]), o.bytes]),
-  );
+  const tail = objects.map((o) => Buffer.concat([Buffer.from([o.id, o.declareLength ?? o.bytes.length]), o.bytes]));
   return Buffer.concat([head, ...tail]);
 }
 const text = (s: string) => Buffer.from(s, "utf8");

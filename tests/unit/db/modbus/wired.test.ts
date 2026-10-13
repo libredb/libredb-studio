@@ -71,7 +71,14 @@ const MAP = JSON.stringify([
 ]);
 
 const provider = (port: number, registerMap = MAP) =>
-  new ModbusProvider({ id: "m", name: "device", type: "modbus", host: "127.0.0.1", port, registerMap } as unknown as DatabaseConnection);
+  new ModbusProvider({
+    id: "m",
+    name: "device",
+    type: "modbus",
+    host: "127.0.0.1",
+    port,
+    registerMap,
+  } as unknown as DatabaseConnection);
 
 describe("a read reaches the device and comes back", () => {
   test("named points are read in one request, and the device gets a Modbus read for them", async () => {

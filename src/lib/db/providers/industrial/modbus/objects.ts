@@ -101,4 +101,3 @@ export function listUnits(mapDocument: string | undefined | null): readonly numb
   const parsed = parseRegisterMap(mapDocument);
   return [...new Set(parsed.points.map((p) => p.unitId))].sort((a, b) => a - b);
 }
-
