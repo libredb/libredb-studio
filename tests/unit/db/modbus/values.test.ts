@@ -52,6 +52,30 @@ describe("64 bit integers are exact, which a number could not be", () => {
     expect(Number(value) > Number.MAX_SAFE_INTEGER).toBe(true);
   });
 
+  /**
+   * TWO cases, and they have to disagree. The first version of this block tested `uint64` only, and
+   * a mutation proved what that costs: turning `int64` into a `number` left the suite green, so the
+   * rule "a 64 bit integer decodes as a bigint" was asserted for one of the two types and held for
+   * neither. The pair below reads the SAME four words two ways and the answers differ by the full
+   * unsigned range, which is the only shape of test that can tell the two decoders apart.
+   */
+  test("the same words decode differently as int64 and as uint64, both as bigint", () => {
+    const words = [0xffff, 0xffff, 0xffff, 0xffff];
+    const signed = decodeScalar("int64", words, HF);
+    const unsigned = decodeScalar("uint64", words, HF);
+    expect(typeof signed).toBe("bigint");
+    expect(typeof unsigned).toBe("bigint");
+    expect(signed).toBe(BigInt("-1"));
+    expect(unsigned).toBe(BigInt("18446744073709551615"));
+    expect(signed).not.toBe(unsigned);
+  });
+
+  test("int64 reads a negative that a number could not hold exactly", () => {
+    const value = decodeScalar("int64", [0x8000, 0x0000, 0x0000, 0x0000], HF);
+    expect(typeof value).toBe("bigint");
+    expect(value).toBe(BigInt("-9223372036854775808"));
+  });
+
   test("a scale or an offset is refused on a bigint rather than silently losing exactness", () => {
     expect(() => applyScale(BigInt("72623859790382856"), 0.1)).toThrow(ModbusDecodeError);
     expect(() => applyScale(BigInt("72623859790382856"), undefined, 1)).toThrow(ModbusDecodeError);
@@ -91,8 +115,15 @@ describe("what the decoder refuses", () => {
 });
 
 describe("scale and offset on a number", () => {
-  test("the order is value times scale plus offset", () => {
+  /**
+   * One case is enough here only because the two candidate formulas disagree ON THIS DATA, and the
+   * test says so rather than leaving a reader to check: value * scale + offset is 15, while
+   * (value + offset) * scale would be 10.5. The second assertion is what makes the first one mean
+   * what its name says.
+   */
+  test("the order is value times scale plus offset, not the other way round", () => {
     expect(applyScale(100, 0.1, 5)).toBeCloseTo(15, 9);
+    expect(applyScale(100, 0.1, 5)).not.toBeCloseTo(10.5, 9);
   });
   test("both are optional and default to identity", () => {
     expect(applyScale(42)).toBe(42);
