@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D344, U17 · 244
+- [Drivers and connections](#drivers-and-connections) — D1-D348, U17 · 248
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U138 · 128
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U139 · 129
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC25 · 22
 - [Release pipeline](#release-pipeline) — REL1-REL8 · 8
@@ -3521,6 +3521,47 @@ Found 2026-10-13 while fixing the Snowflake request's name folding.
 
 **Done when:** the role check also reads `CURRENT_DATABASE()`, `CURRENT_SCHEMA()` and `CURRENT_WAREHOUSE()`, a configured field that answers NULL adds a connect caution naming the field, the fixtures are re-captured on the trial account, and the provider doc's sections 2.5 and 4 state the caution.
 
+### D345. SQL Server refuses plan-mode grounding and the operations workflow on a login that can write
+
+`MSSQLProvider.connect()` verifies the agent principal whenever the provider is opened under the read-only execution context (`assertAgentPrincipalIsUnprivileged` in `src/lib/db/providers/sql/mssql.ts`).
+All three profiles in `PROFILE_ACQUISITION` (`src/lib/db/factory.ts`) carry that context, `agent-operations` included, and `agent-operations` sends no statement of the model's: plan-mode grounding acquires it in `readObjectInventoryForGrounding` and the operations workflow in `runCuratedRead` (`src/lib/agent/tools.ts`).
+So on a connection whose own login can write, `sa` among them, the check refuses both, and a plan run is left with no inventory of the database.
+MySQL met the same shape in #1629 and was fixed there by verifying the principal at the first `queryReadOnly` call instead (`verifiedReadOnlyPool` in `src/lib/db/providers/sql/mysql.ts`): measured in a browser on 2026-10-13, a MySQL plan run on a `root` connection answered "This run was given no inventory of this database" before the fix and was grounded on 12 tables after it.
+The SQL Server half is read from the code, not yet driven.
+
+Found 2026-10-13 while reviewing #1629.
+Not fixed in #1629: a new provider PR changes no other provider.
+
+**Done when:** a plan run and an operations run on a SQL Server connection as `sa` read the schema, an Agent-mode run on it is still refused before its first statement with `PROFILE_PRIVILEGES_TOO_BROAD`, a provider test pins both, and `docs/providers/mssql.md` says where the check runs.
+
+### D346. A privilege refusal is reported as an authentication failure
+
+`mapDatabaseError` in `src/lib/db/errors.ts` returns an `AuthenticationError` ("Authentication failed: ...") for any message containing "access denied" or "permission denied".
+Those words also name refusals of a statement by a connected, authenticated session: MySQL's 1227 (`Access denied; you need (at least one of) the SUPER privilege`) and 1044 (`Access denied for user ... to database`), and PostgreSQL's `permission denied for table`.
+Measured 2026-10-13 through the MySQL agent read-only profile on MySQL 26.7.0 and MariaDB 12.3.2: `SET GLOBAL`, `GRANT` and `SELECT ... INTO OUTFILE` sent as `libredb_agent` came back as "Authentication failed: Access denied ...", which tells a user or a model that the login is wrong when the statement is what was refused.
+
+Found 2026-10-13 while reviewing #1629.
+
+**Done when:** a refusal that arrives on an open session maps to a query-class error that says the statement lacked a privilege, a failed login still maps to `AuthenticationError`, and `tests/unit/db/errors.test.ts` pins MySQL 1045, 1227 and 1044 and PostgreSQL's `permission denied for table` to their classes.
+
+### D347. Percona Server is refused by the MySQL agent read-only profile
+
+`assertAgentEngineIsAdmissible` in `src/lib/db/providers/sql/mysql.ts` refuses a server whose `@@version_comment` names Percona Server with `PROFILE_UNSUPPORTED_TARGET`, because the profile's layers were measured on MySQL and MariaDB only.
+Percona Server is a widely deployed MySQL build, and nothing in the profile is known to differ on it; the refusal is the absence of a measurement, not a finding.
+
+Found 2026-10-13 while reviewing #1629.
+
+**Done when:** `tests/live/mysql-agent-profile.ts` passes against a Percona Server, the profile admits it, and `docs/providers/mysql.md` section 12.5 moves its row from refused to admitted with the version measured.
+
+### D348. The MySQL read-only profile lives inside the 5,000-line provider
+
+`src/lib/db/providers/sql/mysql.ts` is over 5,000 lines after #1629, which added the agent read-only profile (`queryReadOnly`, the principal and engine checks, the read-only pool, the streamed row bound and the KILL deadline) to it; `mssql.ts` is about 3,700.
+Its grant parser and engine admission are pure functions that the provider suite can only reach through a mocked session, and other providers already split into a directory of modules (`sql/duckdb/`, `sql/snowflake/`).
+
+Found 2026-10-13 while reviewing #1629.
+
+**Done when:** the profile lives in its own module under a `sql/mysql/` directory, its pure checks have unit tests of their own, and `tests/integration/db/mysql-provider.test.ts` and `tests/live/mysql-agent-profile.ts` pass unchanged.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -5346,6 +5387,16 @@ So a result the provider cut inside a script gets neither the grid's limited bad
 Found 2026-10-12 while designing the Snowflake provider.
 
 **Done when:** the multi-query route carries the main result's `pagination`, and the route and component tests show the badge and the export wording over a cut result inside a script.
+
+### U139. The login page pays for each agent engine by shrinking its spacing
+
+The agent claim on the login page names every engine in `AGENT_EXECUTION_ENGINES` (`src/components/login/hero-proof.tsx`), and the page is tuned to fit 1280x800 with no scroll (#541).
+Adding MySQL in #1629 made the claim one line longer, and it was paid back by tightening `space-y` and `leading` in `hero-proof.tsx` and the community block's `mt-8` to `mt-6` in `src/app/login/login-form.tsx`.
+Each further engine will need another squeeze, and the next one has none left to give.
+
+Found 2026-10-13 while reviewing #1629.
+
+**Done when:** the claim's height no longer grows with the engine list (for example a count with the names behind a disclosure), the spacing #1629 took back is restored, and `tests/components/LoginPage.test.tsx` still pins that the claim names only engines agent mode executes on.
 
 ## Dependencies
 
