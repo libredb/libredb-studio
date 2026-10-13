@@ -36,6 +36,7 @@ import type {
   MaintenanceResult,
   ObjectDetail,
   ObjectSourceDocument,
+  ProviderOptions,
   ObjectDetailBatch,
   PerformanceMetrics,
   ProviderCapabilities,
@@ -147,8 +148,19 @@ export class MTConnectProvider extends BaseDatabaseProvider {
   private session: MtcSession | null = null;
   private readonly limiter = limiterFor();
 
-  public constructor(config: DatabaseConnection) {
-    super(config);
+  /**
+   * `options` IS CARRIED, and dropping it would have been a silent loss rather than a tidy-up.
+   *
+   * MEASURED: the factory resolves the connection's own `queryTimeout` into `options` before it
+   * builds anything (`factory.ts`, `options = { ...options, queryTimeout: options.queryTimeout ??
+   * connection.queryTimeout }`), and `BaseDatabaseProvider` reads it there
+   * (`base-provider.ts:153`, `options.queryTimeout ?? DEFAULT_QUERY_TIMEOUT`). This provider then
+   * uses `this.queryTimeout` twice: the limiter's permit wait and the request's own abort signal. So
+   * a constructor that ignored `options` would quietly replace a reader's configured timeout with the
+   * default, on every read, with nothing failing. Every sibling takes it; this one does too.
+   */
+  public constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+    super(config, options);
   }
 
   public override getCapabilities(): ProviderCapabilities {
