@@ -966,14 +966,20 @@ export const HOSTILE_PEERS: readonly HostilePeer[] = [
     limit: 100,
     heavyParse: true,
     steps: () => [...ready(), { repeat: heavyHeader(1, "void"), times: 100 }],
-    expect: ["stop:budget", "stop:limit"],
+    // A starved runner can spend longer than the wall-clock deadline parsing the flood, so the deadline can win
+    // before the byte budget; measured on windows-latest beside three busy loops. Both stops bound the read, and
+    // neither is an error path.
+    expect: ["stop:budget", "stop:limit", "stop:deadline"],
   },
   {
     name: "header-heavy-bytes",
     limit: 100,
     heavyParse: true,
     steps: () => [...ready(), { repeat: heavyHeader(1, "bytes"), times: 100 }],
-    expect: ["stop:budget", "stop:limit"],
+    // A starved runner can spend longer than the wall-clock deadline parsing the flood, so the deadline can win
+    // before the byte budget; measured on windows-latest beside three busy loops. Both stops bound the read, and
+    // neither is an error path.
+    expect: ["stop:budget", "stop:limit", "stop:deadline"],
   },
   {
     name: "trickled-300-mib-header-frame",

@@ -1,12 +1,14 @@
 /**
  * R-S10: every AMQP read runs under a Studio deadline and cannot crash the process. Each hostile peer, with a 2,000 ms
- * deadline, settles within the deadline plus 100 ms, with no uncaught error and no socket left open, under Bun in this
+ * deadline, settles within the deadline plus the margin set below, with no uncaught error and no socket left open, under Bun in this
  * process and under every Node binary in NODE_TRANSPORT_NODES (or the node on PATH), from a bundle of the read loop and
  * the peers. Node needs its own run because a throw inside a socket listener exits a Node process, while Bun turns it
  * into a rejection.
  *
- * The 100 ms margin is about 25 times the 3.9 ms overshoot measured for one read per process; the peers run
- * concurrently here, so the margin also covers their contention, re-measured on the ubuntu runner before merge.
+ * The margin is measured where the failures came from: 10 iterations of this set beside three busy loops on
+ * windows-latest and macos-latest stretched the timeout-derived stops to 2,427 ms, and the reported CI failure sat at
+ * 2,178 ms, so MARGIN_MS is 500. The old 100 ms covered the 3.9 ms overshoot measured for one read per process; a
+ * starved runner stretches timers far beyond contention between the peers themselves.
  *
  * Several expected stops are a race on one event loop: a peer's close or cancel against the read's 1,000 ms idle timer,
  * and the idle timer against the 2,000 ms deadline. The client's parse of the header-heavy pair holds the loop for one
@@ -14,7 +16,10 @@
  * "socket-end-mid-read" into idle and "heartbeats-in-content" into deadline. So those two peers run in a wave of their
  * own after the rest, and the peers that close, cancel or end mid-read act on the client's acks instead of a 100 ms
  * wait. Measured on the starved core, the light wave's longest stall is under 200 ms, against the 1,000 ms an idle
- * stop needs, and every idle stop's last byte arrives by 320 ms, leaving 680 ms before the deadline could win. The
+ * stop needs, and every idle stop's last byte arrives by 320 ms, leaving 680 ms before the deadline could win. On a
+ * starved runner the heavy pair's byte budget can lose to the wall-clock deadline instead (one of ten stretched runs
+ * stopped header-heavy-bytes on deadline), so both heavy peers allow that stop, and their sockets still close inside
+ * the helper's 1 s wait across all 40 stretched runs, which is why no read-loop change was needed. The
  * file's budget is 20 s: about 3 s per runtime, plus the bundle.
  */
 import { beforeAll, describe, expect, test } from "bun:test";
@@ -25,7 +30,7 @@ import { makeCertificates } from "../../../helpers/node-transport-fixtures";
 import { HOSTILE_PEERS, type HostileOutcome, runHostileSet } from "../../../helpers/rabbitmq-fake-peer";
 
 const DEADLINE_MS = 2_000;
-const MARGIN_MS = 100;
+const MARGIN_MS = 500;
 const HELPER = join(import.meta.dir, "..", "..", "..", "helpers", "rabbitmq-fake-peer.ts");
 
 /** The Node binaries NODE_TRANSPORT_NODES lists, or the node on PATH; an empty list or no node fails by name. */
@@ -131,7 +136,12 @@ function check(run: RuntimeRun): void {
       allowed: true,
     });
     const ms = Math.round(outcome.ms);
-    expect({ name: outcome.name, label: outcome.label, ms, withinDeadline: ms <= DEADLINE_MS + MARGIN_MS }).toMatchObject({
+    expect({
+      name: outcome.name,
+      label: outcome.label,
+      ms,
+      withinDeadline: ms <= DEADLINE_MS + MARGIN_MS,
+    }).toMatchObject({
       name: outcome.name,
       label: outcome.label,
       withinDeadline: true,
