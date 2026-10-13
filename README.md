@@ -1096,7 +1096,7 @@ one covers and what attribution is owed in return are at
   image. The canonical image is still GHCR; this is what keeps the Hub mirror
   usable without an account. Since 2026-09-01.
 
-- **[BrowserStack](https://www.browserstack.com/opensource)** — the BrowserStack
+- **[BrowserStack](https://www.browserstack.com/open-source)** — the BrowserStack
   Open Source programme behind the cross-browser testing that runs the full Playwright
   suite on desktop Chromium and the `security-headers` spec on WebKit (`webkit-security`).
   Beyond that one WebKit spec, Safari and older WebKit regressions, mobile layout, and the

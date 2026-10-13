@@ -1028,7 +1028,7 @@ _成为第一个赞助 libredb-studio 的人！_
   镜像的人免去了拉取速率限制。主镜像仍然是 GHCR；这个计划让 Hub 上的镜像镜像无需
   账号即可使用。自 2026-09-01 起。
 
-- **[BrowserStack](https://www.browserstack.com/opensource)**：BrowserStack
+- **[BrowserStack](https://www.browserstack.com/open-source)**：BrowserStack
   Open Source 计划支撑着跨浏览器测试，即在桌面 Chromium 上跑完整的 Playwright
   测试套件，并在 WebKit 上跑 `security-headers` 这个 spec（`webkit-security`）。
   除了那一个 WebKit spec 之外，Safari 与旧版 WebKit 的回归问题、移动端布局，以及

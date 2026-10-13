@@ -1049,7 +1049,7 @@ libredb-studio는 무료 오픈소스 프로젝트입니다. 이 프로젝트가
 
 * **[Docker](https://www.docker.com/community/open-source/)**: Docker-Sponsored Open Source 프로그램을 통해 Docker Hub의 `libredb` namespace를 지원받고 있습니다. 이 프로그램 덕분에 공개 image를 pull하는 사용자에게 rate limit이 적용되지 않습니다. 기본 image registry는 여전히 GHCR이지만, Docker Hub의 mirror image도 계정 없이 사용할 수 있습니다. 2026-09-01부터 지원받고 있습니다.
 
-* **[BrowserStack](https://www.browserstack.com/opensource)**: BrowserStack Open Source 프로그램을 통해 크로스 브라우저 테스트를 지원받고 있습니다. Desktop Chromium에서는 전체 Playwright 테스트를 실행하고 WebKit에서는 `security-headers` spec(`webkit-security`)을 실행합니다. 이 WebKit spec 하나를 제외한 Safari 및 이전 버전 WebKit의 regression, 모바일 layout, Linux Desktop 버전에서 사용하는 WebKitGTK 엔진은 실제 환경에서 테스트해야 합니다. 2026-08-31부터 지원받고 있습니다.
+* **[BrowserStack](https://www.browserstack.com/open-source)**: BrowserStack Open Source 프로그램을 통해 크로스 브라우저 테스트를 지원받고 있습니다. Desktop Chromium에서는 전체 Playwright 테스트를 실행하고 WebKit에서는 `security-headers` spec(`webkit-security`)을 실행합니다. 이 WebKit spec 하나를 제외한 Safari 및 이전 버전 WebKit의 regression, 모바일 layout, Linux Desktop 버전에서 사용하는 WebKitGTK 엔진은 실제 환경에서 테스트해야 합니다. 2026-08-31부터 지원받고 있습니다.
 
 * **[Tailscale](https://tailscale.com/opensource)**: GitHub Community 프로그램을 통해 Maintainer가 데이터베이스 테스트용 host에 접근할 때 사용하는 private network를 지원받고 있습니다. 이를 통해 실제 데이터베이스 엔진을 테스트하면서 데이터베이스 port를 공개 인터넷에 노출하지 않아도 됩니다. 2026-08-30부터 지원받고 있습니다.
 
