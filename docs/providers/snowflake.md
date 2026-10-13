@@ -212,7 +212,8 @@ A seed that sets `connectionString` for `snowflake` is refused.
 
 Studio runs every statement as Role and stops nothing a role may do.
 The role is the boundary, not Studio: grant it no MODIFY, OPERATE, MANAGE WAREHOUSES or CREATE TASK, and keep `DEFAULT_SECONDARY_ROLES = ()` on the user or use a role-restricted credential, because with secondary roles ALL a read-only role is not a boundary.
-On the trial on 2026-10-13 a key or token restricted to one role signed in under that role and under no role, and was refused under another with 390186.
+On the trial on 2026-10-13 a key restricted to one role signed in under that role and under no role, and was refused under another with 390186.
+On 2026-10-12 a token restricted to one role signed in under that role and was refused under another with 390186.
 Every name below is a placeholder:
 
 ```sql
@@ -424,7 +425,7 @@ A kind's `SHOW` is sent only when the user opens that kind:
 | Procedures | `SHOW PROCEDURES IN SCHEMA`, less the built-in rows (`is_builtin` `Y`) it also answers |
 
 A schema expand sends one `SHOW TERSE OBJECTS IN SCHEMA ... LIMIT 10000` to count its tables and views.
-On the trial on 2026-10-13, over 10,250 tables and 10,250 sequences in one schema, `SHOW TABLES` and `SHOW TERSE OBJECTS` without a `LIMIT` answered all 10,250 rows, with no error and no 10,000-row ceiling.
+On the trial on 2026-10-13, over 10,250 tables in one scratch schema and 10,250 sequences in another, `SHOW TABLES` and `SHOW TERSE OBJECTS` without a `LIMIT` answered all 10,250 rows, with no error and no 10,000-row ceiling.
 Studio still sends `LIMIT 10000` wherever Snowflake offers paging, so each answer stays bounded:
 
 - A pageable listing (databases, schemas, tables, views, streams, tasks) is read in pages of 10,000 rows, each from the previous page's last name with `FROM`, which starts after the name it is given (a page with nothing past that name ends the listing), up to five pages: `Snowflake has more than 50,000 objects of this kind here; Studio shows the first 50,000 by name.`
