@@ -469,6 +469,31 @@ describe("the error event reaches the boundary too", () => {
     expect((error as Error).message).toContain("ECONNRESET");
   });
 
+  test("an AggregateError becomes a ConnectionError, carrying each address's own reason", () => {
+    // What a dial gives when every address of a host failed. It has no `code` of its own, so the
+    // code test let it through raw and the route reported our 500 for an unreachable address.
+    const where = { host: "device.local", port: 502 };
+    const both = new AggregateError(
+      [
+        Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:502"), { code: "ECONNREFUSED" }),
+        Object.assign(new Error("connect EHOSTUNREACH ::1:502"), { code: "EHOSTUNREACH" }),
+      ],
+      "all attempts failed",
+    );
+    const converted = atSocketBoundary(both, where);
+    expect(converted).toBeInstanceOf(ConnectionError);
+    expect((converted as ConnectionError).host).toBe("device.local");
+    expect((converted as Error).message).toContain("ECONNREFUSED");
+    expect((converted as Error).message).toContain("EHOSTUNREACH");
+  });
+
+  test("the selectivity still holds: a programmer's error is NOT dressed as a connection fault", () => {
+    // The control for the test above. An AggregateError is converted because its shape IS a dial
+    // failure; a TypeError from a bug of ours must keep reaching us as a 500.
+    const planted = new TypeError("undefined is not a function");
+    expect(atSocketBoundary(planted, { host: "h", port: 1 })).toBe(planted);
+  });
+
   test("an unrelated error on the same path still passes through by identity", async () => {
     const fake = emitterSocket();
     const planted = new TypeError("undefined is not a function");

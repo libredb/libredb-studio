@@ -93,6 +93,21 @@ export function atSocketBoundary(error: unknown, endpoint: Endpoint): unknown {
   // device's answer, which is the opposite thing for whoever has to act on it.
   if (error instanceof ModbusFramingError)
     return new ConnectionError(error.message, undefined, endpoint.host, endpoint.port);
+  // An AggregateError is what a dial gives when EVERY address of a host failed: it carries the
+  // per-address errors and no `code` of its own, so the test below it let it through raw, and a
+  // raw error reads as our defect rather than as an address that cannot be reached. Measured on
+  // the boundary function directly. NOT reproduced through a live dial here: this container has no
+  // IPv6, so both `127.0.0.1` and `localhost` produced a code-bearing error instead. The branch is
+  // closed on the shape rather than on a reproduction, and this comment says which.
+  if (error instanceof AggregateError) {
+    const reasons = error.errors.map((inner) => (inner instanceof Error ? inner.message : String(inner))).join("; ");
+    return new ConnectionError(
+      `The connection to ${endpoint.host}:${endpoint.port} failed: ${reasons || error.message}`,
+      undefined,
+      endpoint.host,
+      endpoint.port,
+    );
+  }
   if (error instanceof Error && typeof (error as { code?: unknown }).code === "string")
     return new ConnectionError(
       `The connection to ${endpoint.host}:${endpoint.port} failed: ${error.message}`,
