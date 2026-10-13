@@ -22,6 +22,9 @@ import { MBAP_HEADER_BYTES, MBAP_LENGTH_MAX, MBAP_LENGTH_MIN, PROTOCOL_ID } from
 
 export class ModbusFramingError extends Error {}
 
+/** A complete Modbus TCP ADU, so the most this reader ever holds for one incomplete frame. */
+export const MAX_ADU_BYTES = MBAP_HEADER_BYTES + MBAP_LENGTH_MAX - 1;
+
 export interface InboundFrame {
   readonly transactionId: number;
   readonly unitId: number;
@@ -44,27 +47,62 @@ export class FrameReader {
     return this.buffer.length;
   }
 
+  /**
+   * Takes a chunk and returns the complete frames in it.
+   *
+   * WHY IT NEVER CONCATENATES THE WHOLE CHUNK. The first version did: it joined the chunk to the
+   * buffer and then checked the header, so a peer sending five megabytes in one write had five
+   * megabytes held before any rule ran, and the bytes stayed held after the refusal. That is the
+   * exact fault this module was written to avoid, measured in `modbus-serial` and `jsmodbus`: a
+   * bound that only runs after the body is buffered is not a bound. This reader therefore takes
+   * from the chunk only what a frame can need, and a complete Modbus TCP ADU is at most
+   * MBAP_HEADER_BYTES + MBAP_LENGTH_MAX - 1 bytes, so nothing beyond that is ever retained.
+   *
+   * A peer that sends more than one frame in a write is served from the same chunk without copying
+   * it: the loop walks an offset instead.
+   */
   push(chunk: Buffer): InboundFrame[] {
-    this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk]);
     const frames: InboundFrame[] = [];
+    let offset = 0;
     for (;;) {
-      if (this.buffer.length < MBAP_HEADER_BYTES) return frames;
+      // Fill the header first, taking only the bytes still missing from it.
+      if (this.buffer.length < MBAP_HEADER_BYTES) {
+        const need = MBAP_HEADER_BYTES - this.buffer.length;
+        const take = Math.min(need, chunk.length - offset);
+        if (take <= 0) return frames;
+        this.buffer = Buffer.concat([this.buffer, chunk.subarray(offset, offset + take)]);
+        offset += take;
+        if (this.buffer.length < MBAP_HEADER_BYTES) return frames;
+      }
 
       const protocolId = this.buffer.readUInt16BE(2);
-      if (protocolId !== PROTOCOL_ID)
+      if (protocolId !== PROTOCOL_ID) {
+        this.buffer = Buffer.alloc(0);
         throw new ModbusFramingError(`The device sent protocol id ${protocolId}, and Modbus TCP defines only 0.`);
+      }
 
       const length = this.buffer.readUInt16BE(4);
-      if (length < MBAP_LENGTH_MIN || length > MBAP_LENGTH_MAX)
+      if (length < MBAP_LENGTH_MIN || length > MBAP_LENGTH_MAX) {
+        // Dropped rather than kept: the frame is unreadable, so holding its bytes serves nothing
+        // and holding them is the fault this comment describes.
+        this.buffer = Buffer.alloc(0);
         throw new ModbusFramingError(
           `The device sent an MBAP length of ${length}, outside the ${MBAP_LENGTH_MIN} to ${MBAP_LENGTH_MAX} a Modbus TCP frame allows. Nothing after the header was read.`,
         );
+      }
 
       const total = MBAP_HEADER_BYTES + length - 1;
-      if (this.buffer.length < total) return frames;
+      if (this.buffer.length < total) {
+        const need = total - this.buffer.length;
+        const take = Math.min(need, chunk.length - offset);
+        if (take <= 0) return frames;
+        this.buffer = Buffer.concat([this.buffer, chunk.subarray(offset, offset + take)]);
+        offset += take;
+        if (this.buffer.length < total) return frames;
+      }
 
       const frame = this.buffer.subarray(0, total);
-      this.buffer = this.buffer.subarray(total);
+      this.buffer = Buffer.alloc(0);
 
       const functionCode = frame[MBAP_HEADER_BYTES] ?? 0;
       const isException = (functionCode & 0x80) !== 0;
