@@ -144,6 +144,10 @@ describe("a read reaches the device and comes back", () => {
     const port = await device([230]);
     const health = await provider(port, "[]").getHealth();
     expect(health.databaseSize).toBe("unknown");
+    // Absence and zero are different facts: `activeConnections` is omitted rather than sent as 0,
+    // because a device has no connection count a reader can ask for.
+    expect(Object.hasOwn(health, "activeConnections")).toBe(false);
+    expect(health.cacheHitRatio).toBe("unknown");
     // The dial claims nothing beyond reachability: the server received no ADU at all.
     expect(received).toHaveLength(0);
   });
@@ -165,7 +169,6 @@ describe("a read reaches the device and comes back", () => {
     expect(received).toHaveLength(1);
     expect((received[0] as Buffer).readUInt16BE(10)).toBe(1);
   });
-
 
   test("a request the parser refuses costs no connection at all", async () => {
     delete process.env[FLAG];

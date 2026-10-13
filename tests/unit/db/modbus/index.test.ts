@@ -315,13 +315,14 @@ describe("what the provider refuses rather than fakes", () => {
     expect(await p.getStorageStats()).toEqual([]);
   });
 
-  test("health omits activeConnections rather than sending a fabricated zero", async () => {
-    // With no map there is no point to read, so health asks the device nothing and this runs with
-    // no server. The read itself is measured over a real socket in `wired.test.ts`.
-    const health = await provider().getHealth();
-    expect(Object.hasOwn(health, "activeConnections")).toBe(false);
-    expect(health.cacheHitRatio).toBe("unknown");
-  });
+  /**
+   * The shape of the health answer moved to `wired.test.ts`, with the rest of the reads.
+   *
+   * It used to run here with no server, which stopped being possible the moment health began to
+   * dial when the map is empty: the assertion was about the answer's SHAPE and the test was
+   * spending three seconds proving a dial timeout. The claim did not weaken, it moved to the file
+   * that has a device to answer it.
+   */
 });
 
 describe("a refusal is a QueryError, because the product treats it differently", () => {
