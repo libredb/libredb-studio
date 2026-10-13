@@ -1,0 +1,127 @@
+/**
+ * What the provider declares about itself, asserted flag by flag and then as a closed set.
+ *
+ * This suite exists because the declaration had none, and because of the shape a declaration test
+ * fails in. Asserting eight false flags as one array of eight falses cannot tell which flag is
+ * which: swap two of them in the source and the array still matches. So every flag is named, and
+ * then the KEY SET is pinned as well, so that a member cannot enter the declaration silently.
+ *
+ * The provider class cannot be constructed here, because `DatabaseConnection.type` is a closed
+ * union that does not yet carry this type id, which is the last step of the provider's PR. The
+ * capability object is read off the prototype instead, which is enough: the method takes no
+ * argument and reads no connection field.
+ */
+import { describe, expect, test } from "bun:test";
+import type { ProviderCapabilities } from "@/lib/db/types";
+import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect";
+import { MTCONNECT_DEFAULT_PORT, MTCONNECT_OBJECT_KINDS } from "@/lib/db/providers/industrial/mtconnect/capabilities";
+
+/** The declaration, read without a connection: `getCapabilities` reads none. */
+const capabilities = MTConnectProvider.prototype.getCapabilities.call({}) as ProviderCapabilities;
+
+describe("every flag by name", () => {
+  test("the eight that are false are false, each named", () => {
+    // Named one at a time on purpose. `[false, false, ...]` would pass with any two swapped.
+    expect(capabilities.supportsExplain).toBe(false);
+    expect(capabilities.supportsExternalQueryLimiting).toBe(false);
+    expect(capabilities.supportsCreateTable).toBe(false);
+    expect(capabilities.supportsInlineRowEdit).toBe(false);
+    expect(capabilities.supportsTestDataGeneration).toBe(false);
+    expect(capabilities.supportsResultPagination).toBe(false);
+    expect(capabilities.supportsTransactions).toBe(false);
+    expect(capabilities.supportsMaintenance).toBe(false);
+    expect(capabilities.supportsConnectionString).toBe(false);
+    expect(capabilities.declaresForeignKeys).toBe(false);
+    expect(capabilities.tablesAreDerivedGroupings).toBe(false);
+  });
+
+  test("read-only is declared as a structural fact, not as a mode", () => {
+    // MEASURED on the pinned agent: with `AllowPut = true` the agent's own Swagger grows from 15
+    // operations to 39. So the guarantee cannot rest on an agent setting, and this flag says it
+    // rests on the client's shape instead.
+    expect(capabilities.enforcesReadOnly).toBe(true);
+    expect(capabilities.maintenanceOperations).toEqual([]);
+  });
+
+  test("the text is JSON-shaped and no dialect is declared yet", () => {
+    expect(capabilities.queryLanguage).toBe("json");
+    // The third shared line this provider needs: the dialect union is closed and does not carry
+    // this id. The field is optional, so the declaration is honest without it rather than casting.
+    expect(capabilities.queryDialect).toBeUndefined();
+  });
+
+  test("the port and the refresh pattern are the measured ones", () => {
+    expect(capabilities.defaultPort).toBe(MTCONNECT_DEFAULT_PORT);
+    expect(MTCONNECT_DEFAULT_PORT).toBe(5000);
+    // No read changes what the tree shows, so nothing ever asks for a refresh.
+    expect(capabilities.schemaRefreshPattern).toBe("(?!)");
+    expect(new RegExp(capabilities.schemaRefreshPattern ?? "").test("anything")).toBe(false);
+  });
+
+  test("one container level, the device, in the shape the repository declares", () => {
+    expect(capabilities.containerLevels).toEqual([{ id: "schema", label: "Device", labelPlural: "Devices" }]);
+    expect(capabilities.containerPathShapes).toBe("exact");
+  });
+
+  test("three object kinds, and no Keys panel surface", () => {
+    expect(capabilities.objectKinds).toBe(MTCONNECT_OBJECT_KINDS);
+    expect(capabilities.objectKinds?.map((kind) => kind.id)).toEqual(["dataitem", "condition", "asset"]);
+    expect(capabilities.keyScan).toBeUndefined();
+  });
+});
+
+describe("the declaration is a closed set", () => {
+  /**
+   * Every key the declaration carries, pinned.
+   *
+   * Naming each flag above catches a changed value. It does not catch a NEW key, and a new
+   * capability key is how a provider quietly acquires a surface it was never reviewed for. This is
+   * the half that catches that.
+   */
+  const EXPECTED_KEYS = [
+    "containerLevels",
+    "containerPathShapes",
+    "declaresForeignKeys",
+    "defaultPort",
+    "enforcesReadOnly",
+    "maintenanceOperations",
+    "objectKinds",
+    "queryLanguage",
+    "schemaRefreshPattern",
+    "statementTerminator",
+    "supportsConnectionString",
+    "supportsCreateTable",
+    "supportsExplain",
+    "supportsExternalQueryLimiting",
+    "supportsInlineRowEdit",
+    "supportsMaintenance",
+    "supportsResultPagination",
+    "supportsTestDataGeneration",
+    "supportsTransactions",
+    "tablesAreDerivedGroupings",
+  ] as const;
+
+  test("the key set is exactly this, so a new key cannot enter unreviewed", () => {
+    expect(Object.keys(capabilities).sort()).toEqual([...EXPECTED_KEYS]);
+  });
+
+  test("the keys this provider deliberately does NOT declare are absent, each named", () => {
+    // Each absence is a decision recorded elsewhere, so each is asserted rather than assumed.
+    expect(capabilities.keyScan).toBeUndefined(); // decision K-134: no Keys panel surface
+    expect(capabilities.queryDialect).toBeUndefined(); // the third shared line, not landed
+    expect(capabilities.agentWalkScope).toBeUndefined(); // MEASURED: it cannot express what MT-S10 wants
+    expect(capabilities.explainFormat).toBeUndefined(); // no explain, so no format
+    expect(capabilities.identifierQuoting).toBeUndefined(); // the text is not SQL
+    expect(capabilities.readsFileAccessPosture).toBeUndefined(); // the provider reads no local file
+    expect(capabilities.singleWriterFile).toBeUndefined(); // there is no file
+    expect(capabilities.supportsColumnProfiling).toBeUndefined();
+    expect(capabilities.supportsQueryCancel).toBeUndefined();
+  });
+
+  test("the set is not all one value, so a declaration of constants would fail here", () => {
+    const values = Object.values(capabilities);
+    expect(new Set(values.map((value) => typeof value)).size).toBeGreaterThan(1);
+    expect(values.filter((value) => value === false).length).toBeGreaterThan(1);
+    expect(values.filter((value) => value === true).length).toBe(1);
+  });
+});
