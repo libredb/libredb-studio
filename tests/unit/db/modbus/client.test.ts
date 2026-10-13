@@ -15,8 +15,9 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { createServer, type Server } from "node:net";
-import { DatabaseConfigError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import {
+  atSocketBoundary,
   dialModbus,
   exchangeOnce,
   ModbusDialError,
@@ -137,19 +138,40 @@ describe("one exchange on an open socket", () => {
     delete process.env[FLAG];
     const port = await listener("silent");
     const socket = await dialModbus({ host: "127.0.0.1", port });
-    const error = await exchangeOnce(socket, request(), { timeoutMs: 40 }).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(ModbusDialTimeout);
+    const error = await exchangeOnce(socket, request(), {
+      timeoutMs: 40,
+      endpoint: { host: "127.0.0.1", port },
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
     expect((error as Error).message).toContain("40 ms");
     socket.destroy();
   });
 
-  test("a device that closes before answering is reported as that, not as a timeout", async () => {
+  /**
+   * This test used to assert `ModbusDialError`, and it was RACING. A device that destroys the
+   * socket may surface as a `close` event or as an `error` carrying ECONNRESET, and which one
+   * arrives first is timing: on a loaded machine the reset won and the raw error came through
+   * unwrapped, so the suite went red for a reason the test's name did not describe. Six runs here
+   * were green and another session's run was not, which is the worst shape a test can have.
+   *
+   * Both paths now mean the same thing and the test says so: the connection is gone, so it is a
+   * `ConnectionError` whichever event announced it. The race is no longer observable because the
+   * two outcomes are no longer different.
+   */
+  test("a device that ends the connection before answering is a ConnectionError, either way", async () => {
     delete process.env[FLAG];
     const port = await listener("close");
     const socket = await dialModbus({ host: "127.0.0.1", port }).catch(() => undefined);
     if (socket === undefined) return;
-    const error = await exchangeOnce(socket, request(), { timeoutMs: 500 }).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(ModbusDialError);
+    const error = await exchangeOnce(socket, request(), {
+      timeoutMs: 500,
+      endpoint: { host: "127.0.0.1", port },
+    }).catch((e: unknown) => e);
+    // The endpoint rides in the error's own fields rather than in its sentence, which is where a
+    // reader can use it. Asserting the message would have been asserting the wrong place.
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as ConnectionError).host).toBe("127.0.0.1");
+    expect((error as ConnectionError).port).toBe(port);
   });
 });
 
@@ -201,7 +223,9 @@ describe("the dial timer", () => {
       { host: "203.0.113.7", port: 502 },
       { dialTimeoutMs: 30, connect: () => fake.socket as never },
     ).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(ModbusDialTimeout);
+    // A dial that never completes has not failed one read, it has failed the connection, so the
+    // boundary converts it. The time stays in the sentence: that is what the user needs.
+    expect(error).toBeInstanceOf(ConnectionError);
     expect((error as Error).message).toContain("30 ms");
   });
 
@@ -224,5 +248,55 @@ describe("the dial timer", () => {
     ).catch(() => undefined);
     expect(fake.timeoutMs()).toBe(25);
     expect(fake.timeoutMs()).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The socket boundary, tested on the function rather than through a race.
+ *
+ * The identity assertions matter more than the type ones: an error that is read and re-wrapped on
+ * the way out would still be an instance of the right class, and only identity catches that.
+ */
+describe("the socket boundary converts by scope and keeps its hands off the rest", () => {
+  const where = { host: "10.1.2.3", port: 502 };
+
+  test("a socket error becomes a ConnectionError naming the endpoint", () => {
+    const reset = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+    const converted = atSocketBoundary(reset, where);
+    expect(converted).toBeInstanceOf(ConnectionError);
+    expect((converted as Error).message).toContain("10.1.2.3:502");
+    expect((converted as Error).message).toContain("ECONNRESET");
+  });
+
+  test("a close before an answer becomes a ConnectionError too, because the scope is the same", () => {
+    const converted = atSocketBoundary(new ModbusDialError("closed before answering"), where);
+    expect(converted).toBeInstanceOf(ConnectionError);
+  });
+
+  test("a dial timeout becomes a ConnectionError", () => {
+    expect(atSocketBoundary(new ModbusDialTimeout("no answer"), where)).toBeInstanceOf(ConnectionError);
+  });
+
+  test("the egress guard's own refusal passes through BY IDENTITY, so the user reads its words", () => {
+    const planted = new DatabaseConfigError("Invalid host: blocked");
+    expect(atSocketBoundary(planted, where)).toBe(planted);
+  });
+
+  test("an unrelated error passes through BY IDENTITY, not merely as the same class", () => {
+    const planted = new TypeError("undefined is not a function");
+    expect(atSocketBoundary(planted, where)).toBe(planted);
+    expect(atSocketBoundary(planted, where)).not.toBeInstanceOf(ConnectionError);
+  });
+
+  test("a ConnectionError is not wrapped a second time", () => {
+    const planted = new ConnectionError("already", undefined, "h", 1);
+    expect(atSocketBoundary(planted, where)).toBe(planted);
+  });
+
+  test("the five cases do not all give the same answer, which is what makes this a rule", () => {
+    const reset = Object.assign(new Error("x"), { code: "ECONNRESET" });
+    const unrelated = new TypeError("y");
+    expect(atSocketBoundary(reset, where)).not.toBe(reset);
+    expect(atSocketBoundary(unrelated, where)).toBe(unrelated);
   });
 });

@@ -26,6 +26,7 @@
  */
 import { connect as netConnect, type LookupFunction, type Socket } from "node:net";
 import { connect as tlsConnect } from "node:tls";
+import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { socketEgress } from "@/lib/db/http/egress-policy";
 import { DIAL_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from "./constants";
 import { FrameReader, type InboundFrame } from "./framing";
@@ -51,6 +52,39 @@ export interface Endpoint {
 
 export class ModbusDialError extends Error {}
 export class ModbusDialTimeout extends Error {}
+
+/**
+ * The socket boundary. Every failure that leaves this module leaves through here.
+ *
+ * WHY `ConnectionError` AND NOT `QueryError`. The test is scope, not type. A socket that errors or
+ * closes has not failed one read, it has ended the connection: the next read on it cannot work
+ * either, so reporting it per read would leave each surface answering "unavailable" while the
+ * connection looked healthy. The Kubernetes provider's object layer states the same rule the other
+ * way round, that a closed or failing connection fails every kind alike and rises.
+ *
+ * WHY IT IS SELECTIVE. The shared egress guard's own refusal passes through UNCHANGED, by identity,
+ * so the user reads the guard's words rather than ours. A programming mistake passes through too,
+ * for the reason that dressing one as a device problem sends the reader to the device.
+ *
+ * WHY THIS EXISTS AT ALL: the first version of this module handed `socket.on("error")` straight to
+ * `reject`, so a device that reset the connection surfaced as a raw `ECONNRESET`. One of this
+ * module's own tests caught it, intermittently, which is the worst way to learn it: a race decided
+ * whether the suite was green.
+ */
+export function atSocketBoundary(error: unknown, endpoint: Endpoint): unknown {
+  if (error instanceof DatabaseConfigError) return error;
+  if (error instanceof ConnectionError) return error;
+  if (error instanceof ModbusDialTimeout || error instanceof ModbusDialError)
+    return new ConnectionError(error.message, undefined, endpoint.host, endpoint.port);
+  if (error instanceof Error && typeof (error as { code?: unknown }).code === "string")
+    return new ConnectionError(
+      `The connection to ${endpoint.host}:${endpoint.port} failed: ${error.message}`,
+      undefined,
+      endpoint.host,
+      endpoint.port,
+    );
+  return error;
+}
 
 /** The seam the tests use. A test that dialled would be a test of the network. */
 export type Dialer = (endpoint: Endpoint, options?: DialOptions) => Promise<ModbusSocket>;
@@ -112,7 +146,7 @@ export const dialModbus: Dialer = (endpoint, options = {}) =>
       if (settled) return;
       settled = true;
       socket.destroy();
-      reject(error);
+      reject(atSocketBoundary(error, endpoint));
     };
 
     // The dial carries its own timer for the reason section 5.1 of the specification measured:
@@ -140,8 +174,9 @@ export const dialModbus: Dialer = (endpoint, options = {}) =>
 export function exchangeOnce(
   socket: ModbusSocket,
   adu: Buffer,
-  options: { readonly timeoutMs?: number } = {},
+  options: { readonly timeoutMs?: number; readonly endpoint?: Endpoint } = {},
 ): Promise<InboundFrame> {
+  const where = options.endpoint ?? { host: "the device", port: 0 };
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   return new Promise<InboundFrame>((resolve, reject) => {
     const reader = new FrameReader();
@@ -153,7 +188,10 @@ export function exchangeOnce(
       fn();
     };
     const timer = setTimeout(
-      () => done(() => reject(new ModbusDialTimeout(`The device did not answer within ${timeoutMs} ms.`))),
+      () =>
+        done(() =>
+          reject(atSocketBoundary(new ModbusDialTimeout(`The device did not answer within ${timeoutMs} ms.`), where)),
+        ),
       timeoutMs,
     );
     socket.on("data", (chunk) => {
@@ -161,15 +199,17 @@ export function exchangeOnce(
       try {
         frames = reader.push(chunk);
       } catch (error) {
-        done(() => reject(error as Error));
+        done(() => reject(atSocketBoundary(error, where)));
         return;
       }
       const first = frames[0];
       if (first !== undefined) done(() => resolve(first));
     });
-    socket.on("error", (error) => done(() => reject(error)));
+    socket.on("error", (error) => done(() => reject(atSocketBoundary(error, where))));
     socket.on("close", () =>
-      done(() => reject(new ModbusDialError("The device closed the connection before answering."))),
+      done(() =>
+        reject(atSocketBoundary(new ModbusDialError("The device closed the connection before answering."), where)),
+      ),
     );
     socket.write(adu);
   });

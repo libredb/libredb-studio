@@ -14,11 +14,13 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
+  atBoundary,
   MODBUS_NO_REVOCATION_SENTENCE,
   MODBUS_READ_ONLY_HINT,
   ModbusProvider,
 } from "@/lib/db/providers/industrial/modbus/index";
-import { QueryError } from "@/lib/db/errors";
+import { ModbusMapError } from "@/lib/db/providers/industrial/modbus/register-map";
+import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 
 const connection = (extra: Record<string, unknown> = {}) =>
@@ -106,8 +108,94 @@ describe("the tree comes from the map, with no device traffic", () => {
 });
 
 describe("what the provider refuses rather than fakes", () => {
-  test("connect reports a malformed map rather than waiting for the first read", async () => {
-    await expect(provider({ registerMap: "{not json" }).connect()).rejects.toThrow(/not valid JSON/);
+  /**
+   * This test asserted the MESSAGE only, and that is how the defect hid. The three refusals this
+   * class throws itself were asserted by TYPE, and the one it merely lets through was asserted by
+   * text, so `connect` rejected with a `ModbusMapError` for as long as the suite stayed green. The
+   * message assertion stays, because the sentence matters too, but the type is what carries it.
+   */
+  test("connect reports a malformed map as a configuration fault, not a query failure", async () => {
+    const error = await provider({ registerMap: "{not json" })
+      .connect()
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error).not.toBeInstanceOf(QueryError);
+    expect((error as Error).message).toMatch(/not valid JSON/);
+  });
+
+  test.each([
+    ["listObjects", (p: ReturnType<typeof provider>) => p.listObjects([], "coil")],
+    ["countObjects", (p: ReturnType<typeof provider>) => p.countObjects([])],
+    ["listContainers", (p: ReturnType<typeof provider>) => p.listContainers()],
+    ["getHealth", (p: ReturnType<typeof provider>) => p.getHealth()],
+    ["getOverview", (p: ReturnType<typeof provider>) => p.getOverview()],
+  ])("%s converts a malformed map at the boundary too", async (_name, call) => {
+    const error = await call(provider({ registerMap: "{not json" })).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+  });
+
+  /**
+   * The measurement behind the choice of type. Every surface that reads anything reads the same
+   * document, so an unparseable map leaves no kind that still works: it is the connection that is
+   * wrong, not one read. Six of six is the evidence, and if a seventh surface is added it belongs
+   * in this list.
+   */
+  test("a malformed map fails every surface alike, which is why it rises as configuration", async () => {
+    const p = provider({ registerMap: "{not json" });
+    const outcomes = await Promise.all(
+      [
+        () => p.connect(),
+        () => p.listContainers(),
+        () => p.countObjects([]),
+        () => p.listObjects([], "coil"),
+        () => p.getHealth(),
+        () => p.getOverview(),
+      ].map((call) =>
+        call()
+          .then(() => "served" as const)
+          .catch(() => "refused" as const),
+      ),
+    );
+    expect(outcomes).toEqual(["refused", "refused", "refused", "refused", "refused", "refused"]);
+  });
+
+  /**
+   * The boundary has to be SELECTIVE, and this is the case that proves it. A programming mistake
+   * is not a query failure: dressed as one, it sends a developer to look at the device instead of
+   * at the code. So converting everything would be as wrong as converting nothing.
+   */
+  /**
+   * The first version of this test made a getter throw and asserted the error came back unchanged.
+   * A mutation proved it was a passenger: converting EVERYTHING at the boundary left it green,
+   * because the getter throws before the wrapped region is entered, so the error never reached the
+   * boundary at all. A test of a dead path measures nothing. The rule belongs to one function, so
+   * it is tested on that function.
+   */
+  test("an unrelated error passes through the boundary unchanged, by identity", () => {
+    const boom = new TypeError("undefined is not a function");
+    expect(atBoundary(boom)).toBe(boom);
+    expect(atBoundary(boom)).not.toBeInstanceOf(QueryError);
+  });
+
+  test("a map refusal becomes a DatabaseConfigError and keeps its sentence", () => {
+    const converted = atBoundary(new ModbusMapError("the map is not valid JSON"));
+    expect(converted).toBeInstanceOf(DatabaseConfigError);
+    expect(converted).not.toBeInstanceOf(QueryError);
+    expect((converted as Error).message).toBe("the map is not valid JSON");
+  });
+
+  test("a QueryError is returned as the same instance, not wrapped twice", () => {
+    const already = new QueryError("already converted");
+    expect(atBoundary(already)).toBe(already);
+  });
+
+  test("the three cases give three different answers, which is what makes the rule a rule", () => {
+    const unrelated = new TypeError("x");
+    const mapError = new ModbusMapError("y");
+    const already = new QueryError("z");
+    expect(atBoundary(unrelated)).toBe(unrelated);
+    expect(atBoundary(mapError)).not.toBe(mapError);
+    expect(atBoundary(already)).toBe(already);
   });
 
   test("connect on an absent map succeeds, because an empty map is a normal state", async () => {

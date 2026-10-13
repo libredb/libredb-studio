@@ -23,7 +23,7 @@
  * network.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 import type {
   ActiveSessionDetails,
@@ -54,7 +54,7 @@ import {
   NO_DISCOVERY_SENTENCE,
 } from "./objects";
 import type { Table } from "./pdu";
-import { parseRegisterMap } from "./register-map";
+import { ModbusMapError, parseRegisterMap } from "./register-map";
 
 /**
  * WHY EVERY REFUSAL HERE IS A `QueryError` AND NOT A PLAIN `Error`. Measured on `90881379`: the
@@ -68,6 +68,73 @@ import { parseRegisterMap } from "./register-map";
  * The provider argument is left out on purpose: it takes a `DatabaseType`, and `"modbus"` is not a
  * member of that union until the registration change lands. It is filled in there.
  */
+
+/**
+ * The boundary. Every refusal this provider raises leaves through here, and the conversion happens
+ * in ONE place rather than at six call sites.
+ *
+ * WHY IT EXISTS: writing the rule is not applying it. The comment above states that the product
+ * treats a plain `Error` differently from a `QueryError`, and the first version of this file applied
+ * that only to the three errors it threw itself. `parseRegisterMap` throws `ModbusMapError extends
+ * Error`, there was no try/catch anywhere in this file, and so a malformed register map escaped the
+ * CONNECT path unconverted: the first thing a user meets, with its sentence stripped of the type
+ * that carries it to them. Measured, not supposed.
+ *
+ * WHY A MAP REFUSAL BECOMES A `DatabaseConfigError` AND NOT A `QueryError`. The test is SCOPE, not
+ * type, and the rule is written in the comment this file cites: a failure that breaks ONE read is
+ * converted, and one that "fail[s] every kind alike" rises instead, because otherwise "every module
+ * reads unavailable while the connection looks perfectly healthy".
+ *
+ * Measured, six surfaces of six: `connect`, `listContainers`, `countObjects`, `listObjects`,
+ * `getHealth` and `getOverview` all read the same document, so an unparseable map leaves no kind
+ * that still works. It is not a failed read, it is a connection whose configuration is wrong, and
+ * `src/lib/api/errors.ts` gives that its own class: 400 with CONFIG_ERROR and a "Database config
+ * error" log line, against 400 QUERY_ERROR for a query and 500 INTERNAL_ERROR with "Unhandled
+ * error" for a plain `Error`. The first version of this boundary chose `QueryError`, which fixed
+ * the 500 and still dressed a configuration fault as a query failure.
+ *
+ * THE SAME QUESTION, ANSWERED FOR THE SEVEN CLASSES NOT YET ON A USER PATH. Measured: of this
+ * provider's eight refusal classes, only `ModbusMapError` reaches a provider method today, because
+ * `index.ts` imports `register-map` for its code and `pdu` for a type alone. The others become
+ * reachable when the read console is wired, and the scope test answers each in advance:
+ *
+ *   `ModbusDecodeError`   one read: a word that will not decode. Converted, `QueryError`.
+ *   `ModbusRequestError`  one read: a request refused before a byte is sent. Converted, `QueryError`.
+ *   `ModbusFramingError`  one read: a frame that cannot be attributed. Converted, and MB-S4 closes
+ *                         the connection as well, which is a separate obligation from the type.
+ *   `ModbusTimeout`       one read: the device did not answer. `TimeoutError`, which the Kubernetes
+ *                         comment lists beside `QueryError` for exactly this reason.
+ *   `ModbusDialError`     the whole connection: no socket was made. Rises, `ConnectionError`.
+ *   `ModbusDialTimeout`   the whole connection: same. Rises.
+ *   `ModbusValveDefect`   neither: it is a defect, not a condition. Rises unconverted, because a
+ *                         frame our own encoder should be unable to build reaching the valve is a
+ *                         bug, and dressing it as a device problem sends the reader to the device.
+ *
+ * Each becomes a line in this function when its path exists, not before: a conversion for an
+ * unreachable class is a branch no test can enter.
+ *
+ * WHY IT IS SELECTIVE, which matters as much as the conversion. A `TypeError` from a programming
+ * mistake passes through unchanged. Dressing one as a query failure would send a developer to look
+ * at the device instead of at the code, so everything-converted is as wrong as nothing-converted.
+ */
+export function atBoundary(error: unknown): unknown {
+  if (error instanceof QueryError) return error;
+  if (error instanceof ModbusMapError) return new DatabaseConfigError(error.message);
+  return error;
+}
+
+/**
+ * Parses the connection's map and converts its refusal. Six surfaces read the map and all six go
+ * through here, because a conversion that has to be remembered at each call site is one that will
+ * be forgotten at the seventh.
+ */
+function readMap(config: unknown): ReturnType<typeof parseRegisterMap> {
+  try {
+    return parseRegisterMap(mapOf(config));
+  } catch (error) {
+    throw atBoundary(error);
+  }
+}
 
 /** Read from the connection. A field, so the map travels with the connection it belongs to. */
 function mapOf(config: unknown): string | undefined {
@@ -142,7 +209,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
    * wrote that document, and the moment they connect is when they can still fix it.
    */
   public async connect(): Promise<void> {
-    parseRegisterMap(mapOf(this.config));
+    readMap(this.config);
   }
 
   public async disconnect(): Promise<void> {
@@ -154,8 +221,25 @@ export class ModbusProvider extends BaseDatabaseProvider {
   // ==========================================================================
 
   /** The units the map names. Never a scan: an absent unit behind a gateway cost 2137 ms. */
+  /** Every map read inside this class funnels through the boundary helper, listings included. */
+  private listing(kind: Table): ReturnType<typeof listFromMap> {
+    try {
+      return listFromMap(mapOf(this.config), kind);
+    } catch (error) {
+      throw atBoundary(error);
+    }
+  }
+
+  private units(): readonly number[] {
+    try {
+      return listUnits(mapOf(this.config));
+    } catch (error) {
+      throw atBoundary(error);
+    }
+  }
+
   public async listContainers(): Promise<Container[]> {
-    return listUnits(mapOf(this.config)).map((unit) => ({
+    return this.units().map((unit) => ({
       path: [String(unit)],
       name: String(unit),
       level: 0,
@@ -172,8 +256,12 @@ export class ModbusProvider extends BaseDatabaseProvider {
    * the count is the number of points of that kind in the map, and 0 is then an answer.
    */
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
-    const document = mapOf(this.config);
-    const counts = countFromMap(document);
+    let counts: ReturnType<typeof countFromMap>;
+    try {
+      counts = countFromMap(mapOf(this.config));
+    } catch (error) {
+      throw atBoundary(error);
+    }
     const unit = container[0];
     const out: Record<string, KindCount> = {};
     for (const kind of MODBUS_OBJECT_KINDS) {
@@ -182,9 +270,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
         out[kind.id] = { unavailable: answer.unavailable };
         continue;
       }
-      const mine = listFromMap(document, kind.id).objects.filter(
-        (point) => unit === undefined || String(point.unitId) === unit,
-      );
+      const mine = this.listing(kind.id).objects.filter((point) => unit === undefined || String(point.unitId) === unit);
       out[kind.id] = { count: mine.length };
     }
     return out;
@@ -192,7 +278,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
 
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     const unit = container[0];
-    const listing = listFromMap(mapOf(this.config), kind as Table);
+    const listing = this.listing(kind as Table);
     return listing.objects
       .filter((point) => unit === undefined || String(point.unitId) === unit)
       .map((point) => ({
@@ -204,7 +290,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
 
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
     const name = path[path.length - 1];
-    const listing = listFromMap(mapOf(this.config), kind as Table);
+    const listing = this.listing(kind as Table);
     const point = listing.objects.find((candidate) => candidate.name === name);
     if (point === undefined)
       throw new QueryError(`The register map names no point "${name}". ${NO_DISCOVERY_SENTENCE}`);
@@ -242,7 +328,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
    * while no answer was coming. Health is an answer, or the absence of one.
    */
   public async getHealth(): Promise<HealthInfo> {
-    const parsed = parseRegisterMap(mapOf(this.config));
+    const parsed = readMap(this.config);
     return {
       databaseSize: parsed.isEmpty
         ? "unknown"
@@ -261,7 +347,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
   // ==========================================================================
 
   public async getOverview(): Promise<DatabaseOverview> {
-    const parsed = parseRegisterMap(mapOf(this.config));
+    const parsed = readMap(this.config);
     return {
       version: "Modbus TCP",
       // A device publishes no uptime a reader can ask for.
