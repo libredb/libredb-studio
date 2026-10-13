@@ -15,7 +15,11 @@ import { describe, expect, test } from "bun:test";
 import { resolveTabType } from "@/lib/editor/tab-language";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect";
-import { MTCONNECT_DEFAULT_PORT, MTCONNECT_OBJECT_KINDS } from "@/lib/db/providers/industrial/mtconnect/capabilities";
+import {
+  MTCONNECT_ABSENT_SURFACES,
+  MTCONNECT_DEFAULT_PORT,
+  MTCONNECT_OBJECT_KINDS,
+} from "@/lib/db/providers/industrial/mtconnect/capabilities";
 
 /** The declaration, read without a connection: `getCapabilities` reads none. */
 const capabilities = MTConnectProvider.prototype.getCapabilities.call({}) as ProviderCapabilities;
@@ -136,6 +140,29 @@ describe("the declaration is a closed set", () => {
     expect(capabilities.singleWriterFile).toBeUndefined(); // there is no file
     expect(capabilities.supportsColumnProfiling).toBeUndefined();
     expect(capabilities.supportsQueryCancel).toBeUndefined();
+  });
+
+  /**
+   * The absence LIST the provider publishes, held against the declaration itself.
+   *
+   * `MTCONNECT_ABSENT_SURFACES` names eleven surfaces this provider answers nothing for, and it was
+   * read by no code and no test at all: `knip` reported it as an unused export, which is the same
+   * family as the version constant that claimed a rule nothing applied. A list of absences nobody
+   * checks is prose. Three of its entries have a capability key of their own and are checked above;
+   * the rest are answered by a method, so the list is held here as a list: it says eleven things,
+   * every one of them is a name this file or `index.ts` accounts for, and it carries no duplicate.
+   */
+  test("the published list of absent surfaces is the list, and nothing has quietly joined it", () => {
+    expect(MTCONNECT_ABSENT_SURFACES).toHaveLength(11);
+    expect(new Set(MTCONNECT_ABSENT_SURFACES).size).toBe(11);
+    // The three that ARE capability keys resolve to an absent key, so the list and the declaration
+    // cannot drift apart on those: a surface named here while declared there would fail.
+    expect(capabilities.explainFormat).toBeUndefined();
+    expect(MTCONNECT_ABSENT_SURFACES).toContain("explain");
+    expect(capabilities.supportsResultPagination).toBe(false);
+    expect(MTCONNECT_ABSENT_SURFACES).toContain("resultPagination");
+    expect(capabilities.supportsConnectionString).toBe(false);
+    expect(MTCONNECT_ABSENT_SURFACES).toContain("connectionString");
   });
 
   test("the set is not all one value, so a declaration of constants would fail here", () => {

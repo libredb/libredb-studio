@@ -46,10 +46,12 @@ import type {
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
 import {
+  MTCONNECT_CONTAINER_LEVEL,
   MTCONNECT_DEFAULT_PORT,
   MTCONNECT_HEALTH_REQUEST,
   MTCONNECT_HEALTH_UNKNOWN,
   MTCONNECT_OBJECT_KINDS,
+  MTCONNECT_QUERY_DIALECT,
 } from "./capabilities";
 import {
   headerOf,
@@ -163,7 +165,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
       // the agent's own URL grammar with GET implied. The union member landed with this provider's
       // registration; it was absent in an earlier draft and the field was left out rather than cast,
       // which is how the third shared line this provider needed was found.
-      queryDialect: "mtconnect",
+      queryDialect: MTCONNECT_QUERY_DIALECT,
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
       supportsCreateTable: false,
@@ -186,7 +188,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
       // One container level, the device. The shape is the repository's, not a guess: `id` is
       // "catalog" or "schema" and the plural field is `labelPlural`, as RabbitMQ's virtual host
       // level declares it. An earlier draft wrote `plural` and hid the mismatch behind a cast.
-      containerLevels: [{ id: "schema", label: "Device", labelPlural: "Devices" }],
+      containerLevels: [{ id: "schema", label: MTCONNECT_CONTAINER_LEVEL.label, labelPlural: "Devices" }],
       containerPathShapes: "exact",
       objectKinds: MTCONNECT_OBJECT_KINDS,
     };
