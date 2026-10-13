@@ -117,17 +117,30 @@ function check(run: RuntimeRun): void {
   expect(run.outcomes.map((outcome) => outcome.name)).toEqual(HOSTILE_PEERS.map((peer) => peer.name));
   for (const [index, outcome] of run.outcomes.entries()) {
     const peer = HOSTILE_PEERS[index];
-    expect({ runtime: run.runtime, name: outcome.name, allowed: peer?.expect.includes(outcome.label) }).toEqual({
+    // label and ms ride the asserted objects so a failure on a CI runner names the stop that happened and how long
+    // the read took, rather than only the boolean that fell.
+    expect({
       runtime: run.runtime,
       name: outcome.name,
+      label: outcome.label,
+      allowed: peer?.expect.includes(outcome.label),
+    }).toEqual({
+      runtime: run.runtime,
+      name: outcome.name,
+      label: outcome.label,
       allowed: true,
     });
     const ms = Math.round(outcome.ms);
-    expect({ name: outcome.name, ms, withinDeadline: ms <= DEADLINE_MS + MARGIN_MS }).toMatchObject({
+    expect({ name: outcome.name, label: outcome.label, ms, withinDeadline: ms <= DEADLINE_MS + MARGIN_MS }).toMatchObject({
       name: outcome.name,
+      label: outcome.label,
       withinDeadline: true,
     });
-    expect({ name: outcome.name, openAfter: outcome.openAfter }).toEqual({ name: outcome.name, openAfter: 0 });
+    expect({ name: outcome.name, label: outcome.label, openAfter: outcome.openAfter }).toEqual({
+      name: outcome.name,
+      label: outcome.label,
+      openAfter: 0,
+    });
   }
 }
 
