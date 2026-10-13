@@ -959,7 +959,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   (`src/lib/agent/runtime.ts`) — the rail says so in as many words
   (`src/components/agent/timeline.ts`). So on the other thirty-two ids in the `DatabaseType` union
   (`src/lib/types.ts`), an Agent-mode run cannot read anything: Oracle, Db2 LUW, libSQL, MongoDB, Redis,
-  ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Cassandra, Couchbase, Firestore, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage and LibreDB. That
+  ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Cassandra, Couchbase, Firestore, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes and LibreDB. That
   last id is the bundled **LibreDB sample** connection, whose provider implements no `queryReadOnly`
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
   connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode still opens on
