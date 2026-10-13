@@ -37,6 +37,11 @@ const BIT_TABLES: ReadonlySet<string> = new Set(["coil", "discrete_input"]);
 /**
  * A device's own refusal, in its own words where the protocol gives them.
  *
+ * The fallback says what THIS PROVIDER lacks rather than what the protocol lacks. It used to read
+ * "which Modbus does not define", which is a claim about the standard that could not be checked
+ * here - the specification PDF in hand is compressed and its text could not be read - and if the
+ * code is in fact defined, that sentence blames the device for our own missing row.
+ *
  * `QueryError` rather than a bare throw: the device answered, the answer is a refusal of THIS
  * read, and the next read may well succeed. An exception code the protocol does not define is
  * reported as the number it is rather than guessed at.
@@ -44,7 +49,8 @@ const BIT_TABLES: ReadonlySet<string> = new Set(["coil", "discrete_input"]);
 function refusal(code: number): QueryError {
   const sentence = EXCEPTION_SENTENCES[code];
   return new QueryError(
-    sentence ?? `The device refused the read with exception code ${code}, which Modbus does not define.`,
+    sentence ??
+      `The device refused the read with exception code ${code}, and this provider has no sentence for that code.`,
   );
 }
 

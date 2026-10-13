@@ -302,7 +302,7 @@ describe("what the provider refuses rather than fakes", () => {
   });
 
   test("maintenance is refused with the reason", async () => {
-    await expect(provider().runMaintenance()).rejects.toThrow(/no request this provider is allowed/);
+    await expect(provider().runMaintenance()).rejects.toThrow(/sends no maintenance request/);
   });
 
   test("the monitoring surfaces answer empty rather than inventing figures", async () => {

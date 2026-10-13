@@ -74,7 +74,7 @@ export function parseIdentificationResponse(body: Buffer): IdentificationRespons
     const length = body[at + 1] as number;
     if (length > MAX_IDENTIFICATION_OBJECT_BYTES)
       throw new ModbusIdentificationError(
-        `Object 0x${id.toString(16)} declares ${length} bytes, past the ${MAX_IDENTIFICATION_OBJECT_BYTES} a Modbus frame can carry.`,
+        `Object 0x${id.toString(16)} declares ${length} bytes, and only ${MAX_IDENTIFICATION_OBJECT_BYTES} are left for one object once this answer's own header is counted against what a Modbus frame carries.`,
       );
     if (at + 2 + length > body.length)
       throw new ModbusIdentificationError(

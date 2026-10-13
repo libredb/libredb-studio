@@ -116,7 +116,7 @@ describe("what the device declares is checked against what arrived", () => {
   test("a declared length past what any frame can carry is refused with the bound", () => {
     const run = () =>
       parseIdentificationResponse(body({ objects: [{ id: 0x7f, bytes: Buffer.alloc(0), declareLength: 255 }] }));
-    expect(run).toThrow(/past the 244/);
+    expect(run).toThrow(/only 244 are left for one object/);
   });
 
   test("the bound is derived from the frame's own limit, not written down beside it", () => {

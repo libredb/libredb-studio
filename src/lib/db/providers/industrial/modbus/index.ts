@@ -497,7 +497,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
 
   public async runMaintenance(): Promise<MaintenanceResult> {
     throw new QueryError(
-      "Modbus offers no maintenance operation: no request this provider is allowed to send changes anything on a device.",
+      "This provider sends no maintenance request: the five requests it can build are four reads and the device identification read, and none of them changes anything. The protocol itself is not so narrow - function code 08 can clear a device's counters and restart its communications - and there is no code here that builds those.",
     );
   }
 }
