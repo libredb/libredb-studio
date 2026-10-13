@@ -24,6 +24,7 @@
  * network.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
+import { QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 import type {
   ActiveSessionDetails,
@@ -55,6 +56,19 @@ import {
 } from "./objects";
 import type { Table } from "./pdu";
 import { parseRegisterMap } from "./register-map";
+
+/**
+ * WHY EVERY REFUSAL HERE IS A `QueryError` AND NOT A PLAIN `Error`. Measured on `90881379`: the
+ * product treats the two differently, and a plain `Error` is the worse answer. `isQueryError`
+ * (`src/lib/db/errors.ts:245`) tests `instanceof QueryError`, and a reader such as
+ * `src/lib/db/providers/platform/kubernetes/objects.ts:348` turns a `QueryError` into
+ * `{ unavailable }` while letting anything else propagate as an unexpected failure. So a refusal
+ * thrown as a plain `Error` reaches the user as a crash rather than as the sentence it carries.
+ * This was a real defect in the first version of this file and it is fixed here.
+ *
+ * The provider argument is left out on purpose: it takes a `DatabaseType`, and `"modbus"` is not a
+ * member of that union until the registration change lands. It is filled in there.
+ */
 
 /** Read from the connection. A field, so the map travels with the connection it belongs to. */
 function mapOf(config: unknown): string | undefined {
@@ -193,7 +207,8 @@ export class ModbusProvider extends BaseDatabaseProvider {
     const name = path[path.length - 1];
     const listing = listFromMap(mapOf(this.config), kind as Table);
     const point = listing.objects.find((candidate) => candidate.name === name);
-    if (point === undefined) throw new Error(`The register map names no point "${name}". ${NO_DISCOVERY_SENTENCE}`);
+    if (point === undefined)
+      throw new QueryError(`The register map names no point "${name}". ${NO_DISCOVERY_SENTENCE}`);
     return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
   }
 
@@ -214,7 +229,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
    * that turns one JSON document into those calls. It refuses rather than pretending to read.
    */
   public async query(_statement: string, _params?: unknown[]): Promise<QueryResult> {
-    throw new Error(
+    throw new QueryError(
       "The Modbus read console is not wired up yet. The client, the register map, the block planner and the frame reader are in place; the request parser that turns one JSON document into those calls is the next change.",
     );
   }
@@ -288,7 +303,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
   }
 
   public async runMaintenance(): Promise<MaintenanceResult> {
-    throw new Error(
+    throw new QueryError(
       "Modbus offers no maintenance operation: no request this provider is allowed to send changes anything on a device.",
     );
   }

@@ -14,6 +14,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { ModbusProvider } from "@/lib/db/providers/industrial/modbus/index";
+import { QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 
 const connection = (extra: Record<string, unknown> = {}) =>
@@ -131,5 +132,35 @@ describe("what the provider refuses rather than fakes", () => {
     const health = await provider({ registerMap: MAP }).getHealth();
     expect(Object.hasOwn(health, "activeConnections")).toBe(false);
     expect(health.cacheHitRatio).toBe("unknown");
+  });
+});
+
+describe("a refusal is a QueryError, because the product treats it differently", () => {
+  /**
+   * Measured rather than assumed: `isQueryError` tests `instanceof QueryError`, and at least one
+   * reader (`platform/kubernetes/objects.ts:348`) turns a `QueryError` into `{ unavailable }` while
+   * letting anything else propagate as an unexpected failure. A refusal thrown as a plain `Error`
+   * therefore reaches the user as a crash instead of as the sentence it carries. The first version
+   * of the provider threw plain errors; these tests exist so that cannot come back.
+   */
+  test("the read console's refusal is a QueryError", async () => {
+    const error = await provider({ registerMap: MAP })
+      .query("{}")
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(QueryError);
+  });
+
+  test("the maintenance refusal is a QueryError", async () => {
+    const error = await provider()
+      .runMaintenance()
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(QueryError);
+  });
+
+  test("an unknown point is a QueryError", async () => {
+    const error = await provider({ registerMap: MAP })
+      .describeObject(["1", "nope"], "holding_register")
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(QueryError);
   });
 });
