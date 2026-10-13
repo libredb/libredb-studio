@@ -2025,6 +2025,7 @@ describe("useConnectionForm", () => {
     snowflake: true,
     spark: true,
     opcua: true,
+    mtconnect: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

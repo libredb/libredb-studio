@@ -223,6 +223,10 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
   rabbitmq: ["stream/json", "queue/json", "exchange/json"],
   // The one kind: a node's value and attributes open in its Source tab, rendered as JSON (#1677).
   opcua: ["node/json"],
+  // The one kind: an asset IS a document, and the document is the XML the agent answered, so the
+  // Source tab renders it in `xml` rather than re-encoding it as JSON. A data item and a condition
+  // carry no document, so neither declares a source (#1722).
+  mtconnect: ["asset/xml"],
   libredb: [],
 });
 
@@ -317,7 +321,7 @@ describe("the fleet census of object source declarations", () => {
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // EXTERNAL_DATABASE_TYPES.length (36 with db2, neo4j, milvus, qdrant, influxdb, influxdb3, oxia, databend,
-    // bigquery, snowflake, spark, s3, kubernetes, mqtt, firestore, rabbitmq and opcua) plus the embedded store.
+    // bigquery, snowflake, s3, kubernetes, mqtt, firestore, rabbitmq, opcua and mtconnect) plus the embedded store.
     expect(CENSUS_TYPES).toHaveLength(37);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
@@ -373,7 +377,7 @@ describe("the fleet census of object source declarations", () => {
     expect(mariadbRows.filter((row) => row.kind.hasSource === true)).toHaveLength(8);
     // 126 on a MariaDB connection against 124 unconnected: the design states both numbers because
     // criterion 2's evidence method reads an unconnected provider and would otherwise
-    // structurally exclude the two riskiest declarations in the phase.
+    // structurally exclude the two riskiest declarations in the phase. 142 since MTConnect's `asset`
     expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(143);
   });
 

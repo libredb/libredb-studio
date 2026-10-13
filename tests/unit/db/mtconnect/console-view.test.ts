@@ -12,8 +12,14 @@
  * pinned are asserted here against the shared parser itself rather than against a copy.
  */
 import { describe, expect, test } from "bun:test";
+import type { QueryKeySpec, RouteSpec } from "@/lib/db/console/dialect";
 import { ConsoleRefusal, parseConsole } from "@/lib/db/console/parser";
-import { MTC_CONSOLE_DIALECT, MTC_CONSOLE_ROUTES, MTC_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
+import {
+  MTC_CONSOLE_DIALECT,
+  MTC_CONSOLE_ROUTES,
+  MTC_ROUTES,
+  type MtcOp,
+} from "@/lib/db/providers/industrial/mtconnect/routes";
 
 /** The rule a parse breaks, or "accepted". The rule is on `reason`, not on `code` (parser.ts). */
 function parsed(text: string): string {
@@ -61,6 +67,67 @@ describe("the derived table is the guard's table", () => {
       "path",
       "to",
     ]);
+  });
+});
+
+/**
+ * Why the shared console needed a change at all, shown against THIS dialect (K-102).
+ *
+ * The three kinds the console had could not carry any of MTConnect's three awkward values, and this
+ * says so with the real dialect rather than with a stand-in: a route is fabricated here because no
+ * MTConnect route declares those kinds, which is the point, but the grammar, the bounds and the
+ * comment markers doing the refusing are the provider's own.
+ *
+ * REPLACES `console-delta.test.ts`, which was written before the member landed and mirrored the arm
+ * in its own helper. A test file that addresses a stand-in keeps passing while the real thing drifts,
+ * and that suite also carried a wrong expectation because of it: it pinned a value past the byte
+ * bound as a `query-value` refusal, which the measurement below shows it is not.
+ */
+describe("the three older kinds cannot carry what this dialect sends", () => {
+  const routeWith = (key: string, spec: QueryKeySpec): readonly RouteSpec<MtcOp>[] => [
+    Object.freeze({
+      method: "GET",
+      template: "thing",
+      op: "probe" as MtcOp,
+      class: "read" as const,
+      params: Object.freeze({}),
+      query: Object.freeze({ [key]: spec }),
+      body: "none" as const,
+    }),
+  ];
+  const against = (routes: readonly RouteSpec<MtcOp>[], text: string): string => {
+    try {
+      parseConsole(MTC_CONSOLE_DIALECT, routes, text);
+      return "accepted";
+    } catch (error) {
+      if (error instanceof ConsoleRefusal) return error.reason;
+      throw error;
+    }
+  };
+  const OLDER: readonly QueryKeySpec[] = [
+    { kind: "positive-int" },
+    { kind: "positive-int-or-words", words: ["majority"] },
+    { kind: "word-list", words: ["queued"] },
+  ];
+
+  test("an XPath: refused by all three, accepted by text", () => {
+    const path = encodeURIComponent('//DataItem[@category="CONDITION"]');
+    for (const spec of OLDER) expect(against(routeWith("path", spec), `GET /thing?path=${path}`)).toBe("query-value");
+    expect(against(routeWith("path", { kind: "text" }), `GET /thing?path=${path}`)).toBe("accepted");
+  });
+
+  test("a negative count, which the agent answers with the newest N: the same split", () => {
+    for (const spec of OLDER.slice(0, 2))
+      expect(against(routeWith("count", spec), "GET /thing?count=-3")).toBe("query-value");
+    expect(against(routeWith("count", { kind: "text" }), "GET /thing?count=-3")).toBe("accepted");
+  });
+
+  test("a 64 bit sequence number, which stops at the safe integer in the numeric kinds", () => {
+    const big = "18446744073709551615";
+    expect(against(routeWith("from", { kind: "positive-int" }), `GET /thing?from=${big}`)).toBe("query-value");
+    // The ceiling itself, so the refusal above is about the size and not about the digits.
+    expect(against(routeWith("from", { kind: "positive-int" }), "GET /thing?from=9007199254740991")).toBe("accepted");
+    expect(against(routeWith("from", { kind: "text" }), `GET /thing?from=${big}`)).toBe("accepted");
   });
 });
 

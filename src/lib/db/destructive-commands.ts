@@ -538,6 +538,11 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
   // exists because the record is exhaustive over every engine whose text is not SQL, and its operations list is
   // empty by construction: the client seam names eight read services and none of them writes.
   opcua: { operations: new Set<string>(), read: () => [], decidesAlone: true, safetyAnalysis: false },
+
+  // MTConnect (#1722): the console reads one request line from a closed table of nine routes, every one a GET, so
+  // there is no destructive verb to find. The row names no operation ON PURPOSE, in the shape Prometheus and Kafka
+  // use: naming one would claim this provider can send it.
+  mtconnect: { operations: new Set<string>(), read: () => [], decidesAlone: true, safetyAnalysis: false },
   kubernetes: {
     operations: KUBERNETES_DESTRUCTIVE_OPERATIONS,
     read: readKubernetesOperations,

@@ -12,6 +12,7 @@
  * argument and reads no connection field.
  */
 import { describe, expect, test } from "bun:test";
+import { resolveTabType } from "@/lib/editor/tab-language";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect";
 import { MTCONNECT_DEFAULT_PORT, MTCONNECT_OBJECT_KINDS } from "@/lib/db/providers/industrial/mtconnect/capabilities";
@@ -41,6 +42,21 @@ describe("every flag by name", () => {
     // rests on the client's shape instead.
     expect(capabilities.enforcesReadOnly).toBe(true);
     expect(capabilities.maintenanceOperations).toEqual([]);
+  });
+
+  /**
+   * The cost of registering late, closed (K-184).
+   *
+   * A provider whose `queryDialect` is absent falls through the tab-type ladder to the JSON rung,
+   * so until the union member landed this provider's console would have been typed `mongodb` and
+   * read as a MongoDB aggregation: `resolveTabType` reads the dialect FIRST and `queryLanguage`
+   * only after. That is measured here in both directions rather than described, so the day someone
+   * drops the dialect to make a registry conflict go away, this fails and names what it costs.
+   */
+  test("the tab type is this provider's own, and without the dialect it would be MongoDB's", () => {
+    expect(resolveTabType(capabilities)).toBe("mtconnect");
+    const withoutDialect = { ...capabilities, queryDialect: undefined } as ProviderCapabilities;
+    expect(resolveTabType(withoutDialect)).toBe("mongodb");
   });
 
   test("the dialect is declared, and the language beside it is the slot it has to sit in", () => {

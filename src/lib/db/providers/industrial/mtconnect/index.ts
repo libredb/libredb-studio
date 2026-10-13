@@ -35,6 +35,7 @@ import type {
   IndexStats,
   MaintenanceResult,
   ObjectDetail,
+  ObjectSourceDocument,
   ObjectDetailBatch,
   PerformanceMetrics,
   ProviderCapabilities,
@@ -43,11 +44,25 @@ import type {
   TableStats,
 } from "@/lib/db/types";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
+import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
 import { MTCONNECT_DEFAULT_PORT, MTCONNECT_OBJECT_KINDS } from "./capabilities";
-import { headerOf, readObservations, readOnce, type MtcClientOptions } from "./client";
-import { guardRequestLine, MtcRefusal, type MtcWindow } from "./guard";
+import {
+  headerOf,
+  MtcClientError,
+  readObservations,
+  readOnce,
+  type MtcAnswer,
+  type MtcClientOptions,
+} from "./client";
+import {
+  guardRequestLine,
+  MtcRefusal,
+  type MtcGuardOptions,
+  type MtcRequest,
+  type MtcWindow,
+} from "./guard";
 import { indexMtconnectModel, modelIsCurrent, type MtcModel } from "./model";
-import type { MtcElement } from "./xml";
+import type { MtcElement, MtcObservation } from "./xml";
 import type { MtcOp } from "./routes";
 import { buildRow, rowsFromAssets, rowsFromModel, sortRows, type MtcRow } from "./rows";
 
@@ -61,6 +76,13 @@ interface MtcSession {
 }
 
 const NOT_CONNECTED = "Provider is not connected. Call connect() first.";
+
+/** How a refusal spells the container path: by the level's label, which reads "[Device]". */
+const MTC_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "mtconnect",
+  label: "An MTConnect",
+  shapeNames: "label",
+};
 const ROW_CAP = 10_000;
 
 /**
@@ -188,6 +210,63 @@ export class MTConnectProvider extends BaseDatabaseProvider {
   }
 
   /**
+   * EVERY REFUSAL LEAVES THIS PROVIDER AS A `QueryError`, and that is a correctness rule rather than
+   * a style one (#1722).
+   *
+   * MEASURED on `origin/main`: `providers/platform/kubernetes/objects.ts:348` turns a `QueryError` or
+   * a `TimeoutError` into `{ unavailable: error.message }` and RE-THROWS anything else, and
+   * `errors.ts:244` defines `isQueryError` as `instanceof QueryError`. So a refusal thrown as a plain
+   * `Error` is handled as an unexpected failure and THE SENTENCE IT CARRIES NEVER REACHES THE READER.
+   *
+   * This provider had that defect in its first version, and it is recorded rather than quietly fixed:
+   * `MtcClientError` (`client.ts`) and `MtcRefusal` (`guard.ts`) both derive from `Error`, and only the
+   * `query()` path converted one of them. Every byte cap, every 8 KiB request ceiling, every "this
+   * answer is not an MTConnect document" and every guard refusal reached the caller as a plain `Error`
+   * from `connect()`, from the tree's own reads and from an asset's Source tab.
+   *
+   * The two classes are NOT re-parented onto `QueryError`, and that is measured too: the shared base
+   * ends its constructor with `Object.setPrototypeOf(this, DatabaseError.prototype)`, so a subclass of
+   * it answers `false` to `instanceof` its own name unless each constructor puts the prototype back.
+   * A conversion at the boundary keeps the two classes exactly as the unit tests address them, and the
+   * type that leaves is the one the product reads.
+   */
+  private asQueryError(error: unknown): unknown {
+    if (error instanceof MtcRefusal || error instanceof MtcClientError) return new QueryError(error.message);
+    return error;
+  }
+
+  /** One read, with every refusal converted on the way out. */
+  private async read(session: MtcSession, request: MtcRequest): Promise<MtcAnswer> {
+    try {
+      return await readOnce(this.clientOptions(session), request);
+    } catch (error) {
+      throw this.asQueryError(error);
+    }
+  }
+
+  /** One streaming read, with every refusal converted on the way out. */
+  private async streamed(
+    session: MtcSession,
+    request: MtcRequest,
+    onObservation: (observation: MtcObservation) => void,
+  ): Promise<void> {
+    try {
+      await readObservations(this.clientOptions(session), request, ROW_CAP, onObservation);
+    } catch (error) {
+      throw this.asQueryError(error);
+    }
+  }
+
+  /** One request line, read and refused in the product's own error type. */
+  private guard(line: string, options: MtcGuardOptions): MtcRequest {
+    try {
+      return guardRequestLine(line, options);
+    } catch (error) {
+      throw this.asQueryError(error);
+    }
+  }
+
+  /**
    * The Header of a read with no `from` and no `to`.
    *
    * MEASURED on the pinned agent: with `to` given, the Header's `firstSequence` is the request's own
@@ -195,10 +274,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
    */
   private async readWindow(): Promise<MtcWindow> {
     const session = this.require();
-    const answer = await readOnce(
-      this.clientOptions(session),
-      guardRequestLine("/sample?count=1", { rowCap: ROW_CAP }),
-    );
+    const answer = await this.read(session, this.guard("/sample?count=1", { rowCap: ROW_CAP }));
     const header = headerOf(answer.root);
     const window: MtcWindow = {
       instanceId: header.instanceId ?? "",
@@ -224,7 +300,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     if (session.model !== undefined && modelIsCurrent(session.model, { instanceId: window.instanceId })) {
       return session.model;
     }
-    const answer = await readOnce(this.clientOptions(session), guardRequestLine("/probe", { rowCap: ROW_CAP }));
+    const answer = await this.read(session, this.guard("/probe", { rowCap: ROW_CAP }));
     const model = indexMtconnectModel(answer.root);
     if (model === undefined) {
       throw new QueryError("This address answered a document that is not an MTConnect device model.");
@@ -247,27 +323,22 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     const session = this.require();
     const model = await this.model();
     const started = Date.now();
-    let request;
-    try {
-      request = guardRequestLine(sql, {
-        window: session.window,
-        rowCap: ROW_CAP,
-        knownDevices: new Set(model.devices.flatMap((device) => [device.name, device.uuid])),
-      });
-    } catch (error) {
-      // A refusal from phase 0 is the provider's own sentence, named by its rule.
-      if (error instanceof MtcRefusal) throw new QueryError(error.message);
-      throw error;
-    }
+    // A refusal from phase 0 is the provider's own sentence, named by its rule, and it leaves as a
+    // `QueryError` like every other refusal here.
+    const request = this.guard(sql, {
+      window: session.window,
+      rowCap: ROW_CAP,
+      knownDevices: new Set(model.devices.flatMap((device) => [device.name, device.uuid])),
+    });
 
     const rows: MtcRow[] = [];
     if (request.op === "sample" || request.op === "current") {
-      await readObservations(this.clientOptions(session), request, ROW_CAP, (observation) => {
+      await this.streamed(session, request, (observation) => {
         const row = buildRow(observation, model);
         if (row !== undefined) rows.push(row);
       });
     } else {
-      const answer = await readOnce(this.clientOptions(session), request);
+      const answer = await this.read(session, request);
       if (answer.isError) throw new QueryError(this.sentenceFor(answer.root));
       // probe, assets and asset are read as a tree: none of them is a stream of observations.
       const rows = this.rowsOfDocument(answer.root, request.op, model, request.params.device);
@@ -360,9 +431,23 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     }));
   }
 
+  /**
+   * The device a container path names, refused by the SHARED check rather than by a length test here.
+   *
+   * FOUND BY A GATE: `tests/unit/db/container-path-shapes-capability.test.ts` holds that the engines
+   * declaring `containerPathShapes` are exactly the engines whose providers call
+   * `assertContainerPathShape`, and this provider declared `"exact"` while calling nothing. A
+   * declaration with no check behind it means a path of the wrong length reaches the model lookup and
+   * comes back as "no such device", which names the wrong mistake (#1147).
+   */
+  private deviceOf(container: readonly string[]): string {
+    assertContainerPathShape(this.getCapabilities(), container, MTC_CONTAINER_PATH_ENGINE);
+    return container[0];
+  }
+
   public async countObjects(container: readonly string[]): Promise<Record<string, { count: number }>> {
     const model = await this.model();
-    const device = container[0];
+    const device = this.deviceOf(container);
     const items = [...model.items.values()].filter((item) => item.deviceName === device);
     return {
       dataitem: { count: items.filter((item) => item.category !== "CONDITION").length },
@@ -373,7 +458,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
 
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     const model = await this.model();
-    const device = container[0];
+    const device = this.deviceOf(container);
     const items = [...model.items.values()].filter((item) => item.deviceName === device);
     const wanted = items.filter((item) =>
       kind === "condition" ? item.category === "CONDITION" : item.category !== "CONDITION",
@@ -383,6 +468,52 @@ export class MTConnectProvider extends BaseDatabaseProvider {
       name: item.name === undefined ? item.dataItemId : `${item.componentPath}/${item.name}`,
       kind,
     }));
+  }
+
+  /**
+   * One asset's document, which is the only object this provider has a document for.
+   *
+   * FOUND BY A GATE RATHER THAN BY DESIGN, and the gate is `tests/isolated/object-source-declarations.test.ts`:
+   * the `asset` kind declared `hasSource: true` and `sourceLanguage: "xml"` while this method did not
+   * exist, so the Source tab would have opened on a provider that cannot fill it. A declaration with
+   * no reader behind it is the defect that file exists to catch, and it caught this one.
+   *
+   * The text is the agent's own answer rather than a re-render of the parsed tree, so `origin` can
+   * say `stored`: an asset is a document the plant holds, and reordered attributes or re-indented
+   * lines would not be it. The request goes through the same guard a typed request line does, so an
+   * asset id that the guard would refuse is refused here in the same words.
+   */
+  public async readObjectSource(path: readonly string[], kind: string): Promise<ObjectSourceDocument> {
+    const session = this.require();
+    if (kind !== "asset") {
+      throw new DatabaseConfigError(
+        `Only an asset has a document. A ${kind} is a value with a timestamp and a sequence number, which the grid shows.`,
+        this.type,
+      );
+    }
+    const assetId = path[path.length - 1];
+    if (assetId === undefined || assetId === "") {
+      throw new DatabaseConfigError(`This path names no asset: ${JSON.stringify(path)}.`, this.type);
+    }
+    const request = this.guard(`/asset/${encodeURIComponent(assetId)}`, { rowCap: ROW_CAP });
+    const answer = await this.read(session, request);
+    if (answer.isError) throw new QueryError(this.sentenceFor(answer.root));
+    return {
+      path,
+      kind,
+      parts: [
+        {
+          id: "asset",
+          label: "Asset",
+          text: answer.text,
+          language: "xml",
+          // Complete: the answer holds the whole asset document, and there is no second half.
+          form: "complete",
+          origin: "stored",
+          edit: { offered: false, reason: "This provider sends GET requests only, so no document can be submitted back." },
+        },
+      ],
+    };
   }
 
   public async describeObject(path: readonly string[]): Promise<ObjectDetail> {

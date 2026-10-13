@@ -2080,10 +2080,10 @@ describe("QueryEditor", () => {
     expect(capturedLanguageRegistrations).toContain("graph-cypher");
   });
 
-  test("registers the Milvus and Qdrant console languages after the custom languages, before the editor mounts (vector-family spec 3.8)", () => {
+  test("registers the three console languages after the custom languages, before the editor mounts (vector-family spec 3.8)", () => {
     render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", value: "SELECT 1" })));
 
-    // registerDialectConsoles runs on every mount, and the Milvus and Qdrant records are the ones that carry a console
+    // registerDialectConsoles runs on every mount, and the Milvus, Qdrant and MTConnect records are the ones that carry a console
     // language, registered in the record's order.
     expect(capturedLanguageRegistrations).toEqual([
       "libredb",
@@ -2098,6 +2098,7 @@ describe("QueryEditor", () => {
       "influxql",
       "milvus",
       "qdrant",
+      "mtconnect",
     ]);
   });
 

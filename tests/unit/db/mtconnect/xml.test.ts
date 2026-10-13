@@ -369,3 +369,68 @@ describe("what an agent really sends and the reader must keep", () => {
     expect(result.root.text.length).toBe(65_536);
   });
 });
+
+/**
+ * The bounds themselves, pinned against what the captured documents really measure.
+ *
+ * WHY THIS EXISTS. Every other test in this file builds its input FROM the bound
+ * (`MTC_XML_BOUNDS.maxDepth + 10`, `maxAttributeLength + 1`), which is right for exercising the
+ * refusal and says nothing about the number: with `maxDepth` set to 2 all of them would still pass
+ * and the reader would be unable to open a real document. A bound's basis has to be a measurement
+ * rather than the type it sits in, so each one is pinned here, together with the worst case the
+ * thirteen captured answers actually contain.
+ *
+ * MEASURED over all thirteen documents in `tests/fixtures/mtconnect/2.8.0.3/`: deepest nesting 12,
+ * longest element or attribute name 25 characters, most attributes on one element 9, longest
+ * attribute value 100 characters, longest character data 1,121 characters.
+ */
+describe("the bounds are the measured ones, and they sit above the real documents", () => {
+  const WORST = { depth: 12, name: 25, attributes: 9, attributeLength: 100, text: 1121 };
+
+  test("the captured documents really are what this file says they are", () => {
+    // The control: without it the headroom assertions below would compare the bounds with numbers
+    // typed beside them rather than with the documents.
+    let depth = 0;
+    let name = 0;
+    let attributes = 0;
+    let attributeLength = 0;
+    let text = 0;
+    const walk = (element: MtcElement, at: number): void => {
+      depth = Math.max(depth, at);
+      name = Math.max(name, element.name.length);
+      attributes = Math.max(attributes, Object.keys(element.attributes).length);
+      for (const value of Object.values(element.attributes)) attributeLength = Math.max(attributeLength, value.length);
+      text = Math.max(text, element.text.length);
+      for (const child of element.children) walk(child, at + 1);
+    };
+    let read = 0;
+    for (const file of FIXTURES) {
+      const result = readMtconnectXml(bytes(file));
+      if (!result.ok) throw new Error(`${file}: ${result.reason}`);
+      read += 1;
+      walk(result.root, 1);
+    }
+    expect(read).toBe(13);
+    expect({ depth, name, attributes, attributeLength, text }).toEqual(WORST);
+  });
+
+  test("each bound is the value the module states, as a literal", () => {
+    expect(MTC_XML_BOUNDS.maxDepth).toBe(64);
+    expect(MTC_XML_BOUNDS.maxElements).toBe(500_000);
+    expect(MTC_XML_BOUNDS.maxAttributes).toBe(64);
+    expect(MTC_XML_BOUNDS.maxNameLength).toBe(256);
+    expect(MTC_XML_BOUNDS.maxTextLength).toBe(4 * 1024 * 1024);
+    expect(MTC_XML_BOUNDS.maxAttributeLength).toBe(64 * 1024);
+  });
+
+  test("each bound leaves room above the worst real document, which is why none of them refuses one", () => {
+    expect(MTC_XML_BOUNDS.maxDepth).toBeGreaterThan(WORST.depth * 4);
+    expect(MTC_XML_BOUNDS.maxNameLength).toBeGreaterThan(WORST.name * 4);
+    expect(MTC_XML_BOUNDS.maxAttributes).toBeGreaterThan(WORST.attributes * 4);
+    expect(MTC_XML_BOUNDS.maxAttributeLength).toBeGreaterThan(WORST.attributeLength * 4);
+    expect(MTC_XML_BOUNDS.maxTextLength).toBeGreaterThan(WORST.text * 4);
+    // And the element bound against the largest model measured rather than against these thirteen:
+    // a 500 device probe answered in 2,918,819 bytes and held about 60,000 elements.
+    expect(MTC_XML_BOUNDS.maxElements).toBeGreaterThan(60_000 * 4);
+  });
+});

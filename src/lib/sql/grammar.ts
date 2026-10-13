@@ -1431,6 +1431,8 @@ const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "rabbitmq",
   // One JSON read request naming node ids, so no span of it is SQL (#1677).
   "opcua",
+  // One request line in the agent's own URL grammar, so no span of it is SQL (#1722).
+  "mtconnect",
 ]);
 
 /**

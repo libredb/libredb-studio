@@ -119,6 +119,15 @@ export interface MtcAnswer {
   /** True where the root is `MTConnectError`, so the caller reads the typed or legacy error shape. */
   readonly isError: boolean;
   readonly bytes: number;
+  /**
+   * The answer AS THE AGENT WROTE IT, which is what an asset's Source tab shows.
+   *
+   * Kept rather than re-rendered from the tree, so the document a reader sees is the agent's own
+   * bytes and its `origin` can honestly say `stored`: a re-render would reorder attributes, drop
+   * the prolog and re-indent, and none of that is the asset the plant holds. It is bounded by the
+   * same byte cap the read was, and `asset` is the smallest of them at 2 MiB.
+   */
+  readonly text: string;
 }
 
 function assertMtconnect(status: number, contentType: string | null, text: string): MtcElement {
@@ -173,6 +182,7 @@ export async function readOnce(options: MtcClientOptions, request: MtcRequest): 
     root,
     isError: root.name === "MTConnectError",
     bytes: new TextEncoder().encode(response.text).length,
+    text: response.text,
   };
 }
 

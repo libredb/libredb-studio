@@ -33,6 +33,9 @@ export const EXPECTED_EDITABLE_KINDS: readonly (readonly [DatabaseType, string])
 export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: object edit is not implemented in this version.
   "bigquery",
+  // No kind accepts a write of any sort, and the absence is structural rather than a version's scope:
+  // every route this provider sends is a GET, which docs/providers/mtconnect.md names (#1722).
+  "mtconnect",
   "cassandra",
   "clickhouse",
   "couchbase",

@@ -114,5 +114,6 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   // The shared test connection: the constructor validates nothing and opens nothing.
   rabbitmq: rabbitmqConnection(),
   opcua: unconnected("opcua"),
+  mtconnect: unconnected("mtconnect"),
   libredb: unconnected("libredb"),
 });

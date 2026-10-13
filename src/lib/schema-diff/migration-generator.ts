@@ -304,6 +304,13 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     reason:
       "An OPC UA node has attributes defined by its type in the server's own model, not columns, and this provider has no code that can write to a server, so there is no column definition to change.",
   },
+  // Not a table store either (#1722): a data item's shape is declared in the agent's own device
+  // model, which no client writes, and every route this provider sends is a GET.
+  mtconnect: {
+    label: "MTConnect",
+    reason:
+      "An MTConnect data item's shape is declared in the agent's own device model, not in columns a client can change, and every request this provider sends is a GET, so there is no column definition to change.",
+  },
 };
 
 /**
@@ -409,6 +416,8 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   // No table DDL to wrap either (#1656): a broker keeps no schema.
   "rabbitmq",
   "opcua",
+  // No table DDL to wrap either (#1722): an agent's model is the agent's own.
+  "mtconnect",
 ]);
 
 // These engines cannot apply a relational table diff through SQL. In particular,
@@ -440,6 +449,8 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   // No schema and no catalog (#1656), so no table DDL to decline.
   "rabbitmq",
   "opcua",
+  // One container level of devices and no schema, so no table DDL to decline (#1722).
+  "mtconnect",
 ]);
 
 // IndexDiff carries column names/uniqueness, not ClickHouse's index expression,

@@ -108,6 +108,9 @@ const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.fre
   rabbitmq: null,
   // No count statement: a server publishes no count of its nodes, and a node is not a table (#1677).
   opcua: null,
+  // No count statement either: an agent publishes no count, and a data item is not a table. The
+  // tree's own counts come from the probe document, which the provider already holds (#1722).
+  mtconnect: null,
 });
 
 async function censusCapabilities(type: DatabaseType): Promise<ProviderCapabilities> {

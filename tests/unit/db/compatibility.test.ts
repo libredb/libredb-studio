@@ -522,6 +522,7 @@ describe("wire-compatibility registry", () => {
     // A pasted sc:// address is decomposed into fields; a seed gives fields, never a string.
     expect(CONNECTION_FORM_URI_MODE.spark).toBe(false);
     expect(CONNECTION_STRING_ACCEPTED.spark).toBe(false);
+    // 63 and not 62 because MTConnect joined as an external engine with no wire-compatible relative:
   });
 
   test("firestore ships as an external engine that keeps the read-only mode, is not offered to MCP and has no relatives", () => {

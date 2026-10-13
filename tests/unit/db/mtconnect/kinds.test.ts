@@ -32,7 +32,9 @@ describe("the kinds this provider declares", () => {
   test("all three are listed from the tree, so all three are enumerable", () => {
     const enumerable = enumerableKinds(capabilitiesWith(MTCONNECT_OBJECT_KINDS));
     expect(enumerable.map((kind) => kind.id)).toEqual(["dataitem", "condition", "asset"]);
-    expect(enumerable).toHaveLength(MTCONNECT_OBJECT_KINDS.length);
+    // Three as a literal, not as `MTCONNECT_OBJECT_KINDS.length`: against its own length this would
+    // hold for an empty declaration too, so the count would say nothing (KURAL 53).
+    expect(enumerable).toHaveLength(3);
   });
 
   test("no kind is listed from the Keys panel, and the provider says so by name", () => {

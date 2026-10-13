@@ -59,6 +59,8 @@ const OFFERED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   rabbitmq: false,
   // Generating test data would be a write, and this provider has no code that can write (#1677).
   opcua: false,
+  // The same, and more plainly: every route this provider sends is a GET (#1722).
+  mtconnect: false,
 });
 
 const TYPES = Object.keys(OFFERED) as DatabaseType[];

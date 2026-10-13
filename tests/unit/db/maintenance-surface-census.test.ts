@@ -115,6 +115,8 @@ const EXPECTED: Readonly<Record<DatabaseType, SurfaceRow>> = {
   rabbitmq: NONE,
   // Maintenance would be a write, and this provider has no code that can write to a server (#1677).
   opcua: NONE,
+  // The same: every route this provider sends is a GET (#1722).
+  mtconnect: NONE,
   libredb: NONE,
 };
 

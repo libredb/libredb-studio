@@ -333,3 +333,58 @@ describe("the row builders go red when broken", () => {
     expect(unfiltered).not.toHaveLength(filtered.length);
   });
 });
+
+/**
+ * The branch the captured page cannot reach, and the measurement that says so (K-185).
+ *
+ * `sortRows` compares two sequence numbers by LENGTH first and only then by text, because a
+ * sequence is an unsigned decimal and plain text order puts "100000000" before "99999999". The
+ * suite above sorts a real 200 row page, and MEASURED on that page every sequence is eight digits
+ * long: the length branch is never taken, so a `sortRows` rewritten to compare the two strings
+ * directly would pass every assertion above. The first test here measures that premise rather than
+ * asserting it, and the second takes the branch.
+ */
+describe("sorting across a digit boundary", () => {
+  const row = (timestamp: string, sequence: string): MtcRow => ({
+    device: "Mazak",
+    dataItemId: `item-${sequence}`,
+    name: `item-${sequence}`,
+    category: "SAMPLE",
+    type: "POSITION",
+    value: "1",
+    timestamp,
+    sequence,
+    unknownToModel: false,
+  });
+
+  test("the captured page cannot catch a length mistake, which is why the next test exists", () => {
+    const lengths = new Set(rows("sample-count-200.xml").map((built) => built.sequence.length));
+    expect([...lengths]).toEqual([8]);
+  });
+
+  test("a sequence of nine digits sorts after one of eight, not before it", () => {
+    const stamp = "2026-10-05T13:27:22.835705Z";
+    const sorted = sortRows([row(stamp, "100000000"), row(stamp, "99999999")]);
+    expect(sorted.map((built) => built.sequence)).toEqual(["99999999", "100000000"]);
+    // And the comparison a text sort would have made, shown failing, so the test cannot be read as
+    // agreeing with either implementation.
+    expect(["100000000", "99999999"].sort()).toEqual(["100000000", "99999999"]);
+  });
+
+  test("the same two in the other order, so the sort is not reading the input order", () => {
+    const stamp = "2026-10-05T13:27:22.835705Z";
+    const sorted = sortRows([row(stamp, "99999999"), row(stamp, "100000000")]);
+    expect(sorted.map((built) => built.sequence)).toEqual(["99999999", "100000000"]);
+  });
+
+  test("a later timestamp wins over a lower sequence, which is the outer comparison", () => {
+    const sorted = sortRows([
+      row("2026-10-05T13:27:23.000000Z", "1"),
+      row("2026-10-05T13:27:22.000000Z", "100000000"),
+    ]);
+    expect(sorted.map((built) => built.timestamp)).toEqual([
+      "2026-10-05T13:27:22.000000Z",
+      "2026-10-05T13:27:23.000000Z",
+    ]);
+  });
+});

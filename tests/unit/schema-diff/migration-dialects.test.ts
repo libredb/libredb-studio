@@ -56,6 +56,8 @@ const COLUMN_GRAMMAR: Record<DatabaseType, [string, string] | null> = {
   rabbitmq: null,
   // No migration dialect: a node has attributes defined by its type in the server's model (#1677).
   opcua: null,
+  // No migration dialect: a data item's shape is the agent's own model, which no client writes (#1722).
+  mtconnect: null,
 };
 
 describe("migration dialect regressions (#284)", () => {
