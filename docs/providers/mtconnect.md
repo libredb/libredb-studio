@@ -147,6 +147,22 @@ MEASURED through a reverse proxy: a 401 came back as `text/html`, nginx's own pa
 whether or not authentication is ever offered, because a proxy can answer with HTML for a 401, a
 403, a 502 or a maintenance page.
 
+A refusal from the reader says WHO refused, and that was a defect first. Eleven of the reader's
+sixteen refusals are Studio's own rule applied to a document that is well-formed XML and often
+perfectly good MTConnect: a DOCTYPE or an entity declaration, refused before parsing so no DTD is
+expanded; an XML comment, refused because no agent measured so far sends one; a processing
+instruction after the root opened; and each of the six bounds in `xml-bounds.ts`, every one of them
+a number this repository chose. The remaining five - malformed input, two roots, text after the
+root, stray markup, a character XML 1.0 does not allow - are the document's own defect.
+
+All sixteen used to arrive as one sentence, *"The answer could not be read as an MTConnect document
+(doctype)"*, which tells a plant operator their agent sent something broken. It did not, and an
+operator reading that takes our rule to their vendor, who finds nothing wrong because there is
+nothing wrong. `MTC_XML_REFUSAL_OWNER` now marks each reason, a Studio rule leaves as
+`refused-by-rule` saying *"Studio refused this answer: ... this is Studio's rule, not a fault in the
+agent"* with the rule's own reason and, for a bound, its figure; a document defect leaves as
+`unreadable` saying the answer is not readable XML.
+
 ### 3.8 The read-only mode
 
 There is nothing to enforce. MEASURED: with `AllowPut = true` the agent's own Swagger grows from 15

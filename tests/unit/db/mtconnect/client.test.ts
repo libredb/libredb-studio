@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { httpOrigin } from "@/lib/db/http/endpoint";
 import type { NodeRequest, NodeResponse, NodeTransport } from "@/lib/db/http/node-transport";
+import { MTC_XML_REFUSAL_OWNER } from "@/lib/db/providers/industrial/mtconnect/xml";
 import {
   buildTarget,
   headerOf,
@@ -208,16 +209,54 @@ describe("an answer that is not MTConnect gets our own sentence", () => {
     }
   });
 
-  test("a document carrying a DOCTYPE is refused before it is parsed", async () => {
+  /**
+   * The DOCTYPE case used to be asserted as `not-mtconnect`, and that was the defect written down:
+   * `<!DOCTYPE d [...]><MTConnectDevices/>` IS an MTConnect document, and Studio refuses it by its
+   * own rule so that no DTD is ever expanded. Saying "not MTConnect" sends an operator to their
+   * vendor over a rule of ours. The assertions below hold the new type AND the attribution, so a
+   * later edit cannot quietly go back to blaming the agent.
+   */
+  test("a document carrying a DOCTYPE is refused by Studio's rule, and the sentence says so", async () => {
     const { transport } = standIn('<!DOCTYPE d [<!ENTITY x "y">]><MTConnectDevices/>');
     try {
       await readOnce(options(transport, { count: 0 }), guardRequestLine("/probe", GUARD));
       throw new Error("should have refused");
     } catch (error) {
       if (!(error instanceof MtcClientError)) throw error;
-      expect(error.failure).toBe("not-mtconnect");
-      expect(error.message).toContain("doctype");
+      expect(error.failure).toBe("refused-by-rule");
+      expect(error.message).toContain("Studio refused this answer");
+      expect(error.message).toContain("DOCTYPE");
+      // The reason the rule exists, in the sentence rather than in a code only we can read.
+      expect(error.message).toContain("never expanded");
+      // And it must NOT say the document is not MTConnect, which is what it used to say.
+      expect(error.message).not.toContain("could not be read as an MTConnect document");
     }
+  });
+
+  test("a document that is not readable XML is still the document's own defect", async () => {
+    // The other side of the split: nothing here is Studio's rule, so the sentence does not
+    // apologise for one. Without this the classification could mark everything `studio` and pass.
+    const { transport } = standIn("<MTConnectDevices><Devices></MTConnectDevices>");
+    try {
+      await readOnce(options(transport, { count: 0 }), guardRequestLine("/probe", GUARD));
+      throw new Error("should have refused");
+    } catch (error) {
+      if (!(error instanceof MtcClientError)) throw error;
+      expect(error.failure).toBe("unreadable");
+      expect(error.message).toContain("not readable XML");
+      expect(error.message).not.toContain("Studio refused");
+    }
+  });
+
+  test("every reader refusal is owned by exactly one side", () => {
+    // The table is exhaustive by its type; this says it is also HONEST about the two it was
+    // written for, so a later edit cannot move a bound of ours onto the agent's account.
+    expect(MTC_XML_REFUSAL_OWNER.doctype).toBe("studio");
+    expect(MTC_XML_REFUSAL_OWNER.comment).toBe("studio");
+    expect(MTC_XML_REFUSAL_OWNER["too-many-elements"]).toBe("studio");
+    expect(MTC_XML_REFUSAL_OWNER.malformed).toBe("document");
+    expect(MTC_XML_REFUSAL_OWNER["two-roots"]).toBe("document");
+    expect(MTC_XML_REFUSAL_OWNER.character).toBe("document");
   });
 });
 

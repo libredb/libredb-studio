@@ -40,7 +40,15 @@ import { endpointUrl, type HttpOrigin } from "@/lib/db/http/endpoint";
 import type { NodeTransport } from "@/lib/db/http/node-transport";
 import { MTC_REQUEST_HEADER_BUDGET_BYTES, type MtcOp } from "./routes";
 import type { MtcRequest } from "./guard";
-import { readMtconnectXml, streamMtconnectObservations, type MtcElement, type MtcObservation } from "./xml";
+import {
+  MTC_XML_REFUSAL_OWNER,
+  readMtconnectXml,
+  streamMtconnectObservations,
+  type MtcElement,
+  type MtcObservation,
+  type MtcXmlRefusal,
+} from "./xml";
+import { MTC_XML_BOUNDS } from "./xml-bounds";
 
 /** The four roots an MTConnect answer can have. Anything else is not an agent answering. */
 const MTCONNECT_ROOTS = new Set(["MTConnectDevices", "MTConnectStreams", "MTConnectAssets", "MTConnectError"]);
@@ -91,7 +99,7 @@ export const MTC_TARGET_BUDGET_BYTES = MTC_REQUEST_HEADER_BUDGET_BYTES - HEADER_
  * all: a reader counting the failure modes counts one that cannot happen, and a handler written
  * for it is dead on the day it is written.
  */
-export type MtcClientFailure = "request-too-long" | "not-mtconnect" | "unreadable";
+export type MtcClientFailure = "request-too-long" | "not-mtconnect" | "unreadable" | "refused-by-rule";
 
 export class MtcClientError extends Error {
   constructor(
@@ -151,16 +159,53 @@ export interface MtcAnswer {
   readonly text: string;
 }
 
+/**
+ * What Studio refuses by its own rule, in the words an operator can act on.
+ *
+ * One clause per reason `MTC_XML_REFUSAL_OWNER` marks `studio`, because "doctype" is our word and
+ * not a fault anybody can look up in their agent. Each bound names its own figure, so the sentence
+ * says what was crossed rather than that something was.
+ */
+const STUDIO_RULE: Readonly<Record<string, string>> = Object.freeze({
+  doctype: "it carries a DOCTYPE declaration, and Studio refuses one before any parsing so that a DTD is never expanded and an external entity is never fetched",
+  "entity-declaration": "it declares an entity, and Studio refuses one before any parsing so that nothing is expanded or fetched",
+  entity: "it uses an entity beyond the five XML predefines and numeric character references, and Studio resolves nothing outside the document",
+  comment: "it carries an XML comment, which Studio refuses: no agent measured so far sends one, and a named refusal is how we hear about an agent that does",
+  "processing-instruction": "it carries a processing instruction after the root element opened, which Studio refuses",
+  "too-deep": `it nests deeper than Studio's bound of ${MTC_XML_BOUNDS.maxDepth} elements`,
+  "too-many-elements": `it holds more than Studio's bound of ${MTC_XML_BOUNDS.maxElements.toLocaleString("en-US")} elements`,
+  "too-many-attributes": `one element carries more than Studio's bound of ${MTC_XML_BOUNDS.maxAttributes} attributes`,
+  "name-too-long": `a name is longer than Studio's bound of ${MTC_XML_BOUNDS.maxNameLength} characters`,
+  "text-too-long": `one element's text is longer than Studio's bound of ${MTC_XML_BOUNDS.maxTextLength.toLocaleString("en-US")} characters`,
+  "attribute-too-long": `one attribute value is longer than Studio's bound of ${MTC_XML_BOUNDS.maxAttributeLength.toLocaleString("en-US")} characters`,
+});
+
+/**
+ * The sentence for a reader refusal, written from WHO refused.
+ *
+ * It used to be one sentence for all sixteen reasons - "The answer could not be read as an
+ * MTConnect document (doctype)" - which blames the agent for eleven refusals that are Studio's own
+ * rule applied to a well-formed document. An operator reading that takes our rule to their vendor.
+ */
+function readerRefusal(reason: MtcXmlRefusal, status: number, contentType: string | null): MtcClientError {
+  const answered = `The agent answered ${status}${contentType === null ? "" : ` with ${contentType}`}.`;
+  if (MTC_XML_REFUSAL_OWNER[reason] === "studio") {
+    const rule = STUDIO_RULE[reason] ?? `Studio's rule named ${reason} refused it`;
+    return new MtcClientError(
+      "refused-by-rule",
+      `Studio refused this answer: ${rule}. The document itself may be perfectly good MTConnect - this is Studio's rule, not a fault in the agent. ${answered}`,
+    );
+  }
+  return new MtcClientError(
+    "unreadable",
+    `The answer is not readable XML (${reason}), so it could not be read as an MTConnect document. ${answered}`,
+  );
+}
+
 function assertMtconnect(status: number, contentType: string | null, text: string): MtcElement {
   const read = readMtconnectXml(new Uint8Array(new TextEncoder().encode(text)));
   if (!read.ok) {
-    // A refusal from the reader is named, so the sentence says which rule the document broke.
-    throw new MtcClientError(
-      read.reason === "doctype" || read.reason === "entity-declaration" ? "not-mtconnect" : "unreadable",
-      `The answer could not be read as an MTConnect document (${read.reason}). The agent answered ${status}${
-        contentType === null ? "" : ` with ${contentType}`
-      }.`,
-    );
+    throw readerRefusal(read.reason, status, contentType);
   }
   if (!MTCONNECT_ROOTS.has(read.root.name)) {
     throw new MtcClientError(
@@ -256,7 +301,8 @@ export async function readObservations(
     return true;
   });
   if (!walk.ok) {
-    throw new MtcClientError("unreadable", `The sample answer could not be read (${walk.reason}).`);
+    // The same split as a tree read: a bound of ours is not the agent's defect.
+    throw readerRefusal(walk.reason, response.status, response.contentType);
   }
   return { read, capped };
 }

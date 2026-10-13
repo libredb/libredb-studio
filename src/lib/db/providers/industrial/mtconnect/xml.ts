@@ -66,6 +66,42 @@ export type MtcXmlRefusal =
   | "text-too-long"
   | "attribute-too-long";
 
+/**
+ * WHO REFUSED, for every reason above, and why a reader has to be told.
+ *
+ * Half of these refusals are STUDIO'S RULE applied to a document that is perfectly well-formed
+ * XML, and often perfectly valid MTConnect: a DOCTYPE is refused before parsing so no DTD is ever
+ * expanded or fetched, an XML comment is refused because no measured agent sends one and a named
+ * refusal is how we would hear about an agent that does, and each bound of `MTC_XML_BOUNDS` is a
+ * number this repository chose. The other half are the DOCUMENT'S OWN DEFECT: text after the root,
+ * two roots, a character XML 1.0 does not allow, anything else malformed.
+ *
+ * They used to reach the reader as one sentence - "The answer could not be read as an MTConnect
+ * document (doctype)" - which tells a plant operator that their agent sent something broken. It
+ * did not. An operator who reads that goes to their vendor with our rule in their hand, and the
+ * vendor finds nothing wrong, because there is nothing wrong. A refusal that is ours says so.
+ */
+export const MTC_XML_REFUSAL_OWNER: Readonly<Record<MtcXmlRefusal, "studio" | "document">> = Object.freeze({
+  // Studio's rules. Each one refuses input that is well-formed XML.
+  doctype: "studio",
+  "entity-declaration": "studio",
+  entity: "studio",
+  comment: "studio",
+  "processing-instruction": "studio",
+  "too-deep": "studio",
+  "too-many-elements": "studio",
+  "too-many-attributes": "studio",
+  "name-too-long": "studio",
+  "text-too-long": "studio",
+  "attribute-too-long": "studio",
+  // The document's own defects: none of these is readable XML at all.
+  markup: "document",
+  malformed: "document",
+  "two-roots": "document",
+  "trailing-content": "document",
+  character: "document",
+});
+
 export type MtcXmlResult =
   | { readonly ok: true; readonly root: MtcElement }
   | { readonly ok: false; readonly reason: MtcXmlRefusal };
