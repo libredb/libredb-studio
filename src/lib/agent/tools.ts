@@ -85,7 +85,12 @@ import type {
   ReadOnlyStatementMode,
 } from "@/lib/db/types";
 import type { ContainerEnumeration } from "@/lib/db/container-walk";
-import { enumerationOf, kindsByContainer, scopeGroundingContainers } from "@/lib/db/container-walk";
+import {
+  enumerationOf,
+  kindsByContainer,
+  scopeGroundingContainers,
+  sessionDefaultContainer,
+} from "@/lib/db/container-walk";
 import {
   applicableKinds,
   containerDepth,
@@ -3081,10 +3086,8 @@ async function walkObjectInventory(
 
   // A provider that declares a walk scope is read in its session-default container and the ones it names; the
   // rest are counted, so the inventory can say what it did not read.
-  const scoped = scopeGroundingContainers(
-    await enumerateGroundingContainers(provider, capabilities),
-    capabilities.agentWalkScope,
-  );
+  const grounding = await enumerateGroundingContainers(provider, capabilities);
+  const scoped = scopeGroundingContainers(grounding.enumeration, capabilities.agentWalkScope, grounding.parentDefault);
   const enumeration = scoped.enumeration;
   const { containers, defaultContainer } = enumeration;
   // A container that names its kinds is walked for those alone: asking it for another would meet the
@@ -3233,17 +3236,22 @@ async function walkObjectInventory(
  * reads it, with each container's kinds, off that level. This walk calls it rather than
  * `enumerateContainers` for one reason: the depth here comes from the capabilities the RUN
  * CONTEXT holds, not from `provider.getCapabilities()`.
+ *
+ * `parentDefault` is the default the level above the deepest marks, read by the same rule, for a walk scope that
+ * declares `whenNoDefault`; it is absent on an engine of one level.
  */
 async function enumerateGroundingContainers(
   provider: DatabaseProvider,
   capabilities: ProviderCapabilities,
-): Promise<ContainerEnumeration> {
+): Promise<{ readonly enumeration: ContainerEnumeration; readonly parentDefault?: readonly string[] }> {
   const depth = containerDepth(capabilities);
-  if (depth === 0) return { containers: [[]], defaultContainer: [] };
+  if (depth === 0) return { enumeration: { containers: [[]], defaultContainer: [] } };
   const listContainers = provider.listContainers.bind(provider);
 
   let level = await listContainers();
+  let parentDefault: readonly string[] | undefined;
   for (let below = 1; below < depth; below += 1) {
+    parentDefault = sessionDefaultContainer(level);
     const next: Container[] = [];
     for (const parent of level) {
       next.push(...(await listContainers(parent.path)));
@@ -3251,7 +3259,8 @@ async function enumerateGroundingContainers(
     level = next;
   }
 
-  return enumerationOf(level);
+  const enumeration = enumerationOf(level);
+  return parentDefault === undefined ? { enumeration } : { enumeration, parentDefault };
 }
 
 /** One container's counts, or none where the provider declares no counting. */

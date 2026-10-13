@@ -7,8 +7,8 @@ import { splitExecutionUnits } from "@/lib/sql/statement-splitter";
 
 // Each fact is one the trial capture measured (Snowflake 10.37.100, 2026-10-12, items M60 to M64 of
 // tests/fixtures/snowflake/trial-2026-10-12-v10.37.100/), named in its title. Where the account reads a form more
-// permissively than the shared reader (M61's backslash in an identifier, M63's continuation, M64's a$b$c), the test
-// pins the reader's refusal, the fail-safe direction.
+// permissively than the shared reader (M63's continuation), the test pins the reader's refusal, the fail-safe
+// direction.
 const grammar = resolveSqlGrammar("snowflake");
 const units = (sql: string) => splitExecutionUnits(sql, grammar).map((unit) => unit.sql.trim());
 
@@ -50,14 +50,21 @@ describe("the Snowflake grammar", () => {
     expect(units("SELECT X'0A'; SELECT 2")).toEqual(["SELECT X'0A'", "SELECT 2"]);
   });
 
-  test("M61: a backslash inside a double-quoted identifier is read as an escape, so the run is unterminated", () => {
-    // The shared reader applies the escape to both quotes; the unterminated answer is the fail-safe direction.
-    expect(hasUnterminatedSpan('SELECT "a\\"; SELECT 2', grammar)).toBe(true);
-    expect(units('SELECT "a\\"; SELECT 2')).toHaveLength(1);
+  test("M61: a backslash inside a double-quoted identifier is part of the name, so the run closes at its second quote", () => {
+    expect(grammar.doubleQuoteBackslashEscapes).toBe(false);
+    expect(hasUnterminatedSpan('SELECT 1 AS "a\\"', grammar)).toBe(false);
+    expect(units('SELECT 1 AS "a\\"; SELECT 2')).toEqual(['SELECT 1 AS "a\\"', "SELECT 2"]);
   });
 
-  test("M64: `a$b$c` meets the shared reader's fail-safe refusal of an unterminated tagged string", () => {
-    expect(hasUnterminatedSpan("SELECT a$b$c FROM t", grammar)).toBe(true);
+  test("M64: `a$b$c` is a name, so it opens no span and the statement is bounded", () => {
+    expect(grammar.dollarTags).toBe(false);
+    expect(hasUnterminatedSpan("SELECT a$b$c FROM t", grammar)).toBe(false);
+    expect(applyQueryLimit("SELECT a$b$c FROM t", 5, 0, {}, "snowflake").sql).toBe("SELECT a$b$c FROM t LIMIT 5");
+  });
+
+  test("`$$` is the only dollar-quoted form, so a tagged run is code and its `;` ends the statement", () => {
+    expect(units("SELECT $t$x;y$t$")).toEqual(["SELECT $t$x", "y$t$"]);
+    expect(units("SELECT $$x;y$$; SELECT 2")).toEqual(["SELECT $$x;y$$", "SELECT 2"]);
   });
 
   test("`[` is a subscript", () => {

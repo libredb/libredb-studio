@@ -2294,6 +2294,9 @@ describe("Snowflake's confirmation forms", () => {
     "CREATE API INTEGRATION i API_PROVIDER = AWS_API_GATEWAY API_AWS_ROLE_ARN = 'arn:aws:iam::1:role/r' API_ALLOWED_PREFIXES = ('https://example.com') ENABLED = TRUE",
     "CREATE NETWORK RULE r MODE = EGRESS TYPE = HOST_PORT VALUE_LIST = ('example.com')",
     "CREATE REPLICATION GROUP g OBJECT_TYPES = DATABASES ALLOWED_DATABASES = d ALLOWED_ACCOUNTS = o.a",
+    "CREATE FAILOVER GROUP g OBJECT_TYPES = DATABASES ALLOWED_DATABASES = d ALLOWED_ACCOUNTS = o.a",
+    "CREATE CORTEX SEARCH SERVICE s ON c WAREHOUSE = w TARGET_LAG = '1 hour' AS SELECT c FROM t",
+    "CREATE DYNAMIC ICEBERG TABLE d TARGET_LAG = '1 minute' WAREHOUSE = w AS SELECT 1",
   ];
 
   test.each(FORMS)("asks for %s, in any case and behind any comment", (sql) => {
@@ -2332,6 +2335,13 @@ describe("Snowflake's confirmation forms", () => {
     expect(isDangerousQuery('SELECT "SYSTEM$WAIT"(10)', "snowflake")).toBe(true);
     expect(isDangerousQuery('SELECT "SYSTEM$WAIT" /* x */ (10)', "snowflake")).toBe(true);
     expect(isDangerousQuery('SELECT SNOWFLAKE.."SYSTEM$WAIT"(10)', "snowflake")).toBe(true);
+  });
+
+  // `$` is a name character and `$$` the only dollar-quoted form (M64), and a backslash inside `"…"` is part of the
+  // name (M61), so neither hides the code written after it.
+  test("a `$` inside a name and a backslash inside a quoted name hide nothing written after them", () => {
+    expect(isDangerousQuery("SELECT 1 AS a$b$c; DELETE FROM t", "snowflake")).toBe(true);
+    expect(isDangerousQuery('SELECT 1 AS "a\\", SYSTEM$CANCEL_ALL_QUERIES(1) --"', "snowflake")).toBe(true);
   });
 
   test.each([

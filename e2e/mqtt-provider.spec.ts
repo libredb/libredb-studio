@@ -23,8 +23,10 @@ test.describe("MQTT in the connection dialog", () => {
     await page.waitForURL("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.first().click();
+    // By name, not by position: the header draws Show ERD Diagram before it once the sample's capabilities load,
+    // and `.first()` clicked that instead whenever they had loaded before the click.
+    await page.getByRole("button", { name: "New connection", exact: true }).click();
+    await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
   });
 
   test("is offered as its own driver", async ({ page }) => {

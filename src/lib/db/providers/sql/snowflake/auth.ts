@@ -78,6 +78,13 @@ const MISSING_PASSPHRASE_CODES: ReadonlySet<string> = new Set([
 ]);
 /** The codes a wrong passphrase throws on Bun and Node, and OpenSSL's older EVP spelling. */
 const WRONG_PASSPHRASE_CODES: ReadonlySet<string> = new Set(["ERR_OSSL_BAD_DECRYPT", "ERR_OSSL_EVP_BAD_DECRYPT"]);
+/**
+ * The decoder's codes, Node's OpenSSL 3 and Bun's BoringSSL: a wrong passphrase decrypts an encrypted key to random
+ * bytes, and about one time in 256 their padding holds and the decoder refuses them (measured 2026-10-13: 15 to 22 of
+ * 4,000 wrong passphrases on Node 24.14.0 and Bun 1.4.2). On an encrypted key given a passphrase they read as the
+ * wrong passphrase; elsewhere as unreadable.
+ */
+const GARBLED_DECRYPT_CODES: ReadonlySet<string> = new Set(["ERR_OSSL_UNSUPPORTED", "ERR_OSSL_EVP_DECODE_ERROR"]);
 
 export interface SnowflakeKeyFingerprint {
   /** `SHA256:` and the standard base64 of SHA-256 over the DER SPKI, as Snowflake shows RSA_PUBLIC_KEY_FP. */
@@ -369,7 +376,11 @@ export function loadPrivateKey(pem: unknown, passphrase: unknown): LoadedKey {
     if ((armoured.encrypted && pass === undefined) || (code !== undefined && MISSING_PASSPHRASE_CODES.has(code))) {
       refuse(SNOWFLAKE_KEY_SENTENCES.needsPassphrase);
     }
-    if (pass !== undefined && code !== undefined && WRONG_PASSPHRASE_CODES.has(code)) {
+    if (
+      pass !== undefined &&
+      code !== undefined &&
+      (WRONG_PASSPHRASE_CODES.has(code) || (armoured.encrypted && GARBLED_DECRYPT_CODES.has(code)))
+    ) {
       refuse(SNOWFLAKE_KEY_SENTENCES.wrongPassphrase);
     }
     refuse(SNOWFLAKE_KEY_SENTENCES.unreadable);

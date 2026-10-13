@@ -632,6 +632,29 @@ describe("backslashAlwaysEscapes", () => {
   });
 });
 
+// Two opt-outs from readings every other row shares: whether `$tag$ … $tag$` is a string (`dollarTags`, absent means
+// true) and what a backslash means inside `"…"` (`doubleQuoteBackslashEscapes`, absent means the reading
+// `backslashAlwaysEscapes` gives both quotes).
+describe("dollarTags and doubleQuoteBackslashEscapes", () => {
+  test("the compatibility default declares neither", () => {
+    expect(DEFAULT_SQL_GRAMMAR.dollarTags).toBeUndefined();
+    expect(DEFAULT_SQL_GRAMMAR.doubleQuoteBackslashEscapes).toBeUndefined();
+  });
+
+  test("snowflake declares both false", () => {
+    expect(resolveSqlGrammar("snowflake").dollarTags).toBe(false);
+    expect(resolveSqlGrammar("snowflake").doubleQuoteBackslashEscapes).toBe(false);
+  });
+
+  test.each((Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter((type) => type !== "snowflake"))(
+    "%s declares neither",
+    (type) => {
+      expect(resolveSqlGrammar(type).dollarTags).toBeUndefined();
+      expect(resolveSqlGrammar(type).doubleQuoteBackslashEscapes).toBeUndefined();
+    },
+  );
+});
+
 describe("every database type has a recorded grammar decision", () => {
   test.each(Object.entries(GRAMMAR_COVERAGE))("%s is %s", (type, expected) => {
     const isDefault = resolveSqlGrammar(type as DatabaseType) === DEFAULT_SQL_GRAMMAR;

@@ -246,6 +246,67 @@ describe("scopeGroundingContainers", () => {
     expect(scoped.unread).toBe(3);
   });
 
+  describe("with the parent-default fallback", () => {
+    const fallback = {
+      mode: "session-default",
+      whenNoDefault: { walk: "parent-default-children", skip: ["INFORMATION_SCHEMA"] },
+    } as const;
+    const twoLevels: ContainerEnumeration = {
+      containers: [
+        ["OTHER", "PUBLIC"],
+        ["SALES", "INFORMATION_SCHEMA"],
+        ["SALES", "PUBLIC"],
+        ["SALES", "RAW"],
+        ["OTHER", "RAW"],
+      ],
+    };
+
+    test("a deepest default present is read alone, as without the fallback", () => {
+      const withDefault: ContainerEnumeration = { ...twoLevels, defaultContainer: ["SALES", "RAW"] };
+      expect(scopeGroundingContainers(withDefault, fallback, ["SALES"])).toEqual(
+        scopeGroundingContainers(withDefault, { mode: "session-default" }),
+      );
+      expect(scopeGroundingContainers(withDefault, fallback, ["SALES"]).enumeration.containers).toEqual([
+        ["SALES", "RAW"],
+      ]);
+    });
+
+    test("no deepest default and one parent default reads that parent's children in walk order, minus the skipped", () => {
+      expect(scopeGroundingContainers(twoLevels, fallback, ["SALES"])).toEqual({
+        enumeration: {
+          containers: [
+            ["SALES", "PUBLIC"],
+            ["SALES", "RAW"],
+          ],
+        },
+        unread: 3,
+      });
+    });
+
+    test("no deepest default and no parent default reads nothing, as today", () => {
+      expect(scopeGroundingContainers(twoLevels, fallback, undefined)).toEqual({
+        enumeration: { containers: [] },
+        unread: 5,
+      });
+    });
+
+    test("more than one parent flagged is answered as no parent default, so nothing is read", () => {
+      const level: Container[] = [
+        { path: ["SALES"], name: "SALES", level: 0, isSessionDefault: true },
+        { path: ["OTHER"], name: "OTHER", level: 0, isSessionDefault: true },
+      ];
+      expect(
+        scopeGroundingContainers(twoLevels, fallback, sessionDefaultContainer(level)).enumeration.containers,
+      ).toEqual([]);
+    });
+
+    test("a parent default without the fallback declared reads nothing, as today", () => {
+      expect(
+        scopeGroundingContainers(twoLevels, { mode: "session-default" }, ["SALES"]).enumeration.containers,
+      ).toEqual([]);
+    });
+  });
+
   test("an enumeration that carries no kinds stays without them", () => {
     const noKinds: ContainerEnumeration = {
       containers: enumeration.containers,

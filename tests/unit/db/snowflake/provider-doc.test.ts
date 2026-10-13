@@ -379,6 +379,15 @@ describe("docs/providers/snowflake.md", () => {
     expect(gate).toContain("`IDENTIFIER()`");
   });
 
+  test("says how the editor reads `$` and a backslash inside a quoted name, as the grammar does", () => {
+    const grammar = resolveSqlGrammar("snowflake");
+    const sessions = flat(sectionOf(DOC, "## 4. Sessions, transactions and blocks"));
+    expect(grammar.dollarTags).toBe(false);
+    expect(grammar.doubleQuoteBackslashEscapes).toBe(false);
+    expect(sessions).toContain("`$` is a name character and only `$$` opens a string");
+    expect(sessions).toContain('A backslash inside `"..."` is part of the name');
+  });
+
   test("registers the key under the name and statements Studio's refusal prints, the administrator's first", () => {
     const admin = /registers it with (ALTER USER <name> ADD KEY PAIR \S+ PUBLIC_KEY = )'<body>'/.exec(KEY_PAIR_REFUSED);
     const self = /; (ALTER USER ADD KEY PAIR \S+ PUBLIC_KEY = )'<body>' is refused with 003001/.exec(KEY_PAIR_REFUSED);

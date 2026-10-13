@@ -586,12 +586,13 @@ was invisible to the reading. It now asks instead of executing.
 
 The accepted cost, pinned by tests rather than left to be discovered, in two classes:
 
-- **A closing quote behind an odd backslash run** is reported undeterminable whatever the dialect, and
+- **A closing quote behind an odd backslash run** is reported undeterminable on most rows, and
   this is the most frequent prompt the rule buys: it covers a literal ending in a backslash (a Windows
   path) *and* `\'` as an escaped apostrophe — which is MySQL's own escape, so an everyday MySQL read
   such as `… WHERE name = 'O\'Brien'` asks on every execute.
-  Naming a shipped dialect does not narrow this one, with one exception: the grammar record carries the fact as `backslashAlwaysEscapes`, and every row declares it false, MySQL included because `NO_BACKSLASH_ESCAPES` in `sql_mode` changes its reading per session.
-  Databend's row declares it true, because its lexer escapes with a backslash in both quotes and no setting turns that off, so there `'it\'s'` is one closed literal and a backslash before a line feed leaves the literal open.
+  Naming a shipped dialect narrows this one only where the dialect has one fixed reading: the grammar record carries the fact as `backslashAlwaysEscapes`, and most rows declare it false, MySQL included because `NO_BACKSLASH_ESCAPES` in `sql_mode` changes its reading per session.
+  Databend's, BigQuery's and Snowflake's rows declare it true, because their lexers escape with a backslash and no setting turns that off, so there `'it\'s'` is one closed literal and a backslash before a line feed leaves the literal open.
+  Snowflake's row also declares `doubleQuoteBackslashEscapes` false, because a backslash inside `"..."` is part of the name there, so `"a\"` is one closed name.
   What does *not* happen is a prompt
   for a statement that merely contains a backslash — `SELECT 'a\nb' FROM t`, `… LIKE 'a\_b'` and
   `'C:\\Users\\me'` all resolve and run without one.

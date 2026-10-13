@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import type { DatabaseType } from "@/lib/types";
 
@@ -233,6 +233,15 @@ describe("readStatementEnd", () => {
       const clickhouse = resolveSqlGrammar("clickhouse");
 
       expect(readStatementEnd("SELECT [1,2 AS a", clickhouse).rewritable).toBe(false);
+    });
+
+    // A dialect without the tagged dollar form (`dollarTags: false`) reads the `$` that would open one as code, so a
+    // run that never closes there is no unterminated span and the cut is allowed.
+    test("a tagged dollar run that never closes allows the cut only where the dialect has no tagged form", () => {
+      const untagged: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, dollarTags: false };
+
+      expect(readStatementEnd("SELECT $t$x FROM t", untagged)).toEqual({ end: 18, rewritable: true });
+      expect(readStatementEnd("SELECT $t$x FROM t").rewritable).toBe(false);
     });
   });
 

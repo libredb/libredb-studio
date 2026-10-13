@@ -1547,11 +1547,21 @@ export interface ProviderCapabilities {
    * handed one container as the whole database. It is for an engine whose container count makes a whole walk cost
    * hundreds of reads.
    *
+   * `whenNoDefault`, where the deepest level marks no session default: `{ walk: "parent-default-children" }` reads
+   * the children of the one container the level above marks `isSessionDefault`, in the walk's order, minus each
+   * child whose name `skip` holds, within the walk's own limits and timer. Absent, or with no single parent default,
+   * no container is read beyond `alsoWalk`, as before. It is for an engine whose session has a catalog and no schema
+   * when only the catalog is configured.
+   *
    * Optional for the same published-interface reason as `containerLevels`.
    */
   agentWalkScope?: {
     readonly mode: "session-default";
     readonly alsoWalk?: readonly (readonly string[])[];
+    readonly whenNoDefault?: {
+      readonly walk: "parent-default-children";
+      readonly skip?: readonly string[];
+    };
   };
   /**
    * The row actions this engine offers on objects of named kinds, in menu order. See `KindRowAction`.

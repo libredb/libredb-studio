@@ -339,7 +339,12 @@ export class SnowflakeProvider extends SQLBaseProvider {
       ],
       containerPathShapes: "exact",
       objectKinds: SNOWFLAKE_OBJECT_KINDS,
-      agentWalkScope: { mode: "session-default" },
+      // With a Database and no Schema the session has no schema, so the walk reads that database's schemas; its
+      // INFORMATION_SCHEMA is about sixty catalog views that would crowd the walk and say nothing of the user's data.
+      agentWalkScope: {
+        mode: "session-default",
+        whenNoDefault: { walk: "parent-default-children", skip: ["INFORMATION_SCHEMA"] },
+      },
       // Every statement that needs a warehouse can resume it and bills at least a minute: read from configuration alone.
       resumesBilledCompute: true,
     };

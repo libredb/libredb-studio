@@ -806,7 +806,10 @@ describe("the declarations", () => {
       identifierQuoting: "double-always",
       containerPathShapes: "exact",
       resumesBilledCompute: true,
-      agentWalkScope: { mode: "session-default" },
+      agentWalkScope: {
+        mode: "session-default",
+        whenNoDefault: { walk: "parent-default-children", skip: ["INFORMATION_SCHEMA"] },
+      },
     });
     expect(capabilities.containerLevels).toEqual([
       { id: "catalog", label: "Database", labelPlural: "Databases" },

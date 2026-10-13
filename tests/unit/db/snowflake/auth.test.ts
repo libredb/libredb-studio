@@ -223,10 +223,9 @@ describe("SR8 the KDF ceiling, read before decryption", () => {
     expectRefused(pem, KEY_TEST_PASSPHRASE, S.kdfCost);
     const under = pbes2With(pbkdf2(derInteger(2_048), derInteger(32)), aes256);
     // Under the ceiling the reader passes it on, and the random payload does not decrypt: its padding fails, or in
-    // about one case of 256 the padding holds and the plaintext does not parse.
+    // about one case of 256 the padding holds and the decoder refuses the plaintext; both read as the wrong passphrase.
     const createPrivateKey = spyOn(crypto, "createPrivateKey");
-    const name = sentenceName(refusal(under, KEY_TEST_PASSPHRASE).message) as string;
-    expect(["wrongPassphrase", "unreadable"]).toContain(name);
+    expect(sentenceName(refusal(under, KEY_TEST_PASSPHRASE).message)).toBe("wrongPassphrase");
     expect(createPrivateKey).toHaveBeenCalledTimes(1);
   });
 
@@ -401,6 +400,21 @@ describe("the passphrase", () => {
     const error = refusal(pkcs8, passphrase);
     expect(sentenceName(error.message)).toBe(name);
     expect(error.message).not.toContain("SECRET");
+  });
+
+  // A wrong passphrase whose decryption happens to end in valid padding reaches the decoder, which refuses the bytes
+  // with its own code: Node's OpenSSL 3 and Bun's BoringSSL spell it differently.
+  test.each([
+    ["Node's decoder code", "ERR_OSSL_UNSUPPORTED"],
+    ["Bun's decoder code", "ERR_OSSL_EVP_DECODE_ERROR"],
+  ])("%s reads as the wrong passphrase on an encrypted key given one, and as unreadable otherwise", (_name, code) => {
+    spyOn(crypto, "createPrivateKey").mockImplementation(() => {
+      throw Object.assign(new Error("runtime text SECRET"), { code });
+    });
+    expect(sentenceName(refusal(encryptedPkcs8, "p").message)).toBe("wrongPassphrase");
+    expect(sentenceName(refusal(encryptedPkcs1, "p").message)).toBe("wrongPassphrase");
+    expect(sentenceName(refusal(pkcs8, "p").message)).toBe("unreadable");
+    expect(sentenceName(refusal(encryptedPkcs8, undefined).message)).toBe("needsPassphrase");
   });
 
   test("a thrown non-object maps to the unreadable sentence", () => {

@@ -69,6 +69,19 @@ function runCases(a: typeof auth, k: typeof keys, c: Pick<typeof crypto, "create
     codes[`${name} missing`] = code(pem, undefined);
     codes[`${name} wrong`] = code(pem, "not-the-passphrase");
   }
+  // A wrong passphrase decrypts to random bytes, and about one time in 256 their padding holds and the decoder refuses
+  // them with a code of its own (measured 2026-10-13: 15 to 22 of 4,000 wrong passphrases on Node 24.14.0 and Bun
+  // 1.4.2). The first such passphrase of a fixed sequence must still read as the wrong passphrase.
+  for (const [name, pem] of Object.entries(forms)) {
+    let garbled: string | undefined;
+    for (let i = 0; i < 20_000 && garbled === undefined; i += 1) {
+      const thrown = code(pem, `wrong-${i}`);
+      if (thrown !== "ERR_OSSL_BAD_DECRYPT" && thrown !== "ERR_OSSL_EVP_BAD_DECRYPT") garbled = `wrong-${i}`;
+    }
+    results[`${name} with a wrong passphrase that decrypts to garbage`] =
+      garbled === undefined ? "none found" : outcome(pem, garbled);
+    codes[`${name} garbled`] = garbled === undefined ? "none found" : code(pem, garbled);
+  }
   for (const prf of ["sha1", "sha256", "sha384", "sha512", null] as const) {
     results[`PBKDF2 2,048 with ${prf ?? "the PRF omitted"}`] = outcome(k.pbes2Pbkdf2Pem(key, pass, 2_048, prf), pass);
   }
@@ -106,6 +119,8 @@ const PASSPHRASE_CASES: Readonly<Record<string, string>> = {
   "pkcs1 with no passphrase": "needsPassphrase",
   "pkcs1 with a wrong passphrase": "wrongPassphrase",
   "pkcs1 with its passphrase": "loaded",
+  "pkcs8 with a wrong passphrase that decrypts to garbage": "wrongPassphrase",
+  "pkcs1 with a wrong passphrase that decrypts to garbage": "wrongPassphrase",
   "PBKDF2 2,048 with sha1": "loaded",
   "PBKDF2 2,048 with sha256": "loaded",
   "PBKDF2 2,048 with the PRF omitted": "loaded",

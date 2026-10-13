@@ -455,7 +455,8 @@ function readQuoted(
  *
  * The tag body follows identifier rules - the same ones names follow, non-ASCII
  * included - which is what keeps a positional parameter (`$1`) and a bare `$` out
- * of it.
+ * of it. A dialect that opts out of the tagged form (`dollarTags: false`) still
+ * measures here, and `readSqlSpan` reads a tag longer than `$$` as code.
  */
 function measureDollarTag(sql: string, index: number): number {
   let i = index + 1;
@@ -568,8 +569,15 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
   // `"` is a quoted identifier in every dialect this project supports except
   // MySQL with its default settings, where it is a string - and therefore takes
   // backslash escapes. Either way it is an opaque literal and the doubling rule is
-  // the same, so one reading serves both.
-  if (ch === '"') return readQuoted(sql, index, '"', "quoted-identifier", literalBackslash);
+  // the same, so one reading serves both. A dialect that declares
+  // `doubleQuoteBackslashEscapes` overrides the backslash reading here alone.
+  if (ch === '"') {
+    let quoteBackslash: "never" | "ambiguous" | "escapes" = literalBackslash;
+    if (grammar.doubleQuoteBackslashEscapes !== undefined) {
+      quoteBackslash = grammar.doubleQuoteBackslashEscapes ? "escapes" : "never";
+    }
+    return readQuoted(sql, index, '"', "quoted-identifier", quoteBackslash);
+  }
   // Backticks are MySQL's identifier quotes. Without them a backtick-quoted CTE
   // name would read as undeterminable input and cost that statement its bound. No
   // dialect but GoogleSQL gives a backslash meaning inside them, so one before the
@@ -604,6 +612,8 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
   if (ch === "$") {
     const tagLength = measureDollarTag(sql, index);
     if (tagLength === 0) return null;
+    // A dialect whose only dollar-quoted form is the untagged `$$` reads a tagged opener as code.
+    if (grammar.dollarTags === false && tagLength > 2) return null;
 
     const tag = sql.slice(index, index + tagLength);
     const close = sql.indexOf(tag, index + tagLength);

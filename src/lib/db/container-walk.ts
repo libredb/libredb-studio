@@ -212,10 +212,15 @@ export function sessionDefaultContainer(level: readonly Container[]): readonly s
  * `alsoWalk` names, in the enumeration's own order, with each kept container's kinds beside it; a path `alsoWalk`
  * names that the enumeration does not hold is not invented. The default is carried unchanged, since it is a fact
  * about the session and not about what was read.
+ *
+ * `parentDefault` is the session default the level above the deepest marks, read by `sessionDefaultContainer` off
+ * that level. It counts only where the scope declares `whenNoDefault` and the deepest level has no default: then
+ * the parent's children are kept as well, minus each one whose name the scope skips.
  */
 export function scopeGroundingContainers(
   enumeration: ContainerEnumeration,
   scope: ProviderCapabilities["agentWalkScope"],
+  parentDefault?: readonly string[],
 ): { readonly enumeration: ContainerEnumeration; readonly unread: number } {
   if (scope === undefined) return { enumeration, unread: 0 };
   const wanted = new Set(
@@ -224,7 +229,17 @@ export function scopeGroundingContainers(
       ...(scope.alsoWalk ?? []),
     ].map(pathKey),
   );
-  const kept = enumeration.containers.flatMap((path, index) => (wanted.has(pathKey(path)) ? [index] : []));
+  const fallback = enumeration.defaultContainer === undefined ? scope.whenNoDefault : undefined;
+  const parentKey = parentDefault === undefined ? undefined : pathKey(parentDefault);
+  const skipped = new Set(fallback?.skip ?? []);
+  const isParentChild = (path: readonly string[]): boolean =>
+    fallback !== undefined &&
+    parentKey !== undefined &&
+    pathKey(path.slice(0, -1)) === parentKey &&
+    !skipped.has(path[path.length - 1]);
+  const kept = enumeration.containers.flatMap((path, index) =>
+    wanted.has(pathKey(path)) || isParentChild(path) ? [index] : [],
+  );
   const { containerKinds, ...rest } = enumeration;
   return {
     enumeration: {

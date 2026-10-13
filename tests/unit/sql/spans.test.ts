@@ -402,6 +402,45 @@ describe("readSqlSpan", () => {
     });
   });
 
+  // A dialect whose only dollar-quoted form is the untagged `$$` (`dollarTags: false`, Snowflake's row) reads the
+  // `$` that would open a tagged run as code, and keeps every other dollar reading.
+  describe("dollar-quoted strings without the tagged form", () => {
+    const UNTAGGED: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, dollarTags: false };
+
+    test("no `$` of a tagged run opens a span", () => {
+      const sql = "$t$x$t$";
+
+      for (let index = 0; index < sql.length; index++) {
+        if (sql[index] === "$") expect(readSqlSpan(sql, index, UNTAGGED)).toBeNull();
+      }
+    });
+
+    test("an untagged $$ body is still a dollar string", () => {
+      expect(readSqlSpan("$$x$$", 0, UNTAGGED)).toEqual({ kind: "dollar-string", end: 5, terminated: true });
+    });
+
+    test("an unterminated untagged body still reports terminated: false", () => {
+      expect(readSqlSpan("$$ body", 0, UNTAGGED)).toEqual({ kind: "dollar-string", end: 7, terminated: false });
+    });
+
+    test.each<string>(["$1", "$", "$1$"])("%s is code, as before", (sql) => {
+      expect(readSqlSpan(sql, 0, UNTAGGED)).toBeNull();
+      expect(readSqlSpan(sql, 0)).toBeNull();
+    });
+
+    test("a tagged run inside an untagged body is part of the body", () => {
+      expect(spanOf("$$ $t$ $$ x", 0, UNTAGGED)).toBe("dollar-string|$$ $t$ $$");
+    });
+
+    test.each<[string, SqlGrammar]>([
+      ["the default grammar", DEFAULT_SQL_GRAMMAR],
+      ["the postgres row", resolveSqlGrammar("postgres")],
+    ])("%s still reads the tagged run as a dollar string", (_label, grammar) => {
+      expect(readSqlSpan("$t$x$t$", 0, grammar)).toEqual({ kind: "dollar-string", end: 7, terminated: true });
+      expect(readSqlSpan("$t$ body", 0, grammar)).toEqual({ kind: "dollar-string", end: 8, terminated: false });
+    });
+  });
+
   // ── Alternate quoting (Oracle's `q'…'`) ─────────────────────────────────
   //
   // The form exists so that a literal can carry apostrophes without doubling
@@ -908,6 +947,40 @@ describe("readSqlSpan: a dialect where a backslash always escapes", () => {
 
   test("with the fact false, a double quote behind an odd backslash run stays undeterminable", () => {
     expect(readSqlSpan('"a\\" x', 0, DEFAULT_SQL_GRAMMAR)?.terminated).toBe(false);
+  });
+});
+
+// `doubleQuoteBackslashEscapes` overrides `backslashAlwaysEscapes` inside `"…"` alone: false makes a backslash there
+// an ordinary character (Snowflake's row), true makes it an escape, and absent keeps the reading both quotes share.
+describe("readSqlSpan: a dialect that says what a backslash means inside double quotes", () => {
+  test("false: the run closes at its second quote, even where a backslash escapes inside strings", () => {
+    const grammar: SqlGrammar = {
+      ...DEFAULT_SQL_GRAMMAR,
+      backslashAlwaysEscapes: true,
+      doubleQuoteBackslashEscapes: false,
+    };
+
+    expect(spanOf('"a\\" x', 0, grammar)).toBe('quoted-identifier|"a\\"');
+    expect(readSqlSpan("'it\\'s' x", 0, grammar)).toEqual({ kind: "string", end: 7, terminated: true });
+  });
+
+  test("false: a doubled quote is still an escape", () => {
+    const grammar: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, doubleQuoteBackslashEscapes: false };
+
+    expect(spanOf('"a\\""b" x', 0, grammar)).toBe('quoted-identifier|"a\\""b"');
+  });
+
+  test("absent, with backslashAlwaysEscapes true: the backslash escapes the quote and the run does not close", () => {
+    const grammar: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, backslashAlwaysEscapes: true };
+
+    expect(readSqlSpan('"a\\"', 0, grammar)).toEqual({ kind: "quoted-identifier", end: 4, terminated: false });
+  });
+
+  test("true: the backslash escapes the quote, even where strings leave it undeterminable", () => {
+    const grammar: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, doubleQuoteBackslashEscapes: true };
+
+    expect(spanOf('"a\\"b" x', 0, grammar)).toBe('quoted-identifier|"a\\"b"');
+    expect(readSqlSpan("'a\\' , x", 0, grammar)?.terminated).toBe(false);
   });
 });
 

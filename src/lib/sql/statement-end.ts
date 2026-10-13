@@ -106,8 +106,9 @@ function isStatementText(kind: SqlSpanKind): boolean {
  *    a quote behind an odd backslash run, which `spans.ts` reports as
  *    undeterminable because MySQL escapes with backslashes and PostgreSQL does
  *    not, so the two readings end the statement in different places. (A `$` in a
- *    bare identifier reaches this too: `a$b$c` opens a dollar-quote tag that
- *    never closes.) Inserting on a guess emits `… 'O\'Brien'; LIMIT 500`, a bound
+ *    bare identifier reaches this too under the tagged reading: `a$b$c` opens a
+ *    dollar-quote tag that never closes; a row with `dollarTags: false` reads it
+ *    as a name.) Inserting on a guess emits `… 'O\'Brien'; LIMIT 500`, a bound
  *    after the statement's own `;`, which is a syntax error rather than too many
  *    rows.
  * 2. **A `#` line comment in the trailing run, and ONLY where no dialect was

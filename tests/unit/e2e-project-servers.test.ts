@@ -27,6 +27,7 @@ const SECOND_SERVER_SPECS = [
   "kubernetes-provider.spec.ts",
   "firestore-connection.spec.ts",
   "rabbitmq-provider.spec.ts",
+  "mqtt-provider.spec.ts",
 ];
 
 type Project = NonNullable<typeof config.projects>[number];

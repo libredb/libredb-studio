@@ -203,6 +203,26 @@ export interface SqlGrammar {
    */
   readonly backtickBackslashEscapes?: boolean;
   /**
+   * Whether a tagged run (`$tag$ … $tag$`, the tag non-empty) is a string literal; absent means true, the reading
+   * every row had before the fact existed, which deliberately inverts its neighbours' absent-means-false because the
+   * fact is an opt-out. False: the `$` that would open a tagged run is code, and the untagged `$$ … $$` is still a
+   * dollar string.
+   *
+   * It is a fact the text cannot settle: `$t$x; DELETE FROM t; $t$` is one string where the tagged form exists and
+   * code holding a `DELETE` where it does not, so under the wrong reading the `DELETE` would hide inside a literal
+   * or a string would be cut into statements.
+   */
+  readonly dollarTags?: boolean;
+  /**
+   * Whether a backslash escapes the next character inside `"…"`; absent means the reading `backslashAlwaysEscapes`
+   * gives both quotes. False: a backslash there is an ordinary character, so `"a\"` is a terminated name. True: it
+   * escapes there.
+   *
+   * It is a fact the text cannot settle: `"a\"; DELETE FROM t --"` is a name and a DELETE where the backslash is part
+   * of the name, and one quoted run to the trailing quote where it escapes.
+   */
+  readonly doubleQuoteBackslashEscapes?: boolean;
+  /**
    * How a script is cut into the units the engine receives (E2E pass of 2026-10-03/04,
    * #1312). Before this fact existed every code `;` was a boundary in every dialect, so a
    * PL/SQL procedure, a SQLite trigger and a T-SQL batch were each cut at their inner `;`
@@ -762,30 +782,32 @@ const BIGQUERY_GRAMMAR: SqlGrammar = {
 };
 
 /**
- * Snowflake, every fact read off Snowflake's SQL reference (comments, string and binary literals, dollar-quoted
- * constants, `SELECT ... FOR UPDATE`) and provisional until the live capture measures it: each fact names what the
- * capture still has to show.
+ * Snowflake. The lexical facts were measured on the trial capture of 2026-10-12 (Snowflake 10.37.100), each named on
+ * its field by its item in `tests/fixtures/snowflake/trial-2026-10-12-v10.37.100/`; the rest are read off Snowflake's
+ * SQL reference (string and binary literals, dollar-quoted constants, `SELECT ... FOR UPDATE`).
  *
- * Snowflake's only tagged string is the untagged `$$ … $$`, and `$` is a legal identifier character, so `a$b$c` is a
- * name to Snowflake while the shared span reader opens a `$b$` tagged string there and, finding no closer, reports
- * the text unterminated. That is the reader's fail-safe refusal, as on Databend's row: the statement loses its bound
- * and the confirmation gate asks, and nothing written after the run is read as code it is not.
+ * The one measured reading the shared reader does not follow is the string continuation: M63 ran `'a\<line feed>b'`
+ * as a three-character string, and the reader leaves a literal unterminated at a backslash before a line feed, the
+ * fail-safe direction, so the statement loses its bound and the confirmation gate asks.
  */
 const SNOWFLAKE_GRAMMAR: SqlGrammar = {
-  // CODE: the reference lists `--` and `//` as the line-comment forms; `#` opens none. Until the capture: `#` and
-  // `X''` read as code and an ordinary string.
+  // CODE: M62 refused `SELECT 3 # 2` at the `#` ("unexpected '# '"), so `#` hides nothing, and ran `X''` as a binary
+  // value, which the reader reads as a name and an ordinary string.
   hash: "code",
   // A SUBSCRIPT: `v[0]` and `v['key']` read a semi-structured value, and names are quoted with `"` only.
   bracket: "subscript",
-  // FLAT: the reference gives no nesting rule for `/* */`. Until the capture: a `/*` inside a comment opens nothing.
+  // FLAT: M60 ran `SELECT /* a /* b */ 1` and refused the same text with a second `*/` ("unexpected '/'").
   blockComment: "flat",
   alternateQuoting: false,
-  // A LINE comment: `//` is the reference's second single-line comment form. Until the capture: `//` and a
-  // backslash string continuation.
+  // A LINE comment: M63 ran `SELECT 1 AS c // a comment`.
   doubleSlashComment: true,
-  // A backslash escapes inside `'…'` (`'it\'s'`). Until the capture: whether it also escapes inside `"…"`, which the
-  // shared reader treats as it treats a string.
+  // A backslash escapes inside `'…'` (`'it\'s'`), as the reference gives it.
   backslashAlwaysEscapes: true,
+  // False: M61 named a column `a\b` from `"a\b"`, so a backslash inside `"…"` is part of the name.
+  doubleQuoteBackslashEscapes: false,
+  // False: M64 ran `SELECT 1 AS a$b$c` as the name `A$B$C`, and the reference gives `$$` as the only dollar-quoted
+  // form, so a `$` that would open a tagged run is code.
+  dollarTags: false,
   // A Scripting block runs through `EXECUTE IMMEDIATE $$ … $$`, which the span reader holds whole.
   script: DEFAULT_SQL_GRAMMAR.script,
   // `SELECT ... FOR UPDATE [NOWAIT | WAIT <n>]` ends the statement, after any LIMIT. The wait is a number, so a `)`
@@ -793,7 +815,9 @@ const SNOWFLAKE_GRAMMAR: SqlGrammar = {
   trailingLimitClauses: [/\s+FOR\s+UPDATE(?:\s+NOWAIT|\s+WAIT\s+\d+)?\s*$/i],
   // The forms that replace, overwrite, unload, delete stage files, run text the gate cannot read, spend credits or
   // open a path out of the account, none of which the shared set names: every COPY asks, whichever way it moves data,
-  // and so does every CALL and every pipe. `CREATE OR ALTER` drops whatever columns its new definition leaves out.
+  // and so does every CALL and every pipe. `CREATE OR ALTER` drops whatever columns its new definition leaves out. A
+  // dynamic table, a dynamic Iceberg table, a Cortex Search service and a replication or failover group each refresh
+  // or replicate on their own and bill for it.
   confirmForms: [
     ["CREATE", "OR", "REPLACE"],
     ["CREATE", "OR", "ALTER"],
@@ -826,6 +850,9 @@ const SNOWFLAKE_GRAMMAR: SqlGrammar = {
     ["CREATE", "API", "INTEGRATION"],
     ["CREATE", "NETWORK", "RULE"],
     ["CREATE", "REPLICATION", "GROUP"],
+    ["CREATE", "FAILOVER", "GROUP"],
+    ["CREATE", "CORTEX", "SEARCH", "SERVICE"],
+    ["CREATE", "DYNAMIC", "ICEBERG", "TABLE"],
   ],
   // An anonymous procedure (`WITH p AS PROCEDURE … CALL p()`) and any `SYSTEM$` function, wherever they are written.
   confirmCodeForms: [["AS", "PROCEDURE"], { prefix: "SYSTEM$" }],

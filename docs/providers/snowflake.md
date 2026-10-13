@@ -284,6 +284,8 @@ $$;
 The confirmation gate asks before such a block runs ([section 9](#9-the-confirmation-gate)).
 A bare block, as Snowsight runs it, fails at its first fragment with Snowflake's own syntax error, and Studio adds `A Snowflake Scripting block runs through the SQL API only inside EXECUTE IMMEDIATE $$ ... $$.`
 The editor splits a script with Snowflake's grammar, `//` comments included, and sends each statement as its own request with a statement count of 1.
+In that grammar `$` is a name character and only `$$` opens a string, as Snowflake's reference gives it, so a `$t$` run is code and `a$b$c` is one name, as the trial capture measured.
+A backslash inside `"..."` is part of the name, so `"a\b"` names the column `a\b`.
 
 ## 5. What runs on a warehouse
 
@@ -465,7 +467,11 @@ Information Schema reads are cached for 60 s, and auto-refresh stays off until t
 
 ### 8.3 Plan mode and agent operations
 
-Plan mode grounds on the session-default database and schema through `SHOW` only, under its 10 s timer, and drafts SQL without running it; the draft reaches the editor, where the gate applies.
+Plan mode grounds through `SHOW` only, under its 10 s timer, and drafts SQL without running it; the draft reaches the editor, where the gate applies.
+With a Schema set, it reads that schema alone.
+With a Database set and no Schema, Snowflake's session has no current schema, so it reads that database's schemas in listing order, leaving out `INFORMATION_SCHEMA`, within the same timer and the walk's limits.
+With neither, it reads no schema.
+In each case the inventory tells the model how many schemas it did not read and names the ones it did.
 The agent operations workflow is offered and reads through the monitoring panels' gate.
 A Role edit makes a new connection identity, so a plan held under one role is not validated under another.
 
@@ -500,10 +506,10 @@ The gate is a browser confirmation, not a boundary: it asks before a statement r
 On top of the shared destructive keywords it asks for these Snowflake forms, at the top level and inside a block.
 Forms that replace, overwrite, unload or delete: `CREATE OR REPLACE`, `CREATE OR ALTER` (which drops the columns its new definition leaves out), `INSERT OVERWRITE`, `MERGE`, `COPY`, `REMOVE` and `RM`.
 Forms that run text or work the gate cannot read: `EXECUTE IMMEDIATE`, `EXECUTE TASK`, `EXECUTE ALERT`, `EXECUTE NOTEBOOK`, `EXECUTE JOB SERVICE`, `EXECUTE DBT PROJECT` and `CALL`.
-Forms that spend credits on their own, once or on a schedule: `CREATE WAREHOUSE`, `CREATE TASK`, `CREATE ALERT`, `CREATE COMPUTE POOL`, `CREATE SERVICE`, `CREATE DYNAMIC TABLE`, `CREATE TRANSIENT DYNAMIC TABLE`, `CREATE MATERIALIZED VIEW`, `CREATE SECURE MATERIALIZED VIEW` and `CREATE PIPE`.
-Forms that change who gets in or what leaves the account: `CREATE USER`, `CREATE ROLE`, `CREATE NETWORK POLICY`, `CREATE NETWORK RULE`, `CREATE EXTERNAL ACCESS INTEGRATION`, `CREATE API INTEGRATION` and `CREATE REPLICATION GROUP`.
+Forms that spend credits on their own, once or on a schedule: `CREATE WAREHOUSE`, `CREATE TASK`, `CREATE ALERT`, `CREATE COMPUTE POOL`, `CREATE SERVICE`, `CREATE DYNAMIC TABLE`, `CREATE TRANSIENT DYNAMIC TABLE`, `CREATE MATERIALIZED VIEW`, `CREATE SECURE MATERIALIZED VIEW`, `CREATE PIPE`, `CREATE DYNAMIC ICEBERG TABLE` and `CREATE CORTEX SEARCH SERVICE`.
+Forms that change who gets in or what leaves the account: `CREATE USER`, `CREATE ROLE`, `CREATE NETWORK POLICY`, `CREATE NETWORK RULE`, `CREATE EXTERNAL ACCESS INTEGRATION`, `CREATE API INTEGRATION`, `CREATE REPLICATION GROUP` and `CREATE FAILOVER GROUP`.
 It also asks wherever `AS PROCEDURE` (an anonymous procedure) or an identifier starting `SYSTEM$` appears in a statement's code, a quoted `"SYSTEM$..."` name included when it is called as a function.
-Still unconfirmed: every Snowflake form not named above, among them `CREATE STORAGE INTEGRATION`, `CREATE FAILOVER GROUP` and `CREATE SHARE`; a statement whose effect hides behind an `IDENTIFIER()` target; and whatever a procedure created earlier does when a statement that does not name it reaches it.
+Still unconfirmed: every Snowflake form not named above, among them `CREATE STORAGE INTEGRATION` and `CREATE SHARE`; a statement whose effect hides behind an `IDENTIFIER()` target; and whatever a procedure created earlier does when a statement that does not name it reaches it.
 
 ## 10. Security
 

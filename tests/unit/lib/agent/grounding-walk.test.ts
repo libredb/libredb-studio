@@ -60,6 +60,8 @@ interface Stub {
   /** Further capability declarations, such as a walk scope. */
   readonly extra?: Partial<ProviderCapabilities>;
   readonly containers?: readonly Container[];
+  /** A tree of more than one level: the containers under a parent, the root's where none is given. */
+  readonly containersUnder?: (parent?: readonly string[]) => readonly Container[];
   readonly counts?: (container: readonly string[]) => Record<string, KindCount>;
   readonly objects?: (container: readonly string[], kind: string) => readonly DatabaseObject[];
 }
@@ -78,18 +80,15 @@ function stub(options: Stub = {}) {
       options.counts?.(container) ?? { pods: { count: 1 }, secrets: { count: 2 } },
   );
   const listContainers = mock(
-    async () =>
+    async (parent?: readonly string[]) =>
+      options.containersUnder?.(parent) ??
       options.containers ?? [
         { path: ["default"], name: "default", level: 0, isSessionDefault: true },
         { path: ["shop"], name: "shop", level: 0 },
       ],
   );
-  const provider = {
-    listObjects,
-    countObjects,
-    listContainers,
-    describeObjects: mock(async () => ({ details: [] })),
-  } as unknown as DatabaseProvider;
+  const describeObjects = mock(async (_container: readonly string[], _kind: string) => ({ details: [] }));
+  const provider = { listObjects, countObjects, listContainers, describeObjects } as unknown as DatabaseProvider;
   const context: AgentToolContext = {
     runId: "run-1",
     modelId: "unmeasured-model-for-tests",
@@ -112,7 +111,7 @@ function stub(options: Stub = {}) {
     acquireProvider: mock(async () => provider),
     clock: frozenClock,
   };
-  return { context, listObjects, countObjects, listContainers };
+  return { context, listObjects, countObjects, listContainers, describeObjects };
 }
 
 async function captured(
@@ -323,6 +322,110 @@ describe("a scoped walk", () => {
     });
 
     expect(snapshot.unreadContainers).toBeUndefined();
+  });
+});
+
+describe("a scoped walk over two levels with no deepest default", () => {
+  const TABLE: ObjectKindSpec = { id: "table", role: "relation", label: "Table", labelPlural: "Tables" };
+  const schemas = (database: string, ...names: string[]): Container[] =>
+    names.map((name) => ({ path: [database, name], name, level: 1, isSessionDefault: false }));
+  // Shaped like Snowflake with a Database and no Schema: the database is marked, no schema is.
+  const containersUnder = (parent?: readonly string[]): readonly Container[] =>
+    parent === undefined
+      ? [
+          { path: ["OTHER"], name: "OTHER", level: 0, isSessionDefault: false },
+          { path: ["SALES"], name: "SALES", level: 0, isSessionDefault: true },
+        ]
+      : parent[0] === "SALES"
+        ? schemas("SALES", "INFORMATION_SCHEMA", "PUBLIC", "RAW")
+        : schemas("OTHER", "PUBLIC");
+  const twoLevels: Partial<ProviderCapabilities> = {
+    containerLevels: [
+      { id: "catalog", label: "Database", labelPlural: "Databases" },
+      { id: "schema", label: "Schema", labelPlural: "Schemas" },
+    ],
+  };
+  const table = (container: readonly string[], kind: string): readonly DatabaseObject[] => [
+    { path: [...container, "ORDERS"], name: "ORDERS", kind },
+  ];
+
+  test("with the fallback, reads the configured database's schemas minus the skipped, and counts the rest", async () => {
+    const { snapshot, harness } = await captured({
+      kinds: [TABLE],
+      containersUnder,
+      counts: () => ({ table: { count: 1 } }),
+      objects: table,
+      extra: {
+        ...twoLevels,
+        agentWalkScope: {
+          mode: "session-default",
+          whenNoDefault: { walk: "parent-default-children", skip: ["INFORMATION_SCHEMA"] },
+        },
+      },
+    });
+
+    expect(harness.countObjects.mock.calls.map((call) => call[0])).toEqual([
+      ["SALES", "PUBLIC"],
+      ["SALES", "RAW"],
+    ]);
+    expect(harness.listObjects.mock.calls.map((call) => call[0])).toEqual([
+      ["SALES", "PUBLIC"],
+      ["SALES", "RAW"],
+    ]);
+    expect(harness.describeObjects.mock.calls.map((call) => call[0])).toEqual([
+      ["SALES", "PUBLIC"],
+      ["SALES", "RAW"],
+    ]);
+    expect(snapshot.objects.map((object) => object.path)).toEqual([
+      ["SALES", "PUBLIC", "ORDERS"],
+      ["SALES", "RAW", "ORDERS"],
+    ]);
+    expect(snapshot.unreadContainers).toEqual({
+      count: 2,
+      label: "Schema",
+      labelPlural: "Schemas",
+      read: ["SALES.PUBLIC", "SALES.RAW"],
+    });
+  });
+
+  test("without the fallback, reads no container and counts every one, as before", async () => {
+    const { snapshot, harness } = await captured({
+      kinds: [TABLE],
+      containersUnder,
+      counts: () => ({ table: { count: 1 } }),
+      objects: table,
+      extra: { ...twoLevels, agentWalkScope: { mode: "session-default" } },
+    });
+
+    expect(harness.countObjects).not.toHaveBeenCalled();
+    expect(snapshot.objects).toEqual([]);
+    expect(snapshot.unreadContainers?.count).toBe(4);
+  });
+
+  test("with the fallback and two databases marked, reads no container, as with no default", async () => {
+    const { snapshot, harness } = await captured({
+      kinds: [TABLE],
+      containersUnder: (parent) =>
+        parent === undefined
+          ? [
+              { path: ["OTHER"], name: "OTHER", level: 0, isSessionDefault: true },
+              { path: ["SALES"], name: "SALES", level: 0, isSessionDefault: true },
+            ]
+          : containersUnder(parent),
+      counts: () => ({ table: { count: 1 } }),
+      objects: table,
+      extra: {
+        ...twoLevels,
+        agentWalkScope: {
+          mode: "session-default",
+          whenNoDefault: { walk: "parent-default-children", skip: ["INFORMATION_SCHEMA"] },
+        },
+      },
+    });
+
+    expect(harness.countObjects).not.toHaveBeenCalled();
+    expect(snapshot.objects).toEqual([]);
+    expect(snapshot.unreadContainers?.count).toBe(4);
   });
 });
 
