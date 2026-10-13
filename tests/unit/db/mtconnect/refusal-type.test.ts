@@ -284,7 +284,8 @@ describe("a result says when this provider's row cap cut it", () => {
     const provider = Object.create(MTConnectProvider.prototype) as Record<string, unknown>;
     provider.require = () => ({ window: undefined });
     provider.model = async () => ({ instanceId: "1", items: new Map(), devices: [] }) satisfies MtcModel;
-    provider.guard = () => ({ op: "current", route: { op: "current" }, params: {}, query: {} }) as unknown as MtcRequest;
+    provider.guard = () =>
+      ({ op: "current", route: { op: "current" }, params: {}, query: {} }) as unknown as MtcRequest;
     provider.streamed = async (_s: unknown, _r: unknown, onObservation: (o: MtcObservation) => void) => {
       for (const row of rows) {
         onObservation({
