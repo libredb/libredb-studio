@@ -31,9 +31,9 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > not, so "manage data across …" must never be written over the whole list. Read the split from
 > the providers: `supportsInlineRowEdit` and `supportsCreateTable` default to `true` in
 > `src/lib/db/base-provider.ts` and each provider that cannot turns them off, which leaves inline
-> row editing on PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL and DuckDB, and table
-> creation on those seven plus Trino. Every other engine (BigQuery, Cassandra, ClickHouse, Couchbase, Databend, Druid,
-> Db2 LUW, Elasticsearch, Firestore, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, Kubernetes, Milvus, MongoDB, MQTT, Neo4j, OPC UA, OpenSearch, Oxia, Prometheus, Qdrant, RabbitMQ, Redis, S3-compatible object storage, Snowflake and etcd) reports those controls as unsupported. The
+> row editing on PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL and DuckDB, and table
+> creation on the same engines except Db2 LUW, plus Trino. Every other engine (BigQuery, Cassandra, ClickHouse, Couchbase, Databend, Druid,
+> Elasticsearch, Firestore, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, Kubernetes, Milvus, MongoDB, MQTT, Neo4j, OPC UA, OpenSearch, Oxia, Prometheus, Qdrant, RabbitMQ, Redis, S3-compatible object storage, Snowflake and etcd) reports those controls as unsupported. The
 > reason differs per engine and the copy must not flatten it: on Elasticsearch no mutation is in
 > the SQL grammar at all, while OpenSearch's grammar carries exactly one — `DELETE`, off by
 > default on the cluster (`docs/providers/opensearch.md` §5.6, and `SEARCH_SCHEMA_REFRESH_PATTERN`
@@ -151,7 +151,8 @@ MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, O
 Snowflake, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ and OPC UA from a single web interface, with no desktop
 client to install. Editing
 data follows the engine rather than the IDE: inline row editing on PostgreSQL, MySQL,
-Oracle, SQL Server, SQLite, libSQL and DuckDB, table creation on those seven and Trino, and
+Oracle, Db2 LUW, SQL Server, SQLite, libSQL and DuckDB, table creation on the same engines
+except Db2 LUW, whose Create Table dialog has no Db2 column types yet, and on Trino, and
 everywhere else the controls are reported as unsupported rather than offered and then
 failed — Elasticsearch SQL has no mutation in its grammar at all, OpenSearch's one
 mutation (`DELETE`) is off by default, and Druid SQL has no `UPDATE`, no `DELETE` and no
