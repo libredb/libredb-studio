@@ -153,6 +153,7 @@ A refused key is reported, never re-signed and retried.
 With Sign-in set to Programmatic access token, paste the token into Access token.
 For a PAT on a PERSON user, a network policy must allow the public address Studio connects from, which on a laptop changes with the network.
 The durable relief is an authentication policy with `PAT_POLICY = (NETWORK_POLICY_EVALUATION = ENFORCED_NOT_REQUIRED)`.
+On the trial on 2026-10-13 that policy let a token sign in for a user with no network policy, and each policy change took up to about 45 s to show.
 Key pair avoids that requirement, though a network policy that applies to the user still refuses an address it excludes.
 Use Key pair for npx and the desktop app, and a PAT for a server with a fixed egress address.
 
@@ -211,6 +212,7 @@ A seed that sets `connectionString` for `snowflake` is refused.
 
 Studio runs every statement as Role and stops nothing a role may do.
 The role is the boundary, not Studio: grant it no MODIFY, OPERATE, MANAGE WAREHOUSES or CREATE TASK, and keep `DEFAULT_SECONDARY_ROLES = ()` on the user or use a role-restricted credential, because with secondary roles ALL a read-only role is not a boundary.
+On the trial on 2026-10-13 a key or token restricted to one role signed in under that role and under no role, and was refused under another with 390186.
 Every name below is a placeholder:
 
 ```sql
@@ -242,10 +244,12 @@ ALTER USER STUDIO_SVC ADD KEY PAIR libredb_studio_<fp8> PUBLIC_KEY = '<public ke
 
 - Assigning a key needs MODIFY PROGRAMMATIC AUTHENTICATION METHODS on the user, or OWNERSHIP, usually an administrator; a user's own self-service form was refused with 003001 by a message naming that privilege on the user.
 - A resource monitor caps warehouse credits only, not serverless features such as the Query Acceleration Service.
+  On the trial on 2026-10-13 a monitor at its quota suspended the warehouse mid-statement, and the statement ended with HTTP 422, code 000629 and SQLSTATE 57014, `Warehouse ... was suspended immediate by resource monitor ..., statement aborted.`, which Studio shows with Snowflake's text and code; a statement that needs no warehouse still answered.
   A warehouse created without `GENERATION = '1'` may be Gen2, at another credit rate and with query acceleration on by default, which is why the recipe sets both.
 - The warehouse's `STATEMENT_TIMEOUT_IN_SECONDS` caps the connection's Query Timeout, because Snowflake applies the lowest non-zero value of the two: under the recipe's 600 s, a longer Query Timeout still ends at 600 s.
   On the trial (Snowflake 10.37.100, 2026-10-12) a 700 s Query Timeout ended at the warehouse's 600 s with HTTP 408, code 000630 and SQLSTATE 57014, which Studio reports with the sentence of [section 5.3](#53-timeouts-cancel-and-disconnect).
 - The credit quota, the trigger percentages and the statement timeout are starting values for a first setup, not Snowflake's advice.
+- The recipe ran as written on the trial on 2026-10-13, and its user was refused an INSERT with 003001.
 
 ## 4. Sessions, transactions and blocks
 
@@ -547,6 +551,8 @@ Still unconfirmed: every Snowflake form not named above, among them `CREATE STOR
 | No usable statement handle | `DatabaseError` | `Snowflake answered without a statement handle Studio can use.` |
 | A link outside the account's statements | `DatabaseError` | `Snowflake answered with a link outside this account's statements, so Studio did not follow it.` |
 | Lone transaction, `USE`, result partitions, key and field checks | as above | the sentences of sections 2, 4 and 6 |
+
+A data movement policy refusal answers HTTP 422 with code 001003, the code a syntax error answers, and `Data movement policy triggered. Contact your administrator for details.`, so Studio shows Snowflake's text.
 
 Every request sends the User-Agent `LibreDB-Studio/<version>`, or `LibreDB-Studio` in the embedded package, whose build injects no version.
 A submit answered 429, 500, 502, 503 or 504 is resent with the same request id and `retry=true`, so Snowflake never runs it twice, after a backoff from 500 ms doubling to 8 s, at most 5 sends; 401, 403, 404, 422 and 522 are never retried.
