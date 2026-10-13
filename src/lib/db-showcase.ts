@@ -121,6 +121,9 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   // Last (rank 36), behind the embedded store: a plant's address space is the least recognisable name
   // on a page of databases, so no existing engine moves for it (#1677).
   opcua: 36,
+  // Last (rank 36), behind the address space: a machine tool's agent is a narrower name still, so nothing
+  // above it moves for it either (#1722).
+  mtconnect: 36,
 };
 
 /**

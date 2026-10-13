@@ -18,7 +18,15 @@ export type RouteClass = "read" | "write" | "destructive" | "admin";
 
 /** One query key a route declares, and the values it takes. */
 export interface QueryKeySpec {
-  readonly kind: "positive-int" | "positive-int-or-words" | "word-list";
+  /**
+   * `"text"` (#1722) takes any non-empty value up to the dialect's `maxTextBytes`, counted in bytes, and leaves
+   * the rest to the provider's own phase 0. It exists because MTConnect declares three keys none of the kinds
+   * above can carry: `path` is an XPath, `count` may be negative, which the agent answers as the newest N, and a
+   * sequence number runs to 2^64-1, past the safe integer the numeric kinds stop at. A kind of its own for each
+   * would put three numeric rules in this module that one provider uses; this one keeps the sentence honest
+   * ("takes text") and leaves the numbers where they have to be checked anyway, against the agent's own window.
+   */
+  readonly kind: "positive-int" | "positive-int-or-words" | "word-list" | "text";
   /** The words the key takes: one of them for `positive-int-or-words`, a comma-separated list of them for `word-list`. */
   readonly words?: readonly string[];
 }

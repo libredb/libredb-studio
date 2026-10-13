@@ -619,6 +619,9 @@ function queryValueText(spec: { readonly kind: string; readonly words?: readonly
   const words = (spec.words ?? []).join(", ");
   if (spec.kind === "positive-int") return "a positive integer";
   if (spec.kind === "positive-int-or-words") return `a positive integer or one of ${words}`;
+  // `text` before the list below, which is the fallback: a kind with no arm is read as a word list with no words,
+  // so every value is refused and the sentence names a list the key does not have (#1722).
+  if (spec.kind === "text") return "text";
   return `a comma-separated list of ${words}`;
 }
 
@@ -630,6 +633,11 @@ function queryValueAccepted(
   const words = spec.words ?? [];
   if (spec.kind === "positive-int") return positive;
   if (spec.kind === "positive-int-or-words") return positive || words.includes(value);
+  // Non-empty, and nothing about length. MEASURED rather than assumed: the whole text is held to
+  // `maxTextBytes` before any value is read, and a decoded value is never longer than the text that
+  // carried it, so a byte bound here could not fire. A value past the bound is refused as `too-large`
+  // on the text, which is the honest sentence: the request line is too long, not the value wrong.
+  if (spec.kind === "text") return value !== "";
   return value !== "" && value.split(",").every((word) => words.includes(word));
 }
 

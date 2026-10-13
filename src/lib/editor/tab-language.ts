@@ -18,7 +18,8 @@ export type EditorLanguage =
   | "oxia"
   | "s3"
   | "kubectl"
-  | "firestore";
+  | "firestore"
+  | "mtconnect";
 
 /**
  * The tab type a connection's tabs take.

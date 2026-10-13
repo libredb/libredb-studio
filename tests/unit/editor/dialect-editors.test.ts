@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
 import type { ConsoleLanguage } from "@/lib/editor/console-language";
 import { formatConsole } from "@/lib/db/console/format";
+import { MTC_CONSOLE_DIALECT, MTC_CONSOLE_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
 import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/routes";
 import { QDRANT_CONSOLE, QDRANT_ROUTES as QDRANT_ROUTES_REAL } from "@/lib/db/providers/vector/qdrant/routes";
 import { DIALECT_EDITORS, formatterForLanguage, registerDialectConsoles } from "@/lib/editor/dialect-editors";
@@ -40,6 +41,7 @@ describe("DIALECT_EDITORS", () => {
       "milvus",
       "mongodb",
       "mqtt",
+      "mtconnect",
       "opcua",
       "oxia",
       "promql",
@@ -60,6 +62,7 @@ describe("DIALECT_EDITORS", () => {
       mongodb: "json",
       mqtt: "json",
       opcua: "json",
+      mtconnect: "mtconnect",
       libredb: "libredb",
       redis: "redis",
       promql: "promql",
@@ -158,11 +161,18 @@ describe("formatterForLanguage", () => {
 });
 
 describe("the console field", () => {
-  test("the Milvus and Qdrant records carry their console languages, and no other record carries one", () => {
+  test("the three console records carry their console languages, and no other record carries one", () => {
     const carrying = Object.entries(DIALECT_EDITORS)
       .filter(([, editor]) => editor.console !== undefined)
       .map(([tabType]) => tabType);
-    expect(carrying).toEqual(["milvus", "qdrant"]);
+    expect(carrying).toEqual(["milvus", "qdrant", "mtconnect"]);
+    // MTConnect's routes are DERIVED from the table its guard runs, so the identity checked here is
+    // that the record carries that derived table and not a second hand-written one (#1722).
+    expect(DIALECT_EDITORS.mtconnect.console?.spec).toBe(MTC_CONSOLE_DIALECT);
+    expect(DIALECT_EDITORS.mtconnect.console?.routes).toBe(MTC_CONSOLE_ROUTES);
+    // And no formatter: the console formatter writes a method, a route and a JSON body, and this
+    // dialect has no body at all.
+    expect(DIALECT_EDITORS.mtconnect.format).toBeUndefined();
     expect(DIALECT_EDITORS.milvus.console?.spec).toBe(MILVUS_CONSOLE);
     expect(DIALECT_EDITORS.milvus.console?.routes).toBe(MILVUS_ROUTES);
     expect(DIALECT_EDITORS.qdrant.console?.spec).toBe(QDRANT_CONSOLE);
@@ -213,10 +223,10 @@ describe("registerDialectConsoles", () => {
     expect(registered.map((language) => language.id)).toEqual(["first-console", "second-console"]);
   });
 
-  test("registers the Milvus and Qdrant console languages for the shipped records, once each", () => {
+  test("registers the three console languages for the shipped records, once each", () => {
     const { monaco, registered } = recordingMonaco();
     registerDialectConsoles(monaco);
     registerDialectConsoles(monaco);
-    expect(registered.map((language) => language.id)).toEqual(["milvus", "qdrant"]);
+    expect(registered.map((language) => language.id)).toEqual(["milvus", "qdrant", "mtconnect"]);
   });
 });

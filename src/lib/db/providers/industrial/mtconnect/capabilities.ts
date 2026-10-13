@@ -12,20 +12,13 @@
  * There is no `queryReadOnly`, so no agent statement execution and no MCP read query, which follows
  * the rule issue #424 sets for a provider whose text is not a query language.
  *
- * The type id is declared here as a local alias rather than as a member of the published union.
- * Adding `"mtconnect"` to `DatabaseType` in `src/lib/types.ts` is one line in a file six other
- * issues also queue for, so it is the last step of the provider's PR rather than the first. When
- * that line lands, `MtconnectType` below is deleted and the two places that use it read
- * `DatabaseType` instead. The directory's README says so, so that the alias does not outlive its
- * reason.
+ * The type id is a member of the published `DatabaseType` union (`src/lib/types.ts`). It was a local
+ * alias here while that line was queued behind six other issues, and the alias is gone: nothing in
+ * this directory declares the id for itself any more.
  *
  * Browser-safe: no Node built-in, no server module.
  */
 import type { ObjectKindSpec } from "@/lib/db/types";
-
-/** The type id, until the published union carries it. Deleted in one line when it does. */
-export type MtconnectType = "mtconnect";
-export const MTCONNECT_TYPE: MtconnectType = "mtconnect";
 
 /**
  * The default port, from the Institute's quickstart and cppagent's README, and MEASURED on the

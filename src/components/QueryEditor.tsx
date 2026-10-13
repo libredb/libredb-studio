@@ -101,7 +101,8 @@ interface QueryEditorProps {
     | "oxia"
     | "s3"
     | "kubectl"
-    | "firestore";
+    | "firestore"
+    | "mtconnect";
   /**
    * The connected engine, whose grammar decides where a statement ends.
    *

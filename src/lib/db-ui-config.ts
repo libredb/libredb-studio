@@ -8,6 +8,7 @@ import {
   OracleIcon,
   MSSQLIcon,
   LibreDBIcon,
+  MtconnectIcon,
   OpcuaIcon,
   CouchbaseIcon,
   ClickHouseIcon,
@@ -1325,6 +1326,34 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
       "OPC UA connections are read-only whether or not this is ticked, and not by a setting: this " +
       "provider's client exposes Browse, BrowseNext, Read, HistoryRead and the session calls, and has no " +
       "code that can Write, Call a method, or subscribe.",
+  },
+  mtconnect: {
+    // A mark drawn for Studio, never the MTConnect Institute's logo: a baseline with three samples on it.
+    icon: MtconnectIcon,
+    // The second step of the hue OPC UA added, rather than a colour of its own: an agent reads the machines a
+    // plant's address space also stands in front of, so the `industrial/` family carries one hue between its two
+    // members. `slate-alt` joined the identity steps with this entry, and it leaves both closest identity pairs
+    // exactly where they were (tests/unit/theme-accent-contrast.test.ts measures it).
+    color: "text-hue-slate-alt",
+    label: "MTConnect",
+    // The port the reference agent listens on out of the box, and the one the demo agent answered on.
+    defaultPort: "5000",
+    // Host and Port hold the agent. A pasted `http(s)://` address is split into them by the Host box below rather
+    // than kept as a string, so there is one spelling of an address in the form.
+    showConnectionStringToggle: false,
+    hostAcceptsUri: ["http", "https"],
+    // Host, Port and the proxy's path prefix, and nothing else: the standard defines no authentication, so the
+    // form offers no credential to fill in. A proxy that asks for one answers with its own page, which the
+    // provider reports as what it is rather than as an agent's refusal.
+    connectionFields: ["host", "port", "apiPath"],
+    fieldLabels: {
+      host: "Host",
+      port: "Port",
+      apiPath: "Path prefix",
+    },
+    // The dialog's own sentence says the mode can be turned off, which is false here.
+    readOnlyHint:
+      "MTConnect connections are read-only whether or not this is ticked: Studio sends the agent GET requests from a closed table and nothing else.",
   },
   libredb: {
     icon: LibreDBIcon,

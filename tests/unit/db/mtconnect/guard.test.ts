@@ -297,3 +297,38 @@ describe("the path subset", () => {
     expect(guardRequestLine(`/current?path=${encodeURIComponent(path)}`, OPTIONS).query.path).toBe(path);
   });
 });
+
+/**
+ * The comment lines the dialect promises (#1722).
+ *
+ * MTC_CONSOLE_DIALECT declares `#` as a comment marker, so the editor draws a `#` line as a comment
+ * and the tree's generator writes one above the request it builds. Before this the whole text went
+ * into the `#` rule and every such request was refused as carrying a fragment, which is a sentence
+ * about a URL and not about a comment. Found by writing the generator, not by reading the guard.
+ */
+describe("comment lines above the request", () => {
+  test("a comment line is dropped and the request below it runs", () => {
+    const request = guardRequestLine("# PART_COUNT on Mazak\nGET /Mazak/current", {
+      ...OPTIONS,
+      knownDevices: new Set(["Mazak"]),
+    });
+    expect([request.op, request.params.device]).toEqual(["current", "Mazak"]);
+  });
+
+  test("several comment lines and blank lines are dropped", () => {
+    const request = guardRequestLine("# one\n\n#two\n\nGET /probe", OPTIONS);
+    expect(request.op).toBe("probe");
+  });
+
+  test("a # after the route is still a fragment", () => {
+    expect(code(() => guardRequestLine("GET /probe#top", OPTIONS))).toBe("fragment");
+  });
+
+  test("two request lines are refused as two, not run as the first", () => {
+    expect(code(() => guardRequestLine("GET /probe\nGET /current", OPTIONS))).toBe("two-requests");
+  });
+
+  test("a text of only comments is refused for having no route", () => {
+    expect(code(() => guardRequestLine("# nothing here\n", OPTIONS))).toBe("unknown-route");
+  });
+});

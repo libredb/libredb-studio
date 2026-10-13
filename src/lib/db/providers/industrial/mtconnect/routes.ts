@@ -3,8 +3,13 @@
  *
  * The authoritative list is the agent's own. MEASURED on `mtconnect/agent:2.8.0.3` with `AllowPut`
  * unset: `GET /swagger` answered 200 with 15 routes and 15 operations, every one a GET. This table
- * is ten of those fifteen, and the five it leaves out are left out for stated reasons rather than
- * by oversight (decision K-65).
+ * is NINE of those fifteen, and the six it leaves out are left out for stated reasons rather than
+ * by oversight (decision K-65). The table of omissions below holds seven entries: the sixth of the
+ * fifteen plus `/swagger` itself, which the agent answers and which is not one of the fifteen.
+ *
+ * The count was ten in an earlier draft of this file, and the tenth route, `/{device}/asset/{assetIds}`,
+ * DOES NOT EXIST: it was completed by symmetry rather than read, and the Swagger document names no such
+ * route. A test that pinned the count is what sent this back to the document (decision K-65, corrected).
  *
  * The parameter sets below were read from that Swagger document route by route, not copied from the
  * issue. The difference matters twice:
@@ -19,16 +24,21 @@
  * The device is always a path segment. A `device` query parameter is never sent, for the reason
  * above.
  *
- * These shapes mirror the shared console's `RouteSpec` and `ConsoleDialectSpec` deliberately. They
- * are declared here rather than imported because the console's query value kinds are
- * `positive-int`, `positive-int-or-words` and `word-list`, and MTConnect needs a free text value
- * for `path` and a non zero integer that may be negative for `count`. The agreed change is one
- * union member, `"text"`, in the shared module (decision K-102), and the shared module is a file
- * whose turn this session does not hold. When that member lands these specs map onto it one for
- * one; until then nothing outside this directory is touched.
+ * TWO VIEWS OF ONE TABLE, AND ONE OF THEM IS DERIVED. `MTC_ROUTES` below is what the guard runs: its
+ * query kinds are this provider's own, because MT-S2 makes the provider check `from` against the
+ * Header's window and `count` against the buffer size in any case, and the console cannot see either.
+ * `MTC_CONSOLE_ROUTES` is the same table as the shared console's `RouteSpec`, for the editor to draw
+ * and complete, and it is COMPUTED from `MTC_ROUTES` rather than written a second time: a route the
+ * guard would refuse cannot be a route the editor offers, which is what a hand copy drifts into.
+ *
+ * The `"text"` member the mapping leans on is the one change the shared console took for this provider
+ * (decision K-102, `src/lib/db/console/dialect.ts`): `path` is an XPath, `count` may be negative and a
+ * sequence number runs past the safe integer, so none of the three older kinds can carry them.
  *
  * Browser-safe: no Node built-in, no server module.
  */
+
+import type { ConsoleDialectSpec, QueryKeySpec, RouteSpec } from "@/lib/db/console/dialect";
 
 /** What a path parameter holds. */
 export type MtcParamKind = "device" | "asset-ids";
@@ -204,7 +214,7 @@ export const MTC_REFUSED_KEYS: Readonly<Record<string, string>> = Object.freeze(
  * parameters and the headers (decision K-61). This number is the console's own text bound, which
  * sits below that budget.
  */
-export const MTC_CONSOLE_DIALECT = Object.freeze({
+export const MTC_CONSOLE_DIALECT: ConsoleDialectSpec = Object.freeze({
   id: "mtconnect",
   methods: Object.freeze(["GET"]),
   pathPrefix: "/",
@@ -212,9 +222,54 @@ export const MTC_CONSOLE_DIALECT = Object.freeze({
   commentMarkers: Object.freeze(["#"]),
   bodyComments: false,
   maxTextBytes: 4096,
-  /** No route takes a body. Nothing in MTConnect's REST interface reads one. */
-  body: "none",
+  // THE FOUR BODY BOUNDS BOUND A SENTENCE, NOT A REQUEST, AND THEY ARE THE TWO EXISTING DIALECTS'
+  // OWN NUMBERS. No route here takes a body: every one declares `body: "none"`, and a body on such
+  // a route is refused. MEASURED, and this is why they are not zero: `parseConsole` reads the body
+  // BEFORE it checks the route's body rule, so with zeros `GET /current` followed by `{"a":1}` was
+  // refused as `too-many-nodes`, a sentence about a bound, instead of being told the route takes no
+  // body. Qdrant's and Milvus's numbers are carried over rather than invented, so the only thing
+  // these four decide is how large a mistyped body gets the right sentence.
+  maxDepth: 32,
+  maxNodes: 4_096,
+  maxNumericLeaves: 262_144,
+  maxScalarLeaves: 32_768,
 });
+
+/**
+ * The same table as the shared console reads it, computed rather than written again.
+ *
+ * Two mappings, and each one loses something on purpose:
+ *
+ * - EVERY QUERY KEY BECOMES `"text"`. The shared kinds cannot express "an integer that may be
+ *   negative", "an integer up to 2^64-1" or "one of a set the standard grows each version", so a
+ *   mapping onto them would either refuse a value the agent answers or accept a shape the provider
+ *   then refuses with a sentence from somewhere else. `"text"` draws the value and says nothing
+ *   about it; the sentence a reader gets comes from the guard, which is where MT-S2 puts it anyway.
+ * - EVERY PATH PARAMETER BECOMES `"name"`, the shared kind that asks only for a non-empty segment.
+ *   `asset-ids` is a comma-separated list and `device` is a name the agent knows; neither shape is
+ *   the console's to enforce, and `guard.ts` enforces both.
+ *
+ * What the derivation does guarantee is the part a hand copy gets wrong: the route words, their
+ * order, their path parameters and their query keys are the guard's own, so the editor cannot offer
+ * a route or a key that the guard refuses.
+ */
+export const MTC_CONSOLE_ROUTES: readonly RouteSpec<MtcOp>[] = Object.freeze(
+  MTC_ROUTES.map((route) =>
+    Object.freeze({
+      method: route.method,
+      template: route.template,
+      op: route.op,
+      class: "read" as const,
+      params: Object.freeze(Object.fromEntries(Object.keys(route.params).map((name) => [name, "name" as const]))),
+      query: Object.freeze(
+        Object.fromEntries(
+          Object.keys(route.query).map((key) => [key, Object.freeze({ kind: "text" }) as QueryKeySpec]),
+        ),
+      ),
+      body: "none" as const,
+    }),
+  ),
+);
 
 /** The measured ceiling on the whole request header block, for the budget the path is cut from. */
 export const MTC_REQUEST_HEADER_BUDGET_BYTES = 8192;

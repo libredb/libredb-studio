@@ -85,12 +85,17 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     return {
       // Only the fields `ProviderCapabilities` declares. `supportsSchemas` was in an earlier draft
       // and is not one of them; a cast had been hiding that too.
+      // `"json"` because a dialect is declared, not because the text is JSON. The field is a closed
+      // union of five languages and a request line is none of them; the type says a dialect is
+      // declared "only beside queryLanguage: json", and it is what the dialect-less readers fall
+      // back to. The same pair kubectl and S3 declare for a command line, for the same reason, and
+      // `queryDialect` below is what every reader that matters consults first.
       queryLanguage: "json",
-      // `queryDialect` is left out here on purpose, and this is the THIRD shared line this provider
-      // needs rather than the second. That union is closed and now reads "... | opcua | undefined",
-      // because #1719 added its own member. Declaring "mtconnect" before the member exists does not
-      // compile, and a cast would hide exactly what the compiler is for. The field is optional, so
-      // the provider is honest without it until the member lands; the README records all three.
+      // The grammar the text really is: one request line, a route from a closed table of nine, in
+      // the agent's own URL grammar with GET implied. The union member landed with this provider's
+      // registration; it was absent in an earlier draft and the field was left out rather than cast,
+      // which is how the third shared line this provider needed was found.
+      queryDialect: "mtconnect",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
       supportsCreateTable: false,

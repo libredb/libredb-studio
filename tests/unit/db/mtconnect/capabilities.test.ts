@@ -43,11 +43,15 @@ describe("every flag by name", () => {
     expect(capabilities.maintenanceOperations).toEqual([]);
   });
 
-  test("the text is JSON-shaped and no dialect is declared yet", () => {
+  test("the dialect is declared, and the language beside it is the slot it has to sit in", () => {
+    // The dialect is what every reader that matters consults: it names the grammar the text really
+    // is, one request line from a closed table of nine routes.
+    expect(capabilities.queryDialect).toBe("mtconnect");
+    // And `"json"` because a dialect is declared, not because the text is JSON. The field is a
+    // closed union of five languages and a request line is none of them; kubectl and S3 declare the
+    // same pair for a command line. Pinned here so that a reader of this file is not left thinking
+    // the provider claims to speak JSON.
     expect(capabilities.queryLanguage).toBe("json");
-    // The third shared line this provider needs: the dialect union is closed and does not carry
-    // this id. The field is optional, so the declaration is honest without it rather than casting.
-    expect(capabilities.queryDialect).toBeUndefined();
   });
 
   test("the port and the refresh pattern are the measured ones", () => {
@@ -86,6 +90,7 @@ describe("the declaration is a closed set", () => {
     "enforcesReadOnly",
     "maintenanceOperations",
     "objectKinds",
+    "queryDialect",
     "queryLanguage",
     "schemaRefreshPattern",
     "statementTerminator",
@@ -108,7 +113,6 @@ describe("the declaration is a closed set", () => {
   test("the keys this provider deliberately does NOT declare are absent, each named", () => {
     // Each absence is a decision recorded elsewhere, so each is asserted rather than assumed.
     expect(capabilities.keyScan).toBeUndefined(); // decision K-134: no Keys panel surface
-    expect(capabilities.queryDialect).toBeUndefined(); // the third shared line, not landed
     expect(capabilities.agentWalkScope).toBeUndefined(); // MEASURED: it cannot express what MT-S10 wants
     expect(capabilities.explainFormat).toBeUndefined(); // no explain, so no format
     expect(capabilities.identifierQuoting).toBeUndefined(); // the text is not SQL

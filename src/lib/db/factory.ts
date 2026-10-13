@@ -406,6 +406,15 @@ export async function createDatabaseProvider(
       });
     }
 
+    // MTConnect: an agent in front of machine tools, read over HTTP. Read-only whatever the flag says,
+    // so no execution context rides along, as for OPC UA. No library: the client is this repository's
+    // own over the shared transport, so the import is the provider module and nothing else.
+    case "mtconnect": {
+      // The explicit /index specifier keeps this dynamic import statically analysable.
+      const { MTConnectProvider } = await import("./providers/industrial/mtconnect/index");
+      return new MTConnectProvider(connection, options);
+    }
+
     // Platforms - dynamically imported
     case "kubernetes": {
       // The explicit /index specifier keeps this dynamic import statically analysable. Read-only whatever the flag
@@ -425,7 +434,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, bigquery, snowflake, spark, cassandra, elasticsearch, opensearch, mongodb, couchbase, firestore, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, s3, mqtt, opcua, rabbitmq, kubernetes, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, bigquery, snowflake, cassandra, elasticsearch, opensearch, mongodb, couchbase, firestore, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, s3, mqtt, opcua, mtconnect, rabbitmq, kubernetes, libredb`,
         connection.type,
       );
   }

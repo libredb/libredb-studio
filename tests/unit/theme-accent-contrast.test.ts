@@ -302,6 +302,12 @@ const IDENTITY_ALTS = [
   "amber",
   "pink",
   "lime",
+  // `slate` joined with MTConnect (#1722): the hue OPC UA added had no `-alt` step, and the second
+  // member of the `industrial/` family takes that step rather than adding a colour of its own.
+  // `slate-900` clears AA in light and `slate-300` in dark, and it leaves both closest pairs exactly
+  // where they were: 0.0205 in light (orange vs amber-alt) and 0.0160 in dark (rose-alt vs red-alt),
+  // the same two pairs and the same two figures as before it was declared.
+  "slate",
 ] as const;
 
 /**

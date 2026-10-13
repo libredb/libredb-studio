@@ -41,7 +41,8 @@ export type MtcRefusalCode =
   | "path-predicate-path"
   | "path-too-many-alternatives"
   | "path-too-long"
-  | "param-too-long";
+  | "param-too-long"
+  | "two-requests";
 
 export class MtcRefusal extends Error {
   constructor(
@@ -285,7 +286,19 @@ export interface MtcGuardOptions {
  * is no principled end to `/probe//` or `/./probe` (decision K-65).
  */
 export function guardRequestLine(line: string, options: MtcGuardOptions): MtcRequest {
-  const trimmed = line.trim();
+  // COMMENT LINES FIRST, BECAUSE THE DIALECT PROMISES THEM. `MTC_CONSOLE_DIALECT` declares `#` as a
+  // comment marker, so the editor draws a `#` line as a comment and the tree's generator writes one
+  // above the request it builds. Without this the whole text reached the `#` rule below and every
+  // generated request was refused as carrying a fragment, which is a sentence about a URL and not
+  // about a comment. A `#` after the route is still a fragment and still refused.
+  const lines = line
+    .split("\n")
+    .map((text) => text.trim())
+    .filter((text) => text !== "" && !text.startsWith("#"));
+  if (lines.length > 1) {
+    refuse("two-requests", `A run sends one request. This text holds ${lines.length} lines that are not comments.`);
+  }
+  const trimmed = (lines[0] ?? "").trim();
   const withMethod = /^([A-Za-z]+)\s+(.*)$/.exec(trimmed);
   let target = trimmed;
   if (withMethod !== null) {
