@@ -6,6 +6,255 @@
   "coldStart": "SUSPENDED",
   "stateBefore": "SUSPENDED",
   "stateAfter": "SUSPENDED",
+  "operator": {
+    "answeredOn": "2026-10-13",
+    "how": "SELECT CURRENT_ROLE(), CURRENT_WAREHOUSE(), CURRENT_DATABASE(), CURRENT_SCHEMA() with the request body's role, warehouse, database and schema written in other cases and quoted, against a schema created as \"Mixed Case\" for the run; then a body with a database and no schema; then the schema dropped.",
+    "answer": [
+      "The SQL API reads the body's four names exactly: role studio_rw is refused with HTTP 400, code 390189, and a quoted role is refused too.",
+      "A lower-case warehouse, database or schema answers 200 with that CURRENT_ value null, so the context is unset without an error; the schema created as \"Mixed Case\" resolves only as Mixed Case, unquoted.",
+      "With a database and no schema, CURRENT_SCHEMA() is null; STUDIO_RO cannot use the database's PUBLIC schema there."
+    ],
+    "steps": [
+      {
+        "step": "all upper case, as captured",
+        "at": "2026-10-12T23:57:01.991Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully. [[\"STUDIO_RW\",\"STUDIO_PROBE_WH\",\"STUDIO_DEMO\",\"PROBE\"]]",
+        "data": [
+          [
+            "STUDIO_RW",
+            "STUDIO_PROBE_WH",
+            "STUDIO_DEMO",
+            "PROBE"
+          ]
+        ]
+      },
+      {
+        "step": "role lower case",
+        "at": "2026-10-12T23:57:02.130Z",
+        "status": 400,
+        "code": "390189",
+        "sqlState": null,
+        "message": "Role 'studio_rw' specified in the connect string does not exist or not authorized. Contact your local system administrator, or attempt to login with another role, e.g. PUBLIC. null"
+      },
+      {
+        "step": "warehouse lower case",
+        "at": "2026-10-12T23:57:03.582Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully. [[\"STUDIO_RW\",null,\"STUDIO_DEMO\",\"PROBE\"]]",
+        "data": [
+          [
+            "STUDIO_RW",
+            null,
+            "STUDIO_DEMO",
+            "PROBE"
+          ]
+        ]
+      },
+      {
+        "step": "database lower case",
+        "at": "2026-10-12T23:57:04.950Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully. [[\"STUDIO_RW\",\"STUDIO_PROBE_WH\",null,null]]",
+        "data": [
+          [
+            "STUDIO_RW",
+            "STUDIO_PROBE_WH",
+            null,
+            null
+          ]
+        ]
+      },
+      {
+        "step": "schema lower case",
+        "at": "2026-10-12T23:57:06.311Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully. [[\"STUDIO_RW\",\"STUDIO_PROBE_WH\",\"STUDIO_DEMO\",null]]",
+        "data": [
+          [
+            "STUDIO_RW",
+            "STUDIO_PROBE_WH",
+            "STUDIO_DEMO",
+            null
+          ]
+        ]
+      },
+      {
+        "step": "role double-quoted upper case",
+        "at": "2026-10-12T23:57:06.458Z",
+        "status": 400,
+        "code": "390189",
+        "sqlState": null,
+        "message": "Role '\"STUDIO_RW\"' specified in the connect string does not exist or not authorized. Contact your local system administrator, or attempt to login with another role, e.g. PUBLIC. null"
+      },
+      {
+        "step": "role double-quoted lower case",
+        "at": "2026-10-12T23:57:06.549Z",
+        "status": 400,
+        "code": "390189",
+        "sqlState": null,
+        "message": "Role '\"studio_rw\"' specified in the connect string does not exist or not authorized. Contact your local system administrator, or attempt to login with another role, e.g. PUBLIC. null"
+      },
+      {
+        "step": "setup: a mixed-case schema",
+        "at": "2026-10-12T23:57:07.912Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Schema Mixed Case successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "setup: grant usage on it to STUDIO_RW",
+        "at": "2026-10-12T23:57:09.271Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Statement executed successfully."
+          ]
+        ]
+      },
+      {
+        "step": "mixed-case schema as typed",
+        "at": "2026-10-12T23:57:10.622Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully. [[\"STUDIO_RW\",\"STUDIO_PROBE_WH\",\"STUDIO_DEMO\",\"Mixed Case\"]]",
+        "data": [
+          [
+            "STUDIO_RW",
+            "STUDIO_PROBE_WH",
+            "STUDIO_DEMO",
+            "Mixed Case"
+          ]
+        ]
+      },
+      {
+        "step": "mixed-case schema double-quoted",
+        "at": "2026-10-12T23:57:11.938Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully. [[\"STUDIO_RW\",\"STUDIO_PROBE_WH\",\"STUDIO_DEMO\",null]]",
+        "data": [
+          [
+            "STUDIO_RW",
+            "STUDIO_PROBE_WH",
+            "STUDIO_DEMO",
+            null
+          ]
+        ]
+      },
+      {
+        "step": "mixed-case schema upper case",
+        "at": "2026-10-12T23:57:13.228Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully. [[\"STUDIO_RW\",\"STUDIO_PROBE_WH\",\"STUDIO_DEMO\",null]]",
+        "data": [
+          [
+            "STUDIO_RW",
+            "STUDIO_PROBE_WH",
+            "STUDIO_DEMO",
+            null
+          ]
+        ]
+      },
+      {
+        "step": "teardown: drop the mixed-case schema",
+        "at": "2026-10-12T23:57:14.506Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Mixed Case successfully dropped."
+          ]
+        ]
+      },
+      {
+        "step": "database STUDIO_DEMO, no schema, as STUDIO_RO",
+        "at": "2026-10-13T00:20:49.712Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully. [[\"STUDIO_DEMO\",null]]",
+        "data": [
+          [
+            "STUDIO_DEMO",
+            null
+          ]
+        ]
+      },
+      {
+        "step": "the schemas STUDIO_RO sees in STUDIO_DEMO",
+        "at": "2026-10-13T00:20:51.033Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "INFORMATION_SCHEMA"
+          ],
+          [
+            "PROBE"
+          ]
+        ]
+      },
+      {
+        "step": "database SNOWFLAKE_SAMPLE_DATA, no schema, as STUDIO_RO",
+        "at": "2026-10-13T00:20:52.353Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully. [[\"SNOWFLAKE_SAMPLE_DATA\",null]]",
+        "data": [
+          [
+            "SNOWFLAKE_SAMPLE_DATA",
+            null
+          ]
+        ]
+      },
+      {
+        "step": "admin: the schemas in STUDIO_DEMO",
+        "at": "2026-10-13T00:20:53.615Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "INFORMATION_SCHEMA"
+          ],
+          [
+            "PROBE"
+          ],
+          [
+            "PUBLIC"
+          ]
+        ]
+      }
+    ]
+  },
   "exchanges": [
     {
       "request": {

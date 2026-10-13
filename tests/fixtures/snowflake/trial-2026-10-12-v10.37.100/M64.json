@@ -5,6 +5,24 @@
   "rowsSummarised": "Every answer's rows are summarised: each answer that carried rows keeps its other fields and records `rows` with the byte length on the wire and decoded, the row count, and the first and the last row.",
   "stateBefore": "STARTED",
   "stateAfter": "STARTED",
+  "operator": {
+    "answeredOn": "2026-10-13",
+    "how": "A tagged dollar run on its own, sent as the provider sends a unit.",
+    "answer": [
+      "SELECT $t$x$t$ is a syntax error, 001003 \"unexpected '$x'\": Snowflake has no tagged dollar strings."
+    ],
+    "steps": [
+      {
+        "step": "h tagged dollar run",
+        "statement": "SELECT $t$x$t$",
+        "at": "2026-10-13T00:15:19.017Z",
+        "status": 422,
+        "code": "001003",
+        "sqlState": "42000",
+        "message": "SQL compilation error:\nsyntax error line 1 at position 9 unexpected '$x'."
+      }
+    ]
+  },
   "exchanges": [
     {
       "request": {

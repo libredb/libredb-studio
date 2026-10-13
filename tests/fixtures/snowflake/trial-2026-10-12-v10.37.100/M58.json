@@ -5,6 +5,391 @@
   "rowsSummarised": "Every answer's rows are summarised: each answer that carried rows keeps its other fields and records `rows` with the byte length on the wire and decoded, the row count, and the first and the last row.",
   "stateBefore": "SUSPENDED",
   "stateAfter": "STARTED",
+  "operator": {
+    "answeredOn": "2026-10-13",
+    "how": "Further block shapes, each sent as the provider sends a unit (multi_statement_count 1, role STUDIO_RW, warehouse STUDIO_PROBE_WH), the task and alert as the administrator because STUDIO_RW holds no CREATE TASK; every object created was dropped.",
+    "answer": [
+      "Taken: a DECLARE block, a block with no final semicolon, FOR, WHILE and REPEAT loops, BEGIN TRANSACTION and BEGIN TRANSACTION NAME inside a block, a nested BEGIN whose first word is a variable named work, and procedure, function, task and alert bodies written without dollars.",
+      "At the start of a statement BEGIN, BEGIN TRANSACTION, BEGIN WORK, BEGIN NAME t1 and BEGIN WORK NAME t1 are refused with 391911, TRANSACTION_BEGIN; inside a block BEGIN WORK, BEGIN NAME t1 and a lone BEGIN are syntax errors, 001003."
+    ],
+    "steps": [
+      {
+        "step": "a DECLARE block",
+        "statement": "DECLARE x INT; BEGIN x := 1; RETURN x; END;",
+        "at": "2026-10-13T00:15:05.513Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      },
+      {
+        "step": "b block without a final semicolon",
+        "statement": "BEGIN RETURN 1; END",
+        "at": "2026-10-13T00:15:06.880Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      },
+      {
+        "step": "c1 procedure body without dollars",
+        "statement": "CREATE OR REPLACE PROCEDURE studio_probe_p() RETURNS INT LANGUAGE SQL AS BEGIN RETURN 1; END;",
+        "at": "2026-10-13T00:15:08.169Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Function STUDIO_PROBE_P successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "c2 call it",
+        "statement": "CALL studio_probe_p()",
+        "at": "2026-10-13T00:15:09.554Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      },
+      {
+        "step": "c3 drop it",
+        "statement": "DROP PROCEDURE IF EXISTS studio_probe_p()",
+        "at": "2026-10-13T00:15:10.839Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_PROBE_P successfully dropped."
+          ]
+        ]
+      },
+      {
+        "step": "d loops",
+        "statement": "BEGIN LET s INT := 0; FOR i IN 1 TO 3 DO s := s + i; END FOR; WHILE (s < 10) DO s := s + 1; END WHILE; REPEAT s := s + 1; UNTIL (s > 12) END REPEAT; RETURN s; END;",
+        "at": "2026-10-13T00:15:12.193Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "13"
+          ]
+        ]
+      },
+      {
+        "step": "e transaction inside a block",
+        "statement": "BEGIN BEGIN TRANSACTION; SELECT 1; COMMIT; RETURN 1; END;",
+        "at": "2026-10-13T00:15:13.685Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      },
+      {
+        "step": "i lone BEGIN",
+        "statement": "BEGIN",
+        "at": "2026-10-13T00:15:20.380Z",
+        "status": 422,
+        "code": "391911",
+        "sqlState": "0A000",
+        "message": "Command not supported by SQL API: TRANSACTION_BEGIN"
+      },
+      {
+        "step": "j BEGIN TRANSACTION",
+        "statement": "BEGIN TRANSACTION",
+        "at": "2026-10-13T00:15:21.723Z",
+        "status": 422,
+        "code": "391911",
+        "sqlState": "0A000",
+        "message": "Command not supported by SQL API: TRANSACTION_BEGIN"
+      },
+      {
+        "step": "k BEGIN WORK",
+        "statement": "BEGIN WORK",
+        "at": "2026-10-13T00:15:23.057Z",
+        "status": 422,
+        "code": "391911",
+        "sqlState": "0A000",
+        "message": "Command not supported by SQL API: TRANSACTION_BEGIN"
+      },
+      {
+        "step": "l BEGIN NAME",
+        "statement": "BEGIN NAME t1",
+        "at": "2026-10-13T00:15:24.329Z",
+        "status": 422,
+        "code": "391911",
+        "sqlState": "0A000",
+        "message": "Command not supported by SQL API: TRANSACTION_BEGIN"
+      },
+      {
+        "step": "m BEGIN WORK inside a block",
+        "statement": "BEGIN BEGIN WORK; SELECT 1; COMMIT; RETURN 1; END;",
+        "at": "2026-10-13T00:15:25.679Z",
+        "status": 422,
+        "code": "001003",
+        "sqlState": "42000",
+        "message": "SQL compilation error:\nsyntax error line 1 at position 12 unexpected 'WORK'."
+      },
+      {
+        "step": "n BEGIN NAME inside a block",
+        "statement": "BEGIN BEGIN NAME t1; SELECT 1; COMMIT; RETURN 1; END;",
+        "at": "2026-10-13T00:15:27.047Z",
+        "status": 422,
+        "code": "001003",
+        "sqlState": "42000",
+        "message": "SQL compilation error:\nsyntax error line 1 at position 12 unexpected 'NAME'."
+      },
+      {
+        "step": "o nested BEGIN whose first word is a variable named work",
+        "statement": "DECLARE work INT; BEGIN BEGIN work := 1; END; RETURN work; END;",
+        "at": "2026-10-13T00:15:28.418Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      },
+      {
+        "step": "p1 function body without dollars",
+        "statement": "CREATE OR REPLACE FUNCTION studio_probe_f() RETURNS INT LANGUAGE SQL AS BEGIN RETURN 1; END;",
+        "at": "2026-10-13T00:15:30.002Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Function STUDIO_PROBE_F successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "p2 call it",
+        "statement": "SELECT studio_probe_f()",
+        "at": "2026-10-13T00:15:31.333Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      },
+      {
+        "step": "p3 drop it",
+        "statement": "DROP FUNCTION IF EXISTS studio_probe_f()",
+        "at": "2026-10-13T00:15:32.685Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_PROBE_F successfully dropped."
+          ]
+        ]
+      },
+      {
+        "step": "q1 task body without dollars",
+        "statement": "CREATE OR REPLACE TASK studio_probe_t WAREHOUSE = STUDIO_PROBE_WH SCHEDULE = '60 MINUTE' AS BEGIN SELECT 1; END;",
+        "at": "2026-10-13T00:15:34.040Z",
+        "status": 422,
+        "code": "003001",
+        "sqlState": "42501",
+        "message": "SQL access control error:\nInsufficient privileges to operate on schema 'PROBE'. Your primary role STUDIO_RW must have CREATE TASK granted on SCHEMA STUDIO_DEMO.PROBE."
+      },
+      {
+        "step": "q2 drop it",
+        "statement": "DROP TASK IF EXISTS studio_probe_t",
+        "at": "2026-10-13T00:15:35.386Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Drop statement executed successfully (STUDIO_PROBE_T already dropped)."
+          ]
+        ]
+      },
+      {
+        "step": "r procedure with a DECLARE body without dollars",
+        "statement": "CREATE OR REPLACE PROCEDURE studio_probe_p2() RETURNS INT LANGUAGE SQL AS DECLARE x INT DEFAULT 2; BEGIN RETURN x; END;",
+        "at": "2026-10-13T00:15:36.734Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Function STUDIO_PROBE_P2 successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "r2 call it",
+        "statement": "CALL studio_probe_p2()",
+        "at": "2026-10-13T00:15:38.135Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "2"
+          ]
+        ]
+      },
+      {
+        "step": "r3 drop it",
+        "statement": "DROP PROCEDURE IF EXISTS studio_probe_p2()",
+        "at": "2026-10-13T00:15:39.462Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_PROBE_P2 successfully dropped."
+          ]
+        ]
+      },
+      {
+        "step": "s BEGIN WORK NAME at the top level",
+        "statement": "BEGIN WORK NAME t1",
+        "at": "2026-10-13T00:15:40.796Z",
+        "status": 422,
+        "code": "391911",
+        "sqlState": "0A000",
+        "message": "Command not supported by SQL API: TRANSACTION_BEGIN"
+      },
+      {
+        "step": "t1 task body without dollars (administrator)",
+        "statement": "CREATE OR REPLACE TASK studio_probe_t WAREHOUSE = STUDIO_PROBE_WH SCHEDULE = '60 MINUTE' AS BEGIN SELECT 1; END;",
+        "at": "2026-10-13T00:16:22.280Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Task STUDIO_PROBE_T successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "t2 the task as Snowflake keeps it",
+        "statement": "DESCRIBE TASK studio_probe_t",
+        "at": "2026-10-13T00:16:23.552Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "BEGIN SELECT 1; END"
+          ]
+        ]
+      },
+      {
+        "step": "t3 drop it",
+        "statement": "DROP TASK IF EXISTS studio_probe_t",
+        "at": "2026-10-13T00:16:24.794Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_PROBE_T successfully dropped."
+          ]
+        ]
+      },
+      {
+        "step": "u1 alert action without dollars (administrator)",
+        "statement": "CREATE OR REPLACE ALERT studio_probe_a WAREHOUSE = STUDIO_PROBE_WH SCHEDULE = '60 MINUTE' IF (EXISTS (SELECT 1)) THEN BEGIN SELECT 1; END;",
+        "at": "2026-10-13T00:16:26.098Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "Alert STUDIO_PROBE_A successfully created."
+          ]
+        ]
+      },
+      {
+        "step": "u2 drop it",
+        "statement": "DROP ALERT IF EXISTS studio_probe_a",
+        "at": "2026-10-13T00:16:27.352Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "STUDIO_PROBE_A successfully dropped."
+          ]
+        ]
+      },
+      {
+        "step": "v lone BEGIN inside a block",
+        "statement": "BEGIN BEGIN; SELECT 1; END;",
+        "at": "2026-10-13T00:16:28.664Z",
+        "status": 422,
+        "code": "001003",
+        "sqlState": "42000",
+        "message": "SQL compilation error:\nsyntax error line 1 at position 11 unexpected ';'."
+      },
+      {
+        "step": "w BEGIN TRANSACTION NAME inside a block",
+        "statement": "BEGIN BEGIN TRANSACTION NAME t1; SELECT 1; COMMIT; RETURN 1; END;",
+        "at": "2026-10-13T00:16:30.009Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      }
+    ]
+  },
   "exchanges": [
     {
       "request": {

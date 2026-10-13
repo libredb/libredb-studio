@@ -5,6 +5,29 @@
   "rowsSummarised": "Every answer's rows are summarised: each answer that carried rows keeps its other fields and records `rows` with the byte length on the wire and decoded, the row count, and the first and the last row.",
   "stateBefore": "STARTED",
   "stateAfter": "STARTED",
+  "operator": {
+    "answeredOn": "2026-10-13",
+    "how": "One more quoted identifier, sent as the provider sends a unit: a backslash right before the closing quote.",
+    "answer": [
+      "SELECT 1 AS \"a\\\" ran, so the quote after the backslash closes the name."
+    ],
+    "steps": [
+      {
+        "step": "f backslash ending a quoted identifier",
+        "statement": "SELECT 1 AS \"a\\\"",
+        "at": "2026-10-13T00:15:15.016Z",
+        "status": 200,
+        "code": "090001",
+        "sqlState": "00000",
+        "message": "Statement executed successfully.",
+        "data": [
+          [
+            "1"
+          ]
+        ]
+      }
+    ]
+  },
   "exchanges": [
     {
       "request": {
