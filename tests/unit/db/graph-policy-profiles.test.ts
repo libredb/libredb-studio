@@ -1,25 +1,70 @@
-/**
- * Which engines have a graph policy profile, as a population (#1722).
- *
- * WHY THIS FILE EXISTS. MEASURED by searching the suite: before it, `src/lib/db/graph-policy-profiles.ts`
- * was named by NO test at all. The record behind `graphPolicyProfileOf` is a
- * `Partial<Record<DatabaseType, ...>>`, so a new type id compiles without a row and the function
- * answers `undefined` for it. That is the right answer for every engine that is not a graph, and it
- * is also the right answer for a graph engine whose row someone forgot: the two are
- * indistinguishable without a population this file pins.
- *
- * It walks EVERY shipped type id rather than asserting about one, because the gap this closes is the
- * repository's and not one provider's: the file was unheld when MTConnect's registration measured it
- * (#1722), and the four registrations queued behind that one each add a type id this loop will reach.
- *
- * What it deliberately does NOT do is restate the profile's contents. The Cypher read policy, its
- * denied words and its allowed procedures are held by the graph provider's own suites, where a change
- * to them is a change to behaviour that has tests. Here the question is only which engines get one.
- */
 import { describe, expect, test } from "bun:test";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import type { GraphPolicyProfile } from "@/lib/db/graph/profile";
 import { graphPolicyProfileOf } from "@/lib/db/graph-policy-profiles";
+import { NEO4J_ENGINE_PROFILE } from "@/lib/db/providers/graph/neo4j";
+import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
+/**
+ * `graphPolicyProfileOf` against what each provider declares (Neo4j spec 6.5, SR6).
+ *
+ * The registry is partial, so a graph engine left out of it answers undefined, and the editor then
+ * offers no completion after `CALL` or `SHOW` on that engine's connections without any other test
+ * failing. This census builds every shipped provider and holds the registry to the providers that
+ * declare `queryLanguage: "cypher"`: each has an entry, the entry is the policy half of the profile
+ * the provider itself runs on, and no other engine has one.
+ *
+ * Nothing here connects: `createDatabaseProvider` is a switch over dynamic imports and a
+ * constructor, the reading `CENSUS_CONNECTION` documents.
+ */
+async function providerProfileOf(type: (typeof SHIPPED_DATABASE_TYPES)[number]) {
+  const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
+  const cypher = provider.getCapabilities().queryLanguage === "cypher";
+  // `profile` is protected on GraphBaseProvider; the census reads it to compare like with like.
+  const own = cypher ? (provider as unknown as { profile: GraphPolicyProfile }).profile : undefined;
+  return { cypher, own };
+}
+
+describe("graphPolicyProfileOf against each provider's own declaration (SR6)", () => {
+  test.each([...SHIPPED_DATABASE_TYPES])("%s: a profile exactly when the provider speaks Cypher", async (type) => {
+    const { cypher, own } = await providerProfileOf(type);
+    const registered = graphPolicyProfileOf(type);
+    if (!cypher) {
+      expect(registered).toBeUndefined();
+      return;
+    }
+    expect(registered).toBeDefined();
+    expect(registered?.engineLabel).toBe(own?.engineLabel);
+    expect(registered?.readPolicy).toBe(own?.readPolicy);
+    expect(registered?.dialect).toBe(own?.dialect);
+  });
+
+  test("Neo4j's entry is the policy half of NEO4J_ENGINE_PROFILE", () => {
+    const registered = graphPolicyProfileOf("neo4j");
+    expect(registered?.engineLabel).toBe(NEO4J_ENGINE_PROFILE.engineLabel);
+    expect(registered?.readPolicy).toBe(NEO4J_ENGINE_PROFILE.readPolicy);
+    expect(registered?.dialect).toBe(NEO4J_ENGINE_PROFILE.dialect);
+  });
+});
+
+/*
+ * BELOW: a population census added beside the cross-check above, not in place of it (#1722).
+ *
+ * WHAT HAPPENED, recorded because the mistake is instructive. The cross-check above could not LOAD
+ * on the install this branch was measured against - 820 entries, `neo4j-driver-lite` absent - so the
+ * runner reported the file as a failure with no tests, and the registration audit of #1722 read that
+ * as "no test walks this record". It then REPLACED this file with a version that imports no provider.
+ * The count of lines went up and the claim being held went down: the registry's agreement with each
+ * provider's own declaration - `engineLabel`, `readPolicy`, `dialect`, through a real
+ * `createDatabaseProvider` - was gone, and nothing else in the repository holds it (measured: of the
+ * ten test files that name `readPolicy`, none builds a provider).
+ *
+ * A test that cannot run is a reason to fix the environment, never a reason to weaken the test. The
+ * original is restored verbatim and what #1722 wrote is kept here, because the two ask different
+ * questions: above, does the registry agree with the provider; below, is the population the whole
+ * fleet and is the absence the answer for every engine that is not a graph.
+ */
 describe("the graph policy profile population", () => {
   test("the census population is the whole shipped fleet, driven and not typed", () => {
     // Asserted first: a short or empty list would make every loop below certify nothing.
