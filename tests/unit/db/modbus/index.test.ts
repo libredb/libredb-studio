@@ -139,6 +139,28 @@ describe("the declarations", () => {
   });
 });
 
+describe("the container path is checked, not taken", () => {
+  /**
+   * The guard was wired and NOTHING asserted it: removing the call left every test green
+   * (MEASURED, round 18). A declaration with no check behind it lets a path of the wrong length
+   * reach the map lookup, which then answers "no such point" and names the wrong mistake (#1147).
+   */
+  test("a path with more levels than the tree has is refused, and the refusal says the shape", async () => {
+    const p = provider({ registerMap: MAP });
+    await expect(p.listObjects(["1", "extra"], "coil")).rejects.toThrow(QueryError);
+    await expect(p.listObjects(["1", "extra"], "coil")).rejects.toThrow(/container path/i);
+  });
+
+  test("counts are checked the same way, so the two surfaces cannot drift apart", async () => {
+    await expect(provider({ registerMap: MAP }).countObjects(["1", "extra"])).rejects.toThrow(QueryError);
+  });
+
+  test("the control: the shape the tree actually sends is accepted", async () => {
+    const p = provider({ registerMap: MAP });
+    expect(await p.listObjects(["1"], "holding_register")).toHaveLength(1);
+  });
+});
+
 describe("the tree comes from the map, with no device traffic", () => {
   test("a connection with no map lists no unit and no object", async () => {
     const p = provider();

@@ -109,8 +109,13 @@ describe("what the decoder refuses", () => {
     expect(() => decodeScalar("uint32", [1], HF)).toThrow(/needs 2/);
     expect(() => decodeScalar("uint16", [1, 2], HF)).toThrow(/needs 1/);
   });
-  test("an unknown type", () => {
-    expect(() => decodeScalar("uint24" as never, [1], HF)).toThrow(ModbusDecodeError);
+  test("an unknown type is refused BY NAME, not merely refused", () => {
+    // The class alone left this blind: six places throw ModbusDecodeError, and a refusal carrying
+    // any other one of their sentences passed this test unchanged (MEASURED). A reader acts on the
+    // sentence, so the sentence is what is asserted.
+    const run = () => decodeScalar("uint24" as never, [1], HF);
+    expect(run).toThrow(ModbusDecodeError);
+    expect(run).toThrow(/Unknown type "uint24"/);
   });
 });
 
@@ -160,7 +165,10 @@ describe("bit packing of MB 6.1", () => {
   test("quantity decides how many bits are read, not the byte count", () => {
     expect(decodeBits(Buffer.from([0xff, 0xff]), 9)).toHaveLength(9);
   });
-  test("too few bytes for the quantity is refused", () => {
-    expect(() => decodeBits(Buffer.from([0xff]), 9)).toThrow(ModbusDecodeError);
+  test("too few bytes for the quantity is refused, and the refusal says both numbers", () => {
+    const run = () => decodeBits(Buffer.from([0xff]), 9);
+    expect(run).toThrow(ModbusDecodeError);
+    // Both figures, because "needs 2 and 1 were given" is what tells a reader which end is wrong.
+    expect(run).toThrow(/needs 2 byte\(s\) and 1 were given/);
   });
 });
