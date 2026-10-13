@@ -1467,7 +1467,7 @@ describe("DOCKERHUB.md", () => {
     expect(SHIPPED_DATABASE_TYPES).toHaveLength(EXTERNAL_DATABASE_TYPES.length + 1);
     expect(hub).toContain(`The ${ordinal(SHIPPED_DATABASE_TYPES.length)} row is the embedded LibreDB store`);
     expect(hub).toContain(
-      "Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, Oxia, S3-compatible object storage and Kubernetes are read-only too",
+      "Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Oxia, S3-compatible object storage and Kubernetes are read-only too",
     );
     expect(hub).toContain(`of one of the ${word(EXTERNAL_DATABASE_TYPES.length)} drivers above`);
   });
@@ -1483,7 +1483,7 @@ describe("the chart and the operator name S3 where an evaluator searches", () =>
     expect(chart.keywords.slice(databend + 1, databend + 4)).toEqual(["s3", "object-storage", "minio"]);
     const readme = read("charts/libredb-studio/README.md");
     expect(readme).toContain(`supporting ${word(EXTERNAL_DATABASE_TYPES.length)} engines - `);
-    expect(readme).toContain("InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes and OPC UA.");
+    expect(readme).toContain("InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect.");
     expect(readme).toContain(`--version ${chart.version} \\`);
     expect(read("operator/helm-charts/libredb-studio/Chart.yaml")).toBe(read("charts/libredb-studio/Chart.yaml"));
     const csv = parseYaml(
@@ -1494,10 +1494,10 @@ describe("the chart and the operator name S3 where an evaluator searches", () =>
     };
     expect(csv.metadata.annotations.description).toContain(`for ${word(EXTERNAL_DATABASE_TYPES.length)} engines - `);
     expect(csv.metadata.annotations.description).toContain(
-      "Oxia, Databend, S3-compatible object storage, Kubernetes and OPC UA - with AI-powered query assistance.",
+      "Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect - with AI-powered query assistance.",
     );
     expect(flat(csv.spec.description)).toContain(
-      "Oxia, Databend, S3-compatible object storage, Kubernetes and OPC UA from the browser",
+      "Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect from the browser",
     );
   });
 });
@@ -1542,7 +1542,7 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
     expect(brand).toContain(`- **Proof:** ${word(engines)} providers, each with its own reference document`);
     expect(brand).toContain(`| ${Word(engines)} database engines | One reference document per engine:`);
     expect(brand).toContain(
-      "Qdrant, Oxia, S3-compatible object storage, Kubernetes, OPC UA. One more, `libredb.md`, is the embedded provider",
+      "Qdrant, Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect. One more, `libredb.md`, is the embedded provider",
     );
     expect(brand).toContain(`against ${word(engines)} here.`);
     expect(brand).toContain(`"${Word(engines)} engines" beats "extensive database support".`);
@@ -1557,10 +1557,10 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
     const api = read("docs/API_DOCS.md");
     const capabilities = provider.getCapabilities();
     const keyScan = capabilities.keyScan;
-    expect(api).toContain("Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes and OPC UA.");
+    expect(api).toContain("Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect.");
     expect(api).toMatch(
       new RegExp(
-        `- \\*\\*Multi-Database Support\\*\\* - ${Word(engines)} engines: .*, S3-compatible object storage, Kubernetes, OPC UA$`,
+        `- \\*\\*Multi-Database Support\\*\\* - ${Word(engines)} engines: .*, S3-compatible object storage, Kubernetes, OPC UA, MTConnect$`,
         "m",
       ),
     );
@@ -1683,7 +1683,8 @@ describe("docs/providers/README.md", () => {
     expect(lines[influxdb3 + 3].startsWith("| MQTT | `mqtt` |")).toBe(true);
     expect(lines[influxdb3 + 4].startsWith("| RabbitMQ | `rabbitmq` |")).toBe(true);
     expect(lines[influxdb3 + 5].startsWith("| OPC UA | `opcua` |")).toBe(true);
-    expect(lines[influxdb3 + 6].startsWith("| LibreDB | `libredb` |")).toBe(true);
+    expect(lines[influxdb3 + 6].startsWith("| MTConnect | `mtconnect` |")).toBe(true);
+    expect(lines[influxdb3 + 7].startsWith("| LibreDB | `libredb` |")).toBe(true);
     expect(index).toContain(
       "Qdrant, InfluxDB, Oxia, Databend, S3, Kubernetes, MQTT, Firestore, RabbitMQ and OPC UA are)",
     );
@@ -1772,7 +1773,7 @@ describe("the architecture, provider, editor and guide docs", () => {
     const nonSql = SHIPPED_DATABASE_TYPES.filter((type) => !readsSqlText(type)).length;
     const optimization = read("docs/editor/query-optimization.md");
     expect(optimization).toContain(
-      `Qdrant, Oxia, S3-compatible object storage, Kubernetes and OPC UA are the ${word(nonSql)} types whose query text is not SQL at all**`,
+      `Qdrant, Oxia, S3-compatible object storage, Kubernetes, OPC UA and MTConnect are the ${word(nonSql)} types whose query text is not SQL at all**`,
     );
     expect(optimization).toContain(`holds exactly those ${word(nonSql)},`);
     expect(provider.getCapabilities().supportsResultPagination).toBe(false);
@@ -2057,9 +2058,10 @@ describe("the complete engine lists outside the agent docs", () => {
         .find((line) => line.startsWith("| `connections[].type` |"));
       const listed = (row?.match(/`[a-z0-9]+`/g) ?? []).map((cell) => cell.slice(1, -1)).sort();
       expect(listed, file).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-      // The tail stays in registry order, with the industrial engine between the platform and the store (#1677).
+      // The tail stays in registry order, with the two industrial engines between the platform and the store
+      // (#1677, then #1722: an agent reads the machines an address space stands in front of).
       expect(row, file).toContain(
-        `\`oxia\`${separator}\`s3\`${separator}\`kubernetes\`${separator}\`opcua\`${separator}\`libredb\``,
+        `\`oxia\`${separator}\`s3\`${separator}\`kubernetes\`${separator}\`opcua\`${separator}\`mtconnect\`${separator}\`libredb\``,
       );
     }
     expect(read("docs/BRAND_MESSAGING.md")).toContain(

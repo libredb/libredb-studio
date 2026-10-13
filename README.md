@@ -983,7 +983,7 @@ extraEnvFrom:
 | `defaults` | No | Default values merged into all connections |
 | `connections[].id` | Yes | Unique slug (`[a-z0-9-]+`, max 64 chars) |
 | `connections[].name` | Yes | Display name in UI |
-| `connections[].type` | Yes | `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `oracle`, `db2`, `mssql`, `clickhouse`, `druid`, `trino`, `bigquery`, `databend`, `snowflake`, `spark`, `cassandra`, `elasticsearch`, `opensearch`, `mongodb`, `couchbase`, `firestore`, `redis`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `etcd`, `neo4j`, `milvus`, `qdrant`, `influxdb`, `influxdb3`, `oxia`, `s3`, `kubernetes`, `opcua`, `libredb` |
+| `connections[].type` | Yes | `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `oracle`, `db2`, `mssql`, `clickhouse`, `druid`, `trino`, `bigquery`, `databend`, `snowflake`, `cassandra`, `elasticsearch`, `opensearch`, `mongodb`, `couchbase`, `firestore`, `redis`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `etcd`, `neo4j`, `milvus`, `qdrant`, `influxdb`, `influxdb3`, `oxia`, `s3`, `kubernetes`, `opcua`, `mtconnect`, `libredb` |
 | `connections[].roles` | Yes | `["*"]` (everyone), `["admin"]`, `["user"]`, or `["admin", "user"]` |
 | `connections[].managed` | No | `true` = admin-controlled, not editable in the UI (default), `false` = editable copy for user |
 | `connections[].readOnly` | No | `true` refuses every write on an engine that enforces it (etcd); refused on an unmanaged connection |

@@ -309,6 +309,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | BigQuery | `bigquery` | SQL (analytics, GoogleSQL over REST) | [providers/bigquery.md](./providers/bigquery.md) |
 | MQTT | `mqtt` | Key-Value (broker topics over MQTT, read-only) | [providers/mqtt.md](./providers/mqtt.md) |
 | OPC UA | `opcua` | Industrial (an address space over `opc.tcp`, read-only) | [providers/opcua.md](./providers/opcua.md) |
+| MTConnect | `mtconnect` | Industrial (an agent over HTTP, read-only) | [providers/mtconnect.md](./providers/mtconnect.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface
