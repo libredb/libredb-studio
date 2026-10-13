@@ -116,7 +116,12 @@ describe("the 8 KiB request ceiling", () => {
     } catch (error) {
       if (!(error instanceof MtcClientError)) throw error;
       expect(error.failure).toBe("request-too-long");
-      expect(error.message).toContain("closes the connection without writing an error document");
+      expect(error.message).toContain("closing the connection without writing an error document");
+      // The refusal is STUDIO'S, applied before a socket is opened, and the sentence has to say
+      // so: the ceiling behind it was measured on one agent, and a reader whose agent is a
+      // different one is told what was measured rather than what theirs will do.
+      expect(error.message).toContain("Studio refuses to send this request");
+      expect(error.message).toContain("2.8.0.3");
     }
   });
 

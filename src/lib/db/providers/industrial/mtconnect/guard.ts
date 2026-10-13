@@ -351,7 +351,15 @@ export function guardRequestLine(line: string, options: MtcGuardOptions): MtcReq
       const key = decodeURIComponent(equals === -1 ? pair : pair.slice(0, equals));
       const value = equals === -1 ? "" : decodeURIComponent(pair.slice(equals + 1).replace(/\+/g, " "));
       if (Object.prototype.hasOwnProperty.call(query, key)) {
-        refuse("repeated-key", `${key} is given twice. The agent would take the first and drop the second silently.`);
+        refuse(
+          "repeated-key",
+          // What the agent does with a repeat is NOT defined: the standard says each parameter
+          // appears once in the query (1.4.0 8.3.2.2), so there is no required behaviour to
+          // report. What we have is one measurement - `count=1&count=5` returned one observation
+          // on the pinned 2.8.0.3 agent - and the sentence says that rather than predicting what
+          // the agent in front of this reader will do with it.
+          `${key} is given twice, and a query carries each parameter once. Which one an agent honours is not defined: the one measured here (2.8.0.3) took the first and dropped the second without saying so.`,
+        );
       }
       const why = MTC_REFUSED_KEYS[key];
       if (why !== undefined) refuse("refused-key", `${key} is not sent by this provider: ${why}.`);

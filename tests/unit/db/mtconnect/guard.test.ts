@@ -186,8 +186,21 @@ describe("parameters", () => {
     expect(code(() => guardRequestLine("/assets?device=Mazak", OPTIONS))).toBe("refused-key");
   });
 
-  test("a repeated key is refused, because the agent would drop one silently", () => {
+  test("a repeated key is refused, and the sentence reports the measurement rather than predicting", () => {
     expect(code(() => guardRequestLine("/sample?count=1&count=5", OPTIONS))).toBe("repeated-key");
+    // The standard leaves the behaviour undefined (1.4.0 8.3.2.2 says each parameter appears
+    // once), so the sentence may not tell this reader what THEIR agent will do with a repeat.
+    const message = (() => {
+      try {
+        guardRequestLine("/sample?count=1&count=5", OPTIONS);
+        return "";
+      } catch (error) {
+        return (error as Error).message;
+      }
+    })();
+    expect(message).toContain("is not defined");
+    expect(message).toContain("2.8.0.3");
+    expect(message).not.toContain("The agent would");
   });
 
   test("removed takes true or false", () => {

@@ -135,7 +135,10 @@ export function buildTarget(origin: HttpOrigin, pathPrefix: string, request: Mtc
   if (targetBytes > budget) {
     throw new MtcClientError(
       "request-too-long",
-      `This request is ${targetBytes} bytes of route and parameters, and the agent answers nothing at all past about ${MTC_REQUEST_HEADER_BUDGET_BYTES} bytes of request headers: it closes the connection without writing an error document. Shorten the path or ask for fewer rows.`,
+      // Studio's budget, and the measurement it was sized from, told apart: the ceiling was
+      // measured on one agent (2.8.0.3, with a raw socket), so the sentence reports that
+      // measurement rather than asserting what the reader's own agent will do.
+      `Studio refuses to send this request: it is ${targetBytes} bytes of route and parameters, past the ${MTC_TARGET_BUDGET_BYTES} bytes it budgets for a request target. The budget comes from a measurement: the agent measured here (2.8.0.3) answered a request whose header block was 8,153 bytes and gave no answer at all to one of 8,216, closing the connection without writing an error document. Shorten the path or ask for fewer rows.`,
     );
   }
   return url;
