@@ -20,6 +20,8 @@
  * the part that was missing.
  */
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { QueryError } from "@/lib/db/errors";
 import { MtcClientError, MTC_TARGET_BUDGET_BYTES } from "@/lib/db/providers/industrial/mtconnect/client";
 import {
@@ -38,6 +40,7 @@ import {
 } from "@/lib/db/providers/industrial/mtconnect/capabilities";
 import { MTC_REQUEST_HEADER_BUDGET_BYTES } from "@/lib/db/providers/industrial/mtconnect/routes";
 import type { MtcModel } from "@/lib/db/providers/industrial/mtconnect/model";
+import { readMtconnectXml, type MtcObservation } from "@/lib/db/providers/industrial/mtconnect/xml";
 import type { QueryResult } from "@/lib/types";
 import { guardOptionsFor, MTC_LIMITS, MTConnectProvider, ROW_CAP } from "@/lib/db/providers/industrial/mtconnect/index";
 
@@ -273,5 +276,117 @@ describe("a result says when this provider's row cap cut it", () => {
     // and a present-but-false bound is a bound that was applied.
     const result = await providerWith(false).query("GET /current");
     expect(Object.hasOwn(result, "pagination")).toBe(false);
+  });
+});
+
+/**
+ * THE ORDER A RESULT COMES BACK IN (#1722, KURAL 153).
+ *
+ * `sortRows` is tested directly and thoroughly in `rows.test.ts`, including the branch that
+ * compares two sequence numbers by LENGTH first. What nothing tested is that `query()` CALLS it.
+ * MEASURED by mutation: replacing `sortRows(rows)` with `rows` in the provider failed no test at
+ * all, because every captured fixture already arrives in order - the two paths give the same
+ * answer on the data the suite happens to hold, which is the whole shape of this class of miss.
+ *
+ * An agent is not required to stream in order, and the Streams document interleaves components, so
+ * the sort is what makes a result's order the plant's clock rather than the document's layout.
+ */
+describe("a result is ordered by the plant's clock, not by the document's layout", () => {
+  const observation = (timestamp: string, sequence: string): MtcObservation => ({
+    element: "Position",
+    attributes: { dataItemId: `item-${sequence}`, timestamp, sequence },
+    text: "1",
+    children: [],
+    deviceName: "Mazak",
+  });
+
+  test("observations delivered out of order come back sorted", async () => {
+    const provider = Object.create(MTConnectProvider.prototype) as Record<string, unknown>;
+    provider.require = () => ({ window: undefined });
+    provider.model = async () => ({ instanceId: "1", items: new Map(), devices: [] }) satisfies MtcModel;
+    provider.guard = () => ({ op: "current", route: { op: "current" }, params: {}, query: {} }) as unknown as MtcRequest;
+    provider.streamed = async (_session: unknown, _request: unknown, onObservation: (o: MtcObservation) => void) => {
+      // Later timestamp first, and a sequence whose STRING order disagrees with its numeric one,
+      // so a result that merely preserved arrival order would be visibly wrong in two ways.
+      onObservation(observation("2026-10-13T10:00:02Z", "9"));
+      onObservation(observation("2026-10-13T10:00:01Z", "10"));
+      onObservation(observation("2026-10-13T10:00:01Z", "9"));
+      return { read: 3, capped: false };
+    };
+    const result = await (provider as unknown as { query(sql: string): Promise<QueryResult> }).query("GET /current");
+    expect(result.rows.map((row) => [row.timestamp, row.sequence])).toEqual([
+      ["2026-10-13T10:00:01Z", "9"],
+      ["2026-10-13T10:00:01Z", "10"],
+      ["2026-10-13T10:00:02Z", "9"],
+    ]);
+  });
+});
+
+/**
+ * WHAT A READER IS TOLD WHEN THE AGENT REFUSES (#1722, KURAL 153).
+ *
+ * The agent answers its refusals as an `MTConnectError` document with an `errorCode` and an
+ * `ErrorMessage`, five of which are captured in the fixtures. Those documents are parsed in
+ * `xml.test.ts` and the client marks `isError` in `client.test.ts` - and NOTHING asserted that
+ * `query()` turns one into an error the reader sees. MEASURED by mutation: deleting the
+ * `if (answer.isError)` line failed no test at all. With it gone, an agent that said
+ * "'from' must be greater than 29516470" reaches the grid as an EMPTY RESULT, which is the worst
+ * shape a refusal can take: the agent spoke and the product showed silence.
+ *
+ * `sentenceFor` had no test of its own either, so this covers both at once: the agent's own
+ * message and code, carried into the product's error type.
+ */
+describe("an agent's refusal reaches the reader as the agent's own sentence", () => {
+  const errorDocument = readFileSync(join(import.meta.dir, "../../../fixtures/mtconnect/2.8.0.3/error-out-of-range.xml"), "utf8");
+
+  test("an MTConnectError answer is a QueryError carrying the agent's message and code", async () => {
+    const read = readMtconnectXml(new Uint8Array(new TextEncoder().encode(errorDocument)));
+    expect(read.ok).toBe(true);
+    const provider = Object.create(MTConnectProvider.prototype) as Record<string, unknown>;
+    provider.require = () => ({ window: undefined });
+    provider.model = async () => ({ instanceId: "1", items: new Map(), devices: [] }) satisfies MtcModel;
+    provider.guard = () => ({ op: "assets", route: { op: "assets" }, params: {}, query: {} }) as unknown as MtcRequest;
+    provider.read = async () => ({
+      status: 200,
+      root: read.ok ? read.root : undefined,
+      isError: true,
+      bytes: errorDocument.length,
+      text: errorDocument,
+    });
+
+    let thrown: unknown;
+    try {
+      await (provider as unknown as { query(sql: string): Promise<QueryResult> }).query("GET /assets");
+    } catch (error) {
+      thrown = error;
+    }
+    // The type first, for the reason this file exists: a plain Error is handled as an unexpected
+    // failure and its sentence never reaches the reader.
+    expect(thrown).toBeInstanceOf(QueryError);
+    expect((thrown as QueryError).message).toBe("'from' must be greater than 29516470 (OUT_OF_RANGE)");
+  });
+
+  test("an error document with no error in it still says something", async () => {
+    // The defensive branch of `sentenceFor`, which nothing exercised: MEASURED by mutation,
+    // replacing its sentence with an empty string failed no test. It is reachable - a proxy or a
+    // buggy agent can answer the `MTConnectError` root with no `Errors` child - and an empty
+    // message is an error dialog with nothing in it, which is the silence this provider refuses.
+    const bare = '<MTConnectError><Header sender="x"/></MTConnectError>';
+    const read = readMtconnectXml(new Uint8Array(new TextEncoder().encode(bare)));
+    expect(read.ok).toBe(true);
+    const provider = Object.create(MTConnectProvider.prototype) as Record<string, unknown>;
+    provider.require = () => ({ window: undefined });
+    provider.model = async () => ({ instanceId: "1", items: new Map(), devices: [] }) satisfies MtcModel;
+    provider.guard = () => ({ op: "assets", route: { op: "assets" }, params: {}, query: {} }) as unknown as MtcRequest;
+    provider.read = async () => ({ status: 200, root: read.ok ? read.root : undefined, isError: true, bytes: bare.length, text: bare });
+
+    let thrown: unknown;
+    try {
+      await (provider as unknown as { query(sql: string): Promise<QueryResult> }).query("GET /assets");
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(QueryError);
+    expect((thrown as QueryError).message).toBe("The agent answered an error document with no error in it.");
   });
 });
