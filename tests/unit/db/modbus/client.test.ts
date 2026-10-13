@@ -152,3 +152,77 @@ describe("one exchange on an open socket", () => {
     expect(error).toBeInstanceOf(ModbusDialError);
   });
 });
+
+/**
+ * The dial timer, measured directly rather than through the network.
+ *
+ * These tests exist because a mutation found the timer unbound: setting it to zero left the whole
+ * suite green, while the commit that introduced it said the dial carries its own timer. A real
+ * loopback listener connects immediately and an unroutable address makes the test depend on the
+ * network, so the socket is supplied instead and the timer is the only thing under test.
+ */
+describe("the dial timer", () => {
+  /** A socket that is never ready: it announces nothing, exactly like a listener that never accepts. */
+  function silentSocket(): { socket: unknown; destroyed: () => boolean; timeoutMs: () => number } {
+    let timeoutMs = -1;
+    let destroyed = false;
+    let fire: (() => void) | undefined;
+    const socket = {
+      setTimeout(ms: number, listener?: () => void) {
+        timeoutMs = ms;
+        if (listener !== undefined) fire = listener;
+        if (ms > 0 && fire !== undefined) setTimeout(fire, ms);
+        return socket;
+      },
+      on() {
+        return socket;
+      },
+      once() {
+        return socket;
+      },
+      write() {
+        return true;
+      },
+      destroy() {
+        destroyed = true;
+        return socket;
+      },
+      get destroyed() {
+        return destroyed;
+      },
+    };
+    return { socket, destroyed: () => destroyed, timeoutMs: () => timeoutMs };
+  }
+
+  test("a listener that never accepts ends by our timer, and the time is in the sentence", async () => {
+    delete process.env[FLAG];
+    const fake = silentSocket();
+    const error = await dialModbus(
+      { host: "203.0.113.7", port: 502 },
+      { dialTimeoutMs: 30, connect: () => fake.socket as never },
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ModbusDialTimeout);
+    expect((error as Error).message).toContain("30 ms");
+  });
+
+  test("the socket is destroyed when the dial times out, so nothing is left half open", async () => {
+    delete process.env[FLAG];
+    const fake = silentSocket();
+    await dialModbus(
+      { host: "203.0.113.7", port: 502 },
+      { dialTimeoutMs: 20, connect: () => fake.socket as never },
+    ).catch(() => undefined);
+    expect(fake.destroyed()).toBe(true);
+  });
+
+  test("the timer is armed with a positive value, which a zero would not be", async () => {
+    delete process.env[FLAG];
+    const fake = silentSocket();
+    await dialModbus(
+      { host: "203.0.113.7", port: 502 },
+      { dialTimeoutMs: 25, connect: () => fake.socket as never },
+    ).catch(() => undefined);
+    expect(fake.timeoutMs()).toBe(25);
+    expect(fake.timeoutMs()).toBeGreaterThan(0);
+  });
+});

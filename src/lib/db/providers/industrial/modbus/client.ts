@@ -53,14 +53,33 @@ export class ModbusDialError extends Error {}
 export class ModbusDialTimeout extends Error {}
 
 /** The seam the tests use. A test that dialled would be a test of the network. */
-export type Dialer = (endpoint: Endpoint) => Promise<ModbusSocket>;
+export type Dialer = (endpoint: Endpoint, options?: DialOptions) => Promise<ModbusSocket>;
+
+/**
+ * How a socket is made, and how long the dial may take.
+ *
+ * `connect` exists because the dial timer cannot otherwise be tested for what it claims. A real
+ * loopback listener connects immediately, and an unroutable address makes the test depend on the
+ * network's behaviour rather than on ours. With this seam a test supplies a socket that never
+ * announces itself, and the timer is measured directly. It was added after a mutation showed the
+ * timer was unbound: setting it to zero left the whole suite green.
+ */
+export interface DialOptions {
+  readonly connect?: (target: Record<string, unknown>, tls: boolean) => Socket;
+  readonly dialTimeoutMs?: number;
+}
 
 /**
  * Opens one socket. One attempt, no retry: a read that may have reached a device is never sent
  * again, because a read can change a device's state (issue #1723 section 6, item 9).
  */
-export const dialModbus: Dialer = (endpoint) =>
+export const dialModbus: Dialer = (endpoint, options = {}) =>
   new Promise<ModbusSocket>((resolve, reject) => {
+    const dialTimeoutMs = options.dialTimeoutMs ?? DIAL_TIMEOUT_MS;
+    const make =
+      options.connect ??
+      ((target: Record<string, unknown>, tls: boolean) =>
+        tls ? tlsConnect(target as never) : netConnect(target as never));
     let lookup: LookupFunction | undefined;
     try {
       // The shared rule decides. When the flag is off this is `undefined` and no lookup is
@@ -83,7 +102,10 @@ export const dialModbus: Dialer = (endpoint) =>
       ...(lookup ? { lookup } : {}),
     };
 
-    const socket: Socket = endpoint.tls === undefined ? netConnect(target) : tlsConnect({ ...target, ...endpoint.tls });
+    const socket: Socket = make(
+      endpoint.tls === undefined ? target : { ...target, ...endpoint.tls },
+      endpoint.tls !== undefined,
+    );
 
     let settled = false;
     const fail = (error: Error) => {
@@ -95,8 +117,8 @@ export const dialModbus: Dialer = (endpoint) =>
 
     // The dial carries its own timer for the reason section 5.1 of the specification measured:
     // with no timer of its own, a connect to a listener that never accepts took 134 seconds.
-    socket.setTimeout(DIAL_TIMEOUT_MS, () =>
-      fail(new ModbusDialTimeout(`The device did not accept a connection within ${DIAL_TIMEOUT_MS} ms.`)),
+    socket.setTimeout(dialTimeoutMs, () =>
+      fail(new ModbusDialTimeout(`The device did not accept a connection within ${dialTimeoutMs} ms.`)),
     );
     socket.on("error", (error) => fail(error));
     socket.once(endpoint.tls === undefined ? "connect" : "secureConnect", () => {
