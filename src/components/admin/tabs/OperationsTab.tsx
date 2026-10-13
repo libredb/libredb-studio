@@ -57,6 +57,7 @@ import {
   type MaintenanceOperation,
   type MaintenanceResult,
   type MaintenanceType,
+  type ProviderCapabilities,
   type TableStats,
 } from "@/lib/db/types";
 import { readObjectPathParam } from "@/lib/db/object-path";
@@ -89,22 +90,76 @@ interface TableAction {
   hover: string;
 }
 
+/** A statistics row, or the deep-linked object this page offered because the list did not contain it. */
+type OperationsTableRow = TableStats & { addressed?: true };
+
+/**
+ * Whether any declared operation runs on one object.
+ *
+ * `perEntity` is the flag the tree menu asks (`maintenanceControl(..., "perEntity")` in
+ * `row-actions.ts`). A missing spec is not that declaration: `maintenanceControl` still
+ * offers the legacy per-row buttons, and those stay on measured rows only.
+ */
+function declaresPerObjectMaintenance(capabilities: ProviderCapabilities | undefined): boolean {
+  if (capabilities?.supportsMaintenance !== true) return false;
+  for (const type of capabilities.maintenanceOperations ?? []) {
+    if (capabilities.maintenanceOperationSpecs?.[type]?.perEntity === true) return true;
+  }
+  return false;
+}
+
+/**
+ * A row for the object a maintenance deep link named, when the statistics rows do not
+ * contain it and the provider declares the operation per object (#1412).
+ *
+ * Couchbase's `getTableStats()` returns one bucket row, so a collection path
+ * (`bucket`, `scope`, `collection`) never matches and the page used to refuse an
+ * action the tree had already offered. The path's last segment is the target a click
+ * sends and the segment above it is the container (`schemaName`), which is the pair
+ * `maintenanceKeyspace` already resolves. Nothing on the row is a measurement: item
+ * counts stay on the statistics rows.
+ *
+ * An empty statistics list is left alone. A failed read and a database that holds no
+ * tables both arrive as none, and a row here would hide that.
+ */
+function addressedMaintenanceRow(
+  capabilities: ProviderCapabilities | undefined,
+  path: readonly string[] | null,
+  tables: readonly TableStats[],
+  filter: string,
+): OperationsTableRow | null {
+  if (!declaresPerObjectMaintenance(capabilities) || path === null || path.length === 0) return null;
+  const tableName = path[path.length - 1] ?? "";
+  if (tableName === "" || filter !== tableName || tables.length === 0) return null;
+  const schemaName = path.length >= 2 ? (path[path.length - 2] ?? "") : "";
+  const contained = path.length >= 2;
+  const present = tables.some(
+    (table) => table.tableName === tableName && (!contained || table.schemaName === schemaName),
+  );
+  if (present) return null;
+  return {
+    schemaName,
+    tableName,
+    rowCount: 0,
+    totalSize: "N/A",
+    totalSizeBytes: 0,
+    addressed: true,
+  };
+}
+
 /**
  * Why no per-table maintenance control is anywhere on this page.
  *
- * The schema explorer's two maintenance items are DEEP LINKS, and for an admin they
- * land HERE - `openMaintenance` in src/components/Studio.tsx pushes
- * /admin/operations?path=... - not on the monitoring Tables panel. They are gated on
- * what the OPERATION declares (`maintenanceControl(..., "perEntity")`), which is a
- * different question from whether this page has a ROW to hang the control on: the
- * controls render per row of `filteredTables` only, so every empty branch of the panel
- * below rendered nothing at all about the operation the operator arrived asking for
- * (U22).
+ * The schema explorer's maintenance items are deep links, and for an admin they land
+ * here (`openMaintenance` in src/components/Studio.tsx pushes `/admin/operations?path=...`).
+ * The controls render per row, so an empty list used to say nothing about the operation
+ * the operator arrived asking for (U22).
  *
- * Unlike the monitoring panel, this page HAS the requested table's name - the `?path=`
- * search param that seeded the filter - so naming it is a measurement rather than an
- * invention. It is named only while the filter still holds that param: once the operator
- * types something else, that table is no longer why the list is empty.
+ * A provider that declares the operation per object is offered a row for the address
+ * instead (`addressedMaintenanceRow`, #1412). This note is what remains where that
+ * declaration is absent, or where the statistics read itself failed. The table is
+ * named only while the filter still holds the deep link: once the operator types
+ * something else, that table is no longer why the list is empty.
  */
 function TableMaintenanceUnreachableNote({
   actions,
@@ -516,6 +571,11 @@ export function OperationsTab() {
   const tablesUnavailable = data?.tables === undefined ? data?.errors?.tables : undefined;
   const [tableSearch, setTableSearch] = useState(deepLinkedTable ?? "");
   const filteredTables = tables.filter((t) => t.tableName.toLowerCase().includes(tableSearch.toLowerCase()));
+  // #1412. A deep link to an object the statistics rows do not contain, on a provider that
+  // declares the operation per object, is offered as its own row. The measured rows stay
+  // what the filter matched; the addressed row is not one of them.
+  const addressedRow = addressedMaintenanceRow(capabilities, deepLinkedPath, tables, tableSearch);
+  const visibleTables: OperationsTableRow[] = addressedRow ? [addressedRow, ...filteredTables] : filteredTables;
 
   // U22. Both halves have to be true for the dead end: the engine declares a control
   // that takes ONE table, and this page has no row to offer it on. Which absence it is
@@ -542,7 +602,7 @@ export function OperationsTab() {
   const listScope = tableStatsAbsent ? undefined : labels?.tableStatsCaption;
   const listNoun = listScope === undefined ? "Tables" : "Listed";
   const maintenanceUnreachable =
-    tableActions.length > 0 && filteredTables.length === 0 && (deepLinkRowMissing || tableStatsAbsent);
+    tableActions.length > 0 && visibleTables.length === 0 && (deepLinkRowMissing || tableStatsAbsent);
 
   const activeCount = sessions.filter((s) => s.state === "active").length;
   const idleCount = sessions.filter((s) => s.state === "idle").length;
@@ -816,7 +876,7 @@ export function OperationsTab() {
                     <Skeleton key={i} className="h-10 w-full bg-overlay" />
                   ))}
                 </div>
-              ) : filteredTables.length === 0 ? (
+              ) : visibleTables.length === 0 ? (
                 <div className="p-8 text-center text-fg-subtle text-sm" data-testid="operations-tables-empty">
                   {/* A filter that matched none of a partial list saw only the listed rows, and a
                       table outside them may match, so it must not say no table was found. */}
@@ -827,7 +887,7 @@ export function OperationsTab() {
                 </div>
               ) : (
                 <div className="divide-y divide-hairline">
-                  {filteredTables.map((table) => (
+                  {visibleTables.map((table) => (
                     <div
                       key={`${table.schemaName}.${table.tableName}`}
                       data-selected={isDeepLinkedRow(table) ? "true" : undefined}
@@ -847,16 +907,22 @@ export function OperationsTab() {
                           <span className="truncate max-w-[160px]">{table.tableName}</span>
                         </div>
                         <div className="flex items-center gap-2 text-xs text-fg-muted">
-                          <span className="font-mono">{table.rowCount.toLocaleString()} rows</span>
-                          <span>-</span>
-                          <span className="font-mono">{table.tableSize}</span>
-                          {(table.bloatRatio ?? 0) > 10 && (
-                            <Badge
-                              variant="outline"
-                              className="text-[0.625rem] text-hue-yellow border-hue-yellow-tint/20 h-4"
-                            >
-                              {(table.bloatRatio ?? 0).toFixed(0)}% bloat
-                            </Badge>
+                          {table.addressed ? (
+                            <span data-testid="operations-addressed-unmeasured">Not measured</span>
+                          ) : (
+                            <>
+                              <span className="font-mono">{table.rowCount.toLocaleString()} rows</span>
+                              <span>-</span>
+                              <span className="font-mono">{table.tableSize}</span>
+                              {(table.bloatRatio ?? 0) > 10 && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[0.625rem] text-hue-yellow border-hue-yellow-tint/20 h-4"
+                                >
+                                  {(table.bloatRatio ?? 0).toFixed(0)}% bloat
+                                </Badge>
+                              )}
+                            </>
                           )}
                         </div>
                       </div>
