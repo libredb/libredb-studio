@@ -520,6 +520,46 @@ describe("tables that carry no per-table bytes", () => {
     expect(getAllByTestId("table-row-size")[0]?.textContent).toBe("-");
   });
 
+  /**
+   * The mirror image: rows shaped the way CockroachDB answers through the PostgreSQL provider,
+   * where the tables come from pg_class and its `reltuples` is NULL, so the sizes are there and
+   * the counts are not (#1540). Before `rowCount` went optional a `?? 0` filled it, and this
+   * tab summed those zeros into "0 rows" over a database with rows in it.
+   */
+  function rowlessData(): MonitoringData {
+    const data = makeData();
+    return {
+      ...data,
+      tables: [
+        {
+          schemaName: "public",
+          tableName: "from_pg_class",
+          tableSize: "64 KB",
+          totalSize: "96 KB",
+          totalSizeBytes: 98304,
+        },
+      ],
+    } as unknown as MonitoringData;
+  }
+
+  test("the Tables card drops the row line rather than summing an unpublished count to 0 rows", () => {
+    const { getByTestId, queryByText } = render(
+      <TablesTab data={rowlessData()} loading={false} onRunMaintenance={mock(async () => true)} />,
+    );
+
+    // The table itself is a measurement and is still counted; only the rows are unknown.
+    expect(getByTestId("tables-stat-count").textContent).toBe("1");
+    expect(queryByText("0 rows")).toBeNull();
+  });
+
+  test("a table with no row count of its own reads as unknown, not as zero", () => {
+    const { getAllByTestId } = render(
+      <TablesTab data={rowlessData()} loading={false} onRunMaintenance={mock(async () => true)} />,
+    );
+
+    expect(getAllByTestId("table-row-count")[0]?.textContent).toBe("-");
+  });
+
   test("an engine that publishes bytes still gets its total", () => {
     const { getByTestId } = render(
       <TablesTab data={makeData()} loading={false} onRunMaintenance={mock(async () => true)} />,

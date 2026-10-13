@@ -5648,6 +5648,33 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     expect(rows?.[0]).toMatchObject({ schemaName: "hr", tableName: "employee" });
   });
 
+  // `TableStats.rowCount` became optional with #1540: CockroachDB lists its tables from
+  // pg_class, whose `reltuples` it answers NULL. The reading spells that `null`, the way it
+  // already does for `deadRowCount` and `bloatRatio` beside it, so a model is told the count is
+  // unknown instead of being handed a 0 it would read as a table with nothing in it.
+  test("a table whose row count the catalog does not publish reaches the model as null", async () => {
+    const h = curatedHarness(
+      {},
+      {
+        getTableStats: mock(async () => [
+          {
+            schemaName: "public",
+            tableName: "from_pg_class",
+            tableSize: "64 KB",
+            tableSizeBytes: 1,
+            totalSizeBytes: 1,
+          },
+        ]),
+      },
+    );
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "table-stats" });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    const rows = h.artifacts.get(outcome.artifact.correlationId, 1_000)?.value.rows;
+    expect(rows?.[0]).toMatchObject({ tableName: "from_pg_class", rowCount: null });
+  });
+
   test("a reading with no schema dimension is not filtered by a schema it never carried", async () => {
     const h = curatedHarness();
 

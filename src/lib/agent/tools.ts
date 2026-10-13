@@ -3560,7 +3560,7 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
       (await provider.getTableStats(input.schema === undefined ? {} : { schema: input.schema })).map((table) => ({
         schemaName: table.schemaName,
         tableName: table.tableName,
-        rowCount: table.rowCount,
+        rowCount: table.rowCount ?? null,
         deadRowCount: table.deadRowCount ?? null,
         tableSize: table.tableSize,
         tableSizeBytes: table.tableSizeBytes,

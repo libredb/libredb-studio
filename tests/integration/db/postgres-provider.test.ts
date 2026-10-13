@@ -3490,10 +3490,35 @@ describe("PostgresProvider", () => {
       expect(row.liveRowCount).toBeUndefined();
       expect(row.deadRowCount).toBeUndefined();
       expect(row.bloatRatio).toBeUndefined();
-      // Required by the type, so it stays a number; D105 is where that residue is tracked.
-      expect(row.rowCount).toBe(0);
+      // CockroachDB's NULL `reltuples`. A 0 here reported every table empty on an engine
+      // that lists its tables from pg_class, in the row and in the Tables total.
+      expect(row.rowCount).toBeUndefined();
       // The sizes pg_class CAN answer still arrive.
       expect(row.tableSizeBytes).toBe(65536);
+    });
+
+    // PostgreSQL's own shape, not an other-engine one: `reltuples` is -1 on a table that has
+    // never been analysed, which is the catalog saying it has no estimate rather than that the
+    // table is empty. `estimatedRowCount()` has always refused a negative; what changes is that
+    // the refusal now reaches the row instead of being filled back in.
+    test("a reltuples of -1, the value PostgreSQL uses before the first ANALYZE, is absent too", async () => {
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("pg_stat_user_tables")) return Promise.resolve({ rows: [], fields: [], rowCount: 0 });
+        if (sql.includes("pg_catalog.pg_class c")) {
+          return Promise.resolve({
+            rows: [{ schema_name: "public", table_name: "never_analyzed", row_count: "-1" }],
+            fields: [],
+            rowCount: 1,
+          });
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const row = (await provider.getTableStats())[0];
+      expect(row.tableName).toBe("never_analyzed");
+      expect(row.rowCount).toBeUndefined();
     });
 
     test("each size builtin is dropped on its own, so one absence does not cost the others", async () => {

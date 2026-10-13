@@ -2534,7 +2534,15 @@ export interface ActiveSessionDetails {
 export interface TableStats {
   schemaName: string;
   tableName: string;
-  rowCount: number;
+  /**
+   * Omitted where the catalog that answered publishes no estimate. On the PostgreSQL
+   * pg_class path this is `reltuples`, which CockroachDB answers NULL and PostgreSQL
+   * itself answers -1 for a table it has not analysed yet (#1540). It used to be
+   * required, and a `?? 0` filled it, which the Tables tab then summed and printed as
+   * "0 rows" over tables holding rows - the same fabricated zero as `tableSize` below,
+   * in a different column. Every consumer of the figure gates on it.
+   */
+  rowCount?: number;
   liveRowCount?: number;
   deadRowCount?: number;
   /**

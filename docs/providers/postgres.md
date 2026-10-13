@@ -1874,7 +1874,13 @@ reach — the supported `ANALYZE <table>` of #1387 among them. The fallback answ
 now, with the names and nothing else: `reltuples`, `pg_table_size()`, `pg_indexes_size()` and
 `pg_total_relation_size()` all answer `NULL` for a table CockroachDB has, so every figure is
 absent rather than zero. `pg_class` publishes no tuple counts at all, so `liveRowCount`,
-`deadRowCount` and `bloatRatio` are omitted rather than reported as 0.
+`deadRowCount` and `bloatRatio` are omitted rather than reported as 0, and `rowCount` goes with
+them. It is `reltuples`, which CockroachDB answers `NULL` and PostgreSQL itself answers **-1** for
+a table nothing has analysed yet, and `estimatedRowCount()` reads both as no estimate — the same
+distinction [§3.1.0](#310-a-row-count-nobody-counted) draws on the object surface, now on the
+statistics path too. A genuine `0` is still kept, because an empty table is a measurement. Until
+`TableStats.rowCount` became optional a `?? 0` filled it, and Monitoring > Tables summed those
+zeros into a "0 rows" total while Admin > Operations printed "0 rows" against every table.
 
 The order is what makes this safe without asking which engine answered: an engine that fills the
 view never reaches the second read. On PostgreSQL the fallback is reached only by a schema that

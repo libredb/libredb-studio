@@ -5785,10 +5785,15 @@ export class PostgresProvider extends SQLBaseProvider {
         // here refuses a part AND the total - RisingWave refuses the total alone, CockroachDB
         // answers NULL for all three - so this is the shape being closed rather than one seen.
         const sized = totalBytes !== undefined;
+        const rows = estimatedRowCount(r.row_count);
         return {
           schemaName: r.schema_name,
           tableName: r.table_name,
-          rowCount: estimatedRowCount(r.row_count) ?? 0,
+          // `reltuples` on the pg_class path, which CockroachDB answers NULL and PostgreSQL
+          // answers -1 before the first ANALYZE; `estimatedRowCount()` reads both as no
+          // estimate. A 0 there is a table reported empty that nobody counted, so it goes the
+          // way of the tuple counts below rather than being filled in (#1540).
+          ...(rows === undefined ? {} : { rowCount: rows }),
           // Absent where the catalog that answered has no such column: pg_class publishes no
           // live or dead tuple count, and the three fields are optional for exactly that
           // (#1540). A 0 would say "this table has no dead rows", which nobody measured. On

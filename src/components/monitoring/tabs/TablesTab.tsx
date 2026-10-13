@@ -240,7 +240,7 @@ export function TablesTab({
   const filteredTables = tables.filter((t) => t.tableName.toLowerCase().includes(searchQuery.toLowerCase()));
 
   // Calculate totals
-  const totalRows = tables.reduce((sum, t) => sum + t.rowCount, 0);
+  const totalRows = tables.reduce((sum, t) => sum + (t.rowCount ?? 0), 0);
   const totalSize = tables.reduce((sum, t) => sum + t.totalSizeBytes, 0);
   // The same gate StorageTab has carried since #469: `tableSizeBytes` is what says whether
   // this engine publishes per-table bytes at all, and `totalSizeBytes` is a required field
@@ -274,6 +274,11 @@ export function TablesTab({
   // on `tablesUnavailable` above, which is the reading this approximation exists for.
   const statsAbsent = tablesUnavailable !== undefined || (tables.length === 0 && (data?.overview?.tableCount ?? 0) > 0);
   const sizeAbsent = statsAbsent || !tables.every((t) => t.tableSizeBytes !== undefined);
+  // The same gate for the row counts, which `rowCount` became optional for: CockroachDB lists
+  // its tables from pg_class, whose `reltuples` it answers NULL, and summing those to "0 rows"
+  // reported an empty database over tables with rows in them (#1540). One unknown count makes
+  // the total unknown, which is why this is `every()` rather than a per-row concern.
+  const rowsAbsent = statsAbsent || !tables.every((t) => t.rowCount !== undefined);
 
   // What the rows are, when the provider says they are only part of the database (#1085 6.2). The
   // Prometheus list is the metrics with the most head series, so a count of it titled "Tables" and a
@@ -376,7 +381,7 @@ export function TablesTab({
             <div className="text-lg sm:text-2xl font-medium" data-testid="tables-stat-count">
               {statsAbsent ? "N/A" : tables.length}
             </div>
-            {!statsAbsent && (
+            {!rowsAbsent && (
               <p className="text-xs sm:text-xs text-muted-foreground mt-1">{formatNumber(totalRows)} rows</p>
             )}
           </CardContent>
@@ -466,8 +471,8 @@ export function TablesTab({
                           <span className="text-xs sm:text-xs text-muted-foreground">{table.schemaName}</span>
                         </div>
                       </TableCell>
-                      <TableCell className="text-right font-mono text-xs py-2">
-                        {formatNumber(table.rowCount)}
+                      <TableCell className="text-right font-mono text-xs py-2" data-testid="table-row-count">
+                        {table.rowCount === undefined ? "-" : formatNumber(table.rowCount)}
                         {table.deadRowCount ? (
                           <span className="text-xs text-muted-foreground block">
                             {formatNumber(table.deadRowCount)} dead

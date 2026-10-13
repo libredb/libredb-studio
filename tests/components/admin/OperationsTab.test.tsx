@@ -1686,6 +1686,28 @@ describe("OperationsTab", () => {
     expect(selected[0]?.textContent).not.toContain("10 rows");
   });
 
+  // `TableStats.rowCount` went optional with #1540: CockroachDB lists its tables from pg_class,
+  // whose `reltuples` it answers NULL. This list printed "0 rows" for every one of them, which
+  // reads as a measurement. The figure and its separator are dropped together instead.
+  test("a table whose row count the catalog does not publish prints no row figure", async () => {
+    monitoringOverride = {
+      data: {
+        activeSessions: defaultSessions,
+        tables: [{ tableName: "from_pg_class", schemaName: "public", tableSize: "64 KB", totalSize: "96 KB" }],
+      },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+
+    expect(container.textContent).toContain("from_pg_class");
+    // The size it DID publish is still there, so this is an absent figure and not a dropped row.
+    expect(container.textContent).toContain("64 KB");
+    expect(container.textContent).not.toContain("0 rows");
+  });
+
   // ── The row names its schema, so two schemas holding one label are told apart (#977) ──
   //
   // Two tables that share a name in different schemas rendered as identical rows, so an

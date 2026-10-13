@@ -887,8 +887,14 @@ export function OperationsTab() {
                           <span className="truncate max-w-[160px]">{table.tableName}</span>
                         </div>
                         <div className="flex items-center gap-2 text-xs text-fg-muted">
-                          <span className="font-mono">{table.rowCount.toLocaleString()} rows</span>
-                          <span>-</span>
+                          {/* Dropped whole, separator included, where the catalog published no
+                              estimate - CockroachDB's NULL `reltuples` (#1540). */}
+                          {table.rowCount !== undefined && (
+                            <>
+                              <span className="font-mono">{table.rowCount.toLocaleString()} rows</span>
+                              <span>-</span>
+                            </>
+                          )}
                           <span className="font-mono">{table.tableSize}</span>
                           {(table.bloatRatio ?? 0) > 10 && (
                             <Badge

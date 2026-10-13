@@ -1374,10 +1374,15 @@ describe("the declarations", () => {
       ["prometheus", onPrometheus],
       ["victoriametrics", onVictoriaMetrics],
     ] as const) {
-      const counts = listed.map((row) => row.rowCount);
+      // `TableStats.rowCount` is optional for the catalogs that publish no estimate (#1540).
+      // This provider always answers a real series count, and the length check below is how
+      // that is asserted rather than defaulted - a `?? 0` would read a lost count as a metric
+      // with no series and still sort.
+      const counts = listed.map((row) => row.rowCount).filter((count): count is number => count !== undefined);
 
       expect(listed.length, engine).toBeGreaterThan(0);
       expect(listed.length, engine).toBeLessThanOrEqual(TSDB_TOP_METRICS);
+      expect(counts.length, engine).toBe(listed.length);
       // The most series first.
       expect(counts, engine).toEqual(counts.toSorted((a, b) => b - a));
     }
@@ -1388,7 +1393,9 @@ describe("the declarations", () => {
       "tsdb-status-10000",
     ).data.seriesCountByMetricName;
     const names = new Set(onPrometheus.map((row) => row.tableName));
-    const fewestListed = Math.min(...onPrometheus.map((row) => row.rowCount));
+    const fewestListed = Math.min(
+      ...onPrometheus.map((row) => row.rowCount).filter((count): count is number => count !== undefined),
+    );
 
     expect(onPrometheus.length).toBe(TSDB_TOP_METRICS);
     expect(everyMetric.length).toBeGreaterThan(TSDB_TOP_METRICS);
