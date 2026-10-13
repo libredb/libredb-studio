@@ -93,7 +93,7 @@ const ALLOWED_FUNCTIONS: readonly string[] = Object.freeze(["starts-with", "cont
  * a filtered read on either model within a small multiple of an unfiltered `current`, which measured
  * 12.2 ms on the smaller one.
  */
-const MAX_ALTERNATIVES = 32;
+export const MAX_ALTERNATIVES = 32;
 
 /**
  * The cap on the encoded path.

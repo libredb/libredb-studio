@@ -67,8 +67,18 @@ const REQUEST_HEADERS: Readonly<Record<string, string>> = Object.freeze({
   accept: "application/xml",
 });
 
-/** Room left for the request line and the headers the transport adds, inside the 8 KiB block. */
+/**
+ * Room left for the request line and the headers the transport adds, inside the 8 KiB block.
+ *
+ * CHOSEN, NOT MEASURED, and the measurement beside it is what makes the size defensible rather than
+ * the number itself: the transport's own header block on this provider's requests is about 160 bytes
+ * (`GET`, the host, `accept: application/xml`, `accept-encoding: identity`, `connection`), so 512 is
+ * about three times what the headers take and leaves 7,680 bytes for the route and its parameters.
+ */
 const HEADER_OVERHEAD_BYTES = 512;
+
+/** The route and parameter budget the two constants above leave, which is what a request is held to. */
+export const MTC_TARGET_BUDGET_BYTES = MTC_REQUEST_HEADER_BUDGET_BYTES - HEADER_OVERHEAD_BYTES;
 
 export type MtcClientFailure = "request-too-long" | "not-mtconnect" | "unreadable" | "capped";
 
@@ -102,7 +112,7 @@ export function buildTarget(origin: HttpOrigin, pathPrefix: string, request: Mtc
   // leaves room for the request line and the headers rather than against 8 KiB directly.
   const target = url.slice(url.indexOf(origin.host) + origin.host.length);
   const targetBytes = new TextEncoder().encode(target).length;
-  const budget = MTC_REQUEST_HEADER_BUDGET_BYTES - HEADER_OVERHEAD_BYTES;
+  const budget = MTC_TARGET_BUDGET_BYTES;
   if (targetBytes > budget) {
     throw new MtcClientError(
       "request-too-long",

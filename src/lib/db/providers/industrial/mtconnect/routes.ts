@@ -77,8 +77,14 @@ const COUNT: MtcQueryKey = Object.freeze({ kind: "nonzero-int" });
 const ASSET_TYPE: MtcQueryKey = Object.freeze({ kind: "word" });
 const REMOVED: MtcQueryKey = Object.freeze({ kind: "boolean" });
 
-/** `deviceType` appeared at schema 2.3, so it is sent only where the agent's version allows it. */
-export const DEVICE_TYPE_SINCE = "2.3";
+/*
+ * `deviceType` appeared at schema 2.3, and NOTHING IN THIS PROVIDER GATES ON THAT. An exported
+ * `DEVICE_TYPE_SINCE = "2.3"` stood here and was read by no code at all: changing it to "9.9" broke
+ * no test, because there was nothing to break. A version gate would need the agent's own
+ * `mtconnectVersion`, which this version does not read, so the honest record is the fact and its
+ * consequence: on an agent older than 2.3 the key is sent and the agent answers its own
+ * `INVALID_PARAMETER_VALUE`, which the provider reports as the agent's sentence.
+ */
 
 export const MTC_ROUTES: readonly MtcRoute[] = Object.freeze([
   Object.freeze({
@@ -271,5 +277,13 @@ export const MTC_CONSOLE_ROUTES: readonly RouteSpec<MtcOp>[] = Object.freeze(
   ),
 );
 
-/** The measured ceiling on the whole request header block, for the budget the path is cut from. */
+/**
+ * The ceiling on the whole request header block, for the budget the path is cut from.
+ *
+ * THE NUMBER IS THE ROUND ONE BETWEEN TWO MEASUREMENTS, not a measurement itself: with a raw socket
+ * the pinned agent answered a request whose whole header block was 8,153 bytes and answered NOTHING
+ * at all at 8,216, writing zero bytes and closing the connection. 8192 is 8 KiB, which sits between
+ * them, so a request this provider sends is inside the answered case and a request it refuses is one
+ * the agent might have dropped in silence.
+ */
 export const MTC_REQUEST_HEADER_BUDGET_BYTES = 8192;

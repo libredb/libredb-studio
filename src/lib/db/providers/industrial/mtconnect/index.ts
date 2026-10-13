@@ -45,7 +45,12 @@ import type {
 } from "@/lib/db/types";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
-import { MTCONNECT_DEFAULT_PORT, MTCONNECT_OBJECT_KINDS } from "./capabilities";
+import {
+  MTCONNECT_DEFAULT_PORT,
+  MTCONNECT_HEALTH_REQUEST,
+  MTCONNECT_HEALTH_UNKNOWN,
+  MTCONNECT_OBJECT_KINDS,
+} from "./capabilities";
 import {
   headerOf,
   MtcClientError,
@@ -83,7 +88,21 @@ const MTC_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
   label: "An MTConnect",
   shapeNames: "label",
 };
-const ROW_CAP = 10_000;
+/**
+ * The rows one read answers at most, and the number a reader is refused against.
+ *
+ * CHOSEN, NOT MEASURED, and said so rather than dressed as a measurement. What IS measured is what
+ * bounds it: `current` is about 164 bytes an observation, so ten thousand rows is about 1.6 MB of
+ * answer, an order below the byte caps in `client.ts`; and the richest model measured answers 478
+ * observations, so the cap is more than twenty times the largest real answer and still bounds a
+ * generated one. No agent was found whose useful read needs more, and none was measured that does.
+ *
+ * EXPORTED so a test can bind the NUMBER and not only the mechanism. The guard takes `rowCap` as an
+ * argument, which is right - the bound belongs to the read - but every unit test passed its own
+ * literal, so the default this provider actually sends was held by nothing: the constant could have
+ * become 1 and the suite would have stayed green while every reader got one row.
+ */
+export const ROW_CAP = 10_000;
 
 /**
  * One permit per agent, measured rather than chosen.
@@ -274,7 +293,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
    */
   private async readWindow(): Promise<MtcWindow> {
     const session = this.require();
-    const answer = await this.read(session, this.guard("/sample?count=1", { rowCap: ROW_CAP }));
+    const answer = await this.read(session, this.guard(MTCONNECT_HEALTH_REQUEST, { rowCap: ROW_CAP }));
     const header = headerOf(answer.root);
     const window: MtcWindow = {
       instanceId: header.instanceId ?? "",
@@ -561,8 +580,8 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     // What the buffer holds belongs in the overview, where a count has a home.
     void window;
     return {
-      databaseSize: "unknown",
-      cacheHitRatio: "unknown",
+      databaseSize: MTCONNECT_HEALTH_UNKNOWN,
+      cacheHitRatio: MTCONNECT_HEALTH_UNKNOWN,
       slowQueries: [],
       activeSessions: [],
     };

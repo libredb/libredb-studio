@@ -85,9 +85,12 @@ describe("the check goes red when the declaration is wrong", () => {
   test("the resolvers are the repository's own, so this suite fails if their rule changes", () => {
     // If `enumerableKinds` stopped filtering on `enumeratedBy`, the first test of the broken block
     // would fail: a key-browser kind would still be enumerable.
-    const onlyKeyBrowser = [
-      { id: "k", role: "table", label: "K", labelPlural: "Ks", enumeratedBy: "key-browser" },
-    ] as unknown as readonly ObjectKindSpec[];
+    // Typed, not coerced: `as unknown as readonly ObjectKindSpec[]` stood here, and a coercion is how a
+    // test stops looking. If `ObjectKindSpec` gained a required field, the coerced literal would still
+    // compile and this suite would keep asserting about a shape the product no longer has.
+    const onlyKeyBrowser: readonly ObjectKindSpec[] = [
+      { id: "k", role: "relation", label: "K", labelPlural: "Ks", enumeratedBy: "key-browser" },
+    ];
     expect(enumerableKinds(capabilitiesWith(onlyKeyBrowser))).toHaveLength(0);
     expect(keyBrowserKind(capabilitiesWith(onlyKeyBrowser))?.id).toBe("k");
   });
