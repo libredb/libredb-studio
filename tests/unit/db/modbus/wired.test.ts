@@ -97,6 +97,49 @@ const provider = (port: number, registerMap = MAP) =>
     registerMap,
   } as unknown as DatabaseConnection);
 
+describe("connect answers for the device, not only for the map", () => {
+  /**
+   * `connect()` parsed the map and nothing else, so it answered successfully for an address with
+   * no device behind it: MEASURED at 0 ms against a closed port. The route then reports a health
+   * failure after a successful connect as a DEGRADED SUCCESS, so Test Connection answered
+   * `success: true` for a device that does not exist and the dialog saved the connection. A reader
+   * told "connected, but no health data" goes to fix their map when the fault is the address.
+   */
+  test("a closed port is refused, and the refusal names the address", async () => {
+    delete process.env[FLAG];
+    const dev = await device([230]);
+    const port = dev.port;
+    open?.close();
+    open = undefined;
+    await expect(provider(port).connect()).rejects.toThrow(new RegExp(`127\\.0\\.0\\.1:${port}`));
+  });
+
+  test("an address that answers is accepted, and the map check is still done first", async () => {
+    delete process.env[FLAG];
+    const dev = await device([230]);
+    await provider(dev.port).connect();
+    // The dial sends nothing and holds nothing: one connection, no ADU, and it is closed.
+    expect(dev.connections).toBe(1);
+    expect(dev.received).toHaveLength(0);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(dev.closes).toBe(1);
+  });
+
+  test("an empty map is a normal state: connect answers for the device and says nothing of the map", async () => {
+    delete process.env[FLAG];
+    const dev = await device([230]);
+    await expect(provider(dev.port, "[]").connect()).resolves.toBeUndefined();
+    expect(dev.connections).toBe(1);
+  });
+
+  test("a malformed map is still refused before any socket is opened", async () => {
+    delete process.env[FLAG];
+    const dev = await device([230]);
+    await expect(provider(dev.port, "{not json").connect()).rejects.toThrow(/valid JSON/);
+    expect(dev.connections).toBe(0);
+  });
+});
+
 describe("a read reaches the device and comes back", () => {
   test("named points are read in one request, and the device gets a Modbus read for them", async () => {
     delete process.env[FLAG];

@@ -246,6 +246,20 @@ export class ModbusProvider extends BaseDatabaseProvider {
    */
   public async connect(): Promise<void> {
     readMap(this.config);
+    // AND A BARE DIAL, because the map alone made this method answer for a device that is not
+    // there. MEASURED: against a closed port it returned successfully in 0 ms, and
+    // `src/app/api/db/test-connection/route.ts:146-160` reports a health failure after a
+    // successful connect as a DEGRADED SUCCESS - so an address with no device at all answered
+    // `success: true` and the dialog saved the connection. That sends a reader to fix their map
+    // when the fault is the address.
+    //
+    // A dial and not a read: 43/14 is not mandatory in Modbus, so a device that refuses it is one
+    // that does not know the function rather than one that is not there. The dial claims only that
+    // the address answered a TCP connection.
+    //
+    // It is closed at once. What §4.7 measured as dangerous is HOLDING a connection - a second
+    // client went 3003 ms unanswered while the first stayed open - not opening one twice.
+    (await dialModbus(this.endpoint())).destroy();
   }
 
   public async disconnect(): Promise<void> {

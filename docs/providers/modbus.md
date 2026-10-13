@@ -106,8 +106,19 @@ one undefined register inside a block fails the WHOLE block with exception 02 (M
 
 A libmodbus server serving one client at a time left a second client's read unanswered for 3003 ms
 while the first stayed open (#1723 section 4.7). A connection held between reads would lock out the
-plant's own HMI. So `connect()` opens nothing; it parses the map, which is the one thing worth
-telling the user at the moment they connect.
+plant's own HMI. So `connect()` holds nothing. It parses the map AND dials once, closing the socket at once.
+
+The dial is there because the map alone made `connect()` answer for a device that is not there:
+MEASURED at 0 ms against a closed port. `src/app/api/db/test-connection/route.ts` then reports a
+health failure after a successful connect as a degraded success, so an address with no device
+answered `success: true` and the dialog saved the connection - which sends a reader to fix their
+map when the fault is the address. With the dial, a closed port is refused and the refusal names
+the address.
+
+It is a dial and not a read, for the reason given in section 4.4: 43/14 is not mandatory, so a
+device that refuses it is one that does not know the function rather than one that is not there.
+And it is closed at once: what section 4.7 measured as dangerous is HOLDING a connection, not
+opening one twice.
 
 ### 3.5 A late answer is not this answer's
 

@@ -288,9 +288,11 @@ describe("what the provider refuses rather than fakes", () => {
     expect(atBoundary(already)).toBe(already);
   });
 
-  test("connect on an absent map succeeds, because an empty map is a normal state", async () => {
-    await expect(provider().connect()).resolves.toBeUndefined();
-  });
+  /**
+   * "An empty map is a normal state" moved to `wired.test.ts` with `connect`'s dial: the claim is
+   * about the MAP being acceptable, and connect now also answers for the device, so proving it
+   * needs an address that answers.
+   */
 
   test("an empty request is refused before any socket, and the refusal names the three shapes", async () => {
     // This test used to assert "not wired up". The console reads now, and what it still refuses is
