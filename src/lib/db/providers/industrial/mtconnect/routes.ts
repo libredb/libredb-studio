@@ -70,12 +70,12 @@ export interface MtcRoute {
   readonly reads: true;
 }
 
-const DEVICE_TYPE: MtcQueryKey = Object.freeze({ kind: "word" });
-const PATH: MtcQueryKey = Object.freeze({ kind: "text" });
-const SEQUENCE: MtcQueryKey = Object.freeze({ kind: "uint64" });
-const COUNT: MtcQueryKey = Object.freeze({ kind: "nonzero-int" });
-const ASSET_TYPE: MtcQueryKey = Object.freeze({ kind: "word" });
-const REMOVED: MtcQueryKey = Object.freeze({ kind: "boolean" });
+const DEVICE_TYPE = Object.freeze({ kind: "word" } satisfies MtcQueryKey);
+const PATH = Object.freeze({ kind: "text" } satisfies MtcQueryKey);
+const SEQUENCE = Object.freeze({ kind: "uint64" } satisfies MtcQueryKey);
+const COUNT = Object.freeze({ kind: "nonzero-int" } satisfies MtcQueryKey);
+const ASSET_TYPE = Object.freeze({ kind: "word" } satisfies MtcQueryKey);
+const REMOVED = Object.freeze({ kind: "boolean" } satisfies MtcQueryKey);
 
 /*
  * `deviceType` appeared at schema 2.3, and NOTHING IN THIS PROVIDER GATES ON THAT. An exported
@@ -225,7 +225,7 @@ export const MTC_REFUSED_KEYS: Readonly<Record<string, string>> = Object.freeze(
  * parameters and the headers (decision K-61). This number is the console's own text bound, which
  * sits below that budget.
  */
-export const MTC_CONSOLE_DIALECT: ConsoleDialectSpec = Object.freeze({
+export const MTC_CONSOLE_DIALECT = Object.freeze({
   id: "mtconnect",
   methods: Object.freeze(["GET"]),
   pathPrefix: "/",
@@ -244,7 +244,7 @@ export const MTC_CONSOLE_DIALECT: ConsoleDialectSpec = Object.freeze({
   maxNodes: 4_096,
   maxNumericLeaves: 262_144,
   maxScalarLeaves: 32_768,
-});
+} satisfies ConsoleDialectSpec);
 
 /**
  * The same table as the shared console reads it, computed rather than written again.

@@ -375,12 +375,12 @@ export function readMtconnectXml(bytes: Uint8Array, bounds: MtcXmlBounds = MTC_X
       close() {
         const done = open.pop();
         if (!done) throw new Refused("malformed");
-        const element: MtcElement = Object.freeze({
+        const element = Object.freeze({
           name: done.name,
           attributes: Object.freeze(done.attributes),
           children: Object.freeze(done.children),
           text: done.text,
-        });
+        } satisfies MtcElement);
         const parent = open[open.length - 1];
         if (parent) parent.children.push(element);
         else root = element;
@@ -474,12 +474,12 @@ export function streamMtconnectObservations(
         if (open.length === 0) return;
         const done = open.pop();
         if (!done) throw new Refused("malformed");
-        const element: MtcElement = Object.freeze({
+        const element = Object.freeze({
           name: done.name,
           attributes: Object.freeze(done.attributes),
           children: Object.freeze(done.children),
           text: done.text,
-        });
+        } satisfies MtcElement);
         const parent = open[open.length - 1];
         if (parent) {
           parent.children.push(element);

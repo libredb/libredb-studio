@@ -34,11 +34,11 @@ export interface MtcXmlBounds {
   readonly maxAttributeLength: number;
 }
 
-export const MTC_XML_BOUNDS: MtcXmlBounds = Object.freeze({
+export const MTC_XML_BOUNDS = Object.freeze({
   maxDepth: 64,
   maxElements: 500_000,
   maxAttributes: 64,
   maxNameLength: 256,
   maxTextLength: 4 * 1024 * 1024,
   maxAttributeLength: 64 * 1024,
-});
+} satisfies MtcXmlBounds);

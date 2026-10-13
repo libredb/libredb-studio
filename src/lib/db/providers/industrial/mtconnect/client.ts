@@ -63,13 +63,13 @@ const MTCONNECT_ROOTS = new Set(["MTConnectDevices", "MTConnectStreams", "MTConn
  * `count` as well, and the whole buffer of a default agent measured 19,072,397 bytes, which is past
  * every cap here on purpose: no read asks for the whole buffer.
  */
-export const MTC_BYTE_CAPS: Readonly<Record<MtcOp, number>> = Object.freeze({
+export const MTC_BYTE_CAPS = Object.freeze({
   probe: 12 * 1024 * 1024,
   current: 16 * 1024 * 1024,
   sample: 8 * 1024 * 1024,
   assets: 8 * 1024 * 1024,
   asset: 2 * 1024 * 1024,
-});
+} satisfies Record<MtcOp, number>);
 
 /** Headers the provider sends. `identity` is what the transport asks for in any case. */
 const REQUEST_HEADERS: Readonly<Record<string, string>> = Object.freeze({
