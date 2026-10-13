@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { httpOrigin } from "@/lib/db/http/endpoint";
 import type { NodeRequest, NodeResponse, NodeTransport } from "@/lib/db/http/node-transport";
 import { MTC_XML_REFUSAL_OWNER } from "@/lib/db/providers/industrial/mtconnect/xml";
+import { MTC_XML_BOUNDS } from "@/lib/db/providers/industrial/mtconnect/xml-bounds";
 import {
   buildTarget,
   headerOf,
@@ -251,6 +252,28 @@ describe("an answer that is not MTConnect gets our own sentence", () => {
       expect(error.message).toContain("not readable XML");
       expect(error.message).not.toContain("Studio refused");
     }
+  });
+
+  test("a bound's sentence carries the bound's own figure, not a copy of it", () => {
+    // This one cannot be caught by mutation today, and the reason is worth writing: replacing
+    // `${MTC_XML_BOUNDS.maxDepth}` with the literal 64 changes NOTHING observable while the
+    // constant IS 64. What it breaks is the day the constant moves, and that is what this
+    // assertion holds: the sentence is compared with the constant, so a copied figure fails as
+    // soon as the two part. (MEASURED: with this test absent, the literal substitution failed
+    // no test at all.)
+    const deep = `<MTConnectDevices>${"<a>".repeat(MTC_XML_BOUNDS.maxDepth + 2)}${"</a>".repeat(MTC_XML_BOUNDS.maxDepth + 2)}</MTConnectDevices>`;
+    const { transport } = standIn(deep);
+    return readOnce(options(transport, { count: 0 }), guardRequestLine("/probe", GUARD)).then(
+      () => {
+        throw new Error("should have refused");
+      },
+      (error: unknown) => {
+        if (!(error instanceof MtcClientError)) throw error;
+        expect(error.failure).toBe("refused-by-rule");
+        expect(error.message).toContain(String(MTC_XML_BOUNDS.maxDepth));
+        expect(error.message).toContain("Studio refused this answer");
+      },
+    );
   });
 
   test("every reader refusal is owned by exactly one side", () => {

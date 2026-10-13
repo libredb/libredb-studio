@@ -271,6 +271,38 @@ describe("a result says when this provider's row cap cut it", () => {
     });
   });
 
+  test("totalReturned is the rows that arrived, not a constant", async () => {
+    // MEASURED by mutation: with the test above alone, replacing `totalReturned: rows.length`
+    // with `0` failed nothing, because that stub produces no rows and the two are the same
+    // number. A cut read is exactly the case where the figure matters - it is what the strip
+    // says arrived - so it is asserted against a read that DID return rows.
+    const rows = [
+      { timestamp: "2026-10-13T10:00:01Z", sequence: "9" },
+      { timestamp: "2026-10-13T10:00:02Z", sequence: "10" },
+      { timestamp: "2026-10-13T10:00:03Z", sequence: "11" },
+    ];
+    const provider = Object.create(MTConnectProvider.prototype) as Record<string, unknown>;
+    provider.require = () => ({ window: undefined });
+    provider.model = async () => ({ instanceId: "1", items: new Map(), devices: [] }) satisfies MtcModel;
+    provider.guard = () => ({ op: "current", route: { op: "current" }, params: {}, query: {} }) as unknown as MtcRequest;
+    provider.streamed = async (_s: unknown, _r: unknown, onObservation: (o: MtcObservation) => void) => {
+      for (const row of rows) {
+        onObservation({
+          element: "Position",
+          attributes: { dataItemId: `item-${row.sequence}`, timestamp: row.timestamp, sequence: row.sequence },
+          text: "1",
+          children: [],
+          deviceName: "Mazak",
+        } as unknown as MtcObservation);
+      }
+      return { read: rows.length, capped: true };
+    };
+    const result = await (provider as unknown as { query(sql: string): Promise<QueryResult> }).query("GET /current");
+    expect(result.rowCount).toBe(rows.length);
+    expect(result.pagination?.totalReturned).toBe(rows.length);
+    expect(result.pagination?.wasLimited).toBe(true);
+  });
+
   test("a read that was not cut carries no pagination at all", async () => {
     // Absent rather than `wasLimited: false`, because the strip decides from the field's presence
     // and a present-but-false bound is a bound that was applied.
