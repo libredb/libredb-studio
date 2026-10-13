@@ -2026,6 +2026,7 @@ describe("useConnectionForm", () => {
     spark: true,
     opcua: true,
     mtconnect: true,
+    modbus: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

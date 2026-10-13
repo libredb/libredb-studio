@@ -227,6 +227,9 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
   // Source tab renders it in `xml` rather than re-encoding it as JSON. A data item and a condition
   // carry no document, so neither declares a source (#1722).
   mtconnect: ["asset/xml"],
+  // No kind carries a document. A point's definition is the line the user wrote in their own register
+  // map, which is not the device's and is already in front of them (#1723).
+  modbus: [],
   libredb: [],
 });
 

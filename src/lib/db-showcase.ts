@@ -124,6 +124,9 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   // Last (rank 37), behind the address space: a machine tool's agent is a narrower name still, so nothing
   // above it moves for it either (#1722).
   mtconnect: 37,
+  // Last (rank 37): a device's registers are narrower still, and a map the user writes is the only
+  // thing that names them, so nothing above it moves for this one either (#1723).
+  modbus: 37,
 };
 
 /**

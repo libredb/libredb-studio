@@ -117,6 +117,9 @@ const EXPECTED: Readonly<Record<DatabaseType, SurfaceRow>> = {
   opcua: NONE,
   // The same: every route this provider sends is a GET (#1722).
   mtconnect: NONE,
+  // The same: the encoder can build four read requests and the identification request, and nothing else
+  // (#1723).
+  modbus: NONE,
   libredb: NONE,
 };
 

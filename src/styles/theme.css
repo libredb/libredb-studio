@@ -216,6 +216,11 @@
      palette gains one, and a steel grey is the one colour a plant's address space can carry
      without borrowing another engine's. */
   --studio-hue-slate: #1d293d;
+  /* Modbus (#1723): every base hue and every `-alt` step was an engine's by the time it registered -
+     MTConnect had just taken `slate-alt` - so the palette gains one. `stone-800` clears AA in light,
+     and a warm grey stands apart from `slate`, which is OPC UA's: both are industrial protocols and
+     telling them apart on a tree matters more than telling either apart from a database. */
+  --studio-hue-stone: #292524;
   /* MTConnect (#1722) takes the step this hue never had. MEASURED against this file at 90881379:
      of nineteen base hues, exactly two carried no `-alt` in either theme, `mist` and `slate`, so
      this is one of the two steps the palette was still missing rather than a new colour. A base
@@ -350,6 +355,7 @@
   --studio-hue-lime-alt: #bbf451;
   --studio-hue-mist: #9ca8ab;
   --studio-hue-slate: #90a1b9;
+  --studio-hue-stone: #a6a09b;
   --studio-hue-slate-alt: #cad5e2;
   --studio-hue-taupe: #aba09c;
 }
@@ -462,6 +468,7 @@
   --color-hue-lime-alt: var(--studio-hue-lime-alt);
   --color-hue-mist: var(--studio-hue-mist);
   --color-hue-slate: var(--studio-hue-slate);
+  --color-hue-stone: var(--studio-hue-stone);
   --color-hue-slate-alt: var(--studio-hue-slate-alt);
   --color-hue-taupe: var(--studio-hue-taupe);
   --color-hue-teal-solid: var(--studio-hue-teal-solid);

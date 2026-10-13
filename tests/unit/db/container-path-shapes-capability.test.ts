@@ -64,6 +64,9 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   // One level, the agent's devices, and a path is the device name exactly as the probe document
   // spells it: nothing is prefixed and nothing is derived (#1722).
   mtconnect: "exact",
+  // A container is one unit id, written as the number the map holds: nothing is prefixed and nothing
+  // is derived (#1723).
+  modbus: "exact",
   libredb: "exact",
   duckdb: "prefixes",
   mssql: "prefixes",

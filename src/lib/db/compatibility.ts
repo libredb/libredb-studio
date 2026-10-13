@@ -129,6 +129,7 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // An agent's device model and its observations rather than a store, read through a request table of nine routes
   // that are all GET, so the read-only guarantee is a type rather than a setting.
   mtconnect: true,
+  modbus: true,
   libredb: true,
 });
 
@@ -213,6 +214,7 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   opcua: true,
   // An agent the plant already runs, reached over HTTP at one address the reader types.
   mtconnect: true,
+  modbus: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
@@ -321,6 +323,10 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   // Structural rather than a mode: the request table holds nine routes and every one of them is a GET, so there
   // is no write to enforce against (`src/lib/db/providers/industrial/mtconnect/routes.ts`).
   mtconnect: true,
+  // Structural rather than configured: the encoder names four read function codes and device
+  // identification, and there is no code in the provider that can build a write (#1723 MB-S1,
+  // `src/lib/db/providers/industrial/modbus/valve.ts` re-checks every outbound byte).
+  modbus: true,
   libredb: false,
 });
 
@@ -382,6 +388,7 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
   rabbitmq: false,
   opcua: false,
   mtconnect: false,
+  modbus: false,
   libredb: false,
 });
 
@@ -462,6 +469,10 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // grounded on an address space would be reasoning about figures it cannot qualify.
   opcua: false,
   mtconnect: true,
+  // MCP is outside this provider's first version. A read also needs the register map kept with
+  // the connection, because Modbus has no discovery and a name means only what that document
+  // says it means, so an MCP client has nothing to form a read from on its own.
+  modbus: false,
   libredb: true,
 });
 
@@ -514,6 +525,7 @@ export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> =
   rabbitmq: false,
   opcua: false,
   mtconnect: false,
+  modbus: false,
   libredb: false,
 });
 
@@ -574,6 +586,7 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
   opcua: false,
   // Host and port are the address and `apiPath` is a field of its own, so there is no string form to parse.
   mtconnect: false,
+  modbus: false,
   libredb: false,
 });
 

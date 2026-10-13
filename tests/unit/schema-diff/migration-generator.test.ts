@@ -1120,6 +1120,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     rabbitmq: "engine-has-no-foreign-key",
     opcua: "engine-has-no-foreign-key",
     mtconnect: "engine-has-no-foreign-key",
+    modbus: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1282,6 +1283,11 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   },
   // Not a table store either (#1677): a node has ATTRIBUTES defined by its type in the server's own
   // model, and this provider has no code that can write one.
+  modbus: {
+    label: "Modbus",
+    reason:
+      "A Modbus register has no column definition anywhere: the device holds 16-bit words and single bits with no name, no type and no unit, and what gives them meaning is the register map the user wrote, so there is nothing a client could change here.",
+  },
   mtconnect: {
     label: "MTConnect",
     reason:
@@ -1698,6 +1704,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   opcua: false,
   // No wrapper: every request this provider sends is a GET, so there is no statement to wrap (#1722).
   mtconnect: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  modbus: false, // one JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.

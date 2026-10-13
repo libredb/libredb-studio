@@ -38,6 +38,7 @@ describe("QUERY_DIALECTS", () => {
       "kubectl",
       "libredb",
       "milvus",
+      "modbus",
       "mqtt",
       "mtconnect",
       "opcua",
@@ -143,6 +144,12 @@ describe("QUERY_DIALECTS", () => {
       },
       mtconnect: {
         tabType: "mtconnect",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+      },
+      modbus: {
+        tabType: "modbus",
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,

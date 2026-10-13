@@ -146,6 +146,9 @@ const EXPECTED_COLUMN_KINDS: Readonly<Record<DatabaseType, readonly string[]>> =
   // All three kinds: a data item and a condition each answer value, timestamp and sequence, and an
   // asset answers the fixed shape of an asset read (#1722).
   mtconnect: ["dataitem", "condition", "asset"],
+  // No kind declares columns: a point is one value, and what a read answers is a row per point rather
+  // than a shape the tree can show under the point itself (#1723).
+  modbus: [],
   libredb: ["table", "collection", "keyspace"],
 });
 

@@ -206,7 +206,16 @@ export type DatabaseType =
   // Basic answers with an HTML 401 rather than an MTConnect document, which the provider reports as what it is.
   // Read-only is structural rather than a mode: the request table holds nine routes and every one of them is a GET,
   // so there is nothing to send that writes.
-  | "mtconnect";
+  | "mtconnect"
+  // Modbus TCP (#1723), the third member of the `industrial/` family. A device or a gateway in
+  // front of serial devices, read only: the encoder names four read function codes and device
+  // identification, and there is no code here that can build a write - read-only is structural
+  // rather than a mode, as it is for the two above. Modbus has NO DISCOVERY: no request lists
+  // what a device holds, and no register carries a name, a type or a unit, so the object tree is
+  // built from a register map the user supplies with the connection rather than from the device.
+  // One connection is one device address and one unit id; `mbaps`, the protocol's TLS form on
+  // port 802, rides on the SSL panel the other engines already use.
+  | "modbus";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -942,7 +951,8 @@ export interface QueryTab {
     | "firestore"
     | "rabbitmq"
     | "opcua"
-    | "mtconnect";
+    | "mtconnect"
+    | "modbus";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

@@ -215,7 +215,7 @@ having **no statistics**, never as empty. On SQLite the statistics exist only af
 **Every engine, read one of two ways.** On **PostgreSQL and SQLite** the server composes catalog
 statements and reads them through the same audited, read-only path an Agent run uses. On every other
 connection, which is the other thirty-six (MySQL, Oracle, Db2 LUW, SQL Server, libSQL, DuckDB, MongoDB, Redis,
-ClickHouse, Couchbase, Firestore, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes and the bundled LibreDB
+ClickHouse, Couchbase, Firestore, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, Modbus and the bundled LibreDB
 store), it asks that connection's own provider to describe its schema, which is the reading the
 sidebar already performs when it lists your tables, and composes no statement at all. Grounding is
 no longer decided by the engine, and that changed in #414; what decides it now is whether the
@@ -957,9 +957,9 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   Acquiring a profiled provider for any other engine raises `PROFILE_UNSUPPORTED_BY_PROVIDER`
   (`src/lib/db/factory.ts`), which the runtime reports as `engine-unsupported`
   (`src/lib/agent/runtime.ts`) — the rail says so in as many words
-  (`src/components/agent/timeline.ts`). So on the other thirty-two ids in the `DatabaseType` union
+  (`src/components/agent/timeline.ts`). So on the other thirty-three ids in the `DatabaseType` union
   (`src/lib/types.ts`), an Agent-mode run cannot read anything: Oracle, Db2 LUW, libSQL, MongoDB, Redis,
-  ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Cassandra, Couchbase, Firestore, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage and LibreDB. That
+  ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Cassandra, Couchbase, Firestore, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, etcd, Neo4j, Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, Modbus and LibreDB. That
   last id is the bundled **LibreDB sample** connection, whose provider implements no `queryReadOnly`
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
   connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode still opens on

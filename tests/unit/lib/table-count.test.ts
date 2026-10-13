@@ -111,6 +111,9 @@ const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.fre
   // No count statement either: an agent publishes no count, and a data item is not a table. The
   // tree's own counts come from the probe document, which the provider already holds (#1722).
   mtconnect: null,
+  // No count statement: Modbus has no request that counts anything, and the tree's counts are the
+  // register map's own, which the provider already holds (#1723).
+  modbus: null,
 });
 
 async function censusCapabilities(type: DatabaseType): Promise<ProviderCapabilities> {

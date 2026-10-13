@@ -9,14 +9,14 @@
  * and 4.4). There is nothing to discover, so `listObjects` reads the connection's own map with no
  * device traffic at all.
  *
- * WHY THIS CLASS DECLARES NO `queryDialect`, WHICH IS A GAP AND NOT A CHOICE. The dialect union is
- * itself a registration surface: a member of it arrives with three records
- * (`QUERY_DIALECTS`, `DIALECT_EDITORS`, `DIALECT_GENERATORS`), and `docs/ADDING_A_PROVIDER.md:1088`
- * says "the build fails until all three exist". Declaring `queryDialect: "modbus"` here before
- * those records exist does not compile, which was measured. The cost of leaving it out is real and
- * is NOT hidden: a `json` provider with no dialect of its own is given MongoDB's tab type by
- * `resolveTabType`, so until the registration change lands, this provider's console reads as
- * MongoDB. `tests/unit/db/modbus/index.test.ts` binds that gap so it cannot be forgotten, and the registration change closes it.
+ * THE DIALECT, AND THE GAP THAT CAME BEFORE IT. The dialect union is itself a registration
+ * surface: a member of it arrives with its records (`QUERY_DIALECTS`, `DIALECT_GENERATORS`, and
+ * `DIALECT_EDITORS` through the tab type), and declaring `queryDialect: "modbus"` before those
+ * records existed did not compile, which was measured. For as long as that was true this class
+ * declared no dialect, and the cost was real rather than hidden: a `json` provider with no dialect
+ * of its own is given MongoDB's tab type by `resolveTabType`, so the console read as MongoDB. The
+ * registration change landed the records and this declaration together, which is the only order
+ * in which either one compiles.
  *
  * WHY THIS CLASS OPENS NOTHING IN ITS CONSTRUCTOR. `createDatabaseProvider` is called on every
  * shipped type by the factory tests, so a constructor that dialled would put those tests on the
@@ -165,6 +165,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
   public override getCapabilities(): ProviderCapabilities {
     return {
       queryLanguage: "json",
+      queryDialect: "modbus",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
       supportsCreateTable: false,

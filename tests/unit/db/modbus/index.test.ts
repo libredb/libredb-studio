@@ -20,6 +20,7 @@ import {
   ModbusProvider,
 } from "@/lib/db/providers/industrial/modbus/index";
 import { ModbusMapError } from "@/lib/db/providers/industrial/modbus/register-map";
+import { QUERY_DIALECTS } from "@/lib/db/query-dialects";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -41,16 +42,24 @@ const MAP = JSON.stringify([
   { name: "far", unitId: 10, table: "holding_register", address: 300, type: "uint16" },
 ]);
 
-describe("the declared gap: no query dialect yet", () => {
-  test("getCapabilities declares no queryDialect, and this is pinned on purpose", () => {
+describe("the dialect, and the gap it closed", () => {
+  /**
+   * This describe used to hold the opposite pair: `queryDialect` was undefined, and a second test
+   * said the registration change "has to turn this test red to proceed". It did, and these are
+   * what it turned into. The gap was not cosmetic: a `json` provider with no dialect of its own is
+   * given MongoDB's tab type by `resolveTabType`, so the console read as MongoDB.
+   */
+  test("the provider declares its own dialect, so the console is not given another engine's", () => {
     const caps = provider().getCapabilities();
-    expect(caps.queryDialect).toBeUndefined();
     expect(caps.queryLanguage).toBe("json");
+    expect(caps.queryDialect).toBe("modbus");
   });
 
-  test("the registration change has to turn this test red to proceed", () => {
-    // If a future change adds `queryDialect`, this assertion fails and the comment above is read.
-    expect(Object.hasOwn(provider().getCapabilities(), "queryDialect")).toBe(false);
+  test("the dialect the provider names has a registry entry, and that entry names its own tab type", () => {
+    // Nothing forces a dialect to carry a tab type of its own: an entry saying `tabType: "sql"`
+    // compiles. The pair is what keeps this engine's console its own, so the pair is asserted.
+    expect(provider().getCapabilities().queryDialect).toBe("modbus");
+    expect(QUERY_DIALECTS.modbus.tabType).toBe("modbus");
   });
 });
 

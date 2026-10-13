@@ -8,6 +8,7 @@ import {
   OracleIcon,
   MSSQLIcon,
   LibreDBIcon,
+  ModbusIcon,
   MtconnectIcon,
   OpcuaIcon,
   CouchbaseIcon,
@@ -41,6 +42,7 @@ import {
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
 import type { ConnectionImportDeclaration } from "@/lib/connection-import";
+import { MODBUS_READ_ONLY_HINT } from "@/lib/db/providers/industrial/modbus/constants";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 import {
   SNOWFLAKE_FIELD_SENTENCES,
@@ -1357,6 +1359,32 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // The dialog's own sentence says the mode can be turned off, which is false here.
     readOnlyHint:
       "MTConnect connections are read-only whether or not this is ticked: Studio sends the agent GET requests from a closed table and nothing else.",
+  },
+  modbus: {
+    // A mark drawn for Studio, never the Modbus Organization's: a terminal block with three screws.
+    icon: ModbusIcon,
+    // A NEW hue. Every base hue and every `-alt` step was an engine's by the time this one registered -
+    // MTConnect took `slate-alt` while it was being built - so the palette gains `stone`. Of the four greys
+    // Tailwind ships that no identity used, `stone`, `neutral` and `zinc` clear every test at -700, -800 and
+    // -900 and `gray-800` does not clear AA in light, measured by running
+    // tests/unit/theme-accent-contrast.test.ts against all twelve. A warm grey was chosen of the three that
+    // pass because it stands furthest from `slate`, which is OPC UA's: those two are the industrial pair a
+    // reader is most likely to need to tell apart on one tree.
+    color: "text-hue-stone",
+    label: "Modbus",
+    // IANA `mbap`. MODBUS/TCP Security listens on 802 and the SSL panel turns it on, but the box offers the
+    // plain port: a device that speaks mbaps is the rarer one, and the port is the user's to change.
+    defaultPort: "502",
+    // Modbus TCP has no connection string form of its own, and inventing one would be ours rather than the
+    // protocol's.
+    showConnectionStringToggle: false,
+    // Host and Port, and nothing else. The protocol defines no authentication at all - no user, no password,
+    // no token - so the form offers no credential to fill in; what protects a device is mbaps or a network
+    // path you control. The register map the provider reads is NOT a field here yet: where that document
+    // lives is still open (#1723 section 6 item 1), and a field added now would have to move.
+    connectionFields: ["host", "port"],
+    // The dialog's own sentence says the mode can be turned off, which is false here.
+    readOnlyHint: MODBUS_READ_ONLY_HINT,
   },
   libredb: {
     icon: LibreDBIcon,

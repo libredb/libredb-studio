@@ -122,6 +122,7 @@ const ALL_TYPES: DatabaseType[] = [
   "rabbitmq",
   "opcua",
   "mtconnect",
+  "modbus",
 ];
 
 describe("db-ui-config", () => {
@@ -1567,6 +1568,9 @@ describe("db-showcase", () => {
         // name on a page of databases, so no existing engine moves for it (#1677).
         "opcua",
         "mtconnect",
+        // Last, behind the address space and the agent: a device's registers are named only by a map
+        // the user writes, which is the narrowest name of the three (#1723).
+        "modbus",
       ]);
     });
   });

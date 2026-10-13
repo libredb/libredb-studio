@@ -238,6 +238,7 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
   // taupe-400 7.41:1 on the worst dark one, its nearest shipped hue is mist (0.0331 light, 0.0296 dark), and both
   // closest identity pairs stay where they were (0.0205 light, 0.0160 dark).
   { hue: "taupe", light: "taupe-700", lightAlt: "taupe-900" },
+  // Modbus's identity (#1723): every base hue and every `-alt` step was an engine's by the time it registered,
 ];
 
 /**
