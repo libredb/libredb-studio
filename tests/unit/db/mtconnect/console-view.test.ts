@@ -14,6 +14,9 @@
 import { describe, expect, test } from "bun:test";
 import type { QueryKeySpec, RouteSpec } from "@/lib/db/console/dialect";
 import { ConsoleRefusal, parseConsole } from "@/lib/db/console/parser";
+import { guardRequestLine, MtcRefusal } from "@/lib/db/providers/industrial/mtconnect/guard";
+import { generateTableQuery } from "@/lib/query-generators";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import {
   MTC_CONSOLE_DIALECT,
   MTC_CONSOLE_ROUTES,
@@ -182,5 +185,41 @@ describe("the shared parser accepts what the agent answers", () => {
     expect(MTC_CONSOLE_DIALECT.maxNodes).toBe(4096);
     expect(MTC_CONSOLE_DIALECT.maxDepth).toBe(32);
     expect(MTC_CONSOLE_ROUTES.every((route) => route.body === "none")).toBe(true);
+  });
+});
+
+/**
+ * What the tree's generated line does with a hostile object name (#1722).
+ *
+ * The generator writes the clicked item's name into a `#` comment above the request it builds, and an
+ * object name is a name a user of the database chooses. MEASURED with four names: a newline turns the
+ * generated text into two request lines, and the guard refuses it as two rather than running the first
+ * and discarding the second. A quote and a `#` are carried inside the comment and change nothing,
+ * because a comment line is dropped whole.
+ *
+ * This is the hazard the LibreDB generator records for its own command text, asked of this dialect.
+ */
+describe("the generated request line against a hostile name", () => {
+  const capabilities = { queryLanguage: "json", queryDialect: "mtconnect" } as unknown as ProviderCapabilities;
+  const run = (name: string): string => {
+    const text = generateTableQuery(["Mazak", name], capabilities);
+    try {
+      return `accepted:${guardRequestLine(text, { rowCap: 10_000, knownDevices: new Set(["Mazak"]) }).op}`;
+    } catch (error) {
+      return error instanceof MtcRefusal ? error.code : "unexpected";
+    }
+  };
+
+  test("an ordinary name runs, which is the control", () => {
+    expect(run("PART_COUNT")).toBe("accepted:current");
+  });
+
+  test("a newline in the name is refused as two requests, not run as the first", () => {
+    expect(run('evil\nGET /current?path=//*')).toBe("two-requests");
+  });
+
+  test("a quote and a hash are carried in the comment and change nothing", () => {
+    expect(run('has"quote')).toBe("accepted:current");
+    expect(run("has#hash")).toBe("accepted:current");
   });
 });

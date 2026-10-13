@@ -431,6 +431,18 @@
   "selectQuery": "// An OPC UA node's value is read from the node itself, not from a generated statement: click the key to open its value, or name the node id in a read request.",
   "countQuery": null
  },
+ "mtconnect": {
+  "queryLanguage": "json",
+  "queryDialect": "mtconnect",
+  "tabType": "mtconnect",
+  "monacoLanguage": "mtconnect",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "# Order\"Items: one row of this answer\nGET /c0/current",
+  "selectQuery": "# Order\"Items: one row of this answer\nGET /c0/current",
+  "countQuery": null
+ },
  "libredb": {
   "queryLanguage": "json",
   "queryDialect": "libredb",

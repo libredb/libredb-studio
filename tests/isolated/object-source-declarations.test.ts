@@ -347,7 +347,7 @@ describe("the fleet census of object source declarations", () => {
     // two source-bearing kinds, databend four source-bearing kinds, bigquery three kinds, snowflake nine source-bearing
     // kinds and its stage, s3 two source-bearing kinds, kubernetes 37 source-bearing kinds and its Custom Resources
     // kind, firestore one source-bearing kind and one other, rabbitmq three source-bearing kinds, opcua one
-    // source-bearing kind, and spark two source-bearing kinds and its function kind.
+    // source-bearing kind, and mtconnect three kinds of which two are not source-bearing: a data item and a
     expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(40);
     expect(rows).toHaveLength(181);
   });
@@ -464,7 +464,7 @@ describe("the fleet census of object source declarations", () => {
         throw new Error(`the half-declaration guard never reached ${extra}, so it does not cover the MariaDB branch`);
       }
     }
-    // 181 unconnected kinds plus the MariaDB branch's eight.
+    // 181 unconnected kinds plus the MariaDB branch's eight: MTConnect's three joined (#1722), of which
     expect(rows).toHaveLength(189);
 
     const halfDeclared = rows
