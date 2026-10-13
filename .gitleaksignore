@@ -138,24 +138,6 @@ eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/rustfs-2026-
 eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:285
 eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:306
 
-# The 8 above, as the merge commit of PR #1629 re-presents them: that merge
-# brought main's side of the re-recorded captures into a branch where the
-# files did not yet exist, so the scanner sees the cursors as content added by
-# the merge commit itself and reports them under fingerprints naming the
-# merge. The values are the ones the block above already classified - the
-# same throwaway fixture buckets' ListObjectsV2 continuation cursors, no
-# credential - only the presenting commit differs, which is exactly the
-# re-presentation the fingerprint design reports rather than silently
-# inherits.
-f298310f455813882d98eb783f3158dbfe41d204:tests/fixtures/s3/captures/minio-2026-10-12-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:285
-f298310f455813882d98eb783f3158dbfe41d204:tests/fixtures/s3/captures/minio-2026-10-12-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:306
-f298310f455813882d98eb783f3158dbfe41d204:tests/fixtures/s3/captures/minio-region-2026-10-12-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:305
-f298310f455813882d98eb783f3158dbfe41d204:tests/fixtures/s3/captures/minio-region-2026-10-12-RELEASE.2025-10-15T17-29-55Z/console-list-objects-v2-token.json:generic-api-key:326
-f298310f455813882d98eb783f3158dbfe41d204:tests/fixtures/s3/captures/rustfs-2026-10-12-1.0.1/console-list-objects-v2-token.json:generic-api-key:285
-f298310f455813882d98eb783f3158dbfe41d204:tests/fixtures/s3/captures/rustfs-2026-10-12-1.0.1/console-list-objects-v2-token.json:generic-api-key:306
-f298310f455813882d98eb783f3158dbfe41d204:tests/fixtures/s3/captures/silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:285
-f298310f455813882d98eb783f3158dbfe41d204:tests/fixtures/s3/captures/silo-2026-10-12-RELEASE.2026-09-16T00-00-00Z/console-list-objects-v2-token.json:generic-api-key:306
-
 # The AWS SigV4 test suite's published `post-sts-header-before` vector: its
 # `x-amz-security-token` and expected signature are the example values AWS
 # ships with the suite (AKIDEXAMPLE), checked by the signer's tests.
