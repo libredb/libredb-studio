@@ -47,6 +47,7 @@ import {
   type MtcElement,
   type MtcObservation,
   type MtcXmlRefusal,
+  type StudioRefusal,
 } from "./xml";
 import { MTC_XML_BOUNDS } from "./xml-bounds";
 
@@ -169,7 +170,7 @@ export interface MtcAnswer {
  * not a fault anybody can look up in their agent. Each bound names its own figure, so the sentence
  * says what was crossed rather than that something was.
  */
-const STUDIO_RULE: Readonly<Record<string, string>> = Object.freeze({
+const STUDIO_RULE: Readonly<Record<StudioRefusal, string>> = Object.freeze({
   doctype: "it carries a DOCTYPE declaration, and Studio refuses one before any parsing so that a DTD is never expanded and an external entity is never fetched",
   "entity-declaration": "it declares an entity, and Studio refuses one before any parsing so that nothing is expanded or fetched",
   entity: "it uses an entity beyond the five XML predefines and numeric character references, and Studio resolves nothing outside the document",
@@ -190,10 +191,13 @@ const STUDIO_RULE: Readonly<Record<string, string>> = Object.freeze({
  * MTConnect document (doctype)" - which blames the agent for eleven refusals that are Studio's own
  * rule applied to a well-formed document. An operator reading that takes our rule to their vendor.
  */
+/** Whether this reason is one Studio refuses by its own rule, narrowed from the table itself. */
+const isStudioRule = (reason: MtcXmlRefusal): reason is StudioRefusal => MTC_XML_REFUSAL_OWNER[reason] === "studio";
+
 function readerRefusal(reason: MtcXmlRefusal, status: number, contentType: string | null): MtcClientError {
   const answered = `The agent answered ${status}${contentType === null ? "" : ` with ${contentType}`}.`;
-  if (MTC_XML_REFUSAL_OWNER[reason] === "studio") {
-    const rule = STUDIO_RULE[reason] ?? `Studio's rule named ${reason} refused it`;
+  if (isStudioRule(reason)) {
+    const rule = STUDIO_RULE[reason];
     return new MtcClientError(
       "refused-by-rule",
       `Studio refused this answer: ${rule}. The document itself may be perfectly good MTConnect - this is Studio's rule, not a fault in the agent. ${answered}`,

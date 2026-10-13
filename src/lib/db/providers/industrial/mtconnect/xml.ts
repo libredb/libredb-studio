@@ -81,7 +81,7 @@ export type MtcXmlRefusal =
  * did not. An operator who reads that goes to their vendor with our rule in their hand, and the
  * vendor finds nothing wrong, because there is nothing wrong. A refusal that is ours says so.
  */
-export const MTC_XML_REFUSAL_OWNER: Readonly<Record<MtcXmlRefusal, "studio" | "document">> = Object.freeze({
+export const MTC_XML_REFUSAL_OWNER = Object.freeze({
   // Studio's rules. Each one refuses input that is well-formed XML.
   doctype: "studio",
   "entity-declaration": "studio",
@@ -100,7 +100,20 @@ export const MTC_XML_REFUSAL_OWNER: Readonly<Record<MtcXmlRefusal, "studio" | "d
   "two-roots": "document",
   "trailing-content": "document",
   character: "document",
-});
+} as const satisfies Readonly<Record<MtcXmlRefusal, "studio" | "document">>);
+
+/**
+ * The reasons Studio refuses by its own rule, as a TYPE.
+ *
+ * Derived from the table above rather than written again, so the sentence table in `client.ts` can
+ * be `Record<StudioRefusal, string>` and the compiler can hold the two together. MEASURED before
+ * this existed: flipping an entry of the table one at a time, 10 of the 16 flips changed nothing a
+ * test could see - the suite pinned six by hand - and a flipped entry reports a rule of ours as
+ * the agent's defect, which is the defect the table was added to fix.
+ */
+export type StudioRefusal = {
+  [K in MtcXmlRefusal]: (typeof MTC_XML_REFUSAL_OWNER)[K] extends "studio" ? K : never;
+}[MtcXmlRefusal];
 
 export type MtcXmlResult =
   | { readonly ok: true; readonly root: MtcElement }
