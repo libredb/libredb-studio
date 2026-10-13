@@ -16,6 +16,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createServer, type Server } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { DIAL_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from "@/lib/db/providers/industrial/modbus/constants";
 import {
   atSocketBoundary,
   dialModbus,
@@ -298,5 +299,144 @@ describe("the socket boundary converts by scope and keeps its hands off the rest
     const unrelated = new TypeError("y");
     expect(atSocketBoundary(reset, where)).not.toBe(reset);
     expect(atSocketBoundary(unrelated, where)).toBe(unrelated);
+  });
+});
+
+/**
+ * The `error` event path, driven directly.
+ *
+ * A mutation found this branch unmeasured: handing `socket.on("error")` straight to `reject` broke
+ * no test. The boundary's own tests cover the conversion, and the end-to-end tests reach the timer
+ * and the `close` event but never the `error` event, so the one line that joins them was dead to
+ * the suite. A supplied socket drives it without a race.
+ */
+describe("the error event reaches the boundary too", () => {
+  function emitterSocket(): { socket: unknown; fail: (error: Error) => void } {
+    const handlers: Record<string, ((arg: never) => void)[]> = {};
+    const socket = {
+      on(event: string, listener: (arg: never) => void) {
+        (handlers[event] ??= []).push(listener);
+        return socket;
+      },
+      once(event: string, listener: (arg: never) => void) {
+        return socket.on(event, listener);
+      },
+      setTimeout() {
+        return socket;
+      },
+      write() {
+        return true;
+      },
+      destroy() {
+        return socket;
+      },
+      destroyed: false,
+    };
+    return {
+      socket,
+      fail: (error: Error) => {
+        for (const listener of handlers.error ?? []) (listener as (e: Error) => void)(error);
+      },
+    };
+  }
+
+  test("a reset during a read becomes a ConnectionError, not a raw ECONNRESET", async () => {
+    const fake = emitterSocket();
+    const pending = exchangeOnce(fake.socket as never, request(), {
+      timeoutMs: 5000,
+      endpoint: { host: "10.9.8.7", port: 502 },
+    });
+    fake.fail(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+    const error = await pending.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as ConnectionError).host).toBe("10.9.8.7");
+    expect((error as Error).message).toContain("ECONNRESET");
+  });
+
+  test("an unrelated error on the same path still passes through by identity", async () => {
+    const fake = emitterSocket();
+    const planted = new TypeError("undefined is not a function");
+    const pending = exchangeOnce(fake.socket as never, request(), {
+      timeoutMs: 5000,
+      endpoint: { host: "10.9.8.7", port: 502 },
+    });
+    fake.fail(planted);
+    const error = await pending.catch((e: unknown) => e);
+    expect(error).toBe(planted);
+  });
+});
+
+/**
+ * The default timers, which every other test in this file overrides.
+ *
+ * A mutation proved what that costs: setting either constant to 1 ms broke nothing, because the
+ * tests inject their own value and the declared one is never read. The mechanism was held and the
+ * NUMBER was not. These two drive the default path and assert the constant itself, which is the
+ * only way the figure is pinned.
+ */
+describe("the declared timers, on the path that reads them", () => {
+  test("the dial arms the declared dial timeout when none is given", async () => {
+    delete process.env[FLAG];
+    let armed = -1;
+    const socket = {
+      setTimeout(ms: number) {
+        if (armed < 0) armed = ms;
+        return socket;
+      },
+      on() {
+        return socket;
+      },
+      once() {
+        return socket;
+      },
+      write() {
+        return true;
+      },
+      destroy() {
+        return socket;
+      },
+      destroyed: false,
+    };
+    void dialModbus({ host: "203.0.113.9", port: 502 }, { connect: () => socket as never }).catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 5));
+    // The LITERAL, not the constant. Asserting `armed === DIAL_TIMEOUT_MS` compares the constant
+    // with itself: a mutation to 1 ms armed 1 ms and the test agreed. A number that is a contract
+    // has to be written out, with the measurement that chose it.
+    expect(armed).toBe(3000);
+    expect(DIAL_TIMEOUT_MS).toBe(3000);
+    // Above the 2137 ms an absent unit cost through the measured gateway at its defaults, so the
+    // user sees the gateway's own exception rather than our timeout.
+    expect(DIAL_TIMEOUT_MS).toBeGreaterThan(2137);
+  });
+
+  test("an exchange with no timeout given uses the declared request timeout", async () => {
+    const started = Date.now();
+    const socket = {
+      on() {
+        return socket;
+      },
+      once() {
+        return socket;
+      },
+      setTimeout() {
+        return socket;
+      },
+      write() {
+        return true;
+      },
+      destroy() {
+        return socket;
+      },
+      destroyed: false,
+    };
+    // Not waited out: the point is which figure the call reads, and a request timer of three
+    // seconds is not something a unit test should sit through.
+    const pending = exchangeOnce(socket as never, request(), {
+      endpoint: { host: "h", port: 1 },
+    });
+    expect(REQUEST_TIMEOUT_MS).toBe(3000);
+    expect(REQUEST_TIMEOUT_MS).toBeGreaterThan(2137);
+    expect(Date.now() - started).toBeLessThan(REQUEST_TIMEOUT_MS);
+    void pending.catch(() => undefined);
   });
 });

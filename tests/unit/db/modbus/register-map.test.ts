@@ -78,6 +78,17 @@ describe("unit ids", () => {
   test("a unit inside 1 to 247 raises no warning", () => {
     expect(parseRegisterMap(one({ unitId: 7 })).warnings).toEqual([]);
   });
+
+  /**
+   * The BOUNDARY, not a sample on either side of it. A test using 250 and 7 passes whatever the
+   * threshold is between them, so it pins the warning and not the number. A mutation proved it:
+   * moving the threshold to 200 broke nothing. 247 and 248 are the only pair that can.
+   */
+  test("247 is the last unit that raises no warning and 248 is the first that does", () => {
+    expect(parseRegisterMap(one({ unitId: 247 })).warnings).toEqual([]);
+    expect(parseRegisterMap(one({ unitId: 248 })).warnings).toHaveLength(1);
+    expect(parseRegisterMap(one({ unitId: 248 })).warnings.join(" ")).toContain("serial line reserves");
+  });
 });
 
 describe("a point wider than one register must state both orders", () => {

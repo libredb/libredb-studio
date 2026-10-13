@@ -2,6 +2,7 @@
  * The session. Every rule here was measured, and the measurement is in the module's own comment.
  */
 import { describe, expect, test } from "bun:test";
+import { MAX_TRANSACTIONS_IN_FLIGHT } from "@/lib/db/providers/industrial/modbus/constants";
 import { ModbusSession, ModbusTimeout, type Wire } from "@/lib/db/providers/industrial/modbus/session";
 
 const frame = (tid: number) => {
@@ -130,5 +131,30 @@ describe("requests to one endpoint are paced", () => {
     await session.exchange(frame);
     expect(slept).toEqual([100, 100]);
     expect(slept).not.toEqual([70, 70]);
+  });
+});
+
+/**
+ * NumberMaxOfClientTransaction, where the number itself is the contract.
+ *
+ * TCP 4.4.1.2 requires a client to publish this figure, so the provider documentation states it and
+ * this test pins it. A mutation showed why it needs its own test: raising the constant to 8 broke
+ * nothing, because the queue serialises regardless and the constant is only the published figure.
+ * That makes it exactly the kind of value a test has to assert directly, rather than through
+ * behaviour that does not depend on it.
+ */
+describe("the published transaction figure", () => {
+  test("it is one, which is what the provider documentation says", () => {
+    expect(MAX_TRANSACTIONS_IN_FLIGHT).toBe(1);
+  });
+
+  test("and the queue enforces it independently, so the figure is not the only guard", async () => {
+    const wire = new Recorder(async (adu) => {
+      await new Promise((r) => setTimeout(r, 1));
+      return adu;
+    });
+    const session = new ModbusSession(wire);
+    await Promise.all(Array.from({ length: 10 }, () => session.exchange(frame)));
+    expect(wire.maxOutstanding).toBe(1);
   });
 });
