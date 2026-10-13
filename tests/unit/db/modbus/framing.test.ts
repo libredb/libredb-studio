@@ -39,8 +39,27 @@ describe("the bound is applied at the header", () => {
       head.writeUInt16BE(length, 4);
       head[6] = 1;
       expect(() => reader.push(Buffer.concat([head, Buffer.alloc(4)]))).toThrow(/MBAP length/);
+      // The name of this test claims the bytes are dropped, so the test has to measure it.
+      // Asserting only the throw left the drop unbound: a reader that KEPT the refused header
+      // passed this test unchanged (measured, round 7).
+      expect(reader.buffered).toBe(0);
     });
   }
+
+  test("a well formed answer after a refused header is still read", () => {
+    const reader = new FrameReader();
+    const head = Buffer.alloc(7);
+    head.writeUInt16BE(1, 0);
+    head.writeUInt16BE(0, 2);
+    head.writeUInt16BE(0xffff, 4);
+    head[6] = 1;
+    expect(() => reader.push(head)).toThrow(/MBAP length/);
+    // Had the refused header been kept, this push would read ITS length again and throw a
+    // second time, and a device that recovers would never be heard.
+    expect(reader.push(readOf(2))).toEqual([
+      { transactionId: 1, unitId: 1, functionCode: 3, body: Buffer.concat([Buffer.from([4]), Buffer.alloc(4)]), isException: false, exceptionCode: undefined },
+    ]);
+  });
 
   test("memory does not grow with what a peer sends under a huge length", () => {
     const reader = new FrameReader();
@@ -58,6 +77,8 @@ describe("the bound is applied at the header", () => {
     const f = readOf(2);
     f.writeUInt16BE(1, 2);
     expect(() => reader.push(f)).toThrow(/protocol id/);
+    expect(reader.buffered).toBe(0);
+    expect(reader.push(readOf(2))).toHaveLength(1);
   });
 
   test("a partial header is held and nothing is produced", () => {
