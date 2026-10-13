@@ -35,6 +35,7 @@
   <a href="https://node-oracledb.readthedocs.io/en/latest/user_guide/appendix_b.html#libredb-studio">Oracle</a>、
   <a href="https://planet.mysql.com/showcase/?search=LibreDB">MySQL</a>、
   <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>、
+  <a href="https://valkey.io/participants/#:~:text=LibreDB%20Studio%20connects%20to%20Valkey">Valkey</a>、
   <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>、
   <a href="https://mariadb.com/docs/server/clients-and-utilities/graphical-and-enhanced-clients/libredb-studio">MariaDB</a>、
   <a href="https://trino.io/ecosystem/client-application#libredb-studio">Trino</a>、
