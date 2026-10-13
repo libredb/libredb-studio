@@ -10,19 +10,19 @@
  * option a caller may omit.
  */
 
-/** IANA `mbap`. */
-export const MODBUS_DEFAULT_PORT = 502;
 /**
- * IANA `mbap-s`. MODBUS/TCP Security, section 5 of MB-TCP-Security-v36.
+ * IANA `mbap`.
  *
- * NOTHING READS THIS YET, AND IT IS KEPT ANYWAY. `client.ts` already dials TLS, but the provider
- * does not reach the socket yet, so no code is in a position to choose between 502 and 802. The
- * name was deleted once to turn `knip` green, and that is the wrong repair: it turns a missing
- * connection into a quiet absence, and the gap stops being visible to anyone reading this file.
- * The gate carries it as ONE expected unread export with an end condition - when `index.ts`
- * imports `./client`, this constant must have a reader and the allowance comes out.
+ * MODBUS/TCP Security listens on `mbap-s`, 802 (SEC section 5), and that number is not a constant
+ * here because nothing is in a position to read it: the provider does not reach a socket yet, so
+ * no code chooses between the two ports. It was written as an exported constant first, then kept
+ * as an unexported one, and both are the same mistake in different clothes - the first is a
+ * published name with no reader, the second an unused local that eslint names. What stands in
+ * production because it is absent, which is the question worth asking, is nothing: a connection
+ * cannot be made at all yet. It arrives as a name in the change that dials, where choosing
+ * between 502 and 802 is a decision some code actually makes.
  */
-export const MBAPS_DEFAULT_PORT = 802;
+export const MODBUS_DEFAULT_PORT = 502;
 
 /** MBAP header: transaction id, protocol id, length, unit id. TCP 3.1.3. */
 export const MBAP_HEADER_BYTES = 7;

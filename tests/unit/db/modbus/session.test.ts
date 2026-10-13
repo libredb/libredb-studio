@@ -3,7 +3,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { MAX_TRANSACTIONS_IN_FLIGHT } from "@/lib/db/providers/industrial/modbus/constants";
-import type { Exchange } from "@/lib/db/providers/industrial/modbus/framing";
+import { ModbusFramingError, type Exchange } from "@/lib/db/providers/industrial/modbus/framing";
 import { ModbusSession, ModbusTimeout, type Wire } from "@/lib/db/providers/industrial/modbus/session";
 
 /**
@@ -93,6 +93,27 @@ describe("a request that never answers ends by our own timer", () => {
     const session = new ModbusSession(wire, { requestTimeoutMs: 20 });
     await session.exchange(frame).catch(() => undefined);
     expect(wire.closes).toEqual(["request timed out"]);
+  });
+
+  /**
+   * The TYPE and the OBLIGATION are two claims, and this holds them apart.
+   *
+   * MB-S4: after a frame that cannot be read there is no state in which continuing on the same
+   * socket is safe, because the next answer to arrive may belong to the request just given up on.
+   * The test above makes that claim with a stand-in error, which binds "any failure closes" and
+   * says nothing about a framing error in particular. This one sends the real class and asserts
+   * both separately: the connection closed with the right reason, AND the caller got that very
+   * object rather than something wrapped or replaced on the way out.
+   */
+  test("a framing error closes the connection, and reaches the caller unchanged", async () => {
+    const planted = new ModbusFramingError("the device sent an MBAP length of 0");
+    const wire = new Recorder(async () => {
+      throw planted;
+    });
+    const session = new ModbusSession(wire, { requestTimeoutMs: 500 });
+    const caught = await session.exchange(frame).catch((e: unknown) => e);
+    expect(caught).toBe(planted);
+    expect(wire.closes).toEqual(["request failed"]);
   });
 
   test("a failure of any other kind also closes the connection", async () => {

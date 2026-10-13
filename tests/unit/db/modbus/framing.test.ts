@@ -114,6 +114,55 @@ describe("reassembly", () => {
   });
 });
 
+/**
+ * A REGISTER VALUE CAN LOOK LIKE A HEADER, and the reader must not care.
+ *
+ * Every byte of a register is data the device chose, so a payload can carry bytes that read as a
+ * perfectly good MBAP header: a transaction id, protocol id 0x0000, a plausible length. A reader
+ * that SEARCHED for a header would cut the frame in the middle of a value and the pieces would
+ * still look like frames, which is the worst shape of this fault: the result is not an error, it
+ * is a wrong number.
+ *
+ * This reader advances by the length the header declares and never looks inside a body. These
+ * tests are here to hold that, because the alternative passes every test written with payloads
+ * that happen to contain no header-shaped bytes.
+ */
+describe("a payload that looks like a header is still payload", () => {
+  test("a register value carrying a whole MBAP header is read as data", () => {
+    // Four registers whose bytes spell out tid 1, protocol 0, length 6, unit 1, FC 3: a header a
+    // searching reader would lock onto.
+    const payload = Buffer.from([0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x03]);
+    const frame = answer(7, 1, 3, Buffer.concat([Buffer.from([payload.length]), payload]));
+    const reader = new FrameReader();
+    const frames = reader.push(frame);
+    expect(frames).toHaveLength(1);
+    expect(frames[0]?.transactionId).toBe(7);
+    expect(frames[0]?.body.subarray(1)).toEqual(payload);
+    expect(reader.buffered).toBe(0);
+  });
+
+  test("two frames in one write, where the second's header also appears inside the first's body", () => {
+    const second = answer(2, 1, 3, Buffer.from([2, 0x12, 0x34]));
+    // The first frame's payload CONTAINS the second frame's header bytes, verbatim.
+    const first = answer(1, 1, 3, Buffer.concat([Buffer.from([second.length]), second]));
+    const reader = new FrameReader();
+    const frames = reader.push(Buffer.concat([first, second]));
+    expect(frames.map((f) => f.transactionId)).toEqual([1, 2]);
+    expect(reader.buffered).toBe(0);
+  });
+
+  test("the same two frames split byte by byte still arrive as two, in order", () => {
+    const second = answer(2, 1, 3, Buffer.from([2, 0x12, 0x34]));
+    const first = answer(1, 1, 3, Buffer.concat([Buffer.from([second.length]), second]));
+    const both = Buffer.concat([first, second]);
+    const reader = new FrameReader();
+    const seen: number[] = [];
+    for (const byte of both) seen.push(...reader.push(Buffer.from([byte])).map((f) => f.transactionId));
+    expect(seen).toEqual([1, 2]);
+    expect(reader.buffered).toBe(0);
+  });
+});
+
 describe("a frame is checked against the request", () => {
   const one = (buf: Buffer): InboundFrame => new FrameReader().push(buf)[0] as InboundFrame;
 
