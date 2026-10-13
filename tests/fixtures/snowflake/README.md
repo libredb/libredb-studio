@@ -63,7 +63,7 @@ The partition items M51, M52 and M53 read 100,001 rows of `big` in four partitio
 
 ## What remains by hand
 
-These files hold `"operator": "pending: the operator's answer is added to this file by hand"` and no exchange, because the harness cannot ask them alone:
+These items are the ones the harness cannot ask alone, so their files hold an `operator` field and no exchange:
 
 - M15 and M17: each confirms the default the spec records under its number; the operator follows the spec's item and notes the answer.
 - M22: a request from an address the network policy does not allow, sent from another network.
@@ -74,6 +74,10 @@ These files hold `"operator": "pending: the operator's answer is added to this f
 - M81: where the 10,000-row ceiling of `SHOW` applies, with and without `LIMIT`, over objects the operator creates past it in a scratch schema.
 - M84: the code a data movement policy refusal answers, with one set for one run.
 - M98: how specific the registration statement's names must be; the operator follows the spec's item and notes the answer.
+
+The operator answered M15, M17, M22, M50, M70, M78, M81 and M84 by hand on 2026-10-13, each in its file's `operator` field: what was run, the answer, and each step with its time, status, code and message.
+M55 and M98 remain pending, their `operator` field still `"pending: the operator's answer is added to this file by hand"`.
+M58, M61, M64 and M100 also carry an `operator` field, with further probes the operator asked by hand the same day beside the harness's exchanges.
 
 Three scenarios of the plan have no file, for the reasons its `operator` field gives:
 
