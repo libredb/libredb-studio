@@ -16,8 +16,7 @@
  * those records exist does not compile, which was measured. The cost of leaving it out is real and
  * is NOT hidden: a `json` provider with no dialect of its own is given MongoDB's tab type by
  * `resolveTabType`, so until the registration change lands, this provider's console reads as
- * MongoDB. `tests/unit/db/modbus/provider-surface.test.ts` binds that gap so it cannot be
- * forgotten, and the registration change closes it.
+ * MongoDB. `tests/unit/db/modbus/index.test.ts` binds that gap so it cannot be forgotten, and the registration change closes it.
  *
  * WHY THIS CLASS OPENS NOTHING IN ITS CONSTRUCTOR. `createDatabaseProvider` is called on every
  * shipped type by the factory tests, so a constructor that dialled would put those tests on the
@@ -46,7 +45,7 @@ import type {
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
-import { MODBUS_DEFAULT_PORT } from "./constants";
+import { MODBUS_DEFAULT_PORT, MODBUS_NO_REVOCATION_SENTENCE, MODBUS_READ_ONLY_HINT } from "./constants";
 import {
   countObjects as countFromMap,
   listObjects as listFromMap,
@@ -308,3 +307,5 @@ export class ModbusProvider extends BaseDatabaseProvider {
     );
   }
 }
+
+export { MODBUS_NO_REVOCATION_SENTENCE, MODBUS_READ_ONLY_HINT };

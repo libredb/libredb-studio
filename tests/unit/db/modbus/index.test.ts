@@ -13,7 +13,11 @@
  * look at is a gap that ships.
  */
 import { describe, expect, test } from "bun:test";
-import { ModbusProvider } from "@/lib/db/providers/industrial/modbus/index";
+import {
+  MODBUS_NO_REVOCATION_SENTENCE,
+  MODBUS_READ_ONLY_HINT,
+  ModbusProvider,
+} from "@/lib/db/providers/industrial/modbus/index";
 import { QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -162,5 +166,54 @@ describe("a refusal is a QueryError, because the product treats it differently",
       .describeObject(["1", "nope"], "holding_register")
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(QueryError);
+  });
+});
+
+/**
+ * These assertions used to live in a `provider-surface.test.ts` that read a second declaration
+ * object, `MODBUS_SURFACE`. Nothing in the product read that object: the provider declares its
+ * capabilities inline. So those seventeen tests were passengers, green whatever the provider did,
+ * and the two declarations had ALREADY diverged on `queryDialect`, which is the one point the
+ * provider documents as a gap. The duplicate is deleted and these run against the real class.
+ */
+describe("every capability this provider does not have, asserted on the real class", () => {
+  test.each([
+    ["supportsExplain"],
+    ["supportsCreateTable"],
+    ["supportsInlineRowEdit"],
+    ["supportsTransactions"],
+    ["supportsResultPagination"],
+    ["supportsMaintenance"],
+    ["supportsConnectionString"],
+    ["supportsExternalQueryLimiting"],
+    ["supportsTestDataGeneration"],
+    ["declaresForeignKeys"],
+    ["tablesAreDerivedGroupings"],
+  ])("%s is declared false", (key) => {
+    const caps = provider().getCapabilities() as unknown as Record<string, unknown>;
+    expect(caps[key]).toBe(false);
+  });
+
+  test("no key scan is declared, because nothing is walked", () => {
+    expect(provider().getCapabilities().keyScan).toBeUndefined();
+  });
+
+  test("one container level, named Unit", () => {
+    const levels = provider().getCapabilities().containerLevels ?? [];
+    expect(levels).toHaveLength(1);
+    expect(levels[0]?.label).toBe("Unit");
+  });
+});
+
+describe("the sentences the product has to say out loud", () => {
+  test("the read only hint says the device enforces nothing", () => {
+    expect(MODBUS_READ_ONLY_HINT).toContain("device enforces nothing");
+    expect(MODBUS_READ_ONLY_HINT).toContain("can write to it");
+  });
+
+  test("the mbaps sentence says revocation is not checked, and names both runtimes", () => {
+    expect(MODBUS_NO_REVOCATION_SENTENCE).toContain("does not check revocation");
+    expect(MODBUS_NO_REVOCATION_SENTENCE).toContain("Node");
+    expect(MODBUS_NO_REVOCATION_SENTENCE).toContain("Bun");
   });
 });
