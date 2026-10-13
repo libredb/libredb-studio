@@ -631,6 +631,16 @@ export const settle = (): Promise<void> => new Promise<void>((resolve) => setImm
 /** What one read against a peer came to: its stop kind, or the class name of its error. */
 export type ReadLabel = `stop:${StopReason["kind"]}` | `error:${string}`;
 
+/** The deadline of a peer whose expected stop IS the deadline, which is what R-S10 asserts. */
+export const HOSTILE_DEADLINE_MS = 2_000;
+/**
+ * The deadline of every other peer. A peer that stops on its own bytes or on the 1,000 ms idle must not lose a race
+ * with the deadline on a loaded runner: on a three-way contended run pinned to one core, `header-heavy-bytes` took up
+ * to 3,436 ms and `heartbeats-in-content` reached the deadline instead of idling. 10 s is about three times that
+ * worst measurement and still an order below the file's 60 s `beforeAll`.
+ */
+export const HOSTILE_PEER_DEADLINE_MS = 10_000;
+
 export interface HostilePeer {
   readonly name: string;
   /** The broker's script, built when the peer starts; absent for "closed-port". */
@@ -642,6 +652,8 @@ export interface HostilePeer {
   /** Dial a port nothing listens on. */
   readonly closedPort?: boolean;
   readonly limit?: number;
+  /** The read's deadline; every peer but the ones whose stop it is takes HOSTILE_PEER_DEADLINE_MS. */
+  readonly deadlineMs?: number;
   /**
    * The client's parse of this peer's frames holds the event loop for one long stretch (about 300 ms for the pair
    * unloaded, over 900 ms on a starved core), so the peer runs in a wave of its own after the others: a stall that long
@@ -688,8 +700,19 @@ function heavyHeader(tag: number, kind: "void" | "bytes"): Uint8Array {
  */
 export const HOSTILE_PEERS: readonly HostilePeer[] = [
   { name: "closed-port", closedPort: true, expect: ["error:ConnectionError"] },
-  { name: "tls-never-finishes", steps: () => [{ waitMs: 60_000 }], tlsDial: true, expect: ["error:TimeoutError"] },
-  { name: "silent", steps: () => [{ waitMs: 60_000 }], expect: ["error:TimeoutError"] },
+  {
+    name: "tls-never-finishes",
+    steps: () => [{ waitMs: 60_000 }],
+    tlsDial: true,
+    deadlineMs: HOSTILE_DEADLINE_MS,
+    expect: ["error:TimeoutError"],
+  },
+  {
+    name: "silent",
+    steps: () => [{ waitMs: 60_000 }],
+    deadlineMs: HOSTILE_DEADLINE_MS,
+    expect: ["error:TimeoutError"],
+  },
   {
     name: "http",
     steps: () => [
@@ -707,6 +730,7 @@ export const HOSTILE_PEERS: readonly HostilePeer[] = [
   {
     name: "start-then-hang",
     steps: () => [{ expect: "protocol-header" }, { send: serverFrames.connectionStart() }, { waitMs: 60_000 }],
+    deadlineMs: HOSTILE_DEADLINE_MS,
     expect: ["error:TimeoutError"],
   },
   {
@@ -721,6 +745,7 @@ export const HOSTILE_PEERS: readonly HostilePeer[] = [
   {
     name: "trickle",
     steps: () => [{ expect: "protocol-header" }, { trickle: serverFrames.connectionStart(), everyMs: 500 }],
+    deadlineMs: HOSTILE_DEADLINE_MS,
     expect: ["error:TimeoutError"],
   },
   {
@@ -785,6 +810,7 @@ export const HOSTILE_PEERS: readonly HostilePeer[] = [
   {
     name: "heartbeat-1-silent",
     steps: () => [...ready({ heartbeat: 1 }).slice(0, 8), { waitMs: 60_000 }],
+    deadlineMs: HOSTILE_DEADLINE_MS,
     expect: ["error:ConnectionError", "error:TimeoutError"],
   },
   {
@@ -793,6 +819,7 @@ export const HOSTILE_PEERS: readonly HostilePeer[] = [
       ...ready({ heartbeat: 1 }).slice(0, 8),
       ...Array.from({ length: 10 }, (): PeerStep[] => [{ send: serverFrames.heartbeat() }, { waitMs: 400 }]).flat(),
     ],
+    deadlineMs: HOSTILE_DEADLINE_MS,
     expect: ["error:TimeoutError"],
   },
   {
@@ -998,6 +1025,7 @@ export const HOSTILE_PEERS: readonly HostilePeer[] = [
       },
       { trickle: new Uint8Array(400), everyMs: 10 },
     ],
+    deadlineMs: HOSTILE_DEADLINE_MS,
     expect: ["stop:deadline"],
   },
 ];
@@ -1010,10 +1038,18 @@ export interface HostileOutcome {
   readonly ms: number;
   /** Peer sockets still open 1 s after the read settled. */
   readonly openAfter: number;
+  /**
+   * The read's own socket is destroyed by the time the read settles. `read-loop.ts` destroys it on every stop (a hard
+   * stop drops it, a graceful one waits for close-ok and then destroys it, and the `finally` drops it), so this needs
+   * no time window and says nothing about when the peer's accepted socket notices.
+   */
+  readonly readSocketDestroyed: boolean;
+  /** From the deadline's abort to the read settling; null when the deadline never fired. */
+  readonly afterDeadlineMs: number | null;
 }
 
 /**
- * Runs one hostile peer against the real read loop and dial under the system clock with a 2,000 ms deadline, and
+ * Runs one hostile peer against the real read loop and dial under the system clock with the peer's deadline, and
  * answers what it came to. Self-contained in its imports, so a Node child can run it from a bundle.
  */
 export async function runHostilePeer(
@@ -1024,6 +1060,19 @@ export async function runHostilePeer(
     ? null
     : await startFakePeer(peer.steps?.() ?? [], peer.tlsPeer ? { tls: certificate } : {});
   const port = fake?.port ?? (await closedPort());
+  const deadlineMs = peer.deadlineMs ?? HOSTILE_PEER_DEADLINE_MS;
+  // The production deadline signal, with its abort stamped so a test can tell the runtime's timer lateness from the
+  // read's release, which `dialAmqp` performs synchronously in its abort listener.
+  const signal = AbortSignal.timeout(deadlineMs);
+  let abortedAt: number | null = null;
+  signal.addEventListener(
+    "abort",
+    () => {
+      abortedAt = performance.now();
+    },
+    { once: true },
+  );
+  const sockets: AmqpSocket[] = [];
   const started = performance.now();
   let label: ReadLabel;
   let rows = 0;
@@ -1041,10 +1090,14 @@ export async function runHostilePeer(
       stream: "st",
       from: { kind: "keyword", value: "first" },
       limit: peer.limit ?? 50,
-      signal: AbortSignal.timeout(2_000),
-      deadlineSeconds: 2,
+      signal,
+      deadlineSeconds: deadlineMs / 1_000,
       replicas: { online: [], members: [] },
-      dial: dialAmqp,
+      dial: async (endpoint, dialSignal) => {
+        const socket = await dialAmqp(endpoint, dialSignal);
+        sockets.push(socket);
+        return socket;
+      },
       clock: SYSTEM_CLOCK,
       studioVersion: null,
     });
@@ -1054,11 +1107,20 @@ export async function runHostilePeer(
     label = `error:${(error as Error).name}`;
   }
   const ms = performance.now() - started;
+  const afterDeadlineMs = abortedAt === null ? null : performance.now() - abortedAt;
   // The peer sees the client's socket go once its FIN or RST is read; other peers' floods can delay that by a few ms.
   for (let waited = 0; waited < 1_000 && (fake?.openSockets() ?? 0) > 0; waited += 10) await sleep(10);
   const openAfter = fake?.openSockets() ?? 0;
   await fake?.stop();
-  return { name: peer.name, label, rows, ms, openAfter };
+  return {
+    name: peer.name,
+    label,
+    rows,
+    ms,
+    openAfter,
+    readSocketDestroyed: sockets.every((socket) => socket.destroyed),
+    afterDeadlineMs,
+  };
 }
 
 /**

@@ -1,31 +1,43 @@
 /**
- * R-S10: every AMQP read runs under a Studio deadline and cannot crash the process. Each hostile peer, with a 2,000 ms
- * deadline, settles within the deadline plus 100 ms, with no uncaught error and no socket left open, under Bun in this
- * process and under every Node binary in NODE_TRANSPORT_NODES (or the node on PATH), from a bundle of the read loop and
- * the peers. Node needs its own run because a throw inside a socket listener exits a Node process, while Bun turns it
- * into a rejection.
+ * R-S10: every AMQP read runs under a Studio deadline and cannot crash the process. Each hostile peer settles at one
+ * of the stops its script allows, with no uncaught error, and the socket the read opened is destroyed by the time it
+ * settles, under Bun in this process and under every Node binary in NODE_TRANSPORT_NODES (or the node on PATH), from a
+ * bundle of the read loop and the peers. Node needs its own run because a throw inside a socket listener exits a Node
+ * process, while Bun turns it into a rejection.
  *
- * The 100 ms margin is about 25 times the 3.9 ms overshoot measured for one read per process; the peers run
- * concurrently here, so the margin also covers their contention, re-measured on the ubuntu runner before merge.
+ * The deadline is only asserted where it is the peer's expected stop. A wall-clock timer cannot preempt a loop a peer
+ * is holding: the header-heavy pair's parse blocks it for about 300 ms, over 900 ms on a starved core. On a loaded
+ * runner the 1,000 ms idle and the 2,000 ms deadline then race whichever stop the peer's own bytes would reach, and
+ * the old `deadline + 100 ms` settle bound measured the runner rather than the read. Pinned to one core beside three
+ * busy loops with three copies of this file running, `heartbeats-in-content` ended at the deadline instead of idle,
+ * and `header-heavy-bytes` took 3,436 ms. So the peers whose expected stop is the deadline take HOSTILE_DEADLINE_MS
+ * (2,000 ms), every other peer takes HOSTILE_PEER_DEADLINE_MS (10,000 ms) so its own stop wins that race, and what is
+ * asserted is the property behind the old bound: a read the deadline stopped releases it promptly, which is what
+ * catches a deadline that fires without ending the read.
  *
- * Several expected stops are a race on one event loop: a peer's close or cancel against the read's 1,000 ms idle timer,
- * and the idle timer against the 2,000 ms deadline. The client's parse of the header-heavy pair holds the loop for one
- * stretch of about 300 ms, and over 900 ms with the test pinned to one core beside three busy loops, which once turned
- * "socket-end-mid-read" into idle and "heartbeats-in-content" into deadline. So those two peers run in a wave of their
- * own after the rest, and the peers that close, cancel or end mid-read act on the client's acks instead of a 100 ms
- * wait. Measured on the starved core, the light wave's longest stall is under 200 ms, against the 1,000 ms an idle
- * stop needs, and every idle stop's last byte arrives by 320 ms, leaving 680 ms before the deadline could win. The
- * file's budget is 20 s: about 3 s per runtime, plus the bundle.
+ * The read's own socket is checked through a dial that records it, not through the peer's accepted socket. Every stop
+ * in `read-loop.ts` destroys that socket (a hard stop drops it, a graceful one waits for close-ok and then destroys
+ * it, and the `finally` drops it), so the check needs no time window; the peer's socket can outlive it on a starved
+ * loop, which is why `openAfter` is reported in a failure and not asserted.
+ *
+ * The file's budget is 20 s: about 3 s per runtime, plus the bundle.
  */
 import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { makeCertificates } from "../../../helpers/node-transport-fixtures";
-import { HOSTILE_PEERS, type HostileOutcome, runHostileSet } from "../../../helpers/rabbitmq-fake-peer";
+import {
+  HOSTILE_DEADLINE_MS,
+  HOSTILE_PEER_DEADLINE_MS,
+  HOSTILE_PEERS,
+  type HostileOutcome,
+  type HostilePeer,
+  runHostileSet,
+} from "../../../helpers/rabbitmq-fake-peer";
 
-const DEADLINE_MS = 2_000;
-const MARGIN_MS = 100;
+/** How long a read the deadline stopped may take to release it, measured at 0 to 1 ms unloaded on Linux. */
+const RELEASE_LIMIT_MS = 250;
 const HELPER = join(import.meta.dir, "..", "..", "..", "helpers", "rabbitmq-fake-peer.ts");
 
 /** The Node binaries NODE_TRANSPORT_NODES lists, or the node on PATH; an empty list or no node fails by name. */
@@ -117,21 +129,34 @@ function check(run: RuntimeRun): void {
   expect(run.outcomes.map((outcome) => outcome.name)).toEqual(HOSTILE_PEERS.map((peer) => peer.name));
   for (const [index, outcome] of run.outcomes.entries()) {
     const peer = HOSTILE_PEERS[index];
-    expect({ runtime: run.runtime, name: outcome.name, allowed: peer?.expect.includes(outcome.label) }).toEqual({
+    const ms = Math.round(outcome.ms);
+    const afterDeadlineMs = outcome.afterDeadlineMs === null ? null : Math.round(outcome.afterDeadlineMs);
+    expect({
       runtime: run.runtime,
       name: outcome.name,
+      label: outcome.label,
+      ms,
+      allowed: peer?.expect.includes(outcome.label),
+    }).toEqual({
+      runtime: run.runtime,
+      name: outcome.name,
+      label: outcome.label,
+      ms,
       allowed: true,
     });
-    const ms = Math.round(outcome.ms);
-    expect({ name: outcome.name, ms, withinDeadline: ms <= DEADLINE_MS + MARGIN_MS }).toMatchObject({
+    expect({
       name: outcome.name,
-      withinDeadline: true,
-    });
-    expect({ name: outcome.name, openAfter: outcome.openAfter }).toEqual({ name: outcome.name, openAfter: 0 });
+      label: outcome.label,
+      ms,
+      afterDeadlineMs,
+      openAfter: outcome.openAfter,
+      readSocketDestroyed: outcome.readSocketDestroyed,
+      released: outcome.afterDeadlineMs === null || outcome.afterDeadlineMs <= RELEASE_LIMIT_MS,
+    }).toMatchObject({ readSocketDestroyed: true, released: true });
   }
 }
 
-describe("R-S10: hostile peers settle within the deadline, uncaught-free, leaving no socket", () => {
+describe("R-S10: hostile peers settle at an allowed stop, uncaught-free, with the read's socket destroyed", () => {
   test("the set holds the 36 peers, the header-heavy pair and the trickled header frame", () => {
     expect(HOSTILE_PEERS).toHaveLength(39);
   });
@@ -141,6 +166,16 @@ describe("R-S10: hostile peers settle within the deadline, uncaught-free, leavin
       "header-heavy-void",
       "header-heavy-bytes",
     ]);
+  });
+
+  test("only the peers whose stop is the deadline take the tested 2,000 ms", () => {
+    const stopsAtDeadline = (peer: HostilePeer): boolean =>
+      peer.expect.some((label) => label === "error:TimeoutError" || label === "stop:deadline");
+    const takesTestedDeadline = (peer: HostilePeer): boolean =>
+      (peer.deadlineMs ?? HOSTILE_PEER_DEADLINE_MS) === HOSTILE_DEADLINE_MS;
+    expect(HOSTILE_PEERS.filter(takesTestedDeadline).map((peer) => peer.name)).toEqual(
+      HOSTILE_PEERS.filter(stopsAtDeadline).map((peer) => peer.name),
+    );
   });
 
   test("under Bun", () => {
