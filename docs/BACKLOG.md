@@ -3474,8 +3474,8 @@ Found 2026-10-12 while designing the Snowflake provider.
 ### D340. A listing cannot say it was cut, so the Snowflake tree truncates in silence
 
 `listObjects` in the provider contract (`src/lib/db/types.ts`) answers a bare `DatabaseObject[]`, so it has no channel to say a listing stopped at a cap.
-Snowflake's `listObjects` (`src/lib/db/providers/sql/snowflake/introspect.ts`) reads a pageable kind up to `SNOWFLAKE_TREE_PAGE_LIMIT` pages of `SNOWFLAKE_SHOW_PAGE_ROWS`, 50,000 rows, and any other kind in one `SHOW` that Snowflake caps at 10,000 rows, then answers what it read with the stop reason dropped.
-The object inventory carries the two cap sentences (`treeCap` and `silentCap` in `SNOWFLAKE_INTROSPECT_SENTENCES`), so the agent and the inventory route are told, while the tree shows the first 50,000 or 10,000 objects of a kind as if that were all of them.
+Snowflake's `listObjects` (`src/lib/db/providers/sql/snowflake/introspect.ts`) reads a pageable kind up to `SNOWFLAKE_TREE_PAGE_LIMIT` pages of `SNOWFLAKE_SHOW_PAGE_ROWS`, 50,000 rows, then answers what it read with the stop reason dropped.
+The object inventory carries the cap sentence (`treeCap` in `SNOWFLAKE_INTROSPECT_SENTENCES`), so the agent and the inventory route are told, while the tree shows the first 50,000 objects of a pageable kind as if that were all of them.
 The provider doc's section 7 states the gap.
 
 Found 2026-10-12 while building the Snowflake provider.

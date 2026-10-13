@@ -420,13 +420,14 @@ A kind's `SHOW` is sent only when the user opens that kind:
 | Procedures | `SHOW PROCEDURES IN SCHEMA`, less the built-in rows (`is_builtin` `Y`) it also answers |
 
 A schema expand sends one `SHOW TERSE OBJECTS IN SCHEMA ... LIMIT 10000` to count its tables and views.
-Snowflake answers at most 10,000 rows for one `SHOW`:
+On the trial on 2026-10-13, over 10,250 tables and 10,250 sequences in one schema, `SHOW TABLES` and `SHOW TERSE OBJECTS` without a `LIMIT` answered all 10,250 rows, with no error and no 10,000-row ceiling.
+Studio still sends `LIMIT 10000` wherever Snowflake offers paging, so each answer stays bounded:
 
-- A pageable listing (databases, schemas, tables, views, streams, tasks) is read in pages of 10,000 rows, each from the previous page's last name (a page with nothing past that name ends the listing, whether or not Snowflake repeats the name), up to five pages: `Snowflake has more than 50,000 objects of this kind here; Studio shows the first 50,000 by name.`
-- Any other listing stops at 10,000 rows: `Snowflake returns at most 10,000 rows for this listing, so some may be missing.`
-- A count of exactly 10,000: `Snowflake returns at most 10,000 objects here, so this is a floor.`
+- A pageable listing (databases, schemas, tables, views, streams, tasks) is read in pages of 10,000 rows, each from the previous page's last name with `FROM`, which starts after the name it is given (a page with nothing past that name ends the listing), up to five pages: `Snowflake has more than 50,000 objects of this kind here; Studio shows the first 50,000 by name.`
+- Any other listing has no paging and is sent with no `LIMIT`: `SHOW SEQUENCES` answered all 10,250 rows with and without `LIMIT` and `FROM`, since it ignores both, and the 10,000 rows Snowflake's reference gives as the most the other listings answer is not measured.
+- A count of exactly 10,000, Studio's own `LIMIT`: `Studio counts at most 10,000 objects here, so this is a floor.`
 
-The tree has no place for a listing's sentence, so it shows the first 50,000 (or 10,000) objects of a kind without one; the object inventory, which the agent and the inventory route read, carries the two listing sentences above.
+The tree has no place for a listing's sentence, so it shows the first 50,000 objects of a pageable kind without one; the object inventory, which the agent and the inventory route read, carries that sentence.
 
 The object inventory reads a schema's columns with one `SHOW COLUMNS IN SCHEMA`; when that answers a full 10,000 rows it reads them one object at a time instead, for at most the first 1,000 objects: `Snowflake answered a full 10,000-row column listing for this schema, so Studio read the columns of the first 1,000 objects one at a time`.
 Describe reads `SHOW COLUMNS IN TABLE` (or `IN VIEW`) and `SHOW PRIMARY KEYS`; a primary key column is shown as a key with no further mark, although Snowflake does not enforce primary keys on standard tables; indexes exist only on hybrid tables.

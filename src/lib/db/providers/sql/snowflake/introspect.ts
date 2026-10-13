@@ -9,9 +9,11 @@
  *
  * Two rules of Snowflake's `SHOW` shape the reads:
  *
- * - A pageable command (databases, schemas, tables, views, streams, tasks) errors above 10,000 rows without a
- *   `LIMIT`, so it is always sent with `LIMIT 10000` and paged with `FROM '<last name>'`; every other command is
- *   silently capped at 10,000 rows.
+ * - A pageable command (databases, schemas, tables, views, streams, tasks) is always sent with `LIMIT 10000` and
+ *   paged with `FROM '<last name>'`, so each answer stays bounded; the trial answered `SHOW TABLES` and
+ *   `SHOW TERSE OBJECTS` with all 10,250 rows of a schema without a `LIMIT` (Snowflake 10.37.100, 2026-10-13). Every
+ *   other command has no paging and is sent bare: `SHOW SEQUENCES` answered all 10,250 rows and ignored `LIMIT` and
+ *   `FROM`, and for the rest the 10,000-row figure is the reference's, not a measurement.
  * - `SHOW ... LIKE` matches case-insensitively and keeps `_` and `%` as wildcards, with no escape, so a reader of a
  *   `LIKE` answer takes only the row whose `name` equals the name it asked for, and no such row means absent.
  */
@@ -38,7 +40,7 @@ import {
   type SnowflakeStatementRunner,
 } from "./statements";
 
-/** The rows one page of a pageable `SHOW` asks for, and the cap of every other `SHOW`. */
+/** The rows one page of a pageable `SHOW` asks for, and the bound of the counting `SHOW TERSE OBJECTS`. */
 export const SNOWFLAKE_SHOW_PAGE_ROWS = 10_000;
 /** The pages a tree listing reads before it stops: 50,000 rows. */
 export const SNOWFLAKE_TREE_PAGE_LIMIT = 5;
@@ -61,8 +63,7 @@ export type SnowflakeKindId = (typeof SNOWFLAKE_KIND_IDS)[number];
 /** Every sentence this surface shows, so the provider doc can quote them and a test read them back. */
 export const SNOWFLAKE_INTROSPECT_SENTENCES = Object.freeze({
   treeCap: "Snowflake has more than 50,000 objects of this kind here; Studio shows the first 50,000 by name.",
-  silentCap: "Snowflake returns at most 10,000 rows for this listing, so some may be missing.",
-  countFloor: "Snowflake returns at most 10,000 objects here, so this is a floor.",
+  countFloor: "Studio counts at most 10,000 objects here, so this is a floor.",
   pairCap: `Snowflake answered a full 10,000-row column listing for this schema, so Studio read the columns of the first ${INVENTORY_PAIR_LIMIT.toLocaleString("en-US")} objects one at a time`,
   secureView: "Snowflake hides a secure view's definition from roles that do not own it.",
   stalled: "Snowflake answered a page of this listing that did not move past the last, so Studio stopped reading it.",
@@ -182,8 +183,8 @@ export function cellWholeNumber(cell: SnowflakeCell | undefined): number | undef
 
 type Row = Record<string, SnowflakeCell>;
 
-/** Why a listing stopped: it read everything, hit the page limit, hit a silent cap, or met a page that did not move. */
-type ListingStop = "end" | "pageLimit" | "silentCap" | "stalled";
+/** Why a listing stopped: it read everything, hit the page limit, or met a page that did not move. */
+type ListingStop = "end" | "pageLimit" | "stalled";
 
 interface Listing {
   readonly rows: readonly Row[];
@@ -211,9 +212,11 @@ async function pagedShow(
         : `${base} LIMIT ${SNOWFLAKE_SHOW_PAGE_ROWS} FROM ${literal(last)}`;
     // oxlint-disable-next-line no-await-in-loop -- each page's cursor is the previous page's last name.
     const page: Row[] = (await run(sql, tag)).rows;
+    // The trial's `FROM` starts after the name it is given, so no page repeats the cursor row; dropping one that
+    // does costs one comparison and keeps a repeat from being listed twice.
     const fresh = last !== null && cellText(page[0]?.name) === last ? page.slice(1) : page;
     if (last !== null) {
-      // Nothing past the cursor, whether `FROM` repeats the cursor row or not, is the end of the listing.
+      // Nothing past the cursor is the end of the listing.
       if (fresh.length === 0) return { rows, stop: "end" };
       if (cellText(fresh.at(-1)?.name) <= last) return { rows, stop: "stalled" };
     }
@@ -224,10 +227,9 @@ async function pagedShow(
   }
 }
 
-/** A silently capped `SHOW`: one statement, no `LIMIT`; 10,000 rows means some may be missing. */
-async function cappedShow(run: SnowflakeStatementRunner, sql: string, tag: SnowflakeQueryTag): Promise<Listing> {
-  const rows = (await run(sql, tag)).rows;
-  return { rows, stop: rows.length >= SNOWFLAKE_SHOW_PAGE_ROWS ? "silentCap" : "end" };
+/** A `SHOW` with no paging: one statement, no `LIMIT`, every row it answers. */
+async function unpagedShow(run: SnowflakeStatementRunner, sql: string, tag: SnowflakeQueryTag): Promise<Listing> {
+  return { rows: (await run(sql, tag)).rows, stop: "end" };
 }
 
 // ============================================================================
@@ -324,14 +326,14 @@ async function readListing(
 ): Promise<{ readonly objects: DatabaseObject[]; readonly stop: ListingStop }> {
   const read = kindRead(kind);
   const base = `SHOW ${read.noun} ${inSchema(container)}`;
-  const listing = read.paged ? await pagedShow(run, base, tag, pageLimit) : await cappedShow(run, base, tag);
+  const listing = read.paged ? await pagedShow(run, base, tag, pageLimit) : await unpagedShow(run, base, tag);
   const own = listing.rows.filter((row) => !cellFlag(row.is_builtin));
   return { objects: own.map((row) => objectOf(container, kind, row)), stop: listing.stop };
 }
 
 /**
- * One kind of one schema. The provider contract carries no truncation here, so a listing stops at 50,000 rows or at
- * a silent cap and answers what it read; `describeObjects` reports both caps.
+ * One kind of one schema. The provider contract carries no truncation here, so a paged listing stops at 50,000 rows
+ * and answers what it read; `describeObjects` reports the cap.
  */
 export async function listObjects(
   run: SnowflakeStatementRunner,
@@ -342,8 +344,7 @@ export async function listObjects(
 }
 
 /**
- * Tables and views from one `SHOW TERSE OBJECTS`, which is silently capped at 10,000 rows, so a full answer makes
- * each count a floor. Every other kind is left out of the record: its folder shows no badge and its own `SHOW` runs
+ * Tables and views from one `SHOW TERSE OBJECTS ... LIMIT 10000`, so a full answer makes each count a floor. Every other kind is left out of the record: its folder shows no badge and its own `SHOW` runs
  * only when it is opened.
  */
 export async function countObjects(
@@ -567,16 +568,15 @@ function groupColumns(rows: readonly Row[]): Map<string, ColumnSchema[]> {
 
 function listingStopReason(stop: ListingStop): string | null {
   if (stop === "pageLimit") return SNOWFLAKE_INTROSPECT_SENTENCES.treeCap;
-  if (stop === "silentCap") return SNOWFLAKE_INTROSPECT_SENTENCES.silentCap;
   if (stop === "stalled") return SNOWFLAKE_INTROSPECT_SENTENCES.stalled;
   return null;
 }
 
 /**
  * Every table or view of one schema with its columns: the names from the kind's listing, bounded by the caller's
- * `limit` or `INVENTORY_LIMIT`, and the columns from one `SHOW COLUMNS IN SCHEMA`, shared through `memo`. That read
- * is silently capped at 10,000 rows, so a full answer is replaced by one `SHOW COLUMNS` per listed object, at most
- * `INVENTORY_PAIR_LIMIT` of them. Every other kind answers no details and sends nothing.
+ * `limit` or `INVENTORY_LIMIT`, and the columns from one `SHOW COLUMNS IN SCHEMA`, shared through `memo`. Snowflake's
+ * reference caps that read at 10,000 rows, so a full answer is replaced by one `SHOW COLUMNS` per listed object, at
+ * most `INVENTORY_PAIR_LIMIT` of them. Every other kind answers no details and sends nothing.
  */
 export async function describeObjects(
   run: SnowflakeStatementRunner,

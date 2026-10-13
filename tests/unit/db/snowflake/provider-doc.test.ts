@@ -280,7 +280,6 @@ describe("docs/providers/snowflake.md", () => {
       SNOWFLAKE_INTROSPECT_SENTENCES.notResuming("<wh>"),
       SNOWFLAKE_INTROSPECT_SENTENCES.emptyWarehouse,
       SNOWFLAKE_INTROSPECT_SENTENCES.treeCap,
-      SNOWFLAKE_INTROSPECT_SENTENCES.silentCap,
       SNOWFLAKE_INTROSPECT_SENTENCES.countFloor,
       SNOWFLAKE_INTROSPECT_SENTENCES.pairCap,
       SNOWFLAKE_INTROSPECT_SENTENCES.secureView,
@@ -519,8 +518,23 @@ describe("every other number and sentence the doc states is the code's", () => {
 
   test("the tree's cut is stated as silent, since listObjects carries no truncation", () => {
     expect(FLAT_DOC).toContain(
-      "The tree has no place for a listing's sentence, so it shows the first 50,000 (or 10,000) objects of a kind without one; the object inventory, which the agent and the inventory route read, carries the two listing sentences above.",
+      "The tree has no place for a listing's sentence, so it shows the first 50,000 objects of a pageable kind without one; the object inventory, which the agent and the inventory route read, carries that sentence.",
     );
+  });
+
+  test("the SHOW bounds are stated as measured, Studio's LIMIT as Studio's own", () => {
+    const tree = flat(sectionOf(DOC, "## 7. The tree"));
+    expect(tree).not.toContain("Snowflake answers at most 10,000 rows for one `SHOW`");
+    expect(tree).not.toContain("whether or not Snowflake repeats the name");
+    for (const pinned of [
+      "On the trial on 2026-10-13, over 10,250 tables and 10,250 sequences in one schema, `SHOW TABLES` and `SHOW TERSE OBJECTS` without a `LIMIT` answered all 10,250 rows, with no error and no 10,000-row ceiling.",
+      "Studio still sends `LIMIT 10000` wherever Snowflake offers paging, so each answer stays bounded:",
+      "each from the previous page's last name with `FROM`, which starts after the name it is given (a page with nothing past that name ends the listing), up to five pages",
+      "Any other listing has no paging and is sent with no `LIMIT`: `SHOW SEQUENCES` answered all 10,250 rows with and without `LIMIT` and `FROM`, since it ignores both, and the 10,000 rows Snowflake's reference gives as the most the other listings answer is not measured.",
+      "A count of exactly 10,000, Studio's own `LIMIT`: `Studio counts at most 10,000 objects here, so this is a floor.`",
+    ]) {
+      expect(tree).toContain(pinned);
+    }
   });
 
   test("quotes the sentence a restored Source tab shows while the connection is held", () => {

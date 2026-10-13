@@ -61,12 +61,12 @@ describe("the constants", () => {
     expect(SNOWFLAKE_INTROSPECT_SENTENCES.treeCap).toBe(
       "Snowflake has more than 50,000 objects of this kind here; Studio shows the first 50,000 by name.",
     );
-    expect(SNOWFLAKE_INTROSPECT_SENTENCES.silentCap).toBe(
-      "Snowflake returns at most 10,000 rows for this listing, so some may be missing.",
-    );
+    // The floor is Studio's own LIMIT 10000: the trial answered SHOW TERSE OBJECTS with all 10,250 rows without one.
     expect(SNOWFLAKE_INTROSPECT_SENTENCES.countFloor).toBe(
-      "Snowflake returns at most 10,000 objects here, so this is a floor.",
+      "Studio counts at most 10,000 objects here, so this is a floor.",
     );
+    // No listing without paging shows a cap sentence: the tree drops its stop, and the inventory reads only paged kinds.
+    expect(Object.keys(SNOWFLAKE_INTROSPECT_SENTENCES)).not.toContain("silentCap");
     expect(SNOWFLAKE_INTROSPECT_SENTENCES.secureView).toBe(
       "Snowflake hides a secure view's definition from roles that do not own it.",
     );
@@ -109,15 +109,16 @@ describe("listObjects", () => {
     expect(calls[0].sql).toBe('SHOW VIEWS IN SCHEMA "my""db"."s" LIMIT 10000');
   });
 
-  test("a silently capped kind sends no LIMIT and no second page, even at 10,000 rows", async () => {
-    const { run, calls } = fakeRunner([[/^SHOW /, () => showResult(["name"], namedRows("S", 1, 10_000))]]);
+  test("a kind without paging sends no LIMIT and no second page, and keeps every row past 10,000", async () => {
+    const { run, calls } = fakeRunner([[/^SHOW /, () => showResult(["name"], namedRows("S", 1, 10_250))]]);
     const objects = await listObjects(run, SCHEMA, "sequence");
     expect(calls.map((call) => call.sql)).toEqual([`SHOW SEQUENCES ${IN_SCHEMA}`]);
-    expect(objects).toHaveLength(10_000);
+    expect(objects).toHaveLength(10_250);
   });
 
   test("pages with the FROM cursor and drops the repeated boundary row", async () => {
-    // Page 2 repeats page 1's last name, page 3 repeats page 2's; FROM is inclusive.
+    // Page 2 repeats page 1's last name, page 3 repeats page 2's. The trial's FROM starts after its name, so this
+    // answer is built to hold the read to dropping a repeat should one come.
     const answer = (sql: string) => {
       const cursor = /FROM '([^']*)'$/.exec(sql)?.[1];
       if (cursor === undefined) return showResult(["name"], namedRows("T", 1, 10_000));
