@@ -55,16 +55,26 @@ describe("a map that is present lists its own points", () => {
       wordOrder: "high_first",
       byteOrder: "high_first",
     },
+    { name: "far", unitId: 10, table: "holding_register", address: 300, type: "uint16" },
   ]);
 
   test("one kind lists only its own", () => {
     expect(listObjects(map, "coil").objects.map((o) => o.name)).toEqual(["run"]);
-    expect(listObjects(map, "holding_register").objects.map((o) => o.name)).toEqual(["volts", "power"]);
+    expect(listObjects(map, "holding_register").objects.map((o) => o.name)).toEqual(["volts", "power", "far"]);
     expect(listObjects(map, "input_register").objects).toEqual([]);
   });
 
-  test("the units are the ones the map names, in order, and never a scan", () => {
-    expect(listUnits(map)).toEqual([1, 3]);
+  /**
+   * The map names units 1, 3 and 10, and the 10 is the reason. With single digit units only, a
+   * test cannot tell numeric ordering from string ordering: [1, 3] reads the same either way, so
+   * it would stay green against a plain `sort()`. [1, 3, 10] is itself numerically and
+   * [1, 10, 3] as strings. The first assertion MEASURES that the two orderings differ on this
+   * data rather than trusting that they do.
+   */
+  test("the units are the ones the map names, in numeric order, and never a scan", () => {
+    const sample = [1, 3, 10];
+    expect([...sample].sort((x, y) => x - y)).not.toEqual([...sample].sort());
+    expect(listUnits(map)).toEqual([1, 3, 10]);
   });
 
   test("a listed point carries its PDU address", () => {
