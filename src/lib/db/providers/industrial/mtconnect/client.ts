@@ -180,10 +180,14 @@ export interface MtcAnswer {
  * compiled silently. `satisfies` applies to the literal itself, so both directions are errors.
  */
 const STUDIO_RULE = Object.freeze({
-  doctype: "it carries a DOCTYPE declaration, and Studio refuses one before any parsing so that a DTD is never expanded and an external entity is never fetched",
-  "entity-declaration": "it declares an entity, and Studio refuses one before any parsing so that nothing is expanded or fetched",
-  entity: "it uses an entity beyond the five XML predefines and numeric character references, and Studio resolves nothing outside the document",
-  comment: "it carries an XML comment, which Studio refuses: no agent measured so far sends one, and a named refusal is how we hear about an agent that does",
+  doctype:
+    "it carries a DOCTYPE declaration, and Studio refuses one before any parsing so that a DTD is never expanded and an external entity is never fetched",
+  "entity-declaration":
+    "it declares an entity, and Studio refuses one before any parsing so that nothing is expanded or fetched",
+  entity:
+    "it uses an entity beyond the five XML predefines and numeric character references, and Studio resolves nothing outside the document",
+  comment:
+    "it carries an XML comment, which Studio refuses: no agent measured so far sends one, and a named refusal is how we hear about an agent that does",
   "processing-instruction": "it carries a processing instruction after the root element opened, which Studio refuses",
   "too-deep": `it nests deeper than Studio's bound of ${MTC_XML_BOUNDS.maxDepth} elements`,
   "too-many-elements": `it holds more than Studio's bound of ${MTC_XML_BOUNDS.maxElements.toLocaleString("en-US")} elements`,

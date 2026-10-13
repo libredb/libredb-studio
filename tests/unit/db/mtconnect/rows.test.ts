@@ -378,10 +378,7 @@ describe("sorting across a digit boundary", () => {
   });
 
   test("a later timestamp wins over a lower sequence, which is the outer comparison", () => {
-    const sorted = sortRows([
-      row("2026-10-05T13:27:23.000000Z", "1"),
-      row("2026-10-05T13:27:22.000000Z", "100000000"),
-    ]);
+    const sorted = sortRows([row("2026-10-05T13:27:23.000000Z", "1"), row("2026-10-05T13:27:22.000000Z", "100000000")]);
     expect(sorted.map((built) => built.timestamp)).toEqual([
       "2026-10-05T13:27:22.000000Z",
       "2026-10-05T13:27:23.000000Z",

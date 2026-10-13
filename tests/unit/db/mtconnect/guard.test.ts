@@ -81,7 +81,13 @@ describe("the route table", () => {
       "utf8",
     );
     const words = new Map([
-      ["four", 4], ["five", 5], ["six", 6], ["seven", 7], ["eight", 8], ["nine", 9], ["ten", 10],
+      ["four", 4],
+      ["five", 5],
+      ["six", 6],
+      ["seven", 7],
+      ["eight", 8],
+      ["nine", 9],
+      ["ten", 10],
     ]);
     const said = /\* The (\w+) routes this table leaves out/.exec(source)?.[1] ?? "";
     expect({ said, value: words.get(said) }).toEqual({ said, value: MTC_ROUTES_LEFT_OUT.length });

@@ -1483,7 +1483,9 @@ describe("the chart and the operator name S3 where an evaluator searches", () =>
     expect(chart.keywords.slice(databend + 1, databend + 4)).toEqual(["s3", "object-storage", "minio"]);
     const readme = read("charts/libredb-studio/README.md");
     expect(readme).toContain(`supporting ${word(EXTERNAL_DATABASE_TYPES.length)} engines - `);
-    expect(readme).toContain("InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect.");
+    expect(readme).toContain(
+      "InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect.",
+    );
     expect(readme).toContain(`--version ${chart.version} \\`);
     expect(read("operator/helm-charts/libredb-studio/Chart.yaml")).toBe(read("charts/libredb-studio/Chart.yaml"));
     const csv = parseYaml(
@@ -1557,7 +1559,9 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
     const api = read("docs/API_DOCS.md");
     const capabilities = provider.getCapabilities();
     const keyScan = capabilities.keyScan;
-    expect(api).toContain("Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect.");
+    expect(api).toContain(
+      "Milvus, Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA and MTConnect.",
+    );
     expect(api).toMatch(
       new RegExp(
         `- \\*\\*Multi-Database Support\\*\\* - ${Word(engines)} engines: .*, S3-compatible object storage, Kubernetes, OPC UA, MTConnect$`,
@@ -1994,13 +1998,17 @@ describe("the complete engine lists outside the agent docs", () => {
     expect(readme).toContain(
       "InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes or MTConnect with SSL/TLS and SSH Tunnel support",
     );
-    expect(readme).toContain("InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect | Web, Mobile |");
+    expect(readme).toContain(
+      "InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect | Web, Mobile |",
+    );
     expect(readme).toContain("InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, OPC UA, or MTConnect)");
     const zh = read("README_zh.md");
     expect(zh).toContain(
       "InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、MTConnect，支持 SSL/TLS 与 SSH 隧道",
     );
-    expect(zh).toContain("InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、OPC UA、MTConnect | Web、移动端 |");
+    expect(zh).toContain(
+      "InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、OPC UA、MTConnect | Web、移动端 |",
+    );
     expect(zh).toContain("InfluxDB 3 (SQL)、Oxia、S3-compatible object storage、Kubernetes、OPC UA 或 MTConnect）");
     expect(read("README_ko.md")).toContain(
       "InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes, MTConnect에 연결할 수 있으며",

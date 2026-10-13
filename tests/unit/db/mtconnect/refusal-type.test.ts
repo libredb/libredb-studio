@@ -304,7 +304,8 @@ describe("a result is ordered by the plant's clock, not by the document's layout
     const provider = Object.create(MTConnectProvider.prototype) as Record<string, unknown>;
     provider.require = () => ({ window: undefined });
     provider.model = async () => ({ instanceId: "1", items: new Map(), devices: [] }) satisfies MtcModel;
-    provider.guard = () => ({ op: "current", route: { op: "current" }, params: {}, query: {} }) as unknown as MtcRequest;
+    provider.guard = () =>
+      ({ op: "current", route: { op: "current" }, params: {}, query: {} }) as unknown as MtcRequest;
     provider.streamed = async (_session: unknown, _request: unknown, onObservation: (o: MtcObservation) => void) => {
       // Later timestamp first, and a sequence whose STRING order disagrees with its numeric one,
       // so a result that merely preserved arrival order would be visibly wrong in two ways.
@@ -337,7 +338,10 @@ describe("a result is ordered by the plant's clock, not by the document's layout
  * message and code, carried into the product's error type.
  */
 describe("an agent's refusal reaches the reader as the agent's own sentence", () => {
-  const errorDocument = readFileSync(join(import.meta.dir, "../../../fixtures/mtconnect/2.8.0.3/error-out-of-range.xml"), "utf8");
+  const errorDocument = readFileSync(
+    join(import.meta.dir, "../../../fixtures/mtconnect/2.8.0.3/error-out-of-range.xml"),
+    "utf8",
+  );
 
   test("an MTConnectError answer is a QueryError carrying the agent's message and code", async () => {
     const read = readMtconnectXml(new Uint8Array(new TextEncoder().encode(errorDocument)));
@@ -378,7 +382,13 @@ describe("an agent's refusal reaches the reader as the agent's own sentence", ()
     provider.require = () => ({ window: undefined });
     provider.model = async () => ({ instanceId: "1", items: new Map(), devices: [] }) satisfies MtcModel;
     provider.guard = () => ({ op: "assets", route: { op: "assets" }, params: {}, query: {} }) as unknown as MtcRequest;
-    provider.read = async () => ({ status: 200, root: read.ok ? read.root : undefined, isError: true, bytes: bare.length, text: bare });
+    provider.read = async () => ({
+      status: 200,
+      root: read.ok ? read.root : undefined,
+      isError: true,
+      bytes: bare.length,
+      text: bare,
+    });
 
     let thrown: unknown;
     try {

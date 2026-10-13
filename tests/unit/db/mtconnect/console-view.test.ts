@@ -215,7 +215,7 @@ describe("the generated request line against a hostile name", () => {
   });
 
   test("a newline in the name is refused as two requests, not run as the first", () => {
-    expect(run('evil\nGET /current?path=//*')).toBe("two-requests");
+    expect(run("evil\nGET /current?path=//*")).toBe("two-requests");
   });
 
   test("a quote and a hash are carried in the comment and change nothing", () => {

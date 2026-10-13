@@ -54,21 +54,8 @@ import {
   MTCONNECT_OBJECT_KINDS,
   MTCONNECT_QUERY_DIALECT,
 } from "./capabilities";
-import {
-  headerOf,
-  MtcClientError,
-  readObservations,
-  readOnce,
-  type MtcAnswer,
-  type MtcClientOptions,
-} from "./client";
-import {
-  guardRequestLine,
-  MtcRefusal,
-  type MtcGuardOptions,
-  type MtcRequest,
-  type MtcWindow,
-} from "./guard";
+import { headerOf, MtcClientError, readObservations, readOnce, type MtcAnswer, type MtcClientOptions } from "./client";
+import { guardRequestLine, MtcRefusal, type MtcGuardOptions, type MtcRequest, type MtcWindow } from "./guard";
 import { indexMtconnectModel, modelIsCurrent, type MtcModel } from "./model";
 import type { MtcElement, MtcObservation } from "./xml";
 import type { MtcOp } from "./routes";
@@ -596,7 +583,10 @@ export class MTConnectProvider extends BaseDatabaseProvider {
           // Complete: the answer holds the whole asset document, and there is no second half.
           form: "complete",
           origin: "stored",
-          edit: { offered: false, reason: "This provider sends GET requests only, so no document can be submitted back." },
+          edit: {
+            offered: false,
+            reason: "This provider sends GET requests only, so no document can be submitted back.",
+          },
         },
       ],
     };
