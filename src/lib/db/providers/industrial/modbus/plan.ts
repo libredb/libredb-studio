@@ -32,7 +32,7 @@ export interface Block {
 const BIT_TABLES: ReadonlySet<string> = new Set(["coil", "discrete_input"]);
 
 /** How many registers, or bits, one point occupies. A bit point is one bit. */
-export function spanOf(point: MapPoint): number {
+function spanOf(point: MapPoint): number {
   if (BIT_TABLES.has(point.table)) return 1;
   return REGISTERS_OF_TYPE[point.type] ?? point.registers ?? 1;
 }

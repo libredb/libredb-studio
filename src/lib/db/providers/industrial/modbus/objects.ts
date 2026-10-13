@@ -13,7 +13,7 @@
  * Nothing here is walked and no device traffic happens: the points are read from the connection's
  * own map, which is also what plan mode grounds on (MB-S12).
  */
-import { parseRegisterMap, type MapPoint, ModbusMapError } from "./register-map";
+import { parseRegisterMap, type MapPoint } from "./register-map";
 import type { Table } from "./pdu";
 
 export interface ObjectKind {
@@ -102,4 +102,3 @@ export function listUnits(mapDocument: string | undefined | null): readonly numb
   return [...new Set(parsed.points.map((p) => p.unitId))].sort((a, b) => a - b);
 }
 
-export { ModbusMapError };

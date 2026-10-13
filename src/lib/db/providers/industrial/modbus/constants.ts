@@ -10,10 +10,13 @@
  * option a caller may omit.
  */
 
-/** IANA `mbap`. */
+/**
+ * IANA `mbap`. MODBUS/TCP Security listens on `mbap-s`, 802 (section 5 of MB-TCP-Security-v36),
+ * and that port arrives as a name when the provider reaches the socket and can choose between
+ * them: a published constant no code reads is one `knip` refuses, and a test written only to
+ * read it would be a passenger.
+ */
 export const MODBUS_DEFAULT_PORT = 502;
-/** IANA `mbap-s`. MODBUS/TCP Security, section 5 of MB-TCP-Security-v36. */
-export const MBAPS_DEFAULT_PORT = 802;
 
 /** MBAP header: transaction id, protocol id, length, unit id. TCP 3.1.3. */
 export const MBAP_HEADER_BYTES = 7;
