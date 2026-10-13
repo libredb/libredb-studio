@@ -60,6 +60,8 @@ async function listener(behave: "answer" | "silent" | "close"): Promise<number> 
   return address.port;
 }
 
+const EXPECT = { transactionId: 1, unitId: 1, functionCode: 3, quantity: 2 } as const;
+
 const request = () => {
   const b = Buffer.alloc(12);
   b.writeUInt16BE(1, 0);
@@ -129,9 +131,10 @@ describe("one exchange on an open socket", () => {
     delete process.env[FLAG];
     const port = await listener("answer");
     const socket = await dialModbus({ host: "127.0.0.1", port });
-    const frame = await exchangeOnce(socket, request());
-    expect(frame.functionCode).toBe(3);
-    expect(frame.unitId).toBe(1);
+    const got = await exchangeOnce(socket, request(), { expect: EXPECT });
+    if (got.kind !== "answer") throw new Error(`expected an answer and got ${got.kind}`);
+    expect(got.frame.functionCode).toBe(3);
+    expect(got.frame.unitId).toBe(1);
     socket.destroy();
   });
 
@@ -140,6 +143,7 @@ describe("one exchange on an open socket", () => {
     const port = await listener("silent");
     const socket = await dialModbus({ host: "127.0.0.1", port });
     const error = await exchangeOnce(socket, request(), {
+      expect: EXPECT,
       timeoutMs: 40,
       endpoint: { host: "127.0.0.1", port },
     }).catch((e: unknown) => e);
@@ -165,6 +169,7 @@ describe("one exchange on an open socket", () => {
     const socket = await dialModbus({ host: "127.0.0.1", port }).catch(() => undefined);
     if (socket === undefined) return;
     const error = await exchangeOnce(socket, request(), {
+      expect: EXPECT,
       timeoutMs: 500,
       endpoint: { host: "127.0.0.1", port },
     }).catch((e: unknown) => e);
@@ -311,7 +316,7 @@ describe("the socket boundary converts by scope and keeps its hands off the rest
  * the suite. A supplied socket drives it without a race.
  */
 describe("the error event reaches the boundary too", () => {
-  function emitterSocket(): { socket: unknown; fail: (error: Error) => void } {
+  function emitterSocket(): { socket: unknown; fail: (error: Error) => void; feed: (chunk: Buffer) => void } {
     const handlers: Record<string, ((arg: never) => void)[]> = {};
     const socket = {
       on(event: string, listener: (arg: never) => void) {
@@ -337,12 +342,71 @@ describe("the error event reaches the boundary too", () => {
       fail: (error: Error) => {
         for (const listener of handlers.error ?? []) (listener as (e: Error) => void)(error);
       },
+      feed: (chunk: Buffer) => {
+        for (const listener of handlers.data ?? []) (listener as (c: Buffer) => void)(chunk);
+      },
     };
   }
+
+  /** One complete answer ADU, so a test can put a frame on the wire by hand. */
+  function adu(transactionId: number, unitId: number, functionCode: number, body: Buffer): Buffer {
+    const head = Buffer.alloc(7);
+    head.writeUInt16BE(transactionId, 0);
+    head.writeUInt16BE(0, 2);
+    head.writeUInt16BE(body.length + 2, 4);
+    head[6] = unitId;
+    return Buffer.concat([head, Buffer.from([functionCode]), body]);
+  }
+  const twoRegisters = Buffer.from([4, 0, 7, 0, 14]);
+
+  /**
+   * These three bind the wiring of `matchToRequest`, which was tested on its own and called by
+   * nothing: with `frames[0]` resolved blindly, the first of them returned the stray AS the
+   * answer, and the second dropped the real answer that arrived behind it.
+   */
+  test("a frame for another transaction is discarded and the real answer is still awaited", async () => {
+    const fake = emitterSocket();
+    const pending = exchangeOnce(fake.socket as never, request(), { expect: EXPECT, timeoutMs: 5000 });
+    fake.feed(adu(999, 1, 3, twoRegisters));
+    fake.feed(adu(1, 1, 3, twoRegisters));
+    const got = await pending;
+    if (got.kind !== "answer") throw new Error(`expected an answer and got ${got.kind}`);
+    expect(got.frame.transactionId).toBe(1);
+  });
+
+  test("a stray frame in the SAME chunk does not hide the answer behind it", async () => {
+    const fake = emitterSocket();
+    const pending = exchangeOnce(fake.socket as never, request(), { expect: EXPECT, timeoutMs: 5000 });
+    fake.feed(Buffer.concat([adu(999, 1, 3, twoRegisters), adu(1, 1, 3, twoRegisters)]));
+    const got = await pending;
+    if (got.kind !== "answer") throw new Error(`expected an answer and got ${got.kind}`);
+    expect(got.frame.transactionId).toBe(1);
+  });
+
+  test("the device's own refusal arrives as an exception, not as an answer", async () => {
+    const fake = emitterSocket();
+    const pending = exchangeOnce(fake.socket as never, request(), { expect: EXPECT, timeoutMs: 5000 });
+    fake.feed(adu(1, 1, 0x83, Buffer.from([0x02])));
+    const got = await pending;
+    expect(got).toEqual({ kind: "exception", code: 0x02 });
+  });
+
+  test("a frame that claims to answer this request and cannot is a failure, not a discard", async () => {
+    const fake = emitterSocket();
+    const pending = exchangeOnce(fake.socket as never, request(), {
+      expect: EXPECT,
+      timeoutMs: 5000,
+      endpoint: { host: "10.9.8.7", port: 502 },
+    });
+    fake.feed(adu(1, 9, 3, twoRegisters));
+    const error = await pending.catch((e: unknown) => e);
+    expect((error as Error).message).toContain("unit id 9");
+  });
 
   test("a reset during a read becomes a ConnectionError, not a raw ECONNRESET", async () => {
     const fake = emitterSocket();
     const pending = exchangeOnce(fake.socket as never, request(), {
+      expect: EXPECT,
       timeoutMs: 5000,
       endpoint: { host: "10.9.8.7", port: 502 },
     });
@@ -357,6 +421,7 @@ describe("the error event reaches the boundary too", () => {
     const fake = emitterSocket();
     const planted = new TypeError("undefined is not a function");
     const pending = exchangeOnce(fake.socket as never, request(), {
+      expect: EXPECT,
       timeoutMs: 5000,
       endpoint: { host: "10.9.8.7", port: 502 },
     });
@@ -432,6 +497,7 @@ describe("the declared timers, on the path that reads them", () => {
     // Not waited out: the point is which figure the call reads, and a request timer of three
     // seconds is not something a unit test should sit through.
     const pending = exchangeOnce(socket as never, request(), {
+      expect: EXPECT,
       endpoint: { host: "h", port: 1 },
     });
     expect(REQUEST_TIMEOUT_MS).toBe(3000);

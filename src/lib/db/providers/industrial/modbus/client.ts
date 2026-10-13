@@ -29,7 +29,7 @@ import { connect as tlsConnect } from "node:tls";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { socketEgress } from "@/lib/db/http/egress-policy";
 import { DIAL_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from "./constants";
-import { FrameReader, type InboundFrame } from "./framing";
+import { FrameReader, matchToRequest, type Expectation, type InboundFrame, type Match } from "./framing";
 
 /** What this module needs of a socket. Node's `Socket` and `TLSSocket` both satisfy it. */
 export interface ModbusSocket {
@@ -171,14 +171,27 @@ export const dialModbus: Dialer = (endpoint, options = {}) =>
  * The bound is the frame reader's, applied at the header before anything is buffered. Nothing here
  * accumulates on its own, which is the whole reason the reader exists.
  */
+/** What one exchange can be: the answer that was asked for, or the device's own refusal. */
+export type Exchange =
+  | { readonly kind: "answer"; readonly frame: InboundFrame }
+  | { readonly kind: "exception"; readonly code: number };
+
+/**
+ * `expect` IS REQUIRED, and it was optional in the first version of this function, which is the
+ * fault this comment is about. Without it the first frame off the wire was resolved as the answer:
+ * a late answer to a request we had already given up on would have been read as the answer to this
+ * one (TCP 4.4.1.3 exists for exactly that), and a stray frame arriving in the SAME chunk as the
+ * real answer would have hidden it, because only `frames[0]` was looked at. `matchToRequest` was
+ * written for this, tested, and never called - an unwired name reads as a rule that holds.
+ */
 export function exchangeOnce(
   socket: ModbusSocket,
   adu: Buffer,
-  options: { readonly timeoutMs?: number; readonly endpoint?: Endpoint } = {},
-): Promise<InboundFrame> {
+  options: { readonly expect: Expectation; readonly timeoutMs?: number; readonly endpoint?: Endpoint },
+): Promise<Exchange> {
   const where = options.endpoint ?? { host: "the device", port: 0 };
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
-  return new Promise<InboundFrame>((resolve, reject) => {
+  return new Promise<Exchange>((resolve, reject) => {
     const reader = new FrameReader();
     let settled = false;
     const done = (fn: () => void) => {
@@ -202,8 +215,20 @@ export function exchangeOnce(
         done(() => reject(atSocketBoundary(error, where)));
         return;
       }
-      const first = frames[0];
-      if (first !== undefined) done(() => resolve(first));
+      for (const frame of frames) {
+        let match: Match;
+        try {
+          match = matchToRequest(frame, options.expect);
+        } catch (error) {
+          done(() => reject(atSocketBoundary(error, where)));
+          return;
+        }
+        // A frame nobody asked for is dropped and the wait goes on, which is the only reading
+        // under which a device that answers late does not corrupt the next read.
+        if (match.kind === "discard") continue;
+        done(() => resolve(match));
+        return;
+      }
     });
     socket.on("error", (error) => done(() => reject(atSocketBoundary(error, where))));
     socket.on("close", () =>
