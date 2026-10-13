@@ -25,6 +25,7 @@ import { MtcClientError, MTC_TARGET_BUDGET_BYTES } from "@/lib/db/providers/indu
 import {
   assertCount,
   assertPathInSubset,
+  assertSequence,
   MAX_ALTERNATIVES,
   MtcRefusal,
   type MtcGuardOptions,
@@ -36,7 +37,8 @@ import {
   MTCONNECT_HEALTH_UNKNOWN,
 } from "@/lib/db/providers/industrial/mtconnect/capabilities";
 import { MTC_REQUEST_HEADER_BUDGET_BYTES } from "@/lib/db/providers/industrial/mtconnect/routes";
-import { MTConnectProvider, ROW_CAP } from "@/lib/db/providers/industrial/mtconnect/index";
+import type { MtcModel } from "@/lib/db/providers/industrial/mtconnect/model";
+import { guardOptionsFor, MTC_LIMITS, MTConnectProvider, ROW_CAP } from "@/lib/db/providers/industrial/mtconnect/index";
 
 const boundary = MTConnectProvider.prototype as unknown as {
   asQueryError(error: unknown): unknown;
@@ -164,5 +166,56 @@ describe("the numbers nothing was holding", () => {
     // It has to be a route this provider's own guard accepts, or `connect()` refuses itself.
     expect(boundary.guard.call(boundary, MTCONNECT_HEALTH_REQUEST, OPTIONS).op).toBe("sample");
     expect(MTCONNECT_HEALTH_UNKNOWN).toBe("unknown");
+  });
+});
+
+/**
+ * The two settings the provider SENDS, as opposed to the rules that read them (#1722, KURAL 56).
+ *
+ * MEASURED in a copy of the tree: `window: session.window` changed to `undefined` where the request
+ * options are built left all 202 tests green, and so did widening the limiter from one permit per
+ * agent to eight. The rules themselves are tested - the guard refuses a sequence outside the buffer,
+ * and the limiter is the shared one with its own suite - but what this provider hands them was held
+ * by nothing, which is the difference between "the rule works" and "the rule is applied".
+ *
+ * The third setting of that family, `interval`, was already held: removing its entry from the refused
+ * keys failed two tests. `scope` has nothing to hold, because `agentWalkScope` is not declared and
+ * the measurement for that is in `capabilities.test.ts`.
+ */
+describe("the settings the provider sends", () => {
+  const model = { devices: [{ name: "Mazak", uuid: "Mazak" }] } as unknown as MtcModel;
+  const window: MtcWindow = {
+    instanceId: "1",
+    firstSequence: BigInt(10),
+    lastSequence: BigInt(20),
+    nextSequence: BigInt(21),
+    bufferSize: BigInt(131_072),
+  };
+
+  test("the session's own window is carried, not dropped", () => {
+    expect(guardOptionsFor({ window }, model).window).toBe(window);
+    // And the consequence, through the rule that reads it: a sequence outside the buffer is refused
+    // only because the window arrived.
+    const options = guardOptionsFor({ window }, model);
+    expect(() => assertSequence("from", "9", options.window)).toThrow(MtcRefusal);
+    expect(assertSequence("from", "15", options.window)).toBe(BigInt(15));
+    // With no window the same read is accepted, which is what the mutation silently turned on.
+    expect(assertSequence("from", "9", undefined)).toBe(BigInt(9));
+  });
+
+  test("the row cap and the device names travel with it", () => {
+    const options = guardOptionsFor({ window }, model);
+    expect(options.rowCap).toBe(ROW_CAP);
+    expect([...(options.knownDevices ?? [])].sort()).toEqual(["Mazak"]);
+  });
+
+  test("a session that has not read a window yet carries undefined rather than a guess", () => {
+    expect(guardOptionsFor({ window: undefined }, model).window).toBeUndefined();
+  });
+
+  test("one request at a time per agent, and the two chosen numbers beside it", () => {
+    expect(MTC_LIMITS.perProvider).toBe(1);
+    expect(MTC_LIMITS.perEngine).toBe(4);
+    expect(MTC_LIMITS.queueDepth).toBe(64);
   });
 });

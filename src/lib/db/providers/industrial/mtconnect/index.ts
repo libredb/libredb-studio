@@ -112,7 +112,34 @@ export const ROW_CAP = 10_000;
  * clients too, so this bound is about not degrading the shop floor's monitoring rather than about
  * our own latency (decision K-61).
  */
-const limiterFor = engineLimiter("mtconnect", { perProvider: 1, perEngine: 4, queueDepth: 64 });
+export const MTC_LIMITS = Object.freeze({
+  /** MEASURED: the 1.4 ms to 74.1 ms figure above. One request at a time per agent. */
+  perProvider: 1,
+  /** CHOSEN: four agents read at once from one Studio, which is a load on this process rather than on any agent. */
+  perEngine: 4,
+  /** CHOSEN: a queue deeper than this is a reader waiting longer than they will tolerate anyway. */
+  queueDepth: 64,
+});
+
+const limiterFor = engineLimiter("mtconnect", MTC_LIMITS);
+
+/**
+ * The options a typed request line is read with, as a function so the three things it carries can be
+ * asserted without a socket.
+ *
+ * MEASURED, and this is why it is not inline any more: with `window` set to `undefined` where this
+ * is built, every one of the 202 tests stayed green. The guard's window rules are tested, but with a
+ * window the TEST supplies; that the provider hands over the window it read from the agent's own
+ * Header was held by nothing, and without it `from`, `to` and `count` stop being checked against the
+ * buffer that exists and start being checked against no buffer at all.
+ */
+export function guardOptionsFor(session: Pick<MtcSession, "window">, model: MtcModel): MtcGuardOptions {
+  return {
+    window: session.window,
+    rowCap: ROW_CAP,
+    knownDevices: new Set(model.devices.flatMap((device) => [device.name, device.uuid])),
+  };
+}
 
 export class MTConnectProvider extends BaseDatabaseProvider {
   private session: MtcSession | null = null;
@@ -344,11 +371,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     const started = Date.now();
     // A refusal from phase 0 is the provider's own sentence, named by its rule, and it leaves as a
     // `QueryError` like every other refusal here.
-    const request = this.guard(sql, {
-      window: session.window,
-      rowCap: ROW_CAP,
-      knownDevices: new Set(model.devices.flatMap((device) => [device.name, device.uuid])),
-    });
+    const request = this.guard(sql, guardOptionsFor(session, model));
 
     const rows: MtcRow[] = [];
     if (request.op === "sample" || request.op === "current") {
