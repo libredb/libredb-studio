@@ -9,11 +9,12 @@
  *
  * Two rules of Snowflake's `SHOW` shape the reads:
  *
- * - A pageable command (databases, schemas, tables, views, streams, tasks) is always sent with `LIMIT 10000` and
- *   paged with `FROM '<last name>'`, so each answer stays bounded; the trial answered `SHOW TABLES` and
- *   `SHOW TERSE OBJECTS` with all 10,250 rows of a schema without a `LIMIT` (Snowflake 10.37.100, 2026-10-13). Every
- *   other command has no paging and is sent bare: `SHOW SEQUENCES` answered all 10,250 rows and ignored `LIMIT` and
- *   `FROM`, and for the rest the 10,000-row figure is the reference's, not a measurement.
+ * - A tree listing of databases, schemas, tables, views, streams or tasks is sent with `LIMIT 10000` and paged with
+ *   `FROM '<last name>'`, and the count's `SHOW TERSE OBJECTS` with `LIMIT 10000` alone, so each answer stays
+ *   bounded; the trial answered `SHOW TABLES` and `SHOW TERSE OBJECTS` with all 10,250 rows of a schema without a
+ *   `LIMIT`, and `FROM` started after the name it was given (Snowflake 10.37.100, 2026-10-13). Every other listing
+ *   has no paging and is sent bare: `SHOW SEQUENCES` answered all 10,250 rows and ignored `LIMIT` and `FROM`, and for
+ *   the rest the 10,000-row figure is the reference's, not a measurement.
  * - `SHOW ... LIKE` matches case-insensitively and keeps `_` and `%` as wildcards, with no escape, so a reader of a
  *   `LIKE` answer takes only the row whose `name` equals the name it asked for, and no such row means absent.
  */
@@ -344,8 +345,8 @@ export async function listObjects(
 }
 
 /**
- * Tables and views from one `SHOW TERSE OBJECTS ... LIMIT 10000`, so a full answer makes each count a floor. Every other kind is left out of the record: its folder shows no badge and its own `SHOW` runs
- * only when it is opened.
+ * Tables and views from one `SHOW TERSE OBJECTS ... LIMIT 10000`, so a full answer makes each count a floor. Every
+ * other kind is left out of the record: its folder shows no badge and its own `SHOW` runs only when it is opened.
  */
 export async function countObjects(
   run: SnowflakeStatementRunner,
