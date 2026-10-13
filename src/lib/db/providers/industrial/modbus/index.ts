@@ -43,6 +43,7 @@ import type {
   ProviderOptions,
   QueryResult,
   SlowQueryStats,
+  QueryWarning,
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
@@ -260,6 +261,36 @@ export class ModbusProvider extends BaseDatabaseProvider {
     // It is closed at once. What §4.7 measured as dangerous is HOLDING a connection - a second
     // client went 3003 ms unanswered while the first stayed open - not opening one twice.
     (await dialModbus(this.endpoint())).destroy();
+  }
+
+  /**
+   * The caution a connection with no register map carries.
+   *
+   * MEASURED, and this is the hole it closes: against a port that ACCEPTS a connection and never
+   * answers, an empty-map connection answered `success: true, "Connection successful"` in 0 to 9
+   * ms, three runs identical. The dial succeeded because TCP was accepted, and `getHealth()` could
+   * not fail because there was nothing to read, so the answer carried no hint at all - worse than
+   * the refused-port case, which at least said `degraded` and named the address. An empty map is
+   * the DEFAULT state of a new connection, so this is what a user sees before they have written
+   * one, on a wrong port as readily as on a right one.
+   *
+   * The repair is not another probe, it is an honest answer. There is no guessed read behind this:
+   * a unit id guessed wrong costs 2137 ms behind a gateway (#1723 §4.10), so a timeout there would
+   * blame a device that IS present, and 43/14 is not mandatory either.
+   *
+   * `connectWarnings` and not `testConnectionWarnings` because it needs no request: it reads the
+   * connection's own map. The dialog renders it as a caution rather than a green tick
+   * (`src/hooks/use-connection-form.ts:344`, `cautionSentence`).
+   */
+  public connectWarnings(): QueryWarning[] {
+    return readMap(this.config).isEmpty
+      ? [
+          {
+            message:
+              "This connection carries no register map, so nothing was read from the device: all that was measured is that the address answered a TCP connection. Modbus has no discovery, so until a map names a point there is nothing to read.",
+          },
+        ]
+      : [];
   }
 
   public async disconnect(): Promise<void> {

@@ -45,6 +45,13 @@ async function testConnection(port: number, registerMap: string) {
   return { status: response.status, body: await parseResponseJSON<Record<string, unknown>>(response) };
 }
 
+/** A port that ACCEPTS a connection and never answers: the shape that produced a clean success. */
+async function silentPort(): Promise<{ server: Server; port: number }> {
+  const server = createServer(() => {});
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return { server, port: (server.address() as { port: number }).port };
+}
+
 /** A device that answers one read, so the success case is a real round trip. */
 async function device(): Promise<{ server: Server; port: number }> {
   const server = createServer((socket) => {
@@ -80,6 +87,46 @@ describe("Test Connection on a Modbus address", () => {
     });
   }
 
+  /**
+   * MEASURED: a port that accepts and never answers, with an empty map, answered
+   * `{"success":true,"message":"Connection successful"}` in 0 to 9 ms, three runs identical. The
+   * dial succeeded because TCP was accepted, and health could not fail because there was nothing
+   * to read. An empty map is a NEW connection's default state, so that was the answer a user got
+   * before writing a map, on a wrong port as readily as on a right one.
+   */
+  test("a silent port with no map says nothing was read, rather than Connection successful", async () => {
+    delete process.env[FLAG];
+    const { server, port } = await silentPort();
+    try {
+      const { status, body } = await testConnection(port, "[]");
+      expect(status).toBe(200);
+      // The caution rides in `warnings`, which is where the route puts it; the sentence a user
+      // reads is composed from it client-side by `cautionSentence` in
+      // `src/hooks/use-connection-form.ts:344` and rendered at `ConnectionModal.tsx:1979`, with an
+      // amber tone rather than a green tick. That composition was READ, not executed here.
+      const warnings = body.warnings as { message: string }[] | undefined;
+      expect(warnings?.length).toBe(1);
+      expect(warnings?.[0]?.message).toContain("nothing was read from the device");
+      expect(warnings?.[0]?.message).toContain("no register map");
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a REAL device with no map carries the same caution, because nothing was read there either", async () => {
+    // The caution is about the MAP, not the port. Without this case it would read as a wrong-port
+    // alarm, and the next person would try to make it fire only on a bad address.
+    delete process.env[FLAG];
+    const { server, port } = await device();
+    try {
+      const { body } = await testConnection(port, "[]");
+      const warnings = body.warnings as { message: string }[] | undefined;
+      expect(warnings?.[0]?.message).toContain("nothing was read from the device");
+    } finally {
+      server.close();
+    }
+  });
+
   test("an address that answers is a plain success, with no degraded flag", async () => {
     delete process.env[FLAG];
     const { server, port } = await device();
@@ -88,6 +135,10 @@ describe("Test Connection on a Modbus address", () => {
       expect(status).toBe(200);
       expect(body.success).toBe(true);
       expect(body.degraded).toBeUndefined();
+      // And no caution: there is a map, a point was read, so nothing is being withheld.
+      expect(String(body.message)).toBe("Connection successful");
+      // And no caution: there is a map, a point was read, so nothing is being withheld.
+      expect(body.warnings).toBeUndefined();
     } finally {
       server.close();
     }
