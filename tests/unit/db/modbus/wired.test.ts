@@ -2,7 +2,7 @@
  * END TO END OVER A REAL SOCKET, which is the thing this provider did not do.
  *
  * Every other file here measures one module against fakes. This one opens a TCP server, lets the
- * provider dial it, and asserts BOTH ends: the bytes the device received are a Modbus read for the
+ * provider dial it, and asserts BOTH ends: the bytes the device dev.received are a Modbus read for the
  * address the register map names, and the rows the caller got back carry the value those bytes
  * answered with. Until this file existed the engine was registered, `connect()` returned
  * successfully, and nothing ever left the process.
@@ -26,18 +26,34 @@ afterEach(() => {
   else process.env[FLAG] = originalFlag;
 });
 
-/** Every ADU the device received, so a test can assert what actually went out. */
-const received: Buffer[] = [];
+/**
+ * Each device keeps its OWN counters, and they are not module-level.
+ *
+ * They were module-level and reset per test, and a close event from the previous test's socket
+ * arrived after the reset and landed in the next test's count: connections 2, closes 3. A late
+ * event has no way of knowing which test it belongs to, so the counter has to belong to a device
+ * rather than to the file.
+ */
+interface Device {
+  readonly port: number;
+  readonly received: Buffer[];
+  connections: number;
+  closes: number;
+}
 
 /**
  * A Modbus TCP device, as small as one can be and still be real: it reads the MBAP header, answers
  * the four read function codes from a fixed word bank, and echoes the transaction id.
  */
-async function device(bank: readonly number[], options: { exception?: number } = {}): Promise<number> {
-  received.length = 0;
+async function device(bank: readonly number[], options: { exception?: number } = {}): Promise<Device> {
+  const dev: Device = { port: 0, received: [], connections: 0, closes: 0 };
   const server = createServer((socket) => {
+    dev.connections += 1;
+    socket.on("close", () => {
+      dev.closes += 1;
+    });
     socket.on("data", (adu: Buffer) => {
-      received.push(Buffer.from(adu));
+      dev.received.push(Buffer.from(adu));
       const transactionId = adu.readUInt16BE(0);
       const unitId = adu[6] ?? 0;
       const functionCode = adu[7] ?? 0;
@@ -62,7 +78,8 @@ async function device(bank: readonly number[], options: { exception?: number } =
   });
   open = server;
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return (server.address() as { port: number }).port;
+  (dev as { port: number }).port = (server.address() as { port: number }).port;
+  return dev;
 }
 
 const MAP = JSON.stringify([
@@ -83,8 +100,8 @@ const provider = (port: number, registerMap = MAP) =>
 describe("a read reaches the device and comes back", () => {
   test("named points are read in one request, and the device gets a Modbus read for them", async () => {
     delete process.env[FLAG];
-    const port = await device([230, 12]);
-    const result = await provider(port).query('{"read":["volts","amps"]}');
+    const dev = await device([230, 12]);
+    const result = await provider(dev.port).query('{"read":["volts","amps"]}');
 
     // The caller's end.
     expect(result.rows).toHaveLength(2);
@@ -92,8 +109,9 @@ describe("a read reaches the device and comes back", () => {
     expect(result.rows[1]).toMatchObject({ point: "amps", value: 12, unit_of_measure: "A" });
 
     // The device's end: ONE request, not two, because the planner put both points in one block.
-    expect(received).toHaveLength(1);
-    const adu = received[0] as Buffer;
+    expect(dev.received).toHaveLength(1);
+    const adu = dev.received[0] as Buffer;
+    expect(dev.connections).toBe(1); // the control for the assertion above: an accepted read DOES dial
     expect(adu.readUInt16BE(2)).toBe(0); // protocol id
     expect(adu[6]).toBe(1); // unit id
     expect(adu[7]).toBe(0x03); // read holding registers
@@ -103,77 +121,85 @@ describe("a read reaches the device and comes back", () => {
 
   test("a range read by address answers one row per register", async () => {
     delete process.env[FLAG];
-    const port = await device([7, 8, 9]);
-    const result = await provider(port).query('{"unit":1,"table":"holding_register","address":0,"count":3}');
+    const dev = await device([7, 8, 9]);
+    const result = await provider(dev.port).query('{"unit":1,"table":"holding_register","address":0,"count":3}');
     expect(result.rows.map((row) => row.value)).toEqual([7, 8, 9]);
-    expect(received).toHaveLength(1);
-    expect((received[0] as Buffer).readUInt16BE(10)).toBe(3);
+    expect(dev.received).toHaveLength(1);
+    expect((dev.received[0] as Buffer).readUInt16BE(10)).toBe(3);
   });
 
   test("the device's own refusal arrives as a refusal of this read, in the protocol's words", async () => {
     delete process.env[FLAG];
-    const port = await device([], { exception: 0x02 });
-    await expect(provider(port).query('{"read":["volts"]}')).rejects.toThrow(/no such address/i);
+    const dev = await device([], { exception: 0x02 });
+    await expect(provider(dev.port).query('{"read":["volts"]}')).rejects.toThrow(/no such address/i);
   });
 
   test("nothing is held open: a second read dials again", async () => {
     delete process.env[FLAG];
-    const port = await device([230, 12]);
-    const p = provider(port);
+    const dev = await device([230, 12]);
+    const p = provider(dev.port);
     await p.query('{"read":["volts"]}');
     await p.query('{"read":["amps"]}');
-    expect(received).toHaveLength(2);
+    expect(dev.received).toHaveLength(2);
     // Transaction ids are per connection, so a fresh socket starts at 1 again. Reading the same id
-    // twice is the evidence that the first socket really was closed rather than reused.
-    expect((received[0] as Buffer).readUInt16BE(0)).toBe(1);
-    expect((received[1] as Buffer).readUInt16BE(0)).toBe(1);
+    // twice says a NEW socket was used; it does not say the first one was closed, because a read
+    // that leaked its socket would dial again all the same. The close count is what says that, and
+    // without it dropping `socket.destroy()` from the finally broke no test at all (MEASURED).
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(dev.closes).toBe(2);
+    expect((dev.received[0] as Buffer).readUInt16BE(0)).toBe(1);
+    expect((dev.received[1] as Buffer).readUInt16BE(0)).toBe(1);
   });
 
   test("health is an answer, not a connect: it reads one point at the device", async () => {
     delete process.env[FLAG];
-    const port = await device([230, 12]);
-    const health = await provider(port).getHealth();
+    const dev = await device([230, 12]);
+    const health = await provider(dev.port).getHealth();
     expect(health.databaseSize).toBe("2 points");
     // The docblock claimed this read for a while before the body did it. One quantity-1 read.
-    expect(received).toHaveLength(1);
-    expect((received[0] as Buffer).readUInt16BE(10)).toBe(1);
+    expect(dev.received).toHaveLength(1);
+    expect((dev.received[0] as Buffer).readUInt16BE(10)).toBe(1);
   });
 
   test("with no map health still dials, so a wrong address cannot read as connected", async () => {
     delete process.env[FLAG];
-    const port = await device([230]);
-    const health = await provider(port, "[]").getHealth();
+    const dev = await device([230]);
+    const health = await provider(dev.port, "[]").getHealth();
     expect(health.databaseSize).toBe("unknown");
     // Absence and zero are different facts: `activeConnections` is omitted rather than sent as 0,
     // because a device has no connection count a reader can ask for.
     expect(Object.hasOwn(health, "activeConnections")).toBe(false);
     expect(health.cacheHitRatio).toBe("unknown");
-    // The dial claims nothing beyond reachability: the server received no ADU at all.
-    expect(received).toHaveLength(0);
+    // The dial claims nothing beyond reachability: the server dev.received no ADU at all.
+    expect(dev.received).toHaveLength(0);
   });
 
   test("with no map a closed port fails health, which is the whole point of the dial", async () => {
     delete process.env[FLAG];
-    const port = await device([230]);
+    const dev = await device([230]);
     open?.close();
     open = undefined;
-    await expect(provider(port, "[]").getHealth()).rejects.toThrow();
+    await expect(provider(dev.port, "[]").getHealth()).rejects.toThrow();
   });
 
   test("with a map the dial path is not taken: the read is what proves the device", async () => {
     delete process.env[FLAG];
-    const port = await device([230, 12]);
-    await provider(port).getHealth();
+    const dev = await device([230, 12]);
+    await provider(dev.port).getHealth();
     // One ADU, the quantity-1 read. If the dial-only branch had run as well there would be two
     // connections and still one ADU, so the assertion that holds the branches apart is this one.
-    expect(received).toHaveLength(1);
-    expect((received[0] as Buffer).readUInt16BE(10)).toBe(1);
+    expect(dev.received).toHaveLength(1);
+    expect((dev.received[0] as Buffer).readUInt16BE(10)).toBe(1);
   });
 
   test("a request the parser refuses costs no connection at all", async () => {
     delete process.env[FLAG];
-    const port = await device([230]);
-    await expect(provider(port).query('{"read":["nothing_named_this"]}')).rejects.toThrow(/no point named/);
-    expect(received).toHaveLength(0);
+    const dev = await device([230]);
+    await expect(provider(dev.port).query('{"read":["nothing_named_this"]}')).rejects.toThrow(/no point named/);
+    // CONNECTIONS, not ADUs. A dial sends nothing, so counting ADUs cannot tell "refused before the
+    // socket" from "dialled, then refused": both answer zero. MEASURED by reversing the order in
+    // the provider - the ADU count stayed 0, and only the socket-less tests elsewhere noticed.
+    expect(dev.connections).toBe(0);
+    expect(dev.received).toHaveLength(0);
   });
 });
