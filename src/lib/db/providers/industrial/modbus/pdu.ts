@@ -105,6 +105,33 @@ export function buildRead(
 }
 
 /** FC 43 with MEI type 14. The only other request this provider can produce. */
+/**
+ * What to expect back, read from the request that is going out.
+ *
+ * DERIVED rather than passed alongside: an expectation carried separately can disagree with the
+ * bytes actually sent, and then a wrong answer matches. These are the same bytes, so they cannot.
+ */
+export function expectationOf(adu: Buffer): {
+  readonly transactionId: number;
+  readonly unitId: number;
+  readonly functionCode: number;
+  readonly quantity?: number;
+  readonly isBits?: boolean;
+} {
+  const functionCode = adu[MBAP_HEADER_BYTES] ?? 0;
+  const base = {
+    transactionId: adu.readUInt16BE(0),
+    unitId: adu[6] ?? 0,
+    functionCode,
+  };
+  // Only the four reads carry a quantity; 43/14 answers a length of the device's own choosing.
+  if (functionCode === FC_READ_COILS || functionCode === FC_READ_DISCRETE_INPUTS)
+    return { ...base, quantity: adu.readUInt16BE(MBAP_HEADER_BYTES + 3), isBits: true };
+  if (functionCode === FC_READ_HOLDING_REGISTERS || functionCode === FC_READ_INPUT_REGISTERS)
+    return { ...base, quantity: adu.readUInt16BE(MBAP_HEADER_BYTES + 3), isBits: false };
+  return base;
+}
+
 export function buildIdentification(
   transactionId: number,
   unitId: number,

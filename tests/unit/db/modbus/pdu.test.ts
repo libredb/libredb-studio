@@ -15,12 +15,12 @@ import {
 } from "@/lib/db/providers/industrial/modbus/pdu";
 
 describe("the module exports no way to send another function code", () => {
-  test("every exported function is one of the known five surfaces", () => {
+  test("every exported function is one of the known surfaces, the expectation reader included", () => {
     const callable = Object.entries(pdu)
       .filter(([, v]) => typeof v === "function")
       .map(([k]) => k)
       .sort();
-    expect(callable).toEqual(["ModbusRequestError", "buildIdentification", "buildRead", "checkRead"]);
+    expect(callable).toEqual(["ModbusRequestError", "buildIdentification", "buildRead", "checkRead", "expectationOf"]);
   });
 
   test("buildRead picks the function code from the table, so a caller cannot choose one", () => {

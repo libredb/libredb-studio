@@ -46,7 +46,11 @@ import type {
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
-import { MODBUS_DEFAULT_PORT, MODBUS_NO_REVOCATION_SENTENCE, MODBUS_READ_ONLY_HINT } from "./constants";
+import { MODBUS_DEFAULT_PORT, MODBUS_NO_REVOCATION_SENTENCE, MODBUS_READ_ONLY_HINT, UNIT_ID_MIN } from "./constants";
+import { dialModbus, socketWire, type Endpoint } from "./client";
+import { runRead } from "./read";
+import { parseReadRequest } from "./request";
+import { ModbusSession } from "./session";
 import {
   countObjects as countFromMap,
   listObjects as listFromMap,
@@ -352,10 +356,53 @@ export class ModbusProvider extends BaseDatabaseProvider {
    * block planner and the frame reader are in place and tested, and what is missing is the step
    * that turns one JSON document into those calls. It refuses rather than pretending to read.
    */
-  public async query(_statement: string, _params?: unknown[]): Promise<QueryResult> {
-    throw new QueryError(
-      "The Modbus read console is not wired up yet. The client, the register map, the block planner and the frame reader are in place; the request parser that turns one JSON document into those calls is the next change.",
-    );
+  /** Host and port as the connection gives them, with 502 where none is set. */
+  private endpoint(): Endpoint {
+    const config = this.config as { host?: string; port?: number; ssl?: { enabled?: boolean } };
+    return {
+      host: config.host ?? "127.0.0.1",
+      port: config.port ?? MODBUS_DEFAULT_PORT,
+      ...(config.ssl?.enabled === true ? { tls: {} } : {}),
+    };
+  }
+
+  /**
+   * One JSON read request, run against the device.
+   *
+   * NOTHING IS HELD OPEN. The socket is opened for this read and destroyed in `finally`, which is
+   * the rule `connect()` documents: a libmodbus server serving one client at a time left a second
+   * client unanswered for 3003 ms while the first stayed open, so a connection kept between reads
+   * locks out the plant's own HMI.
+   *
+   * The request is settled BEFORE the socket: a refusal the caller can fix costs no connection.
+   */
+  public async query(statement: string, _params?: unknown[]): Promise<QueryResult> {
+    const map = readMap(this.config);
+    let request;
+    try {
+      request = parseReadRequest(statement, new Set(map.points.map((point) => point.name)));
+    } catch (error) {
+      throw atBoundary(error);
+    }
+    const endpoint = this.endpoint();
+    const socket = await dialModbus(endpoint);
+    try {
+      const session = new ModbusSession(socketWire(socket, endpoint));
+      const read = await runRead(request, map, session, this.unitIdOfConnection(map));
+      return {
+        rows: read.rows,
+        fields: read.fields,
+        rowCount: read.rows.length,
+        ...(read.warnings.length > 0 ? { notices: [...read.warnings] } : {}),
+      } as QueryResult;
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  /** The unit a shape that names none runs at: the map's first, which is the one the tree shows. */
+  private unitIdOfConnection(map: ReturnType<typeof readMap>): number {
+    return map.points[0]?.unitId ?? UNIT_ID_MIN;
   }
 
   /**
@@ -368,6 +415,21 @@ export class ModbusProvider extends BaseDatabaseProvider {
    */
   public async getHealth(): Promise<HealthInfo> {
     const parsed = readMap(this.config);
+    // The read, which this docblock used to describe while the body did only the line above it.
+    // A connect alone is not health (§4.10: a TCP connect succeeded against an absent unit behind
+    // a gateway), and the socket's state is not health either (§5.1: ESTABLISHED for 144 seconds
+    // while no answer was coming). Health is an answer, or the absence of one.
+    const point = parsed.points[0];
+    if (point !== undefined) {
+      const endpoint = this.endpoint();
+      const socket = await dialModbus(endpoint);
+      try {
+        const session = new ModbusSession(socketWire(socket, endpoint));
+        await runRead({ kind: "points", names: [point.name] }, parsed, session, point.unitId);
+      } finally {
+        socket.destroy();
+      }
+    }
     return {
       databaseSize: parsed.isEmpty
         ? "unknown"

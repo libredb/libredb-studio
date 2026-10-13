@@ -292,8 +292,13 @@ describe("what the provider refuses rather than fakes", () => {
     await expect(provider().connect()).resolves.toBeUndefined();
   });
 
-  test("the read console refuses and says what is missing", async () => {
-    await expect(provider({ registerMap: MAP }).query("{}")).rejects.toThrow(/not wired up/);
+  test("an empty request is refused before any socket, and the refusal names the three shapes", async () => {
+    // This test used to assert "not wired up". The console reads now, and what it still refuses is
+    // a request that names no shape - refused by the parser, so no connection is attempted. The
+    // reading itself is measured over a real socket in `wired.test.ts`.
+    const run = provider({ registerMap: MAP }).query("{}");
+    await expect(run).rejects.toThrow(/"read"/);
+    await expect(provider({ registerMap: MAP }).query("{}")).rejects.toThrow(/"identify"/);
   });
 
   test("maintenance is refused with the reason", async () => {
@@ -311,7 +316,9 @@ describe("what the provider refuses rather than fakes", () => {
   });
 
   test("health omits activeConnections rather than sending a fabricated zero", async () => {
-    const health = await provider({ registerMap: MAP }).getHealth();
+    // With no map there is no point to read, so health asks the device nothing and this runs with
+    // no server. The read itself is measured over a real socket in `wired.test.ts`.
+    const health = await provider().getHealth();
     expect(Object.hasOwn(health, "activeConnections")).toBe(false);
     expect(health.cacheHitRatio).toBe("unknown");
   });

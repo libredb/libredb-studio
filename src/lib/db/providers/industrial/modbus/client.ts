@@ -29,6 +29,8 @@ import { connect as tlsConnect } from "node:tls";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { socketEgress } from "@/lib/db/http/egress-policy";
 import { DIAL_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from "./constants";
+import { expectationOf } from "./pdu";
+import type { Wire } from "./session";
 import { assertOutboundAllowed } from "./valve";
 import {
   FrameReader,
@@ -194,6 +196,22 @@ export const dialModbus: Dialer = (endpoint, options = {}) =>
  * real answer would have hidden it, because only `frames[0]` was looked at. `matchToRequest` was
  * written for this, tested, and never called - an unwired name reads as a rule that holds.
  */
+/**
+ * A `Wire` over one open socket: what the session needs, and nothing more.
+ *
+ * The expectation is derived from the ADU being sent (`expectationOf`) rather than handed in
+ * beside it, so the two cannot disagree and a wrong answer cannot match.
+ */
+export function socketWire(socket: ModbusSocket, endpoint: Endpoint, timeoutMs?: number): Wire {
+  return {
+    exchange: (adu: Buffer) =>
+      exchangeOnce(socket, adu, { expect: expectationOf(adu), endpoint, ...(timeoutMs === undefined ? {} : { timeoutMs }) }),
+    close: () => {
+      socket.destroy();
+    },
+  };
+}
+
 export function exchangeOnce(
   socket: ModbusSocket,
   adu: Buffer,

@@ -174,13 +174,25 @@ ignoring it runs a different read from the one that was written. A name is check
 since a name means only what the map says it means. The protocol's bounds are not repeated in the
 parser - it calls `checkRead`, so a limit cannot pass in one file while it fails in another.
 
-### 5.1 What is not wired yet
+### 5.1 The socket, and what this section used to say
 
-`query()` refuses rather than pretending to read: the parser, the client, the session, the planner
-and the frame reader are each in place and tested, and the step that runs a parsed request against
-a device is the next change. `getHealth()` reads the map and does not yet read the device. Both are
-named here rather than described as working, because a document that describes an intention as
-behaviour is worse than one that is silent.
+This section used to say that `query()` refused and `getHealth()` read only the map. Both now reach
+the device: the request is parsed, a socket is dialled for that read, the session serialises the
+exchanges, and the socket is destroyed in `finally`. Nothing is held between reads.
+
+The order matters and is measured: a request the parser refuses costs NO connection, so a mistake
+in the console text never opens a socket. `tests/unit/db/modbus/wired.test.ts` runs the whole path
+against a TCP server written by hand - the frame reader, the valve, the transaction ids and the
+decoder all run for real - and asserts both ends: the bytes the device received are a read for the
+address the map names, and the rows carry the value those bytes answered with.
+
+`getHealth()` dials and reads ONE point at quantity 1. A connect alone is not health (§4.10
+measured a TCP connect succeeding against an absent unit behind a gateway) and neither is the
+socket's state (§5.1 of the issue measured ESTABLISHED for 144 seconds while no answer came).
+With no map there is no point to read, so health asks the device nothing and says so.
+
+What is still absent is MODBUS/TCP Security on a real device: the TLS dial exists and has never
+been run against one (§12a item 3 of the specification).
 
 ## 6. Object edit (#789)
 

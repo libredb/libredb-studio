@@ -44,6 +44,15 @@ export const MBAP_LENGTH_MAX = 254;
  * Written as a literal it would be a number that stays still while the frame bound moves, and the
  * two would disagree without either one looking wrong.
  */
+/**
+ * How many 43/14 requests one walk may make (MB-S6).
+ *
+ * The fixture forces a three-transaction extended walk (#1723 section 4.10), so three is the most
+ * a conforming device was measured needing; this leaves room for a device with more objects while
+ * still ending a walk that would otherwise not end.
+ */
+export const MAX_IDENTIFICATION_ROUNDS = 8;
+
 export const MAX_IDENTIFICATION_OBJECT_BYTES = MBAP_LENGTH_MAX - 1 - 1 - 6 - 2;
 export const PROTOCOL_ID = 0;
 
