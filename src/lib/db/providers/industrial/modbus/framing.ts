@@ -127,10 +127,20 @@ export interface Expectation {
   readonly isBits?: boolean;
 }
 
-export type Match =
+/**
+ * What an exchange can END as: the answer that was asked for, or the device's own refusal.
+ *
+ * Declared here rather than beside the socket, because a frame's meaning is a framing question
+ * and the session carries this type too: if the session carried raw bytes instead, the frame
+ * would be parsed once on the way in and again by whoever read it, and the second parse is the
+ * one that drifts.
+ */
+export type Exchange =
   | { readonly kind: "answer"; readonly frame: InboundFrame }
-  | { readonly kind: "exception"; readonly code: number }
-  | { readonly kind: "discard"; readonly why: string };
+  | { readonly kind: "exception"; readonly code: number };
+
+/** An exchange's two endings, plus the one that is not an ending: a frame nobody asked for. */
+export type Match = Exchange | { readonly kind: "discard"; readonly why: string };
 
 /**
  * Decides what one inbound frame is, against the request that is outstanding. Returns `discard` for

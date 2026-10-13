@@ -3,7 +3,24 @@
  */
 import { describe, expect, test } from "bun:test";
 import { MAX_TRANSACTIONS_IN_FLIGHT } from "@/lib/db/providers/industrial/modbus/constants";
+import type { Exchange } from "@/lib/db/providers/industrial/modbus/framing";
 import { ModbusSession, ModbusTimeout, type Wire } from "@/lib/db/providers/industrial/modbus/session";
+
+/**
+ * The answer a fake wire gives back. The session never looks INSIDE an answer, it only carries
+ * one, so the frame here is the request echoed: what these tests are about is ordering, timing
+ * and pacing.
+ */
+const answerOf = (adu: Buffer): Exchange => ({
+  kind: "answer",
+  frame: {
+    transactionId: adu.readUInt16BE(0),
+    unitId: adu[6] ?? 0,
+    functionCode: adu[7] ?? 0,
+    body: Buffer.alloc(0),
+    isException: false,
+  },
+});
 
 const frame = (tid: number) => {
   const b = Buffer.alloc(12);
@@ -22,8 +39,8 @@ class Recorder implements Wire {
   closes: string[] = [];
   outstanding = 0;
   maxOutstanding = 0;
-  constructor(private readonly behave: (adu: Buffer) => Promise<Buffer>) {}
-  async exchange(adu: Buffer): Promise<Buffer> {
+  constructor(private readonly behave: (adu: Buffer) => Promise<Exchange>) {}
+  async exchange(adu: Buffer): Promise<Exchange> {
     this.sent.push(adu);
     this.outstanding += 1;
     this.maxOutstanding = Math.max(this.maxOutstanding, this.outstanding);
@@ -42,7 +59,7 @@ describe("one request in flight", () => {
   test("fifty concurrent calls never put two on the wire at once", async () => {
     const wire = new Recorder(async (adu) => {
       await new Promise((r) => setTimeout(r, 1));
-      return adu;
+      return answerOf(adu);
     });
     const session = new ModbusSession(wire);
     await Promise.all(Array.from({ length: 50 }, () => session.exchange(frame)));
@@ -53,7 +70,7 @@ describe("one request in flight", () => {
 
 describe("transaction ids are never reused on a connection", () => {
   test("twenty exchanges carry twenty distinct ids", async () => {
-    const wire = new Recorder(async (adu) => adu);
+    const wire = new Recorder(async (adu) => answerOf(adu));
     const session = new ModbusSession(wire);
     await Promise.all(Array.from({ length: 20 }, () => session.exchange(frame)));
     const ids = wire.sent.map((b) => b.readUInt16BE(0));
@@ -63,7 +80,7 @@ describe("transaction ids are never reused on a connection", () => {
 
 describe("a request that never answers ends by our own timer", () => {
   test("it rejects with a timeout, and the sentence does not come from err.code", async () => {
-    const wire = new Recorder(() => new Promise<Buffer>(() => undefined));
+    const wire = new Recorder(() => new Promise<Exchange>(() => undefined));
     const session = new ModbusSession(wire, { requestTimeoutMs: 40 });
     const error = await session.exchange(frame).catch((e) => e);
     expect(error).toBeInstanceOf(ModbusTimeout);
@@ -72,7 +89,7 @@ describe("a request that never answers ends by our own timer", () => {
   });
 
   test("the connection is closed, because the next answer may belong to the request we gave up on", async () => {
-    const wire = new Recorder(() => new Promise<Buffer>(() => undefined));
+    const wire = new Recorder(() => new Promise<Exchange>(() => undefined));
     const session = new ModbusSession(wire, { requestTimeoutMs: 20 });
     await session.exchange(frame).catch(() => undefined);
     expect(wire.closes).toEqual(["request timed out"]);
@@ -92,13 +109,13 @@ describe("a request that never answers ends by our own timer", () => {
     const wire = new Recorder(async (adu) => {
       if (first) {
         first = false;
-        return new Promise<Buffer>(() => undefined);
+        return new Promise<Exchange>(() => undefined);
       }
-      return adu;
+      return answerOf(adu);
     });
     const session = new ModbusSession(wire, { requestTimeoutMs: 20 });
     await session.exchange(frame).catch(() => undefined);
-    await expect(session.exchange(frame)).resolves.toBeInstanceOf(Buffer);
+    await expect(session.exchange(frame)).resolves.toMatchObject({ kind: "answer" });
   });
 });
 
@@ -116,7 +133,7 @@ describe("requests to one endpoint are paced", () => {
     let clock = 1000;
     const wire = new Recorder(async (adu) => {
       clock += 30;
-      return adu;
+      return answerOf(adu);
     });
     const session = new ModbusSession(wire, {
       minIntervalMs: 100,
@@ -151,7 +168,7 @@ describe("the published transaction figure", () => {
   test("and the queue enforces it independently, so the figure is not the only guard", async () => {
     const wire = new Recorder(async (adu) => {
       await new Promise((r) => setTimeout(r, 1));
-      return adu;
+      return answerOf(adu);
     });
     const session = new ModbusSession(wire);
     await Promise.all(Array.from({ length: 10 }, () => session.exchange(frame)));

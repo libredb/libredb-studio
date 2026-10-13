@@ -29,7 +29,14 @@ import { connect as tlsConnect } from "node:tls";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { socketEgress } from "@/lib/db/http/egress-policy";
 import { DIAL_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from "./constants";
-import { FrameReader, matchToRequest, type Expectation, type InboundFrame, type Match } from "./framing";
+import {
+  FrameReader,
+  matchToRequest,
+  type Exchange,
+  type Expectation,
+  type InboundFrame,
+  type Match,
+} from "./framing";
 
 /** What this module needs of a socket. Node's `Socket` and `TLSSocket` both satisfy it. */
 export interface ModbusSocket {
@@ -171,11 +178,6 @@ export const dialModbus: Dialer = (endpoint, options = {}) =>
  * The bound is the frame reader's, applied at the header before anything is buffered. Nothing here
  * accumulates on its own, which is the whole reason the reader exists.
  */
-/** What one exchange can be: the answer that was asked for, or the device's own refusal. */
-export type Exchange =
-  | { readonly kind: "answer"; readonly frame: InboundFrame }
-  | { readonly kind: "exception"; readonly code: number };
-
 /**
  * `expect` IS REQUIRED, and it was optional in the first version of this function, which is the
  * fault this comment is about. Without it the first frame off the wire was resolved as the answer:

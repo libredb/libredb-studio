@@ -24,6 +24,7 @@
  * the delay. A client that pipelines therefore cannot tell whose answer it is holding.
  */
 import { MAX_TRANSACTIONS_IN_FLIGHT, REQUEST_TIMEOUT_MS } from "./constants";
+import type { Exchange } from "./framing";
 
 export class ModbusTimeout extends Error {
   readonly kind = "timeout" as const;
@@ -35,8 +36,15 @@ export class ModbusTimeout extends Error {
 }
 
 export interface Wire {
-  /** Sends one ADU and resolves with one complete ADU, or rejects. Never queues internally. */
-  exchange(adu: Buffer, signal: { aborted: boolean }): Promise<Buffer>;
+  /**
+   * Sends one ADU and resolves with what that exchange ENDED as, or rejects. Never queues
+   * internally.
+   *
+   * The answer crosses this seam already parsed, not as bytes: the frame reader has read the
+   * header to know where the frame ends, so handing bytes on would mean reading the same header
+   * a second time somewhere else, and two readings of one header is one reading too many.
+   */
+  exchange(adu: Buffer, signal: { aborted: boolean }): Promise<Exchange>;
   close(reason: string): void;
 }
 
@@ -90,7 +98,7 @@ export class ModbusSession {
    * state in which continuing on the same socket is safe, because the next answer to arrive may
    * belong to the request we just gave up on.
    */
-  async exchange(build: (transactionId: number) => Buffer): Promise<Buffer> {
+  async exchange(build: (transactionId: number) => Buffer): Promise<Exchange> {
     const run = this.queue.then(async () => {
       if (this.inFlight >= MAX_TRANSACTIONS_IN_FLIGHT)
         throw new Error("A second request reached the session while one was in flight.");
@@ -117,8 +125,8 @@ export class ModbusSession {
     return run;
   }
 
-  private withTimeout(work: Promise<Buffer>, started: number, signal: { aborted: boolean }): Promise<Buffer> {
-    return new Promise<Buffer>((resolve, reject) => {
+  private withTimeout(work: Promise<Exchange>, started: number, signal: { aborted: boolean }): Promise<Exchange> {
+    return new Promise<Exchange>((resolve, reject) => {
       let settled = false;
       const timer = setTimeout(() => {
         if (settled) return;
