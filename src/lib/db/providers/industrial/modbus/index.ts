@@ -22,6 +22,7 @@
  * shipped type by the factory tests, so a constructor that dialled would put those tests on the
  * network.
  */
+import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
@@ -55,6 +56,8 @@ import {
 } from "./objects";
 import type { Table } from "./pdu";
 import { ModbusMapError, parseRegisterMap } from "./register-map";
+import { ModbusRequestError } from "./pdu";
+import { ModbusDecodeError } from "./values";
 
 /**
  * WHY EVERY REFUSAL HERE IS A `QueryError` AND NOT A PLAIN `Error`. Measured on `90881379`: the
@@ -117,9 +120,29 @@ import { ModbusMapError, parseRegisterMap } from "./register-map";
  * mistake passes through unchanged. Dressing one as a query failure would send a developer to look
  * at the device instead of at the code, so everything-converted is as wrong as nothing-converted.
  */
+const MODBUS_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "modbus",
+  label: "A Modbus",
+  shapeNames: "label",
+};
+
 export function atBoundary(error: unknown): unknown {
   if (error instanceof QueryError) return error;
+  // The map is a document the user wrote and edits in the connection, so a fault in it is a
+  // configuration fault.
   if (error instanceof ModbusMapError) return new DatabaseConfigError(error.message);
+  // The read request is text the user wrote and edits in the console, which is a different box
+  // from the map and therefore a different class. Both are 400s and they are NOT interchangeable:
+  // the class is what a reader acts on, and telling someone to fix their map when the fault is in
+  // their request sends them to the one thing that is already right.
+  if (error instanceof ModbusRequestError) return new QueryError(error.message);
+  // A decode fault is read as a fault in the MAP rather than in the request: every sentence this
+  // class carries compares what the map DECLARES with what the device actually sent, so the thing
+  // to change is the declaration.
+  if (error instanceof ModbusDecodeError) return new DatabaseConfigError(error.message);
+  // AND NOT `ModbusValveDefect`, deliberately. That one fires on bytes THIS CODE built, so it is
+  // our defect and not the user's: dressing it as a 400 would ask someone to fix a document that
+  // has nothing wrong with it, and would hide the one failure here that should reach us.
   return error;
 }
 
@@ -186,6 +209,14 @@ export class ModbusProvider extends BaseDatabaseProvider {
       defaultPort: MODBUS_DEFAULT_PORT,
       statementTerminator: "none",
       containerLevels: [{ id: "schema", label: "Unit", labelPlural: "Units" }],
+      // Declared AND checked: the census pairs the two, and a declaration with no check behind it
+      // lets a path of the wrong length reach the map lookup, which then answers "no such point"
+      // and names the wrong mistake (#1147).
+      // , not : a read at the root lists every point of a kind across units, and a
+      // read one level down lists one unit's.  refuses the empty path wherever a level is
+      // declared, which turned the root listing into a refusal - the gate caught it, four of my own
+      // tests at once.
+      containerPathShapes: "prefixes",
       objectKinds: MODBUS_OBJECT_KINDS.map((kind) => ({ ...kind, role: "relation" as const })),
       // Nothing a read runs changes the tree.
       schemaRefreshPattern: "(?!)",
@@ -257,6 +288,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
    * the count is the number of points of that kind in the map, and 0 is then an answer.
    */
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    this.unitOf(container);
     let counts: ReturnType<typeof countFromMap>;
     try {
       counts = countFromMap(mapOf(this.config));
@@ -277,8 +309,14 @@ export class ModbusProvider extends BaseDatabaseProvider {
     return out;
   }
 
+  /** One level: a unit id. The length is CHECKED rather than taken, so an extra level is refused. */
+  private unitOf(container: readonly string[]): string | undefined {
+    assertContainerPathShape(this.getCapabilities(), container, MODBUS_CONTAINER_PATH_ENGINE);
+    return container[0];
+  }
+
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
-    const unit = container[0];
+    const unit = this.unitOf(container);
     const listing = this.listing(kind as Table);
     return listing.objects
       .filter((point) => unit === undefined || String(point.unitId) === unit)

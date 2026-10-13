@@ -66,7 +66,7 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   mtconnect: "exact",
   // A container is one unit id, written as the number the map holds: nothing is prefixed and nothing
   // is derived (#1723).
-  modbus: "exact",
+  modbus: "prefixes",
   libredb: "exact",
   duckdb: "prefixes",
   mssql: "prefixes",

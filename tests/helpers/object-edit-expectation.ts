@@ -36,6 +36,10 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   // No kind accepts a write of any sort, and the absence is structural rather than a version's scope:
   // every route this provider sends is a GET, which docs/providers/mtconnect.md names (#1722).
   "mtconnect",
+  // No kind declares a write of any sort, and the absence is structural: the encoder names four
+  // read function codes and device identification, and there is no code that can build a write.
+  // A point is also not a thing to edit - what names it is the user's own register map (#1723).
+  "modbus",
   "cassandra",
   "clickhouse",
   "couchbase",

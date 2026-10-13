@@ -1,0 +1,203 @@
+# Modbus Provider
+
+Modbus TCP, read-only: a device or a gateway in front of serial devices, read over a raw socket by
+a client this repository owns.
+
+Issue: [#1723](https://github.com/libredb/libredb-studio/issues/1723). Type-id `modbus`, the third
+member of the `industrial/` family after OPC UA and MTConnect.
+
+This document describes what the provider does TODAY. Where a part is built and not yet reached
+from the product, the section says so in those words rather than describing the intention as if it
+were behaviour.
+
+## 1. Overview
+
+Modbus is a register protocol, not a database protocol. A device holds four tables of 65,536 items
+each - coils and discrete inputs hold single bits, input registers and holding registers hold
+16-bit words - and that is the whole of its data model (MB 4.3).
+
+### Concept mapping
+
+| Modbus | Studio |
+| :--- | :--- |
+| Unit id | Container ("Unit") |
+| Coil, discrete input, input register, holding register | Object kinds |
+| A named point of the register map | Object |
+| A 16-bit word or a single bit | Value |
+| Device identification objects (43/14) | Connection details |
+
+### What a reader sees
+
+A tree of units, each holding the four kinds, each kind listing the points the register map names.
+With no map the kinds exist and list nothing, and the panel says why: Modbus has no discovery. No
+request lists what a device holds, and no register carries a name, a type or a unit.
+
+## 2. Architecture
+
+### 2.1 Where it sits
+
+`src/lib/db/providers/industrial/modbus/`, reached through `createDatabaseProvider` in
+`src/lib/db/factory.ts`. No library: the client is this repository's own over the shared egress
+rule, as RabbitMQ's AMQP read client is.
+
+### 2.2 Modules
+
+| Module | What it owns |
+| :--- | :--- |
+| `constants.ts` | Ports, the MBAP bounds, the read limits, the timers |
+| `pdu.ts` | The five requests MB-S1 allows: four reads and 43/14. Builds and bounds them |
+| `valve.ts` | Re-checks every outbound ADU before it reaches a socket |
+| `framing.ts` | Reads frames off a stream; decides what one frame is against the outstanding request |
+| `client.ts` | Dials (plain or TLS) and runs one exchange |
+| `session.ts` | Serialises exchanges, hands out transaction ids, times each one |
+| `register-map.ts` | Parses the user's map and refuses a malformed one |
+| `values.ts` | Decodes words into values, with word and byte order per point |
+| `plan.ts` | Groups points into as few block reads as the limits allow |
+| `objects.ts` | The tree, built from the map |
+| `identification.ts` | Reads one 43/14 answer |
+| `request.ts` | Parses one JSON read request, before any socket exists |
+| `index.ts` | The provider class and its boundaries |
+
+### 2.3 Why the provider carries its own client
+
+`modbus-serial` 8.0.25 and `jsmodbus` 5.0.0 both encode writes. A client that can encode a write is
+a client whose read-only posture is a promise rather than a property, and the measurement in #1723
+section 4.9 is why that matters: three fixture servers took FC 06 from a client that presented
+nothing, and over `mbaps` a certificate labelled "ReadOnly" wrote too. The device enforces nothing.
+So the encoder here names four read function codes and 43/14 with MEI type 14, and there is no
+function anywhere in the provider that builds a write.
+
+### 2.4 The valve
+
+The encoder cannot build a write, and the valve re-checks the bytes anyway, at the one place every
+ADU passes through on its way out (`client.ts`, immediately before `socket.write`). It refuses a
+function code outside the five, a 43 that carries any MEI type but 14, a protocol id other than 0,
+and an MBAP length that disagrees with the frame it is on.
+
+A refusal there is OUR defect and not the user's: it fires on bytes this code built. It is raised
+before a byte is written, which is the only ordering under which the check means anything.
+
+## 3. Design decisions
+
+### 3.1 The register map is the data model
+
+A point names a unit, a table, a zero-based PDU address, a type, and the orders a value wider than
+one register needs. Orders have no default: common stacks disagree, and a wrong order reads as a
+plausible number with no error at all (#1723 section 4.2), so the map states them or the point is
+refused.
+
+The address is the PDU address, counted from zero, exactly what goes on the wire. Vendor
+documentation often numbers from one, and the two are not the same number.
+
+### 3.2 No discovery, and an absent map is not an empty device
+
+With no map, `countObjects` answers `{ unavailable }` with the no-discovery sentence rather than
+`{ count: 0 }`. A zero would be a claim about the device, and Modbus has no request that supports
+it. A map that is PRESENT and malformed is a different case and is reported as a configuration
+fault, because the user wrote that document and can fix it.
+
+### 3.3 Blocks, and why a block stops at a hole
+
+Point reads are planned into as few block reads as the limits allow: 125 registers or 2000 bits per
+request, one unit and one table per block. A block is cut wherever the map has no point, because
+one undefined register inside a block fails the WHOLE block with exception 02 (MEASURED).
+
+### 3.4 Nothing is held open between reads
+
+A libmodbus server serving one client at a time left a second client's read unanswered for 3003 ms
+while the first stayed open (#1723 section 4.7). A connection held between reads would lock out the
+plant's own HMI. So `connect()` opens nothing; it parses the map, which is the one thing worth
+telling the user at the moment they connect.
+
+### 3.5 A late answer is not this answer's
+
+Transaction ids are handed out once and never reused on a connection (TCP 4.4.1.3). A frame whose
+id is not the outstanding one is discarded and the wait goes on; a frame that claims to answer this
+request and cannot - wrong unit, wrong function code, a byte count that disagrees with what was
+asked - ends the request. An unreadable frame ends the connection with it (MB-S4): after one there
+is no state in which continuing on that socket is safe.
+
+### 3.6 Bounds are ours, not the device's word
+
+The frame reader takes only the bytes a frame still needs and holds at most one complete ADU, 260
+bytes. The identification walk starts at object 0 and follows Next Object Id while More Follows is
+0xFF, for a bounded number of rounds and only while the next object id increases; a walk cut short
+returns what it has, with a warning.
+
+### 3.7 A value is data
+
+Strings decoded from registers, identification objects (the private objects 0x80 to 0xFF included)
+and raw words are shown as text or hex, never rendered as markup. An object's bytes are read as
+text only when re-encoding them gives the same bytes back: Buffer's UTF-8 decoder substitutes
+U+FFFD rather than failing, so bytes that are not UTF-8 come back as a string either way and the
+only reliable question is the round trip.
+
+## 4. Connection
+
+### 4.1 Configuration fields
+
+Host and Port, and nothing else. The default port is 502 (IANA `mbap`).
+
+### 4.2 There is no credential field
+
+Modbus TCP defines no authentication: no user, no password, no token. The form offers none because
+there is none to offer. What protects a device is MODBUS/TCP Security or a network path you
+control, and the read-only hint in the connection dialog says exactly that rather than implying
+Studio's posture protects the device.
+
+### 4.3 Unit ids
+
+1 to 255. Unit 0 is a broadcast, which carries writes only and is never answered (SL 2.2), so it is
+refused. 248 to 255 are reserved on a serial line; a point naming one is accepted with a warning,
+because a gateway may still refuse it.
+
+### 4.4 TLS
+
+MODBUS/TCP Security listens on port 802. The dial path exists (`client.ts` uses `node:tls`) and the
+chain and host name are checked; revocation is NOT checked, and the connection details say so in
+those words. MEASURED on 13 October 2026: a stapled OCSP response saying revoked still completes
+the connection under Node, and under Bun it never reaches the application.
+
+## 5. Query interface
+
+One JSON read request, in the Kafka style, in three shapes. Every shape is settled before any
+socket exists.
+
+```json
+{ "read": ["voltage_l1", "frequency"] }
+{ "unit": 1, "table": "holding_register", "address": 100, "count": 10 }
+{ "identify": "regular" }
+```
+
+The schema is strict: a key the parser does not know is refused rather than ignored, because
+ignoring it runs a different read from the one that was written. A name is checked against the map,
+since a name means only what the map says it means. The protocol's bounds are not repeated in the
+parser - it calls `checkRead`, so a limit cannot pass in one file while it fails in another.
+
+### 5.1 What is not wired yet
+
+`query()` refuses rather than pretending to read: the parser, the client, the session, the planner
+and the frame reader are each in place and tested, and the step that runs a parsed request against
+a device is the next change. `getHealth()` reads the map and does not yet read the device. Both are
+named here rather than described as working, because a document that describes an intention as
+behaviour is worse than one that is silent.
+
+## 6. Object edit (#789)
+
+No kind accepts a write of any sort, and the absence is structural rather than this version's
+scope. The encoder names four read function codes and device identification; there is no code in
+the provider that can build a write, and the valve refuses one in case there ever is.
+
+There is also nothing a write would mean here. A point is not a row: it is a line in a document the
+user wrote, naming an address on a device. Editing the definition is editing the register map, which
+is a connection field, not an object. Editing the VALUE would be writing to a plant.
+
+## 7. Security
+
+The requirements are in `docs/SECURITY.md` under MB-S1 to MB-S13. The short form:
+
+- Read-only by construction, re-checked at the socket (MB-S1).
+- The shared egress rule applies, and a link-local address is refused by default (MB-S10).
+- The identification walk is bounded (MB-S6).
+- A value is data, never markup (MB-S13).
+- `mbaps` checks the chain and the host name, and not revocation, and says so.

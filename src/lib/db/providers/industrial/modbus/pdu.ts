@@ -31,18 +31,27 @@ export type BitTable = "coil" | "discrete_input";
 export type RegisterTable = "holding_register" | "input_register";
 export type Table = BitTable | RegisterTable;
 
-export const FUNCTION_CODE_OF_TABLE: Readonly<Record<Table, number>> = Object.freeze({
+/**
+ * KURAL: the type is on the LITERAL, not on the binding.
+ *
+ * Written as `const X: Record<Table, number> = Object.freeze({...})` it holds ONE direction: a
+ * missing member is an error and an EXTRA key is not, because the annotation is a binding and
+ * `Object.freeze`'s return is not a fresh literal the checker can refuse. MEASURED on this very
+ * record: a key named `fazla_anahtar` typechecked clean, while removing `coil` failed. With
+ * `satisfies` inside the call, both directions fail.
+ */
+export const FUNCTION_CODE_OF_TABLE = Object.freeze({
   coil: FC_READ_COILS,
   discrete_input: FC_READ_DISCRETE_INPUTS,
   holding_register: FC_READ_HOLDING_REGISTERS,
   input_register: FC_READ_INPUT_REGISTERS,
-});
+} satisfies Readonly<Record<Table, number>>);
 
-export const IDENTIFICATION_CODES: Readonly<Record<"basic" | "regular" | "extended", number>> = Object.freeze({
+export const IDENTIFICATION_CODES = Object.freeze({
   basic: 0x01,
   regular: 0x02,
   extended: 0x03,
-});
+} satisfies Readonly<Record<"basic" | "regular" | "extended", number>>);
 
 export class ModbusRequestError extends Error {}
 

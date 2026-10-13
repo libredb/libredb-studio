@@ -20,6 +20,9 @@ import {
   ModbusProvider,
 } from "@/lib/db/providers/industrial/modbus/index";
 import { ModbusMapError } from "@/lib/db/providers/industrial/modbus/register-map";
+import { ModbusRequestError } from "@/lib/db/providers/industrial/modbus/pdu";
+import { ModbusDecodeError } from "@/lib/db/providers/industrial/modbus/values";
+import { ModbusValveDefect } from "@/lib/db/providers/industrial/modbus/valve";
 import { QUERY_DIALECTS } from "@/lib/db/query-dialects";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
@@ -41,6 +44,58 @@ const MAP = JSON.stringify([
   { name: "volts", unitId: 1, table: "holding_register", address: 100, type: "uint16" },
   { name: "far", unitId: 10, table: "holding_register", address: 300, type: "uint16" },
 ]);
+
+/**
+ * FOUR READER ACTIONS, FOUR CLASSES, AND THE DIFFERENCE IS IN THE CLASS RATHER THAN THE SENTENCE.
+ *
+ * Before this, one of nine refusal classes was converted and the other eight fell through as plain
+ * Errors, which the API layer reports as 500 INTERNAL_ERROR. That put the user's own bad read
+ * request in the same bucket as OUR defect, and a sentence telling them apart helps a person
+ * reading prose and nothing that branches on a field.
+ *
+ * What a reader does next is the test: edit the REQUEST, edit the MAP, look at the DEVICE, or tell
+ * us. Each assertion below names one of those.
+ */
+describe("a refusal carries what the reader has to act on", () => {
+  test("a fault in the read request is a QueryError: the thing to change is the console text", () => {
+    const converted = atBoundary(new ModbusRequestError("Quantity must be a whole number from 1 to 125."));
+    expect(converted).toBeInstanceOf(QueryError);
+    expect((converted as Error).message).toContain("1 to 125");
+  });
+
+  test("a fault in the register map is a DatabaseConfigError: the thing to change is the map", () => {
+    expect(atBoundary(new ModbusMapError("the map is not valid JSON"))).toBeInstanceOf(DatabaseConfigError);
+  });
+
+  test("a decode fault is read as the map's, because every sentence it carries compares the two", () => {
+    const converted = atBoundary(new ModbusDecodeError("Type float32 needs 2 register(s) and 1 were given."));
+    expect(converted).toBeInstanceOf(DatabaseConfigError);
+    expect(converted).not.toBeInstanceOf(QueryError);
+  });
+
+  test("OUR defect is not dressed as the user's: a valve refusal rises by identity", () => {
+    // The valve fires on bytes this code built, so a 400 here would send someone to fix a document
+    // that has nothing wrong with it, and would hide the one failure that should reach us.
+    const planted = new ModbusValveDefect("Outbound function code 6 writes.");
+    expect(atBoundary(planted)).toBe(planted);
+    expect(atBoundary(planted)).not.toBeInstanceOf(QueryError);
+    expect(atBoundary(planted)).not.toBeInstanceOf(DatabaseConfigError);
+  });
+
+  test("the four are four, not two: no two of them land on one class", () => {
+    const classOf = (e: unknown) => {
+      const out = atBoundary(e);
+      if (out instanceof QueryError) return "query";
+      if (out instanceof DatabaseConfigError) return "config";
+      return "rises";
+    };
+    expect([
+      classOf(new ModbusRequestError("x")),
+      classOf(new ModbusMapError("x")),
+      classOf(new ModbusValveDefect("x")),
+    ]).toEqual(["query", "config", "rises"]);
+  });
+});
 
 describe("the dialect, and the gap it closed", () => {
   /**
@@ -88,11 +143,15 @@ describe("the tree comes from the map, with no device traffic", () => {
   test("a connection with no map lists no unit and no object", async () => {
     const p = provider();
     expect(await p.listContainers()).toEqual([]);
-    expect(await p.listObjects([], "coil")).toEqual([]);
+    // A unit path, not the empty one. The empty path is refused by the container-path guard, and
+    // the product never sends it: the route checks the shape before the provider is reached, and
+    // the tree asks for objects only under a container it has already listed. Four tests here used
+    // `[]` and the guard turned all four red at once, which is the guard doing its job.
+    expect(await p.listObjects(["1"], "coil")).toEqual([]);
   });
 
   test("counts answer unavailable with no map, never zero", async () => {
-    const counts = await provider().countObjects([]);
+    const counts = await provider().countObjects(["1"]);
     for (const kind of ["coil", "discrete_input", "input_register", "holding_register"]) {
       expect(counts[kind]).toHaveProperty("unavailable");
       expect(counts[kind]).not.toHaveProperty("count");
@@ -133,8 +192,8 @@ describe("what the provider refuses rather than fakes", () => {
   });
 
   test.each([
-    ["listObjects", (p: ReturnType<typeof provider>) => p.listObjects([], "coil")],
-    ["countObjects", (p: ReturnType<typeof provider>) => p.countObjects([])],
+    ["listObjects", (p: ReturnType<typeof provider>) => p.listObjects(["1"], "coil")],
+    ["countObjects", (p: ReturnType<typeof provider>) => p.countObjects(["1"])],
     ["listContainers", (p: ReturnType<typeof provider>) => p.listContainers()],
     ["getHealth", (p: ReturnType<typeof provider>) => p.getHealth()],
     ["getOverview", (p: ReturnType<typeof provider>) => p.getOverview()],
@@ -155,8 +214,8 @@ describe("what the provider refuses rather than fakes", () => {
       [
         () => p.connect(),
         () => p.listContainers(),
-        () => p.countObjects([]),
-        () => p.listObjects([], "coil"),
+        () => p.countObjects(["1"]),
+        () => p.listObjects(["1"], "coil"),
         () => p.getHealth(),
         () => p.getOverview(),
       ].map((call) =>

@@ -141,6 +141,7 @@ const SeedDatabaseType = z.enum([
   "rabbitmq",
   "opcua",
   "mtconnect",
+  "modbus",
 ]);
 
 export const SeedDefaultsSchema = z.object({

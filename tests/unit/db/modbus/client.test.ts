@@ -16,6 +16,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createServer, type Server } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { ModbusFramingError } from "@/lib/db/providers/industrial/modbus/framing";
+import { ModbusValveDefect } from "@/lib/db/providers/industrial/modbus/valve";
 import { DIAL_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from "@/lib/db/providers/industrial/modbus/constants";
 import {
   atSocketBoundary,
@@ -316,8 +318,14 @@ describe("the socket boundary converts by scope and keeps its hands off the rest
  * the suite. A supplied socket drives it without a race.
  */
 describe("the error event reaches the boundary too", () => {
-  function emitterSocket(): { socket: unknown; fail: (error: Error) => void; feed: (chunk: Buffer) => void } {
+  function emitterSocket(): {
+    socket: unknown;
+    fail: (error: Error) => void;
+    feed: (chunk: Buffer) => void;
+    yazilanlar: Buffer[];
+  } {
     const handlers: Record<string, ((arg: never) => void)[]> = {};
+    const yazilanlar: Buffer[] = [];
     const socket = {
       on(event: string, listener: (arg: never) => void) {
         (handlers[event] ??= []).push(listener);
@@ -329,7 +337,8 @@ describe("the error event reaches the boundary too", () => {
       setTimeout() {
         return socket;
       },
-      write() {
+      write(chunk: Buffer) {
+        yazilanlar.push(chunk);
         return true;
       },
       destroy() {
@@ -339,6 +348,7 @@ describe("the error event reaches the boundary too", () => {
     };
     return {
       socket,
+      yazilanlar,
       fail: (error: Error) => {
         for (const listener of handlers.error ?? []) (listener as (e: Error) => void)(error);
       },
@@ -389,6 +399,50 @@ describe("the error event reaches the boundary too", () => {
     fake.feed(adu(1, 1, 0x83, Buffer.from([0x02])));
     const got = await pending;
     expect(got).toEqual({ kind: "exception", code: 0x02 });
+  });
+
+  /**
+   * A frame that cannot be read is a fact about the CONNECTION. Left to rise it arrived as a plain
+   * Error, which the API layer reports as 500: our own defect. This one is the device's answer,
+   * which is the opposite thing for whoever has to act on it, and MB-S4 ends the connection with
+   * it either way.
+   */
+  /**
+   * The valve was written, tested on its own, and called by nothing, while the README said in nine
+   * languages that it re-checks every outbound byte. This test is what makes that sentence true:
+   * it asserts the refusal AND that the socket received nothing, because a guard that throws after
+   * the write would still have let the bytes out.
+   */
+  test("a write function code never reaches the socket: the valve runs before the write", () => {
+    const fake = emitterSocket();
+    const write = Buffer.alloc(12);
+    write.writeUInt16BE(1, 0);
+    write.writeUInt16BE(0, 2);
+    write.writeUInt16BE(6, 4);
+    write[6] = 1;
+    write[7] = 0x06; // Write Single Register
+    expect(() => exchangeOnce(fake.socket as never, write, { expect: EXPECT, timeoutMs: 5000 })).toThrow(
+      ModbusValveDefect,
+    );
+    expect(fake.yazilanlar).toHaveLength(0);
+  });
+
+  test("the control: an allowed read DOES reach the socket, so the test above is not vacuous", () => {
+    const fake = emitterSocket();
+    void exchangeOnce(fake.socket as never, request(), { expect: EXPECT, timeoutMs: 5000 }).catch(
+      () => undefined,
+    );
+    expect(fake.yazilanlar).toHaveLength(1);
+    expect(fake.yazilanlar[0]?.[7]).toBe(3);
+  });
+
+  test("an unreadable frame is a ConnectionError naming the endpoint, not a bare Error", () => {
+    const where = { host: "10.9.8.7", port: 502 };
+    const converted = atSocketBoundary(new ModbusFramingError("The device sent protocol id 7"), where);
+    expect(converted).toBeInstanceOf(ConnectionError);
+    expect((converted as ConnectionError).host).toBe("10.9.8.7");
+    expect((converted as ConnectionError).port).toBe(502);
+    expect((converted as Error).message).toContain("protocol id 7");
   });
 
   test("a frame that claims to answer this request and cannot is a failure, not a discard", async () => {

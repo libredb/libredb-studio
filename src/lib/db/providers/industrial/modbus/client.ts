@@ -29,9 +29,11 @@ import { connect as tlsConnect } from "node:tls";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { socketEgress } from "@/lib/db/http/egress-policy";
 import { DIAL_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from "./constants";
+import { assertOutboundAllowed } from "./valve";
 import {
   FrameReader,
   matchToRequest,
+  ModbusFramingError,
   type Exchange,
   type Expectation,
   type InboundFrame,
@@ -82,6 +84,12 @@ export function atSocketBoundary(error: unknown, endpoint: Endpoint): unknown {
   if (error instanceof DatabaseConfigError) return error;
   if (error instanceof ConnectionError) return error;
   if (error instanceof ModbusDialTimeout || error instanceof ModbusDialError)
+    return new ConnectionError(error.message, undefined, endpoint.host, endpoint.port);
+  // A frame that cannot be read is a fact about the CONNECTION, not about the request: MB-S4 says
+  // there is no state in which continuing on that socket is safe, so the connection ends with it.
+  // Left to rise it arrived as a plain Error, which reads as our own defect - and this one is the
+  // device's answer, which is the opposite thing for whoever has to act on it.
+  if (error instanceof ModbusFramingError)
     return new ConnectionError(error.message, undefined, endpoint.host, endpoint.port);
   if (error instanceof Error && typeof (error as { code?: unknown }).code === "string")
     return new ConnectionError(
@@ -238,6 +246,14 @@ export function exchangeOnce(
         reject(atSocketBoundary(new ModbusDialError("The device closed the connection before answering."), where)),
       ),
     );
+    // THE VALVE RUNS HERE, and until this line it ran nowhere.
+    //
+    // It was written, tested on its own and called by NOTHING, while the README said in nine
+    // languages that a valve re-checks every outbound byte. This is the one place every ADU
+    // passes through on its way to a device, so it is the only place the sentence can be true.
+    // A refusal here is OUR defect, not the user's, and it is raised before a single byte is
+    // written rather than after.
+    assertOutboundAllowed(adu);
     socket.write(adu);
   });
 }

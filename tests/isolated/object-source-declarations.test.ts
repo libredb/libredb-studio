@@ -256,6 +256,9 @@ const CENSUS_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   "influxdb",
   "influxdb3",
   "libredb",
+  // No kind carries a definition text: a point is a line in the user's own register map, which is a
+  // connection field rather than something the device publishes (#1723).
+  "modbus",
 ]);
 
 /** MariaDB's two extra kinds, which arrive only once the flavour has been measured. */

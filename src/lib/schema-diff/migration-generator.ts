@@ -311,6 +311,11 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     reason:
       "An MTConnect data item's shape is declared in the agent's own device model, not in columns a client can change, and every request this provider sends is a GET, so there is no column definition to change.",
   },
+  modbus: {
+    label: "Modbus",
+    reason:
+      "A Modbus register has no column definition anywhere: the device holds 16-bit words and single bits with no name, no type and no unit, and what gives them meaning is the register map the user wrote, so there is nothing a client could change here.",
+  },
 };
 
 /**
@@ -418,6 +423,9 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "opcua",
   // No table DDL to wrap either (#1722): an agent's model is the agent's own.
   "mtconnect",
+  // No table DDL to wrap either (#1723): what a register means is the device vendor's, written
+  // down in the user's map rather than in anything a client could migrate.
+  "modbus",
 ]);
 
 // These engines cannot apply a relational table diff through SQL. In particular,
@@ -451,6 +459,9 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "opcua",
   // One container level of devices and no schema, so no table DDL to decline (#1722).
   "mtconnect",
+  // One container level of unit ids and no schema; a register has no definition to alter, and the
+  // provider has no code that could write one (#1723).
+  "modbus",
 ]);
 
 // IndexDiff carries column names/uniqueness, not ClickHouse's index expression,

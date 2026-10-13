@@ -237,11 +237,12 @@ describe("the fleet census of object column declarations", () => {
     expect(CENSUS_TYPES).toHaveLength(38);
     expect(Object.keys(EXPECTED_COLUMN_KINDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // A row naming nothing would make its type-id's census pass on the empty set, so the design's
-    // table has three such rows, and they are named here: every engine but Oxia, S3 and Kubernetes has at least one
+    // table has three such rows, and they are named here: every engine but Oxia, S3, Kubernetes, MQTT, OPC UA and Modbus has at least one
     // kind with columns; Oxia's shard and key and S3's bucket and object declare none (consistency ruling 24), and
-    // every Kubernetes kind opens its YAML instead.
+    // every Kubernetes kind opens its YAML instead. A Modbus point is one value rather than a
+    // shape the tree can show beneath it (#1723).
     const empty = CENSUS_TYPES.filter((type) => EXPECTED_COLUMN_KINDS[type].length === 0);
-    expect(empty).toEqual(["oxia", "s3", "kubernetes", "mqtt", "opcua"]);
+    expect(empty).toEqual(["oxia", "s3", "kubernetes", "mqtt", "opcua", "modbus"]);
   });
 
   test("every kind id the expectation names is a kind its provider actually declares", async () => {

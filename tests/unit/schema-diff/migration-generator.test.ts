@@ -1626,6 +1626,7 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "rabbitmq",
           "opcua",
           "mtconnect",
+          "modbus",
         ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
@@ -1747,6 +1748,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "rabbitmq",
             "opcua",
             "mtconnect",
+            "modbus",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);
