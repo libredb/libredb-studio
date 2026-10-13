@@ -62,9 +62,11 @@ export const MTCONNECT_CONTAINER_LEVEL = Object.freeze({
  * So a kind is listed from the tree OR from the Keys panel, never from both. All three kinds below
  * are listed from the tree, and none declares `enumeratedBy`.
  *
- * The reason is measured rather than stylistic. The six providers that declare `keyScan` (Redis,
- * etcd, Oxia, MQTT, Firestore, S3) all have a keyspace with no bound, where a tree folder cannot
- * list what a connection holds. MTConnect's counts are bounded by the device model: MEASURED on the
+ * The reason is measured rather than stylistic. Every provider that declares `keyScan` has a
+ * keyspace with no bound, where a tree folder cannot list what a connection holds. It was SIX when
+ * this was written and naming them froze the sentence: OPC UA landed afterwards, declared one, and
+ * left the count behind. `capabilities.test.ts` counts the declarations from the built providers
+ * instead, so the claim is measured on the day it is read rather than on the day it was typed. MTConnect's counts are bounded by the device model: MEASURED on the
  * Institute's demo, the three devices hold 20, 104 and 120 data items, and the issue's own 42 device
  * fixture holds at most 123 in one device. A folder lists a hundred rows without paging, so the
  * panel's paging buys nothing here.

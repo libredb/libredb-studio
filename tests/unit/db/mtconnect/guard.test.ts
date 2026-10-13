@@ -67,6 +67,26 @@ describe("the route table", () => {
     expect(MTC_ROUTES_LEFT_OUT.every((entry) => entry.why.length > 40)).toBe(true);
   });
 
+  /**
+   * The sentence beside the table, against the table (KURAL 109 in source).
+   *
+   * MEASURED: the docblock said "The five routes" while the table held seven, and the same file's
+   * header said seven eight lines above it - `/assets/{assetIds}` and `/swagger` had been added
+   * and the sentence had not. A numeral in a comment is a claim like any other, and the test above
+   * could not see it: it holds the entries by NAME, which is exactly what stayed right.
+   */
+  test("the docblock's numeral is the table's own length", () => {
+    const source = readFileSync(
+      join(import.meta.dir, "../../../../src/lib/db/providers/industrial/mtconnect/routes.ts"),
+      "utf8",
+    );
+    const words = new Map([
+      ["four", 4], ["five", 5], ["six", 6], ["seven", 7], ["eight", 8], ["nine", 9], ["ten", 10],
+    ]);
+    const said = /\* The (\w+) routes this table leaves out/.exec(source)?.[1] ?? "";
+    expect({ said, value: words.get(said) }).toEqual({ said, value: MTC_ROUTES_LEFT_OUT.length });
+  });
+
   test("the asset by id route takes the ids and nothing else, as Swagger says", () => {
     // The issue groups `assets` and `asset` under one parameter list. The agent does not.
     for (const route of MTC_ROUTES.filter((candidate) => candidate.op === "asset")) {

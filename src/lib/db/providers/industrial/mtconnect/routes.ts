@@ -163,8 +163,13 @@ export const MTC_ROUTES: readonly MtcRoute[] = Object.freeze([
 ]);
 
 /**
- * The five routes the agent publishes and this table leaves out, with the reason, so that a reader
- * of the table can tell a decision from an oversight.
+ * The seven routes this table leaves out, with the reason, so that a reader of the table can tell a
+ * decision from an oversight.
+ *
+ * The numeral was FIVE here while the table held seven, and the same file's own header said seven
+ * eight lines up: `/assets/{assetIds}` and `/swagger` were added to the table and the sentence
+ * beside it was not. `guard.test.ts` holds the entries by name AND holds this sentence's numeral
+ * against the table's length, so the two cannot part again.
  */
 export const MTC_ROUTES_LEFT_OUT: readonly { readonly route: string; readonly why: string }[] = Object.freeze([
   Object.freeze({

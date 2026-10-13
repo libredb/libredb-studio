@@ -15,6 +15,9 @@ import { describe, expect, test } from "bun:test";
 import { resolveTabType } from "@/lib/editor/tab-language";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import {
   MTCONNECT_ABSENT_SURFACES,
   MTCONNECT_DEFAULT_PORT,
@@ -170,5 +173,32 @@ describe("the declaration is a closed set", () => {
     expect(new Set(values.map((value) => typeof value)).size).toBeGreaterThan(1);
     expect(values.filter((value) => value === false).length).toBeGreaterThan(1);
     expect(values.filter((value) => value === true).length).toBe(1);
+  });
+});
+
+/**
+ * THE CLAIM THIS PROVIDER MAKES ABOUT ITS NEIGHBOURS (KURAL 109, in source).
+ *
+ * `capabilities.ts` argues that MTConnect declares no `keyScan` because every provider that does
+ * has an UNBOUNDED keyspace, while a device model bounds this one. The argument is sound and the
+ * sentence that carried it went stale anyway: it named six providers, OPC UA landed afterwards and
+ * declared one, and nothing could see it - a numeral about OTHER providers is not held by any test
+ * of theirs, and this provider's own suite never looked outside itself.
+ *
+ * So the census is taken from the built providers rather than written down. It is also the shape
+ * that keeps working while four sibling providers are in flight: whichever of them declares a
+ * key-space walk, this test counts it on the day it is read.
+ */
+describe("the key-space walk is declared by the providers with an unbounded keyspace", () => {
+  test("MTConnect declares none, and the providers that do are counted from the real declarations", async () => {
+    const declaring: string[] = [];
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
+      if (provider.getCapabilities().keyScan !== undefined) declaring.push(type);
+    }
+    // Named rather than counted: a count alone would hold while one engine replaced another, and
+    // the sentence in `capabilities.ts` is an argument about WHICH keyspaces are unbounded.
+    expect(declaring.sort()).toEqual(["etcd", "firestore", "mqtt", "opcua", "oxia", "redis", "s3"]);
+    expect(declaring).not.toContain("mtconnect");
   });
 });
