@@ -123,6 +123,11 @@ describe("the capture scenarios", () => {
       expect(sqlOf(`monitoring-started${suffix}`)?.[3]).toContain("QUERY_HISTORY_BY_WAREHOUSE");
     }
   });
+
+  test("only the suspended panels wait for SHOW WAREHOUSES to report the warehouse suspended", () => {
+    const waiting = SNOWFLAKE_EVIDENCE_SCENARIOS.filter((entry) => entry.suspended === true).map((entry) => entry.name);
+    expect(waiting).toEqual(["monitoring-suspended", "monitoring-suspended-without-monitor"]);
+  });
 });
 
 describe("scenarioStop", () => {

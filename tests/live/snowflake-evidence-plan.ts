@@ -68,7 +68,10 @@ export const SNOWFLAKE_EVIDENCE_SCHEMA = "PROBE";
 
 /** M12: seconds after token A's iat at which it is sent again; 960 is past `exp`, to record the expiry code. */
 export const SNOWFLAKE_TOKEN_REUSE_OFFSETS_S = [10, 300, 540, 840, 960] as const;
-/** How long a cold item waits for the warehouse to suspend: `AUTO_SUSPEND` 60 s, the 30 s poll, and a margin. */
+/**
+ * How long a cold item or a suspended scenario waits for the warehouse to suspend: `AUTO_SUSPEND` 60 s, the 30 s
+ * poll, and a margin.
+ */
 export const SNOWFLAKE_SUSPEND_WAIT_MS = 300_000;
 /** How often the harness reads the warehouse's state while it waits. */
 export const SNOWFLAKE_SUSPEND_POLL_MS = 15_000;
@@ -595,6 +598,11 @@ export interface EvidenceScenario {
   readonly freshKey?: true;
   /** Captured by hand: the harness prints this and skips the scenario. */
   readonly operator?: string;
+  /**
+   * Starts only once `SHOW WAREHOUSES` reports the warehouse `SUSPENDED`, polled every `SNOWFLAKE_SUSPEND_POLL_MS`
+   * for at most `SNOWFLAKE_SUSPEND_WAIT_MS`; the harness fails the scenario by name if it never does.
+   */
+  readonly suspended?: true;
 }
 
 const tag = (kind: string): string => `libredb-studio:${kind}`;
@@ -738,7 +746,7 @@ export const SNOWFLAKE_EVIDENCE_SCENARIOS: readonly EvidenceScenario[] = [
           ),
         ],
       },
-      { name: `monitoring-suspended${suffix}`, principal, statements: [...CONNECTED, state] },
+      { name: `monitoring-suspended${suffix}`, principal, suspended: true, statements: [...CONNECTED, state] },
     ];
   }),
   {

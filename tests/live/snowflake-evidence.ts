@@ -354,7 +354,8 @@ async function warehouseState(): Promise<string> {
   return row?.[columns.indexOf("state")] ?? "ABSENT";
 }
 
-async function awaitSuspended(): Promise<string> {
+/** Waits, within the bound, until `SHOW WAREHOUSES` reports the warehouse suspended; fails naming `waiter`. */
+async function awaitSuspended(waiter: string): Promise<string> {
   const deadline = Date.now() + SNOWFLAKE_SUSPEND_WAIT_MS;
   let state = await warehouseState();
   while (state !== "SUSPENDED" && Date.now() < deadline) {
@@ -364,7 +365,11 @@ async function awaitSuspended(): Promise<string> {
     // oxlint-disable-next-line no-await-in-loop -- see above.
     state = await warehouseState();
   }
-  if (state !== "SUSPENDED") throw new Error(`${SNOWFLAKE_EVIDENCE_WAREHOUSE} did not suspend in time (${state})`);
+  if (state !== "SUSPENDED") {
+    throw new Error(
+      `${waiter}: ${SNOWFLAKE_EVIDENCE_WAREHOUSE} did not report SUSPENDED within ${SNOWFLAKE_SUSPEND_WAIT_MS / 1000} s (${state})`,
+    );
+  }
   return state;
 }
 
@@ -416,7 +421,7 @@ async function runItem(item: EvidenceItem): Promise<Record<string, unknown>> {
     asks: item.asks,
     rowsSummarised: SNOWFLAKE_ROWS_SUMMARISED,
   };
-  if (item.cold) record.coldStart = await awaitSuspended();
+  if (item.cold) record.coldStart = await awaitSuspended(item.id);
   if (item.warehouseSensitive) record.stateBefore = await warehouseState();
   const context: Context = { role: item.role ?? ROLES[item.principal], warehouse: item.warehouse !== false };
   const statement = { tag: "libredb-studio:evidence", timeout: item.timeout ?? 60, context };
@@ -500,7 +505,7 @@ async function runItem(item: EvidenceItem): Promise<Record<string, unknown>> {
         if (item.special === "poll-timing") notes.push({ statement: sql, polls: run.polls });
         if (item.special === "status-after-suspend" && run.handle !== null) {
           // oxlint-disable-next-line no-await-in-loop -- the second read waits for the suspension.
-          await awaitSuspended();
+          await awaitSuspended(item.id);
           // oxlint-disable-next-line no-await-in-loop -- see above.
           await send(exchanges, bearer, "GET", `${STATEMENTS}/${run.handle}`);
           // oxlint-disable-next-line no-await-in-loop -- see above.
@@ -516,6 +521,8 @@ async function runItem(item: EvidenceItem): Promise<Record<string, unknown>> {
 
 async function runScenario(scenario: EvidenceScenario): Promise<Record<string, unknown>> {
   const exchanges: SnowflakeRawExchange[] = [];
+  // A suspended panel read on a running warehouse would record the started state under the suspended name.
+  if (scenario.suspended === true) await awaitSuspended(scenario.name);
   const role = scenario.role ?? ROLES[scenario.principal];
   const warehouse = scenario.warehouse !== false;
   const bearer = await bearerFor(scenario.principal, scenario.freshKey === true);
