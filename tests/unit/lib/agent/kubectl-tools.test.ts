@@ -7,6 +7,7 @@ import {
   AGENT_TOOL_DEFINITIONS,
   type AgentToolContext,
   agentToolDefinition,
+  presentAnswerTool,
   runReadQueryTool,
   selectAgentTools,
 } from "@/lib/agent/tools";
@@ -19,6 +20,7 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
 import { AGENT_PAGING_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
 import type { DatabaseProvider } from "@/lib/db/types";
+import type { AgentRunEvent } from "@/lib/agent/types";
 import type { QueryResult } from "@/lib/types";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
 
@@ -166,5 +168,90 @@ describe("the kubectl adapter's server half on run_read_query", () => {
     expect(again).toMatchObject({ kind: "unavailable", reasonCode: "STATEMENT_ALREADY_FAILED" });
     const other = await runReadQueryTool(h.context, { statement: "get pods -n web" });
     expect(other).toMatchObject({ kind: "refused" });
+  });
+});
+
+describe("present_answer on a kubectl data-analysis run", () => {
+  /** A kubectl grid as the provider answers it: every cell is text, quantities included. */
+  const GRID: QueryResult = {
+    rows: [
+      { NAME: "web-1", STATUS: "250m" },
+      { NAME: "web-2", STATUS: "500m" },
+    ],
+    fields: ["NAME", "STATUS"],
+    rowCount: 2,
+    executionTime: 3,
+  };
+
+  function analysis() {
+    const queryReadOnly = mock(async (): Promise<QueryResult> => GRID);
+    return harness({
+      workflowType: "data-analysis",
+      acquireProvider: mock(async () => ({ queryReadOnly }) as unknown as DatabaseProvider),
+    });
+  }
+
+  /** A read this run took, with the drafted statement its step carries. */
+  async function readWithLedger(context: AgentToolContext) {
+    const outcome = await runReadQueryTool(context, { statement: "get pods -n shop" });
+    if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
+    const events: AgentRunEvent[] = [
+      { kind: "statement-drafted", atMs: 1, stepId: "step_1", sql: "get pods -n shop", rationale: "r" },
+      { kind: "tool-completed", atMs: 2, stepId: "step_1", artifact: outcome.artifact },
+    ];
+    return { artifact: outcome.artifact, events };
+  }
+
+  test("a kubectl data-analysis run is offered run_read_query, present_answer and compose_report", () => {
+    const offered = selectAgentTools({ mode: "agent", workflowType: "data-analysis", statementLanguage: "kubectl" });
+    expect(offered.map((tool) => tool.name)).toEqual(["run_read_query", "present_answer", "compose_report"]);
+  });
+
+  test("a completed kubectl.query.read whose step drafted a statement is presented as a table", async () => {
+    const h = analysis();
+    const { artifact, events } = await readWithLedger(h.context);
+    expect(artifact.operationId).toBe("kubectl.query.read");
+
+    const answer = presentAnswerTool(
+      h.context,
+      { runId: h.context.runId, events, autoExecute: false },
+      { artifact: artifact.correlationId, presentation: { kind: "table" } },
+    );
+
+    if (answer.kind !== "answered") throw new Error(`expected an answer, got ${answer.kind}`);
+    expect(answer.answer.presentation).toEqual({ kind: "table" });
+    expect(answer.answer.sql).toBe("get pods -n shop");
+    expect(answer.answer.handover).toBe("none");
+  });
+
+  test("a chart over a kubectl text grid is refused with the chart-column refusal", async () => {
+    const h = analysis();
+    const { artifact, events } = await readWithLedger(h.context);
+
+    const answer = presentAnswerTool(
+      h.context,
+      { runId: h.context.runId, events, autoExecute: false },
+      {
+        artifact: artifact.correlationId,
+        presentation: { kind: "chart", spec: { type: "bar", x: "NAME", y: ["STATUS"], caption: "CPU by pod" } },
+      },
+    );
+
+    expect(answer).toMatchObject({ kind: "unavailable", reasonCode: "CHART_COLUMN_NOT_NUMERIC" });
+  });
+
+  test("a cluster.usage.read artifact is not a data read, so it cannot be the answer", async () => {
+    const h = analysis();
+    const { artifact } = await readWithLedger(h.context);
+    const usage = { ...artifact, correlationId: "usage-1", operationId: "cluster.usage.read" };
+    const events: AgentRunEvent[] = [{ kind: "tool-completed", atMs: 2, stepId: "step_9", artifact: usage }];
+
+    const answer = presentAnswerTool(
+      h.context,
+      { runId: h.context.runId, events, autoExecute: false },
+      { artifact: "usage-1", presentation: { kind: "table" } },
+    );
+
+    expect(answer).toMatchObject({ kind: "unavailable", reasonCode: "ANSWER_NOT_A_DATA_READ" });
   });
 });

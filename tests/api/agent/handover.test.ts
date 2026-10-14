@@ -265,6 +265,38 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
     expect(mockAcquire).not.toHaveBeenCalled();
   });
 
+  test("a Kubernetes run's answer, recorded with no hand-over, is never replayed on the cluster", async () => {
+    // Every kubectl variant refuses auto-execute, so its answer is recorded `none`. The route must
+    // refuse it on that record alone, before it resolves the cluster or reaches its read path.
+    mockResolveConnection.mockResolvedValue({ id: "seed:cluster", name: "Cluster", type: "kubernetes" });
+    try {
+      runs.set("arun_1", {
+        ...fakeRun([
+          answerEvent({
+            sql: "get pods -n shop",
+            handover: "none",
+            artifact: {
+              correlationId: "corr-answer",
+              runId: "arun_1",
+              operationId: "kubectl.query.read",
+              summary: { rowCount: 2, columnNames: ["NAME", "STATUS"], elapsedMs: 4 },
+            },
+          }),
+        ]),
+        autoExecute: false,
+        connectionId: "seed:cluster",
+      });
+
+      const res = await POST(request(), params());
+
+      expect(res.status).toBe(409);
+      expect(mockQueryReadOnly).not.toHaveBeenCalled();
+      expect(mockAcquire).not.toHaveBeenCalled();
+    } finally {
+      mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+    }
+  });
+
   test("a run that composed no answer has nothing to replay", async () => {
     runs.set("arun_1", fakeRun([]));
 

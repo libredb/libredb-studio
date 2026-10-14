@@ -11,7 +11,8 @@ import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untr
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
-import type { AgentRunEvent } from "@/lib/agent/types";
+import { AGENT_ANSWER_CONTRACT } from "@/lib/agent/tools";
+import type { AgentRunEvent, AgentRunWorkflowType } from "@/lib/agent/types";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
@@ -167,9 +168,14 @@ describe("the statement a plan run drafted", () => {
  * container listing the cluster refuses, so the capture is unavailable.
  */
 async function kubectlInvestigationOpening(
-  options: { readonly unreadable?: boolean; readonly pods?: number } = {},
+  options: {
+    readonly unreadable?: boolean;
+    readonly pods?: number;
+    readonly workflowType?: AgentRunWorkflowType;
+    readonly autoExecute?: boolean;
+  } = {},
 ): Promise<{ system: string; opening: string }> {
-  const { unreadable = false, pods = 1 } = options;
+  const { unreadable = false, pods = 1, workflowType = "investigation", autoExecute = false } = options;
   const podNames = Array.from({ length: pods }, (_, index) => `web-${String(index).padStart(4, "0")}-checkout-api`);
   forgetHeldSnapshots();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-kubectl-investigation-"));
@@ -192,7 +198,8 @@ async function kubectlInvestigationOpening(
   const service = new AgentRunService({ store, resources: { tracker, artifacts } });
   const run = await service.start({
     mode: "agent",
-    workflowType: "investigation",
+    workflowType,
+    autoExecute,
     statementLanguage: "kubectl",
     actor: { sessionId: "sess_1", role: "user" },
     connectionId: connection.id,
@@ -265,6 +272,28 @@ describe("an agent-mode kubectl investigation", () => {
     expect(system).toContain("Narrow every read to what the question needs with -n, -l or --field-selector");
     expect(system).toContain("Your objective is a question about this Kubernetes cluster.");
     expect(system).not.toContain("inspect_schema");
+  });
+});
+
+describe("an agent-mode kubectl data analysis", () => {
+  test("its system prompt carries the kubectl data-analysis rules and objective", async () => {
+    const { system } = await kubectlInvestigationOpening({ workflowType: "data-analysis" });
+
+    expect(system).toContain(
+      "Answer from what you have READ with run_read_query: only a result you ran can be the answer.",
+    );
+    expect(system).toContain("A kubectl grid is text, so present it as a table");
+    expect(system).toContain(AGENT_ANSWER_CONTRACT);
+    expect(system).toContain("Your objective is a question about this cluster's objects.");
+    expect(system).not.toContain("profile_table");
+  });
+
+  test("a record carrying auto-execute is still not told it is on, because no kubectl variant hands over", async () => {
+    // The route refuses this run, so the record is written straight to the store: the prompt must not promise a
+    // hand-over the variant cannot perform even when a ledger says the setting was asked for.
+    const { system } = await kubectlInvestigationOpening({ workflowType: "data-analysis", autoExecute: true });
+
+    expect(system).not.toContain("AUTO-EXECUTE IS ON");
   });
 });
 

@@ -301,6 +301,24 @@ export const AGENT_WORKFLOW_VARIANTS: Readonly<
       verifier: "agent-investigation.1",
     }),
     operations: OPERATIONS_VARIANT,
+    /**
+     * A read presented as the answer, the SQL analysis without its profile: a cluster has no table to count.
+     *
+     * It is judged by the SQL analysis verdict, so `present_answer` is kept on a narrowed run for the same reason. It
+     * never auto-executes: the hand-over replays the answer's statement in the user's editor, and a kubectl answer is
+     * never run on the editor's terms.
+     */
+    "data-analysis": Object.freeze({
+      tools: Object.freeze<AgentToolName[]>(["run_read_query", "present_answer", "compose_report"]),
+      narrowedExtras: Object.freeze<AgentToolName[]>(["present_answer"]),
+      classifierDescription: "a question about the cluster whose answer is a result the user wants to see",
+      objective:
+        "Your objective is a question about this cluster's objects. Establish the answer from what you read and produce something to show for it.",
+      planDeliverable: "inherits",
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>([]),
+      verifier: "agent-data-analysis.1",
+    }),
   }),
 } satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>>>);
 

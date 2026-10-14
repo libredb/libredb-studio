@@ -124,7 +124,7 @@ describe("the SQL variants", () => {
   });
 
   // Each kubectl variant task removes its own workflow from this list.
-  test.each(["query-optimization", "database-assessment", "data-analysis"] as const)(
+  test.each(["query-optimization", "database-assessment"] as const)(
     "a missing kubectl %s variant is an explicit error",
     (workflow) => {
       expect(agentVariant("kubectl", workflow)).toBeUndefined();
@@ -170,6 +170,22 @@ describe("the SQL variants", () => {
     });
     expect(Object.isFrozen(requiredVariant("kubectl", "investigation").tools)).toBe(true);
     expect(planDeliverableOf("kubectl", "investigation")).toEqual(planDeliverableOf("sql", "investigation"));
+  });
+
+  test("the kubectl data analysis presents a read and never auto-executes it", () => {
+    expect(requiredVariant("kubectl", "data-analysis")).toEqual({
+      tools: ["run_read_query", "present_answer", "compose_report"],
+      narrowedExtras: ["present_answer"],
+      classifierDescription: "a question about the cluster whose answer is a result the user wants to see",
+      objective:
+        "Your objective is a question about this cluster's objects. Establish the answer from what you read and produce something to show for it.",
+      planDeliverable: "inherits",
+      canAutoExecute: false,
+      requires: [],
+      verifier: "agent-data-analysis.1",
+    });
+    expect(Object.isFrozen(requiredVariant("kubectl", "data-analysis").tools)).toBe(true);
+    expect(planDeliverableOf("kubectl", "data-analysis")).toEqual(planDeliverableOf("sql", "data-analysis"));
   });
 
   test("a workflow naming an inherited property is a missing variant, not a function", () => {
@@ -220,7 +236,7 @@ describe("workflowAvailability", () => {
   );
 
   // Each kubectl variant's task removes its own workflow from this list as it adds the variant.
-  const kubectlWorkflowsWithoutVariant = ["query-optimization", "database-assessment", "data-analysis"] as const;
+  const kubectlWorkflowsWithoutVariant = ["query-optimization", "database-assessment"] as const;
 
   test("kubernetes speaks kubectl: operations and planning open, a workflow with no kubectl variant is refused", () => {
     expect(AGENT_STATEMENT_LANGUAGE.kubernetes).toBe("kubectl");

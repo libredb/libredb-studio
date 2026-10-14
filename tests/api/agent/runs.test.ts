@@ -758,6 +758,36 @@ describe("POST /api/agent/runs", () => {
     });
   });
 
+  test("auto-execute is refused on a Kubernetes data-analysis run, whose answer is never run in the editor", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:cluster", name: "Cluster", type: "kubernetes" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "data-analysis", autoExecute: true }));
+    const body = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe(
+      "autoExecute is not offered for this workflow on this engine: its answer is never run in the editor.",
+    );
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(mockDriveAgentRun).not.toHaveBeenCalled();
+  });
+
+  test("the same Kubernetes data-analysis run without auto-execute opens under the kubectl variant", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:cluster", name: "Cluster", type: "kubernetes" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "data-analysis" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls[0]?.[0]).toMatchObject({ workflowType: "data-analysis", statementLanguage: "kubectl" });
+  });
+
+  test("a Postgres data-analysis run with auto-execute still opens", async () => {
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "data-analysis", autoExecute: true }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart).toHaveBeenCalledTimes(1);
+  });
+
   test.each(["no-variant", "requirement-unmet"] as const)(
     "a %s refusal answers its own sentence under the engine marker, before a run or a model call",
     async (cause) => {

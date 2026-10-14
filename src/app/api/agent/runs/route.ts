@@ -380,6 +380,15 @@ export async function POST(req: Request) {
         "engine-unsupported",
       );
     }
+    // The hand-over replays the answer's statement in the user's editor; a variant that cannot auto-execute (every
+    // kubectl variant: a kubectl answer is never run on the editor's terms) refuses the setting rather than persisting
+    // a run that would promise it. The workflow check above answers before the connection is resolved; this one is
+    // the engine's, read from the same variant the rail and the system prompt read.
+    if (autoExecute === true && availability.variant?.canAutoExecute !== true) {
+      return badRequest(
+        "autoExecute is not offered for this workflow on this engine: its answer is never run in the editor.",
+      );
+    }
 
     /*
       ON A SERVER-LEVEL CONNECTION A RUN READS ONE DATABASE (#1530), named in `catalog` and

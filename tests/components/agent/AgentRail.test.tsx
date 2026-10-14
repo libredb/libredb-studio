@@ -4009,6 +4009,19 @@ describe("AgentRail", () => {
         expect(startBodyOf(fetchMock).autoExecute).toBe(false);
       });
 
+      test("a Kubernetes data-analysis run reaches no consent step: its variant cannot auto-execute", async () => {
+        const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+        const view = analyze({ connectionType: "kubernetes" });
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "pods by status" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        expect(view.queryByTestId("agent-consent")).toBeNull();
+        expect(view.queryByTestId("agent-auto-execute")).toBeNull();
+        expect(startBodyOf(fetchMock).autoExecute).toBe(false);
+      });
+
       test.each([undefined, null, "postgres"])("a connection type of %p is offered it", async (connectionType) => {
         mockAgentFetch([OPENED_LINE, STARTED_LINE]);
         const view = analyze({ connectionType });

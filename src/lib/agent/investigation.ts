@@ -1682,6 +1682,15 @@ const WORKFLOW_TOOL_RULES: Readonly<
       "Report what the evidence supports, and nothing further.",
     ].join(" "),
     operations: SQL_WORKFLOW_TOOL_RULES.operations,
+    // The SQL analysis rules less the profile, which a cluster has no table for, and with the chart rule said up
+    // front: every cell of a kubectl grid is text, so a chart is refused as not numeric and a table is the answer.
+    "data-analysis": [
+      "Answer from what you have READ with run_read_query: only a result you ran can be the answer.",
+      "When you have it, call present_answer with the artifact id of the read that IS the answer. A kubectl grid is text, so present it as a table: a chart needs numeric columns, which kubectl grids do not have.",
+      AGENT_ANSWER_CONTRACT,
+      "Then call compose_report. The presentation shows the result; the claims are what say what it means.",
+      "At least one of those claims must cite the artifact you presented: a report about other evidence entirely is prose beside a picture, and the run is scored as not having answered.",
+    ].join(" "),
   }),
 } satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
 
@@ -1764,10 +1773,13 @@ function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, engi
   // about — it would be told to call `inspect_plan` "on the statement that IS the
   // answer before you present it" and then have no tool with which to present one.
   // The third check is the #350/#356 rule: never state a rule to a model whose tool
-  // set cannot satisfy it. `AGENT_WORKFLOW_PRESENTS_ANSWER` is the same record the
-  // rail and the route read, so the setting cannot be offered where it is unsaid.
+  // set cannot satisfy it. The variant's `canAutoExecute` is what the rail and the
+  // route read too, so the setting cannot be offered where it is unsaid; on SQL it
+  // equals `AGENT_WORKFLOW_PRESENTS_ANSWER`, and no kubectl variant hands over.
   const canHandOver =
-    record.mode === "agent" && record.autoExecute && AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType];
+    record.mode === "agent" &&
+    record.autoExecute &&
+    requiredVariant(record.statementLanguage, record.workflowType).canAutoExecute;
   const handover = canHandOver ? ` ${AUTO_EXECUTE_RULE}` : "";
   // An agent-mode run without its variant is an error; a plan reads `planObjectiveOf`,
   // which never is, because planning is never gated by a language.
