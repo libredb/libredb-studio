@@ -3813,9 +3813,10 @@ export async function runInvestigation(
           turns < maxTurns &&
           resources.deadline.remainingMs() > 0 &&
           // The sentence NAMES `inspect_schema` AND `inspect_plan`, so it may only reach a run
-          // that holds BOTH. Every SQL variant's `tools` but one starts with the read-class four today, which makes the two
-          // checks equivalent - and that equivalence is the thing a future set would break
-          // silently, so it is asserted rather than relied on.
+          // that holds BOTH. Every variant's `tools` but the operations one starts with the
+          // read-class four today, which makes the two checks equivalent - and that
+          // equivalence is the thing a future set would break silently, so it is asserted
+          // rather than relied on.
           // `operations` is the one agent set built on a different four, because the
           // read-class tools need `queryReadOnly`, which only the engines
           // `AGENT_EXECUTION_ENGINES` (`src/lib/agent/engine-support.ts`) names implement -

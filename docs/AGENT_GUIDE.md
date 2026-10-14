@@ -350,10 +350,8 @@ results (`verifyInvestigationGoal`, `src/lib/agent/goal-verifier.ts:349-355`).
 
 ### Optimize
 
-For a statement that is too slow. The model is told that what matters is *how the engine reaches its
-rows* (`investigation.ts:1467-1468`), and it is offered two further tools: `compare_plans`, which
-takes the ids of two plans the run already inspected, and `recommend_change`, which records one
-index or rewrite (`tools.ts:870,876`).
+For a statement that is too slow.
+The model is told that what matters is *how the engine reaches its rows* (the query-optimization variant's `objective` in `AGENT_WORKFLOW_VARIANTS`, `src/lib/agent/agent-manifest.ts`), and it is offered two further tools: `compare_plans`, which takes the ids of two plans the run already inspected, and `recommend_change`, which records one index or rewrite (the same variant's `tools`).
 
 Two things this workflow will not do, and it says so rather than implying otherwise:
 
@@ -373,9 +371,8 @@ to already exist — the recommendation citing the plan it diagnosed (`verifyQue
 
 ### Assess
 
-For the state of the data itself — where it is incomplete, inconsistent or surprising
-(`investigation.ts:1469-1470`). It adds one tool, `profile_table`, and the rule that matters is worth
-reading before you point it at a table of personal data:
+For the state of the data itself: where it is incomplete, inconsistent or surprising (the database-assessment variant's `objective` in `AGENT_WORKFLOW_VARIANTS`, `src/lib/agent/agent-manifest.ts`).
+It adds one tool, `profile_table` (the same variant's `tools`), and the rule that matters is worth reading before you point it at a table of personal data:
 
 **A profile records counts, never values.** Row counts, present counts, distinct counts, and how
 many values match a shape — computed inside the database with `count(CASE WHEN <predicate> …)`, so no
