@@ -52,8 +52,10 @@ describe("the tool descriptions", () => {
   });
 
   test("an execution engine MCP is not offered on is not named", () => {
-    for (const type of AGENT_EXECUTION_ENGINES.filter((candidate) => !MCP_EXPOSABLE[candidate]))
-      expect(RUN_READ_QUERY_ENGINES).not.toContain(getDBConfig(type).label);
+    const withheld = AGENT_EXECUTION_ENGINES.filter((candidate) => !MCP_EXPOSABLE[candidate]);
+    // Not vacuous: Kubernetes executes for the agent and is not offered to MCP.
+    expect(withheld).toEqual(["kubernetes"]);
+    for (const type of withheld) expect(RUN_READ_QUERY_ENGINES).not.toContain(getDBConfig(type).label);
   });
 
   test("inspect_schema and list_connections say they work on every engine", () => {

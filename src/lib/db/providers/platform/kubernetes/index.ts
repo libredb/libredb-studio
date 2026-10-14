@@ -9,8 +9,9 @@
  * failure sentence `errors.ts`. What stays here is the session's lifecycle, the declarations and the one call shape
  * every module reads through.
  *
- * Read-only whatever `readOnly` says: no request path writes, and no maintenance is offered. No `queryReadOnly`, so
- * no agent statement execution and no MCP read. The clock, the randomness and the transport factory are seams.
+ * Read-only whatever `readOnly` says: no request path writes, and no maintenance is offered. `queryReadOnly` serves
+ * the agent under the read-only profile (`machine-read.ts`, `machine-redaction.ts`); MCP is not offered
+ * (`MCP_EXPOSABLE.kubernetes`). The clock, the randomness and the transport factory are seams.
  *
  * The console is `console/`: `query()` runs one statement through `console/run.ts` under the run registry, so a
  * cancel stops it, and `prepareQuery` pages only the list form of a single-type get (`console/paging.ts`).
@@ -33,10 +34,13 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
+  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryPrepareOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
@@ -54,6 +58,7 @@ import { DiscoveryCache, readDiscovery, requireSupportedServer } from "./discove
 import { CLUSTER_CONTAINER, KUBERNETES_OBJECT_KINDS, KUBERNETES_ROW_ACTIONS } from "./kinds";
 import { KUBERNETES_LABELS } from "./labels";
 import { KUBERNETES_DEFAULT_PORT, KUBERNETES_TYPE } from "./limits";
+import { readKubectlForMachine } from "./machine-read";
 import { kubernetesHealth, kubernetesOverview } from "./monitoring";
 import {
   countKubernetesObjects,
@@ -100,15 +105,23 @@ export class KubernetesProvider extends BaseDatabaseProvider {
   private warnings: QueryWarning[] = [];
   private readonly seams: KubernetesSeams;
   private readonly runs: RunRegistry = createRunRegistry();
+  /** Whether this provider was opened under the agent read-only profile; only then does `queryReadOnly` answer. */
+  private readonly readOnlyProfile: boolean;
 
   /**
    * Validates nothing and opens nothing: the connection rules run in `connect()`, so a provider built only for its
-   * declarations (the factory's census, `POST /api/db/provider-meta`) touches no socket. No execution context is
-   * taken: the provider is read-only whatever a profile asks, as Neo4j's is.
+   * declarations (the factory's census, `POST /api/db/provider-meta`) touches no socket. The execution context is
+   * kept for `queryReadOnly` alone: every other path is read-only whatever a profile asks.
    */
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, seams: Partial<KubernetesSeams> = {}) {
+  constructor(
+    config: DatabaseConnection,
+    options: ProviderOptions = {},
+    seams: Partial<KubernetesSeams> = {},
+    execution: ProviderExecutionContext = {},
+  ) {
     super(config, options);
     this.seams = { ...DEFAULT_KUBERNETES_SEAMS, ...seams };
+    this.readOnlyProfile = execution.readOnly === true;
   }
 
   /** Every member written out: the base's defaults are SQL's, so each flag here is a decision. */
@@ -268,6 +281,27 @@ export class KubernetesProvider extends BaseDatabaseProvider {
     } finally {
       run.end();
     }
+  }
+
+  /**
+   * One kubectl statement for the agent: under the read-only profile, bounded by the agent budget (discovery
+   * included), refused rather than truncated past its rows or bytes, and masked on its output projection. The
+   * boundary is the request allowlist on the final method and path and the identity's RBAC, not the reader
+   * (`kubectl.query.read`). `query()` is the editor's and is never masked.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode?: ReadOnlyStatementMode,
+  ): Promise<QueryResult> {
+    const session = this.requireSession();
+    return readKubectlForMachine(
+      { surface: session.surface, explainCache: session.explainCache, lifetime: session.lifetime.signal },
+      statement,
+      budget,
+      mode,
+      { readOnly: this.readOnlyProfile, seams: this.seams, appVersion: getAppVersion() },
+    );
   }
 
   /** Stops a running statement by its id and answers true; an id that names no run answers false. */

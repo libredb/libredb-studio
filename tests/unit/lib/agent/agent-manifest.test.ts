@@ -186,8 +186,7 @@ describe("workflowAvailability", () => {
     }
   });
 
-  // Task 26 moves kubernetes to the open list.
-  test.each(["prometheus", "mongodb", "kubernetes"] as const)(
+  test.each(["prometheus", "mongodb"] as const)(
     "%s opens operations and planning, and refuses a statement workflow in agent mode",
     (type) => {
       expect(workflowAvailability("agent", "operations", type).open).toBe(true);
@@ -197,6 +196,30 @@ describe("workflowAvailability", () => {
       }
     },
   );
+
+  // Each kubectl variant's task removes its own workflow from this list as it adds the variant.
+  const kubectlWorkflowsWithoutVariant = [
+    "investigation",
+    "query-optimization",
+    "database-assessment",
+    "data-analysis",
+  ] as const;
+
+  test("kubernetes speaks kubectl: operations and planning open, a workflow with no kubectl variant is refused", () => {
+    expect(AGENT_STATEMENT_LANGUAGE.kubernetes).toBe("kubectl");
+    expect(workflowAvailability("agent", "operations", "kubernetes").open).toBe(true);
+    for (const workflow of statementWorkflows) {
+      expect(workflowAvailability("planning", workflow, "kubernetes").open).toBe(true);
+    }
+    for (const workflow of kubectlWorkflowsWithoutVariant) {
+      expect(workflowAvailability("agent", workflow, "kubernetes")).toEqual({
+        open: false,
+        cause: "no-variant",
+        sentence:
+          "Agent mode does not offer this workflow on this engine. The operations workflow runs here, and plan mode drafts here.",
+      });
+    }
+  });
 
   test("an SQL run opens under its SQL variant and its language", () => {
     expect(workflowAvailability("agent", "data-analysis", "postgres")).toEqual({

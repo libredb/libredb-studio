@@ -49,8 +49,7 @@ export const AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, AgentStatem
   oxia: null,
   databend: null,
   s3: null,
-  // The provider has no queryReadOnly until its machine context and redaction land; flipped with it.
-  kubernetes: null,
+  kubernetes: "kubectl",
   mqtt: null,
   firestore: null,
   rabbitmq: null,

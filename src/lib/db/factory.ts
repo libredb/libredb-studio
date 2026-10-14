@@ -276,7 +276,7 @@ export async function createDatabaseProvider(
 
     case "firestore": {
       // The explicit /index specifier keeps this dynamic import statically analysable. Read-only whatever the flag
-      // says, so no execution context rides along, as for Kubernetes.
+      // says, so no execution context rides along, as for Neo4j.
       const { FirestoreProvider } = await import("./providers/document/firestore/index");
       return new FirestoreProvider(connection, options);
     }
@@ -382,7 +382,7 @@ export async function createDatabaseProvider(
     }
 
     // OPC UA: an industrial address space, browsed level by level. Read-only whatever the flag says,
-    // so no execution context rides along, as for Kubernetes.
+    // so no execution context rides along, as for Neo4j.
     case "opcua": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { OpcuaProvider } = await import("./providers/industrial/opcua/index");
@@ -402,9 +402,9 @@ export async function createDatabaseProvider(
     // Platforms - dynamically imported
     case "kubernetes": {
       // The explicit /index specifier keeps this dynamic import statically analysable. Read-only whatever the flag
-      // says, so no execution context rides along, as for Neo4j.
+      // says; the execution context rides along, so `queryReadOnly` answers only under an agent profile.
       const { KubernetesProvider } = await import("./providers/platform/kubernetes/index");
-      return new KubernetesProvider(connection, options);
+      return new KubernetesProvider(connection, options, {}, execution);
     }
 
     // Embedded databases - dynamically imported
@@ -1014,9 +1014,10 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * Single source of truth for the profile list, so a new profile cannot be accepted
  * without stating both. The second field is the engine gate, and it is a PROPERTY OF
  * THE PROFILE rather than of the factory: `agent-read-only` sends model-authored
- * statements, so it is served only where the engine itself can bound one, and only
- * the providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite, DuckDB,
- * SQL Server and MySQL (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
+ * statements, so it is served only where the provider can bound one (the engine's own
+ * read-only mechanism, or on Kubernetes the request allowlist plus the identity's RBAC),
+ * and only the providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite,
+ * DuckDB, SQL Server, MySQL and Kubernetes (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

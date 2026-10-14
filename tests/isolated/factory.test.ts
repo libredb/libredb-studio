@@ -56,6 +56,7 @@ import { ConnectionError, DatabaseConfigError, ExecutionProfileError, TimeoutErr
 import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
+import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
 import type { SSHTunnelConfig } from "@/lib/types";
 
 // The SQLite agent-profile tests below construct the read-only profile for its
@@ -848,6 +849,28 @@ describe("createDatabaseProvider", () => {
     expect(provider.getCapabilities().queryDialect).toBe("kubectl");
     expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
     expect(provider.isConnected()).toBe(false);
+  });
+
+  test("the execution context rides along to kubernetes: queryReadOnly answers only under the agent profile", async () => {
+    const conn = makeConnection("kubernetes", { port: 6443, database: undefined });
+    const profiled = await createDatabaseProvider(conn, {}, { readOnly: true });
+    const editor = await createDatabaseProvider(conn);
+    if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
+    // Unconnected, both refuse at the session before the profile is consulted.
+    await expect(profiled.queryReadOnly("get pods", AGENT_BUDGET)).rejects.toThrow("Provider is not connected");
+    // With a session in place, and a statement the console refuses before sending anything, only the provider built
+    // without the context stops at the profile.
+    const lifetime = new AbortController();
+    for (const provider of [profiled, editor]) {
+      Object.assign(provider, { requireSession: () => ({ surface: {}, explainCache: null, lifetime }) });
+    }
+    const write = "delete pod web-1";
+    await expect(editor.queryReadOnly(write, AGENT_BUDGET)).rejects.toThrow(MACHINE_PROFILE_SENTENCE);
+    const refusal = await profiled.queryReadOnly(write, AGENT_BUDGET).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(Error);
+    expect((refusal as Error).message).toContain("it is not read-only");
+    expect((refusal as Error).message).not.toContain(MACHINE_PROFILE_SENTENCE);
+    lifetime.abort();
   });
 
   test("the factory error lists qdrant among the supported types, before the embedded store", async () => {

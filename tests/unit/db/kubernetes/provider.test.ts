@@ -12,9 +12,12 @@ import { EMPTY_PAGES_SENTENCE } from "@/lib/db/providers/platform/kubernetes/tab
 import { KUBERNETES_CLOSED_WHILE_OPENING, KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
 import { KUBERNETES_OBJECT_KINDS, KUBERNETES_ROW_ACTIONS } from "@/lib/db/providers/platform/kubernetes/kinds";
 import { KUBERNETES_LABELS } from "@/lib/db/providers/platform/kubernetes/labels";
+import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
+import { MACHINE_REDACTED } from "@/lib/db/providers/platform/kubernetes/redaction";
 import type { DatabaseConnection } from "@/lib/types";
 import { fakeCluster, type FakeClusterOptions, manyRows } from "../../../helpers/kubernetes-cluster";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
+import { KUBERNETES_SAMPLE_MARKERS as M } from "../../../helpers/kubernetes-markers";
 import { discoveryList, resource } from "../../../helpers/kubernetes-discovery";
 import {
   jsonAnswer,
@@ -89,9 +92,8 @@ describe("declarations", () => {
     expect(capabilities.rowActions).toBe(KUBERNETES_ROW_ACTIONS);
   });
 
-  test("no explain format, no column profiling surface, no agent statement execution", () => {
+  test("no explain format and no column profiling surface", () => {
     expect(capabilities.explainFormat).toBeUndefined();
-    expect((provider as { queryReadOnly?: unknown }).queryReadOnly).toBeUndefined();
   });
 
   test("the labels, as a copy", () => {
@@ -393,6 +395,87 @@ describe("the console", () => {
     await expect(provider.query("get pods", undefined, "run-2")).rejects.toThrow(
       "This connection's identity may not list pods in the namespace shop (403 Forbidden).",
     );
+  });
+});
+
+describe("queryReadOnly", () => {
+  const BUDGET = { statementTimeoutMs: 10_000, maxResultRows: 200, maxResultBytes: 262_144 };
+
+  /** Under the profile, with a statement deadline that never arrives: the test seams' sleep settles at once. */
+  function readOnlyProviderWith(answer: KubernetesAnswerFn, overrides?: Partial<DatabaseConnection>) {
+    const transport = recordingKubernetesTransport(answer);
+    const provider = new KubernetesProvider(
+      kubernetesConnection(overrides),
+      { queryTimeout: 30_000 },
+      { ...testSeams(transport), sleep: () => new Promise<void>(() => {}) },
+      { readOnly: true },
+    );
+    return { provider, transport };
+  }
+
+  test("refuses on a provider not opened under the read-only profile", async () => {
+    const transport = recordingKubernetesTransport(fakeCluster(SHOP));
+    const provider = new KubernetesProvider(kubernetesConnection(), {}, testSeams(transport));
+    await provider.connect();
+    const before = transport.calls.length;
+    await expect(provider.queryReadOnly("get pods", BUDGET)).rejects.toThrow(MACHINE_PROFILE_SENTENCE);
+    expect(transport.calls).toHaveLength(before);
+  });
+
+  test("refuses on a provider that is not connected", async () => {
+    const { provider } = readOnlyProviderWith(fakeCluster(SHOP));
+    await expect(provider.queryReadOnly("get pods", BUDGET)).rejects.toThrow("Provider is not connected");
+  });
+
+  test("reads under the profile, masked, while query() on the same provider is unmasked", async () => {
+    const deployment = {
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "web", namespace: "shop" },
+      spec: {
+        template: {
+          spec: {
+            containers: [{ name: "web", image: "nginx:1.27", env: [{ name: "MARKER_ENV", value: M.envValue }] }],
+          },
+        },
+      },
+    };
+    const { provider } = readOnlyProviderWith(
+      fakeCluster({ ...SHOP, objects: { "/apis/apps/v1/namespaces/shop/deployments/web": deployment } }),
+    );
+    await provider.connect();
+    const statement = "get deploy web -n shop -o yaml";
+    const machine = JSON.stringify((await provider.queryReadOnly(statement, BUDGET)).rows);
+    const editor = JSON.stringify((await provider.query(statement)).rows);
+    expect(machine).toContain("MARKER_ENV");
+    expect(machine).not.toContain(M.envValue);
+    expect(machine).toContain(MACHINE_REDACTED);
+    expect(editor).toContain(M.envValue);
+    expect(editor).not.toContain(MACHINE_REDACTED);
+  });
+
+  test("query() never sets the machine context: its answer is the editor's, past the agent's row budget", async () => {
+    const lists = { ...SHOP.lists, "/api/v1/namespaces/shop/pods": manyRows("p", 600) };
+    const { provider } = readOnlyProviderWith(fakeCluster({ lists }));
+    await provider.connect();
+    const result = await provider.query("get pods -n shop");
+    expect(result.rowCount).toBe(600);
+    expect(result.warnings ?? []).toEqual([]);
+    expect(result.pagination).toBeUndefined();
+    // The same statement on the agent's path is refused rather than truncated past its 200 rows.
+    await expect(provider.queryReadOnly("get pods -n shop", BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the row budget",
+    );
+  });
+
+  test("an estimated plan is refused before anything is sent", async () => {
+    const { provider, transport } = readOnlyProviderWith(fakeCluster(SHOP));
+    await provider.connect();
+    const before = transport.calls.length;
+    await expect(provider.queryReadOnly("get pods -n shop", BUDGET, "estimate-plan")).rejects.toThrow(
+      "kubectl has no estimated plan",
+    );
+    expect(transport.calls).toHaveLength(before);
   });
 });
 
