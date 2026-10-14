@@ -7234,8 +7234,8 @@ Found 2026-10-14 while building agent execution on Kubernetes.
 
 ### B113. The agent user guide cites code by line number and carries em dashes
 
-`docs/AGENT_GUIDE.md` cites code as `file:line` in 41 places (`timeline.ts:499`, `goal-verifier.ts:349-355` and `AgentRail.tsx:401-447` among them), and those numbers have drifted as the files changed, so a reader following one lands on unrelated code.
-The same page carries 154 lines with an em dash, against the repository's writing rule.
+`docs/AGENT_GUIDE.md` cites code as `file:line` 46 times, on 41 lines (`timeline.ts:499`, `goal-verifier.ts:349-355` and `AgentRail.tsx:401-447` among them), and those numbers have drifted as the files changed, so a reader following one lands on unrelated code.
+The same page carries 152 lines with an em dash, against the repository's writing rule.
 Found 2026-10-14 while building agent execution on Kubernetes.
 
 **Done when:** every code citation in `docs/AGENT_GUIDE.md` names a file and a symbol instead of a line, no em or en dash remains on the page, and a guard test fails on a new `file:line` citation there; cited in `docs/AGENT.md`.

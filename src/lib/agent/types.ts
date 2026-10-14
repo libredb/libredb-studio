@@ -335,8 +335,8 @@ export type AgentRunFailureReason =
   /** The provider rejected the credentials. An operator fixes this; retrying does not. */
   | "model-unauthorized"
   /**
-   * The connection's engine has no database-native read-only execution profile, so
-   * this run could never have been permitted on it. A property of the connection the
+   * The connection's engine has no read-only statement path under a declared boundary,
+   * so this run could never have been permitted on it. A property of the connection the
    * user chose, not a fault of the server — which is why it is not `internal`.
    *
    * NARROWER for the `operations` workflow (#325), and narrower is all it is. That

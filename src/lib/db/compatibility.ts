@@ -428,8 +428,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Outside this version, as etcd's and Oxia's: the provider implements no queryReadOnly, and no MCP surface
   // that lists buckets but never an object key is designed yet (BACKLOG B104).
   s3: false,
-  // Outside this version, as etcd's and Oxia's: the provider implements no read-only query path, and plan mode alone
-  // receives Kubernetes object names, Secret names withheld (no MCP surface is designed for them yet).
+  // Agent mode reads it under machine redaction; MCP stays closed until an MCP surface for it is designed (BACKLOG
+  // B105).
   kubernetes: false,
   // Outside this version, as for etcd, Oxia and S3: a read whose completeness cannot be proved is not a
   // read an agent should be handed without a reader looking at it.

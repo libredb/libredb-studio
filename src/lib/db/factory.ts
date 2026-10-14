@@ -1052,7 +1052,9 @@ const EXECUTION_PROFILES: ReadonlySet<string> = new Set(Object.keys(PROFILE_ACQU
  * opened with readSecret). Fail closed on every misconfiguration:
  *
  * - both fields absent → null (the profile runs under the connection's own
- *   credentials, still inside the database-native read-only boundary);
+ *   credentials, still on a read-only statement path under a declared
+ *   boundary: the engine's own read-only session, or on Kubernetes Studio's
+ *   request allowlist with the connection token's RBAC);
  * - only one field present → deny, unless the engine declares
  *   `agentCredential: "token"` and the field is `agentPassword`: that engine
  *   takes the agent's bearer token alone, and refuses an `agentUser` beside it.

@@ -157,8 +157,10 @@ const UNCLASSIFIED: AgentWorkflowClassification = Object.freeze({
 /**
  * Read one objective and name the workflow it belongs to.
  *
- * @returns the workflow and whether it was actually classified. This function does
- *          not reject: every failure is an `unclassified` investigation.
+ * @returns the workflow and whether it was actually classified. Every model failure
+ *          is an `unclassified` investigation.
+ * @throws AgentManifestError when the statement language has no classifier line for a
+ *         workflow, a manifest defect that no fallback should hide.
  */
 export async function classifyAgentWorkflow(
   objective: string,

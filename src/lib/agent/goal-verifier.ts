@@ -96,7 +96,8 @@ export type AgentGoalVerifierId =
   | "agent-query-optimization-kubectl.1"
   | "agent-database-assessment.1"
   /**
-   * Cluster health, the kubectl database assessment: a workload profile of this run, cited by its report.
+   * Cluster health, the kubectl database assessment: the investigation baseline, with a workload profile counted as
+   * meaningful even when it holds no row, then at least one workload profile of this run. The report need not cite it.
    *
    * Its own id for the reason the kubectl optimization has one: a workload is not a table, and both rules stay live.
    */
