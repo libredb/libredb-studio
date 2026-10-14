@@ -206,7 +206,12 @@ export function maskTableForMachine(target: RedactionTarget, table: KubeTable): 
         return cell;
       })
       .filter((_cell, index) => kept[index]);
-    return { ...row, cells, ...(row.object === undefined ? {} : { object: maskObjectForMachine(target, row.object) }) };
+    if (row.object === undefined) return { ...row, cells };
+    const object = maskObjectForMachine(target, row.object);
+    // The row's metadata names no involved object, so only the Object cell says this event's name derives from a Secret.
+    if (aboutASecret && isObject(object.metadata) && typeof object.metadata.name === "string")
+      object.metadata = { ...object.metadata, name: MACHINE_REDACTED };
+    return { ...row, cells, object };
   });
   return { ...table, columns: table.columns.filter((_column, index) => kept[index]), rows };
 }

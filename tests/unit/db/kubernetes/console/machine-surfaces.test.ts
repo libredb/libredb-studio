@@ -204,4 +204,28 @@ describe("Tables", () => {
     expect(machine).toContain('"Object":"pod/web"');
     expect(machine).toContain('"Name":"web.18dd5319a2f7a81f"');
   });
+
+  test("get events -A -o name: a Secret event's name never reaches the machine grid", async () => {
+    const columns = [
+      { name: "Last Seen" },
+      { name: "Type" },
+      { name: "Reason" },
+      { name: "Object" },
+      { name: "Message" },
+    ];
+    const eventMetadata = (name: string) => ({
+      object: { kind: "PartialObjectMetadata", metadata: { name, namespace: "shop" } },
+    });
+    const events = tableAnswer(columns, [
+      { cells: ["1m", "Warning", "Failed", `secret/${M.secretName}`, "m"], ...eventMetadata(`${M.secretName}.18dd`) },
+      { cells: ["2m", "Normal", "Started", "pod/web", "started"], ...eventMetadata("web.18de") },
+    ]);
+    const { editor, machine } = await both(
+      bothLimits("/api/v1/events", "&includeObject=Metadata", events),
+      "get events -A -o name",
+    );
+    expect(editor).toContain(`event/${M.secretName}.18dd`);
+    expect(machine).not.toContain(M.secretName);
+    expect(machine).toBe(JSON.stringify([{ name: `event/${MACHINE_REDACTED}` }, { name: "event/web.18de" }]));
+  });
 });

@@ -344,6 +344,29 @@ describe("Tables, masked by what the request targeted", () => {
     expect(masked.rows[1].cells).toEqual(table.rows[1].cells);
   });
 
+  test("events: a Secret event's row object loses its name though the metadata names no involved object", () => {
+    const table: KubeTable = {
+      columns: columns("Last Seen", "Type", "Reason", "Object", "Message"),
+      rows: [
+        {
+          cells: ["1m", "Warning", "Failed", "secret/db", "m"],
+          object: { kind: "PartialObjectMetadata", metadata: { name: "db.18dd5319a2f7a81e", namespace: "shop" } },
+        },
+        {
+          cells: ["2m", "Normal", "Started", "pod/web", "started"],
+          object: { kind: "PartialObjectMetadata", metadata: { name: "web.18dd5319a2f7a81f", namespace: "shop" } },
+        },
+      ],
+    };
+    const masked = maskTableForMachine(EVENTS, table);
+    expect(masked.rows[0].object).toEqual({
+      kind: "PartialObjectMetadata",
+      metadata: { name: MACHINE_REDACTED, namespace: "shop" },
+    });
+    expect(masked.rows[1].object).toEqual(table.rows[1].object);
+    expect(json(masked)).not.toContain("db.18dd5319a2f7a81e");
+  });
+
   test("every row's object is masked by the object rules", () => {
     const table: KubeTable = {
       columns: columns("Name"),
