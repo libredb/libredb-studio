@@ -257,6 +257,48 @@ describe("the four tables, read through the whole provider", () => {
   });
 });
 
+describe("nothing read once is kept and reused, which is the class a sibling engine was bitten by", () => {
+  /**
+   * MTConnect's live check found a defect of this shape on its first run: a window read at
+   * connect and kept, which went stale as the device's buffer moved on, so the provider refused
+   * data the device was ready to serve. The integration layer could not see it, because a replay
+   * shows one frozen moment.
+   *
+   * The question here is the same one: does this provider read anything once and reuse it? It
+   * holds no socket, which is measured below, and it keeps no parsed map - `readMap(this.config)`
+   * runs at each use and the class declares no field to put one in. This case is what says so,
+   * and what would fall the day somebody caches the parse for speed: the map is changed between
+   * two reads on ONE provider, and the second read must answer the new address.
+   */
+  test("the register map is re-read for every read, not parsed once and kept", async () => {
+    delete process.env[FLAG];
+    const dev = await device();
+    const config = {
+      id: "m",
+      name: "device",
+      type: "modbus",
+      host: "127.0.0.1",
+      port: dev.port,
+      registerMap: JSON.stringify([
+        { name: "volts", unitId: 1, table: "holding_register", address: 0, type: "uint16" },
+      ]),
+    } as unknown as DatabaseConnection;
+    const engine = new ModbusProvider(config);
+
+    const first = await engine.query('{"read":["volts"]}');
+    (config as unknown as { registerMap: string }).registerMap = JSON.stringify([
+      { name: "volts", unitId: 1, table: "holding_register", address: 5, type: "uint16" },
+    ]);
+    const second = await engine.query('{"read":["volts"]}');
+
+    // Same point name, a different address behind it: a cached parse would answer the old one.
+    expect({ first: first.rows[0]?.value, second: second.rows[0]?.value }).toEqual({
+      first: holding(0),
+      second: holding(5),
+    });
+  });
+});
+
 describe("nothing is held open between reads, which is what a single-client device measures", () => {
   /**
    * THE POSITIVE CONTROL, and the test below is worth nothing without it.
