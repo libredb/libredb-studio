@@ -173,9 +173,11 @@ async function kubectlInvestigationOpening(
     readonly pods?: number;
     readonly workflowType?: AgentRunWorkflowType;
     readonly autoExecute?: boolean;
+    /** Events a dead earlier drive already recorded, so the drive is a resume of that run. */
+    readonly prior?: readonly AgentRunEvent[];
   } = {},
 ): Promise<{ system: string; opening: string }> {
-  const { unreadable = false, pods = 1, workflowType = "investigation", autoExecute = false } = options;
+  const { unreadable = false, pods = 1, workflowType = "investigation", autoExecute = false, prior = [] } = options;
   const podNames = Array.from({ length: pods }, (_, index) => `web-${String(index).padStart(4, "0")}-checkout-api`);
   forgetHeldSnapshots();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-kubectl-investigation-"));
@@ -205,6 +207,10 @@ async function kubectlInvestigationOpening(
     connectionId: connection.id,
     objective: "Which pods in shop are restarting?",
   });
+  for (const event of prior) {
+    // oxlint-disable-next-line no-await-in-loop -- a ledger is ordered: each event lands after the one before it.
+    await store.appendEvent(run.runId, event);
+  }
   const script = scriptedModel(answersProse("No report."), answersProse("No report."), answersProse("No report."));
 
   await runInvestigation(run.runId, {
@@ -304,6 +310,35 @@ describe("an agent-mode kubectl data analysis", () => {
   defanged, `toolCallId` and `toolName` are never touched, and nothing the SDK returned
   is mutated.
 */
+describe("a resumed kubectl run that already recommended a resources change", () => {
+  // The resume summary reads the ledger whatever the workflow, so the investigation variant carries it: the
+  // query-optimization variant that records this event in a real run is not in the manifest yet (Task 32).
+  test("is told the resources change it already recommended, by container and owner, with no statement", async () => {
+    const recommended: AgentRunEvent = {
+      kind: "recommendation",
+      atMs: 1,
+      change: "resources",
+      namespace: "shop",
+      ownerKind: "Deployment",
+      ownerName: "web",
+      container: "api",
+      current: { requests: { cpu: "500m", memory: "256Mi" }, limits: { cpu: "1", memory: "512Mi" } },
+      proposed: { requests: { cpu: "150m", memory: "128Mi" }, limits: { cpu: "500m", memory: "256Mi" } },
+      rationale: "The container uses a third of what it requests.",
+      evidence: [{ source: "artifact", correlationId: "usage_1" }],
+    };
+
+    const { opening } = await kubectlInvestigationOpening({ prior: [recommended] });
+
+    expect(opening).toContain(
+      "New requests and limits for container api of Deployment/web were already recommended and are recorded. Do not propose them a second time.",
+    );
+    // The SQL sentence quotes a statement; a resources change has none, so it must never reach that arm.
+    expect(opening).not.toContain("A resources was already recommended");
+    expect(opening).not.toContain("undefined");
+  });
+});
+
 describe("neutraliseAssistantMessages (B29)", () => {
   type AssistantMessages = Parameters<typeof neutraliseAssistantMessages>[0];
   type AnyPart = {
