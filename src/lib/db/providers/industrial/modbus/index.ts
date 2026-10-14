@@ -47,7 +47,14 @@ import type {
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
-import { MODBUS_DEFAULT_PORT, MODBUS_NO_REVOCATION_SENTENCE, MODBUS_READ_ONLY_HINT, UNIT_ID_MIN } from "./constants";
+import {
+  MODBUS_ADDRESS_COLUMN_SOURCE,
+  MODBUS_ADDRESS_MASKING_REASON,
+  MODBUS_DEFAULT_PORT,
+  MODBUS_NO_REVOCATION_SENTENCE,
+  MODBUS_READ_ONLY_HINT,
+  UNIT_ID_MIN,
+} from "./constants";
 import { dialModbus, socketWire, type Endpoint } from "./client";
 import { runRead } from "./read";
 import { parseReadRequest } from "./request";
@@ -198,6 +205,10 @@ export class ModbusProvider extends BaseDatabaseProvider {
       supportsExternalQueryLimiting: false,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      // A read answers a column called `address`, which is the register the caller named. The
+      // built-in Address rule matches on the name alone, so it would star out the one value the
+      // request was about; this exempts that column and says so in its header.
+      maskingExemptColumns: { column: MODBUS_ADDRESS_COLUMN_SOURCE, reason: MODBUS_ADDRESS_MASKING_REASON },
       supportsTestDataGeneration: false,
       // One read answers one request. A Modbus read is bounded by the protocol's own quantity
       // limits, not by a window a caller can advance.

@@ -98,3 +98,19 @@ export const MODBUS_READ_ONLY_HINT =
 
 export const MODBUS_NO_REVOCATION_SENTENCE =
   "Over MODBUS/TCP Security, Studio checks the device's certificate chain and host name but does not check revocation. Measured on 13 October 2026: a stapled OCSP response saying revoked still completes the connection under Node, and under Bun it never reaches the application.";
+
+/**
+ * The result column this provider exempts from the masking rules, and why
+ * (`ProviderCapabilities.maskingExemptColumns`).
+ *
+ * `address` here is the zero-based PDU register the read asked for, not a place. The built-in
+ * Address rule matches a column by NAME, so without this it stars out the one value the request
+ * was about: a reader who asked for register 0 could not see which register answered.
+ *
+ * Anchored, and that is the whole of the care it needs: unanchored, `address` also reaches
+ * `ip_address`, which belongs to a different rule.
+ */
+export const MODBUS_ADDRESS_COLUMN_SOURCE = "^address$";
+
+export const MODBUS_ADDRESS_MASKING_REASON =
+  "The PDU register number this row answered for, not a postal address, so it is shown as it was read.";

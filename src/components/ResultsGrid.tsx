@@ -19,7 +19,7 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
-import { ArrowUpDown, ArrowUp, ArrowDown, Eye, Funnel, Lock, Rows3 } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, Eye, Funnel, Lock, LockOpen, Rows3 } from "lucide-react";
 import { toast } from "sonner";
 import {
   type MaskingConfig,
@@ -53,6 +53,7 @@ import { hasResultOrder } from "@/lib/sql/result-order";
 import { pageOfferFor } from "@/components/results-grid/page-offer";
 import { useDismissOnOutsideClick } from "@/hooks/use-dismiss-on-outside-click";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import { splitMaskedColumns } from "@/lib/db/masking-exemption";
 import { binaryCellsAsHex, jsonText } from "@/lib/export/json";
 
 export interface CellChange {
@@ -157,6 +158,8 @@ interface ResultsGridProps {
   editingEnabled?: boolean;
   /** The provider's columns the editor must not write (`ProviderCapabilities.inlineEditRefusedColumns`). */
   inlineEditRefusedColumns?: ProviderCapabilities["inlineEditRefusedColumns"];
+  /** The provider's columns the masking rules must leave alone (`ProviderCapabilities.maskingExemptColumns`). */
+  maskingExemptColumns?: ProviderCapabilities["maskingExemptColumns"];
   pendingChanges?: CellChange[];
   onCellChange?: (change: CellChange) => void;
   onDiscardChanges?: () => void;
@@ -215,6 +218,7 @@ export function ResultsGrid({
   maskingConfig,
   editingEnabled,
   inlineEditRefusedColumns,
+  maskingExemptColumns,
   pendingChanges,
   onCellChange,
   onDiscardChanges,
@@ -263,10 +267,17 @@ export function ResultsGrid({
   const userCanToggle = useMemo(() => canToggleMasking(userRole, resolvedConfig), [userRole, resolvedConfig]);
   const userCanReveal = useMemo(() => canReveal(userRole, resolvedConfig), [userRole, resolvedConfig]);
 
-  // Config-based sensitive column detection
-  const sensitiveColumns = useMemo(
-    () => detectSensitiveColumnsFromConfig(result.fields, resolvedConfig),
-    [result.fields, resolvedConfig],
+  /**
+   * What is masked here, and what this engine excused.
+   *
+   * The exempt map is kept rather than simply dropped: both header rows draw their lock from the
+   * masked set, so an exempt column would otherwise look like a column no rule ever matched, and
+   * the reader would have no way to tell the two apart. The reason travels with it and is shown
+   * in that same slot.
+   */
+  const { masked: sensitiveColumns, exempt: maskingExempt } = useMemo(
+    () => splitMaskedColumns(result.fields, resolvedConfig, maskingExemptColumns),
+    [result.fields, resolvedConfig, maskingExemptColumns],
   );
 
   const hasSensitive = sensitiveColumns.size > 0;
@@ -616,6 +627,7 @@ export function ResultsGrid({
       header: ({ column }) => {
         const hasFilter = columnFilters.has(field) && !!columnFilters.get(field);
         const isSensitive = effectiveMaskingEnabled && sensitiveColumns.has(field);
+        const exemptReason = effectiveMaskingEnabled ? maskingExempt.get(field) : undefined;
         // The type the wire format declared for THIS result - the only source for a
         // computed column, which has no catalog entry the schema tree could answer with.
         const declaredType = declaredTypeOf(result.columnTypes, field);
@@ -643,6 +655,13 @@ export function ResultsGrid({
               {isSensitive && (
                 <span title="Masked column">
                   <Lock strokeWidth={1.5} className="w-3 h-3 text-hue-purple shrink-0" />
+                </span>
+              )}
+              {/* Shown where the lock would have been, so "why is this one not masked" is
+                  answered where the reader already looks for whether it is. */}
+              {exemptReason !== undefined && (
+                <span title={exemptReason}>
+                  <LockOpen strokeWidth={1.5} className="w-3 h-3 text-text-muted shrink-0" />
                 </span>
               )}
               <div className="flex-shrink-0 opacity-0 group-hover/header:opacity-100 transition-opacity">
@@ -1095,6 +1114,7 @@ export function ResultsGrid({
           <div className="sticky top-0 z-20 bg-raised flex">
             {visibleFields.map((field, idx) => {
               const isSensitive = effectiveMaskingEnabled && sensitiveColumns.has(field);
+              const exemptReason = effectiveMaskingEnabled ? maskingExempt.get(field) : undefined;
               const declaredType = declaredTypeOf(result.columnTypes, field);
               return (
                 <div
@@ -1116,6 +1136,12 @@ export function ResultsGrid({
                       screen-reader text - same treatment as the warnings badge. */}
                   {declaredType && <span className="sr-only">, {declaredType}</span>}
                   {isSensitive && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-hue-purple" />}
+                  {exemptReason !== undefined && (
+                    <>
+                      <LockOpen strokeWidth={1.5} className="w-2.5 h-2.5 text-text-muted" />
+                      <span className="sr-only">, {exemptReason}</span>
+                    </>
+                  )}
                 </div>
               );
             })}
