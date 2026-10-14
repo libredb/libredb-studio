@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { AGENT_PLANNING_VERIFIER, AGENT_WORKFLOW_GOALS, verifyRunGoal } from "@/lib/agent/goal-verifier";
+import {
+  AGENT_PLANNING_VERIFIER,
+  AGENT_WORKFLOW_GOALS,
+  type AgentGoalVerifierId,
+  verifyRunGoal,
+} from "@/lib/agent/goal-verifier";
 import type {
   AgentArtifactReference,
   AgentEvidenceReference,
@@ -840,6 +845,21 @@ describe("the verifier registry", () => {
     expect(() => verifyRunGoal({ ...run, verifier: "agent-query-optimization.1" })).toThrow(
       "no rule for verifier agent-query-optimization.1",
     );
+  });
+
+  test("a verifier id naming a built-in object property is an error, not an inherited rule", () => {
+    const run = { mode: "agent", workflowType: "investigation", status: "succeeded", events: [] } as const;
+    for (const id of ["toString", "constructor", "__proto__"]) {
+      let caught: unknown;
+      try {
+        verifyRunGoal({ ...run, verifier: id as AgentGoalVerifierId });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught, id).toBeInstanceOf(Error);
+      expect((caught as Error).name, id).toBe("AgentGoalVerifierError");
+      expect((caught as Error).message, id).toBe(`no rule for verifier ${id}`);
+    }
   });
 
   test("a run with no persisted verifier is judged by its language's variant, and an absent language reads as sql", () => {

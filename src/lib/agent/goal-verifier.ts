@@ -595,10 +595,24 @@ const AGENT_GOAL_RULES: Readonly<Partial<Record<AgentGoalVerifierId, GoalRule>>>
   "agent-data-analysis.1": verifyDataAnalysisGoal,
 });
 
-/** The id and the rule as ONE value, read from the one record, so a verdict cannot name a bar it did not apply. */
+/** A verifier id with no rule: a retired id, or a ledger this build never wrote. */
+class AgentGoalVerifierError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentGoalVerifierError";
+    Object.setPrototypeOf(this, AgentGoalVerifierError.prototype);
+  }
+}
+
+/**
+ * The id and the rule as ONE value, read from the one record, so a verdict cannot name a bar it did not apply.
+ *
+ * `Object.hasOwn` rather than an undefined check: the id comes from a ledger, and an id such as `toString`
+ * would otherwise find the inherited method and hand back a verdict measured against no rule at all.
+ */
 function goalOf(verifier: AgentGoalVerifierId): AgentWorkflowGoal {
-  const verify = AGENT_GOAL_RULES[verifier];
-  if (verify === undefined) throw new Error(`no rule for verifier ${verifier}`);
+  const verify = Object.hasOwn(AGENT_GOAL_RULES, verifier) ? AGENT_GOAL_RULES[verifier] : undefined;
+  if (verify === undefined) throw new AgentGoalVerifierError(`no rule for verifier ${verifier}`);
   return { verifier, verify };
 }
 
