@@ -514,7 +514,7 @@ describe("exchangeCode", () => {
   beforeEach(() => {
     mockAuthorizationCodeGrant.mockClear();
     mockClaims.mockClear();
-    mockClaims.mockReturnValue({ sub: "user-123", email: "user@test.com" });
+    mockClaims.mockReturnValue({ iss: "https://example.auth0.com", sub: "user-123", email: "user@test.com" });
   });
 
   test("exchanges code and returns claims", async () => {
@@ -526,7 +526,7 @@ describe("exchangeCode", () => {
       "nonce",
     );
 
-    expect(result).toEqual({ sub: "user-123", email: "user@test.com" });
+    expect(result).toEqual({ iss: "https://example.auth0.com", sub: "user-123", email: "user@test.com" });
   });
 
   test("calls authorizationCodeGrant with correct parameters", async () => {

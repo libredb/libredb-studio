@@ -12,8 +12,11 @@ const mockDecryptState = mock(
   }),
 );
 
+/** OIDC_ISSUER, which openid-client has already matched with the `iss` of every ID token it hands over. */
+const ISSUER = "https://example.auth0.com";
+
 const mockGetOIDCConfig = mock(() => ({
-  issuer: "https://example.auth0.com",
+  issuer: ISSUER,
   clientId: "test-client-id",
   clientSecret: "test-client-secret",
   scope: "openid profile email",
@@ -24,6 +27,7 @@ const mockGetOIDCConfig = mock(() => ({
 const mockDiscoverProvider = mock(async () => "mock-config");
 
 const defaultClaims = {
+  iss: ISSUER,
   sub: "user-123",
   email: "user@example.com",
   preferred_username: "testuser",
@@ -51,25 +55,19 @@ mock.module("@/lib/oidc", () => ({
   getPublicOrigin: mockGetPublicOrigin,
 }));
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const mockLogin = mock(async (_role: string, _username?: string) => {});
-
-mock.module("@/lib/auth", () => ({
-  login: mockLogin,
-  signJWT: mock(async () => "mock-token"),
-  verifyJWT: mock(async () => null),
-  getSession: mock(async () => null),
-  logout: mock(async () => {}),
-}));
-
 const mockCookieGet = mock(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   (_name: string) => ({ value: "encrypted-state-cookie" }) as { value: string } | undefined,
 );
 
+/** The cookies the route set, by name. The real login() signs the session, so auth-token is the minted JWT. */
+const setCookies = new Map<string, string>();
+
 const mockCookieStore = {
   get: mockCookieGet,
-  set: mock(() => {}),
+  set: mock((name: string, value: string) => {
+    setCookies.set(name, value);
+  }),
   delete: mock(() => {}),
 };
 
@@ -83,6 +81,14 @@ mock.module("next/headers", () => ({
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 
 const { GET } = await import("@/app/api/auth/oidc/callback/route");
+const { verifyJWT } = await import("@/lib/auth");
+
+/** The session the callback minted, verified and decoded from the auth-token cookie it set. */
+async function mintedSession() {
+  const token = setCookies.get("auth-token");
+  if (token === undefined) throw new Error("the callback set no auth-token cookie");
+  return await verifyJWT(token);
+}
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
@@ -93,8 +99,8 @@ describe("GET /api/auth/oidc/callback", () => {
     mockDiscoverProvider.mockClear();
     mockExchangeCode.mockClear();
     mockMapOIDCRole.mockClear();
-    mockLogin.mockClear();
     mockCookieGet.mockClear();
+    setCookies.clear();
     mockCookieStore.delete.mockClear();
     mockGetPublicOrigin.mockClear();
     mockGetPublicOrigin.mockImplementation((req: Request) => new URL(req.url).origin);
@@ -111,7 +117,7 @@ describe("GET /api/auth/oidc/callback", () => {
 
     expect(mockDecryptState).toHaveBeenCalledWith("encrypted-state-cookie");
     expect(mockExchangeCode).toHaveBeenCalledTimes(1);
-    expect(mockLogin).toHaveBeenCalledWith("user", "user@example.com");
+    expect(await mintedSession()).toMatchObject({ role: "user", username: "user@example.com" });
     expect(res.status).toBe(307);
     expect(res.headers.get("location")).toContain("/");
   });
@@ -122,8 +128,54 @@ describe("GET /api/auth/oidc/callback", () => {
     const req = new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state");
     const res = await GET(req);
 
-    expect(mockLogin).toHaveBeenCalledWith("admin", "user@example.com");
+    expect(await mintedSession()).toMatchObject({ role: "admin", username: "user@example.com" });
     expect(res.headers.get("location")).toContain("/admin");
+  });
+
+  // Spec 5.2: the provider's subject joins a session to its grants, and the issuer says which provider it belongs to.
+  // `username` keeps its display meaning, so the subject travels in a claim of its own.
+  test("the session minted by the callback carries idpSubject and idpIssuer from the ID token", async () => {
+    const res = await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state"));
+
+    expect(res.headers.get("location")).toBe("http://localhost:3000/");
+    expect(await mintedSession()).toMatchObject({
+      role: "user",
+      username: "user@example.com",
+      idpSubject: "user-123",
+      idpIssuer: "https://example.auth0.com",
+    });
+  });
+
+  // Discovery accepts an issuer that differs from OIDC_ISSUER only by URL normalization, such as the trailing slash
+  // of a bare-host issuer, and openid-client then requires that exact issuer in the ID token.
+  test("idpIssuer is the ID token's iss as the provider wrote it, not the configured OIDC_ISSUER", async () => {
+    mockExchangeCode.mockImplementationOnce(async () => ({ ...defaultClaims, iss: `${ISSUER}/` }));
+
+    await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state"));
+
+    expect(await mintedSession()).toMatchObject({ idpSubject: "user-123", idpIssuer: "https://example.auth0.com/" });
+  });
+
+  test("a claim set without iss redirects to /login?error=oidc_no_claims and sets no auth-token", async () => {
+    mockExchangeCode.mockImplementationOnce(async () => ({
+      sub: "user-123",
+      email: "user@example.com",
+      preferred_username: "testuser",
+    }));
+
+    const res = await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state"));
+
+    expect(res.headers.get("location")).toBe("http://localhost:3000/login?error=oidc_no_claims");
+    expect(setCookies.has("auth-token")).toBe(false);
+  });
+
+  test("a claim set whose sub is not a string redirects to /login?error=oidc_no_claims and sets no auth-token", async () => {
+    mockExchangeCode.mockImplementationOnce(async () => ({ iss: ISSUER, sub: 123, email: "user@example.com" }));
+
+    const res = await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state"));
+
+    expect(res.headers.get("location")).toBe("http://localhost:3000/login?error=oidc_no_claims");
+    expect(setCookies.has("auth-token")).toBe(false);
   });
 
   // The return path from the session-ended redirect (#1420) rode through the provider in the
@@ -202,13 +254,14 @@ describe("GET /api/auth/oidc/callback", () => {
 
   test("uses sub as username fallback when email is missing", async () => {
     mockExchangeCode.mockImplementationOnce(async () => ({
+      iss: ISSUER,
       sub: "user-123",
     }));
 
     const req = new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state");
     await GET(req);
 
-    expect(mockLogin).toHaveBeenCalledWith("user", "user-123");
+    expect(await mintedSession()).toMatchObject({ role: "user", username: "user-123" });
   });
 
   test("passes claims to mapOIDCRole with correct config", async () => {

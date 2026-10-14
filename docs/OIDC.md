@@ -27,6 +27,7 @@ Browser → Redirect to app (/ or /admin based on role)
     - [Google Workspace](#google-workspace)
   - [Configuration Reference](#configuration-reference)
   - [Role Mapping](#role-mapping)
+  - [Session Identity](#session-identity)
   - [Security Features](#security-features)
   - [Troubleshooting](#troubleshooting)
   - [Switching Between Auth Modes](#switching-between-auth-modes)
@@ -340,6 +341,23 @@ The role mapping system:
 
 > For the precise algorithm and provider-by-provider worked examples, see the [Role Mapping Engine](#role-mapping-engine) in Part 2.
 
+### Session Identity
+
+A session signed in through OIDC also carries the provider's identifiers for the user, as two private claims of the `auth-token` JWT:
+
+| Claim | Value |
+|-------|-------|
+| `idpSubject` | The ID token's `sub`, the provider's stable id for the user (for Keycloak, the user id) |
+| `idpIssuer` | The ID token's `iss` |
+
+`openid-client` accepts an ID token only when its `iss` is exactly the issuer that discovery at `OIDC_ISSUER` returned, and discovery accepts only an issuer that equals `OIDC_ISSUER` once both are normalized as URLs.
+So for a Keycloak realm `idpIssuer` equals `OIDC_ISSUER`, while an issuer that is a bare host, such as Auth0's, ends in a slash that `OIDC_ISSUER` may leave out.
+`username` keeps its meaning: the email, else `preferred_username`, else `sub`, for display and rate limiting.
+The registered JWT claims `sub` and `iss` stay unused, because MCP tokens already put the username in `sub`.
+Password, passkey and launch sessions carry neither claim.
+`GET /api/auth/me` answers with the session payload, so for an OIDC session its `user` object includes `idpSubject` and `idpIssuer`.
+An ID token without a string `sub` or `iss` signs no one in: the callback redirects to `/login?error=oidc_no_claims`.
+
 ---
 
 ## Security Features
@@ -635,6 +653,7 @@ interface OIDCState {
 
 interface OIDCClaims {
   sub: string;                  // Subject identifier
+  iss: string;                  // Issuer, checked by openid-client against discovery
   email?: string;
   preferred_username?: string;  // Used by Keycloak and others; username fallback
   [claim: string]: unknown;     // Provider-specific claims
@@ -687,16 +706,17 @@ The cache prevents hitting the provider's discovery endpoint on every login. 5-m
 The JWT session layer is completely auth-mode agnostic:
 
 ```typescript
-// Same function called by both local login route and OIDC callback:
-export async function login(role: Role, username?: string) {
-  const token = await signJWT({ role, username: username || role });
+// Same function called by every sign-in route; only the OIDC callback passes an identity:
+export async function login(role: Role, username?: string, sessionVersion?: number, identity?: { subject: string; issuer: string }) {
+  const idp = identity ? { idpSubject: identity.subject, idpIssuer: identity.issuer } : {};
+  const token = await signJWT({ role, username: username || role, sessionVersion, ...idp });
   const cookieStore = await cookies();
   cookieStore.set('auth-token', token, {
     httpOnly: true,
     secure: await shouldMarkCookieSecure(),
     sameSite: 'lax',
-    maxAge: 86400,     // 24 hours
-    path: '/',
+    maxAge: sessionTtlSeconds(),     // AUTH_SESSION_TTL_SECONDS, 24 hours when unset
+    path: getBasePath() || '/',
   });
 }
 ```
@@ -709,6 +729,9 @@ export async function login(role: Role, username?: string) {
 4. On otherwise.
 
 The optional `username` parameter was added for OIDC — local login passes the email, while the OIDC callback resolves it through a fallback chain: `claims.email || claims.preferred_username || claims.sub || role` (so a username is always set regardless of which claims the provider returns).
+
+The optional `identity` is passed only by the OIDC callback, as `{ subject: claims.sub, issuer: claims.iss }`, and becomes the private claims `idpSubject` and `idpIssuer` described under [Session Identity](#session-identity).
+Every other caller passes none, so password, passkey and launch sessions sign exactly `role`, `username` and `sessionVersion`.
 
 ### `src/proxy.ts`
 
@@ -792,6 +815,8 @@ After OIDC (or local) authentication:
 │    path: /                                  │
 └─────────────────────────────────────────────┘
 ```
+
+An OIDC session's payload also carries `idpSubject` and `idpIssuer`, described under [Session Identity](#session-identity).
 
 #### Session lifetime
 
@@ -1006,7 +1031,7 @@ Both OIDC routes redirect to `/login?error=<code>` on failure, and record the sa
 | `oidc_discovery` | login | Any other error before discovery answered | Issuer does not resolve, TLS failure, response is not JSON or names a different issuer |
 | `oidc_state_missing` | callback | `oidc-state` cookie not found | Cookie expired (>5 min) or blocked by browser |
 | `oidc_state_invalid` | callback | State decryption failed or state mismatch | Tampered cookie, wrong JWT_SECRET, or CSRF attempt |
-| `oidc_no_claims` | callback | Token exchange returned no claims | Provider returned invalid/empty ID token |
+| `oidc_no_claims` | callback | Token exchange returned no claims, or no string `sub` or `iss` | Provider returned invalid/empty ID token |
 | `oidc_failed` | login, callback | Any other error after the provider answered | A discovery document that parses but lacks an endpoint, PKCE or state-cookie failure on login; network error, invalid client credentials, etc. on callback |
 
 ### Login Page Error Display

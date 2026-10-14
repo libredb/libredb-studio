@@ -27,6 +27,14 @@ export interface UserPayload {
    * compared with that account's current value on every request. Env and OIDC sessions omit it.
    */
   sessionVersion?: number;
+  /**
+   * The ID token's `sub`, set only on sessions the OIDC callback mints; password, passkey and
+   * launch sessions omit it. A private name, because the registered `sub` already holds the
+   * username in MCP tokens (src/lib/mcp/token.ts), and `username` keeps its display meaning.
+   */
+  idpSubject?: string;
+  /** The ID token's `iss`, set together with `idpSubject`. */
+  idpIssuer?: string;
 }
 
 export async function signJWT(payload: UserPayload) {
@@ -168,8 +176,15 @@ export async function shouldMarkCookieSecure(): Promise<boolean> {
   }
 }
 
-export async function login(role: Role, username?: string, sessionVersion?: number) {
-  const token = await signJWT({ role, username: username || role, sessionVersion });
+export async function login(
+  role: Role,
+  username?: string,
+  sessionVersion?: number,
+  identity?: { subject: string; issuer: string },
+) {
+  // Only the OIDC callback passes an identity, so every other sign-in signs exactly the claims it did before.
+  const idp = identity ? { idpSubject: identity.subject, idpIssuer: identity.issuer } : {};
+  const token = await signJWT({ role, username: username || role, sessionVersion, ...idp });
   const cookieStore = await cookies();
   cookieStore.set("auth-token", token, {
     httpOnly: true,

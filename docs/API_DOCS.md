@@ -194,7 +194,7 @@ Get current authenticated user information.
 }
 ```
 
-> The `user` object is the JWT session payload (`role`, `username`, and `sessionVersion` for an account in the server store). It is a public route in the middleware but self-checks the cookie, returning `{ "authenticated": false }` when absent/invalid.
+> The `user` object is the JWT session payload (`role`, `username`, `sessionVersion` for an account in the server store, and `idpSubject` and `idpIssuer` for an OIDC sign-in, see [OIDC.md](./OIDC.md#session-identity)). It is a public route in the middleware but self-checks the cookie, returning `{ "authenticated": false }` when absent/invalid.
 > With `STORAGE_PROVIDER=sqlite` or `postgres` and local sign-in, a session whose stored account was disabled, deleted, demoted or password-reset since it was issued also answers `401`.
 
 #### GET /api/auth/totp

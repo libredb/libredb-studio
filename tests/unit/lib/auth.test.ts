@@ -196,6 +196,36 @@ describe("auth", () => {
       expect(payload!.role).toBe("user");
     });
 
+    // Spec 5.2: only the OIDC callback passes an identity, so password, passkey and launch
+    // sessions keep signing exactly the claims they signed before.
+    test("login without an identity signs exactly role, username and sessionVersion", async () => {
+      await login("user", "member@example.com", 4);
+      const claims = jose.decodeJwt(mockSetCalls[0].value);
+      expect(claims).toEqual({
+        role: "user",
+        username: "member@example.com",
+        sessionVersion: 4,
+        iat: expect.any(Number),
+        exp: expect.any(Number),
+      });
+    });
+
+    test("login with an identity signs its subject and issuer as idpSubject and idpIssuer", async () => {
+      await login("admin", "ada@example.com", undefined, {
+        subject: "4f6a2c1e-8b7d-4e3a-9c5f-1a2b3c4d5e6f",
+        issuer: "https://sso.example.com/realms/libredb",
+      });
+      const claims = jose.decodeJwt(mockSetCalls[0].value);
+      expect(claims).toEqual({
+        role: "admin",
+        username: "ada@example.com",
+        idpSubject: "4f6a2c1e-8b7d-4e3a-9c5f-1a2b3c4d5e6f",
+        idpIssuer: "https://sso.example.com/realms/libredb",
+        iat: expect.any(Number),
+        exp: expect.any(Number),
+      });
+    });
+
     // The Secure flag is what makes a session survive - or not - in the desktop
     // shell (issue #232): libsoup, the cookie store behind WebKitGTK, drops a
     // Secure cookie delivered over http outright, so the loopback session the

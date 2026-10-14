@@ -136,6 +136,8 @@ export async function generateAuthUrl(
 
 export interface OIDCClaims {
   sub: string;
+  /** openid-client has checked it against the issuer discovered at OIDC_ISSUER. */
+  iss: string;
   email?: string;
   preferred_username?: string;
   [claim: string]: unknown;

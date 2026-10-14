@@ -74,8 +74,10 @@ export async function GET(request: Request) {
 
     const claims = await exchangeCode(config, callbackUrl, oidcState.code_verifier, oidcState.state, oidcState.nonce);
 
-    if (!claims) {
-      logger.warn("OIDC callback: no claims returned from token exchange", { route: "oidc/callback" });
+    // The session's identity is the ID token's sub and iss. openid-client has already checked both; they are checked
+    // again here because the claim set reaches this route through a cast.
+    if (!claims || typeof claims.sub !== "string" || typeof claims.iss !== "string") {
+      logger.warn("OIDC callback: the ID token claims lack a string sub or iss", { route: "oidc/callback" });
       auditFailure("oidc_no_claims", ip);
       return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_no_claims`);
     }
@@ -83,9 +85,10 @@ export async function GET(request: Request) {
     // Map role from claims
     const role = mapOIDCRole(claims as Record<string, unknown>, oidcConfig.roleClaim, oidcConfig.adminRoles);
 
-    // Create local JWT session (same as password login)
+    // Create local JWT session (same as password login). `username` keeps its display meaning, and the provider's
+    // subject and issuer travel as the session's idpSubject and idpIssuer.
     const username = claims.email || claims.preferred_username || claims.sub || role;
-    await login(role, username);
+    await login(role, username, undefined, { subject: claims.sub, issuer: claims.iss });
 
     // Clean up state cookie
     cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
