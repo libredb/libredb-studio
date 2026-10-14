@@ -19,6 +19,7 @@ mock.module("@/lib/auth", () => ({
   getSession: mockGetSession,
   logout: mockLogout,
   login: mockLogin,
+  shouldMarkCookieSecure: mock(async () => false),
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
 }));
@@ -30,7 +31,9 @@ const mockDecryptState = mock(async () => ({
 }));
 /** An ID token's claims as openid-client hands them over: `iss` and `sub` are always there. */
 const ID_TOKEN_CLAIMS = { iss: "https://example.auth0.com", sub: "user-123", email: "user@example.com" };
-const mockExchangeCode = mock(async () => ({ ...ID_TOKEN_CLAIMS }) as Record<string, unknown> | null);
+const mockExchangeCode = mock(
+  async () => ({ claims: { ...ID_TOKEN_CLAIMS }, idToken: "raw.id.token" }) as Record<string, unknown> | null,
+);
 const mockDiscoverProvider = mock(async () => "mock-config");
 const mockGetOIDCConfig = mock(() => ({ roleClaim: "roles", adminRoles: ["admin"] }));
 
@@ -76,7 +79,7 @@ beforeEach(() => {
     name === "oidc-state" ? { name, value: "state-cookie" } : undefined,
   );
   mockDecryptState.mockImplementation(async () => ({ code_verifier: "v", state: "s", nonce: "n" }));
-  mockExchangeCode.mockImplementation(async () => ({ ...ID_TOKEN_CLAIMS }));
+  mockExchangeCode.mockImplementation(async () => ({ claims: { ...ID_TOKEN_CLAIMS }, idToken: "raw.id.token" }));
   mockDiscoverProvider.mockImplementation(async () => "mock-config");
 });
 

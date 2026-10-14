@@ -2,7 +2,14 @@ import { getBasePath, withBasePath } from "@/lib/config/base-path";
 import { safeReturnPath } from "@/lib/api/session-ended";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { login } from "@/lib/auth";
+import { login, shouldMarkCookieSecure } from "@/lib/auth";
+import { sessionTtlSeconds } from "@/lib/config/auth-env";
+import {
+  OIDC_LOGOUT_HINT_COOKIE,
+  fitsLogoutHintCookie,
+  oidcLogoutHintCookiePath,
+  readOidcLogoutHint,
+} from "@/lib/config/oidc-logout-hint";
 import { getOIDCConfig, discoverProvider, exchangeCode, decryptState, mapOIDCRole, getPublicOrigin } from "@/lib/oidc";
 import { logger } from "@/lib/logger";
 import { clientAddress } from "@/lib/api/client-address";
@@ -72,15 +79,16 @@ export async function GET(request: Request) {
     const internalUrl = new URL(request.url);
     const callbackUrl = new URL(`${internalUrl.pathname}${internalUrl.search}`, origin);
 
-    const claims = await exchangeCode(config, callbackUrl, oidcState.code_verifier, oidcState.state, oidcState.nonce);
+    const exchange = await exchangeCode(config, callbackUrl, oidcState.code_verifier, oidcState.state, oidcState.nonce);
 
     // The session's identity is the ID token's sub and iss. openid-client has already checked both; they are checked
     // again here because the claim set reaches this route through a cast.
-    if (!claims || typeof claims.sub !== "string" || typeof claims.iss !== "string") {
+    if (!exchange || typeof exchange.claims.sub !== "string" || typeof exchange.claims.iss !== "string") {
       logger.warn("OIDC callback: the ID token claims lack a string sub or iss", { route: "oidc/callback" });
       auditFailure("oidc_no_claims", ip);
       return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_no_claims`);
     }
+    const { claims, idToken } = exchange;
 
     // Map role from claims
     const role = mapOIDCRole(
@@ -107,6 +115,23 @@ export async function GET(request: Request) {
 
     // Clean up state cookie
     cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
+
+    // OIDC_LOGOUT_HINT: keep the raw ID token where only the logout route receives it, for the provider's
+    // end-session request. A token too large for a cookie is not kept, and one kept by an earlier sign-in is removed so
+    // logout never sends a hint for another session.
+    if (readOidcLogoutHint()) {
+      if (fitsLogoutHintCookie(idToken)) {
+        cookieStore.set(OIDC_LOGOUT_HINT_COOKIE, idToken, {
+          httpOnly: true,
+          secure: await shouldMarkCookieSecure(),
+          sameSite: "lax",
+          maxAge: sessionTtlSeconds(),
+          path: oidcLogoutHintCookiePath(),
+        });
+      } else {
+        cookieStore.delete({ name: OIDC_LOGOUT_HINT_COOKIE, path: oidcLogoutHintCookiePath() });
+      }
+    }
 
     // Isolated in its own try/catch, separate from login() above: a real session already exists by
     // this point, so a failure to record it must never turn a successful login into a recorded (or

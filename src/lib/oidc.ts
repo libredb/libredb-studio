@@ -190,13 +190,19 @@ export interface OIDCClaims {
   [claim: string]: unknown;
 }
 
+/** The ID token's claims and the raw token, which the logout hint cookie carries (OIDC_LOGOUT_HINT). */
+export interface OIDCExchange {
+  claims: OIDCClaims;
+  idToken: string;
+}
+
 export async function exchangeCode(
   config: client.Configuration,
   callbackUrl: URL,
   codeVerifier: string,
   expectedState: string,
   expectedNonce: string,
-): Promise<OIDCClaims | null> {
+): Promise<OIDCExchange | null> {
   const tokens = await client.authorizationCodeGrant(config, callbackUrl, {
     pkceCodeVerifier: codeVerifier,
     expectedState,
@@ -205,12 +211,12 @@ export async function exchangeCode(
   });
 
   const claims = tokens.claims();
-  if (!claims) {
-    logger.warn("OIDC token exchange succeeded but claims are empty", { route: "oidc" });
+  if (!claims || !tokens.id_token) {
+    logger.warn("OIDC token exchange succeeded but the ID token or its claims are missing", { route: "oidc" });
     return null;
   }
 
-  return claims as unknown as OIDCClaims;
+  return { claims: claims as unknown as OIDCClaims, idToken: tokens.id_token };
 }
 
 // ─── Role Mapping ──────────────────────────────────────────────────────────
@@ -321,8 +327,10 @@ export function getPublicOrigin(request: Request): string {
  * Build the OIDC provider's logout URL.
  * Auth0: /v2/logout?client_id=...&returnTo=...
  * Generic: use the discovered end_session_endpoint.
+ * `idTokenHint` is added as `id_token_hint` on the Zitadel and generic end-session paths; Auth0's /v2/logout takes
+ * no such parameter, so its URL stays the same.
  */
-export async function buildLogoutUrl(returnTo: string): Promise<string | null> {
+export async function buildLogoutUrl(returnTo: string, idTokenHint?: string): Promise<string | null> {
   try {
     const config = getOIDCConfig();
     const issuerUrl = new URL(config.issuer);
@@ -341,6 +349,7 @@ export async function buildLogoutUrl(returnTo: string): Promise<string | null> {
       const logoutUrl = new URL("/oidc/v1/end_session", config.issuer);
       logoutUrl.searchParams.set("client_id", config.clientId);
       logoutUrl.searchParams.set("post_logout_redirect_uri", returnTo);
+      if (idTokenHint !== undefined) logoutUrl.searchParams.set("id_token_hint", idTokenHint);
       return logoutUrl.toString();
     }
 
@@ -348,6 +357,7 @@ export async function buildLogoutUrl(returnTo: string): Promise<string | null> {
     const discovered = await discoverProvider(config);
     const logoutUrl = client.buildEndSessionUrl(discovered, {
       post_logout_redirect_uri: returnTo,
+      ...(idTokenHint === undefined ? {} : { id_token_hint: idTokenHint }),
     });
     return logoutUrl.toString();
   } catch (error) {

@@ -22,6 +22,7 @@ const mockBuildEndSessionUrl = mock(
 const mockClaims = mock(() => ({ sub: "user-123", email: "user@test.com" }) as Record<string, unknown> | undefined);
 const mockAuthorizationCodeGrant = mock(async () => ({
   claims: mockClaims,
+  id_token: "raw.id.token" as string | undefined,
 }));
 const mockClientSecretPost = mock(() => "client-auth-method");
 
@@ -497,6 +498,40 @@ describe("buildLogoutUrl", () => {
     const url = await buildLogoutUrl("http://localhost:3000/login");
     expect(url).toBeNull();
   });
+
+  test("passes id_token_hint to the discovered end-session endpoint", async () => {
+    process.env.OIDC_ISSUER = "https://keycloak.example.com/realms/myrealm";
+    // The Zitadel test above leaves its role claim behind, which would select the Zitadel path.
+    delete process.env.OIDC_ROLE_CLAIM;
+
+    await buildLogoutUrl("http://localhost:3000/login", "raw.id.token");
+
+    expect(mockBuildEndSessionUrl).toHaveBeenCalledWith("mock-oidc-config", {
+      post_logout_redirect_uri: "http://localhost:3000/login",
+      id_token_hint: "raw.id.token",
+    });
+  });
+
+  test("adds id_token_hint to the Zitadel end-session URL", async () => {
+    process.env.OIDC_ISSUER = "https://my-instance.zitadel.cloud";
+    process.env.OIDC_ROLE_CLAIM = "urn:zitadel:iam:org:project:roles";
+    const without = await buildLogoutUrl("http://localhost:3000/login");
+    const url = new URL((await buildLogoutUrl("http://localhost:3000/login", "raw.id.token"))!);
+
+    expect(url.searchParams.get("id_token_hint")).toBe("raw.id.token");
+    url.searchParams.delete("id_token_hint");
+    expect(url.toString()).toBe(without!);
+  });
+
+  test("leaves the Auth0 /v2/logout URL unchanged when a hint is given", async () => {
+    const without = await buildLogoutUrl("http://localhost:3000/login");
+    const withHint = await buildLogoutUrl("http://localhost:3000/login", "raw.id.token");
+
+    expect(withHint).toBe(without!);
+    expect(withHint).toBe(
+      "https://libredb.eu.auth0.com/v2/logout?client_id=test-client-id&returnTo=http%3A%2F%2Flocalhost%3A3000%2Flogin",
+    );
+  });
 });
 
 // ─── discoverProvider ────────────────────────────────────────────────────────
@@ -667,7 +702,24 @@ describe("exchangeCode", () => {
       "nonce",
     );
 
-    expect(result).toEqual({ iss: "https://example.auth0.com", sub: "user-123", email: "user@test.com" });
+    expect(result).toEqual({
+      claims: { iss: "https://example.auth0.com", sub: "user-123", email: "user@test.com" },
+      idToken: "raw.id.token",
+    });
+  });
+
+  test("returns null when the token response carries no ID token", async () => {
+    mockAuthorizationCodeGrant.mockImplementationOnce(async () => ({ claims: mockClaims, id_token: undefined }));
+
+    const result = await exchangeCode(
+      "mock-config" as never,
+      new URL("http://localhost:3000/callback?code=abc"),
+      "verifier",
+      "state",
+      "nonce",
+    );
+
+    expect(result).toBeNull();
   });
 
   test("calls authorizationCodeGrant with correct parameters", async () => {
