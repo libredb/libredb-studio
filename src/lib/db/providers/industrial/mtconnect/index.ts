@@ -324,6 +324,38 @@ export class MTConnectProvider extends BaseDatabaseProvider {
   }
 
   /**
+   * Guard a reader's request line, and give a `window` refusal ONE second chance against a window
+   * read again.
+   *
+   * The window is read at connect and held, and an agent's buffer does not stand still. MEASURED on
+   * the compose fixture, whose device sends an observation every ten seconds: a session connected
+   * while the agent's next sequence was 339 refused `at=341` twelve seconds later with "past the
+   * agent's next sequence number of 339", and the same agent answered that request with 200. The
+   * refusal was true when the window was read and false when it was used.
+   *
+   * A refusal is still a refusal: a sequence genuinely past the buffer is refused after the second
+   * read, with the number the agent reports now rather than the one it reported at connect. The
+   * refresh is tried ONCE and never in a loop, so a reader who asks for a far future sequence pays
+   * one extra read rather than one per refusal.
+   *
+   * Only `window` is retried. Every other refusal is about the request line itself, which a new
+   * window cannot change.
+   */
+  private async guardAgainstLiveWindow(sql: string, session: MtcSession, model: MtcModel): Promise<MtcRequest> {
+    try {
+      return guardRequestLine(sql, guardOptionsFor(session, model));
+    } catch (error) {
+      if (!(error instanceof MtcRefusal) || error.code !== "window") throw this.asQueryError(error);
+      await this.readWindow();
+      try {
+        return guardRequestLine(sql, guardOptionsFor(session, model));
+      } catch (again) {
+        throw this.asQueryError(again);
+      }
+    }
+  }
+
+  /**
    * The Header of the read that reports the BUFFER's window rather than an answer's.
    *
    * The request is `MTCONNECT_WINDOW_REQUEST`, and its docblock holds the measurement: `count` and
@@ -383,8 +415,9 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     const model = await this.model();
     const started = Date.now();
     // A refusal from phase 0 is the provider's own sentence, named by its rule, and it leaves as a
-    // `QueryError` like every other refusal here.
-    const request = this.guard(sql, guardOptionsFor(session, model));
+    // `QueryError` like every other refusal here. A `window` refusal is read against a window read
+    // again first, because the buffer moves while a session is open.
+    const request = await this.guardAgainstLiveWindow(sql, session, model);
 
     const rows: MtcRow[] = [];
     if (request.op === "sample" || request.op === "current") {

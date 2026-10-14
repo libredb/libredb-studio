@@ -18,6 +18,14 @@
  * was 2, while the same agent answered those requests with 200. The captures hold the difference:
  * four of them carry the same firstSequence and lastSequence and four different nextSequence
  * values, so the cases can assert which Header a window may be read from.
+ *
+ * WHAT THIS FILE CANNOT SEE, and the reason `tests/live/mtconnect-live-check.ts` exists. Every
+ * answer here is of one frozen moment: the captures were taken once, so the buffer in them never
+ * advances. A second defect of the same family lived exactly there. The window is read at connect
+ * and held, and a session that stayed open while the buffer moved refused sequences the agent was
+ * willing to serve, with the number it reported at connect. No case below could fail on that,
+ * because nothing below can make a buffer move. The live check found it on its first run and holds
+ * it now.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -168,11 +176,13 @@ describe("a read inside the buffer's window is served", () => {
     await expect(provider.query("GET /sample?from=999999999&count=5")).rejects.toThrow(
       `from is 999999999, past the agent's next sequence number of ${BUFFER.next}.`,
     );
-    // The refusal is made before the read leaves: the agent is never asked for the sample. The
-    // model read that a fresh connection makes is the only request on the wire, which is why this
-    // asserts the absence of a `/sample` rather than an empty list.
+    // The refusal is made before the read leaves: the agent is never asked for the sample. Two
+    // requests do reach it, and both are named here rather than allowed by a loose matcher: the
+    // model a fresh connection reads, and the ONE window read the provider makes before it refuses
+    // a `window` case, since a window held since connect may be older than the buffer. The cost of
+    // that second read is one per refusal and never a loop, which is what this list pins.
     expect(seen.filter((line) => line.startsWith("/sample"))).toEqual([]);
-    expect(seen).toEqual(["/probe"]);
+    expect(seen).toEqual(["/probe", "/current"]);
     await provider.disconnect();
   });
 });
