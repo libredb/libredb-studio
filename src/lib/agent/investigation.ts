@@ -1779,10 +1779,11 @@ const WORKFLOW_TOOL_RULES: Readonly<
     ].join(" "),
     operations: SQL_WORKFLOW_TOOL_RULES.operations,
     // The SQL analysis rules less the profile, which a cluster has no table for, and with the chart rule said up
-    // front: every cell of a kubectl grid is text, so a chart is refused as not numeric and a table is the answer.
+    // front: most kubectl cells are text, which a chart refuses as not numeric, though a server-side Table's integer
+    // columns (a Deployment's Up-to-date and Available, a ReplicaSet's Desired, Current and Ready) can be charted.
     "data-analysis": [
       "Answer from what you have READ with run_read_query: only a result you ran can be the answer.",
-      "When you have it, call present_answer with the artifact id of the read that IS the answer. A kubectl grid is text, so present it as a table: a chart needs numeric columns, which kubectl grids do not have.",
+      "When you have it, call present_answer with the artifact id of the read that IS the answer. Most kubectl columns are text, so present the read as a table unless the columns you would chart are numeric, such as a Deployment's Up-to-date and Available counts.",
       AGENT_ANSWER_CONTRACT,
       "Then call compose_report. The presentation shows the result; the claims are what say what it means.",
       "At least one of those claims must cite the artifact you presented: a report about other evidence entirely is prose beside a picture, and the run is scored as not having answered.",

@@ -397,7 +397,10 @@ describe("an agent-mode kubectl data analysis", () => {
     expect(system).toContain(
       "Answer from what you have READ with run_read_query: only a result you ran can be the answer.",
     );
-    expect(system).toContain("A kubectl grid is text, so present it as a table");
+    expect(system).toContain(
+      "Most kubectl columns are text, so present the read as a table unless the columns you would chart are numeric",
+    );
+    expect(system).not.toContain("which kubectl grids do not have");
     expect(system).toContain(AGENT_ANSWER_CONTRACT);
     expect(system).toContain("Your objective is a question about this cluster's objects.");
     expect(system).not.toContain("profile_table");
