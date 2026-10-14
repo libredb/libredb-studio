@@ -2445,6 +2445,33 @@ describe("a recommendation reads as a proposal, never as something that happened
   });
 });
 
+describe("a resources recommendation folds", () => {
+  test("it has an entry and offers nothing to the editor", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: {
+          kind: "recommendation",
+          atMs: 6,
+          change: "resources",
+          namespace: "shop",
+          ownerKind: "Deployment",
+          ownerName: "web",
+          container: "web",
+          current: { requests: { cpu: "500m", memory: "256Mi" }, limits: { cpu: "1", memory: "512Mi" } },
+          proposed: { requests: { cpu: "150m", memory: "128Mi" }, limits: { cpu: "500m", memory: "256Mi" } },
+          rationale: "The container uses a third of its request.",
+          evidence: [{ source: "artifact", correlationId: "u1" }],
+        },
+      } as AgentLedgerEntry & { kind: "event" }),
+    ]);
+
+    expect(view.items).toHaveLength(2);
+    expect(view.items[1]?.applySql).toBeUndefined();
+  });
+});
+
 describe("a cluster usage reading folds", () => {
   test("a usage reading, a cluster without usage metrics and its refusal each have an entry", () => {
     const view = foldLedgerEntries([

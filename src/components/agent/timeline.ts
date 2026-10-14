@@ -1074,6 +1074,15 @@ function describeEvent(
         applySql: event.after.sql,
       };
     case "recommendation":
+      // A resources change has no statement to quote or to hand the editor: it is a change to a workload's manifest,
+      // which this runtime never writes, so the card offers nothing to apply.
+      if (event.change === "resources") {
+        return {
+          tone: "progress",
+          headline: "Resources recommended",
+          detail: `${event.rationale} Not applied: nothing here changes the cluster.`,
+        };
+      }
       return {
         tone: "progress",
         headline: event.change === "index" ? "Index recommended" : "Rewrite recommended",

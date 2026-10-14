@@ -72,6 +72,7 @@ import {
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
 import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
+import { parseQuantity } from "@/lib/db/providers/platform/kubernetes/console/top";
 import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/execution";
 import { inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
@@ -444,8 +445,16 @@ export type AgentPlanComparisonOutcome =
     }
   | AgentToolUnavailable;
 
-/** Everything a `recommendation` event carries except when it happened. */
-export type AgentRecommendation = Omit<Extract<AgentRunEvent, { kind: "recommendation" }>, "kind" | "atMs">;
+/**
+ * Everything a `recommendation` event carries except when it happened, arm by arm: `Omit` over the union itself would
+ * keep only the fields both arms share, and lose the statement of one and the container of the other.
+ */
+export type AgentRecommendation =
+  Extract<AgentRunEvent, { kind: "recommendation" }> extends infer Arm
+    ? Arm extends unknown
+      ? Omit<Arm, "kind" | "atMs">
+      : never
+    : never;
 
 export type AgentRecommendationOutcome =
   | { readonly kind: "recommended"; readonly recommendation: AgentRecommendation; readonly modelText: string }
@@ -979,6 +988,40 @@ const recommendationSchema = z.strictObject({
   evidence: z.array(evidenceSchema).min(1),
 });
 
+/**
+ * A Kubernetes quantity as a manifest states one: `250m`, `0.5`, `512Mi`, `1Gi`. Read by the same parser that reads
+ * the cluster's own figures, so a value this accepts is one the API server would accept too.
+ */
+const resourceQuantity = z
+  .string()
+  .min(1)
+  .max(32)
+  .refine((text) => parseQuantity(text) !== undefined, "not a Kubernetes quantity, such as 250m, 0.5, 512Mi or 1Gi");
+const resourceQuantities = z.strictObject({ cpu: resourceQuantity.optional(), memory: resourceQuantity.optional() });
+const resourceSettings = z.strictObject({ requests: resourceQuantities, limits: resourceQuantities });
+
+/**
+ * The resource-efficiency card: one container's requests and limits, as they are and as the run proposes them.
+ *
+ * No `statement`: the change is to a workload's manifest, which nothing here writes and no editor runs, so there is
+ * nothing to hand over. The owner is named so the user knows which manifest holds the container. `rationale` and
+ * `evidence` are declared as `recommendationSchema` declares them, against the same evidence schema.
+ */
+const resourcesRecommendationSchema = z.strictObject({
+  change: z.literal("resources"),
+  namespace: z.string().min(1),
+  ownerKind: z.enum(["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "ReplicaSet", "Pod"]),
+  ownerName: z.string().min(1),
+  container: z.string().min(1),
+  current: resourceSettings,
+  proposed: resourceSettings,
+  rationale: z.string().min(1),
+  evidence: z.array(evidenceSchema).min(1),
+});
+
+/** What a `recommend_change` call parses to, on whichever card the run's language offers. */
+type RecommendationInput = z.infer<typeof recommendationSchema> | z.infer<typeof resourcesRecommendationSchema>;
+
 /** The four keys `recommendationSchema` accepts, for the lone-rename reading below. */
 const RECOMMENDATION_KEYS = ["change", "statement", "rationale", "evidence"] as const;
 
@@ -1238,6 +1281,21 @@ const KUBECTL_STATEMENT_TOOLS: Readonly<Partial<Record<AgentToolName, AgentToolD
   run_read_query: KUBECTL_RUN_READ_QUERY,
 });
 
+const KUBECTL_RECOMMEND_CHANGE: AgentToolDefinition = Object.freeze({
+  name: "recommend_change",
+  description: `Propose one change to one container's CPU and memory requests and limits, for the user to apply themselves. Nothing is applied by this run and nothing here changes the cluster. State the current and the proposed values as Kubernetes quantities, and cite the inspect_usage reading the change rests on. ${AGENT_EVIDENCE_CONTRACT}`,
+  inputSchema: resourcesRecommendationSchema,
+});
+
+/**
+ * Resource efficiency, the kubectl query-optimization: the statement tools plus the resources card. Only this variant
+ * proposes a change to a container's resources, so only it replaces `recommend_change`.
+ */
+const KUBECTL_RESOURCE_EFFICIENCY_TOOLS: Readonly<Partial<Record<AgentToolName, AgentToolDefinition>>> = Object.freeze({
+  ...KUBECTL_STATEMENT_TOOLS,
+  recommend_change: KUBECTL_RECOMMEND_CHANGE,
+});
+
 /**
  * The tool definitions a workflow on a language replaces, keyed by language and then by workflow, because a
  * language's tools are not uniform across its workflows: one kubectl workflow may be offered a schema another is not.
@@ -1254,7 +1312,7 @@ const TOOL_OVERRIDES: Readonly<
   sql: Object.freeze({}),
   kubectl: Object.freeze({
     investigation: KUBECTL_STATEMENT_TOOLS,
-    "query-optimization": KUBECTL_STATEMENT_TOOLS,
+    "query-optimization": KUBECTL_RESOURCE_EFFICIENCY_TOOLS,
     "database-assessment": KUBECTL_STATEMENT_TOOLS,
     "data-analysis": KUBECTL_STATEMENT_TOOLS,
   }),
@@ -4435,7 +4493,18 @@ export function recommendChangeTool(
     throw new Error("agent tool layer: the recommendation's run record does not belong to this run");
   }
 
-  const parsed = parseToolInput(recommendationSchema, readDisplacedRecommendation(input));
+  const definition = agentToolDefinition(context.statementLanguage, context.workflowType, "recommend_change");
+  /*
+    The statement card's readings and refusal copy are about a statement: the displaced-field repair moves SQL between
+    fields, and the shape sentence describes a CREATE INDEX or a SELECT. Neither says anything true about the resources
+    card, so both apply only where the definition is the statement one, which every SQL run's is.
+  */
+  const statementCard = definition.inputSchema === recommendationSchema;
+  const parsed = parseToolInput(
+    definition.inputSchema as z.ZodType<RecommendationInput>,
+    statementCard ? readDisplacedRecommendation(input) : input,
+  );
+  if (!parsed.ok && !statementCard) return invalidEvidenceInput(parsed.problems);
   if (!parsed.ok) {
     return invalidEvidenceInput(
       parsed.problems,
@@ -4450,6 +4519,26 @@ export function recommendChangeTool(
           ? AGENT_RECOMMENDATION_SHAPE
           : undefined,
     );
+  }
+  if (parsed.value.change === "resources") {
+    const { container, ownerKind, ownerName } = parsed.value;
+    if (!parsed.value.evidence.every((reference) => verifiedAgainst(run.events, reference))) {
+      return unavailable(
+        "UNVERIFIABLE_EVIDENCE",
+        unverifiableCitation(run.events, [{ evidence: parsed.value.evidence }]),
+      );
+    }
+    return {
+      kind: "recommended",
+      recommendation: {
+        ...parsed.value,
+        // Carried by the schema's `.min(1)`, as on the statement card.
+        evidence: parsed.value.evidence as [AgentEvidenceReference, ...AgentEvidenceReference[]],
+      },
+      // The container and the owner are text the model itself sent in this call, so quoting them back adds no
+      // untrusted content.
+      modelText: `Recommendation recorded: new requests and limits for container ${container} of ${ownerKind}/${ownerName}, offered to the user and not applied. It is theirs to apply.`,
+    };
   }
   if (!matchesCard(parsed.value.change, parsed.value.statement)) {
     /*

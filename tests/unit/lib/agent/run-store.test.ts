@@ -382,6 +382,31 @@ describe("AgentRunStore — folding the ledger into a record", () => {
     expect(view?.record.status).toBe("running");
   });
 
+  test("a ledger holding a resources recommendation folds", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun(OPEN_INPUT);
+    await store.appendEvent(runId, event("run-started", 1, { mode: "agent" }));
+    await store.appendEvent(
+      runId,
+      event("recommendation", 2, {
+        change: "resources",
+        namespace: "shop",
+        ownerKind: "Deployment",
+        ownerName: "web",
+        container: "web",
+        current: { requests: { cpu: "500m", memory: "256Mi" }, limits: { cpu: "1", memory: "512Mi" } },
+        proposed: { requests: { cpu: "150m", memory: "128Mi" }, limits: { cpu: "500m", memory: "256Mi" } },
+        rationale: "r",
+        evidence: [{ source: "artifact", correlationId: "u1" }],
+      }),
+    );
+
+    const view = await store.read(runId);
+    expect(view?.record.events.map((entry) => entry.kind)).toEqual(["run-started", "recommendation"]);
+    expect(view?.record.events[1]).toMatchObject({ change: "resources", container: "web" });
+    expect(view?.record.status).toBe("running");
+  });
+
   test("a cancellation request is visible in the view but is not one of the run's events", async () => {
     const clock = fakeClock();
     const { store } = storeAt(undefined, clock.read);

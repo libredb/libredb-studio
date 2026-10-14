@@ -465,6 +465,39 @@ describe("a query-optimization run is judged by its own artifact as well as the 
       expect(verdict.unmet).toEqual(["no-plan-comparison"]);
     });
 
+    test("a resources recommendation citing the plan is not counted as an index recommendation", () => {
+      const resources: AgentRunEvent = {
+        kind: "recommendation",
+        atMs: 28,
+        change: "resources",
+        namespace: "shop",
+        ownerKind: "Deployment",
+        ownerName: "web",
+        container: "web",
+        current: { requests: { cpu: "500m" }, limits: {} },
+        proposed: { requests: { cpu: "150m" }, limits: {} },
+        rationale: "The container uses a third of its request.",
+        evidence: [{ source: "artifact", correlationId: CORRELATION.plan }],
+      };
+      const without = optimization([
+        contextCaptured,
+        planRead,
+        completed(CORRELATION.full, 8),
+        reportCiting(ARTIFACT(CORRELATION.full)),
+      ]);
+
+      const verdict = optimization([
+        contextCaptured,
+        planRead,
+        completed(CORRELATION.full, 8),
+        resources,
+        reportCiting(ARTIFACT(CORRELATION.full)),
+      ]);
+
+      expect(verdict.outcome).not.toBe("answered");
+      expect(verdict).toEqual(without);
+    });
+
     test("one grounded index among several answers, and the rest do not have to be", () => {
       const verdict = optimization([
         contextCaptured,

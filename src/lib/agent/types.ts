@@ -457,6 +457,21 @@ export type AgentEvidenceReference =
   | { readonly source: "artifact"; readonly correlationId: string; readonly locator?: string }
   | { readonly source: "context-snapshot"; readonly fingerprint: string; readonly locator?: string };
 
+/** CPU and memory as Kubernetes quantities, as the user would write them into a manifest. Either may be unset. */
+export interface AgentResourceQuantities {
+  readonly cpu?: string;
+  readonly memory?: string;
+}
+
+/** One container's requests and limits, the two halves a resources recommendation states before and after. */
+export interface AgentResourceSettings {
+  readonly requests: AgentResourceQuantities;
+  readonly limits: AgentResourceQuantities;
+}
+
+/** The workload kinds that own a container and whose pod template a user edits to change its resources. */
+export type AgentWorkloadKind = "Deployment" | "StatefulSet" | "DaemonSet" | "Job" | "CronJob" | "ReplicaSet" | "Pod";
+
 /**
  * One side of a before/after plan comparison (#330 T3).
  *
@@ -1343,6 +1358,26 @@ export type AgentRunEvent =
       readonly kind: "recommendation";
       readonly change: "index" | "rewrite";
       readonly statement: string;
+      readonly rationale: string;
+      readonly evidence: readonly [AgentEvidenceReference, ...AgentEvidenceReference[]];
+    })
+  | (AgentRunEventBase & {
+      /**
+       * A change to one container's CPU and memory requests and limits, proposed and NOT made.
+       *
+       * The same event kind as an index or a rewrite, because it is the same act: the run proposes, the user decides.
+       * It carries no `statement`, since there is nothing to hand an editor: the change is to a workload's manifest,
+       * which this runtime never writes. `current` and `proposed` are Kubernetes quantities the schema validated as
+       * such, and the owner is named so the user knows which manifest to edit.
+       */
+      readonly kind: "recommendation";
+      readonly change: "resources";
+      readonly namespace: string;
+      readonly ownerKind: AgentWorkloadKind;
+      readonly ownerName: string;
+      readonly container: string;
+      readonly current: AgentResourceSettings;
+      readonly proposed: AgentResourceSettings;
       readonly rationale: string;
       readonly evidence: readonly [AgentEvidenceReference, ...AgentEvidenceReference[]];
     })

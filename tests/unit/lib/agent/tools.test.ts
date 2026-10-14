@@ -4025,7 +4025,7 @@ describe("recommendChangeTool — a change the run proposes and does not make", 
 
     if (outcome.kind !== "recommended") throw new Error("expected recommended");
     expect(outcome.recommendation.change).toBe("index");
-    expect(outcome.recommendation.statement).toBe(INDEX_DDL);
+    expect(outcome.recommendation).toMatchObject({ statement: INDEX_DDL });
     expect(outcome.recommendation.evidence).toEqual([{ source: "artifact", correlationId: "corr-1" }]);
     expect(outcome.modelText).toContain("not executed");
   });
@@ -4269,7 +4269,7 @@ describe("recommendChangeTool — a change the run proposes and does not make", 
 
     if (outcome.kind !== "recommended") throw new Error(`expected recommended, got ${outcome.reasonCode}`);
     expect(outcome.recommendation.change).toBe("index");
-    expect(outcome.recommendation.statement).toBe(INDEX_DDL);
+    expect(outcome.recommendation).toMatchObject({ statement: INDEX_DDL });
     expect(outcome.recommendation.rationale).toBe("the filtered column has no index");
     expect(outcome.recommendation.evidence).toEqual([{ source: "artifact", correlationId: "corr-1" }]);
   });
@@ -4302,7 +4302,7 @@ describe("recommendChangeTool — a change the run proposes and does not make", 
 
     if (outcome.kind !== "recommended") throw new Error(`expected recommended, got ${outcome.reasonCode}`);
     expect(outcome.recommendation.change).toBe("rewrite");
-    expect(outcome.recommendation.statement).toBe("SELECT emp_no, first_name FROM employee");
+    expect(outcome.recommendation).toMatchObject({ statement: "SELECT emp_no, first_name FROM employee" });
   });
 
   test("but a card whose statement is prose is still refused", () => {
@@ -4357,7 +4357,7 @@ describe("recommendChangeTool — a change the run proposes and does not make", 
 
     if (outcome.kind !== "recommended") throw new Error(`expected recommended, got ${outcome.reasonCode}`);
     expect(outcome.recommendation.change).toBe("rewrite");
-    expect(outcome.recommendation.statement).toBe("SELECT id FROM orders WHERE customer_id = 1");
+    expect(outcome.recommendation).toMatchObject({ statement: "SELECT id FROM orders WHERE customer_id = 1" });
   });
 
   test("the statement under a key of the model's own, when `statement` is empty", () => {
@@ -4389,7 +4389,7 @@ describe("recommendChangeTool — a change the run proposes and does not make", 
 
     if (outcome.kind !== "recommended") throw new Error(`expected recommended, got ${outcome.reasonCode}`);
     expect(outcome.recommendation.change).toBe("index");
-    expect(outcome.recommendation.statement).toBe(INDEX_DDL);
+    expect(outcome.recommendation).toMatchObject({ statement: INDEX_DDL });
   });
 
   test("the same, with the model's other spellings of that key", () => {
@@ -4404,7 +4404,7 @@ describe("recommendChangeTool — a change the run proposes and does not make", 
       } as never);
 
       if (outcome.kind !== "recommended") throw new Error(`${key}: expected recommended, got ${outcome.reasonCode}`);
-      expect(outcome.recommendation.statement).toBe(INDEX_DDL);
+      expect(outcome.recommendation).toMatchObject({ statement: INDEX_DDL });
     }
   });
 
@@ -4472,7 +4472,7 @@ describe("recommendChangeTool — a change the run proposes and does not make", 
     });
 
     if (outcome.kind !== "recommended") throw new Error("expected recommended");
-    expect(outcome.recommendation.statement).toBe(INDEX_DDL);
+    expect(outcome.recommendation).toMatchObject({ statement: INDEX_DDL });
   });
 
   test("a recommendation citing something the run never produced is refused", () => {

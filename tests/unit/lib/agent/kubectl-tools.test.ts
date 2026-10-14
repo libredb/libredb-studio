@@ -9,6 +9,7 @@ import {
   agentToolDefinition,
   inspectUsageTool,
   presentAnswerTool,
+  recommendChangeTool,
   runReadQueryTool,
   selectAgentTools,
 } from "@/lib/agent/tools";
@@ -395,5 +396,101 @@ describe("inspect_usage", () => {
     expect(definition.operationId).toBe("cluster.usage.read");
     expect(properties(definition.inputSchema)).toEqual(["namespace", "selector"]);
     expect(definition.description).toContain("500");
+  });
+});
+
+describe("recommend_change on kubectl", () => {
+  /** A usage reading this run took, so a resources change has something of the run's own to cite. */
+  const USAGE_READ: AgentRunEvent = {
+    kind: "usage-read",
+    atMs: 2,
+    artifact: {
+      correlationId: "u1",
+      runId: "run-1",
+      operationId: "cluster.usage.read",
+      summary: { rowCount: 1, columnNames: ["container"], elapsedMs: 3 },
+    },
+    namespace: "shop",
+  };
+
+  const RESOURCES = {
+    change: "resources",
+    namespace: "shop",
+    ownerKind: "Deployment",
+    ownerName: "web",
+    container: "web",
+    current: { requests: { cpu: "500m", memory: "256Mi" }, limits: { cpu: "1", memory: "512Mi" } },
+    proposed: { requests: { cpu: "150m", memory: "128Mi" }, limits: { cpu: "500m", memory: "256Mi" } },
+    rationale: "r",
+    evidence: [{ source: "artifact", correlationId: "u1" }],
+  };
+
+  const optimization = () => harness({ workflowType: "query-optimization" });
+  const recommend = (input: unknown) => {
+    const h = optimization();
+    return recommendChangeTool(h.context, { runId: h.context.runId, events: [USAGE_READ] }, input);
+  };
+
+  test("a resources change citing a usage reading of this run goes through the schema and is recorded, with no statement", () => {
+    const outcome = recommend(RESOURCES);
+
+    if (outcome.kind !== "recommended") throw new Error(`expected a recommendation, got ${outcome.kind}`);
+    expect(outcome.recommendation.change).toBe("resources");
+    expect("statement" in outcome.recommendation).toBe(false);
+    expect(outcome.recommendation).toMatchObject({
+      namespace: "shop",
+      ownerKind: "Deployment",
+      ownerName: "web",
+      container: "web",
+      proposed: RESOURCES.proposed,
+    });
+    expect(outcome.modelText).toBe(
+      "Recommendation recorded: new requests and limits for container web of Deployment/web, offered to the user and not applied. It is theirs to apply.",
+    );
+  });
+
+  test.each(["250 millicores", "1.5.0", "", "-"])("a quantity that is not one (%s) is invalid input", (quantity) => {
+    const outcome = recommend({
+      ...RESOURCES,
+      proposed: { requests: { cpu: quantity, memory: "128Mi" }, limits: { cpu: "500m", memory: "256Mi" } },
+    });
+
+    expect(outcome).toMatchObject({ kind: "unavailable", reasonCode: "INVALID_TOOL_INPUT" });
+  });
+
+  test("an index card is not offered on kubectl: change index is invalid input", () => {
+    const outcome = recommend({
+      change: "index",
+      statement: "CREATE INDEX ix ON orders (customer_id)",
+      rationale: "r",
+      evidence: [{ source: "artifact", correlationId: "u1" }],
+    });
+
+    expect(outcome).toMatchObject({ kind: "unavailable", reasonCode: "INVALID_TOOL_INPUT" });
+  });
+
+  test("evidence the run did not produce is UNVERIFIABLE_EVIDENCE", () => {
+    const outcome = recommend({ ...RESOURCES, evidence: [{ source: "artifact", correlationId: "nope" }] });
+
+    expect(outcome).toMatchObject({ kind: "unavailable", reasonCode: "UNVERIFIABLE_EVIDENCE" });
+  });
+
+  test("the kubectl query-optimization definition takes the resources schema, and SQL keeps the statement one", () => {
+    const kubectl = agentToolDefinition("kubectl", "query-optimization", "recommend_change");
+    expect(properties(kubectl.inputSchema)).toEqual([
+      "change",
+      "namespace",
+      "ownerKind",
+      "ownerName",
+      "container",
+      "current",
+      "proposed",
+      "rationale",
+      "evidence",
+    ]);
+    expect(kubectl.description).toContain("inspect_usage");
+    expect(agentToolDefinition("sql", "query-optimization", "recommend_change")).toBe(
+      AGENT_TOOL_DEFINITIONS.recommend_change,
+    );
   });
 });

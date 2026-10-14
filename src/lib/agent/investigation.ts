@@ -2156,6 +2156,11 @@ function describePriorProgress(record: AgentRunRecord): string | null {
       lines.push(
         `Usage could not be read in namespace ${event.namespace}: this cluster serves no usage metrics (metrics.k8s.io), because metrics-server is not installed or not answering. Asking again will not change that.`,
       );
+    } else if (event.kind === "recommendation" && event.change === "resources") {
+      // The container and the owner are the model's own arguments to an earlier call, as the statement is below.
+      lines.push(
+        `New requests and limits for container ${event.container} of ${event.ownerKind}/${event.ownerName} were already recommended and are recorded. Do not propose them a second time.`,
+      );
     } else if (event.kind === "recommendation") {
       lines.push(
         `A ${event.change} was already recommended and is recorded: ${event.statement}. Do not propose it a second time.`,
