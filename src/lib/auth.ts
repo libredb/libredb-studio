@@ -2,7 +2,7 @@ import { getBasePath } from "@/lib/config/base-path";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies, headers } from "next/headers";
 import { logger } from "@/lib/logger";
-import { getJwtSecret } from "@/lib/config/auth-env";
+import { getJwtSecret, sessionTtlSeconds } from "@/lib/config/auth-env";
 import { storedAccountAllows } from "@/lib/local-accounts";
 
 // getJwtSecret is called per sign/verify rather than at module load, so a
@@ -33,7 +33,7 @@ export async function signJWT(payload: UserPayload) {
   return await new SignJWT({ ...payload })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime("24h")
+    .setExpirationTime(`${sessionTtlSeconds()}s`)
     .sign(getJwtSecret());
 }
 
@@ -179,7 +179,7 @@ export async function login(role: Role, username?: string, sessionVersion?: numb
     // notably a cross-site POST /api/auth/login, where there is no pre-existing cookie to withhold
     // - are covered by the Origin check in src/proxy.ts (src/lib/api/origin-check.ts).
     sameSite: "lax",
-    maxAge: 60 * 60 * 24, // 1 day
+    maxAge: sessionTtlSeconds(),
     path: getBasePath() || "/",
   });
 }

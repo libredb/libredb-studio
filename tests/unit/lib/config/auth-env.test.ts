@@ -8,6 +8,10 @@ import {
   getJwtSecret,
   JWT_SECRET_MISSING_MESSAGE,
   JWT_SECRET_TOO_SHORT_MESSAGE,
+  SESSION_TTL_DEFAULT_SECONDS,
+  SESSION_TTL_MAX_SECONDS,
+  SESSION_TTL_MIN_SECONDS,
+  sessionTtlSeconds,
 } from "@/lib/config/auth-env";
 
 // getJwtSecret is stateless (no memoization), so every test sees a fresh read of
@@ -134,5 +138,39 @@ describe("config/auth-env derivedSigningKey", () => {
       .sign(await derivedSigningKey("libredb.passkey.ceremony.v1"));
 
     expect(await verifyJWT(token)).toBeNull();
+  });
+});
+
+describe("config/auth-env sessionTtlSeconds", () => {
+  const orig = process.env.AUTH_SESSION_TTL_SECONDS;
+
+  afterEach(() => {
+    if (orig === undefined) delete process.env.AUTH_SESSION_TTL_SECONDS;
+    else process.env.AUTH_SESSION_TTL_SECONDS = orig;
+  });
+
+  test("defaults to 86400 seconds, the fixed 24-hour lifetime, when unset or blank", () => {
+    delete process.env.AUTH_SESSION_TTL_SECONDS;
+    expect(SESSION_TTL_DEFAULT_SECONDS).toBe(86400);
+    expect(sessionTtlSeconds()).toBe(86400);
+    process.env.AUTH_SESSION_TTL_SECONDS = "  ";
+    expect(sessionTtlSeconds()).toBe(86400);
+  });
+
+  test("returns a set integer inside the range, including both bounds, trimmed", () => {
+    process.env.AUTH_SESSION_TTL_SECONDS = "28800";
+    expect(sessionTtlSeconds()).toBe(28800);
+    process.env.AUTH_SESSION_TTL_SECONDS = ` ${SESSION_TTL_MIN_SECONDS} `;
+    expect(sessionTtlSeconds()).toBe(300);
+    process.env.AUTH_SESSION_TTL_SECONDS = String(SESSION_TTL_MAX_SECONDS);
+    expect(sessionTtlSeconds()).toBe(86400);
+  });
+
+  test("throws AuthConfigError naming the variable for a non-integer or out-of-range value", () => {
+    for (const value of ["299", "86401", "abc", "3600.5", "1e4", "-600", "0x12c"]) {
+      process.env.AUTH_SESSION_TTL_SECONDS = value;
+      expect(() => sessionTtlSeconds()).toThrow(AuthConfigError);
+      expect(() => sessionTtlSeconds()).toThrow("AUTH_SESSION_TTL_SECONDS");
+    }
   });
 });

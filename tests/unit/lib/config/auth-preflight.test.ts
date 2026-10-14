@@ -332,3 +332,57 @@ describe("config/auth-preflight STORAGE_ENCRYPTION_KEY", () => {
   // login returned 503. A monitor stayed green through all of it and the first report came
   // from a user who could not sign in.
 });
+
+describe("config/auth-preflight AUTH_SESSION_TTL_SECONDS", () => {
+  const origTtl = process.env.AUTH_SESSION_TTL_SECONDS;
+  const origSecret = process.env.JWT_SECRET;
+
+  afterEach(() => {
+    if (origTtl === undefined) delete process.env.AUTH_SESSION_TTL_SECONDS;
+    else process.env.AUTH_SESSION_TTL_SECONDS = origTtl;
+    if (origSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = origSecret;
+  });
+
+  function runPreflight(): { result: boolean; exitCalls: Array<number | undefined>; banner: string } {
+    const originalExit = process.exit;
+    const exitCalls: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exitCalls.push(code);
+    }) as unknown as typeof process.exit;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = verifyAuthEnvAtBoot();
+      return { result, exitCalls, banner: errorSpy.mock.calls.flat().join("\n") };
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+    }
+  }
+
+  test("AUTH_SESSION_TTL_SECONDS of 299, 86401 or abc stops the boot naming the variable", () => {
+    process.env.JWT_SECRET = "a-valid-secret-that-is-32-chars!";
+    for (const value of ["299", "86401", "abc"]) {
+      process.env.AUTH_SESSION_TTL_SECONDS = value;
+      const { result, exitCalls, banner } = runPreflight();
+      expect(result).toBe(false);
+      expect(exitCalls).toEqual([1]);
+      expect(banner).toContain("LibreDB Studio cannot start");
+      expect(banner).toContain("AUTH_SESSION_TTL_SECONDS");
+      expect(banner).toContain("300");
+      expect(banner).toContain("86400");
+    }
+  });
+
+  test("allows boot to continue when AUTH_SESSION_TTL_SECONDS is unset or inside the range", () => {
+    process.env.JWT_SECRET = "a-valid-secret-that-is-32-chars!";
+    for (const value of [undefined, "300", "28800", "86400"]) {
+      if (value === undefined) delete process.env.AUTH_SESSION_TTL_SECONDS;
+      else process.env.AUTH_SESSION_TTL_SECONDS = value;
+      const { result, exitCalls, banner } = runPreflight();
+      expect(result).toBe(true);
+      expect(exitCalls).toEqual([]);
+      expect(banner).toBe("");
+    }
+  });
+});

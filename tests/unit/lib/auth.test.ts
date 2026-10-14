@@ -149,6 +149,34 @@ describe("auth", () => {
   // --------------------------------------------------------------------------
 
   describe("login()", () => {
+    describe("session lifetime", () => {
+      const origTtl = process.env.AUTH_SESSION_TTL_SECONDS;
+
+      afterEach(() => {
+        if (origTtl === undefined) delete process.env.AUTH_SESSION_TTL_SECONDS;
+        else process.env.AUTH_SESSION_TTL_SECONDS = origTtl;
+      });
+
+      async function issuedLifetime(): Promise<{ tokenSeconds: number; cookieMaxAge: unknown }> {
+        await login("user", "user");
+        const claims = jose.decodeJwt(mockSetCalls[0].value);
+        return {
+          tokenSeconds: (claims.exp as number) - (claims.iat as number),
+          cookieMaxAge: (mockSetCalls[0].opts as { maxAge?: number }).maxAge,
+        };
+      }
+
+      test("with AUTH_SESSION_TTL_SECONDS unset the token and the cookie still last 24 hours", async () => {
+        delete process.env.AUTH_SESSION_TTL_SECONDS;
+        expect(await issuedLifetime()).toEqual({ tokenSeconds: 86400, cookieMaxAge: 86400 });
+      });
+
+      test("AUTH_SESSION_TTL_SECONDS=28800 gives exp minus iat of 28800 and a cookie Max-Age of 28800", async () => {
+        process.env.AUTH_SESSION_TTL_SECONDS = "28800";
+        expect(await issuedLifetime()).toEqual({ tokenSeconds: 28800, cookieMaxAge: 28800 });
+      });
+    });
+
     test("sets auth-token cookie with admin role", async () => {
       await login("admin", "admin");
       expect(mockSetCalls.length).toBeGreaterThan(0);
