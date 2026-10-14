@@ -29,15 +29,21 @@ import { AgentRunStore, ledgerStreamName } from "@/lib/agent/run-store";
 
 const FIXTURE = path.resolve(import.meta.dir, "../../../fixtures/agent/pre-workflow-type-ledger.ndjson");
 
+/**
+ * A query-optimization run as the ledger wrote it before the statement-language layer: captured through
+ * `AgentRunService` on the commit before that layer, so every entry is in the writer's own shape.
+ */
+const PRE_LANGUAGE = path.resolve(import.meta.dir, "../../../fixtures/agent/pre-statement-language-ledger.ndjson");
+
 const dataDirs: string[] = [];
 
 /** Replays a raw ledger into a real backend and folds it, exactly as a server would. */
-async function foldFixture(): Promise<Awaited<ReturnType<AgentRunStore["read"]>>> {
+async function foldFixture(file = FIXTURE): Promise<Awaited<ReturnType<AgentRunStore["read"]>>> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ledger-compat-"));
   dataDirs.push(dataDir);
   const world = createLocalWorld({ dataDir, recoverActiveRuns: false });
   const lines = fs
-    .readFileSync(FIXTURE, "utf8")
+    .readFileSync(file, "utf8")
     .split("\n")
     .filter((line) => line.trim().length > 0);
   const runId = String((JSON.parse(lines[0] ?? "{}") as { runId?: unknown }).runId);
@@ -149,5 +155,19 @@ describe("a ledger written before goalVerdict existed", () => {
     expect(finished.goalVerdict).toBeUndefined();
     expect(finished.status).toBe("failed");
     expect(finished.reason).toBe("model-rate-limited");
+  });
+});
+
+describe("a ledger written before statementLanguage existed", () => {
+  test("folds to a query-optimization run whose verdict is the one recorded", async () => {
+    const view = await foldFixture(PRE_LANGUAGE);
+
+    expect(view?.record.workflowType).toBe("query-optimization");
+    expect(view?.record.events.some((event) => event.kind === "recommendation")).toBe(true);
+    expect(view?.record.events.at(-1)).toMatchObject({
+      kind: "run-finished",
+      status: "succeeded",
+      goalVerdict: { outcome: "answered", verifier: "agent-query-optimization.3" },
+    });
   });
 });
