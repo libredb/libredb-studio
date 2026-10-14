@@ -45,7 +45,7 @@ import { createRunRegistry, type RunRegistry } from "@/lib/db/utils/bounded-limi
 import type { DatabaseConnection, QueryWarning, WithTunnelFarEnd } from "@/lib/types";
 import { createKubernetesClient, DEFAULT_KUBERNETES_SEAMS, type KubernetesCall, type KubernetesSeams } from "./client";
 import { kubernetesConnectWarnings } from "./connect-warnings";
-import { ExplainCache, type KubectlGrid, statementCall } from "./console/context";
+import { ExplainCache, resultOf, statementCall } from "./console/context";
 import { EXPLAIN_CACHE_ENTRIES } from "./console/explain";
 import { prepareKubectlQuery } from "./console/paging";
 import { runKubectl } from "./console/run";
@@ -53,7 +53,7 @@ import { type ClusterEndpoint, readClusterEndpoint } from "./connection-options"
 import { DiscoveryCache, readDiscovery, requireSupportedServer } from "./discovery";
 import { CLUSTER_CONTAINER, KUBERNETES_OBJECT_KINDS, KUBERNETES_ROW_ACTIONS } from "./kinds";
 import { KUBERNETES_LABELS } from "./labels";
-import { KUBERNETES_DEFAULT_PORT, KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_TYPE } from "./limits";
+import { KUBERNETES_DEFAULT_PORT, KUBERNETES_TYPE } from "./limits";
 import { kubernetesHealth, kubernetesOverview } from "./monitoring";
 import {
   countKubernetesObjects,
@@ -78,29 +78,6 @@ interface KubernetesSession {
   readonly lifetime: AbortController;
   /** The OpenAPI group documents `explain` read, kept for this session only. */
   readonly explainCache: ExplainCache;
-}
-
-/** A command's grid as a query result: the rows it answered, and a bound it applied itself. */
-function resultOf(grid: KubectlGrid, executionTime: number): QueryResult {
-  return {
-    rows: grid.rows,
-    fields: grid.fields,
-    rowCount: grid.rows.length,
-    executionTime,
-    ...(grid.columnTypes === undefined ? {} : { columnTypes: grid.columnTypes }),
-    ...(grid.warnings === undefined ? {} : { warnings: grid.warnings }),
-    ...(grid.bounded === true
-      ? {
-          pagination: {
-            limit: KUBERNETES_MAX_STATEMENT_ROWS,
-            offset: 0,
-            hasMore: true,
-            totalReturned: grid.rows.length,
-            wasLimited: true,
-          },
-        }
-      : {}),
-  };
 }
 
 /** Aborts every request of a session and closes its transport; a second call changes nothing. */

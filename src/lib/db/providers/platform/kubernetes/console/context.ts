@@ -6,11 +6,12 @@
  * Server-only: it reads through the provider's client.
  */
 import { QueryError } from "@/lib/db/errors";
+import type { QueryResult } from "@/lib/db/types";
 import type { QueryWarning } from "@/lib/types";
 import type { KubernetesCall } from "../client";
 import type { IndexedResource } from "../discovery";
 import { typeMissingSentence } from "../errors";
-import { KUBERNETES_TYPE, KUBERNETES_WINDOW_MARGIN_MS } from "../limits";
+import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_TYPE, KUBERNETES_WINDOW_MARGIN_MS } from "../limits";
 import type { KubernetesSurface } from "../objects";
 import { resolveResource } from "../resolve";
 import { KUBECTL_SENTENCES } from "./commands";
@@ -36,6 +37,12 @@ export class ExplainCache {
   }
 }
 
+/** The agent's budget as a command reads it: the most rows and the most JSON bytes its answer may carry. */
+export interface MachineLimits {
+  readonly maxRows: number;
+  readonly maxBytes: number;
+}
+
 /** One run of one statement. */
 export interface KubectlContext {
   readonly surface: KubernetesSurface;
@@ -51,6 +58,12 @@ export interface KubectlContext {
   readonly queryTimeoutMs: number;
   /** The build's version for the version command; null when the build names none. */
   readonly appVersion: string | null;
+  /**
+   * Set by the agent's read path only (`machine-read.ts`), never by `query()`: the agent's row and byte budget. A
+   * command reads at most `maxRows + 1` rows where it can stop early, and the output projection is masked
+   * (`machine-redaction.ts`). Absent, every command answers exactly as the editor's console always has.
+   */
+  readonly machine?: MachineLimits;
 }
 
 /** The one grid a statement answers. */
@@ -77,6 +90,47 @@ export function statementCall(signal: AbortSignal, deadline: number, now: () => 
     const left = deadline - now();
     if (left <= 0) throw new QueryError(STATEMENT_DEADLINE_SENTENCE, KUBERNETES_TYPE);
     return { signal, timeoutMs: left };
+  };
+}
+
+/** The SQL providers' sentence for a result past the row budget, so the agent's advice reads both the same way. */
+export function rowBudgetSentence(rows: number, allowed: number): string {
+  return `Read-only execution exceeded the row budget: ${rows} rows > ${allowed} allowed`;
+}
+
+/** The SQL providers' sentence for a result past the byte budget. */
+export function byteBudgetSentence(bytes: number, allowed: number): string {
+  return `Read-only execution exceeded the byte budget: ${bytes} bytes > ${allowed} allowed`;
+}
+
+/**
+ * The most rows a command reads: its own limit on an editor run; on an agent run one past the budget at most, which is
+ * enough to know the answer is refused without reading the rest.
+ */
+export function machineRowLimit(context: KubectlContext, editorLimit: number): number {
+  return context.machine === undefined ? editorLimit : Math.min(editorLimit, context.machine.maxRows + 1);
+}
+
+/** A command's grid as a query result: the rows it answered, and a bound it applied itself. */
+export function resultOf(grid: KubectlGrid, executionTime: number): QueryResult {
+  return {
+    rows: grid.rows,
+    fields: grid.fields,
+    rowCount: grid.rows.length,
+    executionTime,
+    ...(grid.columnTypes === undefined ? {} : { columnTypes: grid.columnTypes }),
+    ...(grid.warnings === undefined ? {} : { warnings: grid.warnings }),
+    ...(grid.bounded === true
+      ? {
+          pagination: {
+            limit: KUBERNETES_MAX_STATEMENT_ROWS,
+            offset: 0,
+            hasMore: true,
+            totalReturned: grid.rows.length,
+            wasLimited: true,
+          },
+        }
+      : {}),
   };
 }
 
