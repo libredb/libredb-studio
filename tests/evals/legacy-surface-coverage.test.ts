@@ -399,14 +399,17 @@ describe("what the removed panels did that these runs do not", () => {
       // type in `tests/unit/lib/agent/tools.test.ts`.
       "present_answer",
       "profile_table",
+      // The cluster workload profile, offered by no SQL workflow either: it reads a namespace's workloads.
+      "profile_workloads",
       "recommend_change",
       "run_read_query",
     ]);
     // Four canonical SQL-side operations: three composed SQL, and the curated read that names
-    // no statement at all. That fourth id is the thing B27 said did not exist. The fifth is the
-    // cluster usage reading, which names no statement either.
+    // no statement at all. That fourth id is the thing B27 said did not exist. The fifth and sixth
+    // are the cluster usage reading and the workload profile, which name no statement either.
     expect([...new Set(Object.values(AGENT_TOOL_DEFINITIONS).map((tool) => tool.operationId))].sort()).toEqual([
       "cluster.usage.read",
+      "cluster.workloads.read",
       "db.operations.read",
       "sql.explain.estimate",
       "sql.query.read",
