@@ -43,6 +43,7 @@ Docker Hub images are pulled through `mirror.gcr.io` (`registries.yaml`).
 | `shop-only.yaml` | ServiceAccount `probe-auth/shop-only` | `view` in the namespace `shop` only: it may not list namespaces |
 | `reader.yaml` | ServiceAccount `probe-auth/reader` | get, list and watch on every resource, Secrets included |
 | `studio-reader.yaml` | ServiceAccount `libredb-studio/studio-reader` | the `studio-reader` recipe of `docs/providers/kubernetes.md` |
+| `secret-reader.yaml` | ServiceAccount `probe-auth/secret-reader` | `view` and `studio-reader` everywhere, plus get and list on Secrets in `shop`: the live agent gate runs as it, so the Secret-name and Secret-key rules meet Secrets the identity can really read |
 
 The token personas default to the namespace `shop`, and their tokens last 72 hours; run `seed.sh` again for fresh ones.
 

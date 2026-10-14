@@ -1,8 +1,8 @@
 # Sample data for the Kubernetes provider's throwaway clusters (docker/kubernetes/README.md). Fake values only.
 # Every value and key holding k8s-marker- is a planted marker: tests/helpers/kubernetes-markers.ts names each one, the
 # fixture scrub keeps them in the namespaces shop and restricted, and the tests assert that none reaches a surface it
-# must not: a Secret value on any surface, and a value, a key, a label, an annotation, an env value or a Secret name on
-# a machine surface.
+# must not: a Secret value on any surface, and a value, a key, a label, an annotation, an env value, a Secret name, a
+# command-line credential or a probe header on a machine surface.
 apiVersion: v1
 kind: Namespace
 metadata: {name: shop, labels: {env: probe, team: commerce}}
@@ -124,10 +124,53 @@ type: Opaque
 stringData:
   k8s-marker-secret-entry-5e21: k8s-marker-secret-value-3d9a
 ---
+# A workload that names the marker Secret in every place a pod can, with a credential on its command line and in a
+# probe header. The probe never answers on pause, so the pod runs and is never Ready: the health workflows have a real
+# finding.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: vault-client, namespace: shop, labels: {app: vault-client}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: vault-client}}
+  template:
+    metadata:
+      labels: {app: vault-client}
+      annotations: {libredb.dev/k8s-marker-annotation-name-8e0b: k8s-marker-annotation-value-c8e1}
+    spec:
+      serviceAccountName: vault-client
+      imagePullSecrets: [{name: k8s-marker-secret-name}]
+      containers:
+        - name: client
+          image: registry.k8s.io/pause:3.10
+          args: ["--token=k8s-marker-args-value-4f1d"]
+          env:
+            - {name: FROM_SECRET, valueFrom: {secretKeyRef: {name: k8s-marker-secret-name, key: k8s-marker-secret-entry-5e21}}}
+          envFrom: [{secretRef: {name: k8s-marker-secret-name}}]
+          readinessProbe:
+            httpGet: {path: /, port: 8080, httpHeaders: [{name: Authorization, value: k8s-marker-header-value-9b3e}]}
+          volumeMounts: [{name: plain, mountPath: /plain}, {name: projected, mountPath: /projected}]
+          resources: {requests: {cpu: 10m, memory: 16Mi}}
+      volumes:
+        - {name: plain, secret: {secretName: k8s-marker-secret-name}}
+        - {name: projected, projected: {sources: [{secret: {name: k8s-marker-secret-name}}]}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: vault-client, namespace: shop}
+secrets: [{name: k8s-marker-secret-name}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: marker-secret-reader, namespace: shop}
+rules:
+  - {apiGroups: [""], resources: [secrets], resourceNames: [k8s-marker-secret-name], verbs: [get]}
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata: {name: web, namespace: shop}
 spec:
+  tls: [{hosts: [web.shop.example], secretName: k8s-marker-secret-name}]
   rules:
     - host: shop.probe.local
       http:
@@ -323,3 +366,32 @@ kind: ClusterRoleBinding
 metadata: {name: probe-reader}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: probe-read-all}
 subjects: [{kind: ServiceAccount, name: reader, namespace: probe-auth}]
+---
+# secret-reader may get and list Secrets in shop, on top of view and studio-reader: the identity the live agent gate
+# runs as, so the Secret-name and Secret-key rules are exercised against Secrets the identity can really read.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: secret-reader, namespace: probe-auth}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: secret-reader, namespace: shop}
+rules: [{apiGroups: [""], resources: [secrets], verbs: [get, list]}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: secret-reader, namespace: shop}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: secret-reader}
+subjects: [{kind: ServiceAccount, name: secret-reader, namespace: probe-auth}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: secret-reader-view}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view}
+subjects: [{kind: ServiceAccount, name: secret-reader, namespace: probe-auth}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: secret-reader-studio}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: studio-reader}
+subjects: [{kind: ServiceAccount, name: secret-reader, namespace: probe-auth}]

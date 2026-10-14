@@ -62,4 +62,5 @@ persona viewer probe-auth viewer
 persona shop-only probe-auth shop-only
 persona reader probe-auth reader
 persona studio-reader libredb-studio studio-reader
+persona secret-reader probe-auth secret-reader
 echo "seeded $NAME; persona kubeconfigs in $DIR"

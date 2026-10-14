@@ -16,6 +16,10 @@ export const KUBERNETES_SAMPLE_MARKERS = Object.freeze({
   secretKey: "k8s-marker-secret-entry-5e21",
   labelKey: "libredb.dev/k8s-marker-label-name-2c6d",
   annotationKey: "libredb.dev/k8s-marker-annotation-name-8e0b",
+  /** A credential passed on a container's command line, which machine output must never carry. */
+  argsValue: "k8s-marker-args-value-4f1d",
+  /** A probe's HTTP header value, an Authorization header in the sample, which machine output must never carry. */
+  headerValue: "k8s-marker-header-value-9b3e",
 });
 
 /** The namespaces whose Secrets hold planted markers; every other Secret is emptied by the fixture scrub. */

@@ -25,7 +25,17 @@ interface Manifest {
   readonly stringData?: Record<string, string>;
   readonly spec?: {
     readonly template?: { readonly spec?: { readonly containers?: { readonly env?: { value: string }[] }[] } };
+    readonly tls?: { readonly hosts?: string[]; readonly secretName?: string }[];
   };
+  readonly secrets?: { readonly name: string }[];
+  readonly rules?: {
+    readonly apiGroups?: string[];
+    readonly resources?: string[];
+    readonly resourceNames?: string[];
+    readonly verbs?: string[];
+  }[];
+  readonly roleRef?: { readonly kind: string; readonly name: string };
+  readonly subjects?: { readonly kind: string; readonly name: string; readonly namespace?: string }[];
 }
 
 const SAMPLE = parseAllDocuments(read("sample.yaml")).map((document) => document.toJS() as Manifest);
@@ -54,8 +64,8 @@ describe("seed.sh", () => {
     ]);
   });
 
-  test("writes the four token personas, each into the namespace shop", () => {
-    for (const persona of ["viewer", "shop-only", "reader", "studio-reader"]) {
+  test("writes the five token personas, each into the namespace shop", () => {
+    for (const persona of ["viewer", "shop-only", "reader", "studio-reader", "secret-reader"]) {
       expect(script).toContain(`persona ${persona} `);
     }
     expect(script).toContain("      namespace: shop");
@@ -106,5 +116,65 @@ describe("the sample data plants every marker", () => {
       KUBERNETES_SAMPLE_MARKERS.annotationValue,
     );
     expect(web?.spec?.template?.spec?.containers?.[0]?.env?.[0]?.value).toBe(KUBERNETES_SAMPLE_MARKERS.envValue);
+  });
+});
+
+describe("the sample data plants every machine-redaction rule", () => {
+  const find = (kind: string, name: string, namespace?: string) =>
+    SAMPLE.find(
+      (manifest) =>
+        manifest.kind === kind &&
+        manifest.metadata?.name === name &&
+        (namespace === undefined || manifest.metadata?.namespace === namespace),
+    );
+  const client = () => find("Deployment", "vault-client");
+
+  test("a Deployment referencing the marker Secret in every form, with an args credential and a probe header", () => {
+    const text = JSON.stringify(client());
+    for (const field of ["secretKeyRef", "envFrom", "secretName", "projected", "imagePullSecrets", "httpHeaders"])
+      expect(text).toContain(field);
+    expect(text).toContain(KUBERNETES_SAMPLE_MARKERS.argsValue);
+    expect(text).toContain(KUBERNETES_SAMPLE_MARKERS.headerValue);
+    expect(text).toContain(KUBERNETES_SAMPLE_MARKERS.secretName);
+  });
+
+  test("an Ingress tls secretName, a ServiceAccount's secrets and a Role scoped to the Secret by name", () => {
+    expect(find("Ingress", "web", "shop")?.spec?.tls).toEqual([
+      { hosts: ["web.shop.example"], secretName: KUBERNETES_SAMPLE_MARKERS.secretName },
+    ]);
+    expect(find("ServiceAccount", "vault-client", "shop")?.secrets).toEqual([
+      { name: KUBERNETES_SAMPLE_MARKERS.secretName },
+    ]);
+    expect(find("Role", "marker-secret-reader", "shop")?.rules).toEqual([
+      {
+        apiGroups: [""],
+        resources: ["secrets"],
+        resourceNames: [KUBERNETES_SAMPLE_MARKERS.secretName],
+        verbs: ["get"],
+      },
+    ]);
+  });
+
+  test("the secret-reader persona may list and get Secrets in shop, and joins view and studio-reader", () => {
+    const subject = { kind: "ServiceAccount", name: "secret-reader", namespace: "probe-auth" };
+    expect(find("ServiceAccount", "secret-reader", "probe-auth")).toBeDefined();
+    expect(find("Role", "secret-reader", "shop")?.rules).toEqual([
+      { apiGroups: [""], resources: ["secrets"], verbs: ["get", "list"] },
+    ]);
+    const binding = find("RoleBinding", "secret-reader", "shop");
+    expect(binding?.roleRef).toMatchObject({ kind: "Role", name: "secret-reader" });
+    expect(binding?.subjects).toEqual([subject]);
+    for (const [name, role] of [
+      ["secret-reader-view", "view"],
+      ["secret-reader-studio", "studio-reader"],
+    ]) {
+      const clusterBinding = find("ClusterRoleBinding", name);
+      expect(clusterBinding?.roleRef).toMatchObject({ kind: "ClusterRole", name: role });
+      expect(clusterBinding?.subjects).toEqual([subject]);
+    }
+  });
+
+  test("seed.sh writes five token personas", () => {
+    expect(read("seed.sh")).toContain("persona secret-reader probe-auth secret-reader");
   });
 });
