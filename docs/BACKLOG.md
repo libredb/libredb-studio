@@ -44,6 +44,7 @@ None of it is a GitHub issue.
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B116 · 50
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
+- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV4 · 4
 
 ---
 
@@ -7639,3 +7640,50 @@ Found 2026-10-12 while designing the RabbitMQ provider.
 Found 2026-10-12 while designing the RabbitMQ provider.
 
 **Done when:** the chooser prefers an exact match and falls back to the case-insensitive one only when no exact match exists, for every provider, with a test on two names that differ by case.
+
+---
+
+## Governance follow-ups
+
+Defects and open questions found while designing the governance mode (`GOVERNANCE_SOURCE=postgres`), recorded for the modes it does not cover.
+Each was re-verified against the code on 2026-10-15.
+
+### GOV1. Resolving a seed id answers 403 for an existing id and 404 for an unknown one
+
+`resolveConnection` in `src/lib/seed/resolve-connection.ts:84-98` looks the id up again without the role filter when the filtered lookup misses.
+An id that exists but is not available to the caller's role answers 403 with "Access denied", and an id that does not exist answers 404 with "not found".
+So any signed-in user can learn which seed ids the operator configured, including ids no role of theirs may use.
+The connection's fields are not revealed, so the leak is the id alone.
+Governance mode answers a uniform 404 for every connection the caller is not granted; the other modes keep the two answers.
+
+**Done when:** an id the caller's role cannot use and an id that does not exist give the same status and body in every mode, the denial is still logged server-side, and a route test pins both answers as equal.
+
+### GOV2. `docs/STORAGE.md` says `sslmode=require` encrypts without verifying, but pg verifies it
+
+`docs/STORAGE.md` "SSL" tells operators to use `sslmode=require` for managed cloud PostgreSQL and says it encrypts but does not verify (`rejectUnauthorized: false`).
+`buildSSLConfig()` in `src/lib/storage/providers/postgres.ts` does return `{ rejectUnauthorized: false }` for `require`, but the pool is built with the `connectionString` too, and pg 8.23 parses the string after the explicit options, so the parsed `ssl` wins.
+pg-connection-string 2.x treats `prefer`, `require` and `verify-ca` as aliases of `verify-full` unless `uselibpqcompat=true` is set, and emits a security warning.
+Measured with pg 8.23.1 and pg-connection-string 2.14.1: `new ConnectionParameters({ connectionString: "...?sslmode=require", ssl: { rejectUnauthorized: false } }).ssl` is `{}`, which verifies the chain and the host name.
+So a storage database with a self-signed certificate fails with `sslmode=require`, the opposite of what the document promises, and the same holds for `prefer`, `verify-ca` and `verify-full`.
+
+**Done when:** the document states what each `sslmode` value really does with the pinned pg, and either the code keeps the documented non-verifying `require` (for example by removing `sslmode` from the string it hands to pg) or the document drops that promise, with a unit test on the options the pool receives.
+
+### GOV3. Arming the MSSQL and Oracle transaction timeout in every mode needs a design decision first
+
+PostgreSQL and MySQL roll back an editor transaction left open for five minutes (`TX_TIMEOUT_MS` in `src/lib/db/providers/sql/postgres.ts` and `src/lib/db/providers/sql/mysql.ts`).
+The MSSQL and Oracle providers have no such timer, so an abandoned transaction there holds its locks until the provider is torn down.
+The governance design arms the same five-minute timer for MSSQL and Oracle only on providers created with an owner, so installs without governance keep today's transaction lifetime.
+Arming it in every mode would change behaviour for users who never enable governance, so it is a product decision and not a fix.
+
+This entry is a question for the product owner: should every mode get the five-minute limit on MSSQL and Oracle?
+A yes needs the governance design amended before any code changes.
+
+**Done when:** the product owner has decided, and either the design is amended and both providers arm the timer in every mode with a test that a transaction left open past the limit is rolled back, or this entry is deleted with the decision recorded in the provider docs.
+
+### GOV4. Pooled PostgreSQL editor clients are released without `DISCARD ALL`
+
+`PostgresProvider.query()` in `src/lib/db/providers/sql/postgres.ts` releases its pooled client with a plain `client.release()`, so session state a statement creates (`SET`, temporary tables, prepared statements, advisory locks held at session level) stays on the connection and reaches the next caller the pool hands it to.
+The severity is low: `providerCacheKey()` in `src/lib/db/provider-cache-key.ts` keys a pool by the connection id, the server, a digest of the credentials and the read-only mode, so only callers who already open the database as the same credential share a pool, and no database privilege boundary is crossed.
+Governance mode removes the cross-user path because each user gets their own provider; the other modes still share.
+
+**Done when:** a client released after a user statement carries no session state into the next checkout (by `DISCARD ALL` on release, or an equivalent reset where the statement left a session change), the reset does not run inside an open transaction, and a live test against PostgreSQL shows a `SET` and a temporary table from one call are gone in the next.
