@@ -1,5 +1,5 @@
 import { withBasePathEnv } from "../../helpers/base-path";
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import type { OIDCState } from "@/lib/oidc";
 
 // ─── Mock dependencies ─────────────────────────────────────────────────────
@@ -33,8 +33,18 @@ const defaultClaims = {
   preferred_username: "testuser",
 };
 
+/** The raw ID token the exchange hands over next to its claims; only the logout hint cookie carries it. */
+const ID_TOKEN = "header.payload.signature";
+
+type Exchanged = { claims: Record<string, unknown>; idToken: string } | null;
+
+/** What exchangeCode() resolves to for a claim set. */
+function exchanged(claims: Record<string, unknown>, idToken = ID_TOKEN): Exchanged {
+  return { claims, idToken };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const mockExchangeCode = mock(async (..._args: unknown[]) => ({ ...defaultClaims }) as Record<string, unknown> | null);
+const mockExchangeCode = mock(async (..._args: unknown[]) => exchanged({ ...defaultClaims }));
 
 const mockMapOIDCRole = mock(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -62,11 +72,14 @@ const mockCookieGet = mock(
 
 /** The cookies the route set, by name. The real login() signs the session, so auth-token is the minted JWT. */
 const setCookies = new Map<string, string>();
+/** The options each cookie was set with, by name. */
+const setCookieOptions = new Map<string, Record<string, unknown> | undefined>();
 
 const mockCookieStore = {
   get: mockCookieGet,
-  set: mock((name: string, value: string) => {
+  set: mock((name: string, value: string, options?: Record<string, unknown>) => {
     setCookies.set(name, value);
+    setCookieOptions.set(name, options);
   }),
   delete: mock(() => {}),
 };
@@ -101,6 +114,7 @@ describe("GET /api/auth/oidc/callback", () => {
     mockMapOIDCRole.mockClear();
     mockCookieGet.mockClear();
     setCookies.clear();
+    setCookieOptions.clear();
     mockCookieStore.delete.mockClear();
     mockGetPublicOrigin.mockClear();
     mockGetPublicOrigin.mockImplementation((req: Request) => new URL(req.url).origin);
@@ -108,7 +122,7 @@ describe("GET /api/auth/oidc/callback", () => {
     // Reset defaults
     mockCookieGet.mockReturnValue({ value: "encrypted-state-cookie" });
     mockMapOIDCRole.mockReturnValue("user");
-    mockExchangeCode.mockImplementation(async () => ({ ...defaultClaims }));
+    mockExchangeCode.mockImplementation(async () => exchanged({ ...defaultClaims }));
   });
 
   test("exchanges code and creates local session", async () => {
@@ -149,7 +163,7 @@ describe("GET /api/auth/oidc/callback", () => {
   // Discovery accepts an issuer that differs from OIDC_ISSUER only by URL normalization, such as the trailing slash
   // of a bare-host issuer, and openid-client then requires that exact issuer in the ID token.
   test("idpIssuer is the ID token's iss as the provider wrote it, not the configured OIDC_ISSUER", async () => {
-    mockExchangeCode.mockImplementationOnce(async () => ({ ...defaultClaims, iss: `${ISSUER}/` }));
+    mockExchangeCode.mockImplementationOnce(async () => exchanged({ ...defaultClaims, iss: `${ISSUER}/` }));
 
     await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state"));
 
@@ -157,11 +171,13 @@ describe("GET /api/auth/oidc/callback", () => {
   });
 
   test("a claim set without iss redirects to /login?error=oidc_no_claims and sets no auth-token", async () => {
-    mockExchangeCode.mockImplementationOnce(async () => ({
-      sub: "user-123",
-      email: "user@example.com",
-      preferred_username: "testuser",
-    }));
+    mockExchangeCode.mockImplementationOnce(async () =>
+      exchanged({
+        sub: "user-123",
+        email: "user@example.com",
+        preferred_username: "testuser",
+      }),
+    );
 
     const res = await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state"));
 
@@ -170,7 +186,9 @@ describe("GET /api/auth/oidc/callback", () => {
   });
 
   test("a claim set whose sub is not a string redirects to /login?error=oidc_no_claims and sets no auth-token", async () => {
-    mockExchangeCode.mockImplementationOnce(async () => ({ iss: ISSUER, sub: 123, email: "user@example.com" }));
+    mockExchangeCode.mockImplementationOnce(async () =>
+      exchanged({ iss: ISSUER, sub: 123, email: "user@example.com" }),
+    );
 
     const res = await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state"));
 
@@ -253,10 +271,7 @@ describe("GET /api/auth/oidc/callback", () => {
   });
 
   test("uses sub as username fallback when email is missing", async () => {
-    mockExchangeCode.mockImplementationOnce(async () => ({
-      iss: ISSUER,
-      sub: "user-123",
-    }));
+    mockExchangeCode.mockImplementationOnce(async () => exchanged({ iss: ISSUER, sub: "user-123" }));
 
     const req = new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state");
     await GET(req);
@@ -286,7 +301,7 @@ describe("GET /api/auth/oidc/callback", () => {
         roleClaim: "roles",
         adminRoles: ["admin"],
       }));
-      mockExchangeCode.mockResolvedValue({ ...defaultClaims });
+      mockExchangeCode.mockResolvedValue(exchanged({ ...defaultClaims }));
       mockExchangeCode.mockClear();
       mockMapOIDCRole.mockReturnValue("user");
       mockCookieStore.delete.mockClear();
@@ -299,6 +314,82 @@ describe("GET /api/auth/oidc/callback", () => {
       expect((await GET(new Request(url))).headers.get("location")).toBe(
         "https://studio.example/tools/libredb/login?error=oidc_state_missing",
       );
+    });
+  });
+
+  describe("OIDC_LOGOUT_HINT", () => {
+    const originalHint = process.env.OIDC_LOGOUT_HINT;
+    const callbackUrl = "http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state";
+
+    beforeEach(() => {
+      process.env.OIDC_LOGOUT_HINT = "true";
+    });
+
+    afterEach(() => {
+      if (originalHint === undefined) delete process.env.OIDC_LOGOUT_HINT;
+      else process.env.OIDC_LOGOUT_HINT = originalHint;
+      delete process.env.AUTH_SESSION_TTL_SECONDS;
+    });
+
+    test("with OIDC_LOGOUT_HINT on, the callback writes oidc-logout-hint scoped to /api/auth/logout", async () => {
+      process.env.AUTH_SESSION_TTL_SECONDS = "28800";
+
+      const res = await GET(new Request(callbackUrl));
+
+      expect(res.headers.get("location")).toBe("http://localhost:3000/");
+      expect(setCookies.get("oidc-logout-hint")).toBe(ID_TOKEN);
+      expect(setCookieOptions.get("oidc-logout-hint")).toEqual({
+        httpOnly: true,
+        secure: false,
+        sameSite: "lax",
+        maxAge: 28800,
+        path: "/api/auth/logout",
+      });
+    });
+
+    test("the hint cookie is scoped under the build's prefix", async () => {
+      await withBasePathEnv("/tools/libredb", async () => {
+        await GET(new Request("https://studio.example/tools/libredb/api/auth/oidc/callback?code=c&state=s"));
+        expect(setCookieOptions.get("oidc-logout-hint")?.path).toBe("/tools/libredb/api/auth/logout");
+      });
+    });
+
+    test("a token of exactly 3800 bytes is written", async () => {
+      const token = "a".repeat(3800);
+      mockExchangeCode.mockImplementationOnce(async () => exchanged({ ...defaultClaims }, token));
+
+      await GET(new Request(callbackUrl));
+
+      expect(setCookies.get("oidc-logout-hint")).toBe(token);
+    });
+
+    test("a token over 3800 bytes writes no cookie and deletes a stale one at the same path", async () => {
+      mockExchangeCode.mockImplementationOnce(async () => exchanged({ ...defaultClaims }, "a".repeat(3801)));
+
+      const res = await GET(new Request(callbackUrl));
+
+      expect(res.headers.get("location")).toBe("http://localhost:3000/");
+      expect(setCookies.has("auth-token")).toBe(true);
+      expect(setCookies.has("oidc-logout-hint")).toBe(false);
+      expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-logout-hint", path: "/api/auth/logout" });
+    });
+
+    test("with OIDC_LOGOUT_HINT unset the callback neither writes nor deletes the hint cookie", async () => {
+      delete process.env.OIDC_LOGOUT_HINT;
+
+      await GET(new Request(callbackUrl));
+
+      expect(setCookies.has("auth-token")).toBe(true);
+      expect(setCookies.has("oidc-logout-hint")).toBe(false);
+      expect(mockCookieStore.delete).not.toHaveBeenCalledWith(expect.objectContaining({ name: "oidc-logout-hint" }));
+    });
+
+    test("a failed sign-in writes no hint cookie", async () => {
+      mockExchangeCode.mockImplementationOnce(async () => exchanged({ sub: "user-123" }));
+
+      await GET(new Request(callbackUrl));
+
+      expect(setCookies.has("oidc-logout-hint")).toBe(false);
     });
   });
 });

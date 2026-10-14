@@ -1177,10 +1177,11 @@ Nineteen of them spread the real module and replace one function (`{ ...realAuth
 Thirty write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
 The remaining three write a shorter stub of their own, two with two keys and one with a single `getSession`.
 
-`src/lib/auth.ts` exports nine names. The four no hand-written stub carries are
+`src/lib/auth.ts` exports nine names. The four that all but one hand-written stub lack are
 `shouldMarkCookieSecure`, `resetCookieSecurityWarning`, `readCookieSecureOverride` and
-`isLoopbackHost`: `grep -rn 'shouldMarkCookieSecure' tests/` returns exactly one hit, and it is a
-sentence in a comment rather than a stub key. `resetCookieSecurityWarning` appears only in
+`isLoopbackHost`: `grep -rn 'shouldMarkCookieSecure' tests/` returns exactly 2 hits, a sentence in a
+comment and the one stub key, which `tests/security/auth-audit.test.ts` gained when the OIDC callback
+route started importing the function for its logout hint cookie. `resetCookieSecurityWarning` appears only in
 `tests/unit/lib/auth.test.ts`, which imports the real module, and in
 `tests/api/admin/discovery.test.ts`, which calls it on the real module it spreads.
 `readCookieSecureOverride` and `isLoopbackHost` appear in `tests/unit/lib/auth.test.ts` and

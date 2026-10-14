@@ -312,6 +312,7 @@ The difference is the realm role (`admin` or `user`), mapped through `OIDC_ROLE_
 | `OIDC_ADMIN_ROLES` | No | `admin` | Comma-separated values that map to admin role |
 | `OIDC_PROMPT` | No | `login` | The `prompt` sent on sign-in: `login`, `consent`, `select_account`, or `omit` to send none; see [Single sign-on with OIDC_PROMPT](#single-sign-on-with-oidc_prompt) |
 | `OIDC_AUTO_REDIRECT` | No | off | `true`, `1`, `on` or `yes` sends a signed-out `GET /login` straight to the identity provider; see [Automatic redirect to the provider](#automatic-redirect-to-the-provider) |
+| `OIDC_LOGOUT_HINT` | No | off | `true`, `1`, `on` or `yes` sends `id_token_hint` with the provider's end-session request on logout; see [Logout with id_token_hint](#logout-with-id_token_hint) |
 | `AUTH_SESSION_TTL_SECONDS` | No | `86400` | Session lifetime in seconds, from 300 to 86400; see [Session lifetime](#session-lifetime) |
 
 ### Single sign-on with OIDC_PROMPT
@@ -334,6 +335,23 @@ The values `true`, `1`, `on` and `yes` (trimmed, any case) turn it on; unset or 
 A safe `next` on the login address is carried along, so a deep link still opens what it named after sign-in; an unsafe one is dropped.
 Every OIDC failure lands on `/login?error=<code>`, and a login address with `error` always renders the page, so a failing provider shows its error instead of looping.
 After a logout the provider returns to `/login`, which then starts a new sign-in at the provider.
+The flag has no effect unless `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
+
+### Logout with id_token_hint
+
+By default the end-session request Studio sends on logout names the client and the return address, but not the session to end.
+Without a hint, some providers, Keycloak among them, ask the user to confirm the logout.
+With `OIDC_LOGOUT_HINT=true`, the OIDC callback keeps the raw ID token in the cookie `oidc-logout-hint`, and `POST /api/auth/logout` adds it to the end-session request as `id_token_hint`.
+The values `true`, `1`, `on` and `yes` (trimmed, any case) turn it on; unset or empty leaves it off, and any other value leaves it off with a warning in the server log.
+
+- The cookie is `httpOnly` and `SameSite=Lax`, `Secure` under the same rule as the session cookie, scoped to `<BASE_PATH>/api/auth/logout` so no other request carries it, and lives as long as the session (`AUTH_SESSION_TTL_SECONDS`).
+- A token over 3800 bytes is not kept, because a browser drops a cookie over 4096 bytes; a hint kept by an earlier sign-in is deleted instead, and logout proceeds without a hint.
+- Logout sends the hint only when its `sub` equals the session's identity provider subject, and deletes the cookie whether it sent it or not.
+- The hint is added on the Zitadel and the discovered end-session paths; Auth0's `/v2/logout` takes no hint, so its URL stays the same.
+- With the flag off nothing is written, and the logout URL is exactly what it was before the flag existed.
+
+Providers differ in how they treat a hint for a session that has already ended there, for example by asking the user to confirm or by showing an error.
+An installer therefore turns the flag on only after verifying logout with it against the identity provider it ships.
 The flag has no effect unless `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
 
 ### Role Mapping

@@ -464,9 +464,12 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/auth": "session cookie minting and reading",
     "@/lib/auth-compare": "constant-time credential comparison",
     "@/lib/auth-errors": "the auth failure taxonomy",
+    "@/lib/config/auth-env": "reads JWT_SECRET and AUTH_SESSION_TTL_SECONDS from process.env; opens nothing",
     "@/lib/config/base-path": "prefixes redirect URLs and cookie paths; these routes use no fetch or provider",
     "@/lib/config/custom-connections":
       "reads ALLOW_CUSTOM_CONNECTIONS from process.env and logs an unrecognised value once; opens nothing",
+    "@/lib/config/oidc-logout-hint":
+      "reads OIDC_LOGOUT_HINT from process.env and names the logout hint cookie and its path; opens nothing",
     "@/lib/is-record": "a plain-object type guard; data only",
     "@/lib/launch/config": "reads the three LAUNCH_TOKEN_* variables; opens nothing",
     "@/lib/launch/verify":
