@@ -1043,7 +1043,7 @@ describe("every sentence, word for word", () => {
     [
       "batchTooLarge",
       S.batchTooLarge(8),
-      "Spark sends this result in Arrow batches of about 8 MiB, more than Studio reads for one statement (32 MiB), so no row is shown. Add a smaller LIMIT, or select fewer or narrower columns.",
+      "Spark sends this result in Arrow batches of about 8 MiB, and the first one does not fit in the 32 MiB Studio reads for one statement, so no row is shown. Add a smaller LIMIT, or select fewer or narrower columns.",
     ],
     [
       "deadline",

@@ -376,7 +376,7 @@ When a budget ends the result, Studio interrupts the run and shows the rows it k
 - `The result reached Studio's statement budget of 16 MiB, so only the rows before it are shown.`
 - `The result reached Studio's limit of 32 MiB received from Spark for one statement, so only the rows before it are shown.`
 
-A batch too large to fit under the stream bound before any row arrived fails the statement: `Spark sends this result in Arrow batches of about <n> MiB, more than Studio reads for one statement (32 MiB), so no row is shown. Add a smaller LIMIT, or select fewer or narrower columns.`
+A batch too large to fit under the stream bound before any row arrived fails the statement: `Spark sends this result in Arrow batches of about <n> MiB, and the first one does not fit in the 32 MiB Studio reads for one statement, so no row is shown. Add a smaller LIMIT, or select fewer or narrower columns.`
 The editor's LIMIT 500 usually ends a statement first; the budgets bound what the limiter cannot, such as queries led by `FROM`, `TABLE` or `VALUES` and every statement of a script but the last.
 Load More is not offered ([section 8.6](#86-off-in-this-version)).
 

@@ -140,7 +140,7 @@ export const SPARK_ERROR_SENTENCES = Object.freeze({
   commandBatchBound:
     "Spark answers a command in one Arrow batch, and this answer is larger than the batch size this server allows (spark.connect.grpc.arrow.maxBatchSize). Narrow it, for example with LIKE or IN.",
   batchTooLarge: (mib: number) =>
-    `Spark sends this result in Arrow batches of about ${mib} MiB, more than Studio reads for one statement (32 MiB), so no row is shown. Add a smaller LIMIT, or select fewer or narrower columns.`,
+    `Spark sends this result in Arrow batches of about ${mib} MiB, and the first one does not fit in the 32 MiB Studio reads for one statement, so no row is shown. Add a smaller LIMIT, or select fewer or narrower columns.`,
   deadline: (timeoutMs: number) =>
     `The statement ran past the connection's query timeout (${timeoutMs} ms); Studio asked Spark to stop it.`,
   deadlineBeforeSend: (timeoutMs: number) =>
