@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B113 · 47
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B116 · 50
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
 
@@ -7239,6 +7239,30 @@ The same page carries 152 lines with an em dash, against the repository's writin
 Found 2026-10-14 while building agent execution on Kubernetes.
 
 **Done when:** every code citation in `docs/AGENT_GUIDE.md` names a file and a symbol instead of a line, no em or en dash remains on the page, and a guard test fails on a new `file:line` citation there; cited in `docs/AGENT.md`.
+
+### B114. A cluster health run drops the Warning events of a controller of an unlisted kind that has no pod
+
+`readWorkloadProfile` (`src/lib/db/providers/platform/kubernetes/agent-readings.ts`) lists the controller kinds in `WORKLOAD_KINDS` and adds a row for a controller of any other kind only when it meets a pod that controller owns.
+A controller of a kind outside that set with no pod in the namespace, such as a CloudNativePG `Cluster` or an Argo `Rollout` that cannot start one, gets no row, and the Warning events about it are discarded because their involved object is not a key of `podsOf`.
+That is the controller a health run most needs to see, since a controller that cannot create its pods is what those events report.
+Found 2026-10-14 while building agent execution on Kubernetes.
+
+**Done when:** the Warning events of such a controller are counted under a row keyed by the event's involved object, with a test over a namespace that holds a custom-resource controller with Warning events and no pod; cited in `docs/AGENT.md`.
+
+### B115. Plan mode on Kubernetes still speaks of a database
+
+The plan-mode safety strip comes from `planPosture` in `src/lib/agent/posture.ts`, whose qualifier reads "one schema read grounds it, nothing else reaches the database" on every engine, and the objective field in `src/components/agent/AgentRail.tsx` has the fixed placeholder "Why is checkout slow?".
+On a Kubernetes connection both name a database and an application query the cluster does not have, while the statement language's own copy already lives in the manifest (`AGENT_LANGUAGE_COPY` in `src/lib/agent/agent-manifest.ts`).
+Found 2026-10-14 while building agent execution on Kubernetes.
+
+**Done when:** the plan-mode qualifier and the objective placeholder take the statement language's copy from the manifest, with a component test that a Kubernetes connection shows neither database wording; cited in `docs/AGENT.md`.
+
+### B116. The features page carries em dashes
+
+`docs/FEATURES.md` still carries em dashes against the repository's writing rule, on 17 lines: among them the "Two independent axes" bullet of the agent section and the bullets beside it, which the agent execution work on Kubernetes did not touch.
+Found 2026-10-14 while building agent execution on Kubernetes.
+
+**Done when:** no em or en dash remains in `docs/FEATURES.md`; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 
