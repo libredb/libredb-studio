@@ -10,7 +10,7 @@
 | **Status** | ✅ Implemented & shipped |
 | **Database type id** | `redis` |
 | **Family** | Key-Value |
-| **Driver** | `ioredis` (`^5.9.2`) |
+| **Driver** | `ioredis` (the version range is in `package.json`) |
 | **Query language** | `json` (plain command **or** JSON command object) |
 | **Default port** | `6379` |
 | **Connection pooling** | None — single lazy connection |
@@ -190,7 +190,7 @@ These are the non-obvious choices. Read this section before changing the provide
 Schema discovery uses cursor-based `SCAN` with `COUNT 100`, **not** `KEYS *` in
 the object surface ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts)). `KEYS *` is O(N) and blocks the
 entire Redis server until it completes — catastrophic on a production instance with millions of
-keys. `SCAN` is incremental and non-blocking. The scan is also capped at `maxScan = 1000` keys so
+keys. `SCAN` is incremental and non-blocking. The scan is also capped at `KEY_SCAN_LIMIT` (1000) keys so
 schema introspection stays bounded regardless of keyspace size.
 
 ### 3.2 Key-prefix grouping as "tables"
@@ -202,7 +202,7 @@ before the first `:` and appends `:*` — so `user:123` and `user:456` both coll
 grouped it differently would be two different answers about one server. Keys without a colon are their own group. For each prefix the provider probes
 keys with `TYPE` until it has observed up to **3 distinct** value-types — it may inspect more than
 3 keys when they share a type — to populate the synthetic column metadata. The resulting
-object list is sorted by descending key count so the busiest prefixes surface first.
+object list is sorted by path.
 
 That read is BOUNDED and one-shot: it stops at 1,000 keys and discards its cursor, so what it
 answers is a floor rather than a total. The keyspace walk below
