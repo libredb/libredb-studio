@@ -11,10 +11,12 @@ import {
   markerSecret,
   routes,
   SECRET_MARKER,
+  sentLines,
   tableAnswer,
+  textAnswer,
 } from "../../../../helpers/kubernetes-console";
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../../../../helpers/kubernetes-markers";
-import { jsonAnswer, statusAnswer } from "../../../../helpers/kubernetes-transport";
+import { jsonAnswer, type KubernetesAnswerFn, statusAnswer } from "../../../../helpers/kubernetes-transport";
 
 const MACHINE = { maxRows: 200, maxBytes: 262_144 };
 
@@ -227,5 +229,149 @@ describe("Tables", () => {
     expect(editor).toContain(`event/${M.secretName}.18dd`);
     expect(machine).not.toContain(M.secretName);
     expect(machine).toBe(JSON.stringify([{ name: `event/${MACHINE_REDACTED}` }, { name: "event/web.18de" }]));
+  });
+});
+
+/** Answers the events list of any page size; every other line through `routes`. */
+function withEvents(map: Parameters<typeof routes>[0], path: string, items: readonly unknown[]) {
+  const fixed = routes(map);
+  const answer: KubernetesAnswerFn = (request, line) =>
+    line.startsWith(`GET ${path}?`) ? listAnswer(items) : fixed(request, line);
+  return answer;
+}
+
+const secretEvent = {
+  type: "Warning",
+  reason: "Rotated",
+  message: "rotation finished",
+  involvedObject: { kind: "Secret", name: "db", namespace: "shop", uid: "uid-secret" },
+  lastTimestamp: "2026-10-10T11:59:00Z",
+};
+
+describe("describe", () => {
+  test("describe secret: the Summary name is masked, annotation keys kept, and its events are still found", async () => {
+    const secret = markerSecret("db");
+    (secret.metadata as Record<string, unknown>).annotations = {
+      ...((secret.metadata as Record<string, unknown>).annotations as Record<string, string>),
+      "probe.libredb.dev/owner": "ops",
+    };
+    const map = {
+      "GET /api/v1/namespaces/shop/secrets/db?includeObject=None": tableAnswer(
+        [{ name: "Name" }, { name: "Type" }, { name: "Data", type: "integer" }],
+        [{ cells: ["db", "Opaque", 2] }],
+      ),
+      "GET /api/v1/namespaces/shop/secrets/db": jsonAnswer(secret),
+    };
+    const events = "/api/v1/namespaces/shop/events";
+    const editor = consoleContext(withEvents(map, events, [secretEvent]));
+    const agent = consoleContext(withEvents(map, events, [secretEvent]));
+    const editorGrid = JSON.stringify((await runKubectl(editor.context, "describe secret db -n shop")).rows);
+    const machineGrid = (await runKubectl({ ...agent.context, machine: MACHINE }, "describe secret db -n shop")).rows;
+    const machine = JSON.stringify(machineGrid);
+    const eventsLine = sentLines(agent.transport).find((line) => line.startsWith(`GET ${events}?`));
+    expect(eventsLine).toContain("involvedObject.name%3Ddb%2C");
+    expect(eventsLine).toContain("involvedObject.uid%3Duid-secret");
+    expect(machineGrid).toContainEqual({
+      SECTION: "Events",
+      FIELD: "Warning Rotated",
+      VALUE: "60s ago: rotation finished",
+    });
+    expect(editorGrid).toContain('"FIELD":"Name","VALUE":"db"');
+    expect(editorGrid).toContain("team=payments");
+    expect(machine).not.toMatch(/\bdb\b/);
+    expect(machineGrid).toContainEqual({ SECTION: "Summary", FIELD: "Name", VALUE: MACHINE_REDACTED });
+    expect(machineGrid).toContainEqual({ SECTION: "Summary", FIELD: "Annotation", VALUE: `team=${MACHINE_REDACTED}` });
+    expect(machineGrid).toContainEqual({
+      SECTION: "Summary",
+      FIELD: "Annotation",
+      VALUE: `probe.libredb.dev/owner=${MACHINE_REDACTED}`,
+    });
+    expect(machineGrid).toContainEqual({ SECTION: "Summary", FIELD: "Label", VALUE: "app=web" });
+    expect(machine).not.toContain(SECRET_MARKER);
+  });
+
+  test("describe pod: annotation values and Secret owner names masked, labels and condition messages pass", async () => {
+    const pod = {
+      kind: "Pod",
+      apiVersion: "v1",
+      metadata: {
+        ...metadata(),
+        uid: "uid-web",
+        creationTimestamp: "2026-10-10T09:00:00Z",
+        ownerReferences: [
+          { kind: "ReplicaSet", name: "web-6d4f", controller: true },
+          { kind: "Secret", name: M.secretName },
+        ],
+        finalizers: ["probe.libredb.dev/hold"],
+      },
+      spec: plantedPodSpec(),
+      status: {
+        conditions: [
+          {
+            type: "Ready",
+            status: "False",
+            reason: "ContainersNotReady",
+            message: "containers with unready status: [web]",
+          },
+        ],
+      },
+    };
+    const map = {
+      "GET /api/v1/namespaces/shop/pods/web?includeObject=None": tableAnswer(
+        [{ name: "Name" }, { name: "Ready" }, { name: "Status" }],
+        [{ cells: ["web", "0/1", "Running"] }],
+      ),
+      "GET /api/v1/namespaces/shop/pods/web": jsonAnswer(pod),
+    };
+    const events = "/api/v1/namespaces/shop/events";
+    const editor = consoleContext(withEvents(map, events, []));
+    const agent = consoleContext(withEvents(map, events, []));
+    const editorGrid = JSON.stringify((await runKubectl(editor.context, "describe pod web -n shop")).rows);
+    const machineGrid = (await runKubectl({ ...agent.context, machine: MACHINE }, "describe pod web -n shop")).rows;
+    const machine = JSON.stringify(machineGrid);
+    expectMasked(editorGrid, machine, M.annotationKey, M.annotationValue);
+    expectMasked(editorGrid, machine, "Secret/", M.secretName);
+    expect(machineGrid).toContainEqual({ SECTION: "Summary", FIELD: "Name", VALUE: "web" });
+    expect(machineGrid).toContainEqual({ SECTION: "Summary", FIELD: "Label", VALUE: `${M.labelKey}=${M.labelValue}` });
+    expect(machineGrid).toContainEqual({
+      SECTION: "Summary",
+      FIELD: "Annotation",
+      VALUE: `${M.annotationKey}=${MACHINE_REDACTED}`,
+    });
+    expect(machineGrid).toContainEqual({ SECTION: "Summary", FIELD: "Owner", VALUE: `Secret/${MACHINE_REDACTED}` });
+    expect(machineGrid).toContainEqual({
+      SECTION: "Summary",
+      FIELD: "Owner",
+      VALUE: "ReplicaSet/web-6d4f (controller)",
+    });
+    expect(machineGrid).toContainEqual({ SECTION: "Summary", FIELD: "Finalizer", VALUE: "probe.libredb.dev/hold" });
+    expect(machineGrid).toContainEqual({
+      SECTION: "Conditions",
+      FIELD: "Ready",
+      VALUE: "False (ContainersNotReady: containers with unready status: [web])",
+    });
+    expect(sentLines(agent.transport).find((line) => line.startsWith(`GET ${events}?`))).toContain(
+      "involvedObject.uid%3Duid-web",
+    );
+  });
+
+  test("logs still chooses the annotated default container on the agent path", async () => {
+    const pod = {
+      metadata: {
+        name: "web",
+        namespace: "shop",
+        creationTimestamp: "2026-10-10T09:00:00Z",
+        annotations: { "kubectl.kubernetes.io/default-container": "sidecar" },
+      },
+      spec: { containers: [{ name: "app" }, { name: "sidecar" }] },
+      status: { phase: "Running", containerStatuses: [{ name: "app", restartCount: 0 }] },
+    };
+    const fixed = routes({ "GET /api/v1/namespaces/shop/pods/web": jsonAnswer(pod) });
+    const agent = consoleContext((request, line) =>
+      line.startsWith("GET /api/v1/namespaces/shop/pods/web/log?") ? textAnswer("") : fixed(request, line),
+    );
+    await runKubectl({ ...agent.context, machine: MACHINE }, "logs pod/web -n shop");
+    const logLine = sentLines(agent.transport).find((line) => line.includes("/log?"));
+    expect(logLine).toStartWith("GET /api/v1/namespaces/shop/pods/web/log?container=sidecar&");
   });
 });

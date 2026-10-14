@@ -6,12 +6,14 @@
  * annotation, owner and finalizer; one Conditions row per condition; one Events row per event, oldest first, as
  * kubectl orders them. Both object reads are redacted on the request, so a Secret's values and its last-applied
  * annotation never reach a row; an identity that may not list events sees one row that says so, the anonymous
- * sentence when the connection sends no credential.
+ * sentence when the connection sends no credential. On the agent path the rows are written from the copies masked for
+ * the machine (`machine-redaction.ts`), while the events are still selected by the real object.
  */
 import { ACCEPT_JSON, ACCEPT_TABLE } from "../client";
 import type { IndexedResource } from "../discovery";
 import { KubernetesRequestError } from "../errors";
 import { KUBERNETES_EVENTS_READ_MAX, KUBERNETES_PAGE_SIZE } from "../limits";
+import { maskObjectForMachine, maskTableForMachine } from "../machine-redaction";
 import { redactResponse } from "../redaction";
 import { fieldSelectorValue } from "../request-policy";
 import { cellOf, type KubeTable, parseTable, scanTable } from "../table";
@@ -136,11 +138,16 @@ export async function describeObject(context: KubectlContext, statement: Describ
         redactionMode(context),
       ),
     ) ?? {};
-  const metadata = objectOf(object.metadata) ?? {};
+  // Routing reads the body, the rows are written from the masked copy (R6): on the agent path the Summary cells and
+  // the metadata and condition rows come from copies masked for the machine, while `eventRows` below keeps the real
+  // object, so a Secret's events are still selected by its real name and uid.
+  const shownTable = context.machine === undefined ? table : maskTableForMachine(resource, table);
+  const shown = context.machine === undefined ? object : maskObjectForMachine(resource, object);
+  const metadata = objectOf(shown.metadata) ?? {};
   const rows: unknown[][] = [];
-  const [first] = table.rows;
-  for (const column of table.columns) {
-    const cell = first === undefined ? undefined : cellOf(table, first, column.name);
+  const [first] = shownTable.rows;
+  for (const column of shownTable.columns) {
+    const cell = first === undefined ? undefined : cellOf(shownTable, first, column.name);
     rows.push([
       "Summary",
       column.name,
@@ -161,7 +168,7 @@ export async function describeObject(context: KubectlContext, statement: Describ
   }
   const finalizers = Array.isArray(metadata.finalizers) ? metadata.finalizers : [];
   for (const finalizer of finalizers) rows.push(["Summary", "Finalizer", String(finalizer)]);
-  const status = objectOf(object.status) ?? {};
+  const status = objectOf(shown.status) ?? {};
   const conditions = Array.isArray(status.conditions) ? status.conditions : [];
   for (const condition of conditions.map((entry) => objectOf(entry) ?? {})) {
     const reason = stringOf(condition.reason);
