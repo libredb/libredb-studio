@@ -19,6 +19,8 @@ import { KUBERNETES_TYPE } from "./limits";
 export const LAST_APPLIED_ANNOTATION = "kubectl.kubernetes.io/last-applied-configuration";
 /** What a Secret's annotation value is replaced with when it could hold the Secret's values. */
 export const REMOVED_ANNOTATION_VALUE = "(removed by Studio)";
+/** The one marker the agent's machine output carries; a literal `<redacted>` in a value reads the same, and that is accepted. */
+export const MACHINE_REDACTED = "<redacted>";
 /** The longest annotation value of a Secret that is kept as it is. */
 export const SECRET_ANNOTATION_MAX_CHARS = 128;
 /** A `data` or `stringData` key in a JSON or YAML copy of an object; `metadata` does not match. */
