@@ -58,6 +58,11 @@ interface OperationDescriptorBase {
    * for this operation, never a plain allow.
    */
   readonly requiresApproval: boolean;
+  /**
+   * The input carries a statement the MODEL wrote and the engine runs. Only the bounded reads set it; a profile's
+   * statement is composed by the server and a plan's is never run, so neither does. `isStatementReadOperation` reads it.
+   */
+  readonly modelStatement?: true;
   /** Input contract enforced before any policy evaluation (fail closed). */
   readonly inputSchema: z.ZodType<unknown>;
 }

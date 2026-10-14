@@ -2,12 +2,15 @@
  * Canonical Phase 1 operation descriptors (#328, epic #325; extended by #330 T3,
  * B27 and #414).
  *
- * Six operations exist: bounded read, plan inspection, plan execution, table
- * profiling, the curated operational reading and the provider's schema read. The set
- * was pinned at THREE by epic #325 and reopened by #330 T3, which is why the fourth
- * carries that reversal in its own comment rather than arriving as though the number
- * had never been a decision; the fifth and sixth carry their own reasons for the same
- * reason. The last two are the ones that name no statement at all.
+ * Seven operations exist: bounded read, plan inspection, plan execution, table
+ * profiling, the curated operational reading, the provider's schema read and the
+ * kubectl read. The set was pinned at THREE by epic #325 and reopened by #330 T3,
+ * which is why the fourth carries that reversal in its own comment rather than
+ * arriving as though the number had never been a decision; the fifth, sixth and
+ * seventh carry their own reasons for the same reason. The fifth and sixth are the
+ * ones that name no statement at all. The seventh is the bounded read for a
+ * `kubernetes` connection: a statement the model wrote, in kubectl rather than SQL,
+ * under its own id so the SQL contract stays what it was.
  *
  * Plan inspection and plan execution are DISTINCT descriptors whose
  * ids are derived from the explain seam's modes (`ExplainMode`,
@@ -19,6 +22,7 @@
 import { z } from "zod";
 import type { ExplainMode } from "@/lib/explain";
 import { OperationRegistry } from "./registry";
+import { kubectlAgentReadInput } from "./kubectl-admission";
 import { agentPlanExecutionSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
 
@@ -46,6 +50,7 @@ export const sqlQueryReadDescriptor: RegistrableOperationDescriptor = {
   resourceCost: "heavy",
   supportsDryRun: false,
   requiresApproval: false,
+  modelStatement: true,
   inputSchema: agentReadSqlInput,
   verification: {
     reviewedBy: "issue #328 acceptance bar (epic #325 product decisions)",
@@ -295,13 +300,64 @@ export const dbSchemaReadDescriptor: RegistrableOperationDescriptor = {
   inputSchema: z.strictObject({}),
 };
 
+const KUBECTL_READ_BOUNDARY =
+  "Kubernetes: Studio's request allowlist (request-policy.ts) admits GET on discovery, on collections and objects " +
+  "whose verbs discovery lists and on pod logs, and POST to the three self reviews, checked on the final method and " +
+  "path before any socket; aggregated groups are read with GET semantics; the identity's RBAC decides what is " +
+  "visible. The kubectl reader is not this boundary: it refuses writes, exec and tunnels so a model reads why.";
+
+/**
+ * One kubectl read the model wrote, on a `kubernetes` connection.
+ *
+ * R1 on a boundary the ENGINE does not provide: Kubernetes has no read-only transaction, so what bounds the read is
+ * Studio's request allowlist on the final request and the identity's RBAC. The R1 contract admits that shape where
+ * the engine has none (see `RiskVerification.boundary`). Its own id, and not a widened `sql.query.read`, so the SQL
+ * contract and its audit action stay exactly what they were.
+ */
+export const kubectlQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "kubectl.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: kubectlAgentReadInput,
+  verification: {
+    reviewedBy: "Kubernetes agent execution design review",
+    boundary: KUBECTL_READ_BOUNDARY,
+    verifiedOn: "2026-10-14",
+  },
+};
+
+const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.freeze([
+  sqlQueryReadDescriptor,
+  sqlExplainEstimateDescriptor,
+  sqlExplainAnalyzeDescriptor,
+  sqlTableProfileDescriptor,
+  dbOperationsReadDescriptor,
+  dbSchemaReadDescriptor,
+  kubectlQueryReadDescriptor,
+]);
+
+/**
+ * Whether an operation is a bounded read of a statement the model wrote: data-read, carrying a model statement, and
+ * never approval-gated. Derived from the registered descriptors rather than a list of ids, so a later language's
+ * read is one by declaring it.
+ */
+export function isStatementReadOperation(id: string): boolean {
+  return CANONICAL_DESCRIPTORS.some(
+    (descriptor) =>
+      descriptor.id === id &&
+      descriptor.accessLevel === "data-read" &&
+      descriptor.modelStatement === true &&
+      !descriptor.requiresApproval,
+  );
+}
+
 export function createCanonicalOperationRegistry(): OperationRegistry {
   const registry = new OperationRegistry();
-  registry.register(sqlQueryReadDescriptor);
-  registry.register(sqlExplainEstimateDescriptor);
-  registry.register(sqlExplainAnalyzeDescriptor);
-  registry.register(sqlTableProfileDescriptor);
-  registry.register(dbOperationsReadDescriptor);
-  registry.register(dbSchemaReadDescriptor);
+  for (const descriptor of CANONICAL_DESCRIPTORS) registry.register(descriptor);
   return registry;
 }

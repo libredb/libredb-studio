@@ -68,6 +68,7 @@ import {
   type AgentCuratedReadInput,
   type CuratedOperationKind,
   agentCuratedReadInput,
+  isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
 import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/execution";
 import { inspectAgentStatement } from "@/lib/db/operations/statement-guard";
@@ -216,7 +217,9 @@ export type AgentOperationId =
    * this list because the audited path types every operation it runs through it, not
    * because a model can ask for it.
    */
-  | "db.schema.read";
+  | "db.schema.read"
+  /** One kubectl read the model wrote, on a `kubernetes` connection; see `kubectlQueryReadDescriptor` for its id. */
+  | "kubectl.query.read";
 
 export interface AgentToolDefinition {
   readonly name: AgentToolName;
@@ -1698,7 +1701,11 @@ export function presentableArtifact(events: readonly AgentRunEvent[]): string | 
   const drafted = new Set(events.flatMap((event) => (event.kind === "statement-drafted" ? [event.stepId] : [])));
   let latest: string | undefined;
   for (const event of events) {
-    if (event.kind === "tool-completed" && event.artifact.operationId === ANSWER_OPERATION && drafted.has(event.stepId))
+    if (
+      event.kind === "tool-completed" &&
+      isStatementReadOperation(event.artifact.operationId) &&
+      drafted.has(event.stepId)
+    )
       latest = event.artifact.correlationId;
   }
   return latest;
@@ -4352,44 +4359,6 @@ function producedArtifact(events: readonly AgentRunEvent[], correlationId: strin
   return null;
 }
 
-/**
- * The one operation whose result may be an ANSWER (#373 review).
- *
- * `producedArtifact` above asks "did this run produce that?", which is the right
- * question for a CITATION and the wrong one for an answer. A claim may rest on a plan
- * the run read — that is what `recommend_change` is built on — so narrowing that path
- * would make an honest report uncomposable. An answer is a different act: it nominates
- * one result as WHAT THE QUESTION ASKED FOR, hands its statement to the rail, and is
- * what `agent-data-analysis.1` counts. Without this, a run could present a
- * `sql.explain.estimate` artifact — the engine's DESCRIPTION of a statement, with no
- * data read, no rows and no measured duration — and satisfy the workflow's verdict
- * without ever having read the data it was opened to analyse.
- *
- * **A profile is excluded too, and that is a decision rather than a side effect.** A
- * profile IS a real reading of data, so the question is honest. Three things settle it:
- * it returns COUNTS the server composed from the run's own inventory rather than rows
- * the model asked for, so what would be shown is not an answer to the user's question
- * but an aggregate about a table; its statement is the server's, so there is nothing of
- * the model's to hand to an editor, which is why it could never have been presented
- * anyway (`statementBehind` returns null for it, and today that is the refusal it
- * gets); and its single aggregate row fails `CHART_TOO_FEW_ROWS` on every chart. So
- * admitting it would only change which refusal it is given — and the refusal it is
- * given now is the true one, which is the whole point of moving this check ahead of
- * the statement.
- *
- * The check goes BEFORE `statementBehind`, because a plan step DOES carry a drafted
- * statement: a check placed after it would have accepted the plan outright.
- *
- * One consequence, recorded rather than left to be discovered: the auto-execute gate's
- * first condition — "this run executed that exact statement" — can no longer FAIL from
- * this layer, because the only artifact presentable is a read whose own drafted
- * statement is by construction among `executedStatements`. Presenting a plan was the
- * one way to reach it. The condition stays in `auto-execute.ts` anyway: it is pure and
- * enumerated over every combination there, and a gate guarding an unbounded execution
- * path must not depend on which artifacts some other layer happens to admit.
- */
-const ANSWER_OPERATION: AgentOperationId = "sql.query.read";
-
 /** Does this reference name something the run actually produced? */
 /**
  * The evidence this run CAN cite, named, for a refusal that would otherwise only say no.
@@ -4638,7 +4607,7 @@ function executedStatements(events: readonly AgentRunEvent[]): readonly string[]
   }
   const executed: string[] = [];
   for (const event of events) {
-    if (event.kind !== "tool-completed" || event.artifact.operationId !== "sql.query.read") continue;
+    if (event.kind !== "tool-completed" || !isStatementReadOperation(event.artifact.operationId)) continue;
     const sql = sqlByStep.get(event.stepId);
     if (sql !== undefined) executed.push(sql);
   }
@@ -4856,7 +4825,44 @@ export function presentAnswerTool(
 
   const artifact = producedArtifact(run.events, parsed.value.artifact);
   if (artifact === null) return unavailable("ANSWER_ARTIFACT_UNKNOWN");
-  if (artifact.operationId !== ANSWER_OPERATION) {
+  /*
+    Only a statement read may be the ANSWER (#373 review): `isStatementReadOperation`, which is
+    `sql.query.read` on SQL and `kubectl.query.read` on Kubernetes.
+
+    `producedArtifact` asks "did this run produce that?", which is the right
+    question for a CITATION and the wrong one for an answer. A claim may rest on a plan
+    the run read (that is what `recommend_change` is built on), so narrowing that path
+    would make an honest report uncomposable. An answer is a different act: it nominates
+    one result as WHAT THE QUESTION ASKED FOR, hands its statement to the rail, and is
+    what `agent-data-analysis.1` counts. Without this, a run could present a
+    `sql.explain.estimate` artifact, the engine's DESCRIPTION of a statement, with no
+    data read, no rows and no measured duration, and satisfy the workflow's verdict
+    without ever having read the data it was opened to analyse.
+
+    **A profile is excluded too, and that is a decision rather than a side effect.** A
+    profile IS a real reading of data, so the question is honest. Three things settle it:
+    it returns COUNTS the server composed from the run's own inventory rather than rows
+    the model asked for, so what would be shown is not an answer to the user's question
+    but an aggregate about a table; its statement is the server's, so there is nothing of
+    the model's to hand to an editor, which is why it could never have been presented
+    anyway (`statementBehind` returns null for it, and today that is the refusal it
+    gets); and its single aggregate row fails `CHART_TOO_FEW_ROWS` on every chart. So
+    admitting it would only change which refusal it is given, and the refusal it is
+    given now is the true one, which is the whole point of moving this check ahead of
+    the statement.
+
+    The check goes BEFORE `statementBehind`, because a plan step DOES carry a drafted
+    statement: a check placed after it would have accepted the plan outright.
+
+    One consequence, recorded rather than left to be discovered: the auto-execute gate's
+    first condition, "this run executed that exact statement", can no longer FAIL from
+    this layer, because the only artifact presentable is a read whose own drafted
+    statement is by construction among `executedStatements`. Presenting a plan was the
+    one way to reach it. The condition stays in `auto-execute.ts` anyway: it is pure and
+    enumerated over every combination there, and a gate guarding an unbounded execution
+    path must not depend on which artifacts some other layer happens to admit.
+  */
+  if (!isStatementReadOperation(artifact.operationId)) {
     /*
       And WHICH result would have been taken, when the run is holding one.
 

@@ -6392,6 +6392,39 @@ describe("present_answer records which result IS the answer, and how to show it"
       expect(outcome.modelText).toContain("run_read_query");
     });
 
+    test("a kubectl read the model drafted IS a data read, and is accepted as the answer", () => {
+      // The second statement-read operation. Its id is its own so the SQL contract stays
+      // what it was, and that must not make it a plan or a profile in this tool's eyes:
+      // it is a statement the model wrote and the engine ran.
+      const h = harness();
+      const events: AgentRunEvent[] = [
+        {
+          kind: "statement-drafted",
+          atMs: 1,
+          stepId: "step-kubectl",
+          sql: "get pods -n shop",
+          rationale: "which pods run in shop",
+        },
+        {
+          kind: "tool-completed",
+          atMs: 2,
+          stepId: "step-kubectl",
+          artifact: {
+            correlationId: "corr-kubectl-read",
+            runId: "run-1",
+            operationId: "kubectl.query.read",
+            summary: { rowCount: 2, columnNames: ["NAME", "STATUS"], elapsedMs: 5 },
+          },
+        },
+      ];
+
+      const outcome = present(h, events, { artifact: "corr-kubectl-read", presentation: { kind: "table" } });
+
+      if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+      expect(outcome.answer.artifact.correlationId).toBe("corr-kubectl-read");
+      expect(outcome.answer.sql).toBe("get pods -n shop");
+    });
+
     test("and when the run already holds a read, the refusal hands over ITS id", () => {
       /*
         Measured across fifteen `qwen3:1.7b` data-analysis runs: FOURTEEN were refused here on

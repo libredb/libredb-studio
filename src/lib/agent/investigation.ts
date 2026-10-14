@@ -150,6 +150,7 @@ import {
   neutraliseToolInput,
   neutraliseUntrustedMarkers,
 } from "./untrusted-content";
+import { isStatementReadOperation } from "@/lib/db/operations/descriptors";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
 import type { DatabaseType } from "@/lib/types";
@@ -3915,7 +3916,7 @@ export async function runInvestigation(
           const hasReading = sofar.events.some(
             (event) =>
               event.kind === "tool-completed" &&
-              event.artifact.operationId === "sql.query.read" &&
+              isStatementReadOperation(event.artifact.operationId) &&
               drafted.has(event.stepId),
           );
           /*

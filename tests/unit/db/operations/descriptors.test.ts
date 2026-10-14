@@ -3,6 +3,8 @@ import {
   createCanonicalOperationRegistry,
   dbOperationsReadDescriptor,
   dbSchemaReadDescriptor,
+  isStatementReadOperation,
+  kubectlQueryReadDescriptor,
   sqlExplainAnalyzeDescriptor,
   sqlExplainEstimateDescriptor,
   sqlQueryReadDescriptor,
@@ -22,11 +24,17 @@ const sqlDescriptors = [
   sqlTableProfileDescriptor,
 ];
 
-const canonicalDescriptors = [...sqlDescriptors, dbOperationsReadDescriptor, dbSchemaReadDescriptor];
+const canonicalDescriptors = [
+  ...sqlDescriptors,
+  dbOperationsReadDescriptor,
+  dbSchemaReadDescriptor,
+  kubectlQueryReadDescriptor,
+];
 
 describe("canonical operation registry", () => {
-  test("registers exactly the six canonical descriptors — no write, DDL, or admin operation exists", () => {
-    // Six since #414, which gave the provider's own schema inspection an id so that
+  test("registers exactly the seven canonical descriptors: no write, DDL, or admin operation exists", () => {
+    // Seven since the Kubernetes agent read, which has its own id so the SQL contract
+    // and its audit action stay exactly what they were. Six since #414, which gave the provider's own schema inspection an id so that
     // grounding on an engine with no composed catalog goes through the audited path
     // rather than beside it. Five since the `operations` workflow, which added the
     // first descriptor carrying no statement at all (#372). Four
@@ -37,6 +45,7 @@ describe("canonical operation registry", () => {
     expect(registry.registeredIds()).toEqual([
       "db.operations.read",
       "db.schema.read",
+      "kubectl.query.read",
       "sql.explain.analyze",
       "sql.explain.estimate",
       "sql.query.read",
@@ -149,6 +158,63 @@ describe("sql.query.read", () => {
     // the marker has to say so.
     expect(sqlQueryReadDescriptor.verification?.boundary).toContain("least-privilege role verified at open");
     expect(sqlQueryReadDescriptor.verification?.boundary).toContain("program execution");
+  });
+});
+
+describe("the statement-read operations", () => {
+  test("are exactly the two a model writes a read for", () => {
+    // A profile is a data read too, but its statement is the server's, and a plan's
+    // statement is described rather than run: neither is one, or `present_answer`
+    // would accept what it refuses on SQL today.
+    const ids = [
+      "sql.query.read",
+      "sql.explain.estimate",
+      "sql.explain.analyze",
+      "sql.table.profile",
+      "db.operations.read",
+      "db.schema.read",
+      "kubectl.query.read",
+    ];
+    expect(ids.filter(isStatementReadOperation)).toEqual(["sql.query.read", "kubectl.query.read"]);
+  });
+
+  test("an unknown id is not one", () => {
+    expect(isStatementReadOperation("nope.read")).toBe(false);
+  });
+});
+
+describe("kubectl.query.read", () => {
+  test("is R1 data-read, heavy, never approval-gated and registered", () => {
+    expect(kubectlQueryReadDescriptor).toMatchObject({
+      id: "kubectl.query.read",
+      riskClass: 1,
+      accessLevel: "data-read",
+      resourceCost: "heavy",
+      requiresApproval: false,
+      supportsDryRun: false,
+      requiredCapabilities: [],
+    });
+    // Asserted on what the registry RESOLVES, not on the descriptor constant: a
+    // descriptor that is defined and never registered would satisfy the block above.
+    const resolution = createCanonicalOperationRegistry().resolve("kubectl.query.read");
+    if (resolution.kind !== "resolved") throw new Error(`expected resolved, got ${resolution.kind}`);
+    expect(resolution.descriptor.riskClass).toBe(1);
+    expect(resolution.descriptor.accessLevel).toBe("data-read");
+    expect(resolution.descriptor.requiresApproval).toBe(false);
+  });
+
+  test("names the request allowlist and RBAC as its boundary, and says the reader is not it", () => {
+    const boundary = kubectlQueryReadDescriptor.verification?.boundary ?? "";
+    expect(boundary).toContain("request allowlist");
+    expect(boundary).toContain("RBAC");
+    expect(boundary).toContain("The kubectl reader is not this boundary");
+  });
+
+  test("takes one statement and nothing else", () => {
+    const schema = kubectlQueryReadDescriptor.inputSchema;
+    expect(schema.safeParse({ statement: "get pods -n shop" }).success).toBe(true);
+    expect(schema.safeParse({ sql: "get pods -n shop" }).success).toBe(false);
+    expect(schema.safeParse({ statement: "get pods", extra: 1 }).success).toBe(false);
   });
 });
 
