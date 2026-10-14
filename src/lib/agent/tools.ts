@@ -185,9 +185,9 @@ export type AgentToolName =
   /**
    * Which result IS the answer, and how it should be shown. Reaches no database.
    *
-   * Offered by no workflow yet: the record below is the one place a tool set is
-   * decided, and this slice decides that nothing may call it until the workflow that
-   * asks for an answer exists.
+   * Offered to `data-analysis` alone: the workflow variants in `agent-manifest.ts` are
+   * the one place a tool set is decided, and only that workflow's verdict asks for an
+   * answer.
    */
   | "present_answer";
 

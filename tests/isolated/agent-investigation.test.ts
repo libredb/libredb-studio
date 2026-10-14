@@ -2452,9 +2452,9 @@ describe("planning mode runs no statement of the user's", () => {
     });
 
     /*
-      The record is TOTAL over `AgentRunWorkflowType`, the same way
-      `WORKFLOW_OBJECTIVES` and `WORKFLOW_TOOL_RULES` are, so a workflow added to the
-      union stops `investigation.ts` compiling until someone decides what a plan of it
+      The SQL variants are TOTAL over `AgentRunWorkflowType`, the same way
+      `WORKFLOW_TOOL_RULES` is, so a workflow added to the union stops
+      `agent-manifest.ts` compiling until someone decides what a plan of it
       produces. The compiler enforces that a key exists; this asserts that the key is
       worth having — that every workflow's plan rules actually name a deliverable
       rather than falling through to a shared sentence.

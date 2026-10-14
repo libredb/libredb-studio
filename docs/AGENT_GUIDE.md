@@ -342,9 +342,8 @@ and the bar its verdict is judged against.
 ### Investigate
 
 The default. The objective is a question about the database and the model answers it from what it
-establishes (`WORKFLOW_OBJECTIVES.investigation` in `src/lib/agent/investigation.ts:1466`). Tools:
-`inspect_schema`, `run_read_query`, `inspect_plan`, `compose_report`
-(`AGENT_MODE_TOOLS`, `src/lib/agent/tools.ts:900-905`).
+establishes (the investigation variant's `objective` in `AGENT_WORKFLOW_VARIANTS`, `src/lib/agent/agent-manifest.ts`).
+Tools: `inspect_schema`, `run_read_query`, `inspect_plan`, `compose_report` (the same variant's `tools`).
 
 **Answered when** the run composed at least one claim and the claims do not rest entirely on empty
 results (`verifyInvestigationGoal`, `src/lib/agent/goal-verifier.ts:349-355`).

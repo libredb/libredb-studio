@@ -52,7 +52,7 @@ import { generateText } from "ai";
 import { logger } from "@/lib/logger";
 import type { AgentRunWorkflowType } from "./types";
 import { DEFAULT_AGENT_WORKFLOW_TYPE } from "./types";
-import { AGENT_WORKFLOW_VARIANTS, requiredVariant } from "./agent-manifest";
+import { AGENT_WORKFLOW_VARIANTS } from "./agent-manifest";
 import type { AgentFetch } from "./provider-registry";
 import { type AgentModel, createAgentModel, mapAgentModelError } from "./model-adapter";
 
@@ -98,22 +98,15 @@ const CLASSIFY_MAX_OUTPUT_TOKENS = 16;
 
 /**
  * The five ids and the line the model is told about each, read from the SQL variants in
- * `agent-manifest.ts`, which are total over `AgentRunWorkflowType` so that adding a
- * workflow stops the manifest compiling until someone writes that line. A classifier
- * that silently cannot reach a workflow is worse than one that fails to build. Listed
- * in the union's order.
+ * `agent-manifest.ts`. That record is total over `AgentRunWorkflowType` and written in
+ * the union's order, so adding a workflow stops the manifest compiling until someone
+ * writes the line, and the line is then listed here with nothing else to edit. A
+ * classifier that silently cannot reach a workflow is worse than one that fails to
+ * build, which is why this reads the record's own entries rather than a list of ids.
  */
-const WORKFLOW_ORDER: readonly AgentRunWorkflowType[] = [
-  "investigation",
-  "query-optimization",
-  "database-assessment",
-  "operations",
-  "data-analysis",
-];
-
-const WORKFLOW_LINES = WORKFLOW_ORDER.map((id) => `${id}: ${requiredVariant("sql", id).classifierDescription}`).join(
-  "\n",
-);
+const WORKFLOW_LINES = Object.entries(AGENT_WORKFLOW_VARIANTS.sql)
+  .map(([id, variant]) => `${id}: ${variant.classifierDescription}`)
+  .join("\n");
 
 const CLASSIFY_SYSTEM = [
   "You classify a database task into exactly one workflow.",

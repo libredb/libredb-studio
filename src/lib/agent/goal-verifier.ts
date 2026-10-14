@@ -297,7 +297,7 @@ const EVERY_COUNT_MEANS_SOMETHING: ReadonlySet<string> = Object.freeze(new Set<s
  * lecture about how one would find it.
  *
  * **Two bars in one rule, because plan mode has two deliverables.** Every workflow but
- * `operations` is asked for a statement (`PLAN_DELIVERABLES` in `investigation.ts`),
+ * `operations` is asked for a statement (each variant's `planDeliverable` in `agent-manifest.ts`),
  * and `operations` is asked for prose — it composes no SQL, so holding it to a
  * statement would fail every run that did exactly what the workflow is for. (It reads a
  * schema since #411, and since the Operate-statement fix its rules welcome a fenced

@@ -6792,7 +6792,7 @@ there. `agent-investigation.1`, `agent-database-assessment.1` and `agent-data-an
 artifact is scored `empty-evidence` for the same wrong reason: a plan arrives in one column, the
 driver reports no row count for it, and that zero measures nothing.
 
-Reachable rather than theoretical - `inspect_plan` is in `AGENT_MODE_TOOLS`, so every one of those
+Reachable rather than theoretical - `inspect_plan` is in every SQL statement variant's `tools` (`agent-manifest.ts`), so every one of those
 workflows is offered it. Left out of B45 because closing it means changing what three released
 verifier ids mean, which by this file's own versioning rule (`goal-verifier.ts`: a rule that changes
 its mind takes a new id) forces `agent-investigation.1` to `.2` plus the two ids composing on it,

@@ -2191,7 +2191,7 @@ export const AgentRail = React.memo(function AgentRail({
 
           It is offered in BOTH modes and all five are still here: toollessness decides
           which TOOLS a run gets, not what the run is about, and the server frames the
-          objective by workflow in either mode (`WORKFLOW_OBJECTIVES`). What changed is
+          objective by workflow in either mode (each variant's `objective`). What changed is
           only who decides and when — the row used to sit ABOVE the objective, asking
           the user to classify a question they had not written yet.
 

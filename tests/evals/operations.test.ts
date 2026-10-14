@@ -537,7 +537,7 @@ describe("a run that read NOTHING is told what this workflow is scored on", () =
     that reads competently on other surfaces — this is not capacity, it is a run answering
     on turn one because nothing said the answer had to rest on a reading.
 
-    NOT narrowed, and that is load-bearing: `AGENT_NARROWED_EXTRA_TOOLS.operations` is `[]`,
+    NOT narrowed, and that is load-bearing: the operations variant's `narrowedExtras` is `[]`,
     so narrowing here would take `inspect_operations` away — the one tool the sentence asks
     for. The same trap `no-plan-evidence` documents.
   */

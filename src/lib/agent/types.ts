@@ -240,7 +240,7 @@ export const AGENT_WORKFLOW_PRESENTS_ANSWER: Readonly<Record<AgentRunWorkflowTyp
  * A property of the workflow, stated here beside `AGENT_WORKFLOW_PRESENTS_ANSWER`
  * rather than a list inside the route that refuses, and for the same reason: the set is
  * then explicit, total over the union, and pinned to the tool sets by a test instead of
- * being a claim a reader has to re-derive from `WORKFLOW_TOOLS`. A new workflow stops
+ * being a claim a reader has to re-derive from each variant's `tools` in `agent-manifest.ts`. A new workflow stops
  * this file compiling until somebody decides whether it drafts SQL, which is the
  * question that decides where it may run.
  *

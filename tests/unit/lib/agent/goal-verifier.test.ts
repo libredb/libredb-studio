@@ -275,7 +275,7 @@ describe("a planning run is judged by what planning mode can produce", () => {
   });
 
   test("an operations plan keeps the prose rule, because it has no statement contract", () => {
-    // `PLAN_DELIVERABLES.operations` is prose: the workflow reads no schema and
+    // The operations variant's `planDeliverable` is prose: the workflow reads no schema and
     // composes no SQL, so requiring a statement of it would fail every run that did
     // exactly what the workflow is for.
     const verdict = verifyRunGoal(run("planning", "succeeded", [lecture], "operations"));
