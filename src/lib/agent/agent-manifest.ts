@@ -324,3 +324,14 @@ export function planDeliverableOf(
   if (inherited === "inherits") throw new AgentManifestError(`the sql ${workflow} variant inherits from nothing`);
   return inherited;
 }
+
+/**
+ * The objective a plan of this workflow is given. A language with no variant of the workflow reads the SQL
+ * variant's, for the reason `planDeliverableOf` does: planning is never gated by a language.
+ */
+export function planObjectiveOf(
+  language: AgentStatementLanguageId | undefined,
+  workflow: AgentRunWorkflowType,
+): string {
+  return (agentVariant(language, workflow) ?? requiredVariant("sql", workflow)).objective;
+}

@@ -255,6 +255,21 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
     expect(names).toEqual(["inspect_operations", "recommend_change", "compose_report"]);
   });
 
+  test("the persisted statement language picks the variant, and an absent one reads as sql", () => {
+    // The same frozen array for the same variant, so a run recorded before languages existed and one recorded
+    // as sql are offered exactly the same tools.
+    expect(selectAgentTools({ ...persisted("agent"), statementLanguage: "sql" })).toBe(
+      selectAgentTools(persisted("agent")),
+    );
+    expect(selectAgentTools({ ...persisted("agent", "operations"), statementLanguage: "kubectl" })).toBe(
+      selectAgentTools(persisted("agent", "operations")),
+    );
+    expect(selectAgentTools({ ...persisted("planning"), statementLanguage: "kubectl" })).toEqual([]);
+    expect(() => selectAgentTools({ ...persisted("agent"), statementLanguage: "kubectl" })).toThrow(
+      "no investigation variant for kubectl",
+    );
+  });
+
   test("present_answer is offered exactly where AGENT_WORKFLOW_PRESENTS_ANSWER says it is", () => {
     // The binding that keeps four layers agreeing. The rail offers the auto-execute
     // checkbox from this record, the route accepts the field from it, and

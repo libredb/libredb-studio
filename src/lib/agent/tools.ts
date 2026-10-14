@@ -116,7 +116,7 @@ import {
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { nonFiniteWord } from "@/lib/non-finite";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
-import { type AgentWorkflowVariant, requiredVariant } from "./agent-manifest";
+import { type AgentStatementLanguageId, type AgentWorkflowVariant, requiredVariant } from "./agent-manifest";
 import { connectionIdentity, heldSnapshotForConnection } from "./context-snapshot";
 import { offersRefusalExamples } from "./models";
 import type { ColumnSchema, DatabaseConnection, QueryResult } from "@/lib/types";
@@ -260,6 +260,11 @@ export interface AgentToolContext {
    * body could contribute one.
    */
   readonly workflowType: AgentRunWorkflowType;
+  /**
+   * The run's PERSISTED statement language, absent for `sql`. Like `workflowType`, it
+   * can only have come from the run record, never from the live connection.
+   */
+  readonly statementLanguage?: AgentStatementLanguageId;
   /** The persisted actor — the sole authority for authorizing this call. */
   readonly actor: AgentRunActor;
   readonly connection: DatabaseConnection;
@@ -1192,8 +1197,11 @@ const NO_TOOLS: readonly AgentToolDefinition[] = Object.freeze([]);
  */
 const VARIANT_TOOLS = new WeakMap<AgentWorkflowVariant, readonly AgentToolDefinition[]>();
 
-function workflowTools(workflow: AgentRunWorkflowType): readonly AgentToolDefinition[] {
-  const variant = requiredVariant(undefined, workflow);
+function workflowTools(
+  language: AgentStatementLanguageId | undefined,
+  workflow: AgentRunWorkflowType,
+): readonly AgentToolDefinition[] {
+  const variant = requiredVariant(language, workflow);
   let tools = VARIANT_TOOLS.get(variant);
   if (tools === undefined) {
     tools = Object.freeze(variant.tools.map((name) => AGENT_TOOL_DEFINITIONS[name]));
@@ -1203,10 +1211,10 @@ function workflowTools(workflow: AgentRunWorkflowType): readonly AgentToolDefini
 }
 
 /**
- * The tools this run may use, decided from its persisted mode and workflow type and
- * nothing else.
+ * The tools this run may use, decided from its persisted mode, workflow type and
+ * statement language and nothing else.
  *
- * The parameter is the run record (narrowed to the two fields that matter) rather
+ * The parameter is the run record (narrowed to the three fields that matter) rather
  * than bare strings, so the values can only have come from persisted state. There is
  * no parameter through which a request body could contribute a tool, which is what
  * "a client-supplied tool list is ignored, not merged" means here.
@@ -1215,8 +1223,10 @@ function workflowTools(workflow: AgentRunWorkflowType): readonly AgentToolDefini
  * contract whatever it is for, so a workflow type is never a way to give a planning
  * run a tool.
  */
-export function selectAgentTools(run: Pick<AgentRunRecord, "mode" | "workflowType">): readonly AgentToolDefinition[] {
-  return run.mode === "agent" ? workflowTools(run.workflowType) : NO_TOOLS;
+export function selectAgentTools(
+  run: Pick<AgentRunRecord, "mode" | "workflowType" | "statementLanguage">,
+): readonly AgentToolDefinition[] {
+  return run.mode === "agent" ? workflowTools(run.statementLanguage, run.workflowType) : NO_TOOLS;
 }
 
 // ============================================================================

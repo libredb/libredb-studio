@@ -3,7 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
+import { verifyRunGoal } from "@/lib/agent/goal-verifier";
 import { AgentRunStore, ledgerStreamName } from "@/lib/agent/run-store";
+import { selectAgentTools } from "@/lib/agent/tools";
 
 /**
  * The #330 T2 gate: **a ledger written before `workflowType` existed still folds to
@@ -169,5 +171,14 @@ describe("a ledger written before statementLanguage existed", () => {
       status: "succeeded",
       goalVerdict: { outcome: "answered", verifier: "agent-query-optimization.3" },
     });
+  });
+
+  test("reads as an SQL run under the SQL verifier", async () => {
+    const view = await foldFixture(PRE_LANGUAGE);
+    const record = view?.record;
+    if (record === undefined) throw new Error("no record");
+    expect(record.statementLanguage).toBeUndefined();
+    expect(verifyRunGoal(record).verifier).toBe("agent-query-optimization.3");
+    expect(selectAgentTools(record).map((tool) => tool.name)).toContain("inspect_plan");
   });
 });

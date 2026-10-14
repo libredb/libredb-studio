@@ -158,6 +158,27 @@ describe("AgentRunStore — opening a run", () => {
     expect(folded?.threadId).toBe(record.runId);
   });
 
+  test("a run opened on kubectl carries its language and verifier, and a run opened without reads as neither", async () => {
+    const { store, dataDir } = storeAt();
+    const kubectl = await store.openRun({
+      ...OPEN_INPUT,
+      statementLanguage: "kubectl",
+      verifier: "agent-investigation.1",
+    });
+    const plain = await store.openRun({ ...OPEN_INPUT });
+
+    // Read back through a second store on the same files: a resumed drive in a fresh process has the ledger and
+    // nothing else, so the language and the verifier must come back from it alone.
+    const { store: resumed } = storeAt(dataDir);
+    expect((await resumed.read(kubectl.runId))?.record).toMatchObject({
+      statementLanguage: "kubectl",
+      verifier: "agent-investigation.1",
+    });
+    const folded = (await resumed.read(plain.runId))?.record;
+    expect(folded && "statementLanguage" in folded).toBe(false);
+    expect(folded && "verifier" in folded).toBe(false);
+  });
+
   test("a run that continues nothing folds to a thread of one named after itself", async () => {
     const { store } = storeAt();
 

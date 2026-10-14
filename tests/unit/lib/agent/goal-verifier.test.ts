@@ -834,6 +834,20 @@ describe("the verifier registry", () => {
     }
   });
 
+  test("a persisted verifier id is the rule applied, and an unknown one is an error", () => {
+    const run = { mode: "agent", workflowType: "investigation", status: "succeeded", events: [] } as const;
+    expect(verifyRunGoal({ ...run, verifier: "agent-investigation.1" }).verifier).toBe("agent-investigation.1");
+    expect(() => verifyRunGoal({ ...run, verifier: "agent-query-optimization.1" })).toThrow(
+      "no rule for verifier agent-query-optimization.1",
+    );
+  });
+
+  test("a run with no persisted verifier is judged by its language's variant, and an absent language reads as sql", () => {
+    const run = { mode: "agent", workflowType: "operations", status: "succeeded", events: [] } as const;
+    expect(verifyRunGoal({ ...run, statementLanguage: "kubectl" }).verifier).toBe("agent-operations.2");
+    expect(verifyRunGoal(run).verifier).toBe("agent-operations.2");
+  });
+
   test("planning is judged by its own rule whatever the run is FOR", () => {
     // Mode decides before the workflow does, for the same reason it does in
     // `selectAgentTools`: a toolless run can never be held to a bar that requires

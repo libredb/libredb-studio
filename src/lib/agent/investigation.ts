@@ -44,7 +44,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { agentVariant, planDeliverableOf, requiredVariant } from "./agent-manifest";
+import { planDeliverableOf, planObjectiveOf, requiredVariant } from "./agent-manifest";
 import { logger } from "@/lib/logger";
 import { isRetryableError, isToolCallParseError } from "@/lib/llm/types";
 import { type AssistantModelMessage, type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
@@ -155,7 +155,10 @@ import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-langu
 import type { DatabaseType } from "@/lib/types";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
-export type AgentToolResources = Omit<AgentToolContext, "runId" | "modelId" | "mode" | "workflowType" | "actor">;
+export type AgentToolResources = Omit<
+  AgentToolContext,
+  "runId" | "modelId" | "mode" | "workflowType" | "statementLanguage" | "actor"
+>;
 
 export interface AgentInvestigationOptions {
   readonly service: AgentRunService;
@@ -528,6 +531,8 @@ function shortfallsIfReported(
   return verifyRunGoal({
     mode: record.mode,
     workflowType: record.workflowType,
+    statementLanguage: record.statementLanguage,
+    verifier: record.verifier,
     // The status the run would end in, so the verdict is the one this report would earn
     // rather than one shaped by a `cancelled` arm that has not happened.
     status: "succeeded",
@@ -1690,7 +1695,7 @@ function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, engi
   // where the others are — the engine decides it and nothing else — so a prose run
   // that was told the grounded sentence on an engine that could not be read would be
   // pointed at an inventory it does not have.
-  const deliverable = planDeliverableOf(undefined, record.workflowType);
+  const deliverable = planDeliverableOf(record.statementLanguage, record.workflowType);
   const planningDeliverableRules =
     deliverable.kind === "prose"
       ? grounding.schemaKnown
@@ -1712,13 +1717,12 @@ function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, engi
   const canHandOver =
     record.mode === "agent" && record.autoExecute && AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType];
   const handover = canHandOver ? ` ${AUTO_EXECUTE_RULE}` : "";
-  // A plan of a workflow its language has no variant of reads the SQL objective: planning
-  // is never gated by a language. An agent-mode run without its variant is an error.
-  const variant =
+  // An agent-mode run without its variant is an error; a plan reads `planObjectiveOf`,
+  // which never is, because planning is never gated by a language.
+  const objective =
     record.mode === "agent"
-      ? requiredVariant(undefined, record.workflowType)
-      : (agentVariant(undefined, record.workflowType) ?? requiredVariant("sql", record.workflowType));
-  const objective = variant.objective;
+      ? requiredVariant(record.statementLanguage, record.workflowType).objective
+      : planObjectiveOf(record.statementLanguage, record.workflowType);
   return `You are the LibreDB Studio database investigator. ${rules}${handover} ${objective} ${SHARED_RULES}`;
 }
 
@@ -2277,7 +2281,7 @@ function narrowedToolNames(record: AgentRunRecord, since = Number.POSITIVE_INFIN
     AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType] && presentableArtifact(record.events) === undefined;
   for (const name of [
     "compose_report" as const,
-    ...requiredVariant(undefined, record.workflowType).narrowedExtras,
+    ...requiredVariant(record.statementLanguage, record.workflowType).narrowedExtras,
     ...(stillOwesARead ? (["run_read_query"] as const) : []),
   ]) {
     if (held.has(name) && !usedUp(record, name, since)) kept.add(name);
@@ -2706,6 +2710,7 @@ export async function runInvestigation(
       modelId: model.modelId,
       mode: record.mode,
       workflowType: record.workflowType,
+      ...(record.statementLanguage === undefined ? {} : { statementLanguage: record.statementLanguage }),
       actor: record.actor,
     };
     // Read once, from the provider's own declarations, and spent by every sentence that

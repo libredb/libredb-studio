@@ -7,6 +7,7 @@ import {
   type AgentStatementLanguageId,
   agentVariant,
   planDeliverableOf,
+  planObjectiveOf,
   requiredVariant,
 } from "@/lib/agent/agent-manifest";
 import { composesCatalogFor, composesEstimatingExplainFor } from "@/lib/agent/composed-sql";
@@ -140,6 +141,11 @@ describe("the SQL variants", () => {
 
   test("a language with no variant plans with the SQL deliverable", () => {
     expect(planDeliverableOf("kubectl", "investigation")).toEqual(planDeliverableOf("sql", "investigation"));
+  });
+
+  test("a language with no variant plans with the SQL objective, and one with a variant plans with its own", () => {
+    expect(planObjectiveOf("kubectl", "investigation")).toBe(requiredVariant("sql", "investigation").objective);
+    expect(planObjectiveOf("kubectl", "operations")).toBe(requiredVariant("kubectl", "operations").objective);
   });
 
   test("operations plans in prose", () => {

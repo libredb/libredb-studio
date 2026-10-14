@@ -41,6 +41,7 @@
  * claims RESTED on, which is a fact about the run.
  */
 
+import { requiredVariant } from "./agent-manifest";
 import { readPlanStatement } from "./plan-draft";
 import type { AgentReportClaim, AgentRunEvent, AgentRunMode, AgentRunRecord, AgentRunWorkflowType } from "./types";
 
@@ -235,7 +236,10 @@ export interface AgentWorkflowGoal {
 }
 
 /** Everything the verdict is a function of, and nothing else. */
-export type VerifiableAgentRun = Pick<AgentRunRecord, "mode" | "workflowType" | "status" | "events">;
+export type VerifiableAgentRun = Pick<
+  AgentRunRecord,
+  "mode" | "workflowType" | "status" | "events" | "statementLanguage" | "verifier"
+>;
 
 /**
  * Every claim the run composed, across every report entry it wrote.
@@ -575,12 +579,35 @@ function verifyOperationsGoal(run: VerifiableAgentRun): readonly AgentGoalShortf
   return citesReading ? [] : ["no-reading"];
 }
 
+/**
+ * Verifier id → the rule it names, for every id a run can still be judged under.
+ *
+ * Keyed by id rather than by workflow because a run persists the id it was opened
+ * under, and a resumed drive must apply THAT rule. Partial on purpose: a retired id
+ * stays in the union for the ledgers that carry it, but no new verdict is ever
+ * measured against it, so it has no entry here and asking for one is an error.
+ */
+const AGENT_GOAL_RULES: Readonly<Partial<Record<AgentGoalVerifierId, GoalRule>>> = Object.freeze({
+  "agent-investigation.1": (run: VerifiableAgentRun) => verifyInvestigationGoal(run),
+  "agent-query-optimization.3": verifyQueryOptimizationGoal,
+  "agent-database-assessment.1": verifyDatabaseAssessmentGoal,
+  "agent-operations.2": verifyOperationsGoal,
+  "agent-data-analysis.1": verifyDataAnalysisGoal,
+});
+
+/** The id and the rule as ONE value, read from the one record, so a verdict cannot name a bar it did not apply. */
+function goalOf(verifier: AgentGoalVerifierId): AgentWorkflowGoal {
+  const verify = AGENT_GOAL_RULES[verifier];
+  if (verify === undefined) throw new Error(`no rule for verifier ${verifier}`);
+  return { verifier, verify };
+}
+
 export const AGENT_WORKFLOW_GOALS: Readonly<Record<AgentRunWorkflowType, AgentWorkflowGoal>> = Object.freeze({
-  investigation: { verifier: "agent-investigation.1", verify: verifyInvestigationGoal },
-  "query-optimization": { verifier: "agent-query-optimization.3", verify: verifyQueryOptimizationGoal },
-  "database-assessment": { verifier: "agent-database-assessment.1", verify: verifyDatabaseAssessmentGoal },
-  operations: { verifier: "agent-operations.2", verify: verifyOperationsGoal },
-  "data-analysis": { verifier: "agent-data-analysis.1", verify: verifyDataAnalysisGoal },
+  investigation: goalOf("agent-investigation.1"),
+  "query-optimization": goalOf("agent-query-optimization.3"),
+  "database-assessment": goalOf("agent-database-assessment.1"),
+  operations: goalOf("agent-operations.2"),
+  "data-analysis": goalOf("agent-data-analysis.1"),
 } satisfies Record<AgentRunWorkflowType, AgentWorkflowGoal>);
 
 const PLANNING_GOAL: AgentWorkflowGoal = { verifier: AGENT_PLANNING_VERIFIER, verify: verifyPlanningGoal };
@@ -589,9 +616,14 @@ const PLANNING_GOAL: AgentWorkflowGoal = { verifier: AGENT_PLANNING_VERIFIER, ve
  * The goal this run is judged against. Mode decides first and the workflow cannot
  * override it, for the same reason it cannot in `selectAgentTools`: planning has no
  * tools whatever it is for, so it can never be held to a bar requiring evidence.
+ *
+ * An agent-mode run is judged by the verifier it persisted at open. A ledger written
+ * before that field reads its variant's verifier, which for a run with no language
+ * is the SQL workflow's: the rule that judged every run written then.
  */
 function goalFor(run: VerifiableAgentRun): AgentWorkflowGoal {
-  return run.mode === "planning" ? PLANNING_GOAL : AGENT_WORKFLOW_GOALS[run.workflowType];
+  if (run.mode === "planning") return PLANNING_GOAL;
+  return goalOf(run.verifier ?? requiredVariant(run.statementLanguage, run.workflowType).verifier);
 }
 
 /**

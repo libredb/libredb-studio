@@ -49,6 +49,7 @@ import type { AgentStatementViolation } from "@/lib/db/operations/statement-guar
 import type { AgentChartSpec, ColumnSchema, DatabaseType, ForeignKeySchema, IndexSchema } from "@/lib/types";
 import type { ObjectRole } from "@/lib/db/types";
 import type { editorLanguageForTabType } from "@/lib/editor/tab-language";
+import type { AgentStatementLanguageId } from "./agent-manifest";
 import type { AgentContextCharge, AgentContextRowBudget, AgentContextUnavailableCode } from "./context-snapshot";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
 import type { AgentToolName } from "./tools";
@@ -1638,6 +1639,27 @@ export interface AgentRunRecord {
    * the prose path existed, and of every model that can call a tool.
    */
   readonly toolProtocol?: AgentToolProtocol;
+  /**
+   * The statement language this run writes in, which picks its workflow variant in `agent-manifest.ts`.
+   *
+   * Decided once at open from the manifest and carried here for the reason `toolProtocol` is: tool
+   * selection, narrowing, the prompt, the verifier and a resumed drive all read it from the record, never
+   * from the live connection, so a run is the same run in a process that cannot reach its database.
+   *
+   * Optional, and absent reads as `sql`: every ledger written before this field was an SQL run.
+   */
+  readonly statementLanguage?: AgentStatementLanguageId;
+  /**
+   * The rule this run is judged against, decided once at open from its workflow variant.
+   *
+   * On the record for the same reason as `statementLanguage`: the verdict a resumed drive records must be
+   * measured against the bar the run was opened under, read from the ledger rather than re-derived from a
+   * manifest that may have changed since.
+   *
+   * Optional, and absent reads as the verifier of the run's variant (for a ledger written before this field,
+   * the SQL workflow's verifier), which is what judged every run written then.
+   */
+  readonly verifier?: AgentGoalVerifierId;
   /**
    * The conversation this run belongs to.
    *

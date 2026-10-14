@@ -69,6 +69,8 @@ import {
   paginateHistory,
   parseHistoryEntry,
 } from "./history";
+import type { AgentStatementLanguageId } from "./agent-manifest";
+import type { AgentGoalVerifierId } from "./goal-verifier";
 import { assertPersistableState } from "./state-guard";
 import {
   type AgentThreadHeader,
@@ -183,6 +185,16 @@ export type AgentLedgerEntry =
        * other way to ask.
        */
       readonly toolProtocol?: AgentToolProtocol;
+      /**
+       * Optional for the same reason, and absent folds to `sql`: every run written before
+       * the statement-language layer was an SQL run.
+       */
+      readonly statementLanguage?: AgentStatementLanguageId;
+      /**
+       * Optional for the same reason, and absent folds to the verifier of the run's
+       * variant, which is the rule that judged every run written before this field.
+       */
+      readonly verifier?: AgentGoalVerifierId;
       /**
        * Optional on the READ side for the same reason `workflowType` is: `openRun`
        * writes it only when a run CONTINUES a conversation, and a header written
@@ -302,6 +314,10 @@ export interface AgentRunOpenInput {
   readonly autoExecute?: boolean;
   /** Defaults to `native`. Decided by the capability gate at start; see `AgentRunRecord`. */
   readonly toolProtocol?: AgentToolProtocol;
+  /** Defaults to `sql`. Decided from the manifest at start; see `AgentRunRecord`. */
+  readonly statementLanguage?: AgentStatementLanguageId;
+  /** Defaults to the variant's verifier. Decided from the manifest at start; see `AgentRunRecord`. */
+  readonly verifier?: AgentGoalVerifierId;
   /** The conversation this run continues; written to the header only when it does. */
   readonly thread?: AgentThreadHeader;
   readonly actor: AgentRunActor;
@@ -435,6 +451,9 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
       // Spread rather than defaulted: `native` is the absence, so writing it would put
       // a field on every record to say what its absence already says.
       ...(header.toolProtocol === undefined ? {} : { toolProtocol: header.toolProtocol }),
+      // Spread for the same reason: `sql` and the variant's verifier are what absence says.
+      ...(header.statementLanguage === undefined ? {} : { statementLanguage: header.statementLanguage }),
+      ...(header.verifier === undefined ? {} : { verifier: header.verifier }),
       // Defaulted rather than spread, because every run HAS a conversation: one it
       // continues, or one of its own that begins here. A header written before this
       // field folds to a thread of one named after itself, which is what was true of
@@ -592,6 +611,8 @@ export class AgentRunStore {
       // generation can be read as having permitted something it did not.
       autoExecute: input.autoExecute ?? false,
       ...(input.toolProtocol === undefined ? {} : { toolProtocol: input.toolProtocol }),
+      ...(input.statementLanguage === undefined ? {} : { statementLanguage: input.statementLanguage }),
+      ...(input.verifier === undefined ? {} : { verifier: input.verifier }),
       // Written only when a run CONTINUES a conversation, so a ledger opened before
       // this field and one that starts its own thread are the same bytes.
       ...(input.thread === undefined ? {} : { thread: input.thread }),

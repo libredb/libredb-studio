@@ -46,7 +46,8 @@ import { randomUUID } from "node:crypto";
 import { releaseExecutionRun } from "@/lib/db/operations/execution";
 import { logger } from "@/lib/logger";
 import { AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
-import { verifyRunGoal } from "./goal-verifier";
+import type { AgentStatementLanguageId } from "./agent-manifest";
+import { type AgentGoalVerifierId, verifyRunGoal } from "./goal-verifier";
 import type { AgentHistoryCursor, AgentHistoryPage } from "./history";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import type { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -176,6 +177,10 @@ export interface AgentRunStartInput {
   readonly autoExecute?: boolean;
   /** Defaults to `native`; see `AgentRunRecord.toolProtocol`. */
   readonly toolProtocol?: AgentToolProtocol;
+  /** Defaults to `sql`; see `AgentRunRecord.statementLanguage`. */
+  readonly statementLanguage?: AgentStatementLanguageId;
+  /** Defaults to the variant's verifier; see `AgentRunRecord.verifier`. */
+  readonly verifier?: AgentGoalVerifierId;
   /** The conversation this run continues; the route derives it, the store persists it. */
   readonly thread?: AgentThreadHeader;
   readonly actor: AgentRunActor;
