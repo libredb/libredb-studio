@@ -8,11 +8,15 @@
  * `--for TYPE/NAME` selects by the involved object's kind, API version and name, as kubectl's selector does; each
  * value is escaped. A single `--types` value is also sent as a `type=` field selector, so the server narrows the set the
  * 5,000 cap counts; `--types` still filters after the read without case, as kubectl filters.
+ *
+ * On the agent path a list the read did not finish is refused, in the row budget's sentence when the read stopped at
+ * the budget and in the cap's when it stopped at 5,000, because a sorted or filtered part of it would read as the whole;
+ * and an involved Secret's name is withheld from the OBJECT cell.
  */
 import { QueryError } from "@/lib/db/errors";
 import { ACCEPT_JSON } from "../client";
 import { KUBERNETES_EVENTS_READ_MAX, KUBERNETES_EVENTS_SHOWN, KUBERNETES_PAGE_SIZE, KUBERNETES_TYPE } from "../limits";
-import { redactResponse } from "../redaction";
+import { MACHINE_REDACTED, redactResponse } from "../redaction";
 import { fieldSelectorValue } from "../request-policy";
 import { type KubeTable, parseTable, scanTable } from "../table";
 import {
@@ -23,6 +27,7 @@ import {
   objectOf,
   redactionMode,
   resolveType,
+  rowBudgetSentence,
   stringOf,
   textGrid,
 } from "./context";
@@ -112,14 +117,20 @@ export async function listEvents(context: KubectlContext, statement: EventsState
     );
     return parseTable(redactResponse(events, body, redactionMode(context)));
   };
-  // On the agent path the read stops one row past the budget, so the refusal costs 201 rows, not 5,000, and the
-  // row budget refuses it rather than this cap.
+  // On the agent path the read stops one row past the budget, so the refusal costs 201 rows, not 5,000. A read that
+  // did not finish is refused before --types filters it, so a filtered part never passes for the whole list.
   const scan = await scanTable(read, {
     offset: 0,
     limit: machineRowLimit(context, KUBERNETES_EVENTS_READ_MAX),
     pageSize: KUBERNETES_PAGE_SIZE,
   });
-  if (scan.more && context.machine === undefined) throw new QueryError(EVENTS_CAP_SENTENCE, KUBERNETES_TYPE);
+  if (scan.more)
+    throw new QueryError(
+      context.machine === undefined || scan.rows.length <= context.machine.maxRows
+        ? EVENTS_CAP_SENTENCE
+        : rowBudgetSentence(scan.rows.length, context.machine.maxRows),
+      KUBERNETES_TYPE,
+    );
   const typed = scan.rows
     .map((row) => (row.object ?? {}) as KubeEvent)
     // kubectl compares the type without case.
@@ -143,12 +154,17 @@ export async function listEvents(context: KubectlContext, statement: EventsState
     fields,
     shown.map((event) => {
       const involved = objectOf(event.involvedObject) ?? {};
+      // A Secret's name is withheld from the agent; its kind still says which object the event is about.
+      const name =
+        involved.kind === "Secret" && context.machine !== undefined
+          ? MACHINE_REDACTED
+          : (stringOf(involved.name) ?? "");
       const cells: unknown[] = statement.allNamespaces ? [stringOf(objectOf(event.metadata)?.namespace) ?? ""] : [];
       cells.push(
         lastSeen(context, event),
         stringOf(event.type) ?? "",
         stringOf(event.reason) ?? "",
-        `${(stringOf(involved.kind) ?? "").toLowerCase()}/${stringOf(involved.name) ?? ""}`,
+        `${(stringOf(involved.kind) ?? "").toLowerCase()}/${name}`,
         (stringOf(event.message) ?? "").trim(),
       );
       return cells;

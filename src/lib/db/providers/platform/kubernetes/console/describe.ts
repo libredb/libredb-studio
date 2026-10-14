@@ -7,12 +7,14 @@
  * kubectl orders them. Both object reads are redacted on the request, so a Secret's values and its last-applied
  * annotation never reach a row; an identity that may not list events sees one row that says so, the anonymous
  * sentence when the connection sends no credential. On the agent path the rows are written from the copies masked for
- * the machine (`machine-redaction.ts`), while the events are still selected by the real object.
+ * the machine (`machine-redaction.ts`), while the events are still selected by the real object. An agent read whose
+ * events did not all fit the read is refused, never answered with only some of them.
  */
+import { QueryError } from "@/lib/db/errors";
 import { ACCEPT_JSON, ACCEPT_TABLE } from "../client";
 import type { IndexedResource } from "../discovery";
 import { KubernetesRequestError } from "../errors";
-import { KUBERNETES_EVENTS_READ_MAX, KUBERNETES_PAGE_SIZE } from "../limits";
+import { KUBERNETES_EVENTS_READ_MAX, KUBERNETES_PAGE_SIZE, KUBERNETES_TYPE } from "../limits";
 import { maskObjectForMachine, maskTableForMachine } from "../machine-redaction";
 import { redactResponse } from "../redaction";
 import { fieldSelectorValue } from "../request-policy";
@@ -27,6 +29,7 @@ import {
   objectOf,
   redactionMode,
   resolveType,
+  rowBudgetSentence,
   stringOf,
   textGrid,
 } from "./context";
@@ -36,6 +39,9 @@ import type { KubectlStatement } from "./parse";
 type DescribeStatement = Extract<KubectlStatement, { readonly command: "describe" }>;
 
 const FIELDS = ["SECTION", "FIELD", "VALUE"] as const;
+
+const MACHINE_EVENTS_CAP_SENTENCE =
+  "More than 5,000 events name this object, and an agent read is refused rather than answered with only some of them: read them with events --for TYPE/NAME --types=Warning.";
 
 /** `key=value` rows of a string map, or one `<none>` row, as kubectl prints an empty map. */
 function mapRows(section: string, field: string, value: unknown): unknown[][] {
@@ -100,6 +106,14 @@ async function eventRows(
     // The client's own sentence: it names the list and, for a connection that sends no credential, the anonymous request.
     return [["Events", "Events", error.message]];
   }
+  // The editor is told the list is partial; the agent's answer must be whole, so its read is refused instead.
+  if (more && context.machine !== undefined)
+    throw new QueryError(
+      items.length > context.machine.maxRows
+        ? rowBudgetSentence(items.length, context.machine.maxRows)
+        : MACHINE_EVENTS_CAP_SENTENCE,
+      KUBERNETES_TYPE,
+    );
   if (items.length === 0) return [["Events", "Events", "<none>"]];
   const sorted = [...items].sort((a, b) => eventTime(a) - eventTime(b));
   const rows = sorted.map((event) => {

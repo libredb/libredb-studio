@@ -3,6 +3,7 @@
  * through the agent's machine context, so each assertion shows the editor still carries what the agent's copy masks.
  */
 import { describe, expect, test } from "bun:test";
+import { EVENTS_CAP_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/events";
 import { runKubectl } from "@/lib/db/providers/platform/kubernetes/console/run";
 import { MACHINE_REDACTED } from "@/lib/db/providers/platform/kubernetes/redaction";
 import {
@@ -373,5 +374,146 @@ describe("describe", () => {
     await runKubectl({ ...agent.context, machine: MACHINE }, "logs pod/web -n shop");
     const logLine = sentLines(agent.transport).find((line) => line.includes("/log?"));
     expect(logLine).toStartWith("GET /api/v1/namespaces/shop/pods/web/log?container=sidecar&");
+  });
+});
+
+describe("auth", () => {
+  test("auth can-i --list masks Resource Names on a rule covering Secrets only", async () => {
+    const answer = {
+      "POST /apis/authorization.k8s.io/v1/selfsubjectrulesreviews": jsonAnswer(
+        {
+          status: {
+            resourceRules: [
+              { apiGroups: [""], resources: ["secrets"], resourceNames: [M.secretName, "tls"], verbs: ["get"] },
+              { apiGroups: [""], resources: ["configmaps"], resourceNames: ["shop-config"], verbs: ["get"] },
+            ],
+          },
+        },
+        201,
+      ),
+    };
+    const { editor, machine } = await both(answer, "auth can-i --list -n shop");
+    expect(editor).toContain(`"Resource Names":"[${M.secretName} tls]"`);
+    expect(editor).toContain('"Resource Names":"[shop-config]"');
+    expect(machine).not.toContain(M.secretName);
+    expect(machine).not.toMatch(/\btls\b/);
+    expect(machine).toContain(`"Resource Names":"[${MACHINE_REDACTED} ${MACHINE_REDACTED}]"`);
+    expect(machine).toContain('"Resource Names":"[shop-config]"');
+  });
+
+  test("auth whoami keeps Extra keys and masks their values", async () => {
+    const answer = {
+      "POST /apis/authentication.k8s.io/v1/selfsubjectreviews": jsonAnswer(
+        {
+          status: {
+            userInfo: {
+              username: "system:serviceaccount:shop:studio",
+              groups: ["system:authenticated"],
+              extra: {
+                "authentication.kubernetes.io/pod-name": ["studio-0"],
+                "probe.libredb.dev/claims": [M.envValue, "second"],
+              },
+            },
+          },
+        },
+        201,
+      ),
+    };
+    const { editor, machine } = await both(answer, "auth whoami");
+    expect(editor).toContain(`[${M.envValue} second]`);
+    expect(editor).toContain("[studio-0]");
+    expect(machine).not.toContain(M.envValue);
+    expect(machine).not.toContain("studio-0");
+    expect(JSON.parse(machine)).toEqual([
+      { ATTRIBUTE: "Username", VALUE: "system:serviceaccount:shop:studio" },
+      { ATTRIBUTE: "Groups", VALUE: "[system:authenticated]" },
+      { ATTRIBUTE: "Extra: authentication.kubernetes.io/pod-name", VALUE: `[${MACHINE_REDACTED}]` },
+      { ATTRIBUTE: "Extra: probe.libredb.dev/claims", VALUE: `[${MACHINE_REDACTED} ${MACHINE_REDACTED}]` },
+    ]);
+  });
+});
+
+/** An event of `type`, at a fixed time, about a Pod. */
+const podEvent = (type: string) => ({
+  type,
+  reason: "Pulled",
+  message: "m",
+  involvedObject: { kind: "Pod", name: "web", namespace: "shop" },
+  lastTimestamp: "2026-10-10T11:00:00Z",
+});
+
+/** Answers every page of an events list with as many events as it asks for, and always a continue token. */
+function endlessEvents(map: Parameters<typeof routes>[0], path: string, type: (index: number) => string) {
+  const fixed = routes(map);
+  const answer: KubernetesAnswerFn = (request, line) => {
+    if (!line.startsWith(`GET ${path}?`)) return fixed(request, line);
+    const search = new URL(request.url).searchParams;
+    const start = Number(search.get("continue") ?? "0");
+    const count = Number(search.get("limit"));
+    return listAnswer(
+      Array.from({ length: count }, (_, index) => podEvent(type(start + index))),
+      { continue: String(start + count) },
+    );
+  };
+  return answer;
+}
+
+describe("events", () => {
+  test("events: an involved Secret's name is masked in OBJECT; a Pod's passes", async () => {
+    const items = [
+      { ...secretEvent, involvedObject: { ...secretEvent.involvedObject, name: M.secretName } },
+      podEvent("Normal"),
+    ];
+    const editor = consoleContext(withEvents({}, "/api/v1/namespaces/shop/events", items));
+    const agent = consoleContext(withEvents({}, "/api/v1/namespaces/shop/events", items));
+    const editorGrid = JSON.stringify((await runKubectl(editor.context, "events -n shop")).rows);
+    const machine = JSON.stringify((await runKubectl({ ...agent.context, machine: MACHINE }, "events -n shop")).rows);
+    expect(editorGrid).toContain(`"OBJECT":"secret/${M.secretName}"`);
+    expect(machine).not.toContain(M.secretName);
+    expect(machine).toContain(`"OBJECT":"secret/${MACHINE_REDACTED}"`);
+    expect(machine).toContain('"OBJECT":"pod/web"');
+  });
+
+  test("events past the budget are refused on the agent path, even when --types would filter them under it", async () => {
+    // Every other event has a type kubectl's --types drops, so the filtered list would fit the budget.
+    const answer = endlessEvents({}, "/api/v1/namespaces/shop/events", (index) =>
+      index % 2 === 0 ? "Normal" : "Info",
+    );
+    const agent = consoleContext(answer);
+    await expect(
+      runKubectl({ ...agent.context, machine: MACHINE }, "events -n shop --types=Normal,Warning"),
+    ).rejects.toThrow("Read-only execution exceeded the row budget: 201 rows > 200 allowed");
+  });
+
+  test("past 5,000 events under a budget above 5,000, the agent path refuses with the cap sentence", async () => {
+    const agent = consoleContext(endlessEvents({}, "/api/v1/namespaces/shop/events", () => "Normal"));
+    await expect(
+      runKubectl({ ...agent.context, machine: { ...MACHINE, maxRows: 10_000 } }, "events -n shop"),
+    ).rejects.toThrow(EVENTS_CAP_SENTENCE);
+  });
+});
+
+describe("describe events past the read", () => {
+  const map = {
+    "GET /api/v1/namespaces/shop/pods/web?includeObject=None": tableAnswer([{ name: "Name" }], [{ cells: ["web"] }]),
+    "GET /api/v1/namespaces/shop/pods/web": jsonAnswer({
+      kind: "Pod",
+      apiVersion: "v1",
+      metadata: { name: "web", namespace: "shop", uid: "uid-web" },
+    }),
+  };
+
+  test("an object with more events than the budget is refused on the agent path", async () => {
+    const agent = consoleContext(endlessEvents(map, "/api/v1/namespaces/shop/events", () => "Normal"));
+    await expect(runKubectl({ ...agent.context, machine: MACHINE }, "describe pod web -n shop")).rejects.toThrow(
+      "Read-only execution exceeded the row budget: 201 rows > 200 allowed",
+    );
+  });
+
+  test("an object with more than 5,000 events under a budget above 5,000 is refused, never shown in part", async () => {
+    const agent = consoleContext(endlessEvents(map, "/api/v1/namespaces/shop/events", () => "Normal"));
+    await expect(
+      runKubectl({ ...agent.context, machine: { ...MACHINE, maxRows: 10_000 } }, "describe pod web -n shop"),
+    ).rejects.toThrow("More than 5,000 events name this object");
   });
 });

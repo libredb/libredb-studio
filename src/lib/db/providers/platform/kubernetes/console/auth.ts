@@ -7,8 +7,13 @@
  * it as a name and that --subresource asks about the subresource. A type discovery does not know is asked about as
  * written, with kubectl's warning. `--list` is a SelfSubjectRulesReview of the namespace, its rules one row each as
  * the server answers them. `auth whoami` is a SelfSubjectReview.
+ *
+ * On the agent path a rule that reaches Secrets keeps its count of resource names but not the names, and each `Extra`
+ * attribute keeps its key but not its values, which an authenticator may fill with any claim it carries.
  */
 import type { QueryWarning } from "@/lib/types";
+import { coversSecrets } from "../machine-redaction";
+import { MACHINE_REDACTED } from "../redaction";
 import { resolveResource } from "../resolve";
 import { byCodeUnit, type KubectlContext, type KubectlGrid, goList, objectOf, stringOf, textGrid } from "./context";
 import type { KubectlStatement } from "./parse";
@@ -54,7 +59,12 @@ async function rulesList(context: KubectlContext, statement: CanIStatement): Pro
     ...array(status.resourceRules).map((rule) => [
       resourceGroups(strings(rule.resources), strings(rule.apiGroups)),
       "[]",
-      goList(strings(rule.resourceNames)),
+      // A Secret's name is withheld from the agent; the count of names says how narrow the rule is.
+      goList(
+        context.machine !== undefined && coversSecrets(rule)
+          ? strings(rule.resourceNames).map(() => MACHINE_REDACTED)
+          : strings(rule.resourceNames),
+      ),
       goList(strings(rule.verbs)),
     ]),
     ...array(status.nonResourceRules).map((rule) => [
@@ -143,6 +153,10 @@ export async function whoami(context: KubectlContext): Promise<KubectlGrid> {
   if (stringOf(user.uid) !== undefined && user.uid !== "") rows.push(["UID", user.uid]);
   rows.push(["Groups", goList(strings(user.groups))]);
   const extra = objectOf(user.extra) ?? {};
-  for (const key of Object.keys(extra).sort(byCodeUnit)) rows.push([`Extra: ${key}`, goList(strings(extra[key]))]);
+  // An extra value is whatever the authenticator put there, so the agent reads the keys and the count of values only.
+  for (const key of Object.keys(extra).sort(byCodeUnit)) {
+    const values = strings(extra[key]);
+    rows.push([`Extra: ${key}`, goList(context.machine === undefined ? values : values.map(() => MACHINE_REDACTED))]);
+  }
   return textGrid(["ATTRIBUTE", "VALUE"], rows);
 }
