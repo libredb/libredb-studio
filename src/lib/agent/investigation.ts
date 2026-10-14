@@ -47,6 +47,7 @@ import { createHash } from "node:crypto";
 import {
   AGENT_LANGUAGE_COPY,
   type AgentLanguageCopy,
+  type AgentStatementLanguageId,
   planDeliverableOf,
   planObjectiveOf,
   requiredVariant,
@@ -1564,7 +1565,7 @@ const planningProseRulesUngrounded = (engine: PlanningEngine): string =>
  * place of a comparison for an index; a rule the model is not told about is a rule
  * live runs fail, which is exactly how the evidence contract failed in #350.
  */
-const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Object.freeze({
+const SQL_WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Object.freeze({
   investigation: "Report what the evidence supports, and nothing further.",
   "query-optimization": [
     'Read the existing indexes with inspect_schema and kind="indexes" — a multi-statement PRAGMA or SHOW is refused before the database.',
@@ -1661,6 +1662,39 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
 } satisfies Record<AgentRunWorkflowType, string>);
 
 /**
+ * The tool rules by language, then by workflow. The SQL record is total, as above. A language holds rules for the
+ * workflows it has a variant of, and no more: `systemPrompt` throws for an agent-mode run whose language has none,
+ * which `requiredVariant` would already have refused. `operations` sends no statement in any language, so its
+ * rules are the SQL ones, shared rather than restated.
+ *
+ * The kubectl investigation names what the redaction removes, because a model told nothing would read `<redacted>`
+ * as the value and report it, or guess at it: the honest claim is that the value was not available to the run.
+ */
+const WORKFLOW_TOOL_RULES: Readonly<
+  Record<AgentStatementLanguageId, Readonly<Partial<Record<AgentRunWorkflowType, string>>>>
+> = Object.freeze({
+  sql: SQL_WORKFLOW_TOOL_RULES,
+  kubectl: Object.freeze({
+    investigation: [
+      "Read the cluster with run_read_query, one kubectl statement at a time: get, describe, logs, top, events, api-resources, explain and auth can-i are the reads there are.",
+      "Narrow every read to what the question needs with -n, -l or --field-selector: a read past the row budget is refused, never cut.",
+      "Some values never reach you: env values, annotation values, ConfigMap data, a container's command and args, and Secret names and values read as <redacted>. Say so where it matters rather than guessing what they hold.",
+      "Report what the evidence supports, and nothing further.",
+    ].join(" "),
+    operations: SQL_WORKFLOW_TOOL_RULES.operations,
+  }),
+} satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
+
+/** The tool rules an agent-mode run is given. A language with no rules for the workflow is an error, never silence. */
+function workflowToolRules(record: AgentRunRecord): string {
+  const language = record.statementLanguage ?? "sql";
+  const rules: Partial<Record<AgentRunWorkflowType, string>> = WORKFLOW_TOOL_RULES[language];
+  const own = Object.hasOwn(rules, record.workflowType) ? rules[record.workflowType] : undefined;
+  if (own === undefined) throw new Error(`no tool rules for ${record.workflowType} on ${language}`);
+  return own;
+}
+
+/**
  * What the run is FOR is said in both modes; how to pursue it with tools is said
  * only where there are tools.
  *
@@ -1722,7 +1756,7 @@ function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, engi
     engine.statementLanguage === undefined ? "" : ` Write every statement in ${engine.statementLanguage}.`;
   const rules =
     record.mode === "agent"
-      ? `${agentRules(AGENT_LANGUAGE_COPY[record.statementLanguage ?? "sql"])}${languageSentence} ${WORKFLOW_TOOL_RULES[record.workflowType]}`
+      ? `${agentRules(AGENT_LANGUAGE_COPY[record.statementLanguage ?? "sql"])}${languageSentence} ${workflowToolRules(record)}`
       : planningRules;
   // Said only where it can happen, on all THREE counts. A planning run has no tools;
   // a run opened without the setting hands nothing anywhere; and a workflow that is
@@ -1775,19 +1809,53 @@ const INSPECT_SCHEMA_OMISSION_ADVICE = "Call inspect_schema with a table selecto
 const INSPECT_SCHEMA_RELATIONS_OMISSION_ADVICE = 'Call inspect_schema with kind="relations" for them.';
 
 /**
+ * How an agent-mode run of each language is grounded in words its own tools can act on.
+ *
+ * `omissionAdvice` names the tool that reads what the packing left out: `inspect_schema` on SQL, and on kubectl,
+ * which holds no `inspect_schema`, a `run_read_query` get. `relations` says whether the relations block is shown at
+ * all: a cluster declares no foreign keys, and the block's own omission advice names `inspect_schema` again.
+ * `ungrounded` replaces the capture's own advice where the run cannot be ungrounded in the capture's words, which
+ * send a model to `inspect_schema`; absent, the capture's text is forwarded as it always was. The diagnosis is
+ * passed through as-is, joined with a newline, for the reasons `operationsUngroundedNote` records.
+ */
+const GROUNDING_COPY: Readonly<
+  Record<
+    AgentStatementLanguageId,
+    {
+      readonly omissionAdvice: string;
+      readonly relations: boolean;
+      readonly ungrounded?: (detail: string, noun: AgentInventoryNoun) => string;
+    }
+  >
+> = Object.freeze({
+  sql: { omissionAdvice: INSPECT_SCHEMA_OMISSION_ADVICE, relations: true },
+  kubectl: {
+    omissionAdvice: "Read any of them with run_read_query, for example get TYPE NAME -n NAMESPACE.",
+    relations: false,
+    ungrounded: (detail: string, noun: AgentInventoryNoun) =>
+      `${detail}\nSo nothing about this cluster has been established for you: not one ${noun.singular} name. Read what you need with run_read_query, starting with get on the kinds your objective names.`,
+  },
+});
+
+/**
  * The packed inventory, with the sentence that says how to cite it in front of it.
  *
  * Handed to `packContextForTask` as its preface rather than concatenated here, so the
  * sentence is INSIDE the bound that function keeps rather than added on top of it.
  *
- * Every agent-mode caller of this holds `inspect_schema` — the one workflow that does
- * not, `operations`, goes through `packOperationsInventory` instead — so the omission
- * advice is passed here and nowhere else.
+ * Every agent-mode caller of this holds a tool that reads what the packing left out (the
+ * one workflow that does not, `operations`, goes through `packOperationsInventory` instead),
+ * so the caller passes the advice for its own language's tool (`GROUNDING_COPY`).
  */
-function packSnapshotMessage(snapshot: AgentContextSnapshot, objective: string, noun: AgentInventoryNoun): string {
+function packSnapshotMessage(
+  snapshot: AgentContextSnapshot,
+  objective: string,
+  noun: AgentInventoryNoun,
+  omissionAdvice: string,
+): string {
   return packContextForTask(snapshot, objective, {
     preface: snapshotHandoverText(snapshot.fingerprint),
-    omissionAdvice: INSPECT_SCHEMA_OMISSION_ADVICE,
+    omissionAdvice,
     noun,
   });
 }
@@ -3159,6 +3227,8 @@ export async function runInvestigation(
         await establishPlanningContext();
         return;
       }
+      // The words this run is grounded in are its language's: a kubectl run holds no `inspect_schema` to name.
+      const languageGrounding = GROUNDING_COPY[record.statementLanguage ?? "sql"];
 
       /**
        * The inventory, as THIS workflow is shown it.
@@ -3181,7 +3251,11 @@ export async function runInvestigation(
           });
           return;
         }
-        messages.push({ role: "user", content: packSnapshotMessage(snapshot, record.objective, engine.noun) });
+        messages.push({
+          role: "user",
+          content: packSnapshotMessage(snapshot, record.objective, engine.noun, languageGrounding.omissionAdvice),
+        });
+        if (!languageGrounding.relations) return;
         messages.push({
           role: "user",
           content: packRelations(snapshot, record.workflowType, record.mode, context.capabilities, engine.noun),
@@ -3204,9 +3278,12 @@ export async function runInvestigation(
         // The capture's own words send a model to `inspect_schema`, which an operations
         // run does not hold: naming a tool the run has not got is the #350 failure, and
         // this workflow is the one that reaches engines where the capture always fails.
+        // A kubectl run holds no `inspect_schema` either, so its language words the advice.
         messages.push({
           role: "user",
-          content: operations ? operationsUngroundedNote(capture.detail, engine.noun) : capture.modelText,
+          content: operations
+            ? operationsUngroundedNote(capture.detail, engine.noun)
+            : (languageGrounding.ungrounded?.(capture.detail, engine.noun) ?? capture.modelText),
         });
         return;
       }

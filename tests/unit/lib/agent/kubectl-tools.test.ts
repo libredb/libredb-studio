@@ -8,6 +8,7 @@ import {
   type AgentToolContext,
   agentToolDefinition,
   runReadQueryTool,
+  selectAgentTools,
 } from "@/lib/agent/tools";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -90,6 +91,13 @@ describe("run_read_query on kubectl", () => {
       "sql",
       "rationale",
     ]);
+  });
+
+  test("a kubectl investigation is offered run_read_query and compose_report, and its read takes a statement", () => {
+    const offered = selectAgentTools({ mode: "agent", workflowType: "investigation", statementLanguage: "kubectl" });
+    expect(offered.map((tool) => tool.name)).toEqual(["run_read_query", "compose_report"]);
+    const read = offered.find((tool) => tool.name === "run_read_query");
+    expect(properties(read?.inputSchema)).toContain("statement");
   });
 
   test("a kubectl workflow overrides only the tool it names differently", () => {

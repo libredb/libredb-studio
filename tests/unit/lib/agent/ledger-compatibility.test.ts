@@ -182,3 +182,27 @@ describe("a ledger written before statementLanguage existed", () => {
     expect(selectAgentTools(record).map((tool) => tool.name)).toContain("inspect_plan");
   });
 });
+
+describe("a kubectl run resumed in a fresh process", () => {
+  test("is offered the kubectl tools and judged by its verifier from the ledger alone", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ledger-compat-"));
+    dataDirs.push(dataDir);
+    const world = createLocalWorld({ dataDir, recoverActiveRuns: false });
+    const opened = await new AgentRunStore({ world }).openRun({
+      mode: "agent",
+      workflowType: "investigation",
+      statementLanguage: "kubectl",
+      actor: { sessionId: "sess_1", role: "user" },
+      connectionId: "conn_k8s",
+      objective: "Which pods in shop are restarting?",
+    });
+
+    // A second store over the same world holds nothing in memory: the record is the ledger's.
+    const view = await new AgentRunStore({ world }).read(opened.runId);
+    const record = view?.record;
+    if (record === undefined) throw new Error("no record");
+    expect(record.statementLanguage).toBe("kubectl");
+    expect(selectAgentTools(record).map((tool) => tool.name)).toEqual(["run_read_query", "compose_report"]);
+    expect(verifyRunGoal(record).verifier).toBe("agent-investigation.1");
+  });
+});

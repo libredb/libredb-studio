@@ -16,10 +16,14 @@ import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
+import { QueryError } from "@/lib/db/errors";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
+import { kubectlStatementLanguage } from "@/lib/db/providers/platform/kubernetes/labels";
 import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
-import { answersProse, modelOver, scriptedModel } from "../../../isolated/fixtures/agent-scripted-model";
+import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
+import { answersProse, modelOver, scriptedModel, type Turn } from "../../../isolated/fixtures/agent-scripted-model";
 
 /**
  * What a plan run records about the statement it drafted, driven through the real loop.
@@ -153,6 +157,114 @@ describe("the statement a plan run drafted", () => {
       dialect: "etcd",
       language: "influxql",
     });
+  });
+});
+
+/**
+ * The first request an agent-mode kubectl investigation sends, driven through the real loop on a Kubernetes
+ * connection's own declarations. The provider double's object surface is one namespace holding `pods` pods (one by
+ * default, and enough to overflow the packing when the omission advice is under test), or, with `unreadable`, a
+ * container listing the cluster refuses, so the capture is unavailable.
+ */
+async function kubectlInvestigationOpening(
+  options: { readonly unreadable?: boolean; readonly pods?: number } = {},
+): Promise<{ system: string; opening: string }> {
+  const { unreadable = false, pods = 1 } = options;
+  const podNames = Array.from({ length: pods }, (_, index) => `web-${String(index).padStart(4, "0")}-checkout-api`);
+  forgetHeldSnapshots();
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-kubectl-investigation-"));
+  dataDirs.push(dataDir);
+  const connection = kubernetesConnection({ id: "conn_k8s", database: "shop" });
+  const engine = new KubernetesProvider(connection);
+  const provider = {
+    listContainers: async () => {
+      if (unreadable) throw new QueryError("namespaces is forbidden", "kubernetes");
+      return [{ path: ["shop"], name: "shop", level: 0, isSessionDefault: true, kinds: ["pods"] }];
+    },
+    countObjects: async () => ({ pods: { count: pods } }),
+    listObjects: async (container: readonly string[], kind: string) =>
+      kind === "pods" ? podNames.map((name) => ({ path: [...container, name], name, kind })) : [],
+    describeObjects: async () => ({ details: [] }),
+  } as unknown as DatabaseProvider;
+  const store = new AgentRunStore({ world: createLocalWorld({ dataDir, recoverActiveRuns: false }) });
+  const tracker = new ExecutionBudgetTracker();
+  const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
+  const service = new AgentRunService({ store, resources: { tracker, artifacts } });
+  const run = await service.start({
+    mode: "agent",
+    workflowType: "investigation",
+    statementLanguage: "kubectl",
+    actor: { sessionId: "sess_1", role: "user" },
+    connectionId: connection.id,
+    objective: "Which pods in shop are restarting?",
+  });
+  const script = scriptedModel(answersProse("No report."), answersProse("No report."), answersProse("No report."));
+
+  await runInvestigation(run.runId, {
+    service,
+    model: await modelOver(script.fetch),
+    resources: {
+      connection,
+      capabilities: engine.getCapabilities(),
+      labels: engine.getLabels(),
+      registry: createCanonicalOperationRegistry(),
+      scope: createTargetScope(connection.id),
+      tracker,
+      artifacts,
+      deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs, () => 10_000),
+      repairs: new AgentRepairLedger(),
+      acquireProvider: async () => provider,
+    },
+  });
+
+  const [first] = script.turns as Turn[];
+  if (first === undefined) throw new Error("the drive sent no request");
+  const messages = (first.body.messages ?? []) as { role?: string; content?: unknown }[];
+  const text = (role: (value: string | undefined) => boolean): string =>
+    messages
+      .filter((message) => role(message.role))
+      .map((message) => (typeof message.content === "string" ? message.content : JSON.stringify(message.content)))
+      .join("\n");
+  return { system: text((value) => value === "system"), opening: text((value) => value !== "system") };
+}
+
+describe("an agent-mode kubectl investigation", () => {
+  test("opens on the cluster's inventory with no SQL tool named and no relations block", async () => {
+    const { opening } = await kubectlInvestigationOpening();
+
+    expect(opening).toContain("web-0000-checkout-api");
+    for (const absent of ["inspect_schema", "inspect_plan", 'kind="relations"', "schema relations"]) {
+      expect(opening, absent).not.toContain(absent);
+    }
+  });
+
+  test("what the packing leaves out is read with run_read_query, never inspect_schema", async () => {
+    const { opening } = await kubectlInvestigationOpening({ pods: 400 });
+
+    expect(opening).toMatch(/further resource\(s\) omitted/);
+    expect(opening).toContain("Read any of them with run_read_query, for example get TYPE NAME -n NAMESPACE.");
+    expect(opening).not.toContain("inspect_schema");
+  });
+
+  test("an unavailable capture is answered in run_read_query's terms, never inspect_schema's", async () => {
+    const { opening } = await kubectlInvestigationOpening({ unreadable: true });
+
+    expect(opening).toContain("run_read_query");
+    expect(opening).toContain("So nothing about this cluster has been established for you");
+    expect(opening).not.toContain("inspect_schema");
+  });
+
+  test("its system prompt carries the kubectl rules, the language sentence and the kubectl investigation rules", async () => {
+    const { system } = await kubectlInvestigationOpening();
+
+    expect(system).toContain(`Write every statement in ${kubectlStatementLanguage()}.`);
+    expect(system).toContain("writes, exec, port-forward, proxy and watches");
+    expect(system).toContain(
+      "Read the cluster with run_read_query, one kubectl statement at a time: get, describe, logs, top, events, api-resources, explain and auth can-i are the reads there are.",
+    );
+    expect(system).toContain("Narrow every read to what the question needs with -n, -l or --field-selector");
+    expect(system).toContain("Your objective is a question about this Kubernetes cluster.");
+    expect(system).not.toContain("inspect_schema");
   });
 });
 

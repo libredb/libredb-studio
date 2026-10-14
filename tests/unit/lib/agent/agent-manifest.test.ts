@@ -124,7 +124,7 @@ describe("the SQL variants", () => {
   });
 
   // Each kubectl variant task removes its own workflow from this list.
-  test.each(["investigation", "query-optimization", "database-assessment", "data-analysis"] as const)(
+  test.each(["query-optimization", "database-assessment", "data-analysis"] as const)(
     "a missing kubectl %s variant is an explicit error",
     (workflow) => {
       expect(agentVariant("kubectl", workflow)).toBeUndefined();
@@ -144,12 +144,32 @@ describe("the SQL variants", () => {
   });
 
   test("a language with no variant plans with the SQL deliverable", () => {
-    expect(planDeliverableOf("kubectl", "investigation")).toEqual(planDeliverableOf("sql", "investigation"));
+    expect(planDeliverableOf("kubectl", "query-optimization")).toEqual(planDeliverableOf("sql", "query-optimization"));
   });
 
   test("a language with no variant plans with the SQL objective, and one with a variant plans with its own", () => {
-    expect(planObjectiveOf("kubectl", "investigation")).toBe(requiredVariant("sql", "investigation").objective);
+    expect(planObjectiveOf("kubectl", "query-optimization")).toBe(
+      requiredVariant("sql", "query-optimization").objective,
+    );
     expect(planObjectiveOf("kubectl", "operations")).toBe(requiredVariant("kubectl", "operations").objective);
+    expect(planObjectiveOf("kubectl", "investigation")).toBe(
+      "Your objective is a question about this Kubernetes cluster. Answer it from what you establish.",
+    );
+  });
+
+  test("the kubectl investigation reads the cluster with run_read_query and inherits the SQL plan deliverable", () => {
+    expect(requiredVariant("kubectl", "investigation")).toEqual({
+      tools: ["run_read_query", "compose_report"],
+      narrowedExtras: [],
+      classifierDescription: "a question about the cluster that is answered from what the run establishes",
+      objective: "Your objective is a question about this Kubernetes cluster. Answer it from what you establish.",
+      planDeliverable: "inherits",
+      canAutoExecute: false,
+      requires: [],
+      verifier: "agent-investigation.1",
+    });
+    expect(Object.isFrozen(requiredVariant("kubectl", "investigation").tools)).toBe(true);
+    expect(planDeliverableOf("kubectl", "investigation")).toEqual(planDeliverableOf("sql", "investigation"));
   });
 
   test("a workflow naming an inherited property is a missing variant, not a function", () => {
@@ -200,12 +220,7 @@ describe("workflowAvailability", () => {
   );
 
   // Each kubectl variant's task removes its own workflow from this list as it adds the variant.
-  const kubectlWorkflowsWithoutVariant = [
-    "investigation",
-    "query-optimization",
-    "database-assessment",
-    "data-analysis",
-  ] as const;
+  const kubectlWorkflowsWithoutVariant = ["query-optimization", "database-assessment", "data-analysis"] as const;
 
   test("kubernetes speaks kubectl: operations and planning open, a workflow with no kubectl variant is refused", () => {
     expect(AGENT_STATEMENT_LANGUAGE.kubernetes).toBe("kubectl");
@@ -221,6 +236,18 @@ describe("workflowAvailability", () => {
           "Agent mode does not offer this workflow on this engine. The operations workflow runs here, and plan mode drafts here.",
       });
     }
+  });
+
+  test("a kubernetes investigation opens in agent mode under the kubectl variant", () => {
+    const open = workflowAvailability("agent", "investigation", "kubernetes");
+    expect(open).toEqual({
+      open: true,
+      statementLanguage: "kubectl",
+      variant: requiredVariant("kubectl", "investigation"),
+    });
+    if (!open.open) throw new Error("refused");
+    // Its verifier is the SQL investigation's, so only the language is written to the header.
+    expect(persistedRunFacts("agent", "investigation", open)).toEqual({ statementLanguage: "kubectl" });
   });
 
   test("an SQL run opens under its SQL variant and its language", () => {

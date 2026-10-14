@@ -285,6 +285,21 @@ export const AGENT_WORKFLOW_VARIANTS: Readonly<
     }),
   } satisfies Record<AgentRunWorkflowType, AgentWorkflowVariant>),
   kubectl: Object.freeze({
+    /**
+     * Reads alone: there is no catalog composer and no plan on a cluster, so `inspect_schema` and `inspect_plan`
+     * could only refuse. What the run establishes, it establishes with `run_read_query`, and it is judged by the
+     * same bar as an SQL investigation, so the verifier is the SQL one and a plan of it asks for what that one does.
+     */
+    investigation: Object.freeze({
+      tools: Object.freeze<AgentToolName[]>(["run_read_query", "compose_report"]),
+      narrowedExtras: Object.freeze<AgentToolName[]>([]),
+      classifierDescription: "a question about the cluster that is answered from what the run establishes",
+      objective: "Your objective is a question about this Kubernetes cluster. Answer it from what you establish.",
+      planDeliverable: "inherits",
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>([]),
+      verifier: "agent-investigation.1",
+    }),
     operations: OPERATIONS_VARIANT,
   }),
 } satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>>>);

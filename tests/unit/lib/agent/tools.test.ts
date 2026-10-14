@@ -267,9 +267,9 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
       selectAgentTools(persisted("agent", "operations")),
     );
     expect(selectAgentTools({ ...persisted("planning"), statementLanguage: "kubectl" })).toEqual([]);
-    expect(() => selectAgentTools({ ...persisted("agent"), statementLanguage: "kubectl" })).toThrow(
-      "no investigation variant for kubectl",
-    );
+    expect(() =>
+      selectAgentTools({ ...persisted("agent", "query-optimization"), statementLanguage: "kubectl" }),
+    ).toThrow("no query-optimization variant for kubectl");
   });
 
   test("a SQL run is offered the SQL definitions themselves, by name", () => {
