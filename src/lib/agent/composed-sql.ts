@@ -52,9 +52,9 @@ export interface AgentEstimatingExplain {
 export type AgentComposedSqlDenyCode =
   /**
    * This dialect has no verified composition. `CATALOG_COMPOSERS` is the list, and it
-   * is the engines of `AGENT_EXECUTION_ENGINES`: PostgreSQL, SQLite, DuckDB, SQL
-   * Server and MySQL. Anything else is refused rather than served a statement nobody ran
-   * against that engine's catalog.
+   * is the engines whose `AGENT_STATEMENT_LANGUAGE` is SQL: PostgreSQL, SQLite, DuckDB,
+   * SQL Server and MySQL. Anything else is refused rather than served a statement nobody
+   * ran against that engine's catalog.
    */
   | "UNSUPPORTED_DIALECT"
   /** Blank, over-long, or carrying a character that cannot be safely quoted. */
@@ -1095,9 +1095,11 @@ function composeMysqlStatistics(selector: AgentCatalogSelector): string {
  * (`pragma_foreign_key_list`) is refused by the guard, so the same statement serves
  * both and the DDL text is parsed for the edges.
  *
- * EVERY ENGINE IN `AGENT_EXECUTION_ENGINES` MUST HAVE AN ENTRY HERE, and
- * `tests/unit/lib/agent/composed-sql.test.ts` fails if one does not: it walks that list
- * and demands all four kinds plus an estimating plan for each name in it. The invariant was
+ * EVERY SHIPPED ENGINE WHOSE `AGENT_STATEMENT_LANGUAGE` IS SQL MUST HAVE AN ENTRY HERE, and
+ * `tests/unit/lib/agent/composed-sql.test.ts` fails if one does not: it walks those engines
+ * and demands all four kinds plus an estimating plan for each of them. The walk is over the
+ * language, not over `AGENT_EXECUTION_ENGINES`, because an engine the agent executes in
+ * another language (Kubernetes reads through kubectl) has no catalog to compose. The invariant was
  * asserted in this docblock long before anything enforced it, and it named the wrong file:
  * `engine-support.test.ts` compares the engine list against the DRIVERS and has never read
  * this map, so a fourth engine could have been added to the list with no composer and every

@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { getDBConfig } from "@/lib/db-ui-config";
+import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
 import { INSPECT_SCHEMA_DESCRIPTION } from "@/lib/mcp/tools/inspect-schema";
@@ -39,13 +40,20 @@ describe("the tool descriptions", () => {
     expect(LIST_CONNECTIONS_DESCRIPTION).not.toContain(MCP_UNTRUSTED_NOTICE);
   });
 
-  test("run_read_query names the engines derived from the one engine list", () => {
-    const derived = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
+  test("run_read_query names the execution engines that MCP is offered on", () => {
+    const derived = namedList(
+      AGENT_EXECUTION_ENGINES.filter((type) => MCP_EXPOSABLE[type]).map((type) => getDBConfig(type).label),
+    );
     expect(RUN_READ_QUERY_ENGINES).toBe(derived);
     expect(derived).toBe("PostgreSQL, SQLite, DuckDB, SQL Server and MySQL");
     expect(RUN_READ_QUERY_DESCRIPTION).toContain(
       `Runs on ${derived}; other engines refuse it, so use inspect_schema there.`,
     );
+  });
+
+  test("an execution engine MCP is not offered on is not named", () => {
+    for (const type of AGENT_EXECUTION_ENGINES.filter((candidate) => !MCP_EXPOSABLE[candidate]))
+      expect(RUN_READ_QUERY_ENGINES).not.toContain(getDBConfig(type).label);
   });
 
   test("inspect_schema and list_connections say they work on every engine", () => {

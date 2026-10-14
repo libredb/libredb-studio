@@ -9,7 +9,8 @@ import {
   withoutExtensionOwnershipTest,
 } from "@/lib/agent/composed-sql";
 import { agentReadSqlInput, inspectAgentStatement } from "@/lib/db/operations/statement-guard";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1138,15 +1139,17 @@ describe("the composers are reachable, which is the defect that put this file he
    * over - only the 100% line-coverage gate saw them. This test fails if the
    * registration is removed again, whatever the functions themselves still say.
    *
-   * It is driven from `AGENT_EXECUTION_ENGINES` rather than from a name, because the
-   * defect was never about DuckDB: `CATALOG_COMPOSERS`' own docblock asserts that every
-   * engine in that list has an entry here, and until this loop existed NOTHING enforced
-   * it - a hardcoded `"duckdb"` passes for ever while a FIFTH engine joins the list with
-   * no composer and `inspect_schema`, `profile_table` and `inspect_plan` can only refuse
-   * on it. Adding an engine to that list is what makes this test demand its composers.
+   * It walks the shipped engines whose statement language is SQL, read from
+   * `AGENT_STATEMENT_LANGUAGE`, rather than a name, because the defect was never about
+   * DuckDB: `CATALOG_COMPOSERS`' own docblock asserts that every SQL engine agent mode
+   * reads statements on has an entry here, and until this loop existed NOTHING enforced
+   * it - a hardcoded `"duckdb"` passes for ever while another SQL variant joins with no
+   * composer and `inspect_schema`, `profile_table` and `inspect_plan` can only refuse on
+   * it. Every SQL variant requires the composers; an engine whose language is not SQL
+   * is executed through its own tools and is not walked here.
    */
-  test("every execution engine composes every kind rather than refusing UNSUPPORTED_DIALECT", () => {
-    for (const dialect of AGENT_EXECUTION_ENGINES) {
+  test("every SQL execution engine composes every kind rather than refusing UNSUPPORTED_DIALECT", () => {
+    for (const dialect of SHIPPED_DATABASE_TYPES.filter((type) => AGENT_STATEMENT_LANGUAGE[type] === "sql")) {
       for (const kind of ["columns", "relations", "indexes", "statistics"] as const) {
         expect(() => composeCatalogRead(dialect, { kind }), `${dialect}/${kind}`).not.toThrow(AgentComposedSqlError);
       }

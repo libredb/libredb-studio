@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { getDBConfig } from "@/lib/db-ui-config";
+import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import type { DatabaseProvider, PreparedQuery } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
@@ -98,8 +99,15 @@ const RunReadQueryOutputSchema = z.object({
 export type RunReadQueryInput = z.infer<typeof RunReadQueryInputSchema>;
 
 const RUN_READ_QUERY_TITLE = "Run a read-only query";
-/** Derived from the one engine list, as src/lib/agent/posture.ts derives its own sentence. */
-export const RUN_READ_QUERY_ENGINES = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
+/**
+ * Derived from the engine list, as src/lib/agent/posture.ts derives its own sentence, filtered by
+ * MCP_EXPOSABLE. MCP is offered per engine by MCP_EXPOSABLE, and the engines agent mode executes
+ * statements on are a different list: Kubernetes is executed by the agent and closed to MCP, so
+ * naming it here would advertise a tool that only ever refuses there.
+ */
+export const RUN_READ_QUERY_ENGINES = namedList(
+  AGENT_EXECUTION_ENGINES.filter((type) => MCP_EXPOSABLE[type]).map((type) => getDBConfig(type).label),
+);
 export const RUN_READ_QUERY_DESCRIPTION = `Run one read-only SQL statement on a connection: a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE. Runs on ${RUN_READ_QUERY_ENGINES}; other engines refuse it, so use inspect_schema there. Returns at most max_rows rows (default 100, at most 500) and at most 32 KiB; truncated and pagination.hasMore say when rows were cut, and pagination.nextOffset is the offset of the next page when the query can be paged. ${MCP_UNTRUSTED_NOTICE}`;
 
 /** A result, and the reason its outcome event records when it is a failure. */
