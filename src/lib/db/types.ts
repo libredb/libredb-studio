@@ -1993,12 +1993,13 @@ export interface DatabaseProvider {
   query(sql: string, params?: unknown[], queryId?: string, scope?: string): Promise<QueryResult>;
 
   /**
-   * Execute exactly one statement under the DATABASE's own read-only
-   * enforcement (#328): the engine, not a parser, rejects writes through this
-   * path. Optional on purpose — only providers with a verified database-native
-   * boundary implement it, and execution-profile acquisition
-   * (`acquireExecutionProfileProvider` in factory.ts) refuses provider types
-   * that lack it rather than falling back to `query()` (fail closed).
+   * Execute exactly one statement under a declared read-only boundary (#328):
+   * the engine's own read-only mechanism, or on an engine without one a
+   * Studio-enforced allowlist on every final request plus the identity's
+   * authorization. Never a parser of the statement text. Optional on purpose:
+   * only providers with a verified boundary implement it, and execution-profile
+   * acquisition (`acquireExecutionProfileProvider` in factory.ts) refuses provider
+   * types that lack it rather than falling back to `query()` (fail closed).
    */
   queryReadOnly?(sql: string, budget: ReadOnlyStatementBudget, mode?: ReadOnlyStatementMode): Promise<QueryResult>;
 

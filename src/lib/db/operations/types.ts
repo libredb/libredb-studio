@@ -3,12 +3,15 @@
  *
  * Risk classes R0-R6 grade operations by blast radius; Phase 1 gives only two
  * of them a registrable meaning — R0 (bounded metadata read) and R1 (bounded
- * data read, individually verified against a database-native boundary).
+ * data read, individually verified against a declared boundary, see
+ * `RiskVerification.boundary`).
  * Classes 2-6 deliberately have NO registrable representation, not even a
  * disabled slot: `RegistrableOperationDescriptor` structurally cannot express
  * them, and the registry refuses them at runtime for callers that bypass the
- * types. Database-native enforcement (PostgreSQL read-only transaction, SQLite
- * query_only) is the security boundary — nothing in this model trusts a parser.
+ * types. The engine's own read-only enforcement (PostgreSQL's read-only
+ * transaction, SQLite's query_only) is the boundary where an engine has one;
+ * Kubernetes, which has none, is bounded by Studio's request allowlist on the
+ * final request and RBAC. Nothing in this model trusts a parser.
  */
 
 import type { z } from "zod";
@@ -34,13 +37,18 @@ type BooleanProviderCapability = {
 
 /**
  * Explicit per-descriptor verification marker required to register any
- * risk-class-1 descriptor: who reviewed it and which database-native boundary
- * bounds it. An R1 descriptor without a substantive marker is refused exactly
- * like a class-2+ one.
+ * risk-class-1 descriptor: who reviewed it and which boundary bounds it. An R1
+ * descriptor without a substantive marker is refused exactly like a class-2+ one.
  */
 export interface RiskVerification {
   readonly reviewedBy: string;
-  /** The database-native mechanism that bounds the operation (never a parser). */
+  /**
+   * The mechanism that bounds the operation, never a parser: the engine's own
+   * read-only mechanism where it has one, or, where the engine has no read-only
+   * transaction, a Studio-enforced allowlist checked on the final method and path
+   * of every request before it is sent, together with the identity's own
+   * authorization.
+   */
   readonly boundary: string;
   /** ISO date (YYYY-MM-DD) the verification was recorded. */
   readonly verifiedOn: string;

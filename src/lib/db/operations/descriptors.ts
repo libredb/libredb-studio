@@ -206,13 +206,14 @@ const CURATED_OPERATION_READ_ID = "db.operations.read";
  * no statement at all.
  *
  * **R0/`metadata-read`, and that is a claim rather than a convenience.** R1 requires
- * a `RiskVerification` naming the database-native mechanism that bounds the
- * operation, and a curated provider method has none to name — there is no statement
- * for a read-only transaction to bound. What bounds it instead is the SHAPE of the
- * call: the model supplies a kind out of a closed enum and two scalars, the server
- * chooses the method, and no model-authored text reaches an engine on this path. The
- * six readings are the engine's own operational views, which is metadata about the
- * server rather than the contents of user tables.
+ * a `RiskVerification` naming the mechanism that bounds the operation (the engine's
+ * own read-only mechanism, or a Studio-enforced allowlist on the final request where
+ * the engine has none), and a curated provider method has none to name: there is no
+ * statement for a read-only transaction to bound. What bounds it instead is the
+ * SHAPE of the call: the model supplies a kind out of a closed enum and two scalars,
+ * the server chooses the method, and no model-authored text reaches an engine on this
+ * path. The six readings are the engine's own operational views, which is metadata
+ * about the server rather than the contents of user tables.
  *
  * The honest edge, stated rather than glossed: two of the readings carry TEXT that a
  * user wrote. `SlowQueryStats.query` and `ActiveSessionDetails.query` are statements,
@@ -252,11 +253,11 @@ export const dbOperationsReadDescriptor: RegistrableOperationDescriptor = {
  * operator means to allow or deny.
  *
  * **R0/`metadata-read`, on `db.operations.read`'s own argument.** R1 requires a
- * `RiskVerification` naming the database-native mechanism that bounds the operation,
- * and a provider call has no statement for a read-only transaction to bound. What
- * bounds this one is the SHAPE of the call, and here that shape is as narrow as it
- * gets: the input is EMPTY, the server chooses the method, and no model-authored text
- * reaches an engine on this path at all.
+ * `RiskVerification` naming the mechanism that bounds the operation (see
+ * `RiskVerification.boundary`), and a provider call has no statement for a read-only
+ * transaction to bound. What bounds this one is the SHAPE of the call, and here that
+ * shape is as narrow as it gets: the input is EMPTY, the server chooses the method,
+ * and no model-authored text reaches an engine on this path at all.
  *
  * **`heavy`, unlike the curated reading it is modelled on**, and that is a cost claim
  * rather than caution. One charge buys a WALK, not a call: a `listContainers` per

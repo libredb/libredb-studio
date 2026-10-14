@@ -342,3 +342,27 @@ describe("canonical input schemas", () => {
     }
   });
 });
+
+describe("the R1 boundary contract", () => {
+  // R1 admits the engine's own read-only mechanism, or, where the engine has none,
+  // a Studio-enforced allowlist on the final request plus the identity's own
+  // authorization. Never a parser: a later descriptor that names one fails here.
+  test("every R1 descriptor names its boundary, and none names the parser as it", () => {
+    for (const id of [
+      "sql.query.read",
+      "sql.explain.analyze",
+      "sql.table.profile",
+      "kubectl.query.read",
+      "cluster.usage.read",
+      "cluster.workloads.read",
+    ]) {
+      const resolution = createCanonicalOperationRegistry().resolve(id);
+      if (resolution.kind !== "resolved") throw new Error(`expected ${id} resolved, got ${resolution.kind}`);
+      const { descriptor } = resolution;
+      if (descriptor.riskClass !== 1) throw new Error(`expected ${id} at R1, got R${descriptor.riskClass}`);
+      const boundary = descriptor.verification.boundary;
+      expect(boundary.trim().length).toBeGreaterThan(0);
+      expect(boundary).not.toMatch(/\bparser (is|bounds)\b/i);
+    }
+  });
+});
