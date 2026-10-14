@@ -27,7 +27,12 @@
  * so embedding @libredb/studio in libredb-platform is unaffected.
  */
 
-import { JWT_SECRET_MIN_LENGTH } from "@/lib/config/auth-env";
+import {
+  JWT_SECRET_MIN_LENGTH,
+  SESSION_TTL_MAX_SECONDS,
+  SESSION_TTL_MIN_SECONDS,
+  sessionTtlSeconds,
+} from "@/lib/config/auth-env";
 import { isBootstrapEnabled } from "@/lib/auth-bootstrap";
 import { isServerStorageEnabled } from "@/lib/storage/factory";
 
@@ -63,6 +68,35 @@ function verifyStorageEncryptionKeyAtBoot(): boolean {
 }
 
 /**
+ * Validate `AUTH_SESSION_TTL_SECONDS`. Unset keeps the 24-hour default; a set value that is not an integer from 300
+ * to 86400 would make every login throw, so boot stops here instead.
+ */
+function verifySessionTtlAtBoot(): boolean {
+  try {
+    sessionTtlSeconds();
+    return true;
+  } catch {
+    console.error(
+      [
+        "",
+        "============================================================",
+        " LibreDB Studio cannot start: AUTH_SESSION_TTL_SECONDS is invalid",
+        ` Got "${process.env.AUTH_SESSION_TTL_SECONDS}"; it must be a whole number of seconds`,
+        ` from ${SESSION_TTL_MIN_SECONDS} to ${SESSION_TTL_MAX_SECONDS}.`,
+        " Every login would fail, so boot stops here.",
+        " Fix it either way:",
+        "   1. Set a value in range, for example AUTH_SESSION_TTL_SECONDS=28800",
+        "   2. Unset AUTH_SESSION_TTL_SECONDS to keep the 24-hour default",
+        "============================================================",
+        "",
+      ].join("\n"),
+    );
+    process.exit(1);
+    return false;
+  }
+}
+
+/**
  * Validate the auth environment before the server starts serving.
  *
  * Returns `true` when boot may continue. On a fatal misconfiguration it prints
@@ -71,6 +105,8 @@ function verifyStorageEncryptionKeyAtBoot(): boolean {
  * is stubbed (tests) rather than terminating the process immediately.
  */
 export function verifyAuthEnvAtBoot(): boolean {
+  if (!verifySessionTtlAtBoot()) return false;
+
   const secret = process.env.JWT_SECRET;
 
   // A missing secret is only this check's business in the one case where nothing

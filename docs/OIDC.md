@@ -308,6 +308,7 @@ The difference is the realm role (`admin` or `user`), mapped through `OIDC_ROLE_
 | `OIDC_SCOPE` | No | `openid profile email` | OAuth scopes to request |
 | `OIDC_ROLE_CLAIM` | No | — | Claim path for role extraction (dot-notation supported) |
 | `OIDC_ADMIN_ROLES` | No | `admin` | Comma-separated values that map to admin role |
+| `AUTH_SESSION_TTL_SECONDS` | No | `86400` | Session lifetime in seconds, from 300 to 86400; see [Session lifetime](#session-lifetime) |
 
 > Storage configuration (`STORAGE_PROVIDER` etc.) is independent of auth. See [STORAGE.md](./STORAGE.md).
 
@@ -780,17 +781,28 @@ After OIDC (or local) authentication:
 │  Payload: {                                 │
 │    role: "admin" | "user",                  │
 │    username: "user@example.com",            │
-│    exp: <now + 24 hours>                    │
+│    exp: <now + AUTH_SESSION_TTL_SECONDS>    │
 │  }                                          │
 │                                             │
 │  Cookie flags:                              │
 │    httpOnly: true                           │
 │    secure: true (production)                │
 │    sameSite: lax                            │
-│    maxAge: 86400 (24 hours)                 │
+│    maxAge: AUTH_SESSION_TTL_SECONDS         │
 │    path: /                                  │
 └─────────────────────────────────────────────┘
 ```
+
+#### Session lifetime
+
+`AUTH_SESSION_TTL_SECONDS` sets both the token's `exp` and the cookie's `maxAge`.
+It accepts a whole number of seconds from 300 to 86400, and unset keeps 86400 (24 hours).
+Any other value stops a standalone start at boot with a banner naming the variable, rather than failing every login.
+
+The session token carries the role it was issued with, so a role removed at the identity provider keeps working until the session expires.
+A shorter lifetime bounds that window.
+Paired with silent single sign-on, where the login page goes straight to the provider and the provider's own session signs the user in without a prompt, an expired Studio session renews itself and picks up the current role, so a short lifetime costs the user nothing.
+The governance install sets `AUTH_SESSION_TTL_SECONDS=28800` (8 hours).
 
 ---
 

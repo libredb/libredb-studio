@@ -83,3 +83,27 @@ export async function derivedSigningKey(label: string, options: JwtSecretOptions
   const base = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return new Uint8Array(await crypto.subtle.sign("HMAC", base, new TextEncoder().encode(label)));
 }
+
+/** Session lifetime bounds and default, in seconds. The default is the fixed 24 hours sessions had before it was configurable. */
+export const SESSION_TTL_MIN_SECONDS = 300;
+export const SESSION_TTL_MAX_SECONDS = 86400;
+export const SESSION_TTL_DEFAULT_SECONDS = 86400;
+
+const SESSION_TTL_INVALID_MESSAGE = `AUTH_SESSION_TTL_SECONDS must be a whole number of seconds from ${SESSION_TTL_MIN_SECONDS} to ${SESSION_TTL_MAX_SECONDS}.`;
+
+/**
+ * The session lifetime in seconds: the JWT's expiry and the auth-token cookie's Max-Age.
+ *
+ * Reads AUTH_SESSION_TTL_SECONDS on every call; unset or blank keeps the 24-hour default. A set value that is not a
+ * plain integer inside the range throws AuthConfigError rather than falling back, and the boot preflight
+ * (auth-preflight.ts) stops a standalone start on the same value before any login reaches here.
+ */
+export function sessionTtlSeconds(): number {
+  const raw = process.env.AUTH_SESSION_TTL_SECONDS?.trim();
+  if (!raw) return SESSION_TTL_DEFAULT_SECONDS;
+  const seconds = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (!(seconds >= SESSION_TTL_MIN_SECONDS && seconds <= SESSION_TTL_MAX_SECONDS)) {
+    throw new AuthConfigError(SESSION_TTL_INVALID_MESSAGE);
+  }
+  return seconds;
+}
