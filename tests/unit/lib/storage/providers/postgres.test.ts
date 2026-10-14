@@ -1101,4 +1101,135 @@ describe("PostgresStorageProvider", () => {
     mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
     expect(await provider.renamePasskey(ACCOUNT.email, "other", "Laptop")).toBe(false);
   });
+
+  // ── STORAGE_POSTGRES_SCHEMA ──────────────────────────────────────────────────
+
+  const STORAGE_TABLES = [
+    "user_storage",
+    "accounts",
+    "passkey_users",
+    "passkey_credentials",
+    "passkey_spent_challenges",
+  ];
+
+  /** Run `body` with STORAGE_POSTGRES_SCHEMA set, then restore the variable and the pool's default reply. */
+  async function withStorageSchema(value: string, body: () => Promise<void>): Promise<void> {
+    const original = process.env.STORAGE_POSTGRES_SCHEMA;
+    process.env.STORAGE_POSTGRES_SCHEMA = value;
+    try {
+      await body();
+    } finally {
+      if (original === undefined) delete process.env.STORAGE_POSTGRES_SCHEMA;
+      else process.env.STORAGE_POSTGRES_SCHEMA = original;
+      mockQuery.mockImplementation(async () => ({ rows: [] }));
+    }
+  }
+
+  test("with STORAGE_POSTGRES_SCHEMA=studio every statement the pool receives qualifies user_storage, accounts and the passkey tables with the studio schema", async () => {
+    await withStorageSchema("studio", async () => {
+      const qualifiedIndexes = ['"studio".passkey_credentials_account', '"studio".passkey_spent_challenges_expiry'];
+      mockQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes("pg_namespace")) return { rows: [{ role: "libredb_studio", present: true }] };
+        // A fresh schema: both indexes are missing, so initialize() creates them.
+        if (sql.includes("to_regclass")) return { rows: qualifiedIndexes.map((index_name) => ({ index_name })) };
+        return { rows: [], rowCount: 1 };
+      });
+      const qualified = new PostgresStorageProvider("postgresql://localhost:5432/test");
+      await qualified.initialize();
+      const client = scriptedClient((sql) => {
+        if (sql.includes("COUNT(*)")) return { rows: [{ n: "1" }] };
+        if (sql.includes("SELECT user_handle")) return { rows: [{ user_handle: "handle" }] };
+        if (sql.includes("FOR SHARE")) return { rows: [{ role: "user", disabled: 0, session_version: 3 }] };
+        if (sql.includes("FOR UPDATE") && sql.includes("session_version")) return { rows: [{ session_version: 3 }] };
+        return {};
+      });
+      await qualified.getAllData(ACCOUNT.email);
+      await qualified.getCollection(ACCOUNT.email, "connections");
+      await qualified.setCollection(ACCOUNT.email, "connections", []);
+      await qualified.mergeData(ACCOUNT.email, { connections: [] });
+      await qualified.listAccounts();
+      await qualified.getAccount(ACCOUNT.email);
+      await qualified.insertAccount(ACCOUNT);
+      await qualified.updateAccount(ACCOUNT, {
+        expected: { sessionVersion: 3, updatedAt: ACCOUNT.updatedAt },
+        clearPasskeys: true,
+        keepEnabledAdmin: true,
+      });
+      await qualified.deleteAccount(ACCOUNT.email);
+      await qualified.listPasskeys(ACCOUNT.email);
+      await qualified.countPasskeys();
+      await qualified.getPasskeyUserHandle(ACCOUNT.email);
+      await qualified.findPasskey("cred");
+      await qualified.insertPasskey(registration());
+      await qualified.recordPasskeySignIn({
+        id: PASSKEY.id,
+        email: ACCOUNT.email,
+        expectedSessionVersion: 3,
+        expectedRole: "user",
+        signCount: 5,
+        backupState: false,
+        usedAt: "2026-09-28T00:05:00.000Z",
+        challenge: CHALLENGE,
+        purgeSpentBefore: PURGE_BEFORE,
+      });
+      await qualified.renamePasskey(ACCOUNT.email, PASSKEY.id, "Laptop");
+      await qualified.deletePasskey({
+        email: ACCOUNT.email,
+        id: PASSKEY.id,
+        expectedSessionVersion: 3,
+        nextSessionVersion: 4,
+        updatedAt: "2026-09-28T00:05:00.000Z",
+      });
+      await qualified.close();
+
+      const poolCalls = mockQuery.mock.calls as unknown[][];
+      const statements = [...poolCalls.map((call) => call[0] as string), ...client.sql()];
+      const unqualified = new RegExp(`(^|[^.\\w])(${STORAGE_TABLES.join("|")})\\b`);
+      expect(statements.filter((sql) => unqualified.test(sql))).toEqual([]);
+      const text = statements.join("\n");
+      for (const table of STORAGE_TABLES) {
+        expect(text).toContain(`CREATE TABLE IF NOT EXISTS "studio".${table}`);
+      }
+      expect(text).toContain('REFERENCES "studio".accounts(email) ON DELETE CASCADE');
+      expect(text).toContain('REFERENCES "studio".passkey_users(account_email) ON DELETE CASCADE');
+      expect(text).toContain('JOIN "studio".passkey_users u ON u.account_email = c.account_email');
+      // The schema check runs first, then the tables, then the index lookup on qualified names.
+      expect(poolCalls[0]).toEqual([
+        "SELECT quote_ident(current_user) AS role, EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1) AS present",
+        ["studio"],
+      ]);
+      expect(poolCalls[2][1]).toEqual([qualifiedIndexes]);
+      expect(poolCalls.slice(3, 5).map((call) => call[0])).toEqual([
+        'CREATE INDEX IF NOT EXISTS passkey_credentials_account ON "studio".passkey_credentials (account_email)',
+        'CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON "studio".passkey_spent_challenges (expires_at)',
+      ]);
+    });
+  });
+
+  test("a missing schema fails initialize() with the CREATE SCHEMA hint and runs no CREATE TABLE", async () => {
+    await withStorageSchema("studio", async () => {
+      const errorSpy = spyOn(logger, "error").mockImplementation(() => {});
+      try {
+        mockQuery.mockResolvedValueOnce({ rows: [{ role: "libredb_studio", present: false }] });
+        const missing = new PostgresStorageProvider("postgresql://localhost:5432/test");
+        await expect(missing.initialize()).rejects.toThrow(
+          "schema studio does not exist: create it with CREATE SCHEMA studio AUTHORIZATION libredb_studio",
+        );
+        await missing.close();
+        const statements = (mockQuery.mock.calls as unknown[][]).map((call) => call[0] as string);
+        expect(statements).toHaveLength(1);
+        expect(statements.some((sql) => sql.includes("CREATE TABLE"))).toBe(false);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+  });
+
+  test("an invalid STORAGE_POSTGRES_SCHEMA refuses to construct the provider", async () => {
+    await withStorageSchema("Studio", async () => {
+      expect(() => new PostgresStorageProvider("postgresql://localhost:5432/test")).toThrow(
+        'STORAGE_POSTGRES_SCHEMA must be a lowercase PostgreSQL schema name matching ^[a-z_][a-z0-9_]{0,62}$, got "Studio"',
+      );
+    });
+  });
 });

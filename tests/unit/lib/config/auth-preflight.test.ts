@@ -386,3 +386,73 @@ describe("config/auth-preflight AUTH_SESSION_TTL_SECONDS", () => {
     }
   });
 });
+
+/**
+ * STORAGE_POSTGRES_SCHEMA names the schema the PostgreSQL storage tables live in. A value that is
+ * not a plain lowercase identifier would otherwise surface only at the first storage request, after
+ * sign-in, as a failed sync, so the boot refuses it while that provider is selected.
+ */
+describe("config/auth-preflight STORAGE_POSTGRES_SCHEMA", () => {
+  const original = {
+    JWT_SECRET: process.env.JWT_SECRET,
+    STORAGE_PROVIDER: process.env.STORAGE_PROVIDER,
+    STORAGE_POSTGRES_SCHEMA: process.env.STORAGE_POSTGRES_SCHEMA,
+    STORAGE_ENCRYPTION_KEY: process.env.STORAGE_ENCRYPTION_KEY,
+  };
+
+  afterEach(() => {
+    for (const [name, value] of Object.entries(original)) setEnv(name, value);
+  });
+
+  function setEnv(name: string, value: string | undefined): void {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+
+  function run(provider: string | undefined, schema: string | undefined) {
+    setEnv("JWT_SECRET", "a-valid-secret-that-is-32-chars!");
+    setEnv("STORAGE_ENCRYPTION_KEY", undefined);
+    setEnv("STORAGE_PROVIDER", provider);
+    setEnv("STORAGE_POSTGRES_SCHEMA", schema);
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const originalExit = process.exit;
+    const exitCalls: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exitCalls.push(code);
+    }) as unknown as typeof process.exit;
+    try {
+      const result = verifyAuthEnvAtBoot();
+      return { result, exitCalls, banner: errorSpy.mock.calls.flat().join("\n") };
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+    }
+  }
+
+  test("an invalid STORAGE_POSTGRES_SCHEMA stops the boot when STORAGE_PROVIDER=postgres", () => {
+    const { result, exitCalls, banner } = run("postgres", "Studio-Schema");
+    expect(result).toBe(false);
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain("LibreDB Studio cannot start: STORAGE_POSTGRES_SCHEMA is invalid");
+    expect(banner).toContain(
+      'STORAGE_POSTGRES_SCHEMA must be a lowercase PostgreSQL schema name matching ^[a-z_][a-z0-9_]{0,62}$, got "Studio-Schema"',
+    );
+  });
+
+  test("a valid or unset STORAGE_POSTGRES_SCHEMA lets the postgres provider boot", () => {
+    for (const schema of ["studio", undefined]) {
+      const { result, exitCalls, banner } = run("postgres", schema);
+      expect(result).toBe(true);
+      expect(exitCalls).toEqual([]);
+      expect(banner).toBe("");
+    }
+  });
+
+  test("the variable is inert, and not checked, under any other storage provider", () => {
+    for (const provider of ["local", "sqlite", undefined]) {
+      const { result, exitCalls } = run(provider, "Studio-Schema");
+      expect(result).toBe(true);
+      expect(exitCalls).toEqual([]);
+    }
+  });
+});
