@@ -368,7 +368,7 @@ export const clusterUsageReadDescriptor: RegistrableOperationDescriptor = {
 };
 
 /** One namespace (a DNS-1123 label, as the API server names one) and nothing to narrow it: a profile is all of it. */
-const clusterWorkloadsReadInput = z.strictObject({
+export const clusterWorkloadsReadInput = z.strictObject({
   namespace: z.string().regex(/^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/),
 });
 

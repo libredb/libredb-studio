@@ -123,10 +123,8 @@ describe("the SQL variants", () => {
     }
   });
 
-  // Each kubectl variant task removes its own workflow from this list.
-  test.each(["database-assessment"] as const)("a missing kubectl %s variant is an explicit error", (workflow) => {
-    expect(agentVariant("kubectl", workflow)).toBeUndefined();
-    expect(() => requiredVariant("kubectl", workflow)).toThrow(`no ${workflow} variant for kubectl`);
+  test.each([...WORKFLOWS])("kubectl has a %s variant", (workflow) => {
+    expect(agentVariant("kubectl", workflow)).toBeDefined();
   });
 
   test("operations is one variant for every language", () => {
@@ -140,14 +138,8 @@ describe("the SQL variants", () => {
     });
   });
 
-  test("a language with no variant plans with the SQL deliverable", () => {
-    expect(planDeliverableOf("kubectl", "database-assessment")).toEqual(
-      planDeliverableOf("sql", "database-assessment"),
-    );
-  });
-
-  test("a language with no variant plans with the SQL objective, and one with a variant plans with its own", () => {
-    expect(planObjectiveOf("kubectl", "database-assessment")).toBe(
+  test("an absent language plans with the SQL objective, and a language with a variant plans with its own", () => {
+    expect(planObjectiveOf(undefined, "database-assessment")).toBe(
       requiredVariant("sql", "database-assessment").objective,
     );
     expect(planObjectiveOf("kubectl", "operations")).toBe(requiredVariant("kubectl", "operations").objective);
@@ -191,6 +183,29 @@ describe("the SQL variants", () => {
     });
     expect(planObjectiveOf("kubectl", "query-optimization")).toBe(
       requiredVariant("kubectl", "query-optimization").objective,
+    );
+  });
+
+  test("the kubectl assessment is cluster health, judged on a workload profile and never auto-executed", () => {
+    expect(requiredVariant("kubectl", "database-assessment")).toEqual({
+      tools: ["run_read_query", "profile_workloads", "compose_report"],
+      narrowedExtras: ["profile_workloads"],
+      classifierDescription:
+        "the health of a namespace's workloads: replicas not ready, restarts, missing requests, limits or probes, warning events",
+      objective:
+        "Your objective is the health of this cluster's workloads in a namespace: what is not ready, what restarts, what runs without requests, limits or probes, and what the Warning events say.",
+      planDeliverable: { kind: "statement", noun: "the kubectl read that establishes each workload's state" },
+      canAutoExecute: false,
+      requires: ["cluster-workload-reading"],
+      verifier: "agent-database-assessment-kubectl.1",
+    });
+    expect(Object.isFrozen(requiredVariant("kubectl", "database-assessment").tools)).toBe(true);
+    expect(planDeliverableOf("kubectl", "database-assessment")).toEqual({
+      kind: "statement",
+      noun: "the kubectl read that establishes each workload's state",
+    });
+    expect(planObjectiveOf("kubectl", "database-assessment")).toBe(
+      requiredVariant("kubectl", "database-assessment").objective,
     );
   });
 
@@ -257,22 +272,12 @@ describe("workflowAvailability", () => {
     },
   );
 
-  // Each kubectl variant's task removes its own workflow from this list as it adds the variant.
-  const kubectlWorkflowsWithoutVariant = ["database-assessment"] as const;
-
-  test("kubernetes speaks kubectl: operations and planning open, a workflow with no kubectl variant is refused", () => {
+  test("kubernetes speaks kubectl: every workflow opens in both modes", () => {
     expect(AGENT_STATEMENT_LANGUAGE.kubernetes).toBe("kubectl");
     expect(workflowAvailability("agent", "operations", "kubernetes").open).toBe(true);
     for (const workflow of statementWorkflows) {
       expect(workflowAvailability("planning", workflow, "kubernetes").open).toBe(true);
-    }
-    for (const workflow of kubectlWorkflowsWithoutVariant) {
-      expect(workflowAvailability("agent", workflow, "kubernetes")).toEqual({
-        open: false,
-        cause: "no-variant",
-        sentence:
-          "Agent mode does not offer this workflow on this engine. The operations workflow runs here, and plan mode drafts here.",
-      });
+      expect(workflowAvailability("agent", workflow, "kubernetes").open).toBe(true);
     }
   });
 
@@ -304,6 +309,20 @@ describe("workflowAvailability", () => {
     const plan = workflowAvailability("planning", "query-optimization", "kubernetes");
     if (!plan.open) throw new Error("refused");
     expect(persistedRunFacts("planning", "query-optimization", plan)).toEqual({ statementLanguage: "kubectl" });
+  });
+
+  test("a kubernetes cluster-health run opens in agent mode and persists its language and its own verifier", () => {
+    const open = workflowAvailability("agent", "database-assessment", "kubernetes");
+    expect(open).toEqual({
+      open: true,
+      statementLanguage: "kubectl",
+      variant: requiredVariant("kubectl", "database-assessment"),
+    });
+    if (!open.open) throw new Error("refused");
+    expect(persistedRunFacts("agent", "database-assessment", open)).toEqual({
+      statementLanguage: "kubectl",
+      verifier: "agent-database-assessment-kubectl.1",
+    });
   });
 
   test("an SQL run opens under its SQL variant and its language", () => {

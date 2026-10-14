@@ -9,6 +9,7 @@ import {
   agentToolDefinition,
   inspectUsageTool,
   presentAnswerTool,
+  profileWorkloadsTool,
   recommendChangeTool,
   runReadQueryTool,
   selectAgentTools,
@@ -21,8 +22,8 @@ import { QueryError } from "@/lib/db/errors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
 import { AGENT_PAGING_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
-import { CLUSTER_USAGE_FIELDS } from "@/lib/db/providers/platform/kubernetes/agent-readings";
-import type { ClusterUsageReading, DatabaseProvider } from "@/lib/db/types";
+import { CLUSTER_USAGE_FIELDS, WORKLOAD_PROFILE_FIELDS } from "@/lib/db/providers/platform/kubernetes/agent-readings";
+import type { ClusterUsageReading, DatabaseProvider, WorkloadProfileReading } from "@/lib/db/types";
 import type { AgentRunEvent } from "@/lib/agent/types";
 import type { QueryResult } from "@/lib/types";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
@@ -396,6 +397,152 @@ describe("inspect_usage", () => {
     expect(definition.operationId).toBe("cluster.usage.read");
     expect(properties(definition.inputSchema)).toEqual(["namespace", "selector"]);
     expect(definition.description).toContain("500");
+  });
+});
+
+describe("profile_workloads", () => {
+  /* The tool layer only; the drive that writes `workloads-profiled` is in `investigation.test.ts`. */
+
+  const WORKLOAD_ROW = {
+    kind: "Deployment",
+    name: "web",
+    desired: 3,
+    ready: 2,
+    lastSchedule: null,
+    podsNotReady: 1,
+    restarts: 4,
+    lastTerminationReason: "OOMKilled",
+    lastTerminationAt: "2026-10-14T08:00:00Z",
+    withoutRequests: 0,
+    withoutLimits: 1,
+    withoutReadinessProbe: 1,
+    withoutLivenessProbe: 1,
+    warningEvents: "BackOff=3",
+  };
+
+  const ROWS: WorkloadProfileReading = {
+    kind: "rows",
+    result: { rows: [WORKLOAD_ROW], fields: [...WORKLOAD_PROFILE_FIELDS], rowCount: 1, executionTime: 3 },
+  };
+
+  function profileHarness(answer: () => Promise<WorkloadProfileReading>) {
+    const readWorkloadProfile = mock(answer);
+    const h = harness({
+      workflowType: "database-assessment",
+      acquireProvider: mock(async () => ({ readWorkloadProfile }) as unknown as DatabaseProvider),
+    });
+    return { ...h, readWorkloadProfile };
+  }
+
+  test("one audited call, one statement charge, under cluster.workloads.read, rows fenced", async () => {
+    const h = profileHarness(async () => ROWS);
+    const outcome = await profileWorkloadsTool(h.context, { namespace: "shop" });
+
+    if (outcome.kind !== "completed") throw new Error(`expected a completed profile, got ${outcome.kind}`);
+    expect(outcome.artifact.operationId).toBe("cluster.workloads.read");
+    expect(outcome.artifact.summary.rowCount).toBe(1);
+    expect(h.context.tracker.usage(h.context.runId).executedStatements).toBe(1);
+    expect(h.readWorkloadProfile).toHaveBeenCalledTimes(1);
+    expect(h.readWorkloadProfile).toHaveBeenCalledWith({ namespace: "shop" }, expect.any(Object));
+    expect(outcome.modelText).toContain("BEGIN UNTRUSTED");
+    expect(outcome.modelText).toContain("OOMKilled");
+  });
+
+  test("an empty namespace is a completed profile of no rows", async () => {
+    const h = profileHarness(async () => ({
+      kind: "rows",
+      result: { rows: [], fields: [...WORKLOAD_PROFILE_FIELDS], rowCount: 0, executionTime: 1 },
+    }));
+    const outcome = await profileWorkloadsTool(h.context, { namespace: "empty" });
+
+    expect(outcome).toMatchObject({ kind: "completed", artifact: { summary: { rowCount: 0 } } });
+  });
+
+  test("over the ceiling is READING_OVER_BUDGET with advice to narrow by namespace, never a smaller limit", async () => {
+    const h = profileHarness(async () => ({ kind: "over-ceiling" }));
+    const outcome = await profileWorkloadsTool(h.context, { namespace: "shop" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
+    expect(outcome.modelText).toContain("500 workloads");
+    expect(outcome.modelText).toContain("namespace");
+    expect(outcome.modelText).not.toContain("smaller limit");
+    expect(outcome.modelText).not.toContain("selector");
+    expect(h.context.tracker.usage(h.context.runId).executedStatements).toBe(1);
+  });
+
+  test("rows past the byte budget are READING_OVER_BUDGET with a byte sentence", async () => {
+    const wide = { ...WORKLOAD_ROW, name: "w".repeat(4_000) };
+    const maxResultBytes = AGENT_WORKFLOW_BUDGETS["database-assessment"].policy.budgets.maxResultBytes;
+    const count = Math.ceil(maxResultBytes / JSON.stringify(wide).length) + 1;
+    expect(count).toBeLessThan(500);
+    const h = profileHarness(async () => ({
+      kind: "rows",
+      result: {
+        rows: Array(count).fill(wide),
+        fields: [...WORKLOAD_PROFILE_FIELDS],
+        rowCount: count,
+        executionTime: 3,
+      },
+    }));
+
+    const outcome = await profileWorkloadsTool(h.context, { namespace: "shop" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
+    expect(outcome.modelText).toContain(`${maxResultBytes} bytes`);
+    expect(outcome.modelText).toContain("namespace");
+    expect(outcome.modelText).not.toContain("smaller limit");
+  });
+
+  test("a provider without readWorkloadProfile is KIND_UNSUPPORTED_BY_PROVIDER", async () => {
+    const h = harness({ workflowType: "database-assessment" });
+    const outcome = await profileWorkloadsTool(h.context, { namespace: "shop" });
+
+    expect(outcome).toMatchObject({
+      kind: "refused",
+      refusal: { class: "reading-refused", reasonCode: "KIND_UNSUPPORTED_BY_PROVIDER" },
+    });
+    expect(h.queryReadOnly).not.toHaveBeenCalled();
+  });
+
+  test("an invalid namespace, or a selector, is invalid input and reaches nothing", async () => {
+    const h = profileHarness(async () => ROWS);
+    for (const input of [{ namespace: "Shop" }, { namespace: "shop", selector: "app=web" }, {}]) {
+      const outcome = await profileWorkloadsTool(h.context, input);
+      expect(outcome, JSON.stringify(input)).toMatchObject({ kind: "unavailable", reasonCode: "INVALID_TOOL_INPUT" });
+    }
+    expect(h.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("a failed profile asked again is refused by the repair ledger, and another namespace is not", async () => {
+    const h = profileHarness(async () => {
+      throw new QueryError("deployments.apps is forbidden", "kubernetes");
+    });
+
+    const first = await profileWorkloadsTool(h.context, { namespace: "shop" });
+    expect(first).toMatchObject({ kind: "refused", refusal: { class: "database-error" } });
+    const same = await profileWorkloadsTool(h.context, { namespace: "shop" });
+    expect(same).toMatchObject({ kind: "unavailable", reasonCode: "STATEMENT_ALREADY_FAILED" });
+    const other = await profileWorkloadsTool(h.context, { namespace: "web" });
+    expect(other).toMatchObject({ kind: "refused", refusal: { class: "database-error" } });
+    expect(h.readWorkloadProfile).toHaveBeenCalledTimes(2);
+  });
+
+  test("the tool is defined under cluster.workloads.read with a namespace alone", () => {
+    const definition = AGENT_TOOL_DEFINITIONS.profile_workloads;
+    expect(definition.operationId).toBe("cluster.workloads.read");
+    expect(properties(definition.inputSchema)).toEqual(["namespace"]);
+    expect(definition.description).toContain("More than 500 workloads are refused.");
+  });
+
+  test("a kubectl assessment is offered run_read_query, profile_workloads and compose_report", () => {
+    const offered = selectAgentTools({
+      mode: "agent",
+      workflowType: "database-assessment",
+      statementLanguage: "kubectl",
+    });
+    expect(offered.map((tool) => tool.name)).toEqual(["run_read_query", "profile_workloads", "compose_report"]);
   });
 });
 

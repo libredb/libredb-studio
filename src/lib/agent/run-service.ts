@@ -133,6 +133,8 @@ export type AgentRunNarrativeEvent = Extract<
       // drive beside a step that settles on its own, so neither settles one.
       | "usage-read"
       | "usage-unavailable"
+      // A workload profile's evidence, written beside its settled step for the same reason.
+      | "workloads-profiled"
       // Which result IS the answer: a decision about a read already on the ledger,
       // reaching nothing and settling no step, like the three above it.
       | "answer-composed"

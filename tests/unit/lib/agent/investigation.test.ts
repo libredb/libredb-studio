@@ -21,9 +21,15 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import { QueryError } from "@/lib/db/errors";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
-import { CLUSTER_USAGE_FIELDS } from "@/lib/db/providers/platform/kubernetes/agent-readings";
+import { CLUSTER_USAGE_FIELDS, WORKLOAD_PROFILE_FIELDS } from "@/lib/db/providers/platform/kubernetes/agent-readings";
 import { kubectlStatementLanguage } from "@/lib/db/providers/platform/kubernetes/labels";
-import type { ClusterUsageReading, DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import type {
+  ClusterUsageReading,
+  DatabaseProvider,
+  ProviderCapabilities,
+  ProviderLabels,
+  WorkloadProfileReading,
+} from "@/lib/db/types";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
 import {
@@ -187,7 +193,7 @@ interface KubectlDrive {
  * the start route opens it: the language and any verifier its variant persists are written to the record. The
  * provider double's object surface is one namespace holding `pods` pods (one by default, and enough to overflow the
  * packing when the omission advice is under test), or, with `unreadable`, a container listing the cluster refuses,
- * so the capture is unavailable. `usage` answers `readClusterUsage`.
+ * so the capture is unavailable. `usage` answers `readClusterUsage`, and `workloads` answers `readWorkloadProfile`.
  *
  * With `resume`, the drive is a fresh process over an earlier drive's ledger, and `unreachable` makes every provider
  * acquisition throw, so whatever it decides it decides from the ledger alone.
@@ -202,6 +208,7 @@ async function kubectlDrive(
     readonly prior?: readonly AgentRunEvent[];
     readonly turns?: readonly ScriptedTurn[];
     readonly usage?: () => Promise<ClusterUsageReading>;
+    readonly workloads?: () => Promise<WorkloadProfileReading>;
     readonly resume?: { readonly dataDir: string; readonly runId: string };
     readonly unreachable?: boolean;
   } = {},
@@ -223,6 +230,7 @@ async function kubectlDrive(
       kind === "pods" ? podNames.map((name) => ({ path: [...container, name], name, kind })) : [],
     describeObjects: async () => ({ details: [] }),
     readClusterUsage: async () => (options.usage ?? (async () => USAGE_ROWS))(),
+    readWorkloadProfile: async () => (options.workloads ?? (async () => WORKLOAD_ROWS))(),
   } as unknown as DatabaseProvider;
   const store = new AgentRunStore({ world: createLocalWorld({ dataDir, recoverActiveRuns: false }) });
   const tracker = new ExecutionBudgetTracker();
@@ -617,6 +625,140 @@ describe("a kubectl resource-efficiency run", () => {
     expect(resumed.events.find((event) => event.kind === "run-finished")).toMatchObject({
       goalVerdict: { outcome: "answered", verifier: "agent-query-optimization-kubectl.1" },
     });
+  });
+});
+
+/** One workload's state in a namespace, as `readWorkloadProfile` answers it. */
+const WORKLOAD_ROWS: WorkloadProfileReading = {
+  kind: "rows",
+  result: {
+    rows: [
+      {
+        kind: "Deployment",
+        name: "web",
+        desired: 3,
+        ready: 2,
+        lastSchedule: null,
+        podsNotReady: 1,
+        restarts: 4,
+        lastTerminationReason: "OOMKilled",
+        lastTerminationAt: "2026-10-14T08:00:00Z",
+        withoutRequests: 0,
+        withoutLimits: 1,
+        withoutReadinessProbe: 1,
+        withoutLivenessProbe: 1,
+        warningEvents: "BackOff=3",
+      },
+    ],
+    fields: [...WORKLOAD_PROFILE_FIELDS],
+    rowCount: 1,
+    executionTime: 3,
+  },
+};
+
+/** A report citing every artifact the run produced so far. */
+const reportOnProfile = reportOnAll("Deployment web has one pod not ready and restarts on OOMKilled.");
+
+describe("a kubectl cluster-health run", () => {
+  test("its system prompt carries the cluster-health rules and objective", async () => {
+    const { system } = await kubectlInvestigationOpening({ workflowType: "database-assessment" });
+
+    expect(system).toContain(
+      "You must call profile_workloads on the namespace before you report: this workflow answers with the profile that tool takes, and reads you compose yourself with run_read_query do not establish it.",
+    );
+    expect(system).toContain(
+      "Restart counts are cumulative since each container started, not a rate: never present one as recent.",
+    );
+    expect(system).toContain("A namespace with no workloads is an answer: cite the profile and say so.");
+    expect(system).toContain("Your objective is the health of this cluster's workloads in a namespace");
+    expect(system).not.toContain("profile_table");
+  });
+
+  test("a report before any profile is held with the no-workload-profile sentence, and the run is narrowed to profile_workloads and compose_report", async () => {
+    const drive = await kubectlDrive({
+      workflowType: "database-assessment",
+      turns: [
+        reportCitingWhatWasOffered("The namespace looks healthy."),
+        callsTool("profile_workloads", { namespace: "shop" }, "call_profile"),
+        reportOnProfile,
+      ],
+    });
+
+    expect(drive.events.find((event) => event.kind === "call-held")).toMatchObject({
+      kind: "call-held",
+      tool: "compose_report",
+      shortfall: "no-workload-profile",
+    });
+    const afterHold = promptText(drive.turns[1] as Turn);
+    expect(afterHold).toContain(
+      "This workflow answers with the profile profile_workloads takes, and no namespace has been profiled, so the report would be scored as having established nothing.",
+    );
+    expect(afterHold).toContain("Call profile_workloads on the namespace in question");
+    expect(offeredTools(drive.turns[1] as Turn).sort()).toEqual(["compose_report", "profile_workloads"]);
+
+    expect(drive.events.find((event) => event.kind === "run-finished")).toMatchObject({
+      goalVerdict: { outcome: "answered", verifier: "agent-database-assessment-kubectl.1" },
+    });
+  });
+
+  test("a completed profile_workloads writes workloads-profiled beside its settled step", async () => {
+    const drive = await kubectlDrive({
+      workflowType: "database-assessment",
+      turns: [callsTool("profile_workloads", { namespace: "shop" }, "call_profile"), reportOnProfile],
+    });
+
+    const profiles = drive.events.filter((event) => event.kind === "workloads-profiled");
+    expect(profiles).toHaveLength(1);
+    const [profile] = profiles;
+    if (profile?.kind !== "workloads-profiled") throw new Error("no workload profile");
+    expect(profile.namespace).toBe("shop");
+    expect(profile).not.toHaveProperty("selector");
+    expect(profile.artifact.operationId).toBe("cluster.workloads.read");
+    const completedIds = drive.events.flatMap((event) =>
+      event.kind === "tool-completed" ? [event.artifact.correlationId] : [],
+    );
+    expect(completedIds).toContain(profile.artifact.correlationId);
+    expect(drive.events.find((event) => event.kind === "run-finished")).toMatchObject({
+      goalVerdict: { outcome: "answered", verifier: "agent-database-assessment-kubectl.1" },
+    });
+  });
+
+  test("an empty namespace's profile, cited, answers", async () => {
+    const drive = await kubectlDrive({
+      workflowType: "database-assessment",
+      workloads: async () => ({
+        kind: "rows",
+        result: { rows: [], fields: [...WORKLOAD_PROFILE_FIELDS], rowCount: 0, executionTime: 1 },
+      }),
+      turns: [
+        callsTool("profile_workloads", { namespace: "shop" }, "call_profile"),
+        reportOnAll("The shop namespace holds no workloads."),
+      ],
+    });
+
+    expect(drive.events.find((event) => event.kind === "run-finished")).toMatchObject({
+      goalVerdict: { outcome: "answered", verifier: "agent-database-assessment-kubectl.1" },
+    });
+  });
+
+  test("a resumed run is told the namespace it already profiled", async () => {
+    const prior: AgentRunEvent = {
+      kind: "workloads-profiled",
+      atMs: 1,
+      artifact: {
+        correlationId: "profile_1",
+        runId: "arun_1",
+        operationId: "cluster.workloads.read",
+        summary: { rowCount: 2, columnNames: ["kind", "name"], elapsedMs: 3 },
+      },
+      namespace: "shop",
+    };
+
+    const { opening } = await kubectlInvestigationOpening({ workflowType: "database-assessment", prior: [prior] });
+
+    expect(opening).toContain(
+      "The workloads of namespace shop were already profiled, artifact profile_1. That profile is recorded; profile again only a different namespace.",
+    );
   });
 });
 

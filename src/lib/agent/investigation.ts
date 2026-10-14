@@ -131,6 +131,7 @@ import {
   inspectPlanTool,
   planTableProfile,
   presentAnswerTool,
+  profileWorkloadsTool,
   profileTableTool,
   recommendChangeTool,
   inspectSchemaTool,
@@ -158,7 +159,11 @@ import {
   neutraliseToolInput,
   neutraliseUntrustedMarkers,
 } from "./untrusted-content";
-import { clusterUsageReadInput, isStatementReadOperation } from "@/lib/db/operations/descriptors";
+import {
+  clusterUsageReadInput,
+  clusterWorkloadsReadInput,
+  isStatementReadOperation,
+} from "@/lib/db/operations/descriptors";
 import type { ClusterUsageInput, ProviderCapabilities } from "@/lib/db/types";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
 import type { DatabaseType } from "@/lib/types";
@@ -229,7 +234,7 @@ type DatabaseToolName = Exclude<AgentToolName, LedgerOnlyToolName | EvidenceTool
  * that kind beside the settled step. They reach the cluster through `service.runStep` like any database tool and are
  * handled apart only because of that event; see `readEvidence`.
  */
-type EvidenceToolName = "inspect_usage";
+type EvidenceToolName = "inspect_usage" | "profile_workloads";
 
 /**
  * The event each evidence tool writes when it completes. Typed through the event union, so a kind the ledger does not
@@ -239,9 +244,13 @@ const AGENT_EVIDENCE_EVENT: Readonly<
   Record<EvidenceToolName, Extract<AgentRunEvent["kind"], "usage-read" | "workloads-profiled">>
 > = Object.freeze({
   inspect_usage: "usage-read",
+  profile_workloads: "workloads-profiled",
 });
 
-/** Each evidence tool's argument schema, which names the namespace its event records, and the tool itself. */
+/**
+ * Each evidence tool's argument schema, which names the namespace its event records, and the tool itself. Typed as
+ * the usage reading's input because it is the wider of the two: a profile's namespace alone is one with no selector.
+ */
 const EVIDENCE_TOOLS: Readonly<
   Record<
     EvidenceToolName,
@@ -252,6 +261,7 @@ const EVIDENCE_TOOLS: Readonly<
   >
 > = Object.freeze({
   inspect_usage: { input: clusterUsageReadInput, run: inspectUsageTool },
+  profile_workloads: { input: clusterWorkloadsReadInput, run: profileWorkloadsTool },
 });
 
 /**
@@ -837,6 +847,16 @@ function shortfallNotice(
       said: [
         "Your report rests on no usage reading of this run: a resources recommendation, or a finding that nothing needs to change, must cite the inspect_usage artifact it rests on.",
         "Your compose_report call was not run. Cite the inspect_usage artifact id in the recommendation or in a claim, and then call compose_report again.",
+      ].join(" "),
+      narrow: true,
+    };
+  }
+  // The cluster-health arm, narrowed for the same reason: `profile_workloads` is the variant's `narrowedExtras`.
+  if (shortfall === "no-workload-profile") {
+    return {
+      said: [
+        "This workflow answers with the profile profile_workloads takes, and no namespace has been profiled, so the report would be scored as having established nothing.",
+        "Your compose_report call was not run. Call profile_workloads on the namespace in question, and then call compose_report again.",
       ].join(" "),
       narrow: true,
     };
@@ -1750,6 +1770,13 @@ const WORKFLOW_TOOL_RULES: Readonly<
       "A recommendation is offered to the user and never applied by this run.",
       "If the cluster serves no usage metrics, say so: install metrics-server to measure usage. Do not estimate usage from anything else.",
     ].join(" "),
+    "database-assessment": [
+      "You must call profile_workloads on the namespace before you report: this workflow answers with the profile that tool takes, and reads you compose yourself with run_read_query do not establish it.",
+      "Grade what you find: workloads not ready or missing pods, restarts and why they ended, containers without requests, limits or probes, and the Warning events. Say which workload each finding is about.",
+      "Restart counts are cumulative since each container started, not a rate: never present one as recent.",
+      "A namespace with no workloads is an answer: cite the profile and say so.",
+      "Use run_read_query (describe, logs, events) to explain what the profile shows.",
+    ].join(" "),
     operations: SQL_WORKFLOW_TOOL_RULES.operations,
     // The SQL analysis rules less the profile, which a cluster has no table for, and with the chart rule said up
     // front: every cell of a kubectl grid is text, so a chart is refused as not numeric and a table is the answer.
@@ -2190,6 +2217,11 @@ function describePriorProgress(record: AgentRunRecord): string | null {
       lines.push(
         `Container usage in namespace ${event.namespace}${event.selector === undefined ? "" : ` (selector ${event.selector})`} was already read, artifact ${event.artifact.correlationId}. That reading is recorded; read it again only for a different namespace or selector.`,
       );
+    } else if (event.kind === "workloads-profiled") {
+      // Durable and non-terminal like the usage reading above, and told for the same reason.
+      lines.push(
+        `The workloads of namespace ${event.namespace} were already profiled, artifact ${event.artifact.correlationId}. That profile is recorded; profile again only a different namespace.`,
+      );
     } else if (event.kind === "usage-unavailable") {
       lines.push(
         `Usage could not be read in namespace ${event.namespace}: this cluster serves no usage metrics (metrics.k8s.io), because metrics-server is not installed or not answering. Asking again will not change that.`,
@@ -2491,6 +2523,7 @@ const AGENT_INSTRUMENT_RESULT: Readonly<Partial<Record<AgentToolName, AgentRunEv
   profile_table: "table-profiled",
   present_answer: "answer-composed",
   inspect_usage: "usage-read",
+  profile_workloads: "workloads-profiled",
 });
 
 /**

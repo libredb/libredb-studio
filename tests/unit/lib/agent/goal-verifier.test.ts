@@ -980,6 +980,73 @@ describe("agent-query-optimization-kubectl.1", () => {
   });
 });
 
+describe("agent-database-assessment-kubectl.1", () => {
+  const verify = (events: AgentRunEvent[]) =>
+    verifyRunGoal({
+      mode: "agent",
+      workflowType: "database-assessment",
+      status: "succeeded",
+      events,
+      statementLanguage: "kubectl",
+      verifier: "agent-database-assessment-kubectl.1",
+    });
+
+  const PROFILE = "4f2c9a10-0000-4000-8000-0000000000b1";
+  const READ = "4f2c9a10-0000-4000-8000-0000000000b2";
+
+  /** A workload profile this run took, with the settled step a profile writes beside it. */
+  function profiled(correlationId: string, rowCount: number): AgentRunEvent[] {
+    const reference: AgentArtifactReference = {
+      correlationId,
+      runId: "arun_1",
+      operationId: "cluster.workloads.read",
+      summary: { rowCount, columnNames: ["kind", "name"], elapsedMs: 4 },
+    };
+    return [
+      { kind: "tool-completed", atMs: 20, stepId: `step_${correlationId}`, artifact: reference },
+      { kind: "workloads-profiled", atMs: 21, artifact: reference, namespace: "shop" },
+    ];
+  }
+
+  test("a report citing a workload profile answers", () => {
+    const verdict = verify([contextCaptured, ...profiled(PROFILE, 4), reportCiting(ARTIFACT(PROFILE))]);
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-database-assessment-kubectl.1", unmet: [] });
+  });
+
+  test("an EMPTY profile cited answers: an empty namespace is an answer", () => {
+    const verdict = verify([contextCaptured, ...profiled(PROFILE, 0), reportCiting(ARTIFACT(PROFILE))]);
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-database-assessment-kubectl.1", unmet: [] });
+  });
+
+  test("a report from reads alone, with no profile, is no-workload-profile", () => {
+    const verdict = verify([contextCaptured, completed(READ, 4), reportCiting(ARTIFACT(READ))]);
+    expect(verdict).toEqual({
+      outcome: "unanswered",
+      verifier: "agent-database-assessment-kubectl.1",
+      unmet: ["no-workload-profile"],
+    });
+  });
+
+  test("no report is no-report, as every rule says first", () => {
+    expect(verify([contextCaptured, ...profiled(PROFILE, 4)]).unmet).toEqual(["no-report"]);
+  });
+
+  test("a kubectl assessment reopened from its ledger is judged by the kubectl rule, persisted or not", () => {
+    const ledger = {
+      mode: "agent",
+      workflowType: "database-assessment",
+      status: "succeeded",
+      events: [contextCaptured, completed(READ, 4), reportCiting(ARTIFACT(READ))],
+      statementLanguage: "kubectl",
+    } as const;
+    expect(verifyRunGoal(ledger)).toEqual({
+      outcome: "unanswered",
+      verifier: "agent-database-assessment-kubectl.1",
+      unmet: ["no-workload-profile"],
+    });
+  });
+});
+
 describe("the verifier registry", () => {
   test("names one rule per workflow type, so a new workflow cannot inherit another one's bar", () => {
     expect(Object.keys(AGENT_WORKFLOW_GOALS).sort()).toEqual([

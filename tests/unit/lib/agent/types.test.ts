@@ -245,6 +245,12 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
     atMs: 8,
     namespace: "shop",
   },
+  "workloads-profiled": {
+    kind: "workloads-profiled",
+    atMs: 8,
+    artifact: { ...ARTIFACT, operationId: "cluster.workloads.read" },
+    namespace: "shop",
+  },
   // The data-analysis face's own artifact: which result IS the answer, and how it
   // is to be shown. The spec names columns of THAT result and carries no colours,
   // no title and no aggregation — presentation is the app's, and an aggregation

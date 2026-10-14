@@ -870,6 +870,7 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
   "no-usage-reading": "No usage was read, so how the containers use their requests was never established.",
   "no-usage-evidence": "The report rests on no usage reading of this run.",
   "no-usage-metrics": "This cluster serves no usage metrics: install metrics-server to measure usage.",
+  "no-workload-profile": "No workloads were profiled, so the namespace's health was never established.",
   cancelled: "The run was stopped before it could finish.",
 };
 
@@ -1115,6 +1116,13 @@ function describeEvent(
         tone: "progress",
         headline: "Usage read",
         detail: `Namespace ${event.namespace}, ${event.artifact.summary.rowCount} container(s)`,
+        artifactId: event.artifact.correlationId,
+      };
+    case "workloads-profiled":
+      return {
+        tone: "progress",
+        headline: "Workloads profiled",
+        detail: `Namespace ${event.namespace}, ${event.artifact.summary.rowCount} workload(s)`,
         artifactId: event.artifact.correlationId,
       };
     case "usage-unavailable":

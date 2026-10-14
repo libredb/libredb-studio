@@ -2511,6 +2511,32 @@ describe("a cluster usage reading folds", () => {
   });
 });
 
+describe("a workload profile folds", () => {
+  test("a workload profile has an entry naming its namespace and citing its artifact", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: {
+          kind: "workloads-profiled",
+          atMs: 7,
+          artifact: {
+            correlationId: "corr-profile",
+            runId: "run-1",
+            operationId: "cluster.workloads.read",
+            summary: { rowCount: 5, columnNames: ["kind"], elapsedMs: 9 },
+          },
+          namespace: "shop",
+        },
+      }),
+    ]);
+
+    expect(view.items[1]).toMatchObject({ headline: "Workloads profiled", artifactId: "corr-profile" });
+    expect(view.items[1]?.detail).toContain("shop");
+    expect(view.items[1]?.detail).toContain("5 workload(s)");
+  });
+});
+
 describe("a table profile reads as counts and findings, never as values", () => {
   const profiled = (findings: readonly { code: string; column: string; detail: string }[]): AgentLedgerEntry =>
     event({
@@ -2634,6 +2660,21 @@ describe("an ending says whether the run ANSWERED, not only how it stopped (B24)
     );
   });
 
+  test("a cluster-health shortfall says the namespace's health was never established", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      finished(
+        "succeeded",
+        { outcome: "unanswered", verifier: "agent-database-assessment-kubectl.1", unmet: ["no-workload-profile"] },
+        "report-composed",
+      ),
+    ]);
+
+    expect(view.items[1]?.detail).toContain(
+      "No workloads were profiled, so the namespace's health was never established.",
+    );
+  });
+
   test("every shortfall has words, so none reaches a user as a raw code", () => {
     for (const code of [
       "no-report",
@@ -2648,6 +2689,7 @@ describe("an ending says whether the run ANSWERED, not only how it stopped (B24)
       "no-usage-reading",
       "no-usage-evidence",
       "no-usage-metrics",
+      "no-workload-profile",
       "cancelled",
     ]) {
       const view = foldLedgerEntries([

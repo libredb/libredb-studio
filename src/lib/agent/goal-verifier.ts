@@ -96,6 +96,12 @@ export type AgentGoalVerifierId =
   | "agent-query-optimization-kubectl.1"
   | "agent-database-assessment.1"
   /**
+   * Cluster health, the kubectl database assessment: a workload profile of this run, cited by its report.
+   *
+   * Its own id for the reason the kubectl optimization has one: a workload is not a table, and both rules stay live.
+   */
+  | "agent-database-assessment-kubectl.1"
+  /**
    * Kept for the reason `agent-query-optimization.1` is kept: it shipped on `main` and
    * real runs were measured against it, so a reader of one of those ledgers holds this
    * type and `.1` still means what it meant — a composed report, with no arm asking
@@ -239,6 +245,13 @@ export type AgentGoalShortfall =
    * metrics-server does not answer, and the reader is owed that sentence rather than one about the model.
    */
   | "no-usage-metrics"
+  /**
+   * A cluster-health run never profiled a namespace's workloads.
+   *
+   * The template's own artifact, as `no-table-profile` is the SQL assessment's: reads the model composed may describe
+   * a few objects, and only the profile establishes every workload's state in one place.
+   */
+  | "no-workload-profile"
   /**
    * The run was stopped before it could conclude. Substituted for the missing
    * output rather than reported alongside it: a user's stop is not a defect of the
@@ -503,6 +516,19 @@ function verifyQueryOptimizationKubectlGoal(run: VerifiableAgentRun): readonly A
 }
 
 /**
+ * Cluster health: the investigation baseline over the run's own artifacts, with a workload profile counted as
+ * meaningful even when empty (an empty namespace is an answer), then at least one profile.
+ */
+function verifyDatabaseAssessmentKubectlGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
+  const profiles = new Set(
+    run.events.flatMap((event) => (event.kind === "workloads-profiled" ? [event.artifact.correlationId] : [])),
+  );
+  const baseline = verifyInvestigationGoal(run, profiles);
+  if (baseline.length > 0) return baseline;
+  return profiles.size > 0 ? [] : ["no-workload-profile"];
+}
+
+/**
  * The assessment bar: the investigation baseline, and then a table actually
  * profiled.
  *
@@ -656,6 +682,7 @@ const AGENT_GOAL_RULES: Readonly<Partial<Record<AgentGoalVerifierId, GoalRule>>>
   "agent-query-optimization.3": verifyQueryOptimizationGoal,
   "agent-query-optimization-kubectl.1": verifyQueryOptimizationKubectlGoal,
   "agent-database-assessment.1": verifyDatabaseAssessmentGoal,
+  "agent-database-assessment-kubectl.1": verifyDatabaseAssessmentKubectlGoal,
   "agent-operations.2": verifyOperationsGoal,
   "agent-data-analysis.1": verifyDataAnalysisGoal,
 });

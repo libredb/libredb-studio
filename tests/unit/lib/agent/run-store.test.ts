@@ -382,6 +382,24 @@ describe("AgentRunStore — folding the ledger into a record", () => {
     expect(view?.record.status).toBe("running");
   });
 
+  test("a ledger holding a workload profile folds", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun(OPEN_INPUT);
+    await store.appendEvent(runId, event("run-started", 1, { mode: "agent" }));
+    await store.appendEvent(
+      runId,
+      event("workloads-profiled", 2, {
+        artifact: { ...artifactFor(runId, "profile_1"), operationId: "cluster.workloads.read" },
+        namespace: "shop",
+      }),
+    );
+
+    const view = await store.read(runId);
+    expect(view?.record.events.map((entry) => entry.kind)).toEqual(["run-started", "workloads-profiled"]);
+    expect(view?.record.events[1]).toMatchObject({ kind: "workloads-profiled", namespace: "shop" });
+    expect(view?.record.status).toBe("running");
+  });
+
   test("a ledger holding a resources recommendation folds", async () => {
     const { store } = storeAt();
     const { runId } = await store.openRun(OPEN_INPUT);

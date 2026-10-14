@@ -323,6 +323,29 @@ export const AGENT_WORKFLOW_VARIANTS: Readonly<
       requires: Object.freeze<AgentVariantRequirement[]>(["cluster-usage-reading"]),
       verifier: "agent-query-optimization-kubectl.1",
     }),
+    /**
+     * Cluster health: the cluster's assessment is not the state of its data but the state of its workloads, so the
+     * run profiles a namespace and grades what it finds.
+     *
+     * `profile_workloads` is kept on a narrowed run because the verdict asks for a profile, and nothing else the run
+     * can do establishes one. It requires the workload reading of the engine, without which that tool could only
+     * refuse.
+     */
+    "database-assessment": Object.freeze({
+      tools: Object.freeze<AgentToolName[]>(["run_read_query", "profile_workloads", "compose_report"]),
+      narrowedExtras: Object.freeze<AgentToolName[]>(["profile_workloads"]),
+      classifierDescription:
+        "the health of a namespace's workloads: replicas not ready, restarts, missing requests, limits or probes, warning events",
+      objective:
+        "Your objective is the health of this cluster's workloads in a namespace: what is not ready, what restarts, what runs without requests, limits or probes, and what the Warning events say.",
+      planDeliverable: Object.freeze({
+        kind: "statement",
+        noun: "the kubectl read that establishes each workload's state",
+      }),
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>(["cluster-workload-reading"]),
+      verifier: "agent-database-assessment-kubectl.1",
+    }),
     operations: OPERATIONS_VARIANT,
     /**
      * A read presented as the answer, the SQL analysis without its profile: a cluster has no table to count.

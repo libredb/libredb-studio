@@ -267,9 +267,11 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
       selectAgentTools(persisted("agent", "operations")),
     );
     expect(selectAgentTools({ ...persisted("planning"), statementLanguage: "kubectl" })).toEqual([]);
-    expect(() =>
-      selectAgentTools({ ...persisted("agent", "database-assessment"), statementLanguage: "kubectl" }),
-    ).toThrow("no database-assessment variant for kubectl");
+    expect(
+      selectAgentTools({ ...persisted("agent", "database-assessment"), statementLanguage: "kubectl" }).map(
+        (tool) => tool.name,
+      ),
+    ).toEqual(["run_read_query", "profile_workloads", "compose_report"]);
   });
 
   test("a SQL run is offered the SQL definitions themselves, by name", () => {
@@ -428,6 +430,7 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
     // declares no operation — it passed unchanged when two more were added.
     expect([...operations].sort()).toStrictEqual([
       "cluster.usage.read",
+      "cluster.workloads.read",
       "db.operations.read",
       "sql.explain.estimate",
       "sql.query.read",

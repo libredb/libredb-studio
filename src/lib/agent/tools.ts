@@ -69,6 +69,7 @@ import {
   type CuratedOperationKind,
   agentCuratedReadInput,
   clusterUsageReadInput,
+  clusterWorkloadsReadInput,
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
 import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
@@ -88,6 +89,7 @@ import type {
   ProviderCapabilities,
   ProviderLabels,
   ReadOnlyStatementMode,
+  WorkloadProfileInput,
 } from "@/lib/db/types";
 import type { ContainerEnumeration } from "@/lib/db/container-walk";
 import {
@@ -195,6 +197,8 @@ export type AgentToolName =
   | "inspect_operations"
   /** Resource efficiency on a cluster: container usage against requests and limits in one namespace. */
   | "inspect_usage"
+  /** Cluster health: one namespace's workloads, their readiness, restarts, missing resources and probes, and events. */
+  | "profile_workloads"
   /**
    * Which result IS the answer, and how it should be shown. Reaches no database.
    *
@@ -232,7 +236,9 @@ export type AgentOperationId =
   /** One kubectl read the model wrote, on a `kubernetes` connection; see `kubectlQueryReadDescriptor` for its id. */
   | "kubectl.query.read"
   /** Container usage in one namespace, a curated cluster reading; see `clusterUsageReadDescriptor` for its id. */
-  | "cluster.usage.read";
+  | "cluster.usage.read"
+  /** One namespace's workload profile, a curated cluster reading; see `clusterWorkloadsReadDescriptor` for its id. */
+  | "cluster.workloads.read";
 
 export interface AgentToolDefinition {
   readonly name: AgentToolName;
@@ -1249,6 +1255,13 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
       "Read how much CPU and memory each container in one namespace uses right now, against its requests and limits. Pass namespace, and a label selector to narrow it. One row per container: its pod and owning workload, CPU in millicores and memory in bytes as numbers, its requests and limits, and usage divided by request. The figures are metrics-server's latest sample over its window, a moment and not a history. More than 500 containers are refused: narrow by selector.",
     inputSchema: clusterUsageReadInput,
     operationId: "cluster.usage.read",
+  },
+  profile_workloads: {
+    name: "profile_workloads",
+    description:
+      "Profile the workloads of one namespace: one row per Deployment, StatefulSet, DaemonSet, Job, CronJob and bare Pod, with desired and ready counts in the kind's own terms, pods not ready, cumulative restarts with the latest termination's reason and time, how many containers run without requests, limits, a readiness probe or a liveness probe, and the Warning events by reason. Pass namespace. More than 500 workloads are refused.",
+    inputSchema: clusterWorkloadsReadInput,
+    operationId: "cluster.workloads.read",
   },
   present_answer: {
     name: "present_answer",
@@ -4008,6 +4021,63 @@ export async function inspectUsageTool(context: AgentToolContext, input: unknown
   });
 }
 
+/** The workload profile's advice past its row ceiling: it takes a namespace alone, so a selector is not advice. */
+const WORKLOADS_OVER_CEILING_TEXT =
+  "That profile holds more than 500 workloads, the most it may carry, so none of it was kept. Profile a smaller namespace, or read the workloads in question with run_read_query.";
+
+/** The same advice past the run's byte budget. */
+const workloadsOverBytesText = (bytes: number, allowed: number): string =>
+  `That profile came to ${bytes} bytes, more than the ${allowed} bytes this run may carry, so none of it was kept. Profile a smaller namespace, or read the workloads in question with run_read_query.`;
+
+/**
+ * The workload profile, inside the audited call: `runClusterUsage`'s shape for `readWorkloadProfile`.
+ *
+ * The namespace is the model's and reaches the API server, so the profile is acquired under the agent's read-only
+ * profile and machine redaction applies. `over-ceiling` is the provider's answer, not a failure, and becomes the typed
+ * refusal here, after the call was charged; the byte budget is measured as the read path measures it. Both refuse and
+ * nothing is cut.
+ */
+async function runWorkloadProfile(
+  context: AgentToolContext,
+  input: WorkloadProfileInput,
+  budget: ExecutionBudget,
+  phase: { statementSent: boolean },
+): Promise<QueryResult> {
+  const provider = await context.acquireProvider(context.connection, AGENT_EXECUTION_PROFILE);
+  if (typeof provider.readWorkloadProfile !== "function") {
+    throw new AgentCuratedReadError("KIND_UNSUPPORTED_BY_PROVIDER");
+  }
+  phase.statementSent = true;
+  const reading = await provider.readWorkloadProfile(input, {
+    statementTimeoutMs: budget.statementTimeoutMs,
+    maxResultRows: budget.maxResultRows,
+    maxResultBytes: budget.maxResultBytes,
+  });
+  if (reading.kind === "over-ceiling")
+    throw new AgentCuratedReadError("READING_OVER_BUDGET", WORKLOADS_OVER_CEILING_TEXT);
+  const bytes = measureResultBytes(reading.result.rows);
+  if (bytes > budget.maxResultBytes) {
+    throw new AgentCuratedReadError("READING_OVER_BUDGET", workloadsOverBytesText(bytes, budget.maxResultBytes));
+  }
+  return reading.result;
+}
+
+/** One namespace's workload profile: one audited call, one statement charge. */
+export async function profileWorkloadsTool(context: AgentToolContext, input: unknown): Promise<AgentToolOutcome> {
+  const parsed = parseToolInput(clusterWorkloadsReadInput, input);
+  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
+  const target = parsed.value;
+  return runAuditedAgentCall(context, {
+    operationId: "cluster.workloads.read",
+    fingerprintSource: `workloads ${target.namespace}`,
+    fingerprintLanguage: "kubectl",
+    input: target,
+    label: `workload profile of ${target.namespace}`,
+    invoke: (validatedInput, budget, phase) =>
+      runWorkloadProfile(context, validatedInput as WorkloadProfileInput, budget, phase),
+  });
+}
+
 /**
  * The ESTIMATING plan inspection, and only that one. The executing variant is a
  * separate, approval-gated descriptor and no tool reaches it.
@@ -4602,7 +4672,12 @@ function matchesCard(change: "index" | "rewrite", statement: string): boolean {
  * The event kinds that carry an artifact this run produced. A set rather than two comparisons, so a later reading
  * that produces an artifact of its own is added here once and is citable everywhere `producedArtifact` is read.
  */
-const ARTIFACT_EVENTS: ReadonlySet<AgentRunEvent["kind"]> = new Set(["tool-completed", "table-profiled", "usage-read"]);
+const ARTIFACT_EVENTS: ReadonlySet<AgentRunEvent["kind"]> = new Set([
+  "tool-completed",
+  "table-profiled",
+  "usage-read",
+  "workloads-profiled",
+]);
 
 /**
  * The artifact this run produced under that id, or null.

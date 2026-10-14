@@ -1440,6 +1440,18 @@ export type AgentRunEvent =
     })
   | (AgentRunEventBase & {
       /**
+       * One namespace's workloads were profiled, so a report can CITE the profile.
+       *
+       * Its own kind for the reason `usage-read` has one: the cluster-health verdict asks for a workload profile by
+       * kind rather than for any read. The namespace is what the profile covered, recorded so a resumed run is told
+       * what it already profiled.
+       */
+      readonly kind: "workloads-profiled";
+      readonly artifact: AgentArtifactReference;
+      readonly namespace: string;
+    })
+  | (AgentRunEventBase & {
+      /**
        * This artifact IS the answer, and this is how it should be shown.
        *
        * The READ is already on the ledger — `tool-invoked` before it, `tool-completed`
