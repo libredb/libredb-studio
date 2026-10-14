@@ -116,6 +116,7 @@ import {
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { nonFiniteWord } from "@/lib/non-finite";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
+import { type AgentWorkflowVariant, requiredVariant } from "./agent-manifest";
 import { connectionIdentity, heldSnapshotForConnection } from "./context-snapshot";
 import { offersRefusalExamples } from "./models";
 import type { ColumnSchema, DatabaseConnection, QueryResult } from "@/lib/types";
@@ -1178,107 +1179,28 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
   },
 } satisfies Record<AgentToolName, AgentToolDefinition>);
 
-const AGENT_MODE_TOOLS: readonly AgentToolDefinition[] = Object.freeze([
-  AGENT_TOOL_DEFINITIONS.inspect_schema,
-  AGENT_TOOL_DEFINITIONS.run_read_query,
-  AGENT_TOOL_DEFINITIONS.inspect_plan,
-  AGENT_TOOL_DEFINITIONS.compose_report,
-]);
-
 /** Planning is toolless. Not "filtered to nothing" — there is nothing to filter. */
 const NO_TOOLS: readonly AgentToolDefinition[] = Object.freeze([]);
 
 /**
- * Workflow type → the tools that workflow may use (#330 T2).
+ * Workflow type → the tools that workflow may use (#330 T2), read from the workflow's
+ * variant in `agent-manifest.ts`, which is the one place a tool set is decided.
  *
- * A total record, so a workflow type added to the contract stops this file compiling
- * until somebody decides what it may do. All three name the same set today, and that
- * is the honest state rather than a placeholder: M3's two templates are about what
- * the model is ASKED to produce and how the run is JUDGED, and the tools that would
- * distinguish them — bounded per-table profiling, a monitor snapshot — arrive with
- * the templates themselves (#330 T3). What exists now is the seam, in the one place
- * a tool set may be decided, so widening one workflow later cannot become a second
- * decision about where that decision lives.
+ * Memoised per VARIANT, not per workflow or language, so a run is handed the same
+ * frozen array on every turn, as it was when each set was a constant here, and so two
+ * variants of one workflow can never share a set by accident.
  */
-/**
- * The optimization template's own two, on top of the read-class four.
- *
- * Offered to ONE workflow rather than added to `AGENT_MODE_TOOLS`, which is what
- * makes the axis load-bearing: an investigation that calls `compare_plans` is told
- * there is no such tool, because for that run there is not.
- */
-const QUERY_OPTIMIZATION_TOOLS: readonly AgentToolDefinition[] = Object.freeze([
-  ...AGENT_MODE_TOOLS,
-  AGENT_TOOL_DEFINITIONS.compare_plans,
-  AGENT_TOOL_DEFINITIONS.recommend_change,
-]);
+const VARIANT_TOOLS = new WeakMap<AgentWorkflowVariant, readonly AgentToolDefinition[]>();
 
-/** The assessment template's own tool, on top of the read-class four. */
-const DATABASE_ASSESSMENT_TOOLS: readonly AgentToolDefinition[] = Object.freeze([
-  ...AGENT_MODE_TOOLS,
-  AGENT_TOOL_DEFINITIONS.profile_table,
-]);
-
-/**
- * The operations template's tools, and the ONLY set that is not built on the
- * read-class four.
- *
- * Deliberately not `[...AGENT_MODE_TOOLS, inspect_operations]`, which is what every
- * other template does. All three of the read-class tools this leaves out —
- * `inspect_schema`, `run_read_query`, `inspect_plan` — reach the database through
- * `provider.queryReadOnly`, which only the engines `AGENT_EXECUTION_ENGINES`
- * (`src/lib/agent/engine-support.ts`) names implement. That list is named rather than
- * restated here, and its own docblock records why: the real rule is the probe the
- * factory runs against the provider, so a count written out in prose goes stale the
- * next time an engine implements the method. Offering any of those tools here would
- * reintroduce, tool by tool, the exact engine restriction this workflow exists to
- * escape: the run would open on MySQL, be offered a tool, call it, and be answered by
- * an acquisition that refuses the engine.
- *
- * `inspect_schema` was checked rather than assumed, per the spec's condition:
- * `inspectSchemaTool` composes a statement and hands it to `executeAgentOperation`,
- * whose invoke callback is `runStatement`, which calls `provider.queryReadOnly`. It
- * depends on it, so it is left out.
- *
- * `recommend_change` is here and `compare_plans` is not: a comparison names two
- * `inspect_plan` artifacts this run cannot produce, so offering it would be offering
- * a tool that can only ever refuse.
- */
-const OPERATIONS_TOOLS: readonly AgentToolDefinition[] = Object.freeze([
-  AGENT_TOOL_DEFINITIONS.inspect_operations,
-  AGENT_TOOL_DEFINITIONS.recommend_change,
-  AGENT_TOOL_DEFINITIONS.compose_report,
-]);
-
-/**
- * The analysis template's two tools, on top of the read-class four.
- *
- * `present_answer` is the one this workflow's verdict requires, and it is offered
- * HERE and nowhere else for exactly that reason: a tool a run's bar never asks for is
- * a tool that can only distract it.
- *
- * `profile_table` is borrowed from the assessment template rather than duplicated,
- * and it is borrowed at the design's cheapest recommendation (§5.4). The schema
- * carries no row counts, so a 400 M-row fact table and a 12-row lookup table are
- * indistinguishable in the inventory, and a `shipped_at` that is 80% null and a
- * `placed_at` that is fully populated say which date column the business actually
- * fills. Basic depth answers both, costs one statement per table, and reads no value
- * out of any column — which is what makes pointing it at a table of personal data
- * acceptable at all.
- */
-const DATA_ANALYSIS_TOOLS: readonly AgentToolDefinition[] = Object.freeze([
-  ...AGENT_MODE_TOOLS,
-  AGENT_TOOL_DEFINITIONS.profile_table,
-  AGENT_TOOL_DEFINITIONS.present_answer,
-]);
-
-const WORKFLOW_TOOLS: Readonly<Record<AgentRunWorkflowType, readonly AgentToolDefinition[]>> = Object.freeze({
-  investigation: AGENT_MODE_TOOLS,
-  "query-optimization": QUERY_OPTIMIZATION_TOOLS,
-  "database-assessment": DATABASE_ASSESSMENT_TOOLS,
-  operations: OPERATIONS_TOOLS,
-  "data-analysis": DATA_ANALYSIS_TOOLS,
-} satisfies Record<AgentRunWorkflowType, readonly AgentToolDefinition[]>);
+function workflowTools(workflow: AgentRunWorkflowType): readonly AgentToolDefinition[] {
+  const variant = requiredVariant(undefined, workflow);
+  let tools = VARIANT_TOOLS.get(variant);
+  if (tools === undefined) {
+    tools = Object.freeze(variant.tools.map((name) => AGENT_TOOL_DEFINITIONS[name]));
+    VARIANT_TOOLS.set(variant, tools);
+  }
+  return tools;
+}
 
 /**
  * The tools this run may use, decided from its persisted mode and workflow type and
@@ -1294,7 +1216,7 @@ const WORKFLOW_TOOLS: Readonly<Record<AgentRunWorkflowType, readonly AgentToolDe
  * run a tool.
  */
 export function selectAgentTools(run: Pick<AgentRunRecord, "mode" | "workflowType">): readonly AgentToolDefinition[] {
-  return run.mode === "agent" ? WORKFLOW_TOOLS[run.workflowType] : NO_TOOLS;
+  return run.mode === "agent" ? workflowTools(run.workflowType) : NO_TOOLS;
 }
 
 // ============================================================================

@@ -44,6 +44,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { agentVariant, planDeliverableOf, requiredVariant } from "./agent-manifest";
 import { logger } from "@/lib/logger";
 import { isRetryableError, isToolCallParseError } from "@/lib/llm/types";
 import { type AssistantModelMessage, type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
@@ -698,7 +699,7 @@ function shortfallNotice(
       24B model that reads competently on other surfaces, so this is not capacity — it is a
       run answering on turn one because nothing said the answer had to rest on a reading.
 
-      NOT narrowed, and that is load-bearing: `AGENT_NARROWED_EXTRA_TOOLS.operations` is
+      NOT narrowed, and that is load-bearing: the operations variant's `narrowedExtras` is
       empty, so narrowing here would remove `inspect_operations` — the one tool this
       sentence asks for. The same trap `no-plan-evidence` documents one branch below.
     */
@@ -1090,42 +1091,6 @@ const PLANNING_NO_STATEMENT_RULE = [
 ].join(" ");
 
 /**
- * What a plan of each workflow is to produce (section 3 of the plan-mode design).
- *
- * A TOTAL record over `AgentRunWorkflowType`, for the reason `WORKFLOW_OBJECTIVES` and
- * `WORKFLOW_TOOL_RULES` are: a workflow added to the union stops this file compiling
- * until someone decides what a plan of it hands back. The alternative — one deliverable
- * sentence for every workflow — is what makes a plan of a query optimization ask for
- * "the statement that answers the question" when the objective already came with one.
- *
- * `operations` is the exception the owner ruled on, and it is a decision rather than an
- * omission. Two justifications have since been narrowed by what live runs did, and the
- * row survives both. The first expired with #411: the run IS grounded now, on the
- * engines whose catalog can be read, so "there is no schema to write a statement
- * against" is no longer why. The second was "an operational reading is not a statement",
- * which is true of Redis and MongoDB and false of PostgreSQL, where `pg_stat_activity`
- * and `pg_stat_user_indexes` are ordinary objects a user selects from — so the rule
- * built on it (`planningProseStatementRule`) states the condition instead of the
- * conclusion.
- *
- * What is left is why this row is prose and stays prose: no reading of this workflow can
- * be REQUIRED to be a statement, because the workflow deliberately runs on engines where
- * none is. Asking for a fenced statement would be a rule this workflow's own subject
- * matter cannot satisfy on half its engines, which is the #350 failure. So the plan is
- * judged as prose, is exempt from the planning statement rule, and may fence a statement
- * where the engine happens to express the reading as one.
- */
-type PlanDeliverable = { readonly kind: "statement"; readonly noun: string } | { readonly kind: "prose" };
-
-const PLAN_DELIVERABLES: Readonly<Record<AgentRunWorkflowType, PlanDeliverable>> = Object.freeze({
-  investigation: { kind: "statement", noun: "the statement that answers the question" },
-  "query-optimization": { kind: "statement", noun: "the rewritten statement" },
-  "database-assessment": { kind: "statement", noun: "the statement that measures the quality concern" },
-  "data-analysis": { kind: "statement", noun: "the statement that produces the answer" },
-  operations: { kind: "prose" },
-} satisfies Record<AgentRunWorkflowType, PlanDeliverable>);
-
-/**
  * The deliverable, said to a run that HAS an inventory.
  *
  * The fence tag is the connection's canonical type-id and not the word `sql`, because
@@ -1477,7 +1442,7 @@ const planningProseEngineRule = (type: DatabaseType): string =>
  * `INFO`, `SLOWLOG GET`, `CLIENT LIST`, and on MongoDB a server-status command; there is
  * nothing to fence. So the rule states the CONDITION and lets the engine decide.
  *
- * What did NOT change, and must not: `PLAN_DELIVERABLES.operations` is still
+ * What did NOT change, and must not: the operations plan deliverable is still
  * `{ kind: "prose" }`. This is a permission and never a contract — no `noun`, no
  * `NO STATEMENT:` marker, no ledger fact (`recordPlanStatement` still records nothing
  * for this workflow), and no verdict that asks for a block. A plan with no block in it
@@ -1562,14 +1527,15 @@ const planningProseRulesUngrounded = (engine: PlanningEngine): string =>
   ].join(" ");
 
 /**
- * What each workflow is FOR, said to the model (#330 T3).
+ * How to pursue the objective WITH THE TOOLS (#330 T3). Agent mode only, which is the
+ * whole reason this is a record of its own: what each workflow is FOR is its variant's
+ * `objective` in `agent-manifest.ts`, said in both modes, and what a plan of it
+ * produces instead is the variant's `planDeliverable`.
  *
  * A total record, so a workflow added to the contract stops this file compiling
  * until someone decides what to ask of it. Appended to `AGENT_RULES` and never to a
  * planning run's rules: planning is toolless, and telling it to call tools would be
- * asking for something the mode cannot do. What a plan of each workflow produces
- * instead is `PLAN_DELIVERABLES`, which is total over the same union for the same
- * reason.
+ * asking for something the mode cannot do.
  *
  * The optimization block names `inspect_schema`'s index selector explicitly, and
  * that is not padding. A live run on 2026-08-12 reached for
@@ -1581,23 +1547,6 @@ const planningProseRulesUngrounded = (engine: PlanningEngine): string =>
  * sentence is the model's half of #356. The verifier now accepts a cited plan in
  * place of a comparison for an index; a rule the model is not told about is a rule
  * live runs fail, which is exactly how the evidence contract failed in #350.
- */
-/** What the run is FOR. Said in BOTH modes — a plan for an optimization is still about one. */
-const WORKFLOW_OBJECTIVES: Readonly<Record<AgentRunWorkflowType, string>> = Object.freeze({
-  investigation: "Your objective is a question about this database. Answer it from what you establish.",
-  "query-optimization":
-    "Your objective is a statement that is too slow. What matters is HOW the engine reaches its rows, and what change would make it reach them differently.",
-  "database-assessment":
-    "Your objective is the state of this database itself: where its data is incomplete, inconsistent or surprising.",
-  operations:
-    "Your objective is how this database is RUNNING right now: what is connected to it, what it is spending its time on, what is blocked, and where its space and its indexes are going.",
-  "data-analysis":
-    "Your objective is a question about the data in this database. Establish the answer from the data and produce something to show for it.",
-} satisfies Record<AgentRunWorkflowType, string>);
-
-/**
- * How to pursue the objective WITH THE TOOLS. Agent mode only, which is the whole
- * reason this is a second record rather than one.
  */
 const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Object.freeze({
   investigation: "Report what the evidence supports, and nothing further.",
@@ -1741,7 +1690,7 @@ function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, engi
   // where the others are — the engine decides it and nothing else — so a prose run
   // that was told the grounded sentence on an engine that could not be read would be
   // pointed at an inventory it does not have.
-  const deliverable = PLAN_DELIVERABLES[record.workflowType];
+  const deliverable = planDeliverableOf(undefined, record.workflowType);
   const planningDeliverableRules =
     deliverable.kind === "prose"
       ? grounding.schemaKnown
@@ -1763,7 +1712,14 @@ function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, engi
   const canHandOver =
     record.mode === "agent" && record.autoExecute && AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType];
   const handover = canHandOver ? ` ${AUTO_EXECUTE_RULE}` : "";
-  return `You are the LibreDB Studio database investigator. ${rules}${handover} ${WORKFLOW_OBJECTIVES[record.workflowType]} ${SHARED_RULES}`;
+  // A plan of a workflow its language has no variant of reads the SQL objective: planning
+  // is never gated by a language. An agent-mode run without its variant is an error.
+  const variant =
+    record.mode === "agent"
+      ? requiredVariant(undefined, record.workflowType)
+      : (agentVariant(undefined, record.workflowType) ?? requiredVariant("sql", record.workflowType));
+  const objective = variant.objective;
+  return `You are the LibreDB Studio database investigator. ${rules}${handover} ${objective} ${SHARED_RULES}`;
 }
 
 // ============================================================================
@@ -2287,38 +2243,6 @@ interface ModelTurn {
 */
 
 /**
- * What a narrowed run keeps BESIDES `compose_report`: whatever its own verdict requires.
- *
- * The narrowing exists for `no-report`, which is 37 of the 66 failing cells measured
- * across 25 models on six surfaces — more than the other ten shortfalls combined, and
- * the only one that appears on every surface. Those runs did not run out of room. They
- * ended `model-stopped` holding every tool they needed, having read and recorded
- * nothing, and when reminded they went back to reading rather than reporting. So the
- * reminded turn narrows the choice instead of repeating the instruction.
- *
- * The narrowing must not make a run's own bar unreachable, and this record is where that
- * is guaranteed rather than hoped for. An assessment is scored `no-table-profile` without
- * a `table-profiled` event and an optimization `no-plan-comparison` without a comparison
- * or a grounded index recommendation (`goal-verifier.ts`), so leaving those surfaces the
- * report alone would trade one shortfall for another — a different failure, not a smaller
- * one. Keeping the instruments the verdict accepts turns the mechanism from a muzzle into
- * a funnel: a narrowed run can only do the two or three things it is judged on.
- *
- * `investigation` and `operations` keep nothing extra because their bars are about the
- * report itself — claims resting on something read, which by then this run has.
- * `data-analysis` keeps `present_answer` because its verdict scores the answer
- * separately from the report, and narrowing it away would turn `no-report` into
- * `no-answer`.
- */
-const AGENT_NARROWED_EXTRA_TOOLS: Readonly<Record<AgentRunWorkflowType, readonly AgentToolName[]>> = Object.freeze({
-  investigation: [],
-  "query-optimization": ["compare_plans", "recommend_change"],
-  "database-assessment": ["profile_table"],
-  operations: [],
-  "data-analysis": ["present_answer"],
-} satisfies Record<AgentRunWorkflowType, readonly AgentToolName[]>);
-
-/**
  * The names a narrowed run may still call — the single source both the declaration and
  * the dispatch read.
  *
@@ -2353,7 +2277,7 @@ function narrowedToolNames(record: AgentRunRecord, since = Number.POSITIVE_INFIN
     AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType] && presentableArtifact(record.events) === undefined;
   for (const name of [
     "compose_report" as const,
-    ...AGENT_NARROWED_EXTRA_TOOLS[record.workflowType],
+    ...requiredVariant(undefined, record.workflowType).narrowedExtras,
     ...(stillOwesARead ? (["run_read_query"] as const) : []),
   ]) {
     if (held.has(name) && !usedUp(record, name, since)) kept.add(name);
@@ -3328,7 +3252,7 @@ export async function runInvestigation(
     let planStatementAsks = delivered["plan-statement"];
     /**
      * Whether the run has been narrowed to what would finish it; see
-     * `AGENT_NARROWED_EXTRA_TOOLS`. Set once and never cleared — a run narrowed for
+     * each variant's `narrowedExtras`. Set once and never cleared: a run narrowed for
      * looping or for silence stays narrowed, or it spends its remaining turns the same way
      * it spent the ones that got it here.
      */
@@ -3440,7 +3364,7 @@ export async function runInvestigation(
       if (turns >= maxTurns || resources.deadline.remainingMs() <= 0) return false;
       reportReminders += 1;
       // Narrowed as well as told. Reminded runs that kept the whole set went back to
-      // reading; see `AGENT_NARROWED_EXTRA_TOOLS`.
+      // reading; see each variant's `narrowedExtras`.
       narrowed = true;
       messages.push(...assistant);
       messages.push({ role: "user", content: notice(BASELINE_NOTICES.reportReminder) });
@@ -3631,7 +3555,7 @@ export async function runInvestigation(
           // resources are what a statement would actually be run against.
           systemPrompt(record, grounding, engine),
           messages,
-          // Narrowed once the run has been told to finish; see `AGENT_NARROWED_EXTRA_TOOLS`.
+          // Narrowed once the run has been told to finish; see each variant's `narrowedExtras`.
           narrowed && !prompted ? narrowedTools(ledger, narrowedAtEvent) : tools,
           turnBudgetMs,
           // Constraint measured and REVERTED; see the commit that removes it. Left unset here
@@ -4065,7 +3989,7 @@ export async function runInvestigation(
               `run_read_query` three, `qwen3:8b` went back to `inspect_schema`. So the notice
               is not the missing part; the wandering after it is.
 
-              `AGENT_NARROWED_EXTRA_TOOLS` already holds the answer per workflow, because it is
+              Each variant's `narrowedExtras` already holds the answer per workflow, because it is
               keyed on what each verdict accepts — on this one exactly `profile_table` and
               `compose_report`. A held run can therefore fix the thing it was asked to fix, or
               say nothing. It cannot go looking.

@@ -11,6 +11,9 @@
  * has a language exactly when its provider has `queryReadOnly`.
  */
 import type { DatabaseType } from "@/lib/types";
+import type { AgentGoalVerifierId } from "./goal-verifier";
+import type { AgentToolName } from "./tools";
+import type { AgentRunWorkflowType } from "./types";
 
 /** The statement languages agent mode can send. A later engine reuses one or registers a new id here. */
 export type AgentStatementLanguageId = "sql" | "kubectl";
@@ -110,3 +113,214 @@ export const AGENT_REQUIREMENT_ENGINES: Readonly<Record<AgentVariantRequirement,
     "cluster-usage-reading": Object.freeze<DatabaseType[]>([]),
     "cluster-workload-reading": Object.freeze<DatabaseType[]>([]),
   } satisfies Record<AgentVariantRequirement, readonly DatabaseType[]>);
+
+/**
+ * Raised when the manifest is asked about a language it does not hold, or for a variant an agent run cannot do
+ * without. Never a database failure: nothing was reached.
+ */
+class AgentManifestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentManifestError";
+    Object.setPrototypeOf(this, AgentManifestError.prototype);
+  }
+}
+
+/**
+ * What a plan of a workflow is to produce (section 3 of the plan-mode design).
+ *
+ * Per workflow rather than one sentence for every workflow, because one sentence is what makes a plan of a query
+ * optimization ask for "the statement that answers the question" when the objective already came with one.
+ *
+ * `operations` plans in prose, and that is a ruling rather than an omission. No reading of that workflow can be
+ * REQUIRED to be a statement, because the workflow deliberately runs on engines where none is: asking for a fenced
+ * statement would be a rule its own subject matter cannot satisfy on half its engines, which is the #350 failure. So
+ * the plan is judged as prose, is exempt from the planning statement rule, and may fence a statement where the engine
+ * happens to express the reading as one.
+ */
+export type AgentPlanDeliverable = { readonly kind: "statement"; readonly noun: string } | { readonly kind: "prose" };
+
+/**
+ * One workflow on one statement language: what it is offered, what it is told, and what it is judged by.
+ *
+ * Tool overrides are keyed by the variant rather than by the language, because a language's tools are not uniform
+ * across its workflows: what one kubectl workflow is offered says nothing about what another is.
+ */
+export interface AgentWorkflowVariant {
+  /** The tools an agent-mode run is offered, in the order they are sent. */
+  readonly tools: readonly AgentToolName[];
+  /**
+   * What a narrowed run keeps BESIDES `compose_report`: whatever its own verdict requires.
+   *
+   * The narrowing exists for `no-report`, and it must not make a run's own bar unreachable: leaving an assessment
+   * the report alone would trade `no-report` for `no-table-profile`, a different failure rather than a smaller one.
+   * So each variant keeps the instruments its verdict accepts, and a narrowed run can only do the two or three
+   * things it is judged on. A workflow whose bar is about the report itself keeps nothing extra.
+   */
+  readonly narrowedExtras: readonly AgentToolName[];
+  /** The line the workflow classifier is told about this workflow. */
+  readonly classifierDescription: string;
+  /** What the run is FOR. Said in BOTH modes: a plan for an optimization is still about one. */
+  readonly objective: string;
+  /** What a plan of it hands back; "inherits" reads the SQL variant's. */
+  readonly planDeliverable: AgentPlanDeliverable | "inherits";
+  /** Whether the auto-execute setting may be offered: only where the workflow presents an answer. */
+  readonly canAutoExecute: boolean;
+  /** What the engine must hold beyond the language for the variant to be offered. */
+  readonly requires: readonly AgentVariantRequirement[];
+  /** The goal verifier a run of it is judged by. */
+  readonly verifier: AgentGoalVerifierId;
+}
+
+/** The read-class four every SQL statement workflow starts from. */
+const READ_CLASS_TOOLS: readonly AgentToolName[] = [
+  "inspect_schema",
+  "run_read_query",
+  "inspect_plan",
+  "compose_report",
+];
+
+/**
+ * The operations workflow, one variant for every language because it sends no statement at all.
+ *
+ * Its tools are the ONLY set not built on the read-class four. All three of the read-class tools it leaves out,
+ * `inspect_schema`, `run_read_query` and `inspect_plan`, reach the database through `provider.queryReadOnly`, which
+ * only the engines `AGENT_EXECUTION_ENGINES` (`engine-support.ts`) names implement. Offering any of them here would
+ * reintroduce, tool by tool, the exact engine restriction this workflow exists to escape: the run would open on an
+ * engine with no read-only statement path, be offered a tool, call it, and be answered by an acquisition that
+ * refuses the engine. `inspect_schema` was checked rather than assumed: it composes a statement and runs it through
+ * `provider.queryReadOnly`, so it is left out.
+ *
+ * `recommend_change` is here and `compare_plans` is not: a comparison names two `inspect_plan` artifacts this run
+ * cannot produce, so offering it would be offering a tool that can only ever refuse.
+ */
+const OPERATIONS_VARIANT: AgentWorkflowVariant = Object.freeze({
+  tools: Object.freeze<AgentToolName[]>(["inspect_operations", "recommend_change", "compose_report"]),
+  narrowedExtras: Object.freeze<AgentToolName[]>([]),
+  classifierDescription: "how the database is RUNNING right now: connections, waits, blocking, space and index usage",
+  objective:
+    "Your objective is how this database is RUNNING right now: what is connected to it, what it is spending its time on, what is blocked, and where its space and its indexes are going.",
+  planDeliverable: Object.freeze({ kind: "prose" }),
+  canAutoExecute: false,
+  requires: Object.freeze<AgentVariantRequirement[]>([]),
+  verifier: "agent-operations.2",
+});
+
+/**
+ * Every workflow on every language. A language with no entry for a workflow cannot run it in agent mode; a plan of it
+ * reads the SQL variant's objective and deliverable instead, because planning is never gated by a language.
+ *
+ * The SQL record is total over `AgentRunWorkflowType`, in the union's order, which is the order the classifier
+ * lists the workflows in.
+ */
+export const AGENT_WORKFLOW_VARIANTS: Readonly<
+  Record<AgentStatementLanguageId, Readonly<Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>>>>
+> = Object.freeze({
+  sql: Object.freeze({
+    investigation: Object.freeze({
+      tools: Object.freeze([...READ_CLASS_TOOLS]),
+      narrowedExtras: Object.freeze<AgentToolName[]>([]),
+      classifierDescription: "a question about the database that is answered from what the run establishes",
+      objective: "Your objective is a question about this database. Answer it from what you establish.",
+      planDeliverable: Object.freeze({ kind: "statement", noun: "the statement that answers the question" }),
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>(["sql-composers"]),
+      verifier: "agent-investigation.1",
+    }),
+    /**
+     * The optimization template's own two tools on top of the read-class four, offered to this workflow alone, which
+     * is what makes the axis load-bearing: an investigation that calls `compare_plans` is told there is no such
+     * tool, because for that run there is not.
+     */
+    "query-optimization": Object.freeze({
+      tools: Object.freeze<AgentToolName[]>([...READ_CLASS_TOOLS, "compare_plans", "recommend_change"]),
+      narrowedExtras: Object.freeze<AgentToolName[]>(["compare_plans", "recommend_change"]),
+      classifierDescription: "a specific statement that is too slow, and how the engine reaches its rows",
+      objective:
+        "Your objective is a statement that is too slow. What matters is HOW the engine reaches its rows, and what change would make it reach them differently.",
+      planDeliverable: Object.freeze({ kind: "statement", noun: "the rewritten statement" }),
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>(["sql-composers"]),
+      verifier: "agent-query-optimization.3",
+    }),
+    /** The assessment template's own tool, on top of the read-class four. */
+    "database-assessment": Object.freeze({
+      tools: Object.freeze<AgentToolName[]>([...READ_CLASS_TOOLS, "profile_table"]),
+      narrowedExtras: Object.freeze<AgentToolName[]>(["profile_table"]),
+      classifierDescription: "the state of the data itself: where it is incomplete, inconsistent or surprising",
+      objective:
+        "Your objective is the state of this database itself: where its data is incomplete, inconsistent or surprising.",
+      planDeliverable: Object.freeze({ kind: "statement", noun: "the statement that measures the quality concern" }),
+      canAutoExecute: false,
+      requires: Object.freeze<AgentVariantRequirement[]>(["sql-composers"]),
+      verifier: "agent-database-assessment.1",
+    }),
+    operations: OPERATIONS_VARIANT,
+    /**
+     * The analysis template's two tools on top of the read-class four.
+     *
+     * `present_answer` is the one this workflow's verdict requires, and it is offered HERE and nowhere else for
+     * exactly that reason: a tool a run's bar never asks for is a tool that can only distract it. A narrowed run
+     * keeps it because the verdict scores the answer separately from the report.
+     *
+     * `profile_table` is borrowed from the assessment template at basic depth. The schema carries no row counts, so
+     * a 400 M-row fact table and a 12-row lookup table are indistinguishable in the inventory, and a `shipped_at`
+     * that is 80% null beside a fully populated `placed_at` says which date column the business actually fills.
+     * Basic depth answers both, costs one statement per table, and reads no value out of any column, which is what
+     * makes pointing it at a table of personal data acceptable at all.
+     */
+    "data-analysis": Object.freeze({
+      tools: Object.freeze<AgentToolName[]>([...READ_CLASS_TOOLS, "profile_table", "present_answer"]),
+      narrowedExtras: Object.freeze<AgentToolName[]>(["present_answer"]),
+      classifierDescription: "a question about the data whose answer is a result the user wants to see",
+      objective:
+        "Your objective is a question about the data in this database. Establish the answer from the data and produce something to show for it.",
+      planDeliverable: Object.freeze({ kind: "statement", noun: "the statement that produces the answer" }),
+      canAutoExecute: true,
+      requires: Object.freeze<AgentVariantRequirement[]>(["sql-composers"]),
+      verifier: "agent-data-analysis.1",
+    }),
+  } satisfies Record<AgentRunWorkflowType, AgentWorkflowVariant>),
+  kubectl: Object.freeze({
+    operations: OPERATIONS_VARIANT,
+  }),
+} satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>>>);
+
+/**
+ * The variant of one workflow on one language, or undefined when the language has none. An absent language reads as
+ * `sql`, which is what a run recorded before languages existed was. A language the manifest does not hold is an
+ * error rather than an absent variant: it can only be a ledger or a caller this file has never heard of.
+ */
+export function agentVariant(
+  language: AgentStatementLanguageId | undefined,
+  workflow: AgentRunWorkflowType,
+): AgentWorkflowVariant | undefined {
+  const id = language ?? "sql";
+  if (!Object.hasOwn(AGENT_WORKFLOW_VARIANTS, id)) throw new AgentManifestError(`unknown statement language ${id}`);
+  return AGENT_WORKFLOW_VARIANTS[id][workflow];
+}
+
+/** The variant an agent-mode run cannot do without. Its absence is an explicit error, never a fallback. */
+export function requiredVariant(
+  language: AgentStatementLanguageId | undefined,
+  workflow: AgentRunWorkflowType,
+): AgentWorkflowVariant {
+  const variant = agentVariant(language, workflow);
+  if (variant === undefined) throw new AgentManifestError(`no ${workflow} variant for ${language ?? "sql"}`);
+  return variant;
+}
+
+/**
+ * What a plan of this workflow hands back. A variant that inherits, and a language with no variant at all, read the
+ * SQL variant's: planning is never gated by a language, so a plan always has a deliverable to ask for.
+ */
+export function planDeliverableOf(
+  language: AgentStatementLanguageId | undefined,
+  workflow: AgentRunWorkflowType,
+): AgentPlanDeliverable {
+  const own = agentVariant(language, workflow)?.planDeliverable;
+  if (own !== undefined && own !== "inherits") return own;
+  const inherited = requiredVariant("sql", workflow).planDeliverable;
+  if (inherited === "inherits") throw new AgentManifestError(`the sql ${workflow} variant inherits from nothing`);
+  return inherited;
+}
