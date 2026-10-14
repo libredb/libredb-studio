@@ -6,7 +6,7 @@ import { createLocalWorld } from "@workflow/world-local";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
-import { neutraliseAssistantMessages, runInvestigation } from "@/lib/agent/investigation";
+import { DATABASE_TOOL_HANDLERS, neutraliseAssistantMessages, runInvestigation } from "@/lib/agent/investigation";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
@@ -319,5 +319,21 @@ describe("neutraliseAssistantMessages (B29)", () => {
 
   test("an empty input list returns an empty list", () => {
     expect(neutraliseAssistantMessages(cast([]))).toEqual([]);
+  });
+});
+
+describe("the database tool dispatch", () => {
+  /*
+    A total record keyed by the tool name, so a new database tool stops `investigation.ts` compiling until it names
+    its handler. The dispatch it replaced ended in a fall-through to `inspect_plan`, where an unlisted name was
+    re-parsed against a statement schema and answered INVALID_TOOL_INPUT forever.
+  */
+  test("every database tool names its own handler, and nothing else is in the record", () => {
+    expect(Object.keys(DATABASE_TOOL_HANDLERS).sort()).toEqual([
+      "inspect_operations",
+      "inspect_plan",
+      "inspect_schema",
+      "run_read_query",
+    ]);
   });
 });

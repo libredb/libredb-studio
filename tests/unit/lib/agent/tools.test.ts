@@ -12,6 +12,7 @@ import {
   AGENT_ANSWER_CONTRACT,
   AGENT_TOOL_DEFINITIONS,
   type AgentToolContext,
+  agentToolDefinition,
   comparePlansTool,
   composeReportTool,
   executeAgentOperation,
@@ -268,6 +269,20 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
     expect(() => selectAgentTools({ ...persisted("agent"), statementLanguage: "kubectl" })).toThrow(
       "no investigation variant for kubectl",
     );
+  });
+
+  test("a SQL run is offered the SQL definitions themselves, by name", () => {
+    // Every definition is read through `agentToolDefinition`, so a later language's override cannot reach a SQL
+    // run: what an investigation sends is the record's own entry for each name, the same object.
+    const offered = selectAgentTools({ mode: "agent", workflowType: "investigation" });
+
+    expect(offered).toEqual(offered.map((definition) => AGENT_TOOL_DEFINITIONS[definition.name]));
+    for (const definition of offered) expect(definition, definition.name).toBe(AGENT_TOOL_DEFINITIONS[definition.name]);
+  });
+
+  test("a run with no recorded language reads the SQL definition", () => {
+    expect(agentToolDefinition(undefined, "run_read_query")).toBe(AGENT_TOOL_DEFINITIONS.run_read_query);
+    expect(agentToolDefinition("sql", "inspect_operations")).toBe(AGENT_TOOL_DEFINITIONS.inspect_operations);
   });
 
   test("present_answer is offered exactly where AGENT_WORKFLOW_PRESENTS_ANSWER says it is", () => {
@@ -2757,6 +2772,24 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
     // Outside the fence: the advice is this server's sentence, and putting it inside would
     // attribute our instruction to the database.
     expect(outcome.modelText.split(UNTRUSTED_CONTENT_END)[1]).toContain("LIMIT 200");
+  });
+
+  test("a statement in a language with no server adapter is a named error, never a SQL fingerprint", async () => {
+    // A kubectl statement fingerprinted as SQL, or refused with a SQL sentence, would be a wrong answer that looks
+    // like a right one, so until that language registers its adapter the call throws before anything is spent.
+    let reached = false;
+    const h = harness({}, async () => {
+      reached = true;
+      throw new QueryError("never sent", "postgres");
+    });
+
+    await expect(
+      executeAgentOperation(
+        { ...h.context, statementLanguage: "kubectl" },
+        { operationId: "sql.query.read", sql: "get pods -n shop" },
+      ),
+    ).rejects.toThrow("no server adapter for kubectl");
+    expect(reached).toBe(false);
   });
 
   test("a catalog from another engine is answered with the engine this connection actually is", async () => {

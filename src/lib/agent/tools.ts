@@ -140,6 +140,7 @@ import {
 } from "./execution-policy";
 import type { AgentRepairDenyCode, AgentRepairLedger } from "./repair-ledger";
 import { fingerprintStatement } from "./repair-ledger";
+import { languageServer } from "./statement-languages";
 import { evaluateAutoExecute } from "./auto-execute";
 import { summarisePlan } from "./plan-summary";
 import {
@@ -1184,6 +1185,20 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
   },
 } satisfies Record<AgentToolName, AgentToolDefinition>);
 
+/**
+ * The definition a run in `language` is offered for the tool `name`.
+ *
+ * Every SQL run, and every run recorded before languages existed, reads the record above unchanged, which is what
+ * keeps the SQL tool schemas byte-identical. A later language overrides only the entries whose argument it names
+ * differently; the lookup is here so that the run loop's offer and its dispatch read the same definition.
+ */
+export function agentToolDefinition(
+  _language: AgentStatementLanguageId | undefined,
+  name: AgentToolName,
+): AgentToolDefinition {
+  return AGENT_TOOL_DEFINITIONS[name];
+}
+
 /** Planning is toolless. Not "filtered to nothing" — there is nothing to filter. */
 const NO_TOOLS: readonly AgentToolDefinition[] = Object.freeze([]);
 
@@ -1204,7 +1219,7 @@ function workflowTools(
   const variant = requiredVariant(language, workflow);
   let tools = VARIANT_TOOLS.get(variant);
   if (tools === undefined) {
-    tools = Object.freeze(variant.tools.map((name) => AGENT_TOOL_DEFINITIONS[name]));
+    tools = Object.freeze(variant.tools.map((name) => agentToolDefinition(language, name)));
     VARIANT_TOOLS.set(variant, tools);
   }
   return tools;
@@ -1942,6 +1957,7 @@ export async function executeAgentOperation(
     // The statement IS the identity of a SQL call: two calls sending the same text
     // are the same call however the model worded its way to them.
     fingerprintSource: request.sql,
+    fingerprintLanguage: context.statementLanguage ?? "sql",
     input: { sql: request.sql },
     ...(request.label === undefined ? {} : { label: request.label }),
     ...(request.target === undefined ? {} : { target: request.target }),
@@ -1964,6 +1980,11 @@ interface AuditedAgentCall {
   readonly operationId: AgentOperationId;
   /** Canonical text this call is identified by in the repair ledger. */
   readonly fingerprintSource: string;
+  /**
+   * The language `fingerprintSource` is written in, set by statement calls only. A curated call leaves it unset and
+   * keeps the SQL fingerprint of its own `operations:...` or `objects:...` key, which is no statement in any language.
+   */
+  readonly fingerprintLanguage?: AgentStatementLanguageId;
   /** The input the DESCRIPTOR validates. `{sql}` for a statement, the selector for a curated read. */
   readonly input: unknown;
   readonly label?: string;
@@ -2101,13 +2122,20 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
  *
  * Takes no connection: neither branch reads our own state. They are derived from the shape of the
  * engine's message and from the engine this connection IS, which is why neither can be free.
+ *
+ * The row-budget sentence is the statement language's own, since the way to ask for fewer rows is
+ * written in that language. The catalog branch is SQL's alone: a foreign catalog is a SQL mistake.
  */
-function otherStatementAdvice(message: string, engine: string): string | undefined {
+function otherStatementAdvice(
+  message: string,
+  engine: string,
+  statement: string,
+  language: AgentStatementLanguageId,
+): string | undefined {
   const overBudget = /row budget: \d+ rows > (\d+) allowed/.exec(message);
-  if (overBudget !== null) {
-    return `Ask for fewer rows: add LIMIT ${overBudget[1]} (or an aggregate that returns one row) and run it again.`;
-  }
-  if (/information_schema|pg_catalog/i.test(message) || /no such table: \w+\./i.test(message)) {
+  if (overBudget !== null) return languageServer(language).rowCapAdvice(statement, overBudget[1]);
+  const foreignCatalog = /information_schema|pg_catalog/i.test(message) || /no such table: \w+\./i.test(message);
+  if (language === "sql" && foreignCatalog) {
     return `That catalog belongs to another engine — this connection is ${engine}. Call inspect_schema for this database's tables and columns rather than querying a catalog directly.`;
   }
   return undefined;
@@ -2119,7 +2147,7 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
   // set, so no dispatch of a model's tool call ever arrives here with it.
   if (context.mode !== "agent" && call.grounding !== true) return unavailable("MODE_HAS_NO_TOOLS");
 
-  const fingerprint = fingerprintStatement(call.fingerprintSource);
+  const fingerprint = languageServer(call.fingerprintLanguage ?? "sql").fingerprint(call.fingerprintSource);
   const repairAdmission = context.repairs.admit(fingerprint);
   if (!repairAdmission.admitted) return unavailable(repairAdmission.reasonCode);
 
@@ -2276,7 +2304,14 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
       applies. `columnsThatExist` is computed once and used for both rather than called twice.
     */
     const columns = columnsThatExist(error.message, context.connection);
-    const advice = columns ?? otherStatementAdvice(error.message, context.connection.type);
+    const advice =
+      columns ??
+      otherStatementAdvice(
+        error.message,
+        context.connection.type,
+        call.fingerprintSource,
+        call.fingerprintLanguage ?? "sql",
+      );
     const answered = columns !== undefined;
     context.repairs.recordFailure(fingerprint, answered ? "database-error-answered" : "database-error");
     return {
@@ -4291,6 +4326,12 @@ function matchesCard(change: "index" | "rewrite", statement: string): boolean {
 }
 
 /**
+ * The event kinds that carry an artifact this run produced. A set rather than two comparisons, so a later reading
+ * that produces an artifact of its own is added here once and is citable everywhere `producedArtifact` is read.
+ */
+const ARTIFACT_EVENTS: ReadonlySet<AgentRunEvent["kind"]> = new Set(["tool-completed", "table-profiled"]);
+
+/**
  * The artifact this run produced under that id, or null.
  *
  * Both events that carry an artifact this run produced. A profile settles no step, so
@@ -4305,7 +4346,7 @@ function matchesCard(change: "index" | "rewrite", statement: string): boolean {
  */
 function producedArtifact(events: readonly AgentRunEvent[], correlationId: string): AgentArtifactReference | null {
   for (const event of events) {
-    const artifact = event.kind === "tool-completed" || event.kind === "table-profiled" ? event.artifact : null;
+    const artifact = ARTIFACT_EVENTS.has(event.kind) && "artifact" in event ? event.artifact : null;
     if (artifact !== null && artifact.correlationId === correlationId) return artifact;
   }
   return null;

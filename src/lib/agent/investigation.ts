@@ -110,11 +110,11 @@ import type { AgentSettledStepEvent } from "./run-store";
 import {
   AGENT_ANSWER_CONTRACT,
   AGENT_EVIDENCE_CONTRACT,
-  AGENT_TOOL_DEFINITIONS,
   type AgentToolContext,
   type AgentToolDefinition,
   type AgentToolName,
   type AgentToolOutcome,
+  agentToolDefinition,
   citeSnapshot,
   comparePlansTool,
   composeReportTool,
@@ -209,10 +209,9 @@ export type AgentInvestigationResult =
 /**
  * The tools that reach the database. The ledger-only ones are handled apart.
  *
- * Exclusion rather than enumeration, and that matters: `invokeDatabaseTool`'s
- * dispatch ends in a fall-through to `inspect_plan`, so a new tool name that is not
- * excluded here compiles and is silently routed to the wrong tool with a mis-cast
- * argument list. Adding a tool means deciding, here, which side it is on.
+ * Exclusion rather than enumeration, and that matters: the dispatch is a total record,
+ * so a new database tool stops this file compiling until it names its handler. Adding a
+ * tool means deciding, here, which side it is on.
  */
 type DatabaseToolName = Exclude<AgentToolName, LedgerOnlyToolName>;
 
@@ -2162,22 +2161,31 @@ function draftedSql(input: unknown): { sql: string; rationale: string } | null {
 }
 
 /**
- * Dispatches one database tool. Each of them re-validates the arguments against
- * the schema it declares, so an unchecked shape here becomes a typed
- * `INVALID_TOOL_INPUT` outcome rather than a throw.
+ * The handler of each database tool, keyed by its name.
+ *
+ * Total over `DatabaseToolName`, so a database tool with no handler does not compile.
+ * The fall-through this replaced routed any unlisted name to `inspectPlanTool`, where
+ * an operational reading was re-parsed against a statement schema and answered
+ * INVALID_TOOL_INPUT forever. Each handler re-validates the arguments against the
+ * schema it declares, so the unchecked shape here becomes a typed `INVALID_TOOL_INPUT`
+ * outcome rather than a throw.
  */
+export const DATABASE_TOOL_HANDLERS: Readonly<
+  Record<DatabaseToolName, (context: AgentToolContext, input: unknown) => Promise<AgentToolOutcome>>
+> = Object.freeze({
+  inspect_schema: (context, input) => inspectSchemaTool(context, input as { schema?: string; table?: string }),
+  run_read_query: (context, input) => runReadQueryTool(context, input as { sql: string; rationale?: string }),
+  inspect_plan: (context, input) => inspectPlanTool(context, input as { sql: string }),
+  inspect_operations: inspectOperationsTool,
+});
+
+/** Dispatches one database tool through `DATABASE_TOOL_HANDLERS`. */
 function invokeDatabaseTool(
   context: AgentToolContext,
   name: DatabaseToolName,
   input: unknown,
 ): Promise<AgentToolOutcome> {
-  if (name === "inspect_schema") return inspectSchemaTool(context, input as { schema?: string; table?: string });
-  if (name === "run_read_query") return runReadQueryTool(context, input as { sql: string; rationale?: string });
-  // Before the fall-through, which is the hazard the type above exists to make
-  // visible: an operational reading routed to `inspectPlanTool` would be re-parsed
-  // against a statement schema and answered INVALID_TOOL_INPUT forever.
-  if (name === "inspect_operations") return inspectOperationsTool(context, input);
-  return inspectPlanTool(context, input as { sql: string });
+  return DATABASE_TOOL_HANDLERS[name](context, input);
 }
 
 function settlementOf(outcome: AgentToolOutcome): AgentRunStepSettlement {
@@ -4239,12 +4247,11 @@ async function handleCall(input: {
   }
   known.add(stepId);
 
+  const { operationId } = agentToolDefinition(context.statementLanguage, name);
   const invocation: AgentRunInvocation = {
     stepId,
     tool: name,
-    ...(AGENT_TOOL_DEFINITIONS[name].operationId === undefined
-      ? {}
-      : { operationId: AGENT_TOOL_DEFINITIONS[name].operationId }),
+    ...(operationId === undefined ? {} : { operationId }),
   };
 
   // The tool's model-facing text is the tool's to write; it escapes through the
