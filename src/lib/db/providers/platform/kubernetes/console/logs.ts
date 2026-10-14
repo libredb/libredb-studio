@@ -14,6 +14,10 @@
  * requested; the RFC 3339 prefix of each line is its TIME and the rest its LINE, with its terminal escape sequences
  * removed. `follow` is never sent. The merged lines are the statement's rows, so streams times the tail past 5,000
  * answer a sentence before any log is read.
+ *
+ * On the agent path (`context.machine`) the row budget takes the place of the 5,000: a named target without --tail
+ * reads the budget split evenly across its streams, a selector keeps its 10 per pod, streams times the tail past the
+ * budget is refused with the row budget's sentence, and `limitBytes` never asks for more than the byte budget.
  */
 import { QueryError } from "@/lib/db/errors";
 import { ACCEPT_JSON } from "../client";
@@ -36,6 +40,7 @@ import {
   type KubectlGrid,
   objectOf,
   resolveType,
+  rowBudgetSentence,
   stringOf,
   textGrid,
 } from "./context";
@@ -355,14 +360,30 @@ export async function readLogs(context: KubectlContext, statement: LogsStatement
       `This statement would read ${streams.length} log streams, more than the 5 Studio reads at once: name one container with -c, or narrow the selector.`,
       KUBERNETES_TYPE,
     );
+  const machine = context.machine;
+  // The merged lines are the statement's rows: on the agent path their bound is the row budget, split across the
+  // streams when the statement names no tail, so the default always fits.
+  const ceiling = machine?.maxRows ?? KUBERNETES_MAX_STATEMENT_ROWS;
   const tail =
-    statement.tail ?? (statement.target === undefined ? KUBERNETES_LOG_SELECTOR_TAIL : KUBERNETES_LOG_TAIL_DEFAULT);
-  // The merged lines are the statement's rows, so their bound holds before any log is read.
-  if (streams.length * tail > KUBERNETES_MAX_STATEMENT_ROWS)
+    statement.tail ??
+    (statement.target === undefined
+      ? KUBERNETES_LOG_SELECTOR_TAIL
+      : machine === undefined
+        ? KUBERNETES_LOG_TAIL_DEFAULT
+        : Math.floor(machine.maxRows / Math.max(1, streams.length)));
+  // The bound holds before any log is read.
+  if (streams.length * tail > ceiling)
     throw new QueryError(
-      `This statement would read up to ${(streams.length * tail).toLocaleString("en-US")} lines across ${streams.length} log streams, more than the 5,000 one statement shows: lower --tail, name one container with -c, or narrow the selector. No log was read.`,
+      machine === undefined
+        ? `This statement would read up to ${(streams.length * tail).toLocaleString("en-US")} lines across ${streams.length} log streams, more than the 5,000 one statement shows: lower --tail, name one container with -c, or narrow the selector. No log was read.`
+        : rowBudgetSentence(streams.length * tail, machine.maxRows),
       KUBERNETES_TYPE,
     );
+  // The agent's byte budget bounds each stream's request too, so no stream is asked for more than the read may carry.
+  const limitBytes = Math.min(
+    statement.limitBytes ?? KUBERNETES_LOG_LIMIT_BYTES,
+    machine?.maxBytes ?? Number.POSITIVE_INFINITY,
+  );
   let read = 0;
   const lines = await inTurn(streams, async (stream) => {
     const answer = await context.surface.client.send(
@@ -373,7 +394,7 @@ export async function readLogs(context: KubectlContext, statement: LogsStatement
         query: {
           container: stream.container,
           tailLines: tail,
-          limitBytes: statement.limitBytes ?? KUBERNETES_LOG_LIMIT_BYTES,
+          limitBytes,
           ...(statement.sinceSeconds === undefined ? {} : { sinceSeconds: statement.sinceSeconds }),
           ...(statement.sinceTime === undefined ? {} : { sinceTime: statement.sinceTime }),
           ...(statement.previous ? { previous: true } : {}),
@@ -388,7 +409,11 @@ export async function readLogs(context: KubectlContext, statement: LogsStatement
     const split = text.split("\n");
     // A server may answer more lines than tailLines asks for; the statement's bound holds all the same.
     read += split.length;
-    if (read > KUBERNETES_MAX_STATEMENT_ROWS) throw new QueryError(LINES_CAP_SENTENCE, KUBERNETES_TYPE);
+    if (read > ceiling)
+      throw new QueryError(
+        machine === undefined ? LINES_CAP_SENTENCE : rowBudgetSentence(read, machine.maxRows),
+        KUBERNETES_TYPE,
+      );
     return split.map((line) => {
       const parts = splitTimestamp(line);
       return { pod: stream.pod, container: stream.container, time: parts.time, text: stripTerminalEscapes(parts.text) };
@@ -403,6 +428,10 @@ export async function readLogs(context: KubectlContext, statement: LogsStatement
     merged.map((line) => [line.time, line.pod, line.container, line.text]),
   );
   const warned = statement.tail === undefined && statement.target !== undefined;
-  const warnings = [...notices, ...(warned ? [TAIL_WARNING] : [])].map((message) => ({ message }));
+  const tailWarning =
+    machine === undefined
+      ? TAIL_WARNING
+      : `kubectl reads every line when --tail is absent; Studio read the last ${tail} lines of each of the ${streams.length} log stream(s), the most this read may carry. Ask for fewer with --tail.`;
+  const warnings = [...notices, ...(warned ? [tailWarning] : [])].map((message) => ({ message }));
   return warnings.length === 0 ? grid : { ...grid, warnings };
 }

@@ -88,6 +88,30 @@ describe("one pod", () => {
     ]);
   });
 
+  test("the editor's console keeps its 500-line default tail, its 1 MiB byte cap and its warning", async () => {
+    const answer = routes({
+      "GET /api/v1/namespaces/shop/pods/web": jsonAnswer(pod({ name: "web", containers: ["app", "sidecar"] })),
+      [logLine("web", "app")]: textAnswer(""),
+      [logLine("web", "sidecar")]: textAnswer(""),
+    });
+    const { context, transport } = consoleContext(answer);
+    const grid = await readLogs(context, logs("logs web --all-containers"));
+    const queries = transport.requests
+      .map((request) => new URL(request.url))
+      .filter((url) => url.pathname.endsWith("/log"))
+      .map((url) => [url.searchParams.get("tailLines"), url.searchParams.get("limitBytes")]);
+    expect(queries).toEqual([
+      ["500", "1048576"],
+      ["500", "1048576"],
+    ]);
+    expect(grid.warnings).toEqual([
+      {
+        message:
+          "kubectl reads every line when --tail is absent; Studio read the last 500 lines of each stream. Ask for up to 5,000 with --tail.",
+      },
+    ]);
+  });
+
   test("a log is asked for with the JSON Accept, since an API server answers Accept text/plain with a 406", async () => {
     // Measured on k3s 1.29, 1.30 and 1.35: the log endpoint refuses text/plain and answers the log as text/plain.
     const answer = routes({
