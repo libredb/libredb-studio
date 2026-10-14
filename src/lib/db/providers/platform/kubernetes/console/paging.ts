@@ -8,11 +8,18 @@
  */
 import type { PreparedQuery, QueryPrepareOptions } from "@/lib/db/types";
 import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_PAGE_SIZE } from "../limits";
-import { isPageable, type KubectlStatement, parseKubectl } from "./parse";
+import { isPageable, type KubectlRefusalCode, type KubectlStatement, parseKubectl } from "./parse";
 
 /** The sentence for a paging line under a statement that cannot page. */
 export const PAGING_CLAUSE_SENTENCE =
   "The last line is Studio's own paging line, which applies only to the list form of a single-type get: remove it.";
+
+/** The reader's refusal codes, and the one the paging clause adds. */
+export type KubectlRunRefusalCode = KubectlRefusalCode | "paging-clause";
+
+/** The sentence for a paging clause on an agent read: the agent narrows a read, it never pages one. */
+export const AGENT_PAGING_SENTENCE =
+  "The last line is Studio's own paging line, and an agent read is never paged: remove it, and narrow the read with -n, -l or --field-selector instead. Nothing was sent.";
 
 const CLAUSE = /\n# libredb:page offset=(0|[1-9][0-9]{0,8}) limit=([1-9][0-9]{0,8})$/;
 
@@ -37,11 +44,13 @@ export function readKubectlRun(text: string):
       readonly statement: KubectlStatement;
       readonly page?: { readonly offset: number; readonly limit: number };
     }
-  | { readonly ok: false; readonly message: string } {
+  | { readonly ok: false; readonly code: KubectlRunRefusalCode; readonly message: string } {
   const { statement: body, page } = readPagingClause(text);
   const parsed = parseKubectl(body);
-  if (!parsed.ok) return { ok: false, message: parsed.refusal.message };
-  if (page !== undefined && !isPageable(parsed.statement)) return { ok: false, message: PAGING_CLAUSE_SENTENCE };
+  if (!parsed.ok) return { ok: false, code: parsed.refusal.code, message: parsed.refusal.message };
+  if (page !== undefined && !isPageable(parsed.statement)) {
+    return { ok: false, code: "paging-clause", message: PAGING_CLAUSE_SENTENCE };
+  }
   return page === undefined
     ? { ok: true, statement: parsed.statement }
     : { ok: true, statement: parsed.statement, page };

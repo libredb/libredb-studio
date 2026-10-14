@@ -103,12 +103,19 @@ describe("readKubectlRun", () => {
   test("a clause under a statement that cannot page is refused, as is what the parser refuses", () => {
     expect(readKubectlRun("describe pod web\n# libredb:page offset=0 limit=5")).toEqual({
       ok: false,
+      code: "paging-clause",
       message: PAGING_CLAUSE_SENTENCE,
     });
     const parsed = parseKubectl("delete pod web");
     expect(readKubectlRun("delete pod web")).toEqual({
       ok: false,
+      code: "not-read-only",
       message: parsed.ok ? "unreachable" : parsed.refusal.message,
     });
+  });
+
+  test("a refused line carries the parser's code, so a caller can tell one refusal from another", () => {
+    expect(readKubectlRun("delete pod x")).toMatchObject({ ok: false, code: "not-read-only" });
+    expect(readKubectlRun("get pods | grep web")).toMatchObject({ ok: false, code: "shell" });
   });
 });
