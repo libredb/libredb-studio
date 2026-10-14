@@ -73,7 +73,7 @@ export default defineConfig({
       // run under their own projects below, against the second server, passkey.spec.ts against the third,
       // launch.spec.ts against the fourth and the firestore browse spec against the fifth.
       testIgnore:
-        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|influxdb-providers|oxia-provider|databend-provider|snowflake-provider|spark-provider|s3-provider|kubernetes-provider|firestore-connection|firestore-provider|rabbitmq-provider|mqtt-provider|passkey|launch)\.spec\.ts/,
+        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|influxdb-providers|mtconnect-provider|oxia-provider|databend-provider|snowflake-provider|spark-provider|s3-provider|kubernetes-provider|firestore-connection|firestore-provider|rabbitmq-provider|mqtt-provider|passkey|launch)\.spec\.ts/,
     },
     {
       // Every other spec in this suite signs in as the same shared user@libredb.org account
@@ -102,6 +102,13 @@ export default defineConfig({
       name: "chromium-kafka",
       use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
       testMatch: /kafka-provider\.spec\.ts/,
+    },
+    {
+      // mtconnect-provider.spec.ts drives Establish Connection against the compose fixture, so it
+      // takes the second server for the reason kafka-provider.spec.ts does.
+      name: "chromium-mtconnect",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
+      testMatch: /mtconnect-provider\.spec\.ts/,
     },
     {
       // etcd-provider.spec.ts drives Test Connection too, so it takes the second server for the reason
