@@ -5,13 +5,15 @@
     "src/components/ui/**/*.{ts,tsx}",
     "tests/**/*.{ts,tsx}",
     "e2e/**/*.ts",
-    "scripts/*.mjs"
+    "scripts/*.mjs",
+    "scripts/*.ts"
   ],
   "project": [
     "src/**/*.{ts,tsx}",
     "tests/**/*.{ts,tsx}",
     "e2e/**/*.ts",
-    "scripts/*.mjs"
+    "scripts/*.mjs",
+    "scripts/*.ts"
   ],
   "ignoreDependencies": [
     "tailwindcss",
