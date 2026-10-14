@@ -1941,7 +1941,7 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
       "On S3-compatible object storage that is one AWS CLI read command, or Studio's own `preview`, in a block tagged `s3`, which the run never executes.",
     );
     expect(guide).toContain(`So on the other ${word(refused)} ids in the \`DatabaseType\` union`);
-    expect(guide).toContain("Qdrant, Oxia, Databend, S3-compatible object storage, Kubernetes and LibreDB. That");
+    expect(guide).toContain("Qdrant, Oxia, Databend, S3-compatible object storage and LibreDB. That");
     expect(guide).toContain(`no longer takes this path at all on the other ${word(provided)}:`);
     expect(guide).toContain(`on the other ${word(noStatistics)} the plan is told that this engine holds none`);
     const flow = flat(read("docs/AGENT_DATA_FLOW.md"));

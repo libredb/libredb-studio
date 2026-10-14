@@ -466,7 +466,7 @@ that every statement it sends arrives inside `BEGIN READ ONLY`, down to the prov
 EXPLAIN-format probe at connect to keep that true, and an object read taken there acquired a second
 provider under `agent-operations` and sent the walk's catalog SQL outside that envelope.
 
-Those two dialects do not lose the kind for it. They are two of the five engines agent mode executes on, and
+Those two dialects do not lose the kind for it. They are two of the six engines agent mode executes on, and
 an inventory that hands a model a view under the word table is the defect #414 measured, so the kind is
 composed on the catalog path the same way every other fact that path carries is: the composed statement
 selects the ENGINE's own word for the relation, and `context-snapshot.ts` maps it onto the kind id the

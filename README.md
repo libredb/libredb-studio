@@ -203,9 +203,10 @@ what comes back, and finishes by composing a report whose every claim cites the 
   and `EXPLAIN ANALYZE` is default-denied because it would run the statement. This pipeline is the
   agent's alone: statements you run yourself in the editor call the provider directly
   (`src/app/api/db/query/route.ts:44`) and are neither policy-checked nor audited this way.
-- **Agent mode reads PostgreSQL, SQLite, DuckDB, SQL Server and MySQL.** The read-only profile is
-  database-native, so it exists only where a provider implements it — `queryReadOnly` on
-  `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts` and `mysql.ts`, and nowhere else. On any
+- **Agent mode reads PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and Kubernetes.** The read-only profile
+  exists only where a provider implements it: `queryReadOnly` on
+  `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts` and `kubernetes/index.ts`, and nowhere else.
+  On Kubernetes the boundary is Studio's request allowlist plus the agent identity's RBAC. On any
   other engine an Agent-mode run whose workflow sends statements is refused when it is started,
   before a run is opened, and any that reaches the provider factory ends `engine-unsupported`.
   **Plan** mode opens on
@@ -214,7 +215,7 @@ what comes back, and finishes by composing a report whose every claim cites the 
   SQLite the server composes catalog statements itself, and on every other connection it asks that
   connection's own provider to describe its
   schema — the reading the sidebar already performs — which needs no read-only statement path. So the
-  two limits are separate: agent mode is those five engines, grounding is all of them, and a run whose
+  two limits are separate: agent mode is those six engines, grounding is all of them, and a run whose
   reading fails says so plainly rather than inventing tables.
 - **Three workflows**: **Investigate** (answer a question), **Optimize** (compare estimated plans,
   propose an index or a rewrite), **Assess** (profile tables — counts only, never values).
