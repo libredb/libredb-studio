@@ -2462,6 +2462,18 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
       elapsedMs: result.executionTime,
     },
   };
+  const warnings = result.warnings ?? [];
+  // What the provider said about its own answer (an applied tail, a defaulted container) is part of the answer: a
+  // model that cannot see it reads 100 lines as the whole log. Fenced like the rows, because a provider may quote
+  // engine text in one. Absent when there is none, so a result with no warnings reads exactly as it always did.
+  const warned =
+    warnings.length === 0
+      ? ""
+      : `\n${fenceUntrustedContent(warnings.map((warning) => warning.message).join("\n"), {
+          label: `${call.label ?? "result"} warnings`,
+          operationId: artifact.operationId,
+          reference: artifact.correlationId,
+        })}`;
   return {
     kind: "completed",
     artifact,
@@ -2475,7 +2487,7 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
       label: `${call.label ?? "result"}, ${result.rowCount} row(s)`,
       operationId: artifact.operationId,
       reference: artifact.correlationId,
-    })}`,
+    })}${warned}`,
   };
 }
 

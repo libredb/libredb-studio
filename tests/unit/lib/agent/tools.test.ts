@@ -524,6 +524,20 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
     expect(report.kind).toBe("composed");
   });
 
+  test("provider warnings reach the model fenced, and a result with none reads as it always did", async () => {
+    const warned = harness({}, async () =>
+      queryResult({ warnings: [{ message: "Studio read the last 100 lines of each stream." }] }),
+    );
+    const plain = harness();
+    const withWarnings = await runReadQueryTool(warned.context, { sql: "SELECT 1" });
+    const without = await runReadQueryTool(plain.context, { sql: "SELECT 1" });
+
+    expect(withWarnings.modelText).toContain("Studio read the last 100 lines of each stream.");
+    expect(withWarnings.modelText).toContain("warnings");
+    expect(without.modelText).not.toContain("warnings");
+    expect(without.modelText.split(UNTRUSTED_CONTENT_BEGIN)).toHaveLength(2);
+  });
+
   /*
     Measured 2026-10-05 on `qwen2.5:3b-instruct`, data-analysis: FIFTY-FIVE refusals in one
     five-run cell, every one character for character `presentation belongs to present_answer,
