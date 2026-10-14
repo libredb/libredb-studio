@@ -127,6 +127,7 @@ import {
   composeReportTool,
   handoverText,
   inspectOperationsTool,
+  inspectUsageTool,
   inspectPlanTool,
   planTableProfile,
   presentAnswerTool,
@@ -157,8 +158,8 @@ import {
   neutraliseToolInput,
   neutraliseUntrustedMarkers,
 } from "./untrusted-content";
-import { isStatementReadOperation } from "@/lib/db/operations/descriptors";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import { clusterUsageReadInput, isStatementReadOperation } from "@/lib/db/operations/descriptors";
+import type { ClusterUsageInput, ProviderCapabilities } from "@/lib/db/types";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
 import type { DatabaseType } from "@/lib/types";
 
@@ -221,7 +222,37 @@ export type AgentInvestigationResult =
  * so a new database tool stops this file compiling until it names its handler. Adding a
  * tool means deciding, here, which side it is on.
  */
-type DatabaseToolName = Exclude<AgentToolName, LedgerOnlyToolName>;
+type DatabaseToolName = Exclude<AgentToolName, LedgerOnlyToolName | EvidenceToolName>;
+
+/**
+ * The curated cluster readings whose result is EVIDENCE of a kind a verdict asks for, so the drive writes an event of
+ * that kind beside the settled step. They reach the cluster through `service.runStep` like any database tool and are
+ * handled apart only because of that event; see `readEvidence`.
+ */
+type EvidenceToolName = "inspect_usage";
+
+/**
+ * The event each evidence tool writes when it completes. Typed through the event union, so a kind the ledger does not
+ * admit cannot be named here.
+ */
+const AGENT_EVIDENCE_EVENT: Readonly<
+  Record<EvidenceToolName, Extract<AgentRunEvent["kind"], "usage-read" | "workloads-profiled">>
+> = Object.freeze({
+  inspect_usage: "usage-read",
+});
+
+/** Each evidence tool's argument schema, which names the namespace its event records, and the tool itself. */
+const EVIDENCE_TOOLS: Readonly<
+  Record<
+    EvidenceToolName,
+    {
+      readonly input: z.ZodType<ClusterUsageInput>;
+      readonly run: (context: AgentToolContext, input: unknown) => Promise<AgentToolOutcome>;
+    }
+  >
+> = Object.freeze({
+  inspect_usage: { input: clusterUsageReadInput, run: inspectUsageTool },
+});
 
 /**
  * Tools that do NOT go through `invokeDatabaseTool`.
@@ -2113,6 +2144,17 @@ function describePriorProgress(record: AgentRunRecord): string | null {
             reference: event.artifact.correlationId,
           },
         )}`,
+      );
+    } else if (event.kind === "usage-read") {
+      // Durable and non-terminal like the profile above: a resumed run that was not told would spend a statement
+      // measuring what it already measured, and could not cite the reading it holds. The namespace is a validated
+      // DNS label and the selector is the model's own argument, so neither is cluster content.
+      lines.push(
+        `Container usage in namespace ${event.namespace}${event.selector === undefined ? "" : ` (selector ${event.selector})`} was already read, artifact ${event.artifact.correlationId}. That reading is recorded; read it again only for a different namespace or selector.`,
+      );
+    } else if (event.kind === "usage-unavailable") {
+      lines.push(
+        `Usage could not be read in namespace ${event.namespace}: this cluster serves no usage metrics (metrics.k8s.io), because metrics-server is not installed or not answering. Asking again will not change that.`,
       );
     } else if (event.kind === "recommendation") {
       lines.push(
@@ -4341,6 +4383,10 @@ async function handleCall(input: {
   // own inventory rather than from the model's arguments, so its step identity is
   // the table and depth it names. Handled here, where the run record is in hand.
   if (call.toolName === "profile_table") return profileTable(service, context, call, known, notAttempted);
+  // An evidence reading reaches the cluster as a database tool does, and writes its own event beside the step.
+  if (Object.hasOwn(EVIDENCE_TOOLS, call.toolName)) {
+    return readEvidence(service, context, call, known, notAttempted, call.toolName as EvidenceToolName);
+  }
 
   const name = call.toolName as DatabaseToolName;
   const stepId = deriveStepId(name, call.input);
@@ -4487,6 +4533,77 @@ async function profileTable(
     text: notAttempted.has(result.stepId)
       ? refusedBeforeDatabaseText(result.stepId, "profile_table")
       : indeterminateText(result.stepId, "profile_table"),
+  };
+}
+
+/**
+ * One evidence reading, settled as a step and recorded as the event its verdict reads.
+ *
+ * Modelled on `profileTable`: the step settles through `service.runStep`, so a replay, a cancellation and the audit
+ * trail treat it as every other reach, and the event is written inside the settled step, so a reader never sees
+ * evidence whose read was not also recorded. A completed reading writes `AGENT_EVIDENCE_EVENT[tool]` with its
+ * artifact and what it covered. A cluster that serves no usage metrics writes `usage-unavailable`: the refusal alone
+ * cannot tell the verdict that the cluster, not the run, is why usage was never measured.
+ *
+ * The step id is derived from the PARSED arguments where they parse, so two calls that differ only in key order are
+ * one step; arguments that do not parse keep their raw form and the tool answers them as invalid.
+ */
+async function readEvidence(
+  service: AgentRunService,
+  context: AgentToolContext,
+  call: { readonly input: unknown },
+  known: Set<string>,
+  notAttempted: Set<string>,
+  tool: EvidenceToolName,
+): Promise<CallResult> {
+  const parsed = EVIDENCE_TOOLS[tool].input.safeParse(call.input);
+  const covered = parsed.success ? parsed.data : undefined;
+  const stepId = deriveStepId(tool, covered ?? call.input);
+  known.add(stepId);
+
+  const { operationId } = agentToolDefinition(context.statementLanguage, context.workflowType, tool);
+  let modelText = "";
+  const result = await service.runStep(
+    context.runId,
+    { stepId, tool, ...(operationId === undefined ? {} : { operationId }) },
+    async () => {
+      const outcome = await EVIDENCE_TOOLS[tool].run(context, call.input);
+      modelText = outcome.modelText;
+      if (outcome.kind === "completed" && covered !== undefined) {
+        await service.recordEvent(context.runId, {
+          kind: AGENT_EVIDENCE_EVENT[tool],
+          artifact: outcome.artifact,
+          namespace: covered.namespace,
+          ...(covered.selector === undefined ? {} : { selector: covered.selector }),
+        });
+      } else if (
+        outcome.kind === "refused" &&
+        covered !== undefined &&
+        outcome.refusal.class === "reading-refused" &&
+        outcome.refusal.reasonCode === "METRICS_UNAVAILABLE"
+      ) {
+        await service.recordEvent(context.runId, { kind: "usage-unavailable", namespace: covered.namespace });
+      }
+      const settlement = settlementOf(outcome);
+      if (settlement.kind === "not-attempted") notAttempted.add(stepId);
+      return settlement;
+    },
+  );
+
+  if (result.kind === "cancelled") return { kind: "cancelled" };
+  if (result.kind === "paused") return { kind: "paused" };
+  if (result.kind === "performed") return { kind: "answered", text: modelText };
+  if (result.kind === "replayed") {
+    return {
+      kind: "answered",
+      text: `This exact call was already made in this run. ${describeSettled(result.event, tool)}`,
+    };
+  }
+  return {
+    kind: "answered",
+    text: notAttempted.has(result.stepId)
+      ? refusedBeforeDatabaseText(result.stepId, tool)
+      : indeterminateText(result.stepId, tool),
   };
 }
 

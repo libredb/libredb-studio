@@ -68,13 +68,16 @@ import {
   type AgentCuratedReadInput,
   type CuratedOperationKind,
   agentCuratedReadInput,
+  clusterUsageReadInput,
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
+import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
 import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/execution";
 import { inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
 import type {
+  ClusterUsageInput,
   Container,
   DatabaseObject,
   KindCount,
@@ -189,6 +192,8 @@ export type AgentToolName =
   | "recommend_change"
   /** Operations only: one curated reading of what the engine says about itself. */
   | "inspect_operations"
+  /** Resource efficiency on a cluster: container usage against requests and limits in one namespace. */
+  | "inspect_usage"
   /**
    * Which result IS the answer, and how it should be shown. Reaches no database.
    *
@@ -224,7 +229,9 @@ export type AgentOperationId =
    */
   | "db.schema.read"
   /** One kubectl read the model wrote, on a `kubernetes` connection; see `kubectlQueryReadDescriptor` for its id. */
-  | "kubectl.query.read";
+  | "kubectl.query.read"
+  /** Container usage in one namespace, a curated cluster reading; see `clusterUsageReadDescriptor` for its id. */
+  | "cluster.usage.read";
 
 export interface AgentToolDefinition {
   readonly name: AgentToolName;
@@ -1193,6 +1200,13 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
     inputSchema: agentCuratedReadInput,
     operationId: "db.operations.read",
   },
+  inspect_usage: {
+    name: "inspect_usage",
+    description:
+      "Read how much CPU and memory each container in one namespace uses right now, against its requests and limits. Pass namespace, and a label selector to narrow it. One row per container: its pod and owning workload, CPU in millicores and memory in bytes as numbers, its requests and limits, and usage divided by request. The figures are metrics-server's latest sample over its window, a moment and not a history. More than 500 containers are refused: narrow by selector.",
+    inputSchema: clusterUsageReadInput,
+    operationId: "cluster.usage.read",
+  },
   present_answer: {
     name: "present_answer",
     description: `Record that one result you have already read IS the answer, and how it should be shown. Only a result of a run_read_query you drafted can be the answer: a plan describes a statement without running it and a profile returns counts about a table, so neither may be presented — both may still be cited as evidence. Pass the artifact id that read reported; the statement behind it comes from this run's own ledger, so you do not supply it. The columns a chart names are checked against that result's real columns and refused if they do not match. Your report must then cite this same artifact in at least one claim: the presentation shows the result and the claims say what it means, so a report resting on other evidence entirely leaves the run scored as not having answered. ${AGENT_ANSWER_CONTRACT}`,
@@ -1537,6 +1551,8 @@ const READING_REFUSAL_TEXT: Record<AgentReadingDenyCode, string> = {
     "This database serves no reading of that kind, so nothing was read. Ask for a different kind, or report what the other readings established — including that this one is unavailable here.",
   READING_OVER_BUDGET:
     "That reading came back larger than this run may carry, so none of it was kept: a partial reading would be a misleading one. Ask again with a smaller limit; it bounds every kind of reading, not only the ones the engine limits itself.",
+  METRICS_UNAVAILABLE:
+    "This cluster serves no usage metrics (metrics.k8s.io), so nothing could be measured: metrics-server is not installed or not answering. Report that, and what your other readings established; usage cannot be read here.",
 };
 
 function approvalText(operationId: string): string {
@@ -2086,7 +2102,11 @@ interface AuditedAgentCall {
  * happened.
  */
 class AgentCuratedReadError extends Error {
-  constructor(readonly reasonCode: AgentReadingDenyCode) {
+  constructor(
+    readonly reasonCode: AgentReadingDenyCode,
+    /** The sentence the model reads, where this reading's advice differs from the generic one. */
+    readonly modelText?: string,
+  ) {
     super(reasonCode);
     this.name = "AgentCuratedReadError";
   }
@@ -2349,7 +2369,7 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
         },
         // The server's own words: nothing an engine wrote is in this sentence, so it
         // is not fenced.
-        modelText: READING_REFUSAL_TEXT[error.reasonCode],
+        modelText: error.modelText ?? READING_REFUSAL_TEXT[error.reasonCode],
       };
     }
     // The phase gate comes FIRST and is unconditional. A failure raised before the
@@ -3872,6 +3892,64 @@ export async function inspectOperationsTool(context: AgentToolContext, input: un
   });
 }
 
+/** The cluster usage reading's advice past its row ceiling: it takes no limit, so a smaller limit is not advice. */
+const CLUSTER_OVER_CEILING_TEXT =
+  "That reading holds more than 500 rows, the most it may carry, so none of it was kept. Ask again narrowed by a label selector, or for a smaller namespace.";
+
+/** The same advice past the run's byte budget, which a few hundred wide rows can reach under the row ceiling. */
+const clusterOverBytesText = (bytes: number, allowed: number): string =>
+  `That reading came to ${bytes} bytes, more than the ${allowed} bytes this run may carry, so none of it was kept. Ask again narrowed by a label selector, or for a smaller namespace.`;
+
+/**
+ * The cluster usage reading, inside the audited call.
+ *
+ * Acquired under the agent's read-only profile rather than the operations one: the selector is the model's and reaches
+ * the API server, so the reading is a `data-read` under the kubectl read boundary, and machine redaction applies.
+ * `metrics-unavailable` and `over-ceiling` are the provider's answers, not failures, and become the typed refusals
+ * here, after the call was charged. Both bounds refuse and nothing is cut: the provider's own 500-row ceiling, and the
+ * run's byte budget measured as the read path measures it.
+ */
+async function runClusterUsage(
+  context: AgentToolContext,
+  input: ClusterUsageInput,
+  budget: ExecutionBudget,
+  phase: { statementSent: boolean },
+): Promise<QueryResult> {
+  const provider = await context.acquireProvider(context.connection, AGENT_EXECUTION_PROFILE);
+  if (typeof provider.readClusterUsage !== "function") throw new AgentCuratedReadError("KIND_UNSUPPORTED_BY_PROVIDER");
+  phase.statementSent = true;
+  const reading = await provider.readClusterUsage(input, {
+    statementTimeoutMs: budget.statementTimeoutMs,
+    maxResultRows: budget.maxResultRows,
+    maxResultBytes: budget.maxResultBytes,
+  });
+  if (reading.kind === "metrics-unavailable") throw new AgentCuratedReadError("METRICS_UNAVAILABLE");
+  if (reading.kind === "over-ceiling")
+    throw new AgentCuratedReadError("READING_OVER_BUDGET", CLUSTER_OVER_CEILING_TEXT);
+  const bytes = measureResultBytes(reading.result.rows);
+  if (bytes > budget.maxResultBytes) {
+    throw new AgentCuratedReadError("READING_OVER_BUDGET", clusterOverBytesText(bytes, budget.maxResultBytes));
+  }
+  return reading.result;
+}
+
+/** Container usage against requests and limits in one namespace: one audited call, one statement charge. */
+export async function inspectUsageTool(context: AgentToolContext, input: unknown): Promise<AgentToolOutcome> {
+  const parsed = parseToolInput(clusterUsageReadInput, input);
+  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
+  const selector = parsed.value;
+  return runAuditedAgentCall(context, {
+    operationId: "cluster.usage.read",
+    // The kubectl fingerprint, which keeps case: two selectors differing in case are two reads.
+    fingerprintSource: `usage ${selector.namespace} ${selector.selector ?? ""}`,
+    fingerprintLanguage: "kubectl",
+    input: selector,
+    label: `container usage in ${selector.namespace}`,
+    invoke: (validatedInput, budget, phase) =>
+      runClusterUsage(context, validatedInput as ClusterUsageInput, budget, phase),
+  });
+}
+
 /**
  * The ESTIMATING plan inspection, and only that one. The executing variant is a
  * separate, approval-gated descriptor and no tool reaches it.
@@ -4435,7 +4513,7 @@ function matchesCard(change: "index" | "rewrite", statement: string): boolean {
  * The event kinds that carry an artifact this run produced. A set rather than two comparisons, so a later reading
  * that produces an artifact of its own is added here once and is citable everywhere `producedArtifact` is read.
  */
-const ARTIFACT_EVENTS: ReadonlySet<AgentRunEvent["kind"]> = new Set(["tool-completed", "table-profiled"]);
+const ARTIFACT_EVENTS: ReadonlySet<AgentRunEvent["kind"]> = new Set(["tool-completed", "table-profiled", "usage-read"]);
 
 /**
  * The artifact this run produced under that id, or null.

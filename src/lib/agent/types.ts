@@ -679,20 +679,24 @@ export interface AgentContextSnapshot extends AgentInventory {
 }
 
 /**
- * Why a curated reading that sends no statement was refused. Both are decided INSIDE
+ * Why a curated reading that sends no statement was refused. Each is decided INSIDE
  * the call, after the pipeline allowed it and the provider was acquired, which is
  * exactly why they are refusals rather than "the run decided not to ask": a statement
  * of the run's budget was charged and the execution was audited, so a settlement that
  * said nothing happened would contradict the ledger.
  *
- * The grounding schema read (#414) adds no third code. A provider that cannot describe
+ * The grounding schema read (#414) adds no code of its own. A provider that cannot describe
  * itself is not a state that exists — the four object-surface methods are required on
  * `DatabaseProvider` (#789) — and the reachable failure, one of them rejecting, is a
  * database error the reading path already reports as one. The declaration-shaped
  * absence, an engine with no `objectKinds`, is answered before anything is charged, so
  * it never reaches a settlement either.
+ *
+ * `METRICS_UNAVAILABLE` is the cluster usage reading's own: the cluster serves no metrics.k8s.io, or serves one whose
+ * backend does not answer. It is the cluster's fact rather than a failure of the read, so no rewording of the call
+ * could change it and it costs no repair attempt.
  */
-export type AgentReadingDenyCode = "KIND_UNSUPPORTED_BY_PROVIDER" | "READING_OVER_BUDGET";
+export type AgentReadingDenyCode = "KIND_UNSUPPORTED_BY_PROVIDER" | "READING_OVER_BUDGET" | "METRICS_UNAVAILABLE";
 
 /**
  * Why a tool call produced no result. The four variants are distinct in TYPE,
@@ -1366,6 +1370,32 @@ export type AgentRunEvent =
        */
       readonly artifact: AgentArtifactReference;
       readonly profile: AgentTableProfile;
+    })
+  | (AgentRunEventBase & {
+      /**
+       * Container usage in one namespace was read against requests and limits, so a report or a resources
+       * recommendation can CITE it.
+       *
+       * Its own kind for the reason `table-profiled` has one: the artifact is this reading's evidence, and the
+       * resource-efficiency verdict asks for a usage reading by kind rather than for any read. The namespace and the
+       * selector are what the reading covered, recorded so a resumed run is told what it already measured.
+       */
+      readonly kind: "usage-read";
+      readonly artifact: AgentArtifactReference;
+      readonly namespace: string;
+      readonly selector?: string;
+    })
+  | (AgentRunEventBase & {
+      /**
+       * The cluster serves no usage metrics for this namespace: metrics.k8s.io is absent, or its backend
+       * (metrics-server) does not answer.
+       *
+       * A fact about the cluster, recorded as one, rather than only a refused step: the verdict reads it to say the
+       * run could not measure usage and why, which a refusal code alone cannot tell apart from a reading the run
+       * chose not to keep.
+       */
+      readonly kind: "usage-unavailable";
+      readonly namespace: string;
     })
   | (AgentRunEventBase & {
       /**

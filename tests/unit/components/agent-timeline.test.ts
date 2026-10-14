@@ -2445,6 +2445,45 @@ describe("a recommendation reads as a proposal, never as something that happened
   });
 });
 
+describe("a cluster usage reading folds", () => {
+  test("a usage reading, a cluster without usage metrics and its refusal each have an entry", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: {
+          kind: "usage-read",
+          atMs: 7,
+          artifact: {
+            correlationId: "corr-usage",
+            runId: "run-1",
+            operationId: "cluster.usage.read",
+            summary: { rowCount: 3, columnNames: ["pod"], elapsedMs: 9 },
+          },
+          namespace: "shop",
+        },
+      }),
+      event({ kind: "event", event: { kind: "usage-unavailable", atMs: 8, namespace: "web" } }),
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 9,
+          stepId: "s1",
+          refusal: { class: "reading-refused", reasonCode: "METRICS_UNAVAILABLE" },
+        },
+      }),
+    ]);
+
+    expect(view.items[1]).toMatchObject({ headline: "Usage read", artifactId: "corr-usage" });
+    expect(view.items[1]?.detail).toContain("shop");
+    expect(view.items[2]?.headline).toBe("Usage metrics unavailable");
+    expect(view.items[2]?.detail).toContain("metrics-server");
+    expect(view.items[3]?.headline).toBe("This cluster serves no usage metrics");
+    expect(view.items[3]?.detail).toBe("METRICS_UNAVAILABLE");
+  });
+});
+
 describe("a table profile reads as counts and findings, never as values", () => {
   const profiled = (findings: readonly { code: string; column: string; detail: string }[]): AgentLedgerEntry =>
     event({

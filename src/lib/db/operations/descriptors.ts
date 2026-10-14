@@ -332,7 +332,7 @@ export const kubectlQueryReadDescriptor: RegistrableOperationDescriptor = {
 };
 
 /** One namespace (a DNS-1123 label, as the API server names one) and an optional label selector over its pods. */
-const clusterUsageReadInput = z.strictObject({
+export const clusterUsageReadInput = z.strictObject({
   namespace: z.string().regex(/^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/),
   selector: z
     .string()

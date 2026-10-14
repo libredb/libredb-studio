@@ -427,6 +427,7 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
     // the array comparison this assertion used to make was blind to every tool that
     // declares no operation — it passed unchanged when two more were added.
     expect([...operations].sort()).toStrictEqual([
+      "cluster.usage.read",
       "db.operations.read",
       "sql.explain.estimate",
       "sql.query.read",

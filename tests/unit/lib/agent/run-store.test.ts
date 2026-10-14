@@ -363,6 +363,25 @@ describe("AgentRunStore — folding the ledger into a record", () => {
     );
   });
 
+  test("a ledger holding a usage reading and a cluster without usage metrics folds", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun(OPEN_INPUT);
+    await store.appendEvent(runId, event("run-started", 1, { mode: "agent" }));
+    await store.appendEvent(
+      runId,
+      event("usage-read", 2, {
+        artifact: { ...artifactFor(runId, "usage_1"), operationId: "cluster.usage.read" },
+        namespace: "shop",
+        selector: "app=web",
+      }),
+    );
+    await store.appendEvent(runId, event("usage-unavailable", 3, { namespace: "web" }));
+
+    const view = await store.read(runId);
+    expect(view?.record.events.map((entry) => entry.kind)).toEqual(["run-started", "usage-read", "usage-unavailable"]);
+    expect(view?.record.status).toBe("running");
+  });
+
   test("a cancellation request is visible in the view but is not one of the run's events", async () => {
     const clock = fakeClock();
     const { store } = storeAt(undefined, clock.read);

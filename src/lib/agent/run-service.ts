@@ -129,6 +129,10 @@ export type AgentRunNarrativeEvent = Extract<
       | "plan-comparison"
       | "recommendation"
       | "table-profiled"
+      // A usage reading's evidence, and the cluster's own fact that it serves no usage metrics: both written by the
+      // drive beside a step that settles on its own, so neither settles one.
+      | "usage-read"
+      | "usage-unavailable"
       // Which result IS the answer: a decision about a read already on the ledger,
       // reaching nothing and settling no step, like the three above it.
       | "answer-composed"

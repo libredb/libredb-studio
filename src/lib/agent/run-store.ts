@@ -124,6 +124,8 @@ const EVENT_KINDS: ReadonlySet<string> = new Set(
     "tool-refused": true,
     "report-composed": true,
     "table-profiled": true,
+    "usage-read": true,
+    "usage-unavailable": true,
     "plan-comparison": true,
     recommendation: true,
     "call-held": true,

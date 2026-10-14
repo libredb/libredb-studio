@@ -7,6 +7,7 @@ import {
   AGENT_TOOL_DEFINITIONS,
   type AgentToolContext,
   agentToolDefinition,
+  inspectUsageTool,
   presentAnswerTool,
   runReadQueryTool,
   selectAgentTools,
@@ -19,7 +20,8 @@ import { QueryError } from "@/lib/db/errors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
 import { AGENT_PAGING_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
-import type { DatabaseProvider } from "@/lib/db/types";
+import { CLUSTER_USAGE_FIELDS } from "@/lib/db/providers/platform/kubernetes/agent-readings";
+import type { ClusterUsageReading, DatabaseProvider } from "@/lib/db/types";
 import type { AgentRunEvent } from "@/lib/agent/types";
 import type { QueryResult } from "@/lib/types";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
@@ -253,5 +255,145 @@ describe("present_answer on a kubectl data-analysis run", () => {
     );
 
     expect(answer).toMatchObject({ kind: "unavailable", reasonCode: "ANSWER_NOT_A_DATA_READ" });
+  });
+});
+
+describe("inspect_usage", () => {
+  /*
+    The tool layer only. A drive that records `usage-read` and `usage-unavailable` on the ledger needs a variant that
+    offers this tool, and no kubectl variant does until the resource-efficiency variant lands; that drive test is
+    written there, against the variant, rather than here against a handler exported for tests.
+  */
+
+  const USAGE_ROW = {
+    namespace: "shop",
+    ownerKind: "Deployment",
+    ownerName: "web",
+    pod: "web-1",
+    container: "app",
+    cpuMillicores: 120,
+    memoryBytes: 52_428_800,
+    cpuRequestMillicores: 250,
+    cpuLimitMillicores: 500,
+    memoryRequestBytes: 134_217_728,
+    memoryLimitBytes: 268_435_456,
+    cpuRequestRatio: 0.48,
+    memoryRequestRatio: 0.390625,
+    window: "30s",
+    timestamp: "2026-10-14T09:00:00Z",
+  };
+
+  const ROWS: ClusterUsageReading = {
+    kind: "rows",
+    result: { rows: [USAGE_ROW], fields: [...CLUSTER_USAGE_FIELDS], rowCount: 1, executionTime: 3 },
+  };
+
+  function usageHarness(answer: () => Promise<ClusterUsageReading>) {
+    const readClusterUsage = mock(answer);
+    const h = harness({
+      workflowType: "query-optimization",
+      acquireProvider: mock(async () => ({ readClusterUsage }) as unknown as DatabaseProvider),
+    });
+    return { ...h, readClusterUsage };
+  }
+
+  test("one audited call, one statement charge, under cluster.usage.read, rows fenced", async () => {
+    const h = usageHarness(async () => ROWS);
+    const outcome = await inspectUsageTool(h.context, { namespace: "shop", selector: "app=web" });
+
+    if (outcome.kind !== "completed") throw new Error(`expected a completed reading, got ${outcome.kind}`);
+    expect(outcome.artifact.operationId).toBe("cluster.usage.read");
+    expect(outcome.artifact.summary.rowCount).toBe(1);
+    expect(h.context.tracker.usage(h.context.runId).executedStatements).toBe(1);
+    expect(h.readClusterUsage).toHaveBeenCalledTimes(1);
+    expect(h.readClusterUsage).toHaveBeenCalledWith({ namespace: "shop", selector: "app=web" }, expect.any(Object));
+    // The cells are the cluster's content, so they reach the model inside the untrusted fence.
+    expect(outcome.modelText).toContain("BEGIN UNTRUSTED");
+    expect(outcome.modelText).toContain("web-1");
+  });
+
+  test("metrics unavailable is a reading-refused METRICS_UNAVAILABLE naming metrics-server", async () => {
+    const h = usageHarness(async () => ({ kind: "metrics-unavailable" }));
+    const outcome = await inspectUsageTool(h.context, { namespace: "shop" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "METRICS_UNAVAILABLE" });
+    expect(outcome.modelText).toContain("metrics-server");
+    expect(outcome.modelText).toContain("metrics.k8s.io");
+    // The call was made, so it was charged.
+    expect(h.context.tracker.usage(h.context.runId).executedStatements).toBe(1);
+  });
+
+  test("over the ceiling is READING_OVER_BUDGET with advice to narrow by namespace or selector", async () => {
+    const h = usageHarness(async () => ({ kind: "over-ceiling" }));
+    const outcome = await inspectUsageTool(h.context, { namespace: "shop" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
+    expect(outcome.modelText).toContain("500 rows");
+    expect(outcome.modelText).toContain("selector");
+    expect(outcome.modelText).toContain("namespace");
+    expect(outcome.modelText).not.toContain("smaller limit");
+  });
+
+  test("rows past the byte budget are READING_OVER_BUDGET with a byte sentence, never the generic limit advice", async () => {
+    const wide = { ...USAGE_ROW, ownerName: "w".repeat(4_000) };
+    const maxResultBytes = AGENT_WORKFLOW_BUDGETS["query-optimization"].policy.budgets.maxResultBytes;
+    // Few enough rows to sit under the 500-row ceiling, wide enough to pass the byte budget.
+    const count = Math.ceil(maxResultBytes / JSON.stringify(wide).length) + 1;
+    expect(count).toBeLessThan(500);
+    const h = usageHarness(async () => ({
+      kind: "rows",
+      result: { rows: Array(count).fill(wide), fields: [...CLUSTER_USAGE_FIELDS], rowCount: count, executionTime: 3 },
+    }));
+
+    const outcome = await inspectUsageTool(h.context, { namespace: "shop" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
+    expect(outcome.modelText).toContain(`${maxResultBytes} bytes`);
+    expect(outcome.modelText).toContain("selector");
+    expect(outcome.modelText).not.toContain("smaller limit");
+  });
+
+  test("a provider without readClusterUsage is KIND_UNSUPPORTED_BY_PROVIDER", async () => {
+    const h = harness({ workflowType: "query-optimization" });
+    const outcome = await inspectUsageTool(h.context, { namespace: "shop" });
+
+    expect(outcome).toMatchObject({
+      kind: "refused",
+      refusal: { class: "reading-refused", reasonCode: "KIND_UNSUPPORTED_BY_PROVIDER" },
+    });
+    expect(h.queryReadOnly).not.toHaveBeenCalled();
+  });
+
+  test("an invalid namespace is invalid input and reaches nothing", async () => {
+    const h = usageHarness(async () => ROWS);
+    for (const input of [{ namespace: "Shop" }, { namespace: "shop", selector: "  " }, { namespace: "shop", x: 1 }]) {
+      const outcome = await inspectUsageTool(h.context, input);
+      expect(outcome, JSON.stringify(input)).toMatchObject({ kind: "unavailable", reasonCode: "INVALID_TOOL_INPUT" });
+    }
+    expect(h.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("two selectors differing only in case are two calls to the repair ledger", async () => {
+    const h = usageHarness(async () => {
+      throw new QueryError("pods is forbidden", "kubernetes");
+    });
+
+    const first = await inspectUsageTool(h.context, { namespace: "shop", selector: "app=Web" });
+    expect(first).toMatchObject({ kind: "refused", refusal: { class: "database-error" } });
+    const same = await inspectUsageTool(h.context, { namespace: "shop", selector: "app=Web" });
+    expect(same).toMatchObject({ kind: "unavailable", reasonCode: "STATEMENT_ALREADY_FAILED" });
+    const otherCase = await inspectUsageTool(h.context, { namespace: "shop", selector: "app=web" });
+    expect(otherCase).toMatchObject({ kind: "refused", refusal: { class: "database-error" } });
+    expect(h.readClusterUsage).toHaveBeenCalledTimes(2);
+  });
+
+  test("the tool is defined under cluster.usage.read with a namespace and an optional selector", () => {
+    const definition = AGENT_TOOL_DEFINITIONS.inspect_usage;
+    expect(definition.operationId).toBe("cluster.usage.read");
+    expect(properties(definition.inputSchema)).toEqual(["namespace", "selector"]);
+    expect(definition.description).toContain("500");
   });
 });

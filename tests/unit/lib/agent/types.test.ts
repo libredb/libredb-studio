@@ -232,6 +232,19 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
       ],
     },
   },
+  // A cluster usage reading, the resource-efficiency evidence, and the cluster's own fact that it has no metrics.
+  "usage-read": {
+    kind: "usage-read",
+    atMs: 8,
+    artifact: { ...ARTIFACT, operationId: "cluster.usage.read" },
+    namespace: "shop",
+    selector: "app=web",
+  },
+  "usage-unavailable": {
+    kind: "usage-unavailable",
+    atMs: 8,
+    namespace: "shop",
+  },
   // The data-analysis face's own artifact: which result IS the answer, and how it
   // is to be shown. The spec names columns of THAT result and carries no colours,
   // no title and no aggregation — presentation is the app's, and an aggregation

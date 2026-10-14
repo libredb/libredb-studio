@@ -878,6 +878,7 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
 const READING_REFUSAL_HEADLINES: Readonly<Record<AgentReadingDenyCode, string>> = {
   KIND_UNSUPPORTED_BY_PROVIDER: "This engine serves no reading of that kind",
   READING_OVER_BUDGET: "The reading was larger than the run may carry",
+  METRICS_UNAVAILABLE: "This cluster serves no usage metrics",
 };
 
 /**
@@ -1094,6 +1095,20 @@ function describeEvent(
             : `${event.profile.rowCount} row(s) at ${event.profile.depth} depth. ${event.profile.findings
                 .map((finding) => `${finding.column}: ${finding.code} — ${finding.detail}`)
                 .join(" ")}`,
+      };
+    // Placeholders until their cards are written: the fold is total, so a kind the ledger admits must have an entry.
+    case "usage-read":
+      return {
+        tone: "progress",
+        headline: "Usage read",
+        detail: `Namespace ${event.namespace}, ${event.artifact.summary.rowCount} container(s)`,
+        artifactId: event.artifact.correlationId,
+      };
+    case "usage-unavailable":
+      return {
+        tone: "neutral",
+        headline: "Usage metrics unavailable",
+        detail: `Namespace ${event.namespace}: metrics-server is not installed or not answering.`,
       };
     case "answer-composed":
       return {

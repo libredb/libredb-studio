@@ -393,6 +393,8 @@ describe("what the removed panels did that these runs do not", () => {
       "inspect_operations",
       "inspect_plan",
       "inspect_schema",
+      // The cluster usage reading, offered by no SQL workflow: it reaches a cluster, not a monitoring panel.
+      "inspect_usage",
       // Registered, and offered by no workflow yet — asserted over every workflow
       // type in `tests/unit/lib/agent/tools.test.ts`.
       "present_answer",
@@ -400,9 +402,11 @@ describe("what the removed panels did that these runs do not", () => {
       "recommend_change",
       "run_read_query",
     ]);
-    // Four canonical operations: three composed SQL, and the curated read that names
-    // no statement at all. That fourth id is the thing B27 said did not exist.
+    // Four canonical SQL-side operations: three composed SQL, and the curated read that names
+    // no statement at all. That fourth id is the thing B27 said did not exist. The fifth is the
+    // cluster usage reading, which names no statement either.
     expect([...new Set(Object.values(AGENT_TOOL_DEFINITIONS).map((tool) => tool.operationId))].sort()).toEqual([
+      "cluster.usage.read",
       "db.operations.read",
       "sql.explain.estimate",
       "sql.query.read",
