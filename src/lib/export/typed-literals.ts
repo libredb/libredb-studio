@@ -789,6 +789,12 @@ const SPARK_ANSI_INTERVAL =
   /^INTERVAL '-?\d[\d :.-]*' (YEAR|MONTH|DAY|HOUR|MINUTE|SECOND)( TO (MONTH|HOUR|MINUTE|SECOND))?$/;
 const SPARK_NESTED_TYPE = /^(array|map|struct)</;
 /**
+ * A Spark type name with the article it is read with, "an array<int>", "an interval year to month", "a map<...>", for
+ * the refusals the skipped-row line quotes; a Spark type name is ASCII, so its first letter decides.
+ */
+const withArticle = (typeName: string): string => `${/^[aeiou]/i.test(typeName) ? "an" : "a"} ${typeName}`;
+
+/**
  * The type names inside an array, map or struct that FROM_JSON does not read back from the text the decoder writes,
  * each with the words its refused cell is reported in. Spark 4.2.0's JSON reader takes a binary value
  * only as base64, where the decoder writes `\x<hex>`; makes a JSON string under VARIANT a string VARIANT, where the
@@ -798,12 +804,12 @@ const SPARK_NESTED_TYPE = /^(array|map|struct)</;
  * and the CHAR and VARCHAR schemas failed.
  */
 const SPARK_NESTED_REFUSALS: ReadonlyMap<string, string> = new Map([
-  ["binary", "binary inside, which FROM_JSON reads only as base64"],
-  ["variant", "a VARIANT inside, which FROM_JSON would store as a string"],
-  ["geometry", "a geospatial value inside, which FROM_JSON does not read"],
-  ["geography", "a geospatial value inside, which FROM_JSON does not read"],
-  ["char", "a CHAR or VARCHAR inside, which a FROM_JSON schema does not take"],
-  ["varchar", "a CHAR or VARCHAR inside, which a FROM_JSON schema does not take"],
+  ["binary", "binary inside (FROM_JSON reads it only as base64)"],
+  ["variant", "a VARIANT inside (FROM_JSON would store it as a string)"],
+  ["geometry", "a geospatial value inside (FROM_JSON reads none)"],
+  ["geography", "a geospatial value inside (FROM_JSON reads none)"],
+  ["char", "a CHAR or VARCHAR inside (a FROM_JSON schema takes neither)"],
+  ["varchar", "a CHAR or VARCHAR inside (a FROM_JSON schema takes neither)"],
 ]);
 /**
  * FROM_JSON's options. Its default mode, PERMISSIVE, stores NULL for a whole value when one element does not parse (a
@@ -827,7 +833,7 @@ function sparkNestedRefusal(type: string): string | undefined {
     if (token !== "map" || tokens[index + 1] !== "<") continue;
     const afterKey = tokens[index + 3];
     if (tokens[index + 2] !== "string" || (afterKey !== "," && afterKey !== "collate")) {
-      return "a map whose keys are not strings, which FROM_JSON does not read";
+      return "a map whose keys are not strings (FROM_JSON reads none)";
     }
   }
   return undefined;
@@ -838,7 +844,7 @@ function sparkValue(value: unknown, declared: string): string | undefined {
   for (const temporal of SPARK_TEMPORAL) {
     if (!temporal.declared.test(type)) continue;
     if (typeof value !== "string" || !temporal.shape.test(value)) {
-      throw new UnwritableValue(`a ${type} value that is not in the form Studio reads from Spark`);
+      throw new UnwritableValue(`${withArticle(type)} value that is not in the form Studio reads from Spark`);
     }
     return `${temporal.keyword} ${quoteLiteral(value, "spark")}`;
   }
@@ -846,13 +852,13 @@ function sparkValue(value: unknown, declared: string): string | undefined {
     if (typeof value !== "string") return undefined;
     // Not quoted instead: Spark's default store assignment (ANSI) refuses a string into a BIGINT or DECIMAL column
     // with CANNOT_SAFELY_CAST (measured on 4.2.0).
-    if (!SPARK_DIGITS.test(value)) throw new UnwritableValue(`a ${type} value that is not digit text`);
+    if (!SPARK_DIGITS.test(value)) throw new UnwritableValue(`${withArticle(type)} value that is not digit text`);
     return value;
   }
-  if (type === "interval") throw new UnwritableValue("a calendar interval, which no Spark table column stores");
+  if (type === "interval") throw new UnwritableValue("a calendar interval (no Spark table column stores one)");
   if (SPARK_ANSI_INTERVAL_TYPE.test(type)) {
     if (typeof value !== "string" || !SPARK_ANSI_INTERVAL.test(value)) {
-      throw new UnwritableValue(`a ${type} value that is not an ANSI interval literal`);
+      throw new UnwritableValue(`${withArticle(type)} value that is not an ANSI interval literal`);
     }
     return value;
   }
@@ -861,11 +867,11 @@ function sparkValue(value: unknown, declared: string): string | undefined {
     return `PARSE_JSON(${quoteLiteral(value, "spark")})`;
   }
   if (type.startsWith("geometry") || type.startsWith("geography")) {
-    throw new UnwritableValue(`a ${type} value, which Studio does not write back to Spark in this version`);
+    throw new UnwritableValue(`${withArticle(type)} value (Studio does not write one back to Spark in this version)`);
   }
   if (SPARK_NESTED_TYPE.test(type)) {
     const refusal = sparkNestedRefusal(type);
-    if (refusal !== undefined) throw new UnwritableValue(`a ${type} value with ${refusal}`);
+    if (refusal !== undefined) throw new UnwritableValue(`${withArticle(type)} value with ${refusal}`);
     const json = quoteLiteral(jsonText(value), "spark");
     return `FROM_JSON(${json}, ${quoteLiteral(declared.trim(), "spark")}, ${SPARK_FROM_JSON_OPTIONS})`;
   }

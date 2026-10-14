@@ -452,6 +452,24 @@ describe("typedLiteral: spark", () => {
     );
   });
 
+  test("a Spark refusal holds no which-clause of its own and takes the article its type name needs", () => {
+    // The skipped-row line adds "which spark has no literal for", so a refusal that ended in its own which-clause read
+    // "which" twice there.
+    const refusals = [
+      unwritable(() => typedLiteral("x", "interval", "spark", scalar)),
+      unwritable(() => typedLiteral("x", "interval year to month", "spark", scalar)),
+      unwritable(() => typedLiteral("POINT (1 2)", "geometry(4326)", "spark", scalar)),
+      unwritable(() => typedLiteral({ 1: "a" }, "map<int,string>", "spark", scalar)),
+    ];
+    expect(refusals).toStrictEqual([
+      "a calendar interval (no Spark table column stores one)",
+      "an interval year to month value that is not an ANSI interval literal",
+      "a geometry(4326) value (Studio does not write one back to Spark in this version)",
+      "a map<int,string> value with a map whose keys are not strings (FROM_JSON reads none)",
+    ]);
+    for (const refusal of refusals) expect(refusal).not.toMatch(/\bwhich\b/);
+  });
+
   test("writes an ANSI interval as its rendered literal after its shape is checked", () => {
     expect(typedLiteral("INTERVAL '3-7' YEAR TO MONTH", "interval year to month", "spark", scalar)).toBe(
       "INTERVAL '3-7' YEAR TO MONTH",
@@ -487,25 +505,25 @@ describe("typedLiteral: spark", () => {
 
   test("refuses binary, VARIANT and geospatial values at any depth, read as type names and not field names", () => {
     expect(unwritable(() => typedLiteral(["\\x0102"], "array<binary>", "spark", scalar))).toBe(
-      "a array<binary> value with binary inside, which FROM_JSON reads only as base64",
+      "an array<binary> value with binary inside (FROM_JSON reads it only as base64)",
     );
     expect(unwritable(() => typedLiteral({ k: "\\x01" }, "map<string,binary>", "spark", scalar))).toBe(
-      "a map<string,binary> value with binary inside, which FROM_JSON reads only as base64",
+      "a map<string,binary> value with binary inside (FROM_JSON reads it only as base64)",
     );
     expect(unwritable(() => typedLiteral({ b: "\\x01", n: 1 }, "struct<b:binary,n:int>", "spark", scalar))).toBe(
-      "a struct<b:binary,n:int> value with binary inside, which FROM_JSON reads only as base64",
+      "a struct<b:binary,n:int> value with binary inside (FROM_JSON reads it only as base64)",
     );
     expect(unwritable(() => typedLiteral(['{"a":1}'], "array<variant>", "spark", scalar))).toBe(
-      "a array<variant> value with a VARIANT inside, which FROM_JSON would store as a string",
+      "an array<variant> value with a VARIANT inside (FROM_JSON would store it as a string)",
     );
     expect(unwritable(() => typedLiteral([[{ v: "1" }]], "ARRAY<ARRAY<STRUCT<v: VARIANT>>>", "spark", scalar))).toBe(
-      "a array<array<struct<v: variant>>> value with a VARIANT inside, which FROM_JSON would store as a string",
+      "an array<array<struct<v: variant>>> value with a VARIANT inside (FROM_JSON would store it as a string)",
     );
     expect(
       unwritable(() => typedLiteral({ g: "SRID=4326;POINT (1 2)" }, "struct<g:geometry(4326)>", "spark", scalar)),
-    ).toBe("a struct<g:geometry(4326)> value with a geospatial value inside, which FROM_JSON does not read");
+    ).toBe("a struct<g:geometry(4326)> value with a geospatial value inside (FROM_JSON reads none)");
     expect(unwritable(() => typedLiteral(["SRID=4326;POINT (1 2)"], "array<geography(4326)>", "spark", scalar))).toBe(
-      "a array<geography(4326)> value with a geospatial value inside, which FROM_JSON does not read",
+      "an array<geography(4326)> value with a geospatial value inside (FROM_JSON reads none)",
     );
     expect(typedLiteral({ variant: 1, binary: "x" }, "struct<variant:int,binary:string>", "spark", scalar)).toBe(
       `FROM_JSON('{"variant":1,"binary":"x"}', 'struct<variant:int,binary:string>', MAP('mode', 'FAILFAST'))`,
@@ -517,10 +535,10 @@ describe("typedLiteral: spark", () => {
 
   test("refuses a map whose key is not a string at any depth, which FROM_JSON does not take", () => {
     expect(unwritable(() => typedLiteral({ "1": "a" }, "map<int,string>", "spark", scalar))).toBe(
-      "a map<int,string> value with a map whose keys are not strings, which FROM_JSON does not read",
+      "a map<int,string> value with a map whose keys are not strings (FROM_JSON reads none)",
     );
     expect(unwritable(() => typedLiteral({ m: [[[1], 2]] }, "struct<m:map<array<int>,int>>", "spark", scalar))).toBe(
-      "a struct<m:map<array<int>,int>> value with a map whose keys are not strings, which FROM_JSON does not read",
+      "a struct<m:map<array<int>,int>> value with a map whose keys are not strings (FROM_JSON reads none)",
     );
     expect(typedLiteral({ k: 1 }, "map<string collate UTF8_LCASE,int>", "spark", scalar)).toBe(
       `FROM_JSON('{"k":1}', 'map<string collate UTF8_LCASE,int>', MAP('mode', 'FAILFAST'))`,
@@ -532,10 +550,10 @@ describe("typedLiteral: spark", () => {
 
   test("refuses a CHAR or VARCHAR at any depth, which a FROM_JSON schema does not take", () => {
     expect(unwritable(() => typedLiteral({ a: "x" }, "struct<a:char(5)>", "spark", scalar))).toBe(
-      "a struct<a:char(5)> value with a CHAR or VARCHAR inside, which a FROM_JSON schema does not take",
+      "a struct<a:char(5)> value with a CHAR or VARCHAR inside (a FROM_JSON schema takes neither)",
     );
     expect(unwritable(() => typedLiteral(["x"], "array<varchar(5)>", "spark", scalar))).toBe(
-      "a array<varchar(5)> value with a CHAR or VARCHAR inside, which a FROM_JSON schema does not take",
+      "an array<varchar(5)> value with a CHAR or VARCHAR inside (a FROM_JSON schema takes neither)",
     );
   });
   test("refuses a map whose keys are nested, a geospatial cell and a VARIANT that is not text", () => {
