@@ -251,6 +251,12 @@ Create a ServiceAccount token as in section 4.5 and connect with it; Studio mint
 The SSH tunnel dials the API server from the SSH host; the TLS identity is the far end, or the TLS server name when set.
 A far end given as a link-local or metadata literal is refused; a far end given as a name is resolved by the SSH server, which Studio cannot check.
 
+### 4.11 The agent's token
+
+The connection's `agentPassword` alone is the agent's bearer token, because Kubernetes declares `agentCredential: "token"`: no agent user is taken.
+Without an agent token, the agent uses the connection's own token.
+That identity's RBAC decides what the agent can see, so give it a ServiceAccount bound to `view`, and to `studio-reader` for the cluster-scoped kinds, as section 4.5 creates.
+
 ## 5. Query interface
 
 One kubectl command per run, the selected line: an optional leading `kubectl`, a leading `$ ` or `% ` prompt, POSIX shell quoting and `#` comment lines, with every short and long form of a flag kubectl takes (`-n shop`, `-n=shop`, `-nshop`, `--namespace shop`, `--namespace=shop`).
@@ -338,11 +344,43 @@ No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this version reads 
 ## 9. Capabilities, AI and MCP
 
 - `enforcesReadOnly`; the read-only box changes nothing, because nothing writes.
+
+Plan mode:
 - Plan mode sees the namespaces it walked, the kinds, their counts and object names; it walks the Default namespace and `Cluster` only and is told how many other namespaces it did not read.
 - Secret names are withheld from plan mode: the Secrets kind appears with its count.
 - Namespace names pass: the `Cluster` walk lists every namespace by name, the ones plan mode did not read included.
 - No value, label, annotation, env value, ConfigMap key or Secret key reaches the model, and the AI panels receive no Kubernetes name.
-- MCP is not offered for Kubernetes, and agent execution refuses its investigation and data-analysis workflows before a run opens (B105).
+
+Agent mode:
+- Agent mode runs every workflow on Kubernetes, each as its kubectl variant.
+- The agent reads through `kubectl.query.read`, one kubectl read of at most 4,096 characters under the statement row cap; a watch and the paging clause `# libredb:page` are refused.
+- Resource efficiency adds `inspect_usage` (`cluster.usage.read`), one row per container of a namespace with its metrics-server usage against its requests and limits.
+- Cluster health adds `profile_workloads` (`cluster.workloads.read`), one row per workload of a namespace with its desired and ready counts, restarts, missing requests, limits and probes, and its Warning events.
+- Each of the two readings is one statement charge and is refused past 500 rows, with advice to narrow by namespace or selector.
+- The agent runs as the agent token of section 4.11 when one is set, else as the connection's token.
+
+What the agent reads is masked in machine mode before it is written, at any depth of any object, pod templates and pod specs inside custom resources included; keys are kept and values become `<redacted>`:
+- the `value` of every element of an `env` array and of an `httpHeaders` array;
+- every element of a container's `command` and `args`, and of an `exec.command` under a probe or a lifecycle hook;
+- the values of every `annotations` map under any `metadata`;
+- ConfigMap `data` and `binaryData` values;
+- Secret `data` and `stringData` values, and the last-applied annotation;
+- a Secret's name wherever a field is defined to hold one: `secretName`, `secretRef.name` and every `*SecretRef.name`, a volume's or projected source's `secret.name`, `secretKeyRef.name`, `imagePullSecrets`, a ServiceAccount's `secrets`, an Ingress's `tls` secret, and an owner reference or an event's object when its kind is Secret;
+- the `resourceNames` of a Role or ClusterRole rule whose resources include `secrets` or `*` in the core group.
+
+A read whose target is core `secrets` masks every item's name, the Name cell of its table, its `-o name` line and the describe name.
+`get events` masks the object cell when the involved kind is Secret, a custom resource's table keeps only its Name and Age cells, `auth can-i --list` masks the Resource Names cell of a rule covering Secrets, and `auth whoami` masks `Extra:` values.
+
+What machine redaction leaves unmasked, the same six lines as `docs/AGENT.md` states:
+- Log lines and event messages are free text the server wrote; a credential an application prints reaches the model.
+- Status and condition messages pass.
+- Label values pass, and can hold anything a team put there.
+- Custom-resource fields with no structural rule pass in -o yaml and -o json.
+- A guessed Secret name can be confirmed to exist through get secret NAME or auth can-i get secrets/NAME; RBAC decides that.
+- The connection's Namespaces field lists the tree; it does not bound a statement, which may use -A or any -n.
+
+MCP:
+- MCP is not offered for Kubernetes: the MCP fence reads SQL only, so `run_read_query` and `inspect_schema` refuse a Kubernetes connection (B105).
 - The operations workflow opens on Kubernetes in both modes, as on every engine, because it sends no statement; its reports of sessions, slow queries, health, storage, table statistics and index usage come back empty or N/A here.
 
 ## 10. Error handling
@@ -389,6 +427,10 @@ Aggregated API groups, such as `metrics.k8s.io`, are proxied by the API server t
 
 Secrets: every answer to a request for core `secrets`, and every object whose kind is `Secret`, loses `data`, `stringData`, the `kubectl.kubernetes.io/last-applied-configuration` annotation and `managedFields` before anything leaves the provider, whichever command or view asked.
 A deploy tool may keep its own copy of the applied Secret in an annotation, so any other annotation of a Secret whose value is not short plain text, or that names a `data` or `stringData` key, is replaced by a marker; its key stays.
+
+Machine redaction sits beside the editor's Secret redaction and works the other way: the editor deletes a Secret's values and marks them `(removed by Studio)`, while the agent's reads keep every key and mask its value with `<redacted>`, by the rules of section 9.
+Routing reads the real body before masking, so `logs` still picks its container from the default-container annotation and `describe` still finds an object's events by its real name; masking runs only on what is written out.
+The editor's output does not change.
 
 ## 12. Limits and supported versions
 
@@ -442,7 +484,10 @@ Not measured: an etcd-backed managed cluster, Rancher's proxy, OpenShift (its pr
 - `get -w` takes no `-o name`, `-o json` or `-o yaml` (D288), and `auth can-i --list` shows the server's rules without kubectl's compaction (D289).
 - Test Connection records no `Audit-Id` from the API server (D287).
 - One ServiceAccount token per connection makes every Studio user one identity in the cluster's audit log.
-- No agent execution and no MCP (B105).
+- No MCP (B105).
+- No auto-execute on Kubernetes: a kubectl answer is never run in the editor, so the run route refuses `autoExecute`.
+- `inspect_usage` needs metrics-server: without `metrics.k8s.io` the run records that usage is unavailable and names metrics-server.
+- Restart counts are cumulative since a container started, so `profile_workloads` shows a count with the last termination time and reason, never a rate.
 
 ## 15. References
 

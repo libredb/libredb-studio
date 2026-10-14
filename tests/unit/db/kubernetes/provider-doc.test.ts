@@ -140,6 +140,21 @@ describe("the declarations the doc states", () => {
     expect(sectionOf("## 9. Capabilities, AI and MCP")).toContain("MCP is not offered for Kubernetes");
   });
 
+  test("section 9 carries the residue verbatim, and section 14 names only the MCP half of B105", () => {
+    const nine = sectionOf("## 9. Capabilities, AI and MCP");
+    for (const line of [
+      "Log lines and event messages are free text the server wrote; a credential an application prints reaches the model.",
+      "Status and condition messages pass.",
+      "Label values pass, and can hold anything a team put there.",
+      "Custom-resource fields with no structural rule pass in -o yaml and -o json.",
+      "A guessed Secret name can be confirmed to exist through get secret NAME or auth can-i get secrets/NAME; RBAC decides that.",
+      "The connection's Namespaces field lists the tree; it does not bound a statement, which may use -A or any -n.",
+    ])
+      expect(nine).toContain(line);
+    expect(sectionOf("## 14. Known limitations")).toContain("No MCP (B105)");
+    expect(sectionOf("## 4. Connection")).toContain("agent token");
+  });
+
   test("the studio-reader recipe is the file the throwaway clusters apply", () => {
     const recipe = read("docker/kubernetes/studio-reader.yaml")
       .split("\n")
