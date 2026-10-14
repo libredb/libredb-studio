@@ -322,6 +322,14 @@ Its three tools reach only seed connections opted in with `mcp: true`, through `
 It is standalone-only: nothing under `src/lib/mcp/` or `src/app/` is reachable from the package's entry points, which a package-boundary test asserts.
 Full behaviour, client configuration and limits: [`docs/MCP.md`](MCP.md).
 
+### 4.11. Governance Contract (`src/lib/governance/`, off by default)
+
+Studio can run under a control plane that decides which databases each person may open.
+The two never call each other: the control plane publishes a governance source, PostgreSQL views and tables in one schema, and Studio reads it with a role of its own and writes its heartbeat and query events back into it.
+`src/lib/governance/contract.ts` holds that contract as data together with every statement Studio issues against it, `src/lib/governance/settings-registry.ts` holds the runtime settings a control plane may set, and `scripts/generate-governance-manifest.ts` publishes both as `tests/fixtures/governance/contract-v1.json`, which a control plane vendors from a release.
+Governance is off unless `GOVERNANCE_SOURCE=postgres` is set.
+The contract, its conformance files and its semantics: [`docs/GOVERNANCE.md`](GOVERNANCE.md).
+
 ## 5. Directory Structure
 
 ```
@@ -398,6 +406,7 @@ src/
     │   └── types.ts         # Database types
     ├── agent/               # Agent runtime: run ledger, workflow, tools, policy (docs/AGENT.md)
     ├── mcp/                 # MCP server: SDK handler, token, pre-processing, tools (docs/MCP.md)
+    ├── governance/          # Governance contract v1: objects, statements and the settings registry (docs/GOVERNANCE.md)
     ├── passkey/             # Passkey sign-in (docs/PASSKEYS.md): config (PASSKEY_ORIGIN reader), policy, ceremony
     │                        #   cookie, WebAuthn wrapper, management and sign-in services, browser client
     ├── launch/              # Launch-token sign-in (docs/LAUNCH.md): config (LAUNCH_TOKEN_* reader), the token

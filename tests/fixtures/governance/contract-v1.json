@@ -1,0 +1,2210 @@
+{
+  "$comment": "Governance contract v1, generated from src/lib/governance by scripts/generate-governance-manifest.ts. Do not edit: run bun scripts/generate-governance-manifest.ts --write.",
+  "contractVersion": 1,
+  "supportedContractVersions": [
+    1
+  ],
+  "schema": "bridge",
+  "schemaGrants": {
+    "libredb_studio": [
+      "USAGE"
+    ],
+    "libredb_platform": [
+      "USAGE"
+    ]
+  },
+  "viewOptions": {
+    "security_barrier": true,
+    "security_invoker": false
+  },
+  "conformanceFiles": [
+    "docs/GOVERNANCE.md",
+    "tests/fixtures/governance/contract-v1.json",
+    "tests/fixtures/governance/lsb1-vectors.json"
+  ],
+  "notification": {
+    "channel": "libredb_bridge",
+    "payloadVersion": 1,
+    "kinds": [
+      "connections",
+      "grants",
+      "settings",
+      "revocations",
+      "canary"
+    ],
+    "pingChannelPrefix": "libredb_bridge_ping_"
+  },
+  "objects": [
+    {
+      "name": "contract",
+      "kind": "view",
+      "description": "The contract versions the governance source publishes, with their status, sunset time and notification channel. Its shape never changes.",
+      "over": null,
+      "where": null,
+      "checkOption": null,
+      "notifyKind": null,
+      "columns": [
+        {
+          "name": "version",
+          "type": "smallint",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "status",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "current",
+              "deprecated"
+            ],
+            "sql": "status IN ('current','deprecated')"
+          }
+        },
+        {
+          "name": "sunset_after",
+          "type": "timestamptz",
+          "nullable": true,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "notify_channel",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": null
+        }
+      ],
+      "grants": {
+        "libredb_studio": [
+          "SELECT"
+        ],
+        "libredb_platform": [
+          "SELECT"
+        ]
+      }
+    },
+    {
+      "name": "connections_v1",
+      "kind": "view",
+      "description": "The active connections: id, name, engine, environment, group, color, non-secret definition, sealed read and write credentials, MCP flag and update time.",
+      "over": null,
+      "where": null,
+      "checkOption": null,
+      "notifyKind": "connections",
+      "columns": [
+        {
+          "name": "connection_id",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[a-z0-9-]{1,64}$",
+            "sql": "connection_id ~ '^[a-z0-9-]{1,64}$'"
+          }
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": 1,
+            "max": 128,
+            "sql": "char_length(name) BETWEEN 1 AND 128"
+          }
+        },
+        {
+          "name": "engine",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[a-z][a-z0-9]{0,31}$",
+            "sql": "engine ~ '^[a-z][a-z0-9]{0,31}$'"
+          }
+        },
+        {
+          "name": "environment",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "production",
+              "staging",
+              "development",
+              "local",
+              "other"
+            ],
+            "sql": "environment IN ('production','staging','development','local','other')"
+          }
+        },
+        {
+          "name": "group_name",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": 1,
+            "max": 64,
+            "sql": "char_length(group_name) BETWEEN 1 AND 64"
+          }
+        },
+        {
+          "name": "color",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "sql": "color ~ '^#[0-9A-Fa-f]{6}$'"
+          }
+        },
+        {
+          "name": "definition",
+          "type": "jsonb",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "json",
+            "jsonType": "object",
+            "maxItems": null,
+            "sql": "jsonb_typeof(definition) = 'object'"
+          }
+        },
+        {
+          "name": "read_secret",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^lsb[1-9][0-9]*\\.[0-9a-f]{16}\\.",
+            "sql": "read_secret ~ '^lsb[1-9][0-9]*\\.[0-9a-f]{16}\\.'"
+          }
+        },
+        {
+          "name": "write_secret",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^lsb[1-9][0-9]*\\.[0-9a-f]{16}\\.",
+            "sql": "write_secret ~ '^lsb[1-9][0-9]*\\.[0-9a-f]{16}\\.'"
+          }
+        },
+        {
+          "name": "mcp_enabled",
+          "type": "boolean",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": null,
+          "check": null
+        }
+      ],
+      "grants": {
+        "libredb_studio": [
+          "SELECT"
+        ],
+        "libredb_platform": [
+          "SELECT"
+        ]
+      }
+    },
+    {
+      "name": "grants_v1",
+      "kind": "view",
+      "description": "One effective grant per subject and connection: its level, when that level ends, whether a write grant was downgraded to read for want of a write credential, and when access was first granted.",
+      "over": null,
+      "where": null,
+      "checkOption": null,
+      "notifyKind": "grants",
+      "columns": [
+        {
+          "name": "subject",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": 1,
+            "max": 512,
+            "sql": "char_length(subject) BETWEEN 1 AND 512"
+          }
+        },
+        {
+          "name": "connection_id",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[a-z0-9-]{1,64}$",
+            "sql": "connection_id ~ '^[a-z0-9-]{1,64}$'"
+          }
+        },
+        {
+          "name": "level",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "read",
+              "write"
+            ],
+            "sql": "level IN ('read','write')"
+          }
+        },
+        {
+          "name": "expires_at",
+          "type": "timestamptz",
+          "nullable": true,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "downgraded",
+          "type": "boolean",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "granted_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": null,
+          "check": null
+        }
+      ],
+      "grants": {
+        "libredb_studio": [
+          "SELECT"
+        ],
+        "libredb_platform": [
+          "SELECT"
+        ]
+      }
+    },
+    {
+      "name": "settings_v1",
+      "kind": "view",
+      "description": "The runtime settings the control plane set, limited to allowlisted keys published by contract 1.",
+      "over": null,
+      "where": null,
+      "checkOption": null,
+      "notifyKind": "settings",
+      "columns": [
+        {
+          "name": "key",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)+$",
+            "sql": "key ~ '^[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)+$'"
+          }
+        },
+        {
+          "name": "value",
+          "type": "jsonb",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": null,
+          "check": null
+        }
+      ],
+      "grants": {
+        "libredb_studio": [
+          "SELECT"
+        ],
+        "libredb_platform": [
+          "SELECT"
+        ]
+      }
+    },
+    {
+      "name": "session_revocations_v1",
+      "kind": "view",
+      "description": "One row per subject whose sessions must end: a session issued at or before revoked_before is refused. Deny-only.",
+      "over": null,
+      "where": null,
+      "checkOption": null,
+      "notifyKind": "revocations",
+      "columns": [
+        {
+          "name": "subject",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": 1,
+            "max": 512,
+            "sql": "char_length(subject) BETWEEN 1 AND 512"
+          }
+        },
+        {
+          "name": "revoked_before",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": null,
+          "check": null
+        }
+      ],
+      "grants": {
+        "libredb_studio": [
+          "SELECT"
+        ],
+        "libredb_platform": [
+          "SELECT"
+        ]
+      }
+    },
+    {
+      "name": "seal_canary_v1",
+      "kind": "view",
+      "description": "One test envelope per key id, sealed by the control plane, which Studio opens on every load and reports in its heartbeat.",
+      "over": null,
+      "where": null,
+      "checkOption": null,
+      "notifyKind": "canary",
+      "columns": [
+        {
+          "name": "kid",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[0-9a-f]{16}$",
+            "sql": "kid ~ '^[0-9a-f]{16}$'"
+          }
+        },
+        {
+          "name": "envelope",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^lsb[1-9][0-9]*\\.[0-9a-f]{16}\\.",
+            "sql": "envelope ~ '^lsb[1-9][0-9]*\\.[0-9a-f]{16}\\.'"
+          }
+        },
+        {
+          "name": "created_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": null,
+          "check": null
+        }
+      ],
+      "grants": {
+        "libredb_studio": [
+          "SELECT"
+        ],
+        "libredb_platform": [
+          "SELECT"
+        ]
+      }
+    },
+    {
+      "name": "query_event",
+      "kind": "table",
+      "description": "The rows behind query_events_v1. The control plane reads them; Studio can only insert through the view.",
+      "primaryKey": [
+        "event_id"
+      ],
+      "columns": [
+        {
+          "name": "event_id",
+          "type": "uuid",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "started_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "finished_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "received_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": "now()",
+          "check": null
+        },
+        {
+          "name": "contract_version",
+          "type": "smallint",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "studio_instance",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": 1,
+            "max": 128,
+            "sql": "char_length(studio_instance) BETWEEN 1 AND 128"
+          }
+        },
+        {
+          "name": "subject",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": 1,
+            "max": 512,
+            "sql": "char_length(subject) BETWEEN 1 AND 512"
+          }
+        },
+        {
+          "name": "username",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": null,
+            "max": 320,
+            "sql": "char_length(username) <= 320"
+          }
+        },
+        {
+          "name": "session_role",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "admin",
+              "user"
+            ],
+            "sql": "session_role IN ('admin','user')"
+          }
+        },
+        {
+          "name": "connection_id",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": 1,
+            "max": 64,
+            "sql": "char_length(connection_id) BETWEEN 1 AND 64"
+          }
+        },
+        {
+          "name": "connection_name",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": null,
+            "max": 128,
+            "sql": "char_length(connection_name) <= 128"
+          }
+        },
+        {
+          "name": "engine",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[a-z][a-z0-9]{0,31}$",
+            "sql": "engine ~ '^[a-z][a-z0-9]{0,31}$'"
+          }
+        },
+        {
+          "name": "access_level",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "read",
+              "write"
+            ],
+            "sql": "access_level IN ('read','write')"
+          }
+        },
+        {
+          "name": "source",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[a-z][a-z-]{0,31}$",
+            "sql": "source ~ '^[a-z][a-z-]{0,31}$'"
+          }
+        },
+        {
+          "name": "statement_type",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "SELECT",
+              "INSERT",
+              "UPDATE",
+              "DELETE",
+              "DDL",
+              "OTHER"
+            ],
+            "sql": "statement_type IN ('SELECT','INSERT','UPDATE','DELETE','DDL','OTHER')"
+          }
+        },
+        {
+          "name": "explain",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "plan",
+              "analyze"
+            ],
+            "sql": "explain IN ('plan','analyze')"
+          }
+        },
+        {
+          "name": "statement_capture",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "none",
+              "redacted",
+              "full"
+            ],
+            "sql": "statement_capture IN ('none','redacted','full')"
+          }
+        },
+        {
+          "name": "statement",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "bytes",
+            "max": 65536,
+            "sql": "octet_length(statement) <= 65536"
+          }
+        },
+        {
+          "name": "statement_truncated",
+          "type": "boolean",
+          "nullable": false,
+          "default": "false",
+          "check": null
+        },
+        {
+          "name": "statement_fingerprint",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[0-9a-f]{64}$",
+            "sql": "statement_fingerprint ~ '^[0-9a-f]{64}$'"
+          }
+        },
+        {
+          "name": "unit_index",
+          "type": "integer",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "minimum",
+            "min": 0,
+            "sql": "unit_index >= 0"
+          }
+        },
+        {
+          "name": "row_count",
+          "type": "bigint",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "minimum",
+            "min": 0,
+            "sql": "row_count >= 0"
+          }
+        },
+        {
+          "name": "duration_ms",
+          "type": "integer",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "minimum",
+            "min": 0,
+            "sql": "duration_ms >= 0"
+          }
+        },
+        {
+          "name": "status",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "success",
+              "error",
+              "cancelled",
+              "refused"
+            ],
+            "sql": "status IN ('success','error','cancelled','refused')"
+          }
+        },
+        {
+          "name": "error_code",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": null,
+            "max": 64,
+            "sql": "char_length(error_code) <= 64"
+          }
+        },
+        {
+          "name": "error_message",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": null,
+            "max": 1000,
+            "sql": "char_length(error_message) <= 1000"
+          }
+        },
+        {
+          "name": "correlation_id",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": null,
+            "max": 128,
+            "sql": "char_length(correlation_id) <= 128"
+          }
+        },
+        {
+          "name": "transaction_id",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": null,
+            "max": 128,
+            "sql": "char_length(transaction_id) <= 128"
+          }
+        },
+        {
+          "name": "transaction_outcome",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[a-z][a-z-]{0,31}$",
+            "sql": "transaction_outcome ~ '^[a-z][a-z-]{0,31}$'"
+          }
+        },
+        {
+          "name": "client_ip",
+          "type": "inet",
+          "nullable": true,
+          "default": null,
+          "check": null
+        }
+      ],
+      "constraints": [
+        {
+          "name": "query_event_time_order",
+          "check": "finished_at >= started_at"
+        },
+        {
+          "name": "query_event_not_future",
+          "check": "started_at <= received_at + interval '5 minutes'"
+        },
+        {
+          "name": "query_event_capture_none",
+          "check": "statement_capture <> 'none' OR (statement IS NULL AND statement_fingerprint IS NULL)"
+        },
+        {
+          "name": "query_event_error_text_full_only",
+          "check": "statement_capture = 'full' OR error_message IS NULL"
+        },
+        {
+          "name": "query_event_resolved",
+          "check": "status = 'refused' OR (engine IS NOT NULL AND access_level IS NOT NULL)"
+        }
+      ],
+      "grants": {
+        "libredb_studio": [],
+        "libredb_platform": [
+          "SELECT"
+        ]
+      }
+    },
+    {
+      "name": "query_events_v1",
+      "kind": "view",
+      "description": "One row per executed unit, inserted by Studio. The database stamps received_at, which the view does not show.",
+      "over": "query_event",
+      "where": "contract_version = 1",
+      "checkOption": "local",
+      "notifyKind": null,
+      "columns": [
+        {
+          "name": "event_id",
+          "type": "uuid",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "started_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "finished_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "contract_version",
+          "type": "smallint",
+          "nullable": false,
+          "default": "1",
+          "check": null
+        },
+        {
+          "name": "studio_instance",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": 1,
+            "max": 128,
+            "sql": "char_length(studio_instance) BETWEEN 1 AND 128"
+          }
+        },
+        {
+          "name": "subject",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": 1,
+            "max": 512,
+            "sql": "char_length(subject) BETWEEN 1 AND 512"
+          }
+        },
+        {
+          "name": "username",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": null,
+            "max": 320,
+            "sql": "char_length(username) <= 320"
+          }
+        },
+        {
+          "name": "session_role",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "admin",
+              "user"
+            ],
+            "sql": "session_role IN ('admin','user')"
+          }
+        },
+        {
+          "name": "connection_id",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": 1,
+            "max": 64,
+            "sql": "char_length(connection_id) BETWEEN 1 AND 64"
+          }
+        },
+        {
+          "name": "connection_name",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": null,
+            "max": 128,
+            "sql": "char_length(connection_name) <= 128"
+          }
+        },
+        {
+          "name": "engine",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[a-z][a-z0-9]{0,31}$",
+            "sql": "engine ~ '^[a-z][a-z0-9]{0,31}$'"
+          }
+        },
+        {
+          "name": "access_level",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "read",
+              "write"
+            ],
+            "sql": "access_level IN ('read','write')"
+          }
+        },
+        {
+          "name": "source",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[a-z][a-z-]{0,31}$",
+            "sql": "source ~ '^[a-z][a-z-]{0,31}$'"
+          }
+        },
+        {
+          "name": "statement_type",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "SELECT",
+              "INSERT",
+              "UPDATE",
+              "DELETE",
+              "DDL",
+              "OTHER"
+            ],
+            "sql": "statement_type IN ('SELECT','INSERT','UPDATE','DELETE','DDL','OTHER')"
+          }
+        },
+        {
+          "name": "explain",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "plan",
+              "analyze"
+            ],
+            "sql": "explain IN ('plan','analyze')"
+          }
+        },
+        {
+          "name": "statement_capture",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "none",
+              "redacted",
+              "full"
+            ],
+            "sql": "statement_capture IN ('none','redacted','full')"
+          }
+        },
+        {
+          "name": "statement",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "bytes",
+            "max": 65536,
+            "sql": "octet_length(statement) <= 65536"
+          }
+        },
+        {
+          "name": "statement_truncated",
+          "type": "boolean",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "statement_fingerprint",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[0-9a-f]{64}$",
+            "sql": "statement_fingerprint ~ '^[0-9a-f]{64}$'"
+          }
+        },
+        {
+          "name": "unit_index",
+          "type": "integer",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "minimum",
+            "min": 0,
+            "sql": "unit_index >= 0"
+          }
+        },
+        {
+          "name": "row_count",
+          "type": "bigint",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "minimum",
+            "min": 0,
+            "sql": "row_count >= 0"
+          }
+        },
+        {
+          "name": "duration_ms",
+          "type": "integer",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "minimum",
+            "min": 0,
+            "sql": "duration_ms >= 0"
+          }
+        },
+        {
+          "name": "status",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "success",
+              "error",
+              "cancelled",
+              "refused"
+            ],
+            "sql": "status IN ('success','error','cancelled','refused')"
+          }
+        },
+        {
+          "name": "error_code",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": null,
+            "max": 64,
+            "sql": "char_length(error_code) <= 64"
+          }
+        },
+        {
+          "name": "error_message",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": null,
+            "max": 1000,
+            "sql": "char_length(error_message) <= 1000"
+          }
+        },
+        {
+          "name": "correlation_id",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": null,
+            "max": 128,
+            "sql": "char_length(correlation_id) <= 128"
+          }
+        },
+        {
+          "name": "transaction_id",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": null,
+            "max": 128,
+            "sql": "char_length(transaction_id) <= 128"
+          }
+        },
+        {
+          "name": "transaction_outcome",
+          "type": "text",
+          "nullable": true,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[a-z][a-z-]{0,31}$",
+            "sql": "transaction_outcome ~ '^[a-z][a-z-]{0,31}$'"
+          }
+        },
+        {
+          "name": "client_ip",
+          "type": "inet",
+          "nullable": true,
+          "default": null,
+          "check": null
+        }
+      ],
+      "grants": {
+        "libredb_studio": [
+          "INSERT"
+        ],
+        "libredb_platform": []
+      }
+    },
+    {
+      "name": "studio_instance",
+      "kind": "table",
+      "description": "The rows behind studio_instances_v1. The control plane reads them and deletes rows of retired instances.",
+      "primaryKey": [
+        "instance_id"
+      ],
+      "columns": [
+        {
+          "name": "instance_id",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+            "sql": "instance_id ~ '^[A-Za-z0-9._:-]{1,128}$'"
+          }
+        },
+        {
+          "name": "studio_version",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": 1,
+            "max": 64,
+            "sql": "char_length(studio_version) BETWEEN 1 AND 64"
+          }
+        },
+        {
+          "name": "supported_contracts",
+          "type": "smallint[]",
+          "nullable": false,
+          "default": "'{}'",
+          "check": {
+            "kind": "cardinality",
+            "max": 16,
+            "sql": "cardinality(supported_contracts) <= 16"
+          }
+        },
+        {
+          "name": "contract_version",
+          "type": "smallint",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "keyring_kids",
+          "type": "text[]",
+          "nullable": false,
+          "default": "'{}'",
+          "check": {
+            "kind": "cardinality",
+            "max": 16,
+            "sql": "cardinality(keyring_kids) <= 16"
+          }
+        },
+        {
+          "name": "listener_state",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "listening",
+              "reconnecting",
+              "polling",
+              "deaf"
+            ],
+            "sql": "listener_state IN ('listening','reconnecting','polling','deaf')"
+          }
+        },
+        {
+          "name": "last_notification_at",
+          "type": "timestamptz",
+          "nullable": true,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "snapshot_loaded_at",
+          "type": "timestamptz",
+          "nullable": true,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "skipped",
+          "type": "jsonb",
+          "nullable": false,
+          "default": "'[]'::jsonb",
+          "check": {
+            "kind": "json",
+            "jsonType": "array",
+            "maxItems": 500,
+            "sql": "jsonb_typeof(skipped) = 'array' AND jsonb_array_length(skipped) <= 500"
+          }
+        },
+        {
+          "name": "sink",
+          "type": "jsonb",
+          "nullable": false,
+          "default": "'{}'::jsonb",
+          "check": {
+            "kind": "json",
+            "jsonType": "object",
+            "maxItems": null,
+            "sql": "jsonb_typeof(sink) = 'object'"
+          }
+        },
+        {
+          "name": "canary",
+          "type": "jsonb",
+          "nullable": false,
+          "default": "'{}'::jsonb",
+          "check": {
+            "kind": "json",
+            "jsonType": "object",
+            "maxItems": null,
+            "sql": "jsonb_typeof(canary) = 'object'"
+          }
+        },
+        {
+          "name": "started_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "last_seen_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": "now()",
+          "check": null
+        }
+      ],
+      "constraints": [],
+      "grants": {
+        "libredb_studio": [],
+        "libredb_platform": [
+          "SELECT",
+          "DELETE"
+        ]
+      }
+    },
+    {
+      "name": "studio_instances_v1",
+      "kind": "view",
+      "description": "Each Studio instance's heartbeat and health, upserted by the instance every 30 seconds.",
+      "over": "studio_instance",
+      "where": null,
+      "checkOption": null,
+      "notifyKind": null,
+      "columns": [
+        {
+          "name": "instance_id",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "pattern",
+            "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+            "sql": "instance_id ~ '^[A-Za-z0-9._:-]{1,128}$'"
+          }
+        },
+        {
+          "name": "studio_version",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "length",
+            "min": 1,
+            "max": 64,
+            "sql": "char_length(studio_version) BETWEEN 1 AND 64"
+          }
+        },
+        {
+          "name": "supported_contracts",
+          "type": "smallint[]",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "cardinality",
+            "max": 16,
+            "sql": "cardinality(supported_contracts) <= 16"
+          }
+        },
+        {
+          "name": "contract_version",
+          "type": "smallint",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "keyring_kids",
+          "type": "text[]",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "cardinality",
+            "max": 16,
+            "sql": "cardinality(keyring_kids) <= 16"
+          }
+        },
+        {
+          "name": "listener_state",
+          "type": "text",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "values",
+            "values": [
+              "listening",
+              "reconnecting",
+              "polling",
+              "deaf"
+            ],
+            "sql": "listener_state IN ('listening','reconnecting','polling','deaf')"
+          }
+        },
+        {
+          "name": "last_notification_at",
+          "type": "timestamptz",
+          "nullable": true,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "snapshot_loaded_at",
+          "type": "timestamptz",
+          "nullable": true,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "skipped",
+          "type": "jsonb",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "json",
+            "jsonType": "array",
+            "maxItems": 500,
+            "sql": "jsonb_typeof(skipped) = 'array' AND jsonb_array_length(skipped) <= 500"
+          }
+        },
+        {
+          "name": "sink",
+          "type": "jsonb",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "json",
+            "jsonType": "object",
+            "maxItems": null,
+            "sql": "jsonb_typeof(sink) = 'object'"
+          }
+        },
+        {
+          "name": "canary",
+          "type": "jsonb",
+          "nullable": false,
+          "default": null,
+          "check": {
+            "kind": "json",
+            "jsonType": "object",
+            "maxItems": null,
+            "sql": "jsonb_typeof(canary) = 'object'"
+          }
+        },
+        {
+          "name": "started_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": null,
+          "check": null
+        },
+        {
+          "name": "last_seen_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "default": null,
+          "check": null
+        }
+      ],
+      "grants": {
+        "libredb_studio": [
+          "SELECT",
+          "INSERT",
+          "UPDATE"
+        ],
+        "libredb_platform": []
+      }
+    },
+    {
+      "name": "trim_query_events",
+      "kind": "function",
+      "description": "Retention: deletes the oldest query events that started more than p_retention_days ago (90 when null, never fewer than 7), at most p_batch a call (10000 by default, never more than 100000), and returns how many it deleted.",
+      "arguments": [
+        {
+          "name": "p_retention_days",
+          "type": "integer",
+          "default": null
+        },
+        {
+          "name": "p_batch",
+          "type": "integer",
+          "default": "10000"
+        }
+      ],
+      "returns": "bigint",
+      "securityDefiner": true,
+      "grants": {
+        "libredb_studio": [],
+        "libredb_platform": [
+          "EXECUTE"
+        ]
+      }
+    }
+  ],
+  "statements": [
+    {
+      "id": "snapshot.begin",
+      "description": "Opens the snapshot: every read below sees one committed state of the governance source.",
+      "sql": "BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY",
+      "params": []
+    },
+    {
+      "id": "snapshot.contract",
+      "description": "Reads the published contract versions first; Studio stops here when no version is common to both sides.",
+      "sql": "SELECT version, status, sunset_after, notify_channel FROM \"bridge\".contract",
+      "params": []
+    },
+    {
+      "id": "snapshot.connections",
+      "description": "Reads the active connections with their sealed credentials.",
+      "sql": "SELECT connection_id, name, engine, environment, group_name, color, definition, read_secret, write_secret, mcp_enabled, updated_at FROM \"bridge\".connections_v1",
+      "params": []
+    },
+    {
+      "id": "snapshot.grants",
+      "description": "Reads one effective grant per subject and connection.",
+      "sql": "SELECT subject, connection_id, level, expires_at, downgraded, granted_at FROM \"bridge\".grants_v1",
+      "params": []
+    },
+    {
+      "id": "snapshot.settings",
+      "description": "Reads the runtime settings the control plane set.",
+      "sql": "SELECT key, value, updated_at FROM \"bridge\".settings_v1",
+      "params": []
+    },
+    {
+      "id": "snapshot.revocations",
+      "description": "Reads the latest session revocation per subject.",
+      "sql": "SELECT subject, revoked_before FROM \"bridge\".session_revocations_v1",
+      "params": []
+    },
+    {
+      "id": "snapshot.canary",
+      "description": "Reads the seal canary of each key id.",
+      "sql": "SELECT kid, envelope FROM \"bridge\".seal_canary_v1",
+      "params": []
+    },
+    {
+      "id": "snapshot.commit",
+      "description": "Ends the read-only snapshot.",
+      "sql": "COMMIT",
+      "params": []
+    },
+    {
+      "id": "listener.listen",
+      "description": "Subscribes the listener to change notifications; issued after every connect, before the first load.",
+      "sql": "LISTEN libredb_bridge",
+      "params": []
+    },
+    {
+      "id": "listener.listenPing",
+      "description": "Subscribes the listener to its own ping channel, derived from the instance id.",
+      "sql": "LISTEN libredb_bridge_ping_135f9fd550316f04",
+      "params": []
+    },
+    {
+      "id": "listener.ping",
+      "description": "Pings the listener's own channel every 60 seconds with a nonce; two missed pings mark it deaf.",
+      "sql": "SELECT pg_notify($1, $2)",
+      "params": [
+        "libredb_bridge_ping_135f9fd550316f04",
+        "5d41402abc4b2a76"
+      ]
+    },
+    {
+      "id": "listener.probe",
+      "description": "Checks that the listener's connection still answers, raced against a 5 second timer.",
+      "sql": "SELECT 1",
+      "params": []
+    },
+    {
+      "id": "heartbeat.upsert",
+      "description": "Reports this instance's state every 30 seconds; started_at is written by the first beat only.",
+      "sql": "INSERT INTO \"bridge\".studio_instances_v1 (instance_id, studio_version, supported_contracts, contract_version, keyring_kids, listener_state, last_notification_at, snapshot_loaded_at, skipped, sink, canary, started_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (instance_id) DO UPDATE SET studio_version = EXCLUDED.studio_version, supported_contracts = EXCLUDED.supported_contracts, contract_version = EXCLUDED.contract_version, keyring_kids = EXCLUDED.keyring_kids, listener_state = EXCLUDED.listener_state, last_notification_at = EXCLUDED.last_notification_at, snapshot_loaded_at = EXCLUDED.snapshot_loaded_at, skipped = EXCLUDED.skipped, sink = EXCLUDED.sink, canary = EXCLUDED.canary, last_seen_at = now()",
+      "params": [
+        "libredb-studio",
+        "1.0.0",
+        [
+          1
+        ],
+        1,
+        [
+          "0123456789abcdef"
+        ],
+        "listening",
+        "2026-10-14T12:00:02.000Z",
+        "2026-10-14T12:00:02.250Z",
+        "[{\"kind\":\"connection\",\"id\":\"0b1e7c3d-9f2a-4e6b-8c5d-7a4f3e2d1c0b\",\"level\":\"write\",\"code\":\"WRITE_SECRET_UNOPENABLE\"},{\"kind\":\"connection\",\"id\":\"6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c2d\",\"path\":\"password\",\"code\":\"DEFINITION_HAS_SECRET\"},{\"kind\":\"setting\",\"id\":\"query.timeoutMs\",\"code\":\"SETTING_INVALID\"}]",
+        "{\"queued\":12,\"dropped\":0,\"rejected\":1,\"lastFlushAt\":\"2026-10-14T12:00:04.000Z\",\"backingOff\":false,\"lastSqlstate\":\"23514\"}",
+        "{\"0123456789abcdef\":\"ok\",\"fedcba9876543210\":\"UNKNOWN_KID\"}",
+        "2026-10-14T11:00:00.000Z"
+      ]
+    },
+    {
+      "id": "queryEvents.insert",
+      "description": "Inserts a batch of query events, here two; a retried batch keeps its event ids, so it adds no duplicate.",
+      "sql": "INSERT INTO \"bridge\".query_events_v1 (event_id, started_at, finished_at, contract_version, studio_instance, subject, username, session_role, connection_id, connection_name, engine, access_level, source, statement_type, explain, statement_capture, statement, statement_truncated, statement_fingerprint, unit_index, row_count, duration_ms, status, error_code, error_message, correlation_id, transaction_id, transaction_outcome, client_ip) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29), ($30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58) ON CONFLICT DO NOTHING",
+      "params": [
+        "01a13a48-9e00-7a3c-8d4e-5f6a7b8c9d0e",
+        "2026-10-14T12:00:00.000Z",
+        "2026-10-14T12:00:00.042Z",
+        1,
+        "libredb-studio",
+        "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d",
+        "alice@example.com",
+        "user",
+        "3f2c8a14-5b6e-4c0d-9a7f-1e2d3c4b5a69",
+        "Orders",
+        "postgres",
+        "read",
+        "editor",
+        "SELECT",
+        null,
+        "redacted",
+        "SELECT id, total FROM orders WHERE customer_id = ? LIMIT ?",
+        false,
+        "f6704ab322da394dbe0d207ddecf2263eadba05fdab201b3f9a0fa814047b643",
+        null,
+        12,
+        42,
+        "success",
+        null,
+        null,
+        null,
+        null,
+        null,
+        "203.0.113.10",
+        "01a13a48-a1e8-7b4d-9e5f-6a7b8c9d0e1f",
+        "2026-10-14T12:00:01.000Z",
+        "2026-10-14T12:00:01.000Z",
+        1,
+        "libredb-studio",
+        "8d0f6a4e-2b1c-4f3a-9e7d-5c6b4a3f2e1d",
+        "alice@example.com",
+        "user",
+        "0b1e7c3d-9f2a-4e6b-8c5d-7a4f3e2d1c0b",
+        null,
+        null,
+        null,
+        "editor",
+        "SELECT",
+        null,
+        "none",
+        null,
+        false,
+        null,
+        null,
+        null,
+        0,
+        "refused",
+        "CONNECTION_NOT_FOUND",
+        null,
+        null,
+        null,
+        null,
+        "203.0.113.10"
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "ai.enabled",
+      "type": "boolean",
+      "allowedValues": null,
+      "min": null,
+      "max": null,
+      "default": true,
+      "environment": null,
+      "consumer": "guardRoute for the routes of the ai bucket, which answer 403 AI_DISABLED while the value is false",
+      "sinceContract": 1,
+      "description": "AI assistance routes are available"
+    },
+    {
+      "key": "agent.enabled",
+      "type": "boolean",
+      "allowedValues": null,
+      "min": null,
+      "max": null,
+      "default": null,
+      "environment": "LIBREDB_AGENT_ENABLED",
+      "consumer": "readAgentEnableFlag, which still needs a configured model",
+      "sinceContract": 1,
+      "description": "The query agent is available when its prerequisites are configured"
+    },
+    {
+      "key": "mcp.enabled",
+      "type": "boolean",
+      "allowedValues": null,
+      "min": null,
+      "max": null,
+      "default": null,
+      "environment": "LIBREDB_MCP_ENABLED",
+      "consumer": "readMcpSwitch, re-verified by the MCP route on every request",
+      "sinceContract": 1,
+      "description": "The MCP endpoint is available when its prerequisites are configured"
+    },
+    {
+      "key": "query.timeoutMs",
+      "type": "integer",
+      "allowedValues": null,
+      "min": 1000,
+      "max": 3600000,
+      "default": 60000,
+      "environment": null,
+      "consumer": "The queryTimeout of every governed connection",
+      "sinceContract": 1,
+      "description": "Statement timeout applied to governed connections"
+    },
+    {
+      "key": "provider.poolMaxPerUser",
+      "type": "integer",
+      "allowedValues": null,
+      "min": 1,
+      "max": 10,
+      "default": 3,
+      "environment": null,
+      "consumer": "The pool size of per-user providers, applied to providers created after the change",
+      "sinceContract": 1,
+      "description": "Maximum pooled database sessions per user and connection"
+    },
+    {
+      "key": "queryLog.statementCapture",
+      "type": "string",
+      "allowedValues": [
+        "none",
+        "redacted",
+        "full"
+      ],
+      "min": null,
+      "max": null,
+      "default": "none",
+      "environment": null,
+      "consumer": "The query event builder, and the notice the editor shows when the value is full",
+      "sinceContract": 1,
+      "description": "What Studio records of a statement in bridge.query_events_v1"
+    },
+    {
+      "key": "queryLog.maxStatementBytes",
+      "type": "integer",
+      "allowedValues": null,
+      "min": 256,
+      "max": 65536,
+      "default": 4096,
+      "environment": null,
+      "consumer": "The query event builder, which truncates a captured statement to this many UTF-8 bytes",
+      "sinceContract": 1,
+      "description": "UTF-8 byte cap applied to a captured statement before insert"
+    },
+    {
+      "key": "queryLog.onSinkFailure",
+      "type": "string",
+      "allowedValues": [
+        "continue",
+        "refuse"
+      ],
+      "min": null,
+      "max": null,
+      "default": "continue",
+      "environment": null,
+      "consumer": "The admission gate that runs before every recorded execution",
+      "sinceContract": 1,
+      "description": "Whether Studio keeps executing while it cannot record query events"
+    }
+  ],
+  "definitionAllowlist": [
+    {
+      "path": "host",
+      "domain": {
+        "type": "string"
+      }
+    },
+    {
+      "path": "port",
+      "domain": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535
+      }
+    },
+    {
+      "path": "database",
+      "domain": {
+        "type": "string"
+      }
+    },
+    {
+      "path": "schema",
+      "domain": {
+        "type": "string"
+      }
+    },
+    {
+      "path": "serviceName",
+      "domain": {
+        "type": "string"
+      }
+    },
+    {
+      "path": "instanceName",
+      "domain": {
+        "type": "string"
+      }
+    },
+    {
+      "path": "authSource",
+      "domain": {
+        "type": "string"
+      }
+    },
+    {
+      "path": "skipObjectScan",
+      "domain": {
+        "type": "boolean"
+      }
+    },
+    {
+      "path": "ssl.mode",
+      "domain": {
+        "type": "string",
+        "enum": [
+          "disable",
+          "require",
+          "verify-system",
+          "verify-ca",
+          "verify-full"
+        ]
+      }
+    },
+    {
+      "path": "ssl.rejectUnauthorized",
+      "domain": {
+        "type": "boolean"
+      }
+    },
+    {
+      "path": "ssl.caCert",
+      "domain": {
+        "type": "string"
+      }
+    }
+  ],
+  "plaintext": {
+    "keys": [
+      "user",
+      "password",
+      "connectionString",
+      "privateKey",
+      "privateKeyPassphrase",
+      "apiKeyId",
+      "apiKeySecret",
+      "sslClientKey",
+      "sslClientCert"
+    ],
+    "maxBytes": 65536
+  },
+  "codes": {
+    "skip": [
+      "READ_SECRET_UNOPENABLE",
+      "WRITE_SECRET_UNOPENABLE",
+      "DEFINITION_INVALID",
+      "DEFINITION_HAS_SECRET",
+      "ENGINE_UNSUPPORTED",
+      "ENGINE_NOT_ALLOWED",
+      "SERVER_LEVEL_NOT_ALLOWED",
+      "SETTING_INVALID"
+    ],
+    "envelope": [
+      "FORMAT",
+      "UNKNOWN_KID",
+      "AUTH_FAILED",
+      "LOW_ORDER_POINT",
+      "PLAINTEXT_INVALID"
+    ],
+    "api": [
+      {
+        "code": "CONNECTION_NOT_FOUND",
+        "httpStatus": 404
+      },
+      {
+        "code": "GOVERNANCE_UNAVAILABLE",
+        "httpStatus": 503
+      },
+      {
+        "code": "AUDIT_UNAVAILABLE",
+        "httpStatus": 503
+      },
+      {
+        "code": "TRANSACTION_CREDENTIAL_CHANGED",
+        "httpStatus": 409
+      }
+    ]
+  },
+  "listenerStates": [
+    "listening",
+    "reconnecting",
+    "polling",
+    "deaf"
+  ],
+  "heartbeat": {
+    "skipped": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "maxItems": 500,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "connection",
+                "setting"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "level": {
+              "type": "string",
+              "enum": [
+                "read",
+                "write"
+              ]
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "code": {
+              "type": "string",
+              "enum": [
+                "READ_SECRET_UNOPENABLE",
+                "WRITE_SECRET_UNOPENABLE",
+                "DEFINITION_INVALID",
+                "DEFINITION_HAS_SECRET",
+                "ENGINE_UNSUPPORTED",
+                "ENGINE_NOT_ALLOWED",
+                "SERVER_LEVEL_NOT_ALLOWED",
+                "SETTING_INVALID"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "code"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "example": [
+        {
+          "kind": "connection",
+          "id": "0b1e7c3d-9f2a-4e6b-8c5d-7a4f3e2d1c0b",
+          "level": "write",
+          "code": "WRITE_SECRET_UNOPENABLE"
+        },
+        {
+          "kind": "connection",
+          "id": "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c2d",
+          "path": "password",
+          "code": "DEFINITION_HAS_SECRET"
+        },
+        {
+          "kind": "setting",
+          "id": "query.timeoutMs",
+          "code": "SETTING_INVALID"
+        }
+      ]
+    },
+    "sink": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "queued": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "dropped": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "rejected": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "lastFlushAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "backingOff": {
+            "type": "boolean"
+          },
+          "lastSqlstate": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9A-Z]{5}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "queued",
+          "dropped",
+          "rejected",
+          "lastFlushAt",
+          "backingOff",
+          "lastSqlstate"
+        ],
+        "additionalProperties": false
+      },
+      "example": {
+        "queued": 12,
+        "dropped": 0,
+        "rejected": 1,
+        "lastFlushAt": "2026-10-14T12:00:04.000Z",
+        "backingOff": false,
+        "lastSqlstate": "23514"
+      }
+    },
+    "canary": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "additionalProperties": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "FORMAT",
+            "UNKNOWN_KID",
+            "AUTH_FAILED",
+            "LOW_ORDER_POINT",
+            "PLAINTEXT_INVALID"
+          ]
+        }
+      },
+      "example": {
+        "0123456789abcdef": "ok",
+        "fedcba9876543210": "UNKNOWN_KID"
+      }
+    }
+  },
+  "readiness": {
+    "path": "/api/ready",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "ok",
+            "degraded",
+            "loading",
+            "misconfigured",
+            "incompatible"
+          ]
+        },
+        "contract": {
+          "type": "object",
+          "properties": {
+            "supported": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              }
+            },
+            "active": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "supported",
+            "active"
+          ],
+          "additionalProperties": false
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "status",
+        "contract"
+      ],
+      "additionalProperties": false
+    },
+    "withoutGovernance": {
+      "status": "ready",
+      "httpStatus": 200
+    },
+    "freshness": [
+      {
+        "state": "loading",
+        "status": "loading",
+        "httpStatus": 503
+      },
+      {
+        "state": "ok",
+        "status": "ok",
+        "httpStatus": 200
+      },
+      {
+        "state": "degraded",
+        "status": "degraded",
+        "httpStatus": 200
+      },
+      {
+        "state": "unavailable",
+        "status": "degraded",
+        "httpStatus": 200
+      },
+      {
+        "state": "misconfigured",
+        "status": "misconfigured",
+        "httpStatus": 503
+      },
+      {
+        "state": "incompatible",
+        "status": "incompatible",
+        "httpStatus": 503
+      }
+    ],
+    "examples": [
+      {
+        "status": "ready",
+        "contract": {
+          "supported": [
+            1
+          ],
+          "active": null
+        }
+      },
+      {
+        "status": "ok",
+        "contract": {
+          "supported": [
+            1
+          ],
+          "active": 1
+        }
+      },
+      {
+        "status": "degraded",
+        "contract": {
+          "supported": [
+            1
+          ],
+          "active": 1
+        }
+      },
+      {
+        "status": "loading",
+        "contract": {
+          "supported": [
+            1
+          ],
+          "active": null
+        }
+      },
+      {
+        "status": "misconfigured",
+        "contract": {
+          "supported": [
+            1
+          ],
+          "active": null
+        },
+        "detail": "permission denied for view bridge.grants_v1 (SQLSTATE 42501)"
+      },
+      {
+        "status": "incompatible",
+        "contract": {
+          "supported": [
+            1
+          ],
+          "active": null
+        },
+        "detail": "no common contract version: Studio supports [1], the governance source publishes [2]"
+      }
+    ]
+  }
+}

@@ -7,7 +7,8 @@
  * STORAGE_POSTGRES_SCHEMA and GOVERNANCE_POSTGRES_SCHEMA share this one rule.
  */
 
-const SCHEMA_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
+/** The rule itself, also applied where a governance statement quotes the schema it names. */
+export const SCHEMA_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
 
 /**
  * The schema name in `variable`, or `fallback` when the variable is unset or empty.
