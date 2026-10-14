@@ -86,6 +86,20 @@ describe("SafetyStrip renders the posture whole", () => {
     expect(getByTestId("agent-safety-qualifier").getAttribute("aria-hidden")).toBeNull();
   });
 
+  test("on a cluster the strip renders the cluster's own posture, naming Studio's allowlist and RBAC", () => {
+    const CLUSTER: StripCase = { mode: "agent", engine: "kubernetes", handover: false };
+    const { getByTestId } = renderStrip(CLUSTER);
+    const expected = postureFor(CLUSTER);
+
+    expect(getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("reads");
+    expect(getByTestId("agent-safety-strip").textContent).toBe(
+      `${expected.headline}${expected.qualifier}${expected.title}${expected.body}`,
+    );
+    expect(getByTestId("agent-safety-qualifier").textContent).toContain("Studio's request allowlist");
+    expect(getByTestId("agent-safety-claim").textContent).toContain("RBAC");
+    expect(getByTestId("agent-safety-claim").textContent).not.toContain("the database enforces");
+  });
+
   test("plan mode's headline is the reviewed one, so a strip rendering the wrong field fails", () => {
     const { getByTestId } = renderStrip(PLAN);
     expect(getByTestId("agent-safety-headline").textContent).toBe("Executes nothing it drafts");

@@ -727,6 +727,10 @@ describe("POST /api/agent/runs", () => {
       agentPosture({ mode: "agent", engine: "mongodb", engineLabel: getDBConfig("mongodb").label, handover: false })
         .body,
     );
+    // The listed engines include a cluster, which no database bounds, so the refusal
+    // promises a declared boundary rather than a database-native one.
+    expect(body.error).toContain("a read-only statement path under a boundary it declares");
+    expect(body.error).not.toContain("database-native");
     expect(body.refused).toBe("engine-unsupported");
     expect(mockStart).not.toHaveBeenCalled();
   });

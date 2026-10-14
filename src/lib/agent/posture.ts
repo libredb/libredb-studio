@@ -29,7 +29,7 @@
  *    carries the full claim rather than the missing half.
  */
 
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { AGENT_STATEMENT_LANGUAGE, type AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { AGENT_HANDOVER_BUDGET, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
@@ -102,13 +102,39 @@ const engineNames = (types: readonly DatabaseType[]): string => namedList(types.
  *
  * It lives here, beside the posture that quotes it, so the strip's widened body and the
  * checkbox's accessible description are one string with one author.
+ *
+ * The language defaults to SQL because the consent step is only ever raised on a SQL
+ * engine: `canHandOver` in the rail asks the language's workflow variant, and no kubectl
+ * variant can auto-execute, so `ConsentCard` never renders on a cluster and passes no
+ * language. The kubectl sentence exists so the function stays total over the languages and
+ * cannot be read as a promise of a hand-over that engine does not offer.
  */
-export function autoExecuteTerms(workflowType: AgentRunWorkflowType): string {
-  return handoverTerms(AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets);
+export function autoExecuteTerms(
+  workflowType: AgentRunWorkflowType,
+  language: AgentStatementLanguageId = "sql",
+): string {
+  return handoverTerms(AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets, language);
 }
 
-/** The consent sentence itself, over whichever row named it. */
-function handoverTerms(budgets: { readonly maxResultRows: number; readonly statementTimeoutMs: number }): string {
+type StatementBudgets = { readonly maxResultRows: number; readonly statementTimeoutMs: number };
+
+/** The consent sentence itself, over whichever row named it, in the language's own terms. */
+function handoverTerms(budgets: StatementBudgets, language: AgentStatementLanguageId): string {
+  return HANDOVER_TERMS[language](budgets);
+}
+
+/**
+ * One consent sentence per statement language, keyed rather than compared, so a language
+ * registered in the manifest does not compile until it says what its hand-over is.
+ */
+const HANDOVER_TERMS: Readonly<Record<AgentStatementLanguageId, (budgets: StatementBudgets) => string>> = {
+  sql: sqlHandoverTerms,
+  kubectl: () =>
+    "A kubectl answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
+};
+
+/** The SQL consent sentence: the database's own read-only session bounds both paths. */
+function sqlHandoverTerms(budgets: StatementBudgets): string {
   return `The run always produces its answer on its own read-only path, bounded to ${budgets.maxResultRows} rows and ${budgets.statementTimeoutMs / 1000} seconds. Tick this and it will also put that statement in your editor and run it there — on the connection the run was opened on, at the editor's ${AGENT_HANDOVER_BUDGET.maxResultRows}-row limit and with no time limit. It is the same database-enforced read-only session either way, so writes and DDL are refused by the engine rather than by reading the statement. Statements whose plan reads as expensive, or which the run measured as slow, are put in the editor without being run.`;
 }
 
@@ -135,6 +161,11 @@ function planPosture(): AgentPosture {
  * before a run id exists (#512). It used to say the run ends
  * `engine-unsupported` before its first statement, which was true while the refusal was
  * the provider factory's alone - and would now describe a run this build does not open.
+ *
+ * It says "a boundary it declares" and not "database-native": the engines it lists are not
+ * all bounded by the database. The SQL engines are, by a read-only session; Kubernetes is
+ * bounded by Studio's request allowlist and the identity's RBAC. Each executable engine's
+ * own posture names its boundary, so this arm only promises that one is declared.
  */
 function unsupportedPosture(engineLabel: string): AgentPosture {
   return {
@@ -142,7 +173,7 @@ function unsupportedPosture(engineLabel: string): AgentPosture {
     headline: `Cannot execute on ${engineLabel}`,
     qualifier: "plan mode drafts here, and the operations workflow still runs",
     title: `Agent mode has no read-only statement path on ${engineLabel}`,
-    body: `Agent mode executes only where the provider implements a database-native read-only statement path — ${engineNames(AGENT_EXECUTION_ENGINES)}. On ${engineLabel} a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
+    body: `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${engineNames(AGENT_EXECUTION_ENGINES)}. On ${engineLabel} a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
   };
 }
 
@@ -162,23 +193,47 @@ function unresolvedPosture(): AgentPosture {
     headline: "Cannot execute yet",
     qualifier: "no connection is resolved, so no engine has been established",
     title: "Agent mode has no connection to execute on",
-    body: `Agent mode executes only where the provider implements a database-native read-only statement path — ${engineNames(AGENT_EXECUTION_ENGINES)}. No connection is resolved here, so this panel cannot say which engine you are on, or whether it is one of those: until one is resolved, agent mode executes nothing. The operations workflow sends no statement at all, so it runs wherever a connection does, and plan mode drafts on every engine.`,
+    body: `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${engineNames(AGENT_EXECUTION_ENGINES)}. No connection is resolved here, so this panel cannot say which engine you are on, or whether it is one of those: until one is resolved, agent mode executes nothing. The operations workflow sends no statement at all, so it runs wherever a connection does, and plan mode drafts on every engine.`,
   };
 }
 
-/** Agent mode with the editor hand-over consented: still read-only, and one statement wider. */
-function widenedPosture(): AgentPosture {
-  return {
+/**
+ * Agent mode with the editor hand-over consented: still read-only, and one statement wider.
+ *
+ * Only SQL has a widened reading. On a cluster no workflow variant offers the hand-over, so
+ * a tick there consents to nothing and the posture stays the reads one: a "widened" pill
+ * would claim an editor run the engine never performs.
+ */
+const WIDENED_POSTURE: Readonly<Record<AgentStatementLanguageId, () => AgentPosture>> = {
+  sql: () => ({
     tone: "widened",
     headline: "Reads only, and one statement in your editor",
     qualifier: `${AGENT_HANDOVER_BUDGET.maxResultRows} rows, no time limit, same read-only session`,
     title: "Reads only, and one statement lands in your editor",
-    body: handoverTerms(STATEMENT_BOUNDS),
-  };
+    body: handoverTerms(STATEMENT_BOUNDS, "sql"),
+  }),
+  kubectl: () => kubectlReadsPosture(),
+};
+
+function widenedPosture(language: AgentStatementLanguageId): AgentPosture {
+  return WIDENED_POSTURE[language]();
 }
 
-/** Agent mode, executing on its own path and nowhere else. */
-function readsPosture(): AgentPosture {
+/**
+ * Agent mode, executing on its own path and nowhere else, under the boundary its language
+ * declares. Keyed by language rather than compared, like the hand-over terms.
+ */
+const READS_POSTURE: Readonly<Record<AgentStatementLanguageId, () => AgentPosture>> = {
+  sql: sqlReadsPosture,
+  kubectl: kubectlReadsPosture,
+};
+
+function readsPosture(language: AgentStatementLanguageId): AgentPosture {
+  return READS_POSTURE[language]();
+}
+
+/** Agent mode on a SQL engine: the database's read-only session is the boundary. */
+function sqlReadsPosture(): AgentPosture {
   const rows = STATEMENT_BOUNDS.maxResultRows;
   const seconds = STATEMENT_BOUNDS.statementTimeoutMs / 1000;
   return {
@@ -187,6 +242,27 @@ function readsPosture(): AgentPosture {
     qualifier: `${rows} rows and ${seconds} s per statement, enforced by the engine`,
     title: "Agent mode reads, under a boundary the engine enforces",
     body: `Agent mode runs statements it wrote itself, in a read-only session the database enforces, bounded to ${rows} rows and ${seconds} seconds each. Writes and DDL are refused by the engine rather than by reading the statement. Nothing reaches your editor unless you tick the hand-over when the run opens.`,
+  };
+}
+
+/**
+ * Agent mode on a cluster: Studio's allowlist and the identity's RBAC bound it, not the engine.
+ *
+ * The body names BOTH identities the agent may run as, the connection's agent token and its
+ * own token, rather than the one in use. That is not hedging: the rail is handed a
+ * connection id and a type, never the connection's credential fields, so it cannot know
+ * whether an agent token is set. Naming both, and recommending a token bound to `view`, is
+ * the most this panel can say truthfully.
+ */
+function kubectlReadsPosture(): AgentPosture {
+  const rows = STATEMENT_BOUNDS.maxResultRows;
+  const seconds = STATEMENT_BOUNDS.statementTimeoutMs / 1000;
+  return {
+    tone: "reads",
+    headline: "Reads only",
+    qualifier: `${rows} rows and ${seconds} s per statement, enforced by Studio's request allowlist`,
+    title: "Agent mode reads, under a boundary Studio enforces",
+    body: `Agent mode runs kubectl reads it wrote itself, bounded to ${rows} rows and ${seconds} seconds each. Studio's request allowlist admits reads only, checked on the final request before it is sent, and the identity's RBAC decides what is visible: the agent runs on the connection's agent token when one is set, and on the connection's own token otherwise, so give it a token bound to view. Values Studio masks, such as env values, annotation values, ConfigMap data and Secret names and values, never reach the model. Nothing reaches your editor.`,
   };
 }
 
@@ -203,7 +279,9 @@ function readsPosture(): AgentPosture {
  * route refuses from, so the strip and the refusal cannot disagree about an engine. It and
  * `AGENT_EXECUTION_ENGINES`, which names the engines in the copy, are read on every call,
  * not folded into a constant at module load, so the copy follows the lists in the process
- * that is running.
+ * that is running. The same record's answer is also the language the executing arms speak
+ * in, so a cluster's posture names Studio's allowlist and RBAC where a SQL engine's names
+ * the database's read-only session.
  */
 export function agentPosture(input: {
   readonly mode: AgentRunMode;
@@ -213,6 +291,7 @@ export function agentPosture(input: {
 }): AgentPosture {
   if (input.mode === "planning") return planPosture();
   if (input.engine === null) return unresolvedPosture();
-  if (AGENT_STATEMENT_LANGUAGE[input.engine] === null) return unsupportedPosture(input.engineLabel);
-  return input.handover ? widenedPosture() : readsPosture();
+  const language = AGENT_STATEMENT_LANGUAGE[input.engine];
+  if (language === null) return unsupportedPosture(input.engineLabel);
+  return input.handover ? widenedPosture(language) : readsPosture(language);
 }
