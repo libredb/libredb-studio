@@ -1,5 +1,5 @@
 import { withBasePathEnv } from "../../helpers/base-path";
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, spyOn } from "bun:test";
 import type { OIDCState } from "@/lib/oidc";
 
 // ─── Mock dependencies ─────────────────────────────────────────────────────
@@ -22,6 +22,7 @@ const mockGetOIDCConfig = mock(() => ({
   scope: "openid profile email",
   roleClaim: "roles",
   adminRoles: ["admin"],
+  userRoles: ["user"],
 }));
 
 const mockDiscoverProvider = mock(async () => "mock-config");
@@ -38,7 +39,8 @@ const mockExchangeCode = mock(async (..._args: unknown[]) => ({ ...defaultClaims
 
 const mockMapOIDCRole = mock(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  (_claims: Record<string, unknown>, _roleClaim: string, _adminRoles: string[]) => "user" as "admin" | "user",
+  (_claims: Record<string, unknown>, _roleClaim: string, _adminRoles: string[], _userRoles?: string[]) =>
+    "user" as "admin" | "user" | null,
 );
 
 const mockGetPublicOrigin = mock((req: Request) => new URL(req.url).origin);
@@ -272,8 +274,98 @@ describe("GET /api/auth/oidc/callback", () => {
       expect.objectContaining({ sub: "user-123", email: "user@example.com" }),
       "roles",
       ["admin"],
+      ["user"],
     );
   });
+
+  test("no matching role redirects to /login?error=oidc_no_role, sets no auth-token and audits oidc_no_role", async () => {
+    mockMapOIDCRole.mockReturnValue(null);
+    const spy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const req = new Request("http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state");
+      const res = await GET(req);
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get("location")).toBe("http://localhost:3000/login?error=oidc_no_role");
+      // The real login() signs auth-token into the cookie store; this path sets no cookie at all.
+      expect(setCookies.has("auth-token")).toBe(false);
+      expect(setCookies.size).toBe(0);
+      // The exchange used the state up, so its cookie goes as it does after a sign-in.
+      expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-state", path: "/" });
+
+      const lines = spy.mock.calls.map((call: unknown[]) => JSON.parse(call[0] as string) as Record<string, unknown>);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({
+        event: "login_failure",
+        action: "login",
+        outcome: "failure",
+        reason: "oidc_no_role",
+        route: "GET /api/auth/oidc/callback",
+        // The provider authenticated the account, so the refusal names it, as a sign-in would.
+        actor: "user@example.com",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("the no-role refusal names the account by the same claims a sign-in would", async () => {
+    mockMapOIDCRole.mockReturnValue(null);
+    const spy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      mockExchangeCode.mockImplementationOnce(async () => ({
+        iss: ISSUER,
+        sub: "user-123",
+        preferred_username: "testuser",
+      }));
+      await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=c&state=s"));
+      mockExchangeCode.mockImplementationOnce(async () => ({ iss: ISSUER, sub: "f:ldap:jdoe" }));
+      await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=c&state=s"));
+
+      const records = spy.mock.calls.map((call: unknown[]) => {
+        const line = JSON.parse(call[0] as string) as { event: string; reason?: string; actor: string };
+        return [line.event, line.reason, line.actor];
+      });
+      expect(records).toEqual([
+        ["login_failure", "oidc_no_role", "testuser"],
+        ["login_failure", "oidc_no_role", "f:ldap:jdoe"],
+      ]);
+      expect(setCookies.has("auth-token")).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("the no-role refusal keeps the mount in its redirect and its state cleanup", async () => {
+    await withBasePathEnv("/tools/libredb", async () => {
+      mockMapOIDCRole.mockReturnValue(null);
+      const spy = spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const res = await GET(
+          new Request("https://studio.example/tools/libredb/api/auth/oidc/callback?code=c&state=s"),
+        );
+        expect(res.headers.get("location")).toBe("https://studio.example/tools/libredb/login?error=oidc_no_role");
+        expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-state", path: "/tools/libredb" });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  test("a no-role refusal still redirects with its own code when the audit emit throws", async () => {
+    mockMapOIDCRole.mockReturnValue(null);
+    const spy = spyOn(console, "log").mockImplementation(() => {
+      throw new Error("audit sink unavailable");
+    });
+    try {
+      const res = await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=c&state=s"));
+      expect(res.headers.get("location")).toBe("http://localhost:3000/login?error=oidc_no_role");
+      expect(setCookies.has("auth-token")).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test("OIDC callback preserves the mount through exchange, redirect and state cleanup", async () => {
     await withBasePathEnv("/tools/libredb", async () => {
       mockCookieGet.mockReturnValue({ value: "encrypted-state-cookie" });
@@ -285,6 +377,7 @@ describe("GET /api/auth/oidc/callback", () => {
         scope: "openid",
         roleClaim: "roles",
         adminRoles: ["admin"],
+        userRoles: ["user"],
       }));
       mockExchangeCode.mockResolvedValue({ ...defaultClaims });
       mockExchangeCode.mockClear();

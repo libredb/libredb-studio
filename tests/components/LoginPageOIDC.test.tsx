@@ -66,6 +66,16 @@ describe("LoginPage (OIDC mode)", () => {
     expect(getByText(/identity provider could not be reached/)).not.toBeNull();
   });
 
+  // The provider accepted the account but it holds neither role: trying again fails the same way
+  // until someone assigns one, so the message sends the user to the administrator, not to a retry.
+  test("error=oidc_no_role shows the no-role message", () => {
+    setMockSearchParams(new URLSearchParams("error=oidc_no_role"));
+    const { getByText, queryByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
+    const message = getByText("Your account has no role that allows access to LibreDB Studio. Ask your administrator.");
+    expect(message.textContent).not.toMatch(/try again/i);
+    expect(queryByText("Authentication failed. Please try again.")).toBeNull();
+  });
+
   test("renders the generic message for every other code", () => {
     for (const code of ["oidc_state_missing", "oidc_state_invalid", "oidc_no_claims", "constructor", "__proto__"]) {
       setMockSearchParams(new URLSearchParams(`error=${code}`));

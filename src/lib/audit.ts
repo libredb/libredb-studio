@@ -106,6 +106,12 @@ export type AuditReason =
    * because the login page tells the user something different for each.
    */
   | "oidc_discovery"
+  /**
+   * The provider authenticated the account, but with OIDC_USER_ROLES set its role claim holds none
+   * of OIDC_ADMIN_ROLES or OIDC_USER_ROLES, so no session was created. The record names the account,
+   * which the provider vouched for, so an operator can tell whose role assignment is missing.
+   */
+  | "oidc_no_role"
   // Passkey sign-in and management (#785). Each code has one meaning, so an operator can tell a
   // cloned authenticator from a replay or a stale cookie without the export.
   /**

@@ -112,6 +112,63 @@ describe("mapOIDCRole", () => {
     const claims = { realm_access: null };
     expect(mapOIDCRole(claims, "realm_access.roles", ["admin"])).toBe("user");
   });
+
+  // OIDC_USER_ROLES arrives as the fourth argument. Left out, or empty, it is the rule above: an
+  // account that matches no admin role is a user, and nobody is ever refused.
+  test("three-argument calls map every non-admin to user and never to null", () => {
+    const unmatched: [Record<string, unknown>, string][] = [
+      [{ roles: "admin" }, ""],
+      [{}, "roles"],
+      [{ role: "viewer" }, "role"],
+      [{ roles: ["viewer", "editor"] }, "roles"],
+      [{ realm_access: {} }, "realm_access.roles"],
+      [{ realm_access: "string" }, "realm_access.roles"],
+      [{ realm_access: null }, "realm_access.roles"],
+      [{ libredb_roles: [] }, "libredb_roles"],
+    ];
+    for (const [claims, roleClaim] of unmatched) {
+      expect(mapOIDCRole(claims, roleClaim, ["admin"])).toBe("user");
+      expect(mapOIDCRole(claims, roleClaim, ["admin"], [])).toBe("user");
+    }
+    expect(mapOIDCRole({ roles: ["viewer", "admin"] }, "roles", ["admin"])).toBe("admin");
+    expect(mapOIDCRole({ roles: ["viewer", "admin"] }, "roles", ["admin"], [])).toBe("admin");
+  });
+
+  test("with userRoles [user], a claim holding only [viewer] maps to null", () => {
+    expect(mapOIDCRole({ libredb_roles: ["viewer"] }, "libredb_roles", ["admin"], ["user"])).toBeNull();
+  });
+
+  test("with userRoles [user], a claim holding [user] maps to user", () => {
+    expect(mapOIDCRole({ libredb_roles: ["user"] }, "libredb_roles", ["admin"], ["user"])).toBe("user");
+    expect(mapOIDCRole({ libredb_roles: "user" }, "libredb_roles", ["admin"], ["user"])).toBe("user");
+  });
+
+  test("admin wins when the claim holds both the admin and the user role", () => {
+    expect(mapOIDCRole({ libredb_roles: ["user", "admin"] }, "libredb_roles", ["admin"], ["user"])).toBe("admin");
+    expect(mapOIDCRole({ libredb_roles: ["admin", "user"] }, "libredb_roles", ["admin"], ["user"])).toBe("admin");
+  });
+
+  test("an admin match needs no user role", () => {
+    expect(mapOIDCRole({ libredb_roles: ["admin"] }, "libredb_roles", ["admin"], ["user"])).toBe("admin");
+  });
+
+  test("user roles compare case-insensitively, as admin roles do", () => {
+    expect(mapOIDCRole({ libredb_roles: ["USER"] }, "libredb_roles", ["admin"], ["User"])).toBe("user");
+    expect(mapOIDCRole({ role: "Analyst" }, "role", ["admin"], ["user", "analyst"])).toBe("user");
+  });
+
+  test("with userRoles set, a claim that is missing, empty or not reachable maps to null", () => {
+    expect(mapOIDCRole({}, "libredb_roles", ["admin"], ["user"])).toBeNull();
+    expect(mapOIDCRole({ libredb_roles: [] }, "libredb_roles", ["admin"], ["user"])).toBeNull();
+    expect(mapOIDCRole({ realm_access: {} }, "realm_access.roles", ["admin"], ["user"])).toBeNull();
+    expect(mapOIDCRole({ realm_access: "string" }, "realm_access.roles", ["admin"], ["user"])).toBeNull();
+    expect(mapOIDCRole({ realm_access: null }, "realm_access.roles", ["admin"], ["user"])).toBeNull();
+  });
+
+  test("with userRoles set and no role claim configured, no account maps to a role", () => {
+    // getOIDCConfig() refuses this configuration; the pure function still answers it consistently.
+    expect(mapOIDCRole({ roles: ["user"] }, "", ["admin"], ["user"])).toBeNull();
+  });
 });
 
 // ─── getOIDCConfig ──────────────────────────────────────────────────────────
@@ -126,12 +183,14 @@ describe("getOIDCConfig", () => {
     process.env.OIDC_SCOPE = "";
     process.env.OIDC_ROLE_CLAIM = "";
     process.env.OIDC_ADMIN_ROLES = "";
+    process.env.OIDC_USER_ROLES = "";
     delete process.env.OIDC_PROMPT;
   });
 
   afterEach(() => {
     Object.assign(process.env, originalEnv);
     if (originalEnv.OIDC_PROMPT === undefined) delete process.env.OIDC_PROMPT;
+    if (originalEnv.OIDC_USER_ROLES === undefined) delete process.env.OIDC_USER_ROLES;
   });
 
   test("returns config with all required fields", () => {
@@ -161,6 +220,33 @@ describe("getOIDCConfig", () => {
   test('defaults admin roles to ["admin"]', () => {
     const config = getOIDCConfig();
     expect(config.adminRoles).toEqual(["admin"]);
+  });
+
+  test("parses user roles from a comma list, trimmed and without empty entries", () => {
+    process.env.OIDC_ROLE_CLAIM = "libredb_roles";
+    process.env.OIDC_USER_ROLES = " user, ,Analyst ,";
+    expect(getOIDCConfig().userRoles).toEqual(["user", "Analyst"]);
+  });
+
+  test("defaults user roles to an empty list", () => {
+    expect(getOIDCConfig().userRoles).toEqual([]);
+    delete process.env.OIDC_USER_ROLES;
+    expect(getOIDCConfig().userRoles).toEqual([]);
+  });
+
+  test("throws AuthConfigError when OIDC_USER_ROLES is set while OIDC_ROLE_CLAIM is empty", () => {
+    // Without a claim to read, every account would be refused one sign-in at a time as oidc_no_role;
+    // the login route reports it once, as the configuration error it is.
+    process.env.OIDC_USER_ROLES = "user";
+    expect(() => getOIDCConfig()).toThrow(AuthConfigError);
+    expect(() => getOIDCConfig()).toThrow("OIDC_ROLE_CLAIM");
+    process.env.OIDC_ROLE_CLAIM = "libredb_roles";
+    expect(getOIDCConfig().userRoles).toEqual(["user"]);
+  });
+
+  test("a user role list of only commas and spaces counts as unset", () => {
+    process.env.OIDC_USER_ROLES = " , ,";
+    expect(getOIDCConfig().userRoles).toEqual([]);
   });
 
   test("throws when OIDC_ISSUER is missing", () => {
@@ -476,6 +562,7 @@ describe("discoverProvider", () => {
       scope: "openid",
       roleClaim: "",
       adminRoles: ["admin"],
+      userRoles: [],
       prompt: "login" as const,
     };
 

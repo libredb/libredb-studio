@@ -21,6 +21,11 @@ export interface OIDCConfig {
   scope: string;
   roleClaim: string;
   adminRoles: string[];
+  /**
+   * OIDC_USER_ROLES. Empty (the default): an account that matches no admin role is a user. Non-empty: an account must
+   * match an admin or a user role, and any other is refused at sign-in.
+   */
+  userRoles: string[];
   prompt: OIDCPrompt;
 }
 
@@ -41,6 +46,8 @@ const OIDC_CONFIG_MISSING_MESSAGE =
 const OIDC_ISSUER_NOT_HTTPS_MESSAGE =
   "OIDC_ISSUER must be an https:// URL; openid-client refuses plain http, localhost included";
 const OIDC_PROMPT_INVALID_MESSAGE = "OIDC_PROMPT must be one of login, consent, select_account, omit; got ";
+const OIDC_USER_ROLES_WITHOUT_CLAIM_MESSAGE =
+  "OIDC_USER_ROLES is set but OIDC_ROLE_CLAIM is empty: with no claim to read roles from, every sign-in would be refused";
 
 /**
  * Unset or empty keeps `login`, the value Studio always sent before OIDC_PROMPT existed. `none` is
@@ -81,16 +88,29 @@ export function getOIDCConfig(): OIDCConfig {
     throw new AuthConfigError(OIDC_ISSUER_NOT_HTTPS_MESSAGE);
   }
 
+  const roleClaim = process.env.OIDC_ROLE_CLAIM || "";
+  const userRoles = (process.env.OIDC_USER_ROLES || "")
+    .split(",")
+    .map((r) => r.trim())
+    .filter(Boolean);
+
+  // User roles are read from the role claim, so without one every account would be refused, one sign-in at a time, as
+  // oidc_no_role. Named once as configuration instead, which the login route reports as oidc_config.
+  if (userRoles.length > 0 && !roleClaim) {
+    throw new AuthConfigError(OIDC_USER_ROLES_WITHOUT_CLAIM_MESSAGE);
+  }
+
   return {
     issuer,
     clientId,
     clientSecret,
     scope: process.env.OIDC_SCOPE || "openid profile email",
-    roleClaim: process.env.OIDC_ROLE_CLAIM || "",
+    roleClaim,
     adminRoles: (process.env.OIDC_ADMIN_ROLES || "admin")
       .split(",")
       .map((r) => r.trim())
       .filter(Boolean),
+    userRoles,
     prompt: readOIDCPrompt(),
   };
 }
@@ -198,32 +218,39 @@ export async function exchangeCode(
 /**
  * Extract role from OIDC claims using configured claim path.
  * Supports dot-notation for nested claims (e.g. "realm_access.roles").
- * Returns 'admin' if any claim value matches OIDC_ADMIN_ROLES, otherwise 'user'.
+ * Returns 'admin' if any claim value matches OIDC_ADMIN_ROLES, which wins when the claim also holds a user role.
+ * Otherwise, with `userRoles` (OIDC_USER_ROLES) empty, returns 'user'; with it set, returns 'user' only when a claim
+ * value matches one of them, and null for an account that holds neither role.
  */
 export function mapOIDCRole(
   claims: Record<string, unknown>,
   roleClaim: string,
   adminRoles: string[],
-): "admin" | "user" {
-  if (!roleClaim) return "user";
+  userRoles: string[] = [],
+): "admin" | "user" | null {
+  // What an account that matches no role gets: everyone is at least a user until OIDC_USER_ROLES says otherwise.
+  const unmatched = userRoles.length === 0 ? "user" : null;
+  if (!roleClaim) return unmatched;
 
   // Navigate dot-notation path
   const parts = roleClaim.split(".");
   let value: unknown = claims;
   for (const part of parts) {
-    if (value == null || typeof value !== "object") return "user";
+    if (value == null || typeof value !== "object") return unmatched;
     value = (value as Record<string, unknown>)[part];
   }
 
-  if (value == null) return "user";
+  if (value == null) return unmatched;
 
   // Normalize to array of strings
   const values: string[] = Array.isArray(value) ? value.map(String) : [String(value)];
 
   // Check if any value matches admin roles
   const isAdmin = values.some((v) => adminRoles.some((ar) => v.toLowerCase() === ar.toLowerCase()));
+  if (isAdmin) return "admin";
 
-  return isAdmin ? "admin" : "user";
+  const isUser = values.some((v) => userRoles.some((ur) => v.toLowerCase() === ur.toLowerCase()));
+  return isUser ? "user" : unmatched;
 }
 
 // ─── State Cookie Encryption ───────────────────────────────────────────────
