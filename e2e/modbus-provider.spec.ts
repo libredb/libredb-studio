@@ -51,6 +51,29 @@ test.describe("Modbus in the connection dialog", () => {
     await expect(dialog.getByText("Connection String", { exact: false })).toHaveCount(0);
   });
 
+  test("a connection that read nothing is not saved silently, it asks first", async ({ page }) => {
+    /*
+     * The product's own honesty, and nothing held it before this.
+     *
+     * An empty register map is the DEFAULT state of a new Modbus connection, and Modbus has no
+     * discovery, so the dial can only report that an address accepted TCP. Against a port that
+     * accepts and never answers, that used to read `Connection successful` in single-digit
+     * milliseconds. The dialog now says what was and was not measured and asks for a second
+     * click, which is why the flow below clicks twice.
+     */
+    const dialog = page.locator('[role="dialog"]');
+    await dialog.getByRole("button", { name: "Modbus", exact: true }).click();
+    await dialog.locator("#host").fill(FIXTURE.host);
+    await dialog.locator("#port").fill(FIXTURE.port);
+    await dialog.getByRole("button", { name: "Establish Connection" }).click();
+
+    await expect(dialog).toContainText("carries no register map");
+    await expect(dialog).toContainText("Click Establish Connection again to save it anyway");
+    // ABSENCE: it is not saved yet. A dialog that had closed would have saved a connection whose
+    // only measurement was that a port accepted a socket.
+    await expect(dialog).toBeVisible();
+  });
+
   test("says in the dialog that Studio cannot write to a device", async ({ page }) => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "Modbus", exact: true }).click();
@@ -75,7 +98,14 @@ test.describe("a read of the fixture, as a reader sees it", () => {
     await dialog.getByRole("button", { name: "Modbus", exact: true }).click();
     await dialog.locator("#host").fill(FIXTURE.host);
     await dialog.locator("#port").fill(FIXTURE.port);
-    await dialog.getByRole("button", { name: "Establish Connection" }).click();
+    // Twice, and the sentence between them is the reason: with no register map the dialog
+    // reports what it could and could not measure and asks to be told again. Asserted on its own
+    // in the dialog describe above; here it is waited for, so the second click lands on the
+    // acknowledged caution rather than racing it.
+    const establish = dialog.getByRole("button", { name: "Establish Connection" });
+    await establish.click();
+    await expect(dialog).toContainText("carries no register map", { timeout: 20000 });
+    await establish.click();
     await expect(dialog).toBeHidden({ timeout: 20000 });
 
     await expect(page.locator(".monaco-editor").first()).toBeVisible({ timeout: 15000 });
