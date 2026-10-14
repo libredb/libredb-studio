@@ -27,6 +27,7 @@ import {
   type KubectlGrid,
   namespaceFor,
   objectOf,
+  redactionMode,
   requestTimeoutMs,
   resolveType,
   STATEMENT_DEADLINE_SENTENCE,
@@ -142,7 +143,7 @@ export async function getWatch(context: KubectlContext, statement: GetStatement)
     const type = String(event.type);
     if (type === "BOOKMARK") continue;
     if (type === "ERROR") throw watchEventFailure(request, objectOf(event.object) ?? {});
-    const redacted = redactResponse(resource, { type, object: event.object });
+    const redacted = redactResponse(resource, { type, object: event.object }, redactionMode(context));
     for (const row of eventRows(redacted.object, scan.columns)) events.push({ type, row });
     if (scan.rows.length + events.length > KUBERNETES_MAX_STATEMENT_ROWS)
       throw new QueryError(WATCH_ROWS_SENTENCE, KUBERNETES_TYPE);

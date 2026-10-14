@@ -16,13 +16,14 @@ import { redactResponse } from "../redaction";
 import { fieldSelectorValue } from "../request-policy";
 import { cellOf, type KubeTable, parseTable, scanTable } from "../table";
 import {
-  byCodeUnit,
   ageOf,
+  byCodeUnit,
   type KubectlContext,
   type KubectlGrid,
   machineRowLimit,
   namespaceFor,
   objectOf,
+  redactionMode,
   resolveType,
   stringOf,
   textGrid,
@@ -79,7 +80,7 @@ async function eventRows(
       },
       { ...context.call(), accept: ACCEPT_JSON },
     );
-    return parseTable(redactResponse(events, body));
+    return parseTable(redactResponse(events, body, redactionMode(context)));
   };
   let items: readonly KubeEvent[];
   let more = false;
@@ -126,12 +127,13 @@ export async function describeObject(context: KubectlContext, statement: Describ
     { op: "get", target: resource, ...where, includeObject: "None" },
     { ...context.call(), accept: ACCEPT_TABLE },
   );
-  const table = parseTable(redactResponse(resource, tableBody));
+  const table = parseTable(redactResponse(resource, tableBody, redactionMode(context)));
   const object =
     objectOf(
       redactResponse(
         resource,
         await context.surface.client.json({ op: "get", target: resource, ...where }, context.call()),
+        redactionMode(context),
       ),
     ) ?? {};
   const metadata = objectOf(object.metadata) ?? {};

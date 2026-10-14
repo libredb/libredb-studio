@@ -13,6 +13,7 @@ import type { IndexedResource } from "../discovery";
 import { typeMissingSentence } from "../errors";
 import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_TYPE, KUBERNETES_WINDOW_MARGIN_MS } from "../limits";
 import type { KubernetesSurface } from "../objects";
+import type { RedactionMode } from "../redaction";
 import { resolveResource } from "../resolve";
 import { KUBECTL_SENTENCES } from "./commands";
 
@@ -64,6 +65,11 @@ export interface KubectlContext {
    * (`machine-redaction.ts`). Absent, every command answers exactly as the editor's console always has.
    */
   readonly machine?: MachineLimits;
+}
+
+/** Which branch of the redaction walk a run's answers take: the agent's runs mask a Secret's values, keeping its keys. */
+export function redactionMode(context: KubectlContext): RedactionMode {
+  return context.machine === undefined ? "editor" : "machine";
 }
 
 /** The one grid a statement answers. */

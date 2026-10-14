@@ -5,7 +5,15 @@
  */
 import { describe, expect, test } from "bun:test";
 import { runKubectl } from "@/lib/db/providers/platform/kubernetes/console/run";
-import { consoleContext, routes, tableAnswer, textAnswer } from "../../../../helpers/kubernetes-console";
+import { MACHINE_REDACTED } from "@/lib/db/providers/platform/kubernetes/redaction";
+import {
+  consoleContext,
+  markerSecret,
+  routes,
+  SECRET_MARKER,
+  tableAnswer,
+  textAnswer,
+} from "../../../../helpers/kubernetes-console";
 import { CORE_DISCOVERY, GROUPS_DISCOVERY } from "../../../../helpers/kubernetes-discovery";
 import { jsonAnswer, type KubernetesAnswerFn } from "../../../../helpers/kubernetes-transport";
 
@@ -80,5 +88,39 @@ describe("every console read goes through the redaction walk", () => {
     });
     const { context } = consoleContext(answer);
     await expect(runKubectl(context, "kubectl get pods -w")).rejects.toThrow(NESTED_TOO_DEEP);
+  });
+});
+
+describe("the agent's runs take the walk's machine branch", () => {
+  const MACHINE = { maxRows: 50, maxBytes: 65_536 };
+  // The list's page size follows the run's row budget, so the list read is matched by its path alone.
+  const secretAnswer = (): KubernetesAnswerFn => (request, line) =>
+    line.startsWith("GET /api/v1/namespaces/shop/secrets?")
+      ? jsonAnswer({
+          kind: "SecretList",
+          metadata: { resourceVersion: "100" },
+          items: [{ ...markerSecret(), kind: undefined }],
+        })
+      : routes({ "GET /api/v1/namespaces/shop/secrets/db": jsonAnswer(markerSecret()) })(request, line);
+
+  test.each([
+    ["by name", "kubectl get secret db -o json"],
+    ["as a list", "kubectl get secrets -o json"],
+  ])("a Secret read %s keeps its keys and masks every value", async (_label, text) => {
+    const { context } = consoleContext(secretAnswer());
+    const result = await runKubectl({ ...context, machine: MACHINE }, text);
+    const written = JSON.stringify(result.rows);
+    expect(written).not.toContain(SECRET_MARKER);
+    expect(written).toContain(`\\"password\\": \\"${MACHINE_REDACTED}\\"`);
+    expect(written).toContain(`\\"token\\": \\"${MACHINE_REDACTED}\\"`);
+  });
+
+  test("the editor's run of the same read deletes the data and writes no machine marker", async () => {
+    const { context } = consoleContext(secretAnswer());
+    const result = await runKubectl(context, "kubectl get secret db -o json");
+    const written = JSON.stringify(result.rows);
+    expect(written).not.toContain(SECRET_MARKER);
+    expect(written).not.toContain("password");
+    expect(written).not.toContain(MACHINE_REDACTED);
   });
 });

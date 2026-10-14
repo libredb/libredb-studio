@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   LAST_APPLIED_ANNOTATION,
+  MACHINE_REDACTED,
   MAX_RESPONSE_NESTING,
   readsSecrets,
   redactResponse,
   REMOVED_ANNOTATION_VALUE,
   SECRET_ANNOTATION_MAX_CHARS,
 } from "@/lib/db/providers/platform/kubernetes/redaction";
+import { markerSecret, SECRET_MARKER } from "../../../helpers/kubernetes-console";
 
 const SECRETS = { group: "", resource: "secrets" };
 const CONFIGMAPS = { group: "", resource: "configmaps" };
@@ -182,5 +184,57 @@ describe("redactResponse on any other request", () => {
     expect(readsSecrets(SECRETS)).toBe(true);
     expect(readsSecrets({ group: "external-secrets.io", resource: "secrets" })).toBe(false);
     expect(readsSecrets(CONFIGMAPS)).toBe(false);
+  });
+});
+
+describe("the machine branch", () => {
+  test("keeps a Secret's data, stringData and annotation keys and masks every value", () => {
+    const body = markerSecret();
+    redactResponse({ group: "", resource: "secrets" }, body, "machine");
+    const text = JSON.stringify(body);
+    expect(text).not.toContain(SECRET_MARKER);
+    expect(body.data).toEqual({ password: MACHINE_REDACTED });
+    expect(body.stringData).toEqual({ token: MACHINE_REDACTED });
+    const annotations = (body.metadata as { annotations: Record<string, string> }).annotations;
+    expect(annotations[LAST_APPLIED_ANNOTATION]).toBe(MACHINE_REDACTED);
+    expect(annotations.team).toBe(MACHINE_REDACTED);
+    expect(text).not.toContain(REMOVED_ANNOTATION_VALUE);
+  });
+
+  test("the editor branch is unchanged: data deleted, last-applied deleted, the Studio marker", () => {
+    const body = markerSecret();
+    redactResponse({ group: "", resource: "secrets" }, body);
+    expect("data" in body).toBe(false);
+    expect(JSON.stringify(body)).not.toContain(MACHINE_REDACTED);
+  });
+
+  test("a Secret without data, stringData or annotations gains none of them", () => {
+    const body = redactResponse<unknown>(SECRETS, { kind: "Secret", metadata: { name: "db" } }, "machine");
+    expect(body).toEqual({ kind: "Secret", metadata: { name: "db" } });
+    expect(redactResponse<unknown>(SECRETS, { data: { a: VALUE } }, "machine")).toEqual({
+      data: { a: MACHINE_REDACTED },
+    });
+  });
+
+  test("a data, stringData or annotations value that is not a map is removed, never passed through", () => {
+    const body = redactResponse<unknown>(
+      SECRETS,
+      { kind: "Secret", metadata: { name: "db", annotations: VALUE }, data: VALUE, stringData: [VALUE] },
+      "machine",
+    );
+    expect(body).toEqual({ kind: "Secret", metadata: { name: "db" } });
+  });
+
+  test("a ConfigMap on the machine branch keeps its data and annotations as they are", () => {
+    const configMap = {
+      kind: "ConfigMap",
+      metadata: { name: "app", annotations: { team: "shop" }, managedFields: [{}] },
+      data: { mode: "dark" },
+    };
+    expect(redactResponse<unknown>(CONFIGMAPS, configMap, "machine")).toEqual({
+      kind: "ConfigMap",
+      metadata: { name: "app", annotations: { team: "shop" } },
+      data: { mode: "dark" },
+    });
   });
 });

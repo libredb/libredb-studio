@@ -39,6 +39,7 @@ import {
   type KubectlContext,
   type KubectlGrid,
   objectOf,
+  redactionMode,
   resolveType,
   rowBudgetSentence,
   stringOf,
@@ -172,7 +173,7 @@ function podSelectorOf(resource: IndexedResource, object: Json, label: string): 
 
 async function readPod(context: KubectlContext, pods: IndexedResource, namespace: string, name: string): Promise<Json> {
   const body = await context.surface.client.json({ op: "get", target: pods, namespace, name }, context.call());
-  return objectOf(redactResponse(pods, body)) ?? {};
+  return objectOf(redactResponse(pods, body, redactionMode(context))) ?? {};
 }
 
 /** Every pod a selector picks in the namespace, in the server's order, at most 5,000. */
@@ -196,7 +197,7 @@ async function selectedPods(
       },
       { ...context.call(), accept: ACCEPT_JSON },
     );
-    return parseTable(redactResponse(pods, body));
+    return parseTable(redactResponse(pods, body, redactionMode(context)));
   };
   const scan = await scanTable(read, {
     offset: 0,
@@ -235,6 +236,7 @@ async function podsOf(context: KubectlContext, statement: LogsStatement, namespa
           { op: "get", target: resource, namespace, name: statement.target.name },
           context.call(),
         ),
+        redactionMode(context),
       ),
     ) ?? {};
   const matched = await selectedPods(context, pods, namespace, podSelectorOf(resource, owner, label));

@@ -34,6 +34,7 @@ import {
   machineRowLimit,
   namespaceFor,
   objectOf,
+  redactionMode,
   resolveType,
 } from "./context";
 import { callOf, type GetStatement } from "./get-list";
@@ -86,7 +87,7 @@ async function listedObjects(
       { ...callOf(context, statement), accept: ACCEPT_JSON },
     );
     // A plain list reads as a two-column Table whose rows carry each item as their object.
-    return parseTable(redactResponse(resource, body));
+    return parseTable(redactResponse(resource, body, redactionMode(context)));
   };
   const scan = await scanTable(read, {
     offset: 0,
@@ -179,7 +180,7 @@ async function namedRows(
         return;
       throw error;
     }
-    rows.object(objectOf(redactResponse(resource, body)) ?? {});
+    rows.object(objectOf(redactResponse(resource, body, redactionMode(context))) ?? {});
   });
 }
 

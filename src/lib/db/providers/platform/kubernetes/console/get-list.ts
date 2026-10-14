@@ -30,6 +30,7 @@ import {
   type KubectlGrid,
   namespaceFor,
   objectOf,
+  redactionMode,
   requestTimeoutMs,
   resolveType,
 } from "./context";
@@ -103,7 +104,7 @@ export function listPageReader(
       },
       { ...callOf(context, statement), accept: ACCEPT_TABLE },
     );
-    return parseTable(redactResponse(resource, body));
+    return parseTable(redactResponse(resource, body, redactionMode(context)));
   };
 }
 
@@ -215,7 +216,7 @@ export async function getNamed(context: KubectlContext, statement: GetStatement)
         },
         { ...callOf(context, statement), accept: ACCEPT_TABLE },
       );
-      return parseTable(redactResponse(resource, body));
+      return parseTable(redactResponse(resource, body, redactionMode(context)));
     } catch (error) {
       if (
         statement.ignoreNotFound &&

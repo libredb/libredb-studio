@@ -9,6 +9,12 @@
  * short plain text, or that names a `data` or `stringData` key, is replaced by a marker; its key stays. Every object
  * of every response loses `managedFields`, which is bookkeeping a reader never needs.
  *
+ * Two modes. The editor's (the default) is the one above, and its output is unchanged by the second. The machine
+ * mode, taken by the agent's runs only, masks instead of deleting: a Secret keeps every `data`, `stringData` and
+ * annotation key and each value becomes `<redacted>`, the last-applied one included. The model can then name the keys
+ * a workload reads from a Secret (a missing key is a real finding) while no value reaches it; the editor deletes the
+ * maps outright because a person reading a Secret in Studio is never meant to see them through this surface.
+ *
  * The walk reaches the body itself, a list's `items`, a Table's `rows[].object` and a watch event's `object`, as deep
  * as those nest up to a cap no real response comes near; deeper is refused, never read past. It changes the parsed
  * body in place and returns it, before anything is mapped to a cell, a document or a sentence.
@@ -40,6 +46,9 @@ export interface RedactionTarget {
   readonly resource: string;
 }
 
+/** Who reads the answer: a person in the editor, or the agent's model (keys kept, values masked). */
+export type RedactionMode = "editor" | "machine";
+
 type JsonObject = Record<string, unknown>;
 
 function isObject(value: unknown): value is JsonObject {
@@ -51,10 +60,29 @@ export function readsSecrets(target: RedactionTarget): boolean {
   return target.group === "" && target.resource === "secrets";
 }
 
-function redactObject(object: JsonObject, secrets: boolean): void {
+/** A map with the same keys and every value replaced by the machine marker. */
+function masked(map: JsonObject): JsonObject {
+  return Object.fromEntries(Object.keys(map).map((key) => [key, MACHINE_REDACTED]));
+}
+
+function redactObject(object: JsonObject, secrets: boolean, mode: RedactionMode): void {
   const metadata = object.metadata;
   if (isObject(metadata)) delete metadata.managedFields;
   if (!secrets && object.kind !== "Secret") return;
+  // The agent's branch is taken BEFORE anything is deleted, so a Secret's keys survive for the model while no value
+  // does: every data, stringData and annotation value becomes the machine marker, the last-applied one included. A
+  // field that is present but not a map has no keys to keep, so it is deleted as the editor deletes it.
+  if (mode === "machine") {
+    for (const field of ["data", "stringData"] as const) {
+      const map = object[field];
+      if (isObject(map)) object[field] = masked(map);
+      else delete object[field];
+    }
+    if (!isObject(metadata)) return;
+    if (isObject(metadata.annotations)) metadata.annotations = masked(metadata.annotations);
+    else delete metadata.annotations;
+    return;
+  }
   delete object.data;
   delete object.stringData;
   if (!isObject(metadata) || !isObject(metadata.annotations)) return;
@@ -76,8 +104,8 @@ function children(value: JsonObject): unknown[] {
   return found;
 }
 
-/** Redacts a parsed response to a request for `target`, in place, and returns it. */
-export function redactResponse<T>(target: RedactionTarget, body: T): T {
+/** Redacts a parsed response to a request for `target`, in place, and returns it; `mode` names who reads it. */
+export function redactResponse<T>(target: RedactionTarget, body: T, mode: RedactionMode = "editor"): T {
   const secrets = readsSecrets(target);
   // An explicit stack, so the depth is checked rather than left to the call stack.
   const pending: { readonly value: unknown; readonly depth: number }[] = [{ value: body, depth: 0 }];
@@ -85,7 +113,7 @@ export function redactResponse<T>(target: RedactionTarget, body: T): T {
     const { value, depth } = next;
     if (!isObject(value)) continue;
     if (depth > MAX_RESPONSE_NESTING) throw new QueryError(NESTED_TOO_DEEP_SENTENCE, KUBERNETES_TYPE);
-    redactObject(value, secrets);
+    redactObject(value, secrets, mode);
     for (const child of children(value)) pending.push({ value: child, depth: depth + 1 });
   }
   return body;

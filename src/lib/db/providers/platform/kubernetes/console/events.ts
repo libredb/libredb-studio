@@ -21,6 +21,7 @@ import {
   type KubectlGrid,
   machineRowLimit,
   objectOf,
+  redactionMode,
   resolveType,
   stringOf,
   textGrid,
@@ -109,7 +110,7 @@ export async function listEvents(context: KubectlContext, statement: EventsState
       },
       { ...context.call(), accept: ACCEPT_JSON },
     );
-    return parseTable(redactResponse(events, body));
+    return parseTable(redactResponse(events, body, redactionMode(context)));
   };
   // On the agent path the read stops one row past the budget, so the refusal costs 201 rows, not 5,000, and the
   // row budget refuses it rather than this cap.

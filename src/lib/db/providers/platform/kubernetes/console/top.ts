@@ -16,7 +16,15 @@ import { KubernetesRequestError, KubernetesResponseTooLargeError } from "../erro
 import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_PAGE_SIZE, KUBERNETES_TYPE } from "../limits";
 import { redactResponse } from "../redaction";
 import { type KubeTable, parseTable, scanTable } from "../table";
-import { type KubectlContext, type KubectlGrid, machineRowLimit, objectOf, stringOf, textGrid } from "./context";
+import {
+  type KubectlContext,
+  type KubectlGrid,
+  machineRowLimit,
+  objectOf,
+  redactionMode,
+  stringOf,
+  textGrid,
+} from "./context";
 import type { KubectlStatement } from "./parse";
 
 type TopStatement = Extract<KubectlStatement, { readonly command: "top" }>;
@@ -161,7 +169,7 @@ async function itemsOf(
       },
       { ...context.call(), accept: ACCEPT_JSON },
     );
-    return parseTable(redactResponse(target, body));
+    return parseTable(redactResponse(target, body, redactionMode(context)));
   };
   const scan = await scanTable(read, {
     offset: 0,
