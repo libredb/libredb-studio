@@ -425,6 +425,9 @@ jobs:
             exit 1
           fi
           bun tests/live/passkey-store-postgres.ts
+          # STORAGE_POSTGRES_SCHEMA on the same server: a throwaway database and a role that owns only schema
+          # studio and has no CREATE on public, so one unqualified table, foreign key or index fails the step.
+          bun tests/live/storage-schema-postgres.ts
           docker rm -f passkey-contract-pg
         env:
           LIBREDB_LIVE_POSTGRES_URL: postgresql://postgres:contract@127.0.0.1:55432/postgres?sslmode=disable

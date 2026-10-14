@@ -27,6 +27,7 @@ import {
   PasskeySignInConflict,
   STORAGE_COLLECTIONS,
 } from "../types";
+import { readSchemaName } from "../schema-name";
 import { logger } from "@/lib/logger";
 
 let Pool: typeof import("pg").Pool;
@@ -38,11 +39,10 @@ const PERMISSION_PROBLEM =
 // PostgreSQL checks that the caller owns the table before it honours IF NOT EXISTS on CREATE
 // INDEX, so an app user that does not own a DBA-created table fails on an index that exists.
 // initialize() therefore creates an index only when the schema lacks it.
-const PASSKEY_INDEXES: Record<string, string> = {
-  passkey_credentials_account:
-    "CREATE INDEX IF NOT EXISTS passkey_credentials_account ON passkey_credentials (account_email)",
-  passkey_spent_challenges_expiry:
-    "CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON passkey_spent_challenges (expires_at)",
+// Each index with the table and column it covers; an index always lives in its table's schema.
+const PASSKEY_INDEXES: Record<string, { table: string; column: string }> = {
+  passkey_credentials_account: { table: "passkey_credentials", column: "account_email" },
+  passkey_spent_challenges_expiry: { table: "passkey_spent_challenges", column: "expires_at" },
 };
 
 // PostgreSQL SQLSTATE insufficient_privilege.
@@ -51,9 +51,36 @@ const INSUFFICIENT_PRIVILEGE = "42501";
 export class PostgresStorageProvider implements ServerStorageProvider {
   private pool: InstanceType<typeof import("pg").Pool> | null = null;
   private connectionString: string;
+  /** STORAGE_POSTGRES_SCHEMA, or undefined to leave the tables unqualified as before it existed. */
+  private readonly schema: string | undefined;
+  /** Every storage table as statements name it, through `qualify`. */
+  private readonly tables: {
+    userStorage: string;
+    accounts: string;
+    passkeyUsers: string;
+    passkeyCredentials: string;
+    passkeySpentChallenges: string;
+  };
 
   constructor(connectionString?: string) {
     this.connectionString = connectionString || process.env.STORAGE_POSTGRES_URL || "";
+    this.schema = readSchemaName("STORAGE_POSTGRES_SCHEMA");
+    this.tables = {
+      userStorage: this.qualify("user_storage"),
+      accounts: this.qualify("accounts"),
+      passkeyUsers: this.qualify("passkey_users"),
+      passkeyCredentials: this.qualify("passkey_credentials"),
+      passkeySpentChallenges: this.qualify("passkey_spent_challenges"),
+    };
+  }
+
+  /**
+   * A table or index name as every statement writes it: `"<schema>".<name>` with
+   * STORAGE_POSTGRES_SCHEMA set, so the tables never follow a search_path into another schema,
+   * and the bare name, exactly as before, without it.
+   */
+  private qualify(name: string): string {
+    return this.schema ? `"${this.schema}".${name}` : name;
   }
 
   async initialize(): Promise<void> {
@@ -83,17 +110,31 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       logger.error("PostgreSQL storage pool client error", error, { provider: "postgres" });
     });
 
-    // Create table
     try {
+      // Studio never creates the schema: it belongs to whoever provisions the database, and the
+      // role it runs as should hold no CREATE on the database.
+      if (this.schema) {
+        const { rows } = await this.pool.query(
+          "SELECT quote_ident(current_user) AS role, EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1) AS present",
+          [this.schema],
+        );
+        const { role, present } = (rows as { role: string; present: boolean }[])[0];
+        if (!present) {
+          throw new Error(
+            `schema ${this.schema} does not exist: create it with CREATE SCHEMA ${this.schema} AUTHORIZATION ${role}`,
+          );
+        }
+      }
+      // Create table
       await this.pool.query(`
-        CREATE TABLE IF NOT EXISTS user_storage (
+        CREATE TABLE IF NOT EXISTS ${this.tables.userStorage} (
           user_id    TEXT NOT NULL,
           collection TEXT NOT NULL,
           data       TEXT NOT NULL,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY (user_id, collection)
         );
-        CREATE TABLE IF NOT EXISTS accounts (
+        CREATE TABLE IF NOT EXISTS ${this.tables.accounts} (
           email         TEXT PRIMARY KEY,
           password_hash TEXT NOT NULL,
           role          TEXT NOT NULL,
@@ -104,15 +145,15 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           created_at    TEXT NOT NULL,
           updated_at    TEXT NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS passkey_users (
-          account_email TEXT PRIMARY KEY REFERENCES accounts(email) ON DELETE CASCADE,
+        CREATE TABLE IF NOT EXISTS ${this.tables.passkeyUsers} (
+          account_email TEXT PRIMARY KEY REFERENCES ${this.tables.accounts}(email) ON DELETE CASCADE,
           user_handle   TEXT NOT NULL UNIQUE,
           created_at    TEXT NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS passkey_credentials (
+        CREATE TABLE IF NOT EXISTS ${this.tables.passkeyCredentials} (
           id              TEXT PRIMARY KEY,
           credential_id   TEXT NOT NULL UNIQUE,
-          account_email   TEXT NOT NULL REFERENCES passkey_users(account_email) ON DELETE CASCADE,
+          account_email   TEXT NOT NULL REFERENCES ${this.tables.passkeyUsers}(account_email) ON DELETE CASCADE,
           public_key      TEXT NOT NULL,
           sign_count      BIGINT NOT NULL,
           transports      TEXT NOT NULL,
@@ -123,18 +164,25 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           created_at      TEXT NOT NULL,
           last_used_at    TEXT
         );
-        CREATE TABLE IF NOT EXISTS passkey_spent_challenges (
+        CREATE TABLE IF NOT EXISTS ${this.tables.passkeySpentChallenges} (
           challenge_hash TEXT PRIMARY KEY,
           expires_at     TEXT NOT NULL
         )
       `);
+      // Keyed by the name to_regclass() looks up, which carries the schema when one is set.
+      const indexes = new Map(
+        Object.entries(PASSKEY_INDEXES).map(([index, { table, column }]) => [
+          this.qualify(index),
+          `CREATE INDEX IF NOT EXISTS ${index} ON ${this.qualify(table)} (${column})`,
+        ]),
+      );
       const missing = await this.pool.query(
         "SELECT index_name FROM unnest($1::text[]) AS wanted(index_name) WHERE to_regclass(index_name) IS NULL",
-        [Object.keys(PASSKEY_INDEXES)],
+        [[...indexes.keys()]],
       );
       for (const { index_name } of missing.rows as { index_name: string }[]) {
         // oxlint-disable-next-line no-await-in-loop -- one DDL statement at a time on the pool, in a fixed order.
-        await this.pool.query(PASSKEY_INDEXES[index_name]);
+        await this.pool.query(indexes.get(index_name)!);
       }
     } catch (error) {
       if (error instanceof Error && error.message.includes("does not support SSL")) {
@@ -155,7 +203,10 @@ export class PostgresStorageProvider implements ServerStorageProvider {
 
   async getAllData(userId: string): Promise<Partial<StorageData>> {
     this.ensurePool();
-    const { rows } = await this.pool!.query("SELECT collection, data FROM user_storage WHERE user_id = $1", [userId]);
+    const { rows } = await this.pool!.query(
+      `SELECT collection, data FROM ${this.tables.userStorage} WHERE user_id = $1`,
+      [userId],
+    );
 
     const result: Partial<StorageData> = {};
     for (const row of rows) {
@@ -170,10 +221,10 @@ export class PostgresStorageProvider implements ServerStorageProvider {
 
   async getCollection<K extends StorageCollection>(userId: string, collection: K): Promise<StorageData[K] | null> {
     this.ensurePool();
-    const { rows } = await this.pool!.query("SELECT data FROM user_storage WHERE user_id = $1 AND collection = $2", [
-      userId,
-      collection,
-    ]);
+    const { rows } = await this.pool!.query(
+      `SELECT data FROM ${this.tables.userStorage} WHERE user_id = $1 AND collection = $2`,
+      [userId, collection],
+    );
     if (rows.length === 0) return null;
     try {
       return JSON.parse(rows[0].data) as StorageData[K];
@@ -186,7 +237,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
   async setCollection<K extends StorageCollection>(userId: string, collection: K, data: StorageData[K]): Promise<void> {
     this.ensurePool();
     await this.pool!.query(
-      `INSERT INTO user_storage (user_id, collection, data, updated_at)
+      `INSERT INTO ${this.tables.userStorage} (user_id, collection, data, updated_at)
        VALUES ($1, $2, $3, NOW())
        ON CONFLICT (user_id, collection)
        DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
@@ -201,7 +252,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
         const collectionData = (data as Record<string, unknown>)[collection];
         if (collectionData !== undefined) {
           await client.query(
-            `INSERT INTO user_storage (user_id, collection, data, updated_at)
+            `INSERT INTO ${this.tables.userStorage} (user_id, collection, data, updated_at)
              VALUES ($1, $2, $3, NOW())
              ON CONFLICT (user_id, collection)
              DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
@@ -216,7 +267,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     this.ensurePool();
     const { rows } = await this.pool!.query(
       `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, session_version, created_at, updated_at
-       FROM accounts ORDER BY email`,
+       FROM ${this.tables.accounts} ORDER BY email`,
     );
     return (rows as AccountRow[]).map(accountFromRow);
   }
@@ -225,7 +276,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     this.ensurePool();
     const { rows } = await this.pool!.query(
       `SELECT email, password_hash, role, totp_secret, totp_pending, disabled, session_version, created_at, updated_at
-       FROM accounts WHERE email = $1`,
+       FROM ${this.tables.accounts} WHERE email = $1`,
       [email],
     );
     const row = (rows as AccountRow[])[0];
@@ -240,12 +291,14 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     // with insertPasskey, which locks the account row first: no account row exists under this
     // email until this insert, so no passkey write holds a lock this transaction waits behind.
     const removed = await this.transaction(async (client) => {
-      const credentials = await client.query("DELETE FROM passkey_credentials WHERE account_email = $1", [
+      const credentials = await client.query(`DELETE FROM ${this.tables.passkeyCredentials} WHERE account_email = $1`, [
         account.email,
       ]);
-      const users = await client.query("DELETE FROM passkey_users WHERE account_email = $1", [account.email]);
+      const users = await client.query(`DELETE FROM ${this.tables.passkeyUsers} WHERE account_email = $1`, [
+        account.email,
+      ]);
       await client.query(
-        `INSERT INTO accounts (email, password_hash, role, totp_secret, totp_pending, disabled, session_version, created_at, updated_at)
+        `INSERT INTO ${this.tables.accounts} (email, password_hash, role, totp_secret, totp_pending, disabled, session_version, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           account.email,
@@ -275,7 +328,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     // passkey write follows, so an owner removal and an admin clear cannot deadlock.
     return this.accountWrite(options, async (client) => {
       const applied = await client.query(
-        `UPDATE accounts
+        `UPDATE ${this.tables.accounts}
          SET password_hash = $1, role = $2, totp_secret = $3, totp_pending = $4, disabled = $5, session_version = $6,
              updated_at = $7
          WHERE email = $8 AND session_version = $9 AND updated_at = $10`,
@@ -294,7 +347,9 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       );
       if (!applied.rowCount) throw new AccountWriteConflict();
       if (!options.clearPasskeys) return 0;
-      const cleared = await client.query("DELETE FROM passkey_credentials WHERE account_email = $1", [account.email]);
+      const cleared = await client.query(`DELETE FROM ${this.tables.passkeyCredentials} WHERE account_email = $1`, [
+        account.email,
+      ]);
       return cleared.rowCount ?? 0;
     });
   }
@@ -304,15 +359,15 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     // One transaction: an account removed without its rows would hand them to the next account
     // created with the same email.
     await this.accountWrite(options, async (client) => {
-      await client.query("DELETE FROM accounts WHERE email = $1", [email]);
-      await client.query("DELETE FROM user_storage WHERE user_id = $1", [email]);
+      await client.query(`DELETE FROM ${this.tables.accounts} WHERE email = $1`, [email]);
+      await client.query(`DELETE FROM ${this.tables.userStorage} WHERE user_id = $1`, [email]);
     });
   }
 
   async listPasskeys(email: string): Promise<StoredPasskey[]> {
     this.ensurePool();
     const { rows } = await this.pool!.query(
-      `SELECT ${PASSKEY_COLUMNS} FROM passkey_credentials WHERE account_email = $1 ORDER BY created_at, id`,
+      `SELECT ${PASSKEY_COLUMNS} FROM ${this.tables.passkeyCredentials} WHERE account_email = $1 ORDER BY created_at, id`,
       [email],
     );
     return (rows as PasskeyRow[]).map(passkeyFromRow);
@@ -322,14 +377,17 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     this.ensurePool();
     // COUNT(*) is bigint, which pg returns as a string.
     const { rows } = await this.pool!.query(
-      "SELECT account_email, COUNT(*) AS n FROM passkey_credentials GROUP BY account_email",
+      `SELECT account_email, COUNT(*) AS n FROM ${this.tables.passkeyCredentials} GROUP BY account_email`,
     );
     return new Map((rows as { account_email: string; n: string }[]).map((row) => [row.account_email, Number(row.n)]));
   }
 
   async getPasskeyUserHandle(email: string): Promise<string | null> {
     this.ensurePool();
-    const { rows } = await this.pool!.query("SELECT user_handle FROM passkey_users WHERE account_email = $1", [email]);
+    const { rows } = await this.pool!.query(
+      `SELECT user_handle FROM ${this.tables.passkeyUsers} WHERE account_email = $1`,
+      [email],
+    );
     const row = (rows as { user_handle: string }[])[0];
     return row ? row.user_handle : null;
   }
@@ -338,7 +396,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     this.ensurePool();
     const { rows } = await this.pool!.query(
       `SELECT ${PASSKEY_COLUMNS_OF_C}, u.user_handle
-       FROM passkey_credentials c JOIN passkey_users u ON u.account_email = c.account_email
+       FROM ${this.tables.passkeyCredentials} c JOIN ${this.tables.passkeyUsers} u ON u.account_email = c.account_email
        WHERE c.credential_id = $1`,
       [credentialId],
     );
@@ -352,9 +410,10 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     await this.transaction(async (client) => {
       // The account row is locked before any passkey statement: the one lock order, and what
       // keeps two concurrent registrations from both passing the limit.
-      const account = await client.query("SELECT session_version FROM accounts WHERE email = $1 FOR UPDATE", [
-        passkey.accountEmail,
-      ]);
+      const account = await client.query(
+        `SELECT session_version FROM ${this.tables.accounts} WHERE email = $1 FOR UPDATE`,
+        [passkey.accountEmail],
+      );
       const locked = (account.rows as { session_version: number }[])[0];
       if (!locked) throw new PasskeyRegistrationConflict("account_missing");
       if (Number(locked.session_version) !== write.expectedSessionVersion) {
@@ -363,24 +422,25 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       if (!(await this.spendChallenge(client, write.challenge, write.purgeSpentBefore))) {
         throw new PasskeyRegistrationConflict("challenge_spent");
       }
-      const held = await client.query("SELECT COUNT(*) AS n FROM passkey_credentials WHERE account_email = $1", [
-        passkey.accountEmail,
-      ]);
+      const held = await client.query(
+        `SELECT COUNT(*) AS n FROM ${this.tables.passkeyCredentials} WHERE account_email = $1`,
+        [passkey.accountEmail],
+      );
       if (Number((held.rows as { n: string }[])[0].n) >= write.maxPasskeys) {
         throw new PasskeyRegistrationConflict("passkey_limit");
       }
       await client.query(
-        "INSERT INTO passkey_users (account_email, user_handle, created_at) VALUES ($1, $2, $3) ON CONFLICT (account_email) DO NOTHING",
+        `INSERT INTO ${this.tables.passkeyUsers} (account_email, user_handle, created_at) VALUES ($1, $2, $3) ON CONFLICT (account_email) DO NOTHING`,
         [passkey.accountEmail, write.userHandle, passkey.createdAt],
       );
-      const bound = await client.query("SELECT user_handle FROM passkey_users WHERE account_email = $1", [
+      const bound = await client.query(`SELECT user_handle FROM ${this.tables.passkeyUsers} WHERE account_email = $1`, [
         passkey.accountEmail,
       ]);
       if ((bound.rows as { user_handle: string }[])[0].user_handle !== write.userHandle) {
         throw new PasskeyRegistrationConflict("user_handle_changed");
       }
       const inserted = await client.query(
-        `INSERT INTO passkey_credentials (${PASSKEY_COLUMNS})
+        `INSERT INTO ${this.tables.passkeyCredentials} (${PASSKEY_COLUMNS})
          VALUES ($1, $2, $3, $4, $5::bigint, $6, $7, $8, $9, $10, $11, $12)
          ON CONFLICT (credential_id) DO NOTHING`,
         [
@@ -409,7 +469,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       // commit, so the session the route mints is the account as it was here, while sign-ins to the
       // same account still run side by side.
       const account = await client.query(
-        "SELECT role, disabled, session_version FROM accounts WHERE email = $1 FOR SHARE",
+        `SELECT role, disabled, session_version FROM ${this.tables.accounts} WHERE email = $1 FOR SHARE`,
         [write.email],
       );
       const locked = (account.rows as Pick<AccountRow, "role" | "disabled" | "session_version">[])[0];
@@ -428,11 +488,11 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       // counter. An untyped parameter compared with 0 is inferred as integer and fails above
       // 2147483647, so every use of the counter is cast.
       const advanced = await client.query(
-        "UPDATE passkey_credentials SET sign_count = $1::bigint, backup_state = $2, last_used_at = $3 WHERE id = $4 AND ((sign_count = 0 AND $1::bigint = 0) OR sign_count < $1::bigint)",
+        `UPDATE ${this.tables.passkeyCredentials} SET sign_count = $1::bigint, backup_state = $2, last_used_at = $3 WHERE id = $4 AND ((sign_count = 0 AND $1::bigint = 0) OR sign_count < $1::bigint)`,
         [write.signCount, write.backupState ? 1 : 0, write.usedAt, write.id],
       );
       if (advanced.rowCount) return;
-      const exists = await client.query("SELECT 1 FROM passkey_credentials WHERE id = $1", [write.id]);
+      const exists = await client.query(`SELECT 1 FROM ${this.tables.passkeyCredentials} WHERE id = $1`, [write.id]);
       throw new PasskeySignInConflict(exists.rows.length > 0 ? "counter_not_increased" : "credential_missing");
     });
   }
@@ -440,7 +500,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
   async renamePasskey(email: string, id: string, name: string): Promise<boolean> {
     this.ensurePool();
     const renamed = await this.pool!.query(
-      "UPDATE passkey_credentials SET name = $1 WHERE id = $2 AND account_email = $3",
+      `UPDATE ${this.tables.passkeyCredentials} SET name = $1 WHERE id = $2 AND account_email = $3`,
       [name, id, email],
     );
     return (renamed.rowCount ?? 0) > 0;
@@ -451,23 +511,23 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     // The account row first, then the credential: the lock order of every account and passkey write.
     await this.transaction(async (client) => {
       const moved = await client.query(
-        "UPDATE accounts SET session_version = $1, updated_at = $2 WHERE email = $3 AND session_version = $4",
+        `UPDATE ${this.tables.accounts} SET session_version = $1, updated_at = $2 WHERE email = $3 AND session_version = $4`,
         [write.nextSessionVersion, write.updatedAt, write.email, write.expectedSessionVersion],
       );
       if (!moved.rowCount) throw new PasskeyRemovalConflict("session_changed");
-      const deleted = await client.query("DELETE FROM passkey_credentials WHERE id = $1 AND account_email = $2", [
-        write.id,
-        write.email,
-      ]);
+      const deleted = await client.query(
+        `DELETE FROM ${this.tables.passkeyCredentials} WHERE id = $1 AND account_email = $2`,
+        [write.id, write.email],
+      );
       if (!deleted.rowCount) throw new PasskeyRemovalConflict("credential_missing");
     });
   }
 
   /** Inside a transaction: purge old spent rows, then spend this one; false when it was spent. */
   private async spendChallenge(client: PoolClient, challenge: SpentChallenge, purgeSpentBefore: string) {
-    await client.query("DELETE FROM passkey_spent_challenges WHERE expires_at < $1", [purgeSpentBefore]);
+    await client.query(`DELETE FROM ${this.tables.passkeySpentChallenges} WHERE expires_at < $1`, [purgeSpentBefore]);
     const spent = await client.query(
-      "INSERT INTO passkey_spent_challenges (challenge_hash, expires_at) VALUES ($1, $2) ON CONFLICT (challenge_hash) DO NOTHING",
+      `INSERT INTO ${this.tables.passkeySpentChallenges} (challenge_hash, expires_at) VALUES ($1, $2) ON CONFLICT (challenge_hash) DO NOTHING`,
       [challenge.hash, challenge.expiresAt],
     );
     return (spent.rowCount ?? 0) > 0;
@@ -498,13 +558,13 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     return this.transaction(async (client) => {
       if (options.keepEnabledAdmin) {
         await client.query(
-          "SELECT email FROM accounts WHERE role = 'admin' AND disabled = 0 ORDER BY email FOR UPDATE",
+          `SELECT email FROM ${this.tables.accounts} WHERE role = 'admin' AND disabled = 0 ORDER BY email FOR UPDATE`,
         );
       }
       const result = await write(client);
       if (options.keepEnabledAdmin) {
         const { rows } = await client.query(
-          "SELECT COUNT(*)::int AS n FROM accounts WHERE role = 'admin' AND disabled = 0",
+          `SELECT COUNT(*)::int AS n FROM ${this.tables.accounts} WHERE role = 'admin' AND disabled = 0`,
         );
         if (Number((rows as { n: number | string }[])[0]?.n) === 0) throw new LastAdminError();
       }

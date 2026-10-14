@@ -30,6 +30,8 @@
 import { JWT_SECRET_MIN_LENGTH } from "@/lib/config/auth-env";
 import { isBootstrapEnabled } from "@/lib/auth-bootstrap";
 import { isServerStorageEnabled } from "@/lib/storage/factory";
+import { getStorageProviderType } from "@/lib/storage/provider-type";
+import { readSchemaName } from "@/lib/storage/schema-name";
 
 /**
  * Validate `STORAGE_ENCRYPTION_KEY` when server-side storage is configured.
@@ -60,6 +62,36 @@ function verifyStorageEncryptionKeyAtBoot(): boolean {
   );
   process.exit(1);
   return false;
+}
+
+/**
+ * Validate `STORAGE_POSTGRES_SCHEMA` when the PostgreSQL storage provider is configured.
+ *
+ * The provider writes the name into every storage statement, so a value that is not a plain
+ * lowercase identifier would fail only at the first storage request, after sign-in. Under any other
+ * provider the variable is inert and is not checked.
+ */
+function verifyStorageSchemaAtBoot(): boolean {
+  if (getStorageProviderType() !== "postgres") return true;
+  try {
+    readSchemaName("STORAGE_POSTGRES_SCHEMA");
+    return true;
+  } catch (error) {
+    console.error(
+      [
+        "",
+        "============================================================",
+        " LibreDB Studio cannot start: STORAGE_POSTGRES_SCHEMA is invalid",
+        ` ${(error as Error).message}.`,
+        " Set it to the schema that holds the storage tables, such as studio,",
+        " or unset it to keep the tables where the connection's search_path puts them.",
+        "============================================================",
+        "",
+      ].join("\n"),
+    );
+    process.exit(1);
+    return false;
+  }
 }
 
 /**
@@ -105,7 +137,9 @@ export function verifyAuthEnvAtBoot(): boolean {
 
   // Otherwise an unset secret is not this check's business: zero-config bootstrap
   // generates one, and outside production getJwtSecret has its dev fallback.
-  if (!secret || secret.length >= JWT_SECRET_MIN_LENGTH) return verifyStorageEncryptionKeyAtBoot();
+  if (!secret || secret.length >= JWT_SECRET_MIN_LENGTH) {
+    return verifyStorageEncryptionKeyAtBoot() && verifyStorageSchemaAtBoot();
+  }
 
   // The secret value never reaches the logs — only its length.
   console.error(
