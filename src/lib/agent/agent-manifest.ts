@@ -297,7 +297,10 @@ export function agentVariant(
 ): AgentWorkflowVariant | undefined {
   const id = language ?? "sql";
   if (!Object.hasOwn(AGENT_WORKFLOW_VARIANTS, id)) throw new AgentManifestError(`unknown statement language ${id}`);
-  return AGENT_WORKFLOW_VARIANTS[id][workflow];
+  // The workflow is read from a ledger too, so it is guarded the same way: a name such as `toString` must be a
+  // missing variant, never the inherited method.
+  const variants: Partial<Record<AgentRunWorkflowType, AgentWorkflowVariant>> = AGENT_WORKFLOW_VARIANTS[id];
+  return Object.hasOwn(variants, workflow) ? variants[workflow] : undefined;
 }
 
 /** The variant an agent-mode run cannot do without. Its absence is an explicit error, never a fallback. */

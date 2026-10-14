@@ -12,7 +12,7 @@ import {
 } from "@/lib/agent/agent-manifest";
 import { composesCatalogFor, composesEstimatingExplainFor } from "@/lib/agent/composed-sql";
 import { AGENT_WORKFLOW_GOALS } from "@/lib/agent/goal-verifier";
-import { AGENT_WORKFLOW_PRESENTS_ANSWER } from "@/lib/agent/types";
+import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import type { DatabaseType } from "@/lib/types";
@@ -146,6 +146,19 @@ describe("the SQL variants", () => {
   test("a language with no variant plans with the SQL objective, and one with a variant plans with its own", () => {
     expect(planObjectiveOf("kubectl", "investigation")).toBe(requiredVariant("sql", "investigation").objective);
     expect(planObjectiveOf("kubectl", "operations")).toBe(requiredVariant("kubectl", "operations").objective);
+  });
+
+  test("a workflow naming an inherited property is a missing variant, not a function", () => {
+    const workflow = "toString" as AgentRunWorkflowType;
+    expect(agentVariant("sql", workflow)).toBeUndefined();
+    let caught: unknown;
+    try {
+      requiredVariant(undefined, workflow);
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as Error | undefined)?.name).toBe("AgentManifestError");
+    expect((caught as Error).message).toBe("no toString variant for sql");
   });
 
   test("operations plans in prose", () => {
