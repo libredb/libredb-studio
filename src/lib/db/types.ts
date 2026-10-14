@@ -1313,7 +1313,8 @@ export interface ProviderCapabilities {
   readonly machineRedaction?: { readonly maskedNameKinds: readonly string[] };
   /**
    * The curated cluster readings this provider answers for the agent, each one audited call and one statement charge
-   * instead of composed statements: `"usage"` is `readClusterUsage` (`cluster.usage.read`). Absent: it answers none.
+   * instead of composed statements: `"usage"` is `readClusterUsage` (`cluster.usage.read`), `"workloads"` is
+   * `readWorkloadProfile` (`cluster.workloads.read`). Absent: it answers none.
    * `AGENT_REQUIREMENT_ENGINES` in `src/lib/agent/agent-manifest.ts` mirrors it per engine type, and
    * `agent-manifest.test.ts` holds the mirror to this declaration.
    *
@@ -1790,6 +1791,19 @@ export type ClusterUsageReading =
   | { readonly kind: "metrics-unavailable" }
   | { readonly kind: "over-ceiling" };
 
+/** One namespace, for the workload profile: every workload in it, with nothing to narrow it. */
+export interface WorkloadProfileInput {
+  readonly namespace: string;
+}
+
+/**
+ * What a workload profile answers: one row per workload, or `over-ceiling`, which refuses a profile past its row
+ * ceiling, or one whose lists run past a statement's read, rather than truncating it.
+ */
+export type WorkloadProfileReading =
+  | { readonly kind: "rows"; readonly result: QueryResult }
+  | { readonly kind: "over-ceiling" };
+
 /**
  * What the caller wants out of the one statement it is sending: the statement's own
  * result, or the engine's ESTIMATE of how it would be run.
@@ -1994,6 +2008,14 @@ export interface DatabaseProvider {
    * profile, bounded by `budget` as `queryReadOnly` is.
    */
   readClusterUsage?(input: ClusterUsageInput, budget: ReadOnlyStatementBudget): Promise<ClusterUsageReading>;
+
+  /**
+   * The workload profile of one namespace, for the agent's `cluster.workloads.read`: one row per workload, with its
+   * desired and ready counts, pods not Ready, restarts, missing requests, limits and probes, and Warning events.
+   * Optional: only a provider declaring `agentReadings` `"workloads"` implements it, and it answers only under the
+   * agent read-only profile, bounded by `budget` as `queryReadOnly` is.
+   */
+  readWorkloadProfile?(input: WorkloadProfileInput, budget: ReadOnlyStatementBudget): Promise<WorkloadProfileReading>;
 
   /**
    * End a transaction that a statement run through `query()` left open on the session

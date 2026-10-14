@@ -10,9 +10,9 @@
  * every module reads through.
  *
  * Read-only whatever `readOnly` says: no request path writes, and no maintenance is offered. `queryReadOnly` and
- * the curated `readClusterUsage` (`agent-readings.ts`) serve the agent under the read-only profile (`machine-read.ts`,
- * `machine-redaction.ts`); MCP is not offered (`MCP_EXPOSABLE.kubernetes`). The clock, the randomness and the
- * transport factory are seams.
+ * the curated `readClusterUsage` and `readWorkloadProfile` (`agent-readings.ts`) serve the agent under the read-only
+ * profile (`machine-read.ts`, `machine-redaction.ts`); MCP is not offered (`MCP_EXPOSABLE.kubernetes`). The clock,
+ * the randomness and the transport factory are seams.
  *
  * The console is `console/`: `query()` runs one statement through `console/run.ts` under the run registry, so a
  * cancel stops it, and `prepareQuery` pages only the list form of a single-type get (`console/paging.ts`).
@@ -47,10 +47,12 @@ import type {
   SlowQueryStats,
   StorageStats,
   TableStats,
+  WorkloadProfileInput,
+  WorkloadProfileReading,
 } from "@/lib/db/types";
 import { createRunRegistry, type RunRegistry } from "@/lib/db/utils/bounded-limiter";
 import type { DatabaseConnection, QueryWarning, WithTunnelFarEnd } from "@/lib/types";
-import { readClusterUsage } from "./agent-readings";
+import { readClusterUsage, readWorkloadProfile } from "./agent-readings";
 import { createKubernetesClient, DEFAULT_KUBERNETES_SEAMS, type KubernetesCall, type KubernetesSeams } from "./client";
 import { kubernetesConnectWarnings } from "./connect-warnings";
 import { ExplainCache, resultOf, statementCall } from "./console/context";
@@ -163,8 +165,9 @@ export class KubernetesProvider extends BaseDatabaseProvider {
       agentCredential: "token",
       // The agent's reads mask every Secret name its output carries, so the withheld kind holds on `queryReadOnly` too.
       machineRedaction: { maskedNameKinds: ["secrets"] },
-      // Container usage against requests and limits, read in one call for the agent (`readClusterUsage`).
-      agentReadings: ["usage"],
+      // Container usage against requests and limits (`readClusterUsage`) and a namespace's workload profile
+      // (`readWorkloadProfile`), each read in one call for the agent.
+      agentReadings: ["usage", "workloads"],
       // Nothing a statement runs changes the tree.
       schemaRefreshPattern: "(?!)",
     };
@@ -312,6 +315,17 @@ export class KubernetesProvider extends BaseDatabaseProvider {
     const session = this.requireSession();
     return withMachineContext(this.machineSession(session), budget, this.machineOptions(), (context) =>
       readClusterUsage(context, input),
+    );
+  }
+
+  /** A namespace's workload profile for the agent (`cluster.workloads.read`), in the machine context. */
+  public async readWorkloadProfile(
+    input: WorkloadProfileInput,
+    budget: ReadOnlyStatementBudget,
+  ): Promise<WorkloadProfileReading> {
+    const session = this.requireSession();
+    return withMachineContext(this.machineSession(session), budget, this.machineOptions(), (context) =>
+      readWorkloadProfile(context, input),
     );
   }
 

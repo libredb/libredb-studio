@@ -1,17 +1,26 @@
 /**
  * The curated readings the agent's cluster workflows take instead of composing kubectl: container usage against
- * requests and limits. Each is one audited call, one statement charge, and has its own row ceiling of 500, refused
- * past it; each runs in the machine context, so it is bounded by the statement budget and every body is redacted in
- * machine mode.
+ * requests and limits, and a namespace's workload profile. Each is one audited call, one statement charge, and has its
+ * own row ceiling of 500, refused past it; each runs in the machine context, so it is bounded by the statement budget
+ * and every body is redacted in machine mode.
  *
  * Usage is read from metrics.k8s.io PodMetrics and joined to the core pod list by pod and container name, so a
  * container metrics-server has not sampled yet still has its row, with null usage. The workload above a pod is read
  * through its controller: ReplicaSet to Deployment, Job to CronJob, as `kubectl get` names the owner.
+ *
+ * The workload profile lists the controllers independently of their pods, so a controller whose pods are all missing
+ * is still a row, then the pods and the Warning events, and attributes each to its workload.
  */
 import { QueryError } from "@/lib/db/errors";
-import type { ClusterUsageInput, ClusterUsageReading, QueryResult } from "@/lib/db/types";
+import type {
+  ClusterUsageInput,
+  ClusterUsageReading,
+  QueryResult,
+  WorkloadProfileInput,
+  WorkloadProfileReading,
+} from "@/lib/db/types";
 import { ACCEPT_JSON } from "./client";
-import { inTurn, type KubectlContext, objectOf, stringOf } from "./console/context";
+import { byCodeUnit, inTurn, type KubectlContext, objectOf, stringOf } from "./console/context";
 import { milliValue, parseQuantity, wholeValue } from "./console/top";
 import { findResource, type IndexedResource } from "./discovery";
 import { KubernetesRequestError } from "./errors";
@@ -39,6 +48,23 @@ export const CLUSTER_USAGE_FIELDS = [
   "timestamp",
 ] as const;
 
+export const WORKLOAD_PROFILE_FIELDS = [
+  "kind",
+  "name",
+  "desired",
+  "ready",
+  "lastSchedule",
+  "podsNotReady",
+  "restarts",
+  "lastTerminationReason",
+  "lastTerminationAt",
+  "withoutRequests",
+  "withoutLimits",
+  "withoutReadinessProbe",
+  "withoutLivenessProbe",
+  "warningEvents",
+] as const;
+
 type Json = Readonly<Record<string, unknown>>;
 
 interface Listed {
@@ -59,7 +85,7 @@ async function listed(
   target: IndexedResource,
   namespace: string,
   limit: number,
-  query: { readonly labelSelector?: string } = {},
+  query: { readonly labelSelector?: string; readonly fieldSelector?: string } = {},
 ): Promise<Listed> {
   const scan = await scanTable(
     async (page) =>
@@ -215,5 +241,206 @@ export async function readClusterUsage(
   }
   if (rows.length > CLUSTER_READING_MAX_ROWS) return { kind: "over-ceiling" };
   const result: QueryResult = { rows, fields: [...CLUSTER_USAGE_FIELDS], rowCount: rows.length, executionTime: 0 };
+  return { kind: "rows", result };
+}
+
+interface Workload {
+  readonly kind: string;
+  readonly name: string;
+  readonly desired: number | null;
+  readonly ready: number | null;
+  readonly lastSchedule: string | null;
+  /** The pod spec its containers come from: the template of a controller, the spec of a bare Pod. */
+  readonly podSpec: Json;
+}
+
+/** The controller kinds a workload profile lists, in the order it reads them, each with the kind it is read as. */
+const WORKLOAD_KINDS = [
+  { group: "apps", resource: "deployments", kind: "Deployment" },
+  { group: "apps", resource: "statefulsets", kind: "StatefulSet" },
+  { group: "apps", resource: "daemonsets", kind: "DaemonSet" },
+  { group: "batch", resource: "jobs", kind: "Job" },
+  { group: "batch", resource: "cronjobs", kind: "CronJob" },
+] as const;
+
+/** The kinds whose desired count is a replica count, so a desired pod with no pod at all is a pod not Ready. */
+const REPLICA_KINDS: ReadonlySet<string> = new Set(["Deployment", "StatefulSet"]);
+
+const number = (value: unknown, fallback: number): number => (typeof value === "number" ? value : fallback);
+
+/** A controller as a workload, desired and ready in its kind's own terms. */
+function workloadOf(kind: string, object: Json): Workload {
+  const spec = objectOf(object.spec) ?? {};
+  const status = objectOf(object.status) ?? {};
+  const template = objectOf(objectOf(spec.template)?.spec) ?? {};
+  switch (kind) {
+    case "DaemonSet":
+      return {
+        kind,
+        name: nameOf(object),
+        desired: number(status.desiredNumberScheduled, 0),
+        ready: number(status.numberReady, 0),
+        lastSchedule: null,
+        podSpec: template,
+      };
+    case "Job":
+      return {
+        kind,
+        name: nameOf(object),
+        desired: number(spec.completions, 1),
+        ready: number(status.succeeded, 0),
+        lastSchedule: null,
+        podSpec: template,
+      };
+    case "CronJob": {
+      const jobTemplate = objectOf(objectOf(objectOf(spec.jobTemplate)?.spec)?.template) ?? {};
+      return {
+        kind,
+        name: nameOf(object),
+        desired: array(status.active).length,
+        ready: null,
+        lastSchedule: stringOf(status.lastScheduleTime) ?? null,
+        podSpec: objectOf(jobTemplate.spec) ?? {},
+      };
+    }
+    default:
+      return {
+        kind,
+        name: nameOf(object),
+        desired: number(spec.replicas, 1),
+        ready: number(status.readyReplicas, 0),
+        lastSchedule: null,
+        podSpec: template,
+      };
+  }
+}
+
+const isReady = (pod: Json): boolean =>
+  array(objectOf(pod.status)?.conditions).some(
+    (condition) => condition.type === "Ready" && condition.status === "True",
+  );
+
+/** A pod that ran to completion is not Ready, and is not one that should be. */
+const hasSucceeded = (pod: Json): boolean => objectOf(pod.status)?.phase === "Succeeded";
+
+const isEmpty = (value: unknown): boolean => Object.keys(objectOf(value) ?? {}).length === 0;
+
+/** How many of `containers` match, as a row's count. */
+const counted = (containers: readonly Json[], missing: (container: Json) => boolean): number =>
+  containers.filter(missing).length;
+
+/** Warning events by reason, as `BackOff=3, FailedScheduling=1`, each event weighing its own repeat `count`. */
+function warningSummary(reasons: ReadonlyMap<string, number> | undefined): string | null {
+  if (reasons === undefined) return null;
+  return [...reasons.keys()]
+    .sort(byCodeUnit)
+    .map((reason) => `${reason}=${reasons.get(reason)}`)
+    .join(", ");
+}
+
+/** One workload's row: its own counts, and what its pods, its template and its events say. */
+function workloadRow(
+  workload: Workload,
+  pods: readonly Json[],
+  warnings: ReadonlyMap<string, number> | undefined,
+): Record<string, unknown> {
+  const missing = REPLICA_KINDS.has(workload.kind) ? Math.max(0, (workload.desired ?? 0) - pods.length) : 0;
+  const statuses = pods.flatMap((pod) => array(objectOf(pod.status)?.containerStatuses));
+  let restarts = 0;
+  let last: { readonly reason: string | null; readonly at: string } | undefined;
+  for (const status of statuses) {
+    restarts += number(status.restartCount, 0);
+    const terminated = objectOf(objectOf(status.lastState)?.terminated);
+    const at = stringOf(terminated?.finishedAt);
+    if (at !== undefined && (last === undefined || at > last.at))
+      last = { reason: stringOf(terminated?.reason) ?? null, at };
+  }
+  const containers = array(workload.podSpec.containers);
+  return {
+    kind: workload.kind,
+    name: workload.name,
+    desired: workload.desired,
+    ready: workload.ready,
+    lastSchedule: workload.lastSchedule,
+    podsNotReady: pods.filter((pod) => !hasSucceeded(pod) && !isReady(pod)).length + missing,
+    restarts,
+    lastTerminationReason: last?.reason ?? null,
+    lastTerminationAt: last?.at ?? null,
+    withoutRequests: counted(containers, (container) => isEmpty(objectOf(container.resources)?.requests)),
+    withoutLimits: counted(containers, (container) => isEmpty(objectOf(container.resources)?.limits)),
+    withoutReadinessProbe: counted(containers, (container) => container.readinessProbe === undefined),
+    withoutLivenessProbe: counted(containers, (container) => container.livenessProbe === undefined),
+    warningEvents: warningSummary(warnings),
+  };
+}
+
+const keyOf = (owner: Owner): string => `${owner.kind}/${owner.name}`;
+
+/**
+ * The workload profile of one namespace: one row per controller, Deployment, StatefulSet, DaemonSet, Job and CronJob,
+ * listed whether or not it has pods, and one per pod no controller owns. A pod counts under its controller, a
+ * ReplicaSet's lifted to its Deployment; a Job's pods count under the Job, and the CronJob's row reads its own active
+ * Jobs. A list discovery does not serve is empty; a list past one statement's read, or more than 500 workloads,
+ * answers `over-ceiling`.
+ */
+export async function readWorkloadProfile(
+  context: KubectlContext,
+  input: WorkloadProfileInput,
+): Promise<WorkloadProfileReading> {
+  const index = await context.surface.discovery.get();
+  const lists = await inTurn(
+    [
+      ...WORKLOAD_KINDS.map(({ group, resource }) => ({ target: findResource(index, group, resource), query: {} })),
+      { target: findResource(index, "apps", "replicasets"), query: {} },
+      { target: findResource(index, "", "pods"), query: {} },
+      { target: findResource(index, "", "events"), query: { fieldSelector: "type=Warning" } },
+    ],
+    async ({ target, query }) =>
+      target === undefined
+        ? NOTHING_LISTED
+        : listed(context, target, input.namespace, KUBERNETES_MAX_STATEMENT_ROWS, query),
+  );
+  if (lists.some((list) => list.more)) return { kind: "over-ceiling" };
+  const [replicaSets, pods, events] = lists.slice(WORKLOAD_KINDS.length).map((list) => list.items);
+  const owners = ownerIndex([{ kind: "ReplicaSet", items: replicaSets }]);
+  const workloads = WORKLOAD_KINDS.flatMap(({ kind }, at) => lists[at].items.map((item) => workloadOf(kind, item)));
+  const podsOf = new Map<string, Json[]>(workloads.map((workload) => [keyOf(workload), []]));
+  const podOwners = new Map<string, Owner>();
+  for (const pod of pods) {
+    const owner = controllerOf({ ...pod, kind: "Pod" }, owners);
+    podOwners.set(nameOf(pod), owner);
+    if (owner.kind === "Pod") {
+      workloads.push({
+        kind: "Pod",
+        name: owner.name,
+        desired: 1,
+        ready: isReady(pod) ? 1 : 0,
+        lastSchedule: null,
+        podSpec: objectOf(pod.spec) ?? {},
+      });
+      podsOf.set(keyOf(owner), [pod]);
+    } else podsOf.get(keyOf(owner))?.push(pod);
+  }
+  if (workloads.length > CLUSTER_READING_MAX_ROWS) return { kind: "over-ceiling" };
+  const warnings = new Map<string, Map<string, number>>();
+  for (const event of events) {
+    const involved = objectOf(event.involvedObject) ?? {};
+    const object: Owner = { kind: stringOf(involved.kind) ?? "", name: stringOf(involved.name) ?? "" };
+    const workload =
+      object.kind === "Pod"
+        ? podOwners.get(object.name)
+        : object.kind === "ReplicaSet"
+          ? owners.get(keyOf(object))
+          : object;
+    if (workload === undefined || !podsOf.has(keyOf(workload))) continue;
+    const reasons = warnings.get(keyOf(workload)) ?? new Map<string, number>();
+    const reason = stringOf(event.reason) ?? "";
+    reasons.set(reason, (reasons.get(reason) ?? 0) + Math.max(1, number(event.count, 1)));
+    warnings.set(keyOf(workload), reasons);
+  }
+  const rows = workloads
+    .toSorted((a, b) => byCodeUnit(a.kind, b.kind) || byCodeUnit(a.name, b.name))
+    .map((workload) => workloadRow(workload, podsOf.get(keyOf(workload)) ?? [], warnings.get(keyOf(workload))));
+  const result: QueryResult = { rows, fields: [...WORKLOAD_PROFILE_FIELDS], rowCount: rows.length, executionTime: 0 };
   return { kind: "rows", result };
 }

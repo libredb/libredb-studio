@@ -367,6 +367,36 @@ export const clusterUsageReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+/** One namespace (a DNS-1123 label, as the API server names one) and nothing to narrow it: a profile is all of it. */
+const clusterWorkloadsReadInput = z.strictObject({
+  namespace: z.string().regex(/^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/),
+});
+
+/**
+ * The workload profile of one namespace, on a `kubernetes` connection: a curated reading the agent's cluster health
+ * workflow takes instead of composing `kubectl get` over each controller kind, the pods and the Warning events.
+ *
+ * R1 `data-read` under the same boundary as `kubectl.query.read`, for the reason `cluster.usage.read` is: the
+ * namespace is model-written and reaches the API server, and the answer is the cluster's own state. `heavy` because
+ * one charge buys eight lists. Its own ceiling of 500 workloads, and a reading past it is refused rather than
+ * truncated.
+ */
+export const clusterWorkloadsReadDescriptor: RegistrableOperationDescriptor = {
+  id: "cluster.workloads.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  inputSchema: clusterWorkloadsReadInput,
+  verification: {
+    reviewedBy: "Kubernetes agent execution design review",
+    boundary: KUBECTL_READ_BOUNDARY,
+    verifiedOn: "2026-10-14",
+  },
+};
+
 const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.freeze([
   sqlQueryReadDescriptor,
   sqlExplainEstimateDescriptor,
@@ -376,6 +406,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   dbSchemaReadDescriptor,
   kubectlQueryReadDescriptor,
   clusterUsageReadDescriptor,
+  clusterWorkloadsReadDescriptor,
 ]);
 
 /**
