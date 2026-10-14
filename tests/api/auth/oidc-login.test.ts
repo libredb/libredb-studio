@@ -11,12 +11,13 @@ const mockGetOIDCConfig = mock(() => ({
   scope: "openid profile email",
   roleClaim: "",
   adminRoles: ["admin"],
+  prompt: "omit",
 }));
 
 const mockDiscoverProvider = mock(async () => "mock-config");
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const mockGenerateAuthUrl = mock(async (_config: unknown, _redirectUri: string, _scope: string) => ({
+const mockGenerateAuthUrl = mock(async (_config: unknown, _redirectUri: string, _scope: string, _prompt?: string) => ({
   url: new URL("https://example.auth0.com/authorize?state=abc&code_challenge=xyz"),
   state: {
     code_verifier: "test-verifier",
@@ -163,6 +164,27 @@ describe("GET /api/auth/oidc/login", () => {
     expect(res.status).toBe(307);
     const location = res.headers.get("location");
     expect(location).toContain("/login?error=oidc_config");
+  });
+
+  test("passes the configured OIDC prompt to the authorization URL", async () => {
+    await GET(new Request("http://localhost:3000/api/auth/oidc/login"));
+
+    expect(mockGenerateAuthUrl).toHaveBeenCalledTimes(1);
+    expect(mockGenerateAuthUrl.mock.calls[0][3]).toBe("omit");
+  });
+
+  test("an invalid OIDC_PROMPT redirects to /login?error=oidc_config", async () => {
+    // getOIDCConfig() is where OIDC_PROMPT is validated (tests/unit/lib/oidc.test.ts); here it is
+    // mocked to throw what it throws for OIDC_PROMPT=none, so the route has to classify it by type.
+    mockGetOIDCConfig.mockImplementationOnce(() => {
+      throw new AuthConfigError("OIDC_PROMPT must be one of login, consent, select_account, omit; got none");
+    });
+
+    const res = await GET(new Request("http://localhost:3000/api/auth/oidc/login"));
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/login?error=oidc_config");
+    expect(mockGenerateAuthUrl).not.toHaveBeenCalled();
   });
 
   test("redirects to /login?error=oidc_discovery when discovery fails", async () => {

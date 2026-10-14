@@ -43,7 +43,7 @@ export async function GET(request: Request) {
 
     const redirectUri = `${origin}${withBasePath("/api/auth/oidc/callback")}`;
 
-    const { url, state } = await generateAuthUrl(config, redirectUri, oidcConfig.scope);
+    const { url, state } = await generateAuthUrl(config, redirectUri, oidcConfig.scope, oidcConfig.prompt);
 
     // Store PKCE state in signed cookie. The Secure flag follows the same rule
     // as the session cookie: a state cookie the browser drops takes the PKCE

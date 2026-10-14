@@ -119,7 +119,7 @@ When the stack is up, open **https://demo.127.0.0.1.nip.io:8443**.
 2. Click **Logout**. Keycloak asks **Do you want to log out?**; confirm it, and you are back on the login page.
 3. Click **Login with SSO** again and sign in as `user` / `user`. You land on the editor, and the admin surfaces are gone: `/admin` sends you back to `/`.
 
-Keycloak asks for a password on that third step whether or not step 2 ended its session, because Studio sends `prompt=login` on every authorization request (`src/lib/oidc.ts`). Treat the prompt as normal, not as proof: what shows the logout worked is that step 2 returns you to the login page and the app stays signed out until you sign in again.
+Keycloak asks for a password on that third step whether or not step 2 ended its session, because Studio sends `prompt=login` on every authorization request by default (`OIDC_PROMPT`, `src/lib/oidc.ts`). Treat the prompt as normal, not as proof: what shows the logout worked is that step 2 returns you to the login page and the app stays signed out until you sign in again.
 
 The difference is the realm role (`admin` or `user`), mapped through `OIDC_ROLE_CLAIM=realm_access.roles` exactly as in the [Keycloak](#keycloak) setup below. The realm already has the roles in the ID token, so nothing needs changing in the Keycloak admin console.
 
@@ -308,7 +308,18 @@ The difference is the realm role (`admin` or `user`), mapped through `OIDC_ROLE_
 | `OIDC_SCOPE` | No | `openid profile email` | OAuth scopes to request |
 | `OIDC_ROLE_CLAIM` | No | — | Claim path for role extraction (dot-notation supported) |
 | `OIDC_ADMIN_ROLES` | No | `admin` | Comma-separated values that map to admin role |
+| `OIDC_PROMPT` | No | `login` | The `prompt` sent on sign-in: `login`, `consent`, `select_account`, or `omit` to send none; see [Single sign-on with OIDC_PROMPT](#single-sign-on-with-oidc_prompt) |
 | `AUTH_SESSION_TTL_SECONDS` | No | `86400` | Session lifetime in seconds, from 300 to 86400; see [Session lifetime](#session-lifetime) |
+
+### Single sign-on with OIDC_PROMPT
+
+By default Studio sends `prompt=login`, so the provider asks for credentials on every sign-in, even when the user already has a provider session.
+Set `OIDC_PROMPT=omit` to send no `prompt` parameter at all.
+The provider then signs a user with a live session straight back in without a form, which is what single sign-on across Studio and other applications on the same provider needs.
+`consent` and `select_account` are passed through for providers that support them.
+The value is trimmed and case-insensitive.
+Any other value, `none` included, is a configuration error: sign-in lands on `/login?error=oidc_config`.
+`none` is refused because the provider answers it with `login_required` whenever there is no session, which leaves the user on an error instead of a sign-in form.
 
 > Storage configuration (`STORAGE_PROVIDER` etc.) is independent of auth. See [STORAGE.md](./STORAGE.md).
 
@@ -348,7 +359,7 @@ The role mapping system:
 |---------|-------------|
 | **PKCE S256** | Proof Key for Code Exchange prevents authorization code interception |
 | **State Cookie** | PKCE state signed as a JWT with a key derived from `JWT_SECRET` for this purpose, httpOnly, sameSite=lax, 5-min expiry |
-| **Prompt Login** | `prompt=login` forces re-authentication on every SSO click |
+| **Prompt Login** | `prompt=login` (the default) forces re-authentication on every SSO click; `OIDC_PROMPT=omit` turns it off for single sign-on |
 | **Provider Logout** | Logout clears both local JWT and provider session |
 | **Discovery Cache** | OIDC provider metadata cached for 5 minutes to reduce network calls |
 | **Nonce Validation** | ID token nonce validated to prevent replay attacks |
@@ -390,7 +401,8 @@ The role mapping system:
 
 ### Same user auto-logs in on every SSO click
 
-- This is handled automatically — LibreDB Studio sends `prompt=login` to force re-authentication
+- With the default `OIDC_PROMPT=login`, LibreDB Studio sends `prompt=login` to force re-authentication
+- With `OIDC_PROMPT=omit` this is intended: the provider session signs the user in (single sign-on)
 - If the issue persists, check your provider's session settings
 
 ### Role is always "user" even for admins
@@ -405,7 +417,7 @@ The role mapping system:
 
 - The return URL must be registered with the provider, or it rejects the redirect: Auth0 "Allowed Logout URLs", Keycloak "Valid post logout redirect URIs", Azure AD "Front-channel logout URL"
 - Keycloak / Okta / Azure AD: the logout endpoint comes from the provider's own Discovery metadata, so no per-provider configuration is needed on Studio's side
-- If the provider advertises no `end_session_endpoint` (Google, for one), the provider session survives on purpose — Studio clears its own cookie and skips the redirect. Signing in again still prompts, because Studio always sends `prompt=login`
+- If the provider advertises no `end_session_endpoint` (Google, for one), the provider session survives on purpose — Studio clears its own cookie and skips the redirect. Signing in again still prompts, because Studio sends `prompt=login` unless `OIDC_PROMPT` says otherwise
 
 ---
 
@@ -624,6 +636,7 @@ interface OIDCConfig {
   scope: string;           // Default: "openid profile email"
   roleClaim: string;       // e.g. "realm_access.roles"
   adminRoles: string[];    // e.g. ["admin"]
+  prompt: OIDCPrompt;      // "login" (default), "consent", "select_account" or "omit" (OIDC_PROMPT)
 }
 
 interface OIDCState {
