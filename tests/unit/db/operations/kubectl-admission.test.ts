@@ -53,6 +53,15 @@ describe("admitKubectlStatement", () => {
     });
   });
 
+  test("a paging clause under a statement that cannot page gets the agent's sentence, not the console's", () => {
+    // The console's sentence says the line applies to the list form of a get, which invites the model to rewrite the
+    // read as one; on the agent path no read is paged at all.
+    expect(admitKubectlStatement("describe pod web -n shop\n# libredb:page offset=0 limit=50")).toEqual({
+      code: "agent-paging",
+      message: AGENT_PAGING_SENTENCE,
+    });
+  });
+
   test("4,096 characters are admitted and 4,097 are not", () => {
     const at = `get pods -n shop -l app=${"a".repeat(KUBECTL_AGENT_MAX_STATEMENT_CHARS - 24)}`;
     expect(at.length).toBe(KUBECTL_AGENT_MAX_STATEMENT_CHARS);

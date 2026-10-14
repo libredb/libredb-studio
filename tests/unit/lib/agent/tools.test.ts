@@ -6,6 +6,7 @@ import {
   AGENT_EXECUTION_PROFILE,
   AGENT_OPERATIONS_PROFILE,
 } from "@/lib/agent/execution-policy";
+import type { AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AgentRepairLedger, fingerprintStatement } from "@/lib/agent/repair-ledger";
 import {
@@ -281,8 +282,12 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
   });
 
   test("a run with no recorded language reads the SQL definition", () => {
-    expect(agentToolDefinition(undefined, "run_read_query")).toBe(AGENT_TOOL_DEFINITIONS.run_read_query);
-    expect(agentToolDefinition("sql", "inspect_operations")).toBe(AGENT_TOOL_DEFINITIONS.inspect_operations);
+    expect(agentToolDefinition(undefined, "investigation", "run_read_query")).toBe(
+      AGENT_TOOL_DEFINITIONS.run_read_query,
+    );
+    expect(agentToolDefinition("sql", "operations", "inspect_operations")).toBe(
+      AGENT_TOOL_DEFINITIONS.inspect_operations,
+    );
   });
 
   test("present_answer is offered exactly where AGENT_WORKFLOW_PRESENTS_ANSWER says it is", () => {
@@ -2775,8 +2780,8 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
   });
 
   test("a statement in a language with no server adapter is a named error, never a SQL fingerprint", async () => {
-    // A kubectl statement fingerprinted as SQL, or refused with a SQL sentence, would be a wrong answer that looks
-    // like a right one, so until that language registers its adapter the call throws before anything is spent.
+    // A statement fingerprinted as SQL, or refused with a SQL sentence, would be a wrong answer that looks like a
+    // right one, so a language id this server does not know (one a ledger carried) throws before anything is spent.
     let reached = false;
     const h = harness({}, async () => {
       reached = true;
@@ -2785,10 +2790,10 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
 
     await expect(
       executeAgentOperation(
-        { ...h.context, statementLanguage: "kubectl" },
-        { operationId: "sql.query.read", sql: "get pods -n shop" },
+        { ...h.context, statementLanguage: "cypher" as AgentStatementLanguageId },
+        { operationId: "sql.query.read", sql: "MATCH (n) RETURN n" },
       ),
-    ).rejects.toThrow("no server adapter for kubectl");
+    ).rejects.toThrow("no server adapter for cypher");
     expect(reached).toBe(false);
   });
 
@@ -3392,8 +3397,8 @@ describe("inspectSchemaTool — the server composes the catalog statement", () =
     const outcomes = [
       await inspectSchemaTool(h.context, { schema: 42 } as unknown as { schema?: string }),
       await inspectSchemaTool(h.context, { unexpected: "x" } as unknown as { schema?: string }),
-      await runReadQueryTool(h.context, { sql: 7 } as unknown as { sql: string }),
-      await runReadQueryTool(h.context, {} as unknown as { sql: string }),
+      await runReadQueryTool(h.context, { sql: 7 }),
+      await runReadQueryTool(h.context, {}),
       await inspectPlanTool(h.context, { sql: null } as unknown as { sql: string }),
     ];
 

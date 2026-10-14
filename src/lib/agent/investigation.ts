@@ -44,7 +44,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { planDeliverableOf, planObjectiveOf, requiredVariant } from "./agent-manifest";
+import { AGENT_LANGUAGE_COPY, planDeliverableOf, planObjectiveOf, requiredVariant } from "./agent-manifest";
 import { logger } from "@/lib/logger";
 import { isRetryableError, isToolCallParseError } from "@/lib/llm/types";
 import { type AssistantModelMessage, type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
@@ -1633,7 +1633,7 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
     "Answer from data you have READ. The schema tells you where to look; only a result you ran can be the answer.",
     "profile_table at basic depth is how you tell a fact table from a lookup one, and a date column the business fills from an audit column nobody does: it returns row counts and how many rows have a value, and reads no value out of any column. Go deeper only if a basic profile leaves a question.",
     "When you have the answer, call present_answer with the artifact id of the read that IS the answer.",
-    // The tool layer's `ANSWER_OPERATION` rule, in the model's terms (#350). A plan
+    // The tool layer's `isStatementReadOperation` rule in `presentAnswerTool`, in the model's terms (#350). A plan
     // step carries a drafted statement and settles like any other, so nothing in what
     // the model sees distinguishes a plan artifact from a read one; a rule enforced
     // only by a refusal is a rule the model meets by spending a turn on it.
@@ -2153,10 +2153,13 @@ function deriveStepId(toolName: string, input: unknown): string {
   return `step_${digest.slice(0, 32)}`;
 }
 
-/** The model's own SQL, when the arguments carry one. Used for the draft entry. */
-function draftedSql(input: unknown): { sql: string; rationale: string } | null {
+/**
+ * The model's own statement, when the arguments carry one under the language's `argument`. Used for the draft entry,
+ * whose field stays `sql` whatever the language calls its argument, so a persisted event reads the same.
+ */
+function draftedStatement(input: unknown, argument: "sql" | "statement"): { sql: string; rationale: string } | null {
   if (input === null || typeof input !== "object") return null;
-  const { sql, rationale } = input as { sql?: unknown; rationale?: unknown };
+  const { [argument]: sql, rationale } = input as Readonly<Record<string, unknown>>;
   if (typeof sql !== "string" || sql.length === 0) return null;
   return { sql, rationale: typeof rationale === "string" && rationale.length > 0 ? rationale : "(none given)" };
 }
@@ -2175,7 +2178,7 @@ export const DATABASE_TOOL_HANDLERS: Readonly<
   Record<DatabaseToolName, (context: AgentToolContext, input: unknown) => Promise<AgentToolOutcome>>
 > = Object.freeze({
   inspect_schema: (context, input) => inspectSchemaTool(context, input as { schema?: string; table?: string }),
-  run_read_query: (context, input) => runReadQueryTool(context, input as { sql: string; rationale?: string }),
+  run_read_query: runReadQueryTool,
   inspect_plan: (context, input) => inspectPlanTool(context, input as { sql: string }),
   inspect_operations: inspectOperationsTool,
 });
@@ -4234,7 +4237,7 @@ async function handleCall(input: {
 
   const name = call.toolName as DatabaseToolName;
   const stepId = deriveStepId(name, call.input);
-  const draft = draftedSql(call.input);
+  const draft = draftedStatement(call.input, AGENT_LANGUAGE_COPY[context.statementLanguage ?? "sql"].argument);
   // The draft is narrated before the invocation it describes, and only for a step
   // the ledger has not seen: a resumed run that replays a call must not write a
   // second draft for it.
@@ -4248,7 +4251,7 @@ async function handleCall(input: {
   }
   known.add(stepId);
 
-  const { operationId } = agentToolDefinition(context.statementLanguage, name);
+  const { operationId } = agentToolDefinition(context.statementLanguage, context.workflowType, name);
   const invocation: AgentRunInvocation = {
     stepId,
     tool: name,

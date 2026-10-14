@@ -1,0 +1,136 @@
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { z } from "zod";
+import { AgentRunDeadline } from "@/lib/agent/deadline";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
+import {
+  AGENT_TOOL_DEFINITIONS,
+  type AgentToolContext,
+  agentToolDefinition,
+  runReadQueryTool,
+} from "@/lib/agent/tools";
+import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
+import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
+import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
+import { admitKubectlStatement } from "@/lib/db/operations/kubectl-admission";
+import { createTargetScope } from "@/lib/db/operations/policy";
+import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
+import { AGENT_PAGING_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
+import type { DatabaseProvider } from "@/lib/db/types";
+import type { QueryResult } from "@/lib/types";
+import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
+
+/**
+ * `run_read_query` on a kubectl run: its argument is `statement`, a line the reader refuses is answered with the
+ * reader's own sentence before anything is sent, and an admitted line reaches the provider under `kubectl.query.read`.
+ * The harness is `tools.test.ts`'s, on a Kubernetes connection.
+ */
+
+const connection = kubernetesConnection();
+const kubernetes = new KubernetesProvider(connection);
+
+/** A clock that never advances, so the deadline is never the reason anything fails. */
+const frozenClock = () => 1_000;
+
+function harness(overrides: Partial<AgentToolContext> = {}) {
+  const queryReadOnly = mock(
+    async (): Promise<QueryResult> => ({ rows: [{ NAME: "web-1" }], fields: ["NAME"], rowCount: 1, executionTime: 3 }),
+  );
+  const provider = { queryReadOnly } as unknown as DatabaseProvider;
+  const acquireProvider = mock(async () => provider);
+  const context: AgentToolContext = {
+    runId: "run-1",
+    modelId: "unmeasured-model-for-tests",
+    mode: "agent",
+    workflowType: "investigation",
+    statementLanguage: "kubectl",
+    actor: { sessionId: "session-1", role: "user" },
+    connection,
+    capabilities: kubernetes.getCapabilities(),
+    labels: kubernetes.getLabels(),
+    registry: createCanonicalOperationRegistry(),
+    scope: createTargetScope(connection.id),
+    tracker: new ExecutionBudgetTracker(),
+    artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
+    deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs * 2, frozenClock),
+    repairs: new AgentRepairLedger(),
+    acquireProvider,
+    clock: () => 1_000,
+    ...overrides,
+  };
+  return { context, queryReadOnly, acquireProvider };
+}
+
+let consoleSpy: ReturnType<typeof spyOn<Console, "log">>;
+
+beforeEach(() => {
+  consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  consoleSpy.mockRestore();
+});
+
+const properties = (schema: unknown): string[] => Object.keys(z.toJSONSchema(schema as z.ZodType).properties ?? {});
+
+const STATEMENT_WORKFLOWS = ["investigation", "query-optimization", "database-assessment", "data-analysis"] as const;
+
+describe("run_read_query on kubectl", () => {
+  test("offers a statement argument on every kubectl statement workflow, and SQL keeps its sql argument", () => {
+    for (const workflow of STATEMENT_WORKFLOWS) {
+      const definition = agentToolDefinition("kubectl", workflow, "run_read_query");
+      expect(properties(definition.inputSchema), workflow).toEqual(["statement", "rationale"]);
+      expect(definition.operationId, workflow).toBe("kubectl.query.read");
+      expect(agentToolDefinition(undefined, workflow, "run_read_query"), workflow).toBe(
+        AGENT_TOOL_DEFINITIONS.run_read_query,
+      );
+    }
+    expect(properties(agentToolDefinition(undefined, "investigation", "run_read_query").inputSchema)).toEqual([
+      "sql",
+      "rationale",
+    ]);
+  });
+
+  test("a kubectl workflow overrides only the tool it names differently", () => {
+    expect(agentToolDefinition("kubectl", "investigation", "compose_report")).toBe(
+      AGENT_TOOL_DEFINITIONS.compose_report,
+    );
+    expect(agentToolDefinition("kubectl", "operations", "inspect_operations")).toBe(
+      AGENT_TOOL_DEFINITIONS.inspect_operations,
+    );
+  });
+
+  test("an admitted read reaches the provider under kubectl.query.read", async () => {
+    const h = harness();
+    const outcome = await runReadQueryTool(h.context, { statement: "get pods -n shop" });
+    expect(outcome.kind).toBe("completed");
+    expect(h.queryReadOnly).toHaveBeenCalledWith("get pods -n shop", expect.any(Object), undefined);
+    if (outcome.kind === "completed") expect(outcome.artifact.operationId).toBe("kubectl.query.read");
+  });
+
+  test("a refused line is answered with the reader's own sentence and reaches nothing", async () => {
+    const h = harness();
+    const outcome = await runReadQueryTool(h.context, { statement: "delete pod web-1 -n shop" });
+    expect(outcome).toMatchObject({ kind: "unavailable", reasonCode: "STATEMENT_NOT_ADMITTED" });
+    const sentence = admitKubectlStatement("delete pod web-1 -n shop")?.message;
+    expect(sentence).toBeString();
+    expect(outcome.modelText).toContain(sentence as string);
+    expect(h.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("the paging clause is refused before the provider", async () => {
+    const h = harness();
+    const outcome = await runReadQueryTool(h.context, {
+      statement: "get pods -n shop\n# libredb:page offset=0 limit=50",
+    });
+    expect(outcome.modelText).toContain(AGENT_PAGING_SENTENCE);
+    expect(h.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("an sql argument on kubectl is invalid input", async () => {
+    const h = harness();
+    const outcome = await runReadQueryTool(h.context, { sql: "get pods" });
+    expect(outcome).toMatchObject({ kind: "unavailable", reasonCode: "INVALID_TOOL_INPUT" });
+    expect(h.acquireProvider).not.toHaveBeenCalled();
+  });
+});

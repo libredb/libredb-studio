@@ -117,7 +117,12 @@ import {
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { nonFiniteWord } from "@/lib/non-finite";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
-import { type AgentStatementLanguageId, type AgentWorkflowVariant, requiredVariant } from "./agent-manifest";
+import {
+  AGENT_LANGUAGE_COPY,
+  type AgentStatementLanguageId,
+  type AgentWorkflowVariant,
+  requiredVariant,
+} from "./agent-manifest";
 import { connectionIdentity, heldSnapshotForConnection } from "./context-snapshot";
 import { offersRefusalExamples } from "./models";
 import type { ColumnSchema, DatabaseConnection, QueryResult } from "@/lib/types";
@@ -384,6 +389,12 @@ export type AgentToolUnavailableCode =
   | "CHART_TOO_FEW_ROWS"
   /** The chart type does not fit the columns named. */
   | "CHART_SHAPE_MISMATCH"
+  /**
+   * The language's own reader refused the statement before the policy pipeline saw it, and its sentence is the
+   * detail. The pipeline's input stage keeps only a reason code, so without this a model refused for `exec` would read
+   * only that its read had the wrong shape. SQL has no such reader and never meets it.
+   */
+  | "STATEMENT_NOT_ADMITTED"
   | AgentDeadlineDenyCode
   | AgentRepairDenyCode;
 
@@ -451,6 +462,12 @@ export interface AgentOperationRequest {
   readonly operationId: AgentOperationId;
   /** The statement as it will be evaluated — composed by the server for two of the tools. */
   readonly sql: string;
+  /**
+   * The key the descriptor's input carries the statement under: `sql` for `sql.query.read`, `statement` for
+   * `kubectl.query.read`. Absent reads as `sql`, so every server-composed SQL read is unchanged. The request keeps
+   * `sql` as its own field name because it is this server's text, not the model's argument.
+   */
+  readonly argument?: "sql" | "statement";
   /** Prose naming what the result is, for the untrusted-content header. */
   readonly label?: string;
   /** Declared target dimensions, so a scope allowlist can bound them. */
@@ -1188,18 +1205,60 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
   },
 } satisfies Record<AgentToolName, AgentToolDefinition>);
 
+const readKubectlStatementSchema = z.strictObject({
+  statement: z.string().min(1),
+  /** Why the model wrote this read; accepted and not recorded, as `readStatementSchema`'s rationale. */
+  rationale: z.string().optional(),
+});
+
+const KUBECTL_RUN_READ_QUERY: AgentToolDefinition = Object.freeze({
+  name: "run_read_query",
+  description:
+    "Run one bounded read-only kubectl statement: get, describe, logs, top, events, api-resources, api-versions, explain, auth can-i, auth whoami or version, with or without the kubectl word. Writes, exec, port-forward, proxy, watches and Studio's paging line are refused before the cluster is reached, and you are told why.",
+  inputSchema: readKubectlStatementSchema,
+  operationId: "kubectl.query.read",
+});
+
+/** The kubectl overrides every kubectl workflow that sends a statement shares. */
+const KUBECTL_STATEMENT_TOOLS: Readonly<Partial<Record<AgentToolName, AgentToolDefinition>>> = Object.freeze({
+  run_read_query: KUBECTL_RUN_READ_QUERY,
+});
+
 /**
- * The definition a run in `language` is offered for the tool `name`.
+ * The tool definitions a workflow on a language replaces, keyed by language and then by workflow, because a
+ * language's tools are not uniform across its workflows: one kubectl workflow may be offered a schema another is not.
+ * Keyed rather than compared, so a later language or workflow registers its own row and no call site changes. SQL
+ * replaces nothing: its definitions are `AGENT_TOOL_DEFINITIONS`. Kubectl `operations` sends no statement, so it
+ * replaces nothing either.
+ */
+const TOOL_OVERRIDES: Readonly<
+  Record<
+    AgentStatementLanguageId,
+    Readonly<Partial<Record<AgentRunWorkflowType, Readonly<Partial<Record<AgentToolName, AgentToolDefinition>>>>>>
+  >
+> = Object.freeze({
+  sql: Object.freeze({}),
+  kubectl: Object.freeze({
+    investigation: KUBECTL_STATEMENT_TOOLS,
+    "query-optimization": KUBECTL_STATEMENT_TOOLS,
+    "database-assessment": KUBECTL_STATEMENT_TOOLS,
+    "data-analysis": KUBECTL_STATEMENT_TOOLS,
+  }),
+});
+
+/**
+ * The definition a run of `workflow` in `language` is offered for the tool `name`.
  *
  * Every SQL run, and every run recorded before languages existed, reads the record above unchanged, which is what
- * keeps the SQL tool schemas byte-identical. A later language overrides only the entries whose argument it names
- * differently; the lookup is here so that the run loop's offer and its dispatch read the same definition.
+ * keeps the SQL tool schemas byte-identical. A workflow on a later language overrides only the entries whose argument
+ * it names differently; the lookup is here so that the run loop's offer and its dispatch read the same definition.
  */
 export function agentToolDefinition(
-  _language: AgentStatementLanguageId | undefined,
+  language: AgentStatementLanguageId | undefined,
+  workflow: AgentRunWorkflowType,
   name: AgentToolName,
 ): AgentToolDefinition {
-  return AGENT_TOOL_DEFINITIONS[name];
+  return TOOL_OVERRIDES[language ?? "sql"][workflow]?.[name] ?? AGENT_TOOL_DEFINITIONS[name];
 }
 
 /** Planning is toolless. Not "filtered to nothing" — there is nothing to filter. */
@@ -1222,7 +1281,7 @@ function workflowTools(
   const variant = requiredVariant(language, workflow);
   let tools = VARIANT_TOOLS.get(variant);
   if (tools === undefined) {
-    tools = Object.freeze(variant.tools.map((name) => agentToolDefinition(language, name)));
+    tools = Object.freeze(variant.tools.map((name) => agentToolDefinition(language, workflow, name)));
     VARIANT_TOOLS.set(variant, tools);
   }
   return tools;
@@ -1356,6 +1415,8 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
     "A chart needs at least two rows and this result has fewer, so a chart of it would render an empty state. Present the answer as a table: one row is a complete answer, not a lesser one.",
   CHART_SHAPE_MISMATCH:
     "That chart type does not fit the columns named: a pie takes exactly one y column, and a scatter needs a numeric x as well as a numeric y. Choose a type that fits the columns, or present the answer as a table.",
+  STATEMENT_NOT_ADMITTED:
+    "This statement was refused before anything was sent, for the reason in parentheses; write a read inside the read-only subset.",
   /*
     Both of these name `compose_report`, and that is the whole correction.
 
@@ -1911,6 +1972,7 @@ async function runStatement(
   validatedInput: unknown,
   budget: ExecutionBudget,
   phase: { statementSent: boolean },
+  argument: "sql" | "statement",
   mode?: ReadOnlyStatementMode,
 ): Promise<QueryResult> {
   const provider = await context.acquireProvider(context.connection, AGENT_EXECUTION_PROFILE);
@@ -1928,7 +1990,7 @@ async function runStatement(
     // was asked for, so it is a note rather than a second guard.
     throw new Error("agent tool layer: the acquired provider exposes no read-only execution path");
   }
-  const { sql } = validatedInput as { readonly sql: string };
+  const sql = (validatedInput as Readonly<Record<string, string>>)[argument];
   // Set immediately before the statement leaves, and never reset. This flag is the
   // whole phase discriminator: anything that threw while we were still connecting
   // cannot be a statement the model could repair, whatever class it carries, so the
@@ -1959,17 +2021,19 @@ export async function executeAgentOperation(
   context: AgentToolContext,
   request: AgentOperationRequest,
 ): Promise<AgentToolOutcome> {
+  const argument = request.argument ?? "sql";
   return runAuditedAgentCall(context, {
     operationId: request.operationId,
     // The statement IS the identity of a SQL call: two calls sending the same text
     // are the same call however the model worded its way to them.
     fingerprintSource: request.sql,
     fingerprintLanguage: context.statementLanguage ?? "sql",
-    input: { sql: request.sql },
+    input: { [argument]: request.sql },
     ...(request.label === undefined ? {} : { label: request.label }),
     ...(request.target === undefined ? {} : { target: request.target }),
     ...(request.grounding === undefined ? {} : { grounding: request.grounding }),
-    invoke: (validatedInput, budget, phase) => runStatement(context, validatedInput, budget, phase, request.mode),
+    invoke: (validatedInput, budget, phase) =>
+      runStatement(context, validatedInput, budget, phase, argument, request.mode),
   });
 }
 
@@ -1992,7 +2056,7 @@ interface AuditedAgentCall {
    * keeps the SQL fingerprint of its own `operations:...` or `objects:...` key, which is no statement in any language.
    */
   readonly fingerprintLanguage?: AgentStatementLanguageId;
-  /** The input the DESCRIPTOR validates. `{sql}` for a statement, the selector for a curated read. */
+  /** The input the DESCRIPTOR validates. `{sql}` or `{statement}` for a statement, the selector for a curated read. */
   readonly input: unknown;
   readonly label?: string;
   readonly target?: { readonly catalog?: string; readonly schema?: string };
@@ -3398,14 +3462,31 @@ async function readCatalog(
   return outcome;
 }
 
-/** One bounded read the model drafted. The statement guard is what bounds it. */
-export async function runReadQueryTool(
-  context: AgentToolContext,
-  input: { readonly sql: string; readonly rationale?: string },
-): Promise<AgentToolOutcome> {
-  const parsed = parseToolInput(readStatementSchema, input);
+/**
+ * One bounded read the model drafted, in the run's language. The statement guard is what bounds it.
+ *
+ * The input is unknown because it is re-validated here against the definition the run was offered, whose argument
+ * the language names (`sql` or `statement`).
+ */
+export async function runReadQueryTool(context: AgentToolContext, input: unknown): Promise<AgentToolOutcome> {
+  const language = context.statementLanguage ?? "sql";
+  const definition = agentToolDefinition(language, context.workflowType, "run_read_query");
+  const parsed = parseToolInput(definition.inputSchema, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
-  return executeAgentOperation(context, { operationId: "sql.query.read", sql: parsed.value.sql, label: "read result" });
+  const argument = AGENT_LANGUAGE_COPY[language].argument;
+  const statement = (parsed.value as Readonly<Record<string, string>>)[argument];
+  const server = languageServer(language);
+  // The reader's own sentence, before the policy pipeline: the pipeline's input stage keeps only a reason code, so
+  // without this a model refused for `exec` would read only that its read had the wrong shape. SQL keeps its generic
+  // shape advice (no `admit`), which the golden snapshot holds.
+  const refusal = server.admit?.(statement) ?? null;
+  if (refusal !== null) return unavailable("STATEMENT_NOT_ADMITTED", refusal.message);
+  return executeAgentOperation(context, {
+    operationId: server.readOperation,
+    sql: statement,
+    argument,
+    label: "read result",
+  });
 }
 
 // ============================================================================

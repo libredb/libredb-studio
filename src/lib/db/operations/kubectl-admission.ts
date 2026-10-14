@@ -32,6 +32,10 @@ const TOO_LARGE_SENTENCE = `The statement is longer than ${KUBECTL_AGENT_MAX_STA
 export function admitKubectlStatement(text: string): KubectlAdmissionRefusal | null {
   if (text.length > KUBECTL_AGENT_MAX_STATEMENT_CHARS) return { code: "agent-too-large", message: TOO_LARGE_SENTENCE };
   const run = readKubectlRun(text);
+  // A paging line under a statement that cannot page is the console's refusal, and its sentence points at the list
+  // form of a get, which invites the model to rewrite the read as one. No agent read is paged, so it reads the
+  // agent's sentence whatever the statement above the line.
+  if (!run.ok && run.code === "paging-clause") return { code: "agent-paging", message: AGENT_PAGING_SENTENCE };
   if (!run.ok) return { code: run.code, message: run.message };
   if (run.page !== undefined) return { code: "agent-paging", message: AGENT_PAGING_SENTENCE };
   return null;
