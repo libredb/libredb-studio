@@ -8,8 +8,9 @@
  * holding more answers a sentence to narrow it; a document over 1 MiB is replaced by a sentence and a warning, and a
  * named read is capped at 2 MiB, past which its cell is that sentence too. On the agent path a document is never
  * replaced: one past the byte budget, or a named read past its 2 MiB cap, refuses the statement with the byte budget's
- * sentence, since a placeholder would read to the agent as the object's content. The documents of one statement hold
- * at most 16 MiB together, past which the statement answers a sentence to narrow it and shows no partial grid.
+ * sentence, since a placeholder would read to the agent as the object's content, and each document is written from
+ * the agent's masked copy of the object (`machine-redaction.ts`). The documents of one statement hold at most 16 MiB
+ * together, past which the statement answers a sentence to narrow it and shows no partial grid.
  */
 import { stringify } from "yaml";
 import { QueryError } from "@/lib/db/errors";
@@ -23,6 +24,7 @@ import {
   KUBERNETES_PAGE_SIZE,
   KUBERNETES_TYPE,
 } from "../limits";
+import { maskObjectForMachine } from "../machine-redaction";
 import { redactResponse } from "../redaction";
 import { type KubeTable, parseTable, scanTable } from "../table";
 import {
@@ -119,8 +121,10 @@ class DocumentRows {
    * document past the byte budget refuses the statement first.
    */
   object(object: Readonly<Record<string, unknown>>): void {
-    const metadata = objectOf(object.metadata) ?? {};
-    const text = documentText(object, this.resource, this.format);
+    // The agent's row is written from the masked copy, so its NAMESPACE and NAME cells and its document agree.
+    const shown = this.machine === undefined ? object : maskObjectForMachine(this.resource, object);
+    const metadata = objectOf(shown.metadata) ?? {};
+    const text = documentText(shown, this.resource, this.format);
     const length = utf8Length(text);
     if (this.machine !== undefined && length > this.machine.maxBytes)
       throw new QueryError(byteBudgetSentence(length, this.machine.maxBytes), KUBERNETES_TYPE);

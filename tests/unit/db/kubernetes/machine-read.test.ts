@@ -147,7 +147,8 @@ describe("an over-size document on the agent path", () => {
     const big = {
       kind: "ConfigMap",
       metadata: { name: "big", namespace: "shop" },
-      data: { blob: "x".repeat(300_000) },
+      // The agent's copy masks every data value and keeps every key, so the bulk is in the keys.
+      data: Object.fromEntries(Array.from({ length: 20_000 }, (_, index) => [`key-${index}`, "x"])),
     };
     const { session, options } = machine(routes({ "GET /api/v1/namespaces/shop/configmaps/big": jsonAnswer(big) }));
     await expect(
