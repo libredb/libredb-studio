@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D361, U17 · 261
+- [Drivers and connections](#drivers-and-connections) — D1-D362, U17 · 262
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U144 · 134
@@ -3703,6 +3703,20 @@ Found 2026-10-14 while merging #1759 and #1764; pre-existing since #1518.
 
 **Done when:** the cause of the stretch is measured, and the file either passes ten loaded full runs within the default budget or measures the bound in a way that does not wait on the wall clock.
 
+### D362. A Spark connection takes no agent credential: the factory asks for a user Apache Spark refuses
+
+`assertAgentCredentialForm` in `src/lib/db/factory.ts` takes `agentPassword` alone only from a provider whose capabilities declare `agentCredential: "token"`, and asks every other engine for both `agentUser` and `agentPassword`, which the agent profile then opens with as the connection's user and password.
+`SparkProvider` declares no `agentCredential`, and `src/lib/db/providers/sql/spark/connection-options.ts` refuses any non-empty User with `SPARK_FIELD_SENTENCES.userNotTaken`, since a Spark Connect session's identity is its token.
+So no agent credential works on a Spark connection: an `agentPassword` alone is refused as an incomplete agent credential, and an `agentUser` beside it is refused by Spark's User check.
+Plan-mode grounding and the operations workflow, which both acquire through the `agent-operations` profile, then meet one of the two refusals instead of reading the schema.
+With no agent credential stored, both run under the connection's own token, and the connection dialog has no input for one, so only a record written through the API or storage reaches this.
+`tests/unit/db/agent-credential-capability.test.ts` pins `TOKEN_ENGINES` to Kubernetes alone.
+Verified 2026-10-14 by reading `factory.ts`, `connection-options.ts` and that test on `main` at 59cdfd09b.
+
+Found 2026-10-14 in the integration review of #1759 and #1764; Spark behaved the same before #1764 added the token form.
+
+**Done when:** `SparkProvider.getCapabilities()` declares `agentCredential: "token"`, `TOKEN_ENGINES` includes `spark`, a factory test shows an `agentPassword` alone becoming the token of the agent's Spark session and an `agentUser` refused, and section 8.3 of `docs/providers/spark.md` says so in one sentence.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -5541,7 +5555,7 @@ Found 2026-10-13 while reviewing #1629.
 
 ### U140. The connection dialog's field census leaves six shipped types out
 
-The docblock of the "declared connection-field copy (#1085)" block in `tests/components/ConnectionModal.test.tsx` says its `SHIPPED` table holds "every shipped type", but the table has no row for BigQuery, Snowflake, Neo4j, MQTT, Firestore or OPC UA, six of the thirty-six in `SHIPPED_DATABASE_TYPES` (counted 2026-10-14 on `main`).
+The docblock of the "declared connection-field copy (#1085)" block in `tests/components/ConnectionModal.test.tsx` says its `SHIPPED` table holds "every shipped type", but the table has no row for BigQuery, Snowflake, Neo4j, MQTT, Firestore or OPC UA, six of the thirty-seven in `SHIPPED_DATABASE_TYPES` (counted 2026-10-14 on `main` at 59cdfd09b, where #1759 added Apache Spark's row).
 The same docblock calls Prometheus and Kafka "the shipped entries that declare either" label or hint, while `src/lib/db-ui-config.ts` now declares field copy for libSQL, Db2, etcd, Neo4j, Milvus, Qdrant, InfluxDB and InfluxDB 3 as well.
 So a change to the labels or hints of those six types reaches no census row.
 
