@@ -71,5 +71,8 @@ export async function runKubectl(context: KubectlContext, text: string): Promise
     if (run.statement.command === "get" && run.statement.watch)
       throw new QueryError(MACHINE_WATCH_SENTENCE, KUBERNETES_TYPE);
   }
-  return withTypeRefresh(context.surface.discovery, () => answer(context, run.statement, run.page));
+  // On the agent path the read stops one row past the budget, so the refusal costs 201 rows, not 5,000.
+  const window =
+    run.page ?? (context.machine === undefined ? undefined : { offset: 0, limit: context.machine.maxRows + 1 });
+  return withTypeRefresh(context.surface.discovery, () => answer(context, run.statement, window));
 }

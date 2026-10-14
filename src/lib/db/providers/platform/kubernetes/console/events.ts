@@ -15,7 +15,16 @@ import { KUBERNETES_EVENTS_READ_MAX, KUBERNETES_EVENTS_SHOWN, KUBERNETES_PAGE_SI
 import { redactResponse } from "../redaction";
 import { fieldSelectorValue } from "../request-policy";
 import { type KubeTable, parseTable, scanTable } from "../table";
-import { ageOf, type KubectlContext, type KubectlGrid, objectOf, resolveType, stringOf, textGrid } from "./context";
+import {
+  ageOf,
+  type KubectlContext,
+  type KubectlGrid,
+  machineRowLimit,
+  objectOf,
+  resolveType,
+  stringOf,
+  textGrid,
+} from "./context";
 import type { KubectlStatement } from "./parse";
 
 type EventsStatement = Extract<KubectlStatement, { readonly command: "events" }>;
@@ -102,8 +111,14 @@ export async function listEvents(context: KubectlContext, statement: EventsState
     );
     return parseTable(redactResponse(events, body));
   };
-  const scan = await scanTable(read, { offset: 0, limit: KUBERNETES_EVENTS_READ_MAX, pageSize: KUBERNETES_PAGE_SIZE });
-  if (scan.more) throw new QueryError(EVENTS_CAP_SENTENCE, KUBERNETES_TYPE);
+  // On the agent path the read stops one row past the budget, so the refusal costs 201 rows, not 5,000, and the
+  // row budget refuses it rather than this cap.
+  const scan = await scanTable(read, {
+    offset: 0,
+    limit: machineRowLimit(context, KUBERNETES_EVENTS_READ_MAX),
+    pageSize: KUBERNETES_PAGE_SIZE,
+  });
+  if (scan.more && context.machine === undefined) throw new QueryError(EVENTS_CAP_SENTENCE, KUBERNETES_TYPE);
   const typed = scan.rows
     .map((row) => (row.object ?? {}) as KubeEvent)
     // kubectl compares the type without case.

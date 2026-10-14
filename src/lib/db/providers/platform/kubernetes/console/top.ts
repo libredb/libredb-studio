@@ -16,7 +16,7 @@ import { KubernetesRequestError, KubernetesResponseTooLargeError } from "../erro
 import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_PAGE_SIZE, KUBERNETES_TYPE } from "../limits";
 import { redactResponse } from "../redaction";
 import { type KubeTable, parseTable, scanTable } from "../table";
-import { type KubectlContext, type KubectlGrid, objectOf, stringOf, textGrid } from "./context";
+import { type KubectlContext, type KubectlGrid, machineRowLimit, objectOf, stringOf, textGrid } from "./context";
 import type { KubectlStatement } from "./parse";
 
 type TopStatement = Extract<KubectlStatement, { readonly command: "top" }>;
@@ -165,7 +165,8 @@ async function itemsOf(
   };
   const scan = await scanTable(read, {
     offset: 0,
-    limit: KUBERNETES_MAX_STATEMENT_ROWS,
+    // On the agent path the read stops one row past the budget, so the refusal costs 201 rows, not 5,000.
+    limit: machineRowLimit(context, KUBERNETES_MAX_STATEMENT_ROWS),
     pageSize: KUBERNETES_PAGE_SIZE,
   });
   return { items: scan.rows.map((row) => row.object ?? {}), more: scan.more };
@@ -179,7 +180,8 @@ async function metricsOf(
   labelSelector: string | undefined,
 ): Promise<readonly Json[]> {
   const { items, more } = await itemsOf(context, target, namespace, labelSelector);
-  if (more) throw new QueryError(METRICS_CAP_SENTENCE, KUBERNETES_TYPE);
+  // On the agent path the read stopped one row past the budget, so the row budget refuses it, not this cap.
+  if (more && context.machine === undefined) throw new QueryError(METRICS_CAP_SENTENCE, KUBERNETES_TYPE);
   return items;
 }
 

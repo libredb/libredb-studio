@@ -20,6 +20,7 @@ import {
   ageOf,
   type KubectlContext,
   type KubectlGrid,
+  machineRowLimit,
   namespaceFor,
   objectOf,
   resolveType,
@@ -85,7 +86,8 @@ async function eventRows(
   try {
     const scan = await scanTable(read, {
       offset: 0,
-      limit: KUBERNETES_EVENTS_READ_MAX,
+      // On the agent path the read stops one row past the budget, so the refusal costs 201 rows, not 5,000.
+      limit: machineRowLimit(context, KUBERNETES_EVENTS_READ_MAX),
       pageSize: KUBERNETES_PAGE_SIZE,
     });
     items = scan.rows.map((row) => (row.object ?? {}) as KubeEvent);

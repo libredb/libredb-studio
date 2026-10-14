@@ -23,7 +23,15 @@ import {
 } from "../limits";
 import { redactResponse } from "../redaction";
 import { type KubeTable, parseTable, scanTable } from "../table";
-import { inTurn, type KubectlContext, type KubectlGrid, namespaceFor, objectOf, resolveType } from "./context";
+import {
+  inTurn,
+  type KubectlContext,
+  type KubectlGrid,
+  machineRowLimit,
+  namespaceFor,
+  objectOf,
+  resolveType,
+} from "./context";
 import { callOf, type GetStatement } from "./get-list";
 
 const TOO_MANY = `The list holds more than ${KUBERNETES_MAX_DOCUMENT_OBJECTS} objects, the most -o json and -o yaml show: narrow it with -l, --field-selector or -n, or read it as a table without -o.`;
@@ -78,7 +86,8 @@ async function listedObjects(
   };
   const scan = await scanTable(read, {
     offset: 0,
-    limit: KUBERNETES_MAX_DOCUMENT_OBJECTS + 1,
+    // On the agent path the read stops one row past the budget, so the refusal costs 201 rows, not 501.
+    limit: machineRowLimit(context, KUBERNETES_MAX_DOCUMENT_OBJECTS + 1),
     pageSize: KUBERNETES_PAGE_SIZE,
     halveOnTooLarge: true,
   });

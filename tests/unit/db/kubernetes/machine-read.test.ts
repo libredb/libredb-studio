@@ -6,6 +6,7 @@ import {
   machineRowLimit,
 } from "@/lib/db/providers/platform/kubernetes/console/context";
 import { AGENT_PAGING_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
+import { runKubectl } from "@/lib/db/providers/platform/kubernetes/console/run";
 import {
   MACHINE_DEADLINE_SENTENCE,
   MACHINE_ESTIMATE_SENTENCE,
@@ -14,7 +15,7 @@ import {
   readKubectlForMachine,
 } from "@/lib/db/providers/platform/kubernetes/machine-read";
 import { fakeCluster, manyRows, testSurface } from "../../../helpers/kubernetes-cluster";
-import { CONSOLE_NOW } from "../../../helpers/kubernetes-console";
+import { CONSOLE_NOW, consoleContext, tableAnswer } from "../../../helpers/kubernetes-console";
 import type { KubernetesAnswerFn } from "../../../helpers/kubernetes-transport";
 
 const BUDGET = { statementTimeoutMs: 10_000, maxResultRows: 200, maxResultBytes: 262_144 };
@@ -129,6 +130,51 @@ describe("readKubectlForMachine", () => {
     await expect(
       readKubectlForMachine(session, "get pods -n shop -w", BUDGET, undefined, options),
     ).rejects.toBeInstanceOf(QueryError);
+  });
+});
+
+describe("the agent path stops reading at maxRows + 1", () => {
+  test.each([
+    ["get pods -n shop", "/api/v1/namespaces/shop/pods"],
+    ["get pods -n shop -o yaml", "/api/v1/namespaces/shop/pods"],
+    ["events -n shop", "/api/v1/namespaces/shop/events"],
+    ["top pod -n shop", "/apis/metrics.k8s.io/v1beta1/namespaces/shop/pods"],
+  ])("%s asks for 201 rows and is refused past 200", async (statement, path) => {
+    const { session, options, transport } = machine(fakeCluster({ lists: { [path]: manyRows("x", 600) } }));
+    await expect(readKubectlForMachine(session, statement, BUDGET, undefined, options)).rejects.toThrow(
+      "Read-only execution exceeded the row budget: 201 rows > 200 allowed",
+    );
+    const reads = transport.calls.map((call) => call.method).filter((line) => line.includes(path));
+    expect(reads).toHaveLength(1);
+    expect(reads[0]).toContain("limit=201");
+  });
+
+  test("describe reads an object's events one row past the budget", async () => {
+    const path = "/api/v1/namespaces/shop/events";
+    const cluster = fakeCluster({
+      lists: { [path]: manyRows("x", 600) },
+      objects: { "/api/v1/namespaces/shop/pods/web": { kind: "Pod", metadata: { name: "web", namespace: "shop" } } },
+    });
+    const { session, options, transport } = machine((request, line) =>
+      line === "GET /api/v1/namespaces/shop/pods/web?includeObject=None"
+        ? tableAnswer([{ name: "Name" }], [{ cells: ["web"] }])
+        : cluster(request, line),
+    );
+    await expect(
+      readKubectlForMachine(session, "describe pod web -n shop", BUDGET, undefined, options),
+    ).rejects.toThrow(/Read-only execution exceeded the row budget/);
+    const reads = transport.calls.map((call) => call.method).filter((line) => line.includes(path));
+    expect(reads).toHaveLength(1);
+    expect(reads[0]).toContain("limit=201");
+  });
+
+  test("the editor's console still reads up to its own caps", async () => {
+    const path = "/api/v1/namespaces/shop/pods";
+    const { context, transport } = consoleContext(fakeCluster({ lists: { [path]: manyRows("x", 600) } }));
+    const grid = await runKubectl(context, "get pods -n shop");
+    expect(grid.rows).toHaveLength(600);
+    const reads = transport.calls.map((call) => call.method).filter((line) => line.includes(path));
+    expect(reads.map((line) => new URL(line.slice(4), "https://x").searchParams.get("limit"))).toEqual(["500", "500"]);
   });
 });
 
