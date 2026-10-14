@@ -1150,8 +1150,19 @@ class DirectSQLiteHandle implements SQLiteHandle {
       const { values, columns } = readStatementRows(stmt, params);
       return { values, columns, returnsRows: true, changes: 0 };
     }
+    // `changes` is `sqlite3_changes()`, which a statement that changes no row leaves as the
+    // previous write set it, so node:sqlite handed a DDL statement that count. If
+    // `total_changes()` did not move, the statement changed no row. The worker's `query`
+    // does the same.
+    const before = this.totalChanges();
     const info = params.length > 0 ? stmt.run(...params) : stmt.run();
-    return { values: [], columns: [], returnsRows: false, changes: info.changes };
+    const changes = this.totalChanges() === before ? 0 : info.changes;
+    return { values: [], columns: [], returnsRows: false, changes };
+  }
+
+  private totalChanges(): number {
+    const row = this.db.prepare("SELECT total_changes() AS n").get() as { n: number | bigint };
+    return Number(row.n);
   }
 
   async inTransaction(): Promise<boolean> {
