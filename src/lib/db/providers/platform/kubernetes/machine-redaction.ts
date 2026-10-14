@@ -11,9 +11,9 @@
  * Labels pass, keys and values. Names pass, except a Secret's (A4), which `maskSecretNames` handles: every
  * `secretName` string, the `name` of a `secretRef`, `secretKeyRef`, `secret` or any `*SecretRef`, each
  * `imagePullSecrets` and ServiceAccount `secrets` entry, an owner, involved, regarding or related reference whose kind
- * is `Secret`, and the `resourceNames` of an RBAC rule that reaches core Secrets (`coversSecrets`). An object's own name is masked when its kind is `Secret`, at any depth; the root's also
- * when the request reads core Secrets, and an Event's about a Secret, because the server derives the Event's name
- * from the Secret's.
+ * is `Secret`, and the `resourceNames` of an RBAC rule that reaches core Secrets (`coversSecrets`). An object's own
+ * name is masked when its kind is `Secret`, at any depth; the root's also when the request reads core Secrets, and an
+ * Event's about a Secret, because the server derives the Event's name from the Secret's.
  * What no rule reaches is the stated residue (`docs/providers/kubernetes.md` section 9): log lines and event messages,
  * status and condition messages, label values, and custom-resource fields with no rule.
  *
