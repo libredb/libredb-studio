@@ -1,0 +1,87 @@
+{
+  "$captured": {
+    "service": "spark-tls",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T11:07:25.696Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "a silent run of about 15 s through the TLS proxy, under its 300 s read timeout: command step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "command": {
+          "sql_command": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "sql": "",
+            "input": {
+              "common": null,
+              "sql": {
+                "pos_args": [],
+                "pos_arguments": [],
+                "args": {},
+                "named_arguments": {},
+                "query": "SELECT sum(hash(id)) AS n FROM range(0, 25000000000, 1, 4)"
+              },
+              "rel_type": "sql"
+            }
+          },
+          "command_type": "sql_command"
+        },
+        "op_type": "command"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "pass",
+  "payload": [
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "bea5fda6-fbf0-40a5-9ab1-53f27b11845b",
+      "server_side_session_id": "fc4f6fd7-1cf1-4c8b-9684-b90341010124",
+      "sql_command_result": {
+        "relation": {
+          "common": null,
+          "sql": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "query": "SELECT sum(hash(id)) AS n FROM range(0, 25000000000, 1, 4)"
+          },
+          "rel_type": "sql"
+        }
+      },
+      "response_type": "sql_command_result"
+    }
+  ]
+}

@@ -42,6 +42,7 @@ describe("fenceTagEngine", () => {
       "databend",
       "s3",
       "firestore",
+      "spark",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);

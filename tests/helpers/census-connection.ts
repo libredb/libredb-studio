@@ -98,6 +98,9 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   // No field beyond UNCONNECTED: the constructor validates nothing and opens nothing; the account, the key and the role
   // are read at connect, which no census reaches.
   snowflake: unconnected("snowflake"),
+  // No field beyond UNCONNECTED: the constructor validates nothing and opens nothing; the host, the token, the catalog
+  // and the namespace are read at connect, which no census reaches.
+  spark: unconnected("spark"),
   // No field beyond UNCONNECTED: the constructor validates nothing and opens nothing; the fields are read at connect,
   // which no census reaches.
   s3: unconnected("s3"),

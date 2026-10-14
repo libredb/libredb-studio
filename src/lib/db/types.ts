@@ -614,7 +614,8 @@ export type ExplainFormat =
   | "databend-text"
   | "bigquery-dryrun"
   | "snowflake-json"
-  | "firestore-explain";
+  | "firestore-explain"
+  | "spark-text";
 
 /**
  * How deep an engine's container chain is, in the TYPE rather than only in a derivation.
@@ -1086,6 +1087,12 @@ export interface ProviderCapabilities {
    */
   supportsColumnProfiling?: false;
   /**
+   * False where the shared SQL formatter rewrites this engine's valid text: the editor offers no Format for its tabs.
+   * Absent: the tab's language decides, as before.
+   * Only `false` is accepted, so the field can withhold Format and never grant it to a language without a formatter.
+   */
+  supportsSqlFormat?: false;
+  /**
    * Whether THIS PROVIDER implements the interactive transaction session that
    * `POST /api/db/transaction` drives — `beginTransaction()` / `commitTransaction()`
    * / `rollbackTransaction()` over one held connection. It is a statement about the
@@ -1499,6 +1506,19 @@ export interface ProviderCapabilities {
    */
   containerLevels?: ContainerLevels;
   /**
+   * The schema-level segment of this engine's container and object paths is the engine's own spelling of a possibly
+   * multi-part name, already quoted where it needs quoting; absent: every segment is a raw name.
+   *
+   * `quoteObjectPath` reads that segment as parts joined by dots, each bare or quoted with the character
+   * `identifierQuoting` declares (that character doubled inside), so a declaration needs `identifierQuoting` beside it.
+   * That reading applies only when a segment follows the schema level, so the last segment is always the object's own
+   * name, and a container path passed alone keeps its schema segment as one name. Editor completion writes and matches
+   * a qualified name by the same reading (`containerSpellingOf`).
+   * Apache Spark declares it: a namespace of a catalog such as Iceberg's can hold several parts, and the tree shows it
+   * as Spark spells it.
+   */
+  containerNameSpelling?: "engine";
+  /**
    * Which container paths this engine accepts as an ADDRESS, beside `containerLevels` (#1147).
    *
    * `exact` accepts only the declared depth: every declared level is named, or the path is
@@ -1892,10 +1912,12 @@ export function newQueryCallScope(): string {
  * A runtime shape check, the same one `POST /api/db/transaction` uses for the interactive
  * session: the method is optional on `DatabaseProvider` because only a provider that can
  * name the session its statements ran on can answer truthfully (`endOpenQueryTransaction`'s
- * declaration argues why). `postgres`, `sqlite`, `duckdb` and `redis` implement it; on the
- * rest a caller leaves the handle exactly as it found it, because inventing a rollback
- * there would be guessing at another engine's state. Shared by the two routes that end
- * what they opened, so they cannot disagree about who can be asked.
+ * declaration argues why). `postgres`, `sqlite`, `duckdb`, `redis` and `spark` implement
+ * it; on the rest a caller leaves the handle exactly as it found it, because inventing a
+ * rollback there would be guessing at another engine's state. On `spark` it releases the
+ * scope's Spark session and answers `"none"`, since Spark has no transaction across
+ * statements. Shared by the two routes that end what they opened, so they cannot disagree
+ * about who can be asked.
  */
 export function endsOpenQueryTransactions(
   provider: DatabaseProvider,
@@ -2049,12 +2071,14 @@ export interface DatabaseProvider {
    *
    * OPTIONAL, for the reason `queryReadOnly` is: only a provider that can name the session
    * its own `query()` ran on can answer truthfully, and a provider that cannot must say
-   * nothing rather than guess. `postgres`, `sqlite`, `duckdb` and `redis` implement it: the
-   * first three are the engines D71 was measured on, and `redis` was added by D75, which
-   * walked every remaining type-id and wrote the absence down where it could not. A caller
-   * shape-checks for it; there is no default, because a default that answered `"none"` would
-   * certify an absence nobody read. Every type-id that does NOT implement it says which
-   * absence it is in its own `docs/providers/<type-id>.md`.
+   * nothing rather than guess. `postgres`, `sqlite`, `duckdb`, `redis` and `spark` implement
+   * it: the first three are the engines D71 was measured on, and `redis` was added by D75,
+   * which walked every remaining type-id and wrote the absence down where it could not. On
+   * `spark` it releases the scope's Spark session and answers `"none"`, since Spark has no
+   * transaction across statements. A caller shape-checks for it; there is no default,
+   * because a default that answered `"none"` would certify an absence nobody read. Every
+   * type-id that does NOT implement it says which absence it is in its own
+   * `docs/providers/<type-id>.md`.
    *
    * `scope` IS THE WHOLE CONTRACT, and an earlier form of this surface took no argument.
    * It said the method "does NOT touch the interactive transaction session

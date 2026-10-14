@@ -117,6 +117,8 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // A ```snowflake block holds one statement in Snowflake's SQL, sent as it is through the SQL API. No alias:
   // `snowsql` names Snowflake's command-line client, not a dialect.
   snowflake: true,
+  // A ```spark block holds one statement in Spark SQL, sent as it is over Spark Connect. No alias.
+  spark: true,
   // A ```s3 block holds one AWS CLI subset read command the editor runs as it is. No alias: `aws` names every AWS
   // service, and `sh`, `bash` and `shell` name no engine.
   s3: true,

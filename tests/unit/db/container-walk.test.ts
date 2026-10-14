@@ -7,6 +7,7 @@ import {
   enumerationOf,
   kindsByContainer,
   scopeGroundingContainers,
+  scopeReadsUnder,
   sessionDefaultContainer,
 } from "@/lib/db/container-walk";
 import type { Container, ContainerLevels, DatabaseProvider } from "@/lib/db/types";
@@ -316,5 +317,34 @@ describe("scopeGroundingContainers", () => {
       containers: [["default"]],
       defaultContainer: ["default"],
     });
+  });
+});
+
+describe("scopeReadsUnder", () => {
+  const fallback = { mode: "session-default", whenNoDefault: { walk: "parent-default-children" } } as const;
+  const named = { mode: "session-default", alsoWalk: [["SHARED", "PUBLIC"]] } as const;
+
+  test("no scope reads under every parent", () => {
+    expect(scopeReadsUnder(undefined, container("OTHER"))).toBe(true);
+    expect(scopeReadsUnder(undefined, container("OTHER", false))).toBe(true);
+  });
+
+  test("a scope reads under the parent marked as the session's, which is also the one its fallback reads", () => {
+    expect(scopeReadsUnder({ mode: "session-default" }, container("SALES", true))).toBe(true);
+    expect(scopeReadsUnder(fallback, container("SALES", true))).toBe(true);
+  });
+
+  test("a scope reads under a parent on the path of a container it names", () => {
+    expect(scopeReadsUnder(named, container("SHARED"))).toBe(true);
+  });
+
+  test("a scope reads nothing under a parent that is not the session's and not on a named path", () => {
+    expect(scopeReadsUnder(fallback, container("OTHER", false))).toBe(false);
+    expect(scopeReadsUnder(named, container("OTHER"))).toBe(false);
+  });
+
+  test("a named path is matched segment by segment, not as text", () => {
+    expect(scopeReadsUnder(named, container("SHARE"))).toBe(false);
+    expect(scopeReadsUnder(named, container("SHAREDX"))).toBe(false);
   });
 });

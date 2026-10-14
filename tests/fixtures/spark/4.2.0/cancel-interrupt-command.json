@@ -1,0 +1,101 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T11:06:33.877Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "Interrupt by tag of a running statement: command step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "command": {
+          "sql_command": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "sql": "",
+            "input": {
+              "common": null,
+              "sql": {
+                "pos_args": [],
+                "pos_arguments": [],
+                "args": {},
+                "named_arguments": {},
+                "query": "SELECT count(*) AS n FROM range(0, 20000000000, 1, 4)"
+              },
+              "rel_type": "sql"
+            }
+          },
+          "command_type": "sql_command"
+        },
+        "op_type": "command"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "pass",
+  "payload": [
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "297f5d35-d1b9-42ae-a5f1-941d3d10f708",
+      "server_side_session_id": "eb67bac8-0d2d-4546-8db8-ee94179a1f60",
+      "sql_command_result": {
+        "relation": {
+          "common": null,
+          "sql": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "query": "SELECT count(*) AS n FROM range(0, 20000000000, 1, 4)"
+          },
+          "rel_type": "sql"
+        }
+      },
+      "response_type": "sql_command_result"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "1859ed72-7d94-4ec6-86eb-28992ab04360",
+      "server_side_session_id": "eb67bac8-0d2d-4546-8db8-ee94179a1f60",
+      "execution_progress": {
+        "stages": [],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    }
+  ]
+}

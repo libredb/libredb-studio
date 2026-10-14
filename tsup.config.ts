@@ -98,6 +98,9 @@ export default defineConfig({
     "jose",
     "openid-client",
     "lucide-react",
+    // The Spark provider's Arrow decoder: a regular dependency, exact-pinned; external so a consumer resolves the one
+    // copy its lockfile holds.
+    "apache-arrow",
   ],
   esbuildPlugins: [
     {

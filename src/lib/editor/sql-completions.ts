@@ -11,6 +11,7 @@ import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readSqlSpan, type SqlSpanKind } from "@/lib/sql/spans";
 import { statementScope, type DerivedSource, type ScopeSource } from "./sql-scope";
 import { formatPostgresIdentifier } from "./postgres-identifiers";
+import type { ContainerSpelling } from "@/lib/query-generators";
 import type { DatabaseType } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -218,6 +219,44 @@ export interface SchemaCompletionCache {
    * writes. Absent before capabilities load, and then a segment is written as it is.
    */
   quoteSegment?: (segment: string) => string;
+  /**
+   * How a qualified name is written and read where the engine spells a container segment
+   * itself (`containerNameSpelling`, Apache Spark): `containerSpellingOf`. Absent on every
+   * other engine, where a qualified insert is its segments each written by `quoteSegment`, and
+   * a typed qualifier is bare names, one per segment.
+   */
+  containerSpelling?: ContainerSpelling;
+}
+
+/** The qualifier the text before a word ends with, each part followed by a dot, and the names it holds. */
+interface TypedQualifier {
+  text: string;
+  names: string[];
+}
+
+/** A qualifier of bare names, read as completion always has: a run of words, split at each dot. */
+function readBareQualifier(text: string): TypedQualifier {
+  const qualifier = text.match(/((?:[\w$]+\.)+)$/)?.[1] ?? "";
+  return { text: qualifier, names: qualifier.split(".").slice(0, -1) };
+}
+
+/**
+ * A qualifier where the engine spells a container name itself, by its quote character: a part
+ * is a bare word as above or quoted, the quote doubled inside, and a quoted part keeps its dots.
+ */
+const SPELLED_QUALIFIER: Record<ContainerSpelling["quote"], { run: RegExp; part: RegExp }> = {
+  "`": { run: /(?:(?:[\w$]+|`(?:[^`]|``)+`)\.)+$/, part: /([\w$]+)\.|`((?:[^`]|``)+)`\./g },
+  '"': { run: /(?:(?:[\w$]+|"(?:[^"]|"")+")\.)+$/, part: /([\w$]+)\.|"((?:[^"]|"")+)"\./g },
+};
+
+/** A spelled qualifier: `` `a`.`b`. `` holds the names `a` and `b`, and `` `x.y`. `` the one name `x.y`. */
+function readSpelledQualifier(text: string, quote: ContainerSpelling["quote"]): TypedQualifier {
+  const { run, part } = SPELLED_QUALIFIER[quote];
+  const qualifier = text.match(run)?.[0] ?? "";
+  return {
+    text: qualifier,
+    names: [...qualifier.matchAll(part)].map(([, bare, quoted]) => bare ?? quoted.replaceAll(quote + quote, quote)),
+  };
 }
 
 /**
@@ -367,6 +406,9 @@ export function registerSQLCompletionProvider(
 ): Monaco.IDisposable {
   const grammar = resolveSqlGrammar(databaseType);
   const blanked = new WeakMap<Monaco.editor.ITextModel, { version: number; code: string }>();
+  const spelling = schemaCompletionCache.containerSpelling;
+  const readQualifier =
+    spelling === undefined ? readBareQualifier : (text: string) => readSpelledQualifier(text, spelling.quote);
   return monaco.languages.registerCompletionItemProvider("sql", {
     triggerCharacters: [".", " "],
     provideCompletionItems: (model: Monaco.editor.ITextModel, position: Monaco.Position) => {
@@ -386,7 +428,8 @@ export function registerSQLCompletionProvider(
 
       // Monaco replaces only the current word. A qualified table suggestion must
       // match and replace the already typed qualifier as well as that word.
-      const typedQualifier = line.substring(0, word.startColumn - 1).match(/((?:[\w$]+\.)+)$/)?.[1] ?? "";
+      const typed = readQualifier(line.substring(0, word.startColumn - 1));
+      const typedQualifier = typed.text;
       // Preserve ordinary identifiers; quote catalog names only when needed
       // to preserve case, escape special characters, or avoid keywords.
       // PostgreSQL keeps its keyword-aware quoting; every other dialect quotes through the
@@ -399,6 +442,10 @@ export function registerSQLCompletionProvider(
           : quoteSegment === undefined
             ? segment
             : quoteSegment(segment);
+      // An address is written whole where the engine spells a container segment itself: Spark's
+      // namespace `a.b` is `a`.`b` there, and one quoted segment would name a namespace `a.b`.
+      const formatPath = (path: readonly string[]) =>
+        spelling === undefined ? path.map(formatSegment).join(".") : spelling.quotePath(path);
       // A statement's own name is read unquoted; one that needed quotes gets them back.
       const asWritten = (name: string) => (/^[A-Za-z_][\w$]*$/.test(name) ? name : formatSegment(name));
       const tableItem = (table: SchemaTableItem, insertText: string, tableRange: Monaco.IRange) => ({
@@ -419,13 +466,25 @@ export function registerSQLCompletionProvider(
       // A typed qualifier that names a CONTAINER (`sales.`, `e2e_other.`, `demo.`) offers that
       // container's tables, which are inserted by their own segment because the qualifier is
       // already in the text. It is matched against the trailing segments of each table's
-      // container path, so `db.sales.` and `sales.` both reach a SQL Server `[db, sales]`.
-      const qualifierSegments = typedQualifier.toLowerCase().split(".").slice(0, -1);
+      // container path, so `db.sales.` and `sales.` both reach a SQL Server `[db, sales]`. A
+      // segment the engine spells itself holds its parts, and the qualifier names whole segments:
+      // `a.b.` reaches a Spark namespace `a.b`, while `b.` does not, nor `x.y.` a namespace `` `x.y` ``.
+      const qualifierSegments = typed.names.map((name) => name.toLowerCase());
       const inTypedContainer = (table: SchemaTableItem) => {
         const container = table.container;
-        if (!container || table.segment === undefined || qualifierSegments.length > container.length) return false;
-        const tail = container.slice(container.length - qualifierSegments.length);
-        return tail.every((segment, index) => segment.toLowerCase() === qualifierSegments[index]);
+        if (!container || table.segment === undefined) return false;
+        const segments =
+          spelling === undefined
+            ? container.map((segment) => [segment])
+            : spelling.pathNames([...container, table.segment]).slice(0, -1);
+        const tail: string[] = [];
+        for (let index = segments.length - 1; index >= 0 && tail.length < qualifierSegments.length; index--) {
+          tail.unshift(...segments[index]);
+        }
+        return (
+          tail.length === qualifierSegments.length &&
+          tail.every((name, index) => name.toLowerCase() === qualifierSegments[index])
+        );
       };
       const containerTables =
         qualifierSegments.length > 0 ? schemaCompletionCache.tableItems.filter(inTypedContainer) : [];
@@ -448,7 +507,7 @@ export function registerSQLCompletionProvider(
                   // Outside the session's default container the address is the name the
                   // engine resolves; inside it the label is, as it always was.
                   table.qualify && table.container && table.segment !== undefined
-                    ? [...table.container, table.segment].map(formatSegment).join(".")
+                    ? formatPath([...table.container, table.segment])
                     : databaseType === "postgres"
                       ? table.label.split(".").map(formatPostgresIdentifier).join(".")
                       : table.label,

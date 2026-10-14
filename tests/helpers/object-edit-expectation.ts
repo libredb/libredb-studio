@@ -93,6 +93,9 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   // No kind declares acceptsRowWrites or acceptsSourceEdits: DDL commits implicitly and ALTER COLUMN is limited, so
   // v1 offers no object edit, which docs/providers/snowflake.md names.
   "snowflake",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: object edit is not in this version, which
+  // docs/providers/spark.md names under "Object edit".
+  "spark",
   "sqlite",
 ] as const);
 

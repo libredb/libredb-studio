@@ -10,6 +10,7 @@ import {
   SNOWFLAKE_PASTE_SENTENCES,
 } from "@/lib/connection-string-parser";
 import { getDBConfig } from "@/lib/db-ui-config";
+import { SPARK_PASTE_SENTENCES } from "@/lib/db/providers/sql/spark/sc-uri";
 import type { SSLMode } from "@/lib/types";
 
 // ─── parseConnectionString ──────────────────────────────────────────────────
@@ -1857,5 +1858,28 @@ describe("parseConnectionString: Snowflake URLs, decomposed into fields and neve
     expect(detectConnectionStringType("jdbc:snowflake://a.snowflakecomputing.com/")).toBe("snowflake");
     expect(detectConnectionStringType("snowflake://u@acct/d")).toBe("snowflake");
     expect(detectConnectionStringType("https://ch.example.clickhouse.cloud")).toBe("clickhouse");
+  });
+});
+
+describe("parseConnectionString: sc:// addresses (Apache Spark)", () => {
+  test("hands an sc:// address to the Spark reader, which decomposes it into fields", () => {
+    expect(parseConnectionString("sc://spark.example.internal:15003/;use_ssl=true;token=abc")).toEqual({
+      type: "spark",
+      host: "spark.example.internal",
+      port: "15003",
+      password: "abc",
+      sslMode: "verify-system",
+    });
+  });
+
+  test("hands the JDBC form to the Spark reader, which refuses it and fills nothing", () => {
+    expect(parseConnectionString("jdbc:sc://h:15002")).toEqual({
+      type: "spark",
+      refusal: SPARK_PASTE_SENTENCES.jdbcPrefix,
+    });
+  });
+
+  test("ENGINE_URI_SCHEMES names no spark scheme: the login signature would show an address Spark refuses", () => {
+    expect(ENGINE_URI_SCHEMES.spark).toBeUndefined();
   });
 });

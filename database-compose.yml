@@ -643,6 +643,118 @@ services:
   # ---------------------------------------------------------------------------------------
 
   # ---------------------------------------------------------------------------------------
+  # Apache Spark (issue #1736): Spark Connect, the gRPC server of sbin/start-connect-server.sh;
+  # docs/providers/spark.md says what each service is for. The catalog is in memory, so
+  # `bun tests/live/spark-evidence.ts --setup <service>` creates the sample namespace after each
+  # start. `spark` carries no token and exercises the tokenless path; `spark-auth` takes its
+  # token from SPARK_CONNECT_TOKEN and refuses to start without one; `spark-tls` is an HTTP/2
+  # TLS proxy in front of it, with certificates from SPARK_TLS_DIR, which
+  # docker/spark/make-certs.sh writes outside the repository. No `${VAR:?}` form is used: one
+  # anywhere in this file makes every compose command fail without that variable.
+  # Start on request only:
+  #   docker compose -f database-compose.yml up -d spark
+  #   docker compose -f database-compose.yml --profile spark-4-1 up -d spark-4-1
+  #   docker compose -f database-compose.yml --profile spark-auth up -d spark-auth spark-tls
+  # ---------------------------------------------------------------------------------------
+  spark:
+    image: apache/spark:4.2.0@sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89
+    container_name: libredb-spark
+    # With bash as PID 1, docker stop waits 10 s and kills; with an init process the server stops at once.
+    init: true
+    # --wait keeps the server in the foreground and local[4] bounds the driver's task threads. studio_unloaded is a
+    # configured catalog nothing loads, so the tree's third catalog source is exercised: the server starts, Config
+    # get_all returns the key, SHOW CATALOGS never lists it, and loading it fails with Spark's text.
+    command: >-
+      /opt/spark/sbin/start-connect-server.sh --wait --master local[4] --driver-memory 2g
+      --conf spark.sql.catalog.studio_unloaded=org.apache.spark.sql.execution.datasources.v2.jdbc.JDBCTableCatalog
+    ports:
+      - "127.0.0.1:15002:15002"
+      # The driver UI, which the live check reads job states from.
+      - "127.0.0.1:4040:4040"
+    # A 2g driver heap streams a 449 MB result inside 4g; 449m was the smallest heap that started.
+    mem_limit: 4g
+    healthcheck:
+      # A TCP connection to the Spark Connect port, opened with bash, which the image carries; the server starts in
+      # about 3 s.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/15002"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  spark-4-1:
+    image: apache/spark:4.1.3@sha256:bf9d035a7c32a8ca46aa58d6348182ffd7d2dff6409206ecfbb3915ff1fef211
+    container_name: libredb-spark-4-1
+    # The version floor of the provider (Spark 4.1).
+    profiles: ["spark-4-1"]
+    init: true
+    command: >-
+      /opt/spark/sbin/start-connect-server.sh --wait --master local[4] --driver-memory 2g
+      --conf spark.sql.catalog.studio_unloaded=org.apache.spark.sql.execution.datasources.v2.jdbc.JDBCTableCatalog
+    ports:
+      - "127.0.0.1:15003:15002"
+      - "127.0.0.1:4041:4040"
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/15002"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  spark-auth:
+    image: apache/spark:4.2.0@sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89
+    container_name: libredb-spark-auth
+    profiles: ["spark-auth"]
+    init: true
+    environment:
+      # Spark reads this variable as it reads spark.connect.authenticate.token. Empty, the command below refuses to
+      # start, so this service never runs without a token.
+      SPARK_CONNECT_AUTHENTICATE_TOKEN: ${SPARK_CONNECT_TOKEN:-}
+    # spark.driver.maxResultSize=4m and spark.connect.grpc.arrow.maxBatchSize=1m here only, so their two failures are
+    # captured without bounding the default server: with the batch size at 1m a command answer above about 0.7 MiB
+    # fails with Spark's one-batch assertion (the provider's command-batch-bound refusal), which a default server
+    # reaches only past the 16 MiB receive cap.
+    command:
+      - bash
+      - -c
+      - >-
+        test -n "$$SPARK_CONNECT_AUTHENTICATE_TOKEN" || { echo "spark-auth: set SPARK_CONNECT_TOKEN" >&2; exit 2; };
+        exec /opt/spark/sbin/start-connect-server.sh --wait --master local[4] --driver-memory 2g
+        --conf spark.sql.catalog.studio_unloaded=org.apache.spark.sql.execution.datasources.v2.jdbc.JDBCTableCatalog
+        --conf spark.driver.maxResultSize=4m
+        --conf spark.connect.grpc.arrow.maxBatchSize=1m
+    ports:
+      - "127.0.0.1:15004:15002"
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/15002"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  spark-tls:
+    image: public.ecr.aws/docker/library/nginx:stable-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    container_name: libredb-spark-tls
+    profiles: ["spark-auth"]
+    depends_on:
+      spark-auth:
+        condition: service_healthy
+    volumes:
+      - ./docker/spark/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Without SPARK_TLS_DIR the source does not exist and this service alone refuses to start.
+      - type: bind
+        source: ${SPARK_TLS_DIR:-/nonexistent/set-SPARK_TLS_DIR}
+        target: /etc/nginx/certs
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "127.0.0.1:15005:15005"
+    mem_limit: 256m
+
+  # ---------------------------------------------------------------------------------------
   # Trino (issue #424, Phase 2). One container is the whole cluster: the coordinator
   # runs the worker in-process by default, which is enough to answer every statement the
   # provider sends. Nothing else is needed to exercise it.

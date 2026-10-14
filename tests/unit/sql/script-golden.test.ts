@@ -30,6 +30,7 @@ const CORPUS: readonly string[] = [
   "CREATE TRIGGER tr AFTER INSERT ON t BEGIN\n  UPDATE t SET a = 1;\n  DELETE FROM u;\nEND;\nSELECT 1;",
   "SELECT 1;\nGO\nSELECT 2;",
   "BEGIN\n  NULL;\nEND;\n/\nSELECT 1 FROM dual;",
+  "SELECT r'C:\\' AS a;\nSELECT 2;",
 ];
 
 interface Reading {
@@ -45,11 +46,14 @@ interface Reading {
 // - go-batches: a `GO` line separates and is never sent.
 // - pair-dollar-plain-quote: a tagged `$t$` run is code, so its `;` ends a statement, and a backslash inside `"..."`
 //   is part of the name, so the quote after it closes the name.
+// - raw-strings: as every-code-semicolon, and `r'...'` is a literal that takes no escapes, so the quote after a
+//   backslash closes it.
 const ROW_CLASS: Readonly<Record<string, string>> = {
   "(no dialect)": "every-code-semicolon",
   postgres: "every-code-semicolon",
   bigquery: "every-code-semicolon",
   snowflake: "pair-dollar-plain-quote",
+  spark: "raw-strings",
   mysql: "every-code-semicolon",
   sqlite: "trigger-body-whole",
   libsql: "trigger-body-whole",
@@ -257,6 +261,11 @@ const EXPECTED: Readonly<Record<string, readonly Reading[]>> = {
       multi: true,
       unterminated: false,
     },
+    {
+      statements: [{ sql: "SELECT r'C:\\' AS a;\nSELECT 2;", start: 0, end: 29, startLine: 0 }],
+      multi: false,
+      unterminated: true,
+    },
   ],
   "trigger-body-whole": [
     {
@@ -448,6 +457,11 @@ const EXPECTED: Readonly<Record<string, readonly Reading[]>> = {
       multi: true,
       unterminated: false,
     },
+    {
+      statements: [{ sql: "SELECT r'C:\\' AS a;\nSELECT 2;", start: 0, end: 29, startLine: 0 }],
+      multi: false,
+      unterminated: true,
+    },
   ],
   "pl-sql-units": [
     {
@@ -625,6 +639,11 @@ const EXPECTED: Readonly<Record<string, readonly Reading[]>> = {
       ],
       multi: true,
       unterminated: false,
+    },
+    {
+      statements: [{ sql: "SELECT r'C:\\' AS a;\nSELECT 2;", start: 0, end: 29, startLine: 0 }],
+      multi: false,
+      unterminated: true,
     },
   ],
   "go-batches": [
@@ -814,6 +833,11 @@ const EXPECTED: Readonly<Record<string, readonly Reading[]>> = {
       multi: true,
       unterminated: false,
     },
+    {
+      statements: [{ sql: "SELECT r'C:\\' AS a;\nSELECT 2;", start: 0, end: 29, startLine: 0 }],
+      multi: false,
+      unterminated: true,
+    },
   ],
   "pair-dollar-plain-quote": [
     {
@@ -1002,6 +1026,207 @@ const EXPECTED: Readonly<Record<string, readonly Reading[]>> = {
         { sql: "BEGIN\n  NULL", start: 0, end: 12, startLine: 0 },
         { sql: "END", start: 14, end: 17, startLine: 2 },
         { sql: "/\nSELECT 1 FROM dual", start: 19, end: 39, startLine: 3 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [{ sql: "SELECT r'C:\\' AS a;\nSELECT 2;", start: 0, end: 29, startLine: 0 }],
+      multi: false,
+      unterminated: true,
+    },
+  ],
+  "raw-strings": [
+    {
+      statements: [
+        { sql: "BEGIN", start: 0, end: 5, startLine: 0 },
+        { sql: "SELECT 1", start: 7, end: 15, startLine: 1 },
+        { sql: "COMMIT", start: 17, end: 23, startLine: 2 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "BEGIN TRANSACTION", start: 0, end: 17, startLine: 0 },
+        { sql: "SELECT 1", start: 19, end: 27, startLine: 1 },
+        { sql: "COMMIT", start: 29, end: 35, startLine: 2 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "BEGIN RETURN 1", start: 0, end: 14, startLine: 0 },
+        { sql: "END", start: 16, end: 19, startLine: 0 },
+        { sql: "SELECT 2", start: 21, end: 29, startLine: 1 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "DECLARE x INT", start: 0, end: 13, startLine: 0 },
+        { sql: "BEGIN x := 1", start: 15, end: 27, startLine: 0 },
+        { sql: "RETURN x", start: 29, end: 37, startLine: 0 },
+        { sql: "END", start: 39, end: 42, startLine: 0 },
+        { sql: "SELECT 2", start: 44, end: 52, startLine: 1 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "BEGIN\n FOR i IN 1 TO 3 DO\n SELECT 1", start: 0, end: 35, startLine: 0 },
+        { sql: "END FOR", start: 38, end: 45, startLine: 3 },
+        { sql: "RETURN 1", start: 48, end: 56, startLine: 4 },
+        { sql: "END", start: 58, end: 61, startLine: 5 },
+        { sql: "SELECT 2", start: 63, end: 71, startLine: 6 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        {
+          sql: "CREATE OR REPLACE PROCEDURE p() RETURNS INT LANGUAGE SQL AS $$ BEGIN RETURN 1; END; $$",
+          start: 0,
+          end: 86,
+          startLine: 0,
+        },
+        { sql: "SELECT 2", start: 88, end: 96, startLine: 1 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "CREATE FUNCTION f() RETURNS INT AS 'SELECT 1'", start: 0, end: 45, startLine: 0 },
+        { sql: "SELECT 2", start: 47, end: 55, startLine: 1 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        {
+          sql: "CREATE OR REPLACE PROCEDURE p() RETURNS INT LANGUAGE SQL AS BEGIN RETURN 1",
+          start: 0,
+          end: 74,
+          startLine: 0,
+        },
+        { sql: "END", start: 76, end: 79, startLine: 0 },
+        { sql: "SELECT 2", start: 81, end: 89, startLine: 1 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "EXECUTE IMMEDIATE $$BEGIN RETURN 1; END;$$", start: 0, end: 42, startLine: 0 },
+        { sql: "SELECT 2", start: 44, end: 52, startLine: 1 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "SELECT $t$x;y$t$", start: 0, end: 16, startLine: 0 },
+        { sql: "SELECT 2", start: 18, end: 26, startLine: 1 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "SELECT $$x;y$$", start: 0, end: 14, startLine: 0 },
+        { sql: "SELECT 2", start: 16, end: 24, startLine: 1 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [{ sql: 'SELECT 1 AS "a\\";\nSELECT 2 AS "b";', start: 0, end: 34, startLine: 0 }],
+      multi: false,
+      unterminated: true,
+    },
+    {
+      statements: [
+        { sql: "DECLARE\n  x NUMBER", start: 0, end: 18, startLine: 0 },
+        { sql: "BEGIN\n  x := 1", start: 20, end: 34, startLine: 2 },
+        { sql: "END", start: 36, end: 39, startLine: 4 },
+        { sql: "SELECT 1 FROM dual", start: 41, end: 59, startLine: 5 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "CREATE OR REPLACE PROCEDURE p AS LANGUAGE JAVA NAME 'a.b()'", start: 0, end: 59, startLine: 0 },
+        { sql: "SELECT 1 FROM dual", start: 61, end: 79, startLine: 1 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "CREATE OR REPLACE PACKAGE pkg AS\n  PROCEDURE p", start: 0, end: 46, startLine: 0 },
+        { sql: "FUNCTION f RETURN NUMBER", start: 50, end: 74, startLine: 2 },
+        { sql: "END pkg", start: 76, end: 83, startLine: 3 },
+        { sql: "SELECT 1 FROM dual", start: 85, end: 103, startLine: 4 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "BEGIN\n  x := (CASE WHEN a THEN 1 END)", start: 0, end: 37, startLine: 0 },
+        { sql: "END", start: 39, end: 42, startLine: 2 },
+        { sql: "SELECT 1 FROM dual", start: 44, end: 62, startLine: 3 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "CREATE FUNCTION f(p_end NUMBER) RETURN NUMBER IS BEGIN RETURN 1", start: 0, end: 63, startLine: 0 },
+        { sql: "END", start: 65, end: 68, startLine: 0 },
+        { sql: "SELECT 2", start: 70, end: 78, startLine: 1 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "CREATE TRIGGER tr AFTER INSERT ON t BEGIN\n  UPDATE t SET a = 1", start: 0, end: 62, startLine: 0 },
+        { sql: "DELETE FROM u", start: 66, end: 79, startLine: 2 },
+        { sql: "END", start: 81, end: 84, startLine: 3 },
+        { sql: "SELECT 1", start: 86, end: 94, startLine: 4 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "SELECT 1", start: 0, end: 8, startLine: 0 },
+        { sql: "GO\nSELECT 2", start: 10, end: 21, startLine: 1 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "BEGIN\n  NULL", start: 0, end: 12, startLine: 0 },
+        { sql: "END", start: 14, end: 17, startLine: 2 },
+        { sql: "/\nSELECT 1 FROM dual", start: 19, end: 39, startLine: 3 },
+      ],
+      multi: true,
+      unterminated: false,
+    },
+    {
+      statements: [
+        { sql: "SELECT r'C:\\' AS a", start: 0, end: 18, startLine: 0 },
+        { sql: "SELECT 2", start: 20, end: 28, startLine: 1 },
       ],
       multi: true,
       unterminated: false,

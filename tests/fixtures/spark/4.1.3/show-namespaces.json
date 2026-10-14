@@ -1,0 +1,124 @@
+{
+  "$captured": {
+    "service": "spark-4-1",
+    "image": "apache/spark:4.1.3",
+    "digest": "sha256:bf9d035a7c32a8ca46aa58d6348182ffd7d2dff6409206ecfbb3915ff1fef211",
+    "sparkVersion": "4.1.3",
+    "date": "2026-10-13T22:18:28.999Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "tree: SHOW NAMESPACES IN spark_catalog: command step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "command": {
+          "sql_command": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "sql": "",
+            "input": {
+              "common": null,
+              "sql": {
+                "pos_args": [],
+                "pos_arguments": [],
+                "args": {},
+                "named_arguments": {},
+                "query": "SHOW NAMESPACES IN `spark_catalog`"
+              },
+              "rel_type": "sql"
+            }
+          },
+          "command_type": "sql_command"
+        },
+        "op_type": "command"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "pass",
+  "payload": [
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "f456e35d-7926-447b-877e-736db10e09c7",
+      "server_side_session_id": "6ab9e87f-cb91-4893-b6af-02c48e41bafd",
+      "sql_command_result": {
+        "relation": {
+          "common": null,
+          "local_relation": {
+            "data": {
+              "$bytes": "/////5AAAAAQAAAAAAAKAA4ABgANAAgACgAAAAAABAAQAAAAAAEKAAwAAAAIAAQACgAAAAgAAAAIAAAAAAAAAAEAAAAYAAAAAAASABgAFAAAABMADAAAAAgABAASAAAAFAAAABQAAAAYAAAAAAAABRQAAAAAAAAAAAAAAAQABAAEAAAACQAAAG5hbWVzcGFjZQAAAAAAAAD/////mAAAABQAAAAAAAAADAAWAA4AFQAQAAQADAAAAFgAAAAAAAAAAAAEABAAAAAAAwoAGAAMAAgABAAKAAAAFAAAAEgAAAAFAAAAAAAAAAAAAAADAAAAAAAAAAAAAAABAAAAAAAAAAgAAAAAAAAAGAAAAAAAAAAgAAAAAAAAADgAAAAAAAAAAAAAAAEAAAAFAAAAAAAAAAAAAAAAAAAAHwAAAAAAAAAAAAAABwAAAA0AAAAZAAAAKQAAADgAAABkZWZhdWx0c3R1ZGlvc3R1ZGlvX2VtcHR5c3R1ZGlvX2Z1bmN0aW9uc3N0dWRpb191bmxvYWRlZP////8AAAAA"
+            },
+            "_data": "data"
+          },
+          "rel_type": "local_relation"
+        }
+      },
+      "response_type": "sql_command_result"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": {
+        "metrics": [
+          {
+            "execution_metrics": {
+              "numOutputRows": {
+                "name": "number of output rows",
+                "value": "0",
+                "metric_type": "sum"
+              }
+            },
+            "name": "CommandResult",
+            "plan_id": "98",
+            "parent": "98"
+          }
+        ]
+      },
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "60047463-2266-41d8-954c-4a71ac9cfc5e",
+      "server_side_session_id": "6ab9e87f-cb91-4893-b6af-02c48e41bafd"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "fd7ca1dd-6c57-4f04-bc81-4ad9b8081f75",
+      "server_side_session_id": "6ab9e87f-cb91-4893-b6af-02c48e41bafd",
+      "execution_progress": {
+        "stages": [],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    }
+  ]
+}

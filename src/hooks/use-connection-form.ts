@@ -1393,7 +1393,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         // they are FILE-based, `showConnectionStringToggle` is false for all three, so
         // this control is never rendered for them and no scheme is being withheld.
         message:
-          "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, couchbase://, clickhouse://, libsql://, http(s)://, redis://, oracle://, mssql://, db2://, databend://",
+          "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, couchbase://, clickhouse://, libsql://, http(s)://, redis://, oracle://, mssql://, db2://, databend://, sc://",
       });
       return;
     }
@@ -1624,6 +1624,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "rabbitmq",
     "snowflake",
     "opcua",
+    "spark",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

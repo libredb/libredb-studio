@@ -1,0 +1,124 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T22:17:46.536Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "agent grounding walk: SHOW USER FUNCTIONS of the current namespace, for its count: command step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "command": {
+          "sql_command": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "sql": "",
+            "input": {
+              "common": null,
+              "sql": {
+                "pos_args": [],
+                "pos_arguments": [],
+                "args": {},
+                "named_arguments": {},
+                "query": "SHOW USER FUNCTIONS IN `spark_catalog`.`default`"
+              },
+              "rel_type": "sql"
+            }
+          },
+          "command_type": "sql_command"
+        },
+        "op_type": "command"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "pass",
+  "payload": [
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "6629eb5b-5ba6-4b19-aa69-5ee8f23936da",
+      "server_side_session_id": "f11cc641-2913-4598-b79d-24331a7235d7",
+      "sql_command_result": {
+        "relation": {
+          "common": null,
+          "local_relation": {
+            "data": {
+              "$bytes": "/////5AAAAAQAAAAAAAKAA4ABgANAAgACgAAAAAABAAQAAAAAAEKAAwAAAAIAAQACgAAAAgAAAAIAAAAAAAAAAEAAAAYAAAAAAASABgAFAAAABMADAAAAAgABAASAAAAFAAAABQAAAAYAAAAAAAABRQAAAAAAAAAAAAAAAQABAAEAAAACAAAAGZ1bmN0aW9uAAAAAAAAAAD/////kAAAABQAAAAAAAAADAAaABIAGQAUAAQADAAAAAgAAAAAAAAAAAAAAAAABAAQAAAAAAMKAAwAAAAIAAQACgAAAAgAAAA8AAAAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////wAAAAA="
+            },
+            "_data": "data"
+          },
+          "rel_type": "local_relation"
+        }
+      },
+      "response_type": "sql_command_result"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "21057ac7-0b9b-450b-95cb-eab802e7e468",
+      "server_side_session_id": "f11cc641-2913-4598-b79d-24331a7235d7",
+      "execution_progress": {
+        "stages": [],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": {
+        "metrics": [
+          {
+            "execution_metrics": {
+              "numOutputRows": {
+                "name": "number of output rows",
+                "value": "0",
+                "metric_type": "sum"
+              }
+            },
+            "name": "CommandResult",
+            "plan_id": "92",
+            "parent": "92"
+          }
+        ]
+      },
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "72616bbf-d648-4f74-8995-fb609d5932f1",
+      "server_side_session_id": "f11cc641-2913-4598-b79d-24331a7235d7"
+    }
+  ]
+}

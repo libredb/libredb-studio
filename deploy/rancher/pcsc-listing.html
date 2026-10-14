@@ -1,9 +1,9 @@
-LibreDB Studio brings a full SQL IDE to Rancher-managed Kubernetes clusters: browse schemas, run queries across thirty-five engines with no desktop app. Where an engine cannot edit data, the controls say so.
+LibreDB Studio brings a full SQL IDE to Rancher-managed Kubernetes clusters: browse schemas, run queries across thirty-six engines with no desktop app. Where an engine cannot edit data, the controls say so.
 
-The Helm chart installs from the Rancher Apps catalog with defaults: first-run admin credentials are generated and logged; production can supply its own secrets. It runs on your own infrastructure, developed and commercially supported by LibreDB.
+The Helm chart installs from the Rancher Apps catalog: first-run admin credentials are generated and logged; production can supply its own secrets. It runs on your own infrastructure, developed and commercially supported by LibreDB.
 <ul>
-<li>Thirty-five engines: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, BigQuery, Snowflake, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ, OPC UA</li>
-<li>Optional AI, off by default (Gemini, OpenAI or a local model): plain-English query explanation from the EXPLAIN plan on PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino, Databend, BigQuery and Snowflake. A read-only agent on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL never writes</li>
+<li>Thirty-six engines: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, BigQuery, Snowflake, Apache Spark, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ, OPC UA</li>
+<li>Optional AI, off by default (Gemini, OpenAI or a local model): plain-English explanation of the EXPLAIN plan on PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino, Databend, BigQuery, Snowflake and Apache Spark. A read-only agent on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL never writes</li>
 <li>Hardened chart defaults: non-root, read-only root filesystem, NetworkPolicy, PDB, HPA, Ingress/TLS</li>
 <li>Self-hosted, air-gap friendly: no external services</li>
 <li>amd64 and arm64 images; Rancher, RKE2/K3s and Kubernetes versions validated each release</li>

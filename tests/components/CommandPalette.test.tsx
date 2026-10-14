@@ -454,6 +454,32 @@ describe("CommandPalette", () => {
     expect(getByText).toBeDefined();
   });
 
+  test("Format Query is hidden where the provider withholds the SQL formatter", () => {
+    // The editor's own Format button and menu entry follow the same capability, so the palette offers no entry
+    // that would do nothing.
+    const capabilities = {
+      queryLanguage: "sql",
+      objectKinds: [],
+      supportsSqlFormat: false,
+    } as unknown as ProviderCapabilities;
+    const props = createDefaultProps({ capabilities });
+    const { queryByText } = render(<CommandPalette {...props} />);
+
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
+
+    expect(queryByText("Format Query")).toBeNull();
+  });
+
+  test("Format Query is offered where the capability is absent", () => {
+    const capabilities = { queryLanguage: "sql", objectKinds: [] } as unknown as ProviderCapabilities;
+    const props = createDefaultProps({ capabilities });
+    const { queryByText } = render(<CommandPalette {...props} />);
+
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
+
+    expect(queryByText("Format Query")).not.toBeNull();
+  });
+
   test("Save Query action callback fires via runAction", () => {
     const onSaveQuery = mock(() => {});
     const props = createDefaultProps({ onSaveQuery });

@@ -1,0 +1,124 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T21:14:02.535Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "source: SHOW CREATE TABLE of a table: command step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "command": {
+          "sql_command": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "sql": "",
+            "input": {
+              "common": null,
+              "sql": {
+                "pos_args": [],
+                "pos_arguments": [],
+                "args": {},
+                "named_arguments": {},
+                "query": "SHOW CREATE TABLE `spark_catalog`.`studio`.`every_type`"
+              },
+              "rel_type": "sql"
+            }
+          },
+          "command_type": "sql_command"
+        },
+        "op_type": "command"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "pass",
+  "payload": [
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "76cc326c-edbf-4255-807c-2b12d300c02c",
+      "server_side_session_id": "548d757c-a690-439a-9d0c-b6663d7ac650",
+      "sql_command_result": {
+        "relation": {
+          "common": null,
+          "local_relation": {
+            "data": {
+              "$bytes": "/////5AAAAAQAAAAAAAKAA4ABgANAAgACgAAAAAABAAQAAAAAAEKAAwAAAAIAAQACgAAAAgAAAAIAAAAAAAAAAEAAAAYAAAAAAASABgAFAAAABMADAAAAAgABAASAAAAFAAAABQAAAAYAAAAAAAABRQAAAAAAAAAAAAAAAQABAAEAAAADgAAAGNyZWF0ZXRhYl9zdG10AAD/////mAAAABQAAAAAAAAADAAWAA4AFQAQAAQADAAAAAgEAAAAAAAAAAAEABAAAAAAAwoAGAAMAAgABAAKAAAAFAAAAEgAAAABAAAAAAAAAAAAAAADAAAAAAAAAAAAAAABAAAAAAAAAAgAAAAAAAAACAAAAAAAAAAQAAAAAAAAAPQDAAAAAAAAAAAAAAEAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAA9AMAAENSRUFURSBUQUJMRSBzcGFya19jYXRhbG9nLnN0dWRpby5ldmVyeV90eXBlICgKICBjX2Jvb2xlYW4gQk9PTEVBTiwKICBjX3RpbnlpbnQgVElOWUlOVCwKICBjX3NtYWxsaW50IFNNQUxMSU5ULAogIGNfaW50IElOVCwKICBjX2JpZ2ludF9zYWZlIEJJR0lOVCwKICBjX2JpZ2ludF9sYXJnZSBCSUdJTlQsCiAgY19mbG9hdCBGTE9BVCwKICBjX2RvdWJsZSBET1VCTEUsCiAgY19kb3VibGVfbmFuIERPVUJMRSwKICBjX2RvdWJsZV9pbmYgRE9VQkxFLAogIGNfZGVjaW1hbCBERUNJTUFMKDEwLDIpLAogIGNfZGVjaW1hbF9uZWcgREVDSU1BTCg0LDIpLAogIGNfZGVjaW1hbF8zOCBERUNJTUFMKDM4LDApLAogIGNfc3RyaW5nIFNUUklORyBDT0xMQVRFIFVURjhfQklOQVJZLAogIGNfc3RyaW5nX2NvbGxhdGVkIFNUUklORyBDT0xMQVRFIFVURjhfTENBU0UsCiAgY19jaGFyIENIQVIoNSkgQ09MTEFURSBVVEY4X0JJTkFSWSwKICBjX3ZhcmNoYXIgVkFSQ0hBUigxMCkgQ09MTEFURSBVVEY4X0JJTkFSWSwKICBjX2JpbmFyeSBCSU5BUlksCiAgY19kYXRlIERBVEUsCiAgY19kYXRlX21pbiBEQVRFLAogIGNfdGltZXN0YW1wIFRJTUVTVEFNUCwKICBjX3RpbWVzdGFtcF9udHogVElNRVNUQU1QX05UWiwKICBjX3ltX2ludGVydmFsIElOVEVSVkFMIFlFQVIgVE8gTU9OVEgsCiAgY195ZWFyX2ludGVydmFsIElOVEVSVkFMIFlFQVIsCiAgY19kdF9pbnRlcnZhbCBJTlRFUlZBTCBEQVkgVE8gU0VDT05ELAogIGNfaG91cl9pbnRlcnZhbCBJTlRFUlZBTCBIT1VSLAogIGNfYXJyYXkgQVJSQVk8SU5UPiwKICBjX21hcCBNQVA8U1RSSU5HIENPTExBVEUgVVRGOF9CSU5BUlksIElOVD4sCiAgY19tYXBfbmVzdGVkX2tleSBNQVA8QVJSQVk8SU5UPiwgU1RSSU5HIENPTExBVEUgVVRGOF9CSU5BUlk+LAogIGNfc3RydWN0IFNUUlVDVDx4OiBJTlQsIHk6IFNUUklORyBDT0xMQVRFIFVURjhfQklOQVJZPiwKICBjX3ZhcmlhbnQgVkFSSUFOVCwKICBjX251bGxfaW50IElOVCkKVVNJTkcgcGFycXVldAoAAAAA/////wAAAAA="
+            },
+            "_data": "data"
+          },
+          "rel_type": "local_relation"
+        }
+      },
+      "response_type": "sql_command_result"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": {
+        "metrics": [
+          {
+            "execution_metrics": {
+              "numOutputRows": {
+                "name": "number of output rows",
+                "value": "0",
+                "metric_type": "sum"
+              }
+            },
+            "name": "CommandResult",
+            "plan_id": "146",
+            "parent": "146"
+          }
+        ]
+      },
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "6c8d0032-8dee-4746-8872-60a888bab23b",
+      "server_side_session_id": "548d757c-a690-439a-9d0c-b6663d7ac650"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "f772c404-5386-4b4d-a63b-d39c8132b918",
+      "server_side_session_id": "548d757c-a690-439a-9d0c-b6663d7ac650",
+      "execution_progress": {
+        "stages": [],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    }
+  ]
+}

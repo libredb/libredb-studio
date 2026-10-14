@@ -35,6 +35,9 @@ Trino has no index grammar, Databend's indexes are inverted, ngram, vector and s
 ClickHouse index metadata to distinguish and recreate its index kinds, so those index changes
 also produce comments. Existing Cassandra and SQLite-family limitations remain explicit.
 Databend gets no transaction wrapper, because a DDL statement commits the open transaction, and a column modification is written as a comment: Databend has `ALTER TABLE ... MODIFY COLUMN`, but the MySQL spelling this generator writes fails `NOT NULL` on an empty table and silently drops an existing default it does not restate.
+Apache Spark declines foreign keys and primary keys in comments, because it accepts either only as an informational `NOT ENFORCED` constraint in a catalog that implements constraints, so an added table's key is declined after its `CREATE TABLE`.
+Spark SQL's `CREATE INDEX` and `DROP INDEX` work only in a catalog whose tables support indexes, so Spark's index changes produce comments too, and so does a column modification: whether a column's type, nullability or default can change depends on the catalog and the table format.
+Spark gets no transaction wrapper, because no transaction spans two Spark SQL statements.
 
 Review each migration against its target: a diff does not carry original foreign-key constraint
 names, schema qualifiers, cross-table dependency order, or a general type-conversion strategy.

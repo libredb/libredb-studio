@@ -1,0 +1,70 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T11:06:33.504Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "a syntax error with ErrorInfo: command step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "command": {
+          "sql_command": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "sql": "",
+            "input": {
+              "common": null,
+              "sql": {
+                "pos_args": [],
+                "pos_arguments": [],
+                "args": {},
+                "named_arguments": {},
+                "query": "SELEC 1"
+              },
+              "rel_type": "sql"
+            }
+          },
+          "command_type": "sql_command"
+        },
+        "op_type": "command"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "error",
+  "code": 13,
+  "details": "\n[PARSE_SYNTAX_ERROR] Syntax error at or near 'SELEC'. SQLSTATE: 42601 (line 1, pos 0)\n\n== SQL ==\nSELEC 1\n^^^\n",
+  "metadata": {
+    "content-type": "application/grpc",
+    "grpc-status-details-bin": {
+      "$bytes": "CA0SbgpbUEFSU0VfU1lOVEFYX0VSUk9SXSBTeW50YXggZXJyb3IgYXQgb3IgbmVhciAnU0VMRUMnLiBTUUxTVEFURTogNDI2MDEgKGxpbmUgMSwgcG9zIDApCgo9PSBTUUwgPT0KU0VMRUMgMQpeXl4KGrwDCih0eXBlLmdvb2dsZWFwaXMuY29tL2dvb2dsZS5ycGMuRXJyb3JJbmZvEo8DCjNvcmcuYXBhY2hlLnNwYXJrLnNxbC5jYXRhbHlzdC5wYXJzZXIuUGFyc2VFeGNlcHRpb24SEG9yZy5hcGFjaGUuc3BhcmsaqwEKB2NsYXNzZXMSnwFbIm9yZy5hcGFjaGUuc3Bhcmsuc3FsLmNhdGFseXN0LnBhcnNlci5QYXJzZUV4Y2VwdGlvbiIsIm9yZy5hcGFjaGUuc3Bhcmsuc3FsLkFuYWx5c2lzRXhjZXB0aW9uIiwiamF2YS5sYW5nLkV4Y2VwdGlvbiIsImphdmEubGFuZy5UaHJvd2FibGUiLCJqYXZhLmxhbmcuT2JqZWN0Il0aEQoIc3FsU3RhdGUSBTQyNjAxGiAKCmVycm9yQ2xhc3MSElBBUlNFX1NZTlRBWF9FUlJPUhoyChFtZXNzYWdlUGFyYW1ldGVycxIdeyJlcnJvciI6IidTRUxFQyciLCJoaW50IjoiIn0aLwoHZXJyb3JJZBIkN2FhZmNhYzMtNDRjMC00ODgwLWE3YjgtZjEwMjRhNWQ1MTQz"
+    }
+  }
+}

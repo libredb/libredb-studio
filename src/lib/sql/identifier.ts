@@ -41,6 +41,10 @@ export function quoteIdentifier(name: string, dialect: DatabaseType | undefined)
     // newline or a NUL round-trip byte-equal through CREATE TABLE, INSERT and SELECT
     // under both dialects. A bare name would be folded to lower case there, which is why
     // the provider quotes every name rather than only the ones that need it.
+    // Spark SQL (4.1 and 4.2) quotes a name in backticks and doubles a backtick inside it, the form its own
+    // quoteIfNeeded writes; a double-quoted text is a string literal in Spark, so the standard form below would
+    // turn a name into a string. Names are case-insensitive there, so quoting never changes which object a
+    // name means.
     // GoogleSQL quotes a name in backticks and escapes inside it with a backslash; a doubled
     // backtick is not an escape there, it ends the name.
     case "bigquery":
@@ -48,6 +52,7 @@ export function quoteIdentifier(name: string, dialect: DatabaseType | undefined)
     case "databend":
     case "opensearch":
     case "mysql":
+    case "spark":
       return `\`${name.replace(/`/g, "``")}\``;
     case "mssql":
       return `[${name.replace(/]/g, "]]")}]`;

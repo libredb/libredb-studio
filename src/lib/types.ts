@@ -185,7 +185,12 @@ export type DatabaseType =
   // one endpoint URL, which carries its own host and port; `securityMode` and `serverCertificateThumbprint`
   // below are its own fields. Read-only is structural rather than a mode: the client seam names eight read
   // services and none of them writes, so there is no Write, Call or HistoryUpdate to send.
-  | "opcua";
+  | "opcua"
+  // Apache Spark (#1736): Spark SQL over Spark Connect (gRPC with Arrow results) for self-hosted Spark 4.1 and later
+  // (`src/lib/db/providers/sql/spark/`). One Spark session per request, released at its end, plus a provider-owned
+  // session for the tree and the panels that never runs user text. The connection's Password is the server's
+  // spark.connect.authenticate.token, Database the catalog and Schema the namespace.
+  | "spark";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

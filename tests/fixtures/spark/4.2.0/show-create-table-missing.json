@@ -1,0 +1,70 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T21:14:02.569Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "source: SHOW CREATE TABLE of a table that does not exist: command step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "command": {
+          "sql_command": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "sql": "",
+            "input": {
+              "common": null,
+              "sql": {
+                "pos_args": [],
+                "pos_arguments": [],
+                "args": {},
+                "named_arguments": {},
+                "query": "SHOW CREATE TABLE `spark_catalog`.`studio`.`no_such_table`"
+              },
+              "rel_type": "sql"
+            }
+          },
+          "command_type": "sql_command"
+        },
+        "op_type": "command"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "error",
+  "code": 13,
+  "details": "[TABLE_OR_VIEW_NOT_FOUND] The table or view `spark_catalog`.`studio`.`no_such_table` cannot be found. Verify the spelling and correctness of the schema and catalog.\nSearch path: [`system`.`session`, `spark_catalog`.`default`].\nIf you did not qualify the name with a schema, verify the current_schema() output, or qualify the name with the correct schema and catalog.\nTo tolerate the error on drop use DROP VIEW IF EXISTS or DROP TABLE IF EXISTS. SQLSTATE: 42P01; line 1 pos 18;\n'ShowCreateTable false, [createtab_stmt#321]\n+- 'UnresolvedTableOrView [spark_catalog, studio, no_such_table], SHOW CREATE TABLE, false, Ddl\n",
+  "metadata": {
+    "content-type": "application/grpc",
+    "grpc-status-details-bin": {
+      "$bytes": "CA0S6wRbVEFCTEVfT1JfVklFV19OT1RfRk9VTkRdIFRoZSB0YWJsZSBvciB2aWV3IGBzcGFya19jYXRhbG9nYC5gc3R1ZGlvYC5gbm9fc3VjaF90YWJsZWAgY2Fubm90IGJlIGZvdW5kLiBWZXJpZnkgdGhlIHNwZWxsaW5nIGFuZCBjb3JyZWN0bmVzcyBvZiB0aGUgc2NoZW1hIGFuZCBjYXRhbG9nLgpTZWFyY2ggcGF0aDogW2BzeXN0ZW1gLmBzZXNzaW9uYCwgYHNwYXJrX2NhdGFsb2dgLmBkZWZhdWx0YF0uCklmIHlvdSBkaWQgbm90IHF1YWxpZnkgdGhlIG5hbWUgd2l0aCBhIHNjaGVtYSwgdmVyaWZ5IHRoZSBjdXJyZW50X3NjaGVtYSgpIG91dHB1dCwgb3IgcXVhbGlmeSB0aGUgbmFtZSB3aXRoIHRoZSBjb3JyZWN0IHNjaGVtYSBhbmQgY2F0YWxvZy4KVG8gdG9sZXJhdGUgdGhlIGVycm9yIG9uIGRyb3AgdXNlIERST1AgVklFVyBJRiBFWElTVFMgb3IgRFJPUCBUQUJMRSBJRiBFWElTVFMuIFNRTFNUQVRFOiA0MlAwMTsgbGluZSAxIHBvcyAxODsKJ1Nob3dDcmVhdGVUYWJsZSBmYWxzZSwgW2NyZWF0ZXRhYl9zdG10IzMyMV0KKy0gJ1VucmVzb2x2ZWRUYWJsZU9yVmlldyBbc3BhcmtfY2F0YWxvZywgc3R1ZGlvLCBub19zdWNoX3RhYmxlXSwgU0hPVyBDUkVBVEUgVEFCTEUsIGZhbHNlLCBEZGwKGqcECih0eXBlLmdvb2dsZWFwaXMuY29tL2dvb2dsZS5ycGMuRXJyb3JJbmZvEvoDCjdvcmcuYXBhY2hlLnNwYXJrLnNxbC5jYXRhbHlzdC5FeHRlbmRlZEFuYWx5c2lzRXhjZXB0aW9uEhBvcmcuYXBhY2hlLnNwYXJrGq8BCgdjbGFzc2VzEqMBWyJvcmcuYXBhY2hlLnNwYXJrLnNxbC5jYXRhbHlzdC5FeHRlbmRlZEFuYWx5c2lzRXhjZXB0aW9uIiwib3JnLmFwYWNoZS5zcGFyay5zcWwuQW5hbHlzaXNFeGNlcHRpb24iLCJqYXZhLmxhbmcuRXhjZXB0aW9uIiwiamF2YS5sYW5nLlRocm93YWJsZSIsImphdmEubGFuZy5PYmplY3QiXRoRCghzcWxTdGF0ZRIFNDJQMDEaJQoKZXJyb3JDbGFzcxIXVEFCTEVfT1JfVklFV19OT1RfRk9VTkQajwEKEW1lc3NhZ2VQYXJhbWV0ZXJzEnp7InJlbGF0aW9uTmFtZSI6ImBzcGFya19jYXRhbG9nYC5gc3R1ZGlvYC5gbm9fc3VjaF90YWJsZWAiLCJzZWFyY2hQYXRoIjoiW2BzeXN0ZW1gLmBzZXNzaW9uYCwgYHNwYXJrX2NhdGFsb2dgLmBkZWZhdWx0YF0ifRovCgdlcnJvcklkEiQ0ZDg1MTc5Yy05ZTRlLTQ1MGQtOTc0Ni0yNWM3MjMxNzg1ZWM="
+    }
+  }
+}

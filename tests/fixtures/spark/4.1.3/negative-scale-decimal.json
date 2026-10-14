@@ -1,0 +1,206 @@
+{
+  "$captured": {
+    "service": "spark-4-1",
+    "image": "apache/spark:4.1.3",
+    "digest": "sha256:bf9d035a7c32a8ca46aa58d6348182ffd7d2dff6409206ecfbb3915ff1fef211",
+    "sparkVersion": "4.1.3",
+    "date": "2026-10-13T11:07:13.496Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "1E10BD under allowNegativeScaleOfDecimal: relation step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "root": {
+          "common": null,
+          "sql": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "query": "SELECT 1E10BD AS d"
+          },
+          "rel_type": "sql"
+        },
+        "op_type": "root"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "pass",
+  "payload": [
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": {
+        "struct": {
+          "fields": [
+            {
+              "name": "d",
+              "data_type": {
+                "decimal": {
+                  "type_variation_reference": 0,
+                  "scale": -10,
+                  "_scale": "scale",
+                  "precision": 1,
+                  "_precision": "precision"
+                },
+                "kind": "decimal"
+              },
+              "nullable": false
+            }
+          ],
+          "type_variation_reference": 0
+        },
+        "kind": "struct"
+      },
+      "operation_id": "<operation>",
+      "response_id": "23be0598-008e-4d64-a1c5-0327bbc6ea80",
+      "server_side_session_id": "36c82dd5-901c-4f72-9932-ea9feb188796"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "80e378ac-c3dc-4622-9c1b-3e48b85e4ddd",
+      "server_side_session_id": "36c82dd5-901c-4f72-9932-ea9feb188796",
+      "execution_progress": {
+        "stages": [],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "cb301e76-8fd9-4f77-8f1e-afa5367da09d",
+      "server_side_session_id": "36c82dd5-901c-4f72-9932-ea9feb188796",
+      "arrow_batch": {
+        "row_count": "1",
+        "data": {
+          "$bytes": "/////5AAAAAQAAAAAAAKAA4ABgANAAgACgAAAAAABAAQAAAAAAEKAAwAAAAIAAQACgAAAAgAAAAIAAAAAAAAAAEAAAAYAAAAAAASABgAFAAAABMADAAAAAgABAASAAAAFAAAABQAAAAcAAAAAAAAByAAAAAAAAAAAAAAAAgADAAIAAQACAAAAPb///8BAAAAAQAAAGQAAAD/////iAAAABQAAAAAAAAADAAWAA4AFQAQAAQADAAAABgAAAAAAAAAAAAEABAAAAAAAwoAGAAMAAgABAAKAAAAFAAAADgAAAABAAAAAAAAAAAAAAACAAAAAAAAAAAAAAABAAAAAAAAAAgAAAAAAAAAEAAAAAAAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAD/////AAAAAA=="
+        },
+        "start_offset": "0",
+        "_start_offset": "start_offset",
+        "chunk_index": "0",
+        "_chunk_index": "chunk_index",
+        "num_chunks_in_batch": "1",
+        "_num_chunks_in_batch": "num_chunks_in_batch"
+      },
+      "response_type": "arrow_batch"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "5c283353-be97-40a0-b976-2e3e2f42c3ff",
+      "server_side_session_id": "36c82dd5-901c-4f72-9932-ea9feb188796",
+      "execution_progress": {
+        "stages": [
+          {
+            "stage_id": "3",
+            "num_tasks": "1",
+            "num_completed_tasks": "1",
+            "input_bytes_read": "0",
+            "done": true
+          }
+        ],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "60759941-f2dd-4ef4-9baa-ec9cf39d8596",
+      "server_side_session_id": "36c82dd5-901c-4f72-9932-ea9feb188796",
+      "execution_progress": {
+        "stages": [
+          {
+            "stage_id": "3",
+            "num_tasks": "1",
+            "num_completed_tasks": "1",
+            "input_bytes_read": "0",
+            "done": true
+          }
+        ],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": {
+        "metrics": [
+          {
+            "execution_metrics": {
+              "pipelineTime": {
+                "name": "duration",
+                "value": "0",
+                "metric_type": "timing"
+              }
+            },
+            "name": "WholeStageCodegen (1)",
+            "plan_id": "186",
+            "parent": "186"
+          },
+          {
+            "execution_metrics": {},
+            "name": "Project",
+            "plan_id": "185",
+            "parent": "186"
+          },
+          {
+            "execution_metrics": {
+              "numOutputRows": {
+                "name": "number of output rows",
+                "value": "1",
+                "metric_type": "sum"
+              }
+            },
+            "name": "Scan OneRowRelation",
+            "plan_id": "184",
+            "parent": "185"
+          }
+        ]
+      },
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "caaf89db-27d9-46f5-b5b3-4672bb42d339",
+      "server_side_session_id": "36c82dd5-901c-4f72-9932-ea9feb188796"
+    }
+  ]
+}

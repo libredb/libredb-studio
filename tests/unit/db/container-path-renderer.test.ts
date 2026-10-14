@@ -69,13 +69,13 @@ function renderingLines(file: string, source: string): string[] {
 }
 
 /**
- * The fifteen provider files that reach the renderer, pinned by name.
+ * The provider files that reach the renderer, pinned by name.
  *
  * A floor (`>= 14`) stood here first, and a floor cannot see the thing it exists to notice:
- * an engine that stops reaching the renderer takes the count DOWN, and 14 still passes for
- * a fifteen-file population minus one. Naming the files makes a departure fail with the
- * file in the message, and a sixteenth arriving as a deliberate edit here rather than as a
- * silent count change.
+ * an engine that stops reaching the renderer takes the count DOWN, and a floor still passes
+ * for the full population minus one. Naming the files makes a departure fail with the file
+ * in the message, and a new file arriving as a deliberate edit here rather than as a silent
+ * count change.
  */
 const ENGINES = [
   "src/lib/db/providers/document/couchbase/objects.ts",
@@ -92,6 +92,7 @@ const ENGINES = [
   "src/lib/db/providers/sql/duckdb/objects.ts",
   "src/lib/db/providers/sql/libsql/objects.ts",
   "src/lib/db/providers/sql/snowflake/index.ts",
+  "src/lib/db/providers/sql/spark/index.ts",
   "src/lib/db/providers/sql/mssql.ts",
   "src/lib/db/providers/sql/mysql.ts",
   "src/lib/db/providers/sql/oracle.ts",

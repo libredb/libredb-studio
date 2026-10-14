@@ -1,0 +1,71 @@
+{
+  "$captured": {
+    "service": "spark-4-1",
+    "image": "apache/spark:4.1.3",
+    "digest": "sha256:bf9d035a7c32a8ca46aa58d6348182ffd7d2dff6409206ecfbb3915ff1fef211",
+    "sparkVersion": "4.1.3",
+    "date": "2026-10-13T11:07:12.191Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/Config",
+    "surface": "a request session's Config set of seven pairs",
+    "request": {
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "operation": {
+        "set": {
+          "pairs": [
+            {
+              "key": "spark.sql.variable.substitute",
+              "value": "false",
+              "_value": "value"
+            },
+            {
+              "key": "spark.sql.execution.arrow.compression.codec",
+              "value": "none",
+              "_value": "value"
+            },
+            {
+              "key": "spark.sql.execution.arrow.useLargeVarTypes",
+              "value": "false",
+              "_value": "value"
+            },
+            {
+              "key": "spark.connect.session.resultChunking.maxChunkSize",
+              "value": "4194304",
+              "_value": "value"
+            },
+            {
+              "key": "spark.sql.execution.arrow.maxRecordsPerBatch",
+              "value": "1000",
+              "_value": "value"
+            },
+            {
+              "key": "spark.connect.progress.reportInterval",
+              "value": "2s",
+              "_value": "value"
+            },
+            {
+              "key": "spark.sql.connect.enrichError.enabled",
+              "value": "true",
+              "_value": "value"
+            }
+          ]
+        },
+        "op_type": "set"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "pairs": [],
+    "warnings": [],
+    "session_id": "<session>",
+    "server_side_session_id": "d0eafd7f-a344-4ad4-995b-fe135a72b9f9"
+  }
+}

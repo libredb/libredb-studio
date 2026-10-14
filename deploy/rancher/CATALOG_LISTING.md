@@ -15,25 +15,25 @@ The import takes the page title from `appVersion` and the chart version from `ve
 Edits here do not propagate automatically — SUSE owns the page, so any change has to be mailed to the partner contact.
 What gets mailed is `pcsc-listing.html` beside this file, not the sections below: the page template holds at most 1494 characters including the list markup, and `tests/unit/pcsc-listing.test.ts` keeps that file under it.
 
-> **Accuracy gate: engine count.** The wording below says thirty-five engines. That is true only
-> from the release that carries **OPC UA**, which followed Snowflake; thirty-four is true of a release that carries **Snowflake** and not OPC UA, which followed RabbitMQ; thirty-three is true of a release that carries **RabbitMQ** and not Snowflake, which followed Firestore; thirty-two is true of a release that carries **Firestore** and not RabbitMQ, which followed BigQuery; thirty-one is true of a release that carries **BigQuery** and not Firestore, which followed MQTT; thirty is true of a release that carries **MQTT** and not BigQuery, which followed Kubernetes; twenty-nine is true of a release that carries **Kubernetes** and not MQTT, which followed S3-compatible object storage; twenty-eight is true of a release that carries **S3-compatible object storage** and not Kubernetes, which followed Databend; twenty-seven is true of a release that carries **Databend** and not S3, which followed Oxia; twenty-six is true of a release that carries **Oxia** and not Databend, 0.18.0 among them, which followed InfluxDB; twenty-five is true of a release that carries **InfluxDB** (two connection types, InfluxQL and InfluxDB 3 SQL, so the count moves by two) and not Oxia, if one is cut, which followed Milvus; twenty-three is true of a release that carries **Milvus** (the vector-family release, [#424](https://github.com/libredb/libredb-studio/issues/424)) and not InfluxDB, if one is cut, which followed Qdrant; twenty-two is true of a release that carries **Qdrant** and not Milvus, if one is cut, which followed Db2 LUW; twenty-one is true of a release that carries **Db2 LUW** ([#786](https://github.com/libredb/libredb-studio/issues/786)) and not Qdrant, if one is cut, which followed Neo4j; twenty is true of a release that carries **Neo4j** and not Db2 LUW, if one is cut, which followed etcd; nineteen is true of a release that carries **etcd** ([#1089](https://github.com/libredb/libredb-studio/issues/1089)) and not Neo4j, if one is cut, which followed Apache Kafka; eighteen is true of a release that carries **Apache Kafka** ([#1088](https://github.com/libredb/libredb-studio/issues/1088)) and not etcd, if one is cut, which followed Prometheus; seventeen is true of a release that carries **Prometheus** ([#1085](https://github.com/libredb/libredb-studio/issues/1085)) and not Kafka, if one is cut,
+> **Accuracy gate: engine count.** The wording below says thirty-six engines. That is true only
+> from the release that carries **Apache Spark**, which followed OPC UA; thirty-five is true of a release that carries **OPC UA** and not Apache Spark, which followed Snowflake; thirty-four is true of a release that carries **Snowflake** and not OPC UA, which followed RabbitMQ; thirty-three is true of a release that carries **RabbitMQ** and not Snowflake, which followed Firestore; thirty-two is true of a release that carries **Firestore** and not RabbitMQ, which followed BigQuery; thirty-one is true of a release that carries **BigQuery** and not Firestore, which followed MQTT; thirty is true of a release that carries **MQTT** and not BigQuery, which followed Kubernetes; twenty-nine is true of a release that carries **Kubernetes** and not MQTT, which followed S3-compatible object storage; twenty-eight is true of a release that carries **S3-compatible object storage** and not Kubernetes, which followed Databend; twenty-seven is true of a release that carries **Databend** and not S3, which followed Oxia; twenty-six is true of a release that carries **Oxia** and not Databend, 0.18.0 among them, which followed InfluxDB; twenty-five is true of a release that carries **InfluxDB** (two connection types, InfluxQL and InfluxDB 3 SQL, so the count moves by two) and not Oxia, if one is cut, which followed Milvus; twenty-three is true of a release that carries **Milvus** (the vector-family release, [#424](https://github.com/libredb/libredb-studio/issues/424)) and not InfluxDB, if one is cut, which followed Qdrant; twenty-two is true of a release that carries **Qdrant** and not Milvus, if one is cut, which followed Db2 LUW; twenty-one is true of a release that carries **Db2 LUW** ([#786](https://github.com/libredb/libredb-studio/issues/786)) and not Qdrant, if one is cut, which followed Neo4j; twenty is true of a release that carries **Neo4j** and not Db2 LUW, if one is cut, which followed etcd; nineteen is true of a release that carries **etcd** ([#1089](https://github.com/libredb/libredb-studio/issues/1089)) and not Neo4j, if one is cut, which followed Apache Kafka; eighteen is true of a release that carries **Apache Kafka** ([#1088](https://github.com/libredb/libredb-studio/issues/1088)) and not etcd, if one is cut, which followed Prometheus; seventeen is true of a release that carries **Prometheus** ([#1085](https://github.com/libredb/libredb-studio/issues/1085)) and not Kafka, if one is cut,
 > which followed DuckDB; sixteen was true from the release that carried **DuckDB**
 > ([#424](https://github.com/libredb/libredb-studio/issues/424)), which followed libSQL, and fourteen from **0.13.0** onwards, the release that carried
 > Elasticsearch, OpenSearch, Trino and Apache Cassandra alongside the ten of 0.11.0.
 > The number is the `SHIPPED` record in
 > `src/lib/db/compatibility.ts` minus the embedded `libredb`, which `EXTERNAL` in the same
 > file already splits out; read it from there rather than from this file. The catalog entry
-> is version-scoped, so do not publish the thirty-five-engine wording against a version that
-> predates OPC UA: send the thirty-four-engine variant for a release with Snowflake and not OPC UA (its size-cut body is `pcsc-listing.html` at 31c3ca8c), the thirty-three-engine variant for a release with RabbitMQ and not Snowflake (its size-cut body is `pcsc-listing.html` at ef21d3f60), the thirty-two-engine variant for a release with Firestore and not RabbitMQ (its size-cut body is `pcsc-listing.html` at 60f691d29), the thirty-one-engine variant for a release with BigQuery and not Firestore (its size-cut body is `pcsc-listing.html` at d28cd1e42), the thirty-engine variant for a release with MQTT and not BigQuery, the twenty-nine-engine variant for a release with Kubernetes and not MQTT (its size-cut body is `pcsc-listing.html` at c23f3890), the twenty-eight-engine variant for a release with S3-compatible object storage and not Kubernetes (its size-cut body is `pcsc-listing.html` at 11717b7e5), the twenty-seven-engine variant for a release with Databend and not S3 (its size-cut body is `pcsc-listing.html` at d5e5a9aff), the twenty-six-engine variant for a release with Oxia and not Databend (its size-cut body is `pcsc-listing.html` at a7f06def), the twenty-five-engine variant for a release with InfluxDB and not Oxia (its size-cut body is `pcsc-listing.html` at eacf73a3), the twenty-three-engine variant for a release with Milvus and not InfluxDB (its size-cut body is `pcsc-listing.html` at 046f0ee9), the twenty-two-engine variant for a release with Qdrant and not Milvus (its size-cut body is `pcsc-listing.html` at d8070ec6), the twenty-one-engine variant for a release with Db2 LUW and not Qdrant (its size-cut body is `pcsc-listing.html` at 214f6537), the twenty-engine variant for a release with Neo4j and not Db2 LUW (its size-cut body is `pcsc-listing.html` at 23f5c859), the nineteen-engine variant for a release with etcd and not Neo4j (its size-cut body is `pcsc-listing.html` at 42050550), the eighteen-engine variant for a release with Apache Kafka and not etcd (its size-cut body is `pcsc-listing.html` at 2ddb99c9), the seventeen-engine variant for a release with Prometheus and not Kafka (its size-cut body is `pcsc-listing.html` at 8dfdfcce), the sixteen-engine variant (the DuckDB release onwards; its size-cut body is `pcsc-listing.html` at 06a4cb11), the fourteen-engine one (0.13.0 onwards), the ten-engine one
+> is version-scoped, so do not publish the thirty-six-engine wording against a version that
+> predates Apache Spark: send the thirty-five-engine variant for a release with OPC UA and not Apache Spark (its size-cut body is `pcsc-listing.html` at f447c9b7d), the thirty-four-engine variant for a release with Snowflake and not OPC UA (its size-cut body is `pcsc-listing.html` at 31c3ca8c), the thirty-three-engine variant for a release with RabbitMQ and not Snowflake (its size-cut body is `pcsc-listing.html` at ef21d3f60), the thirty-two-engine variant for a release with Firestore and not RabbitMQ (its size-cut body is `pcsc-listing.html` at 60f691d29), the thirty-one-engine variant for a release with BigQuery and not Firestore (its size-cut body is `pcsc-listing.html` at d28cd1e42), the thirty-engine variant for a release with MQTT and not BigQuery, the twenty-nine-engine variant for a release with Kubernetes and not MQTT (its size-cut body is `pcsc-listing.html` at c23f3890), the twenty-eight-engine variant for a release with S3-compatible object storage and not Kubernetes (its size-cut body is `pcsc-listing.html` at 11717b7e5), the twenty-seven-engine variant for a release with Databend and not S3 (its size-cut body is `pcsc-listing.html` at d5e5a9aff), the twenty-six-engine variant for a release with Oxia and not Databend (its size-cut body is `pcsc-listing.html` at a7f06def), the twenty-five-engine variant for a release with InfluxDB and not Oxia (its size-cut body is `pcsc-listing.html` at eacf73a3), the twenty-three-engine variant for a release with Milvus and not InfluxDB (its size-cut body is `pcsc-listing.html` at 046f0ee9), the twenty-two-engine variant for a release with Qdrant and not Milvus (its size-cut body is `pcsc-listing.html` at d8070ec6), the twenty-one-engine variant for a release with Db2 LUW and not Qdrant (its size-cut body is `pcsc-listing.html` at 214f6537), the twenty-engine variant for a release with Neo4j and not Db2 LUW (its size-cut body is `pcsc-listing.html` at 23f5c859), the nineteen-engine variant for a release with etcd and not Neo4j (its size-cut body is `pcsc-listing.html` at 42050550), the eighteen-engine variant for a release with Apache Kafka and not etcd (its size-cut body is `pcsc-listing.html` at 2ddb99c9), the seventeen-engine variant for a release with Prometheus and not Kafka (its size-cut body is `pcsc-listing.html` at 8dfdfcce), the sixteen-engine variant (the DuckDB release onwards; its size-cut body is `pcsc-listing.html` at 06a4cb11), the fourteen-engine one (0.13.0 onwards), the ten-engine one
 > (0.11.0 onwards) or the eight-engine one instead.
 >
-> **The scope goes with the count.** Browsing and querying reach all thirty-five; editing data does
+> **The scope goes with the count.** Browsing and querying reach all thirty-six; editing data does
 > not, so "manage data across …" must never be written over the whole list. Read the split from
 > the providers: `supportsInlineRowEdit` and `supportsCreateTable` default to `true` in
 > `src/lib/db/base-provider.ts` and each provider that cannot turns them off, which leaves inline
 > row editing on PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL and DuckDB, and table
 > creation on the same engines except Db2 LUW, plus Trino. Every other engine (BigQuery, Cassandra, ClickHouse, Couchbase, Databend, Druid,
-> Elasticsearch, Firestore, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, Kubernetes, Milvus, MongoDB, MQTT, Neo4j, OPC UA, OpenSearch, Oxia, Prometheus, Qdrant, RabbitMQ, Redis, S3-compatible object storage, Snowflake and etcd) reports those controls as unsupported. The
+> Elasticsearch, Firestore, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, Kubernetes, Milvus, MongoDB, MQTT, Neo4j, OPC UA, OpenSearch, Oxia, Prometheus, Qdrant, RabbitMQ, Redis, S3-compatible object storage, Snowflake, Apache Spark and etcd) reports those controls as unsupported. The
 > reason differs per engine and the copy must not flatten it: on Elasticsearch no mutation is in
 > the SQL grammar at all, while OpenSearch's grammar carries exactly one — `DELETE`, off by
 > default on the cluster (`docs/providers/opensearch.md` §5.6, and `SEARCH_SCHEMA_REFRESH_PATTERN`
@@ -53,8 +53,8 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > no listing may say the assistant writes SQL from a plain-English question. What ships is
 > AI query *explanation*, and it is **not** available on any connection: the write-up is
 > derived from the engine's own `EXPLAIN` plan, and `src/components/studio/BottomPanel.tsx`
-> drops the Explain tab unless the provider declares `explainFormat`. Twelve do — PostgreSQL,
-> MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino, Databend, BigQuery and Snowflake — so name that
+> drops the Explain tab unless the provider declares `explainFormat`. Thirteen do — PostgreSQL,
+> MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino, Databend, BigQuery, Snowflake and Apache Spark — so name that
 > set rather than a count, and check it by grepping `explainFormat:` under
 > `src/lib/db/providers/` rather than by trusting this line. Keep the colon: without it the
 > search provider's own account of why it declares none is counted as a declaration, and the
@@ -117,7 +117,7 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > checked by hand with each engine: winget's, chocolatey's and tauri's descriptions all ended at
 > MQTT after OPC UA landed, and the claim above was false until a review read them.
 > `packaging/linux/nfpm.yaml` and the operator CSVs are consumed at release time from `main`,
-> so `nfpm.yaml` and the operator CSVs name thirty-five now, and the next tag publishes both.
+> so `nfpm.yaml` and the operator CSVs name thirty-six now, and the next tag publishes both.
 
 ## Listing facts
 
@@ -142,7 +142,7 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 
 LibreDB Studio is an MIT-licensed, AI-assisted open source SQL IDE that connects to
 PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, Firestore,
-ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, BigQuery, Snowflake, Apache Cassandra,
+ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, BigQuery, Snowflake, Apache Spark, Apache Cassandra,
 Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ and OPC UA directly from the browser.
 
 ## Long description
@@ -150,7 +150,7 @@ Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Mi
 LibreDB Studio brings a full SQL IDE to Rancher-managed Kubernetes clusters: browse
 schemas and run queries across PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB,
 MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, BigQuery,
-Snowflake, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ and OPC UA from a single web interface, with no desktop
+Snowflake, Apache Spark, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ and OPC UA from a single web interface, with no desktop
 client to install. Editing
 data follows the engine rather than the IDE: inline row editing on PostgreSQL, MySQL,
 Oracle, Db2 LUW, SQL Server, SQLite, libSQL and DuckDB, table creation on the same engines
@@ -161,7 +161,7 @@ mutation (`DELETE`) is off by default, and Druid SQL has no `UPDATE`, no `DELETE
 `CREATE TABLE`. An optional AI assistant (bring your own key: Gemini, OpenAI, or a local
 model) writes up a query in plain English from the engine's own EXPLAIN plan, on
 PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino,
-Databend, BigQuery and Snowflake, the engines that return one. It also runs a read-only investigation agent on PostgreSQL,
+Databend, BigQuery, Snowflake and Apache Spark, the engines that return one. It also runs a read-only investigation agent on PostgreSQL,
 SQLite, DuckDB, SQL Server and MySQL whose every claim cites the result it came from, and that never writes:
 the database, not the IDE, is what refuses writes and DDL. It stays off unless
 configured.
@@ -176,14 +176,14 @@ versions are documented and validated for every release.
 
 ## Key features (bullet form, if the catalog template asks for them)
 
-- Thirty-five database engines in one browser-based IDE: PostgreSQL, MySQL, Oracle,
+- Thirty-six database engines in one browser-based IDE: PostgreSQL, MySQL, Oracle,
   Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid,
-  Elasticsearch, OpenSearch, Trino, Databend, BigQuery, Snowflake, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ, OPC UA
+  Elasticsearch, OpenSearch, Trino, Databend, BigQuery, Snowflake, Apache Spark, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ, OPC UA
 - One-click install from the Rancher Apps catalog — deployable with default values,
   zero configuration required
 - Optional AI assistance (Gemini, OpenAI, or a self-hosted model; off by default):
   plain-English query explanation on the engines that return an EXPLAIN plan (PostgreSQL,
-  MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino, Databend, BigQuery, Snowflake). Plus a
+  MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino, Databend, BigQuery, Snowflake, Apache Spark). Plus a
   read-only investigation agent on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL that never writes — the
   database, not the IDE, is what refuses the write
 - Hardened chart defaults: non-root, read-only root filesystem, NetworkPolicy, PDB,

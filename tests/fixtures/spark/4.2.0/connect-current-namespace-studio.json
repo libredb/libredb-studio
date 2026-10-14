@@ -1,0 +1,124 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T22:01:32.549Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "connect with a catalog and a namespace: SHOW CURRENT NAMESPACE on the metadata session, in studio: command step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "command": {
+          "sql_command": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "sql": "",
+            "input": {
+              "common": null,
+              "sql": {
+                "pos_args": [],
+                "pos_arguments": [],
+                "args": {},
+                "named_arguments": {},
+                "query": "SHOW CURRENT NAMESPACE"
+              },
+              "rel_type": "sql"
+            }
+          },
+          "command_type": "sql_command"
+        },
+        "op_type": "command"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "pass",
+  "payload": [
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "730003c2-9796-4f0c-9246-16c0c630ac73",
+      "server_side_session_id": "3b4c7889-7857-4d98-8788-180f2a0380a7",
+      "sql_command_result": {
+        "relation": {
+          "common": null,
+          "local_relation": {
+            "data": {
+              "$bytes": "/////8AAAAAQAAAAAAAKAA4ABgANAAgACgAAAAAABAAQAAAAAAEKAAwAAAAIAAQACgAAAAgAAAAIAAAAAAAAAAIAAABMAAAABAAAAM7///8UAAAAFAAAABQAAAAAAAAFEAAAAAAAAAAAAAAAvP///wkAAABuYW1lc3BhY2UAEgAYABQAAAATAAwAAAAIAAQAEgAAABQAAAAUAAAAGAAAAAAAAAUUAAAAAAAAAAAAAAAEAAQABAAAAAcAAABjYXRhbG9nAAAAAAD/////2AAAABQAAAAAAAAADAAWAA4AFQAQAAQADAAAADgAAAAAAAAAAAAEABAAAAAAAwoAGAAMAAgABAAKAAAAFAAAAHgAAAABAAAAAAAAAAAAAAAGAAAAAAAAAAAAAAABAAAAAAAAAAgAAAAAAAAACAAAAAAAAAAQAAAAAAAAAA0AAAAAAAAAIAAAAAAAAAABAAAAAAAAACgAAAAAAAAACAAAAAAAAAAwAAAAAAAAAAYAAAAAAAAAAAAAAAIAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAA0AAABzcGFya19jYXRhbG9nAAAAAQAAAAAAAAAAAAAABgAAAHN0dWRpbwAA/////wAAAAA="
+            },
+            "_data": "data"
+          },
+          "rel_type": "local_relation"
+        }
+      },
+      "response_type": "sql_command_result"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "2a741c94-df0e-4955-a756-74144eac356f",
+      "server_side_session_id": "3b4c7889-7857-4d98-8788-180f2a0380a7",
+      "execution_progress": {
+        "stages": [],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": {
+        "metrics": [
+          {
+            "execution_metrics": {
+              "numOutputRows": {
+                "name": "number of output rows",
+                "value": "0",
+                "metric_type": "sum"
+              }
+            },
+            "name": "CommandResult",
+            "plan_id": "104",
+            "parent": "104"
+          }
+        ]
+      },
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "3e83527e-76a8-4530-bb31-500c25261c11",
+      "server_side_session_id": "3b4c7889-7857-4d98-8788-180f2a0380a7"
+    }
+  ]
+}

@@ -106,18 +106,21 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   // Behind RabbitMQ and ahead of libSQL: the third cloud data warehouse on this page, and the newest name, so only
   // libSQL and the embedded store move, as they did for RabbitMQ and the rest.
   snowflake: 32,
+  // Behind Snowflake and ahead of libSQL: the open-source engine a data team runs its lakehouse SQL on, and the newest
+  // name on this page, so only libSQL, the embedded store and OPC UA move.
+  spark: 33,
   // Behind etcd and ahead of the embedded store: libSQL is the name on this page an
   // evaluator is least likely to have met, but it is a product name (Turso's server)
   // rather than our own, so it goes ahead of `libredb`.
-  libsql: 33,
-  // Last on purpose: the embedded store is the least recognisable name here. It is
+  libsql: 34,
+  // Last of the databases on purpose: the embedded store is the least recognisable database name here. It is
   // still shown - it is a shipped provider with a doc (docs/providers/libredb.md), an
   // icon and a slot in the connection picker, so omitting it would make the login page
   // contradict the app (issue #425, step 2).
-  libredb: 34,
-  // Last (rank 35), behind the embedded store: a plant's address space is the least recognisable name
+  libredb: 35,
+  // Last (rank 36), behind the embedded store: a plant's address space is the least recognisable name
   // on a page of databases, so no existing engine moves for it (#1677).
-  opcua: 35,
+  opcua: 36,
 };
 
 /**

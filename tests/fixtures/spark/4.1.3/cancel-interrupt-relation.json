@@ -1,0 +1,59 @@
+{
+  "$captured": {
+    "service": "spark-4-1",
+    "image": "apache/spark:4.1.3",
+    "digest": "sha256:bf9d035a7c32a8ca46aa58d6348182ffd7d2dff6409206ecfbb3915ff1fef211",
+    "sparkVersion": "4.1.3",
+    "date": "2026-10-13T21:14:10.491Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "Interrupt by tag of a running statement: relation step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "root": {
+          "common": null,
+          "sql": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "query": "SELECT count(*) AS n FROM range(0, 20000000000, 1, 4)"
+          },
+          "rel_type": "sql"
+        },
+        "op_type": "root"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "error",
+  "code": 13,
+  "details": "[OPERATION_CANCELED] Operation has been canceled. SQLSTATE: HY008",
+  "metadata": {
+    "grpc-status-details-bin": {
+      "$bytes": "CA0SQVtPUEVSQVRJT05fQ0FOQ0VMRURdIE9wZXJhdGlvbiBoYXMgYmVlbiBjYW5jZWxlZC4gU1FMU1RBVEU6IEhZMDA4Gu0CCih0eXBlLmdvb2dsZWFwaXMuY29tL2dvb2dsZS5ycGMuRXJyb3JJbmZvEsACCiJvcmcuYXBhY2hlLnNwYXJrLlNwYXJrU1FMRXhjZXB0aW9uEhBvcmcuYXBhY2hlLnNwYXJrGogBCgdjbGFzc2VzEn1bIm9yZy5hcGFjaGUuc3BhcmsuU3BhcmtTUUxFeGNlcHRpb24iLCJqYXZhLnNxbC5TUUxFeGNlcHRpb24iLCJqYXZhLmxhbmcuRXhjZXB0aW9uIiwiamF2YS5sYW5nLlRocm93YWJsZSIsImphdmEubGFuZy5PYmplY3QiXRoRCghzcWxTdGF0ZRIFSFkwMDgaIAoKZXJyb3JDbGFzcxIST1BFUkFUSU9OX0NBTkNFTEVEGhcKEW1lc3NhZ2VQYXJhbWV0ZXJzEgJ7fRovCgdlcnJvcklkEiQ3YmRjNGE2OC1jNzBiLTQ2ZDItOTY5Ni1iOTE3MWNiOTc0ZDk="
+    }
+  }
+}

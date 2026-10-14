@@ -35,6 +35,7 @@ import {
   RabbitMQIcon,
   KubernetesIcon,
   SnowflakeIcon,
+  SparkIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
@@ -281,6 +282,53 @@ export const SNOWFLAKE_FIELD_RULES: Readonly<Partial<Record<ConnectionField, Con
   privateKey: { required: SNOWFLAKE_FIELD_SENTENCES.keyEmpty },
   password: { required: SNOWFLAKE_FIELD_SENTENCES.tokenEmpty },
   role: { required: SNOWFLAKE_FIELD_SENTENCES.roleEmpty },
+});
+
+/**
+ * The sentences the connection dialog draws under Apache Spark's fields, exported so the provider doc and its test can
+ * be held to the same words.
+ */
+export const SPARK_FIELD_HINTS: Readonly<Partial<Record<ConnectionField, string>>> = Object.freeze({
+  host: "The host of the Spark Connect server, or of a TLS proxy in front of it. Spark Connect listens on 15002 unless the server was started on another port. Paste an sc:// address with Paste URL.",
+  password:
+    "The server's spark.connect.authenticate.token (Spark 4.0 and later), sent on every call. Leave it empty for a server without a token. Studio sends a token only over TLS or an SSH tunnel, unless the host is this machine.",
+  database:
+    "The catalog unqualified names resolve in, and the one the tree opens first. Empty: the server's default catalog.",
+  schema:
+    "The namespace in that catalog, written as in Spark SQL: parts joined by dots, a part with other characters in backticks. Empty: the catalog's current namespace.",
+});
+
+/**
+ * Apache Spark's form checks, in the provider's own sentences. The provider's modules are server code the dialog may
+ * not import, so the three patterns and the four sentences are copies of the exports of
+ * src/lib/db/providers/sql/spark/namespace.ts and connection-options.ts, and tests/unit/lib/db-ui-config.test.ts holds
+ * each copy to the provider's.
+ */
+export const SPARK_FIELD_RULES: Readonly<Partial<Record<ConnectionField, ConnectionFieldRule>>> = Object.freeze({
+  host: {
+    required:
+      "Host is required: the name or address of the Spark Connect server, or of the TLS proxy in front of it. Nothing was sent.",
+  },
+  password: {
+    format: {
+      pattern: /^(?:[\x21-\x7E](?:[\x20-\x7E]*[\x21-\x7E])?)?$/,
+      sentence:
+        "Token takes printable ASCII with no space at either end: a gRPC header cannot carry other characters, and Spark compares the token exactly. Nothing was sent.",
+    },
+  },
+  database: {
+    format: {
+      pattern: /^[^.\p{Cc}]{1,255}$/u,
+      sentence: "Catalog takes one catalog name without dots, as spark.sql.catalog.<name> names it. Nothing was sent.",
+    },
+  },
+  schema: {
+    format: {
+      pattern: /^(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)){0,7}$/,
+      sentence:
+        "Namespace takes a Spark SQL namespace: parts joined by dots, each a letter or _ followed by letters, digits or _, or written in backticks with a backtick doubled; at most 8 parts. Nothing was sent.",
+    },
+  },
 });
 
 /**
@@ -1011,6 +1059,25 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // would be read.
     showSshTunnel: false,
     showSslPanel: false,
+  },
+  spark: {
+    // A stage DAG drawn for Studio, never the Apache Spark logo.
+    icon: SparkIcon,
+    // Every chromatic hue, every `-alt` step, `mist` and `slate` were already an engine's, so `taupe`, the warm neutral
+    // nearest Spark's orange mark, joined the identity palette with this entry: taupe-700 in light and taupe-400 in dark
+    // leave both closest pairs where they were (tests/unit/theme-accent-contrast.test.ts).
+    color: "text-hue-taupe",
+    label: "Apache Spark",
+    defaultPort: "15002",
+    // A pasted sc:// address is decomposed into fields; no connection string is stored.
+    showConnectionStringToggle: false,
+    // No User box: every request uses one fixed Spark Connect user id, and Token is the credential. Both the SSH
+    // tunnel and the SSL / TLS panel stay offered: TLS reaches Spark through an operator's TLS-terminating proxy.
+    connectionFields: ["host", "port", "password", "database", "schema"],
+    fieldLabels: { host: "Host", port: "Port", password: "Token", database: "Catalog", schema: "Namespace" },
+    fieldPlaceholders: { database: "server default (spark_catalog)", schema: "catalog default" },
+    fieldHints: SPARK_FIELD_HINTS,
+    fieldRules: SPARK_FIELD_RULES,
   },
   s3: {
     // A generic bucket drawn for Studio, never a vendor's logo.

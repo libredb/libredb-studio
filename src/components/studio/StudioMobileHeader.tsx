@@ -91,6 +91,11 @@ interface StudioMobileHeaderProps {
   onImport: () => void;
   onExplain?: () => void;
   /**
+   * False where the provider declares `supportsSqlFormat: false`, the capability the editor's own Format button
+   * and menu entry read; the "Format SQL" item is then not rendered. Omitted means Format is offered.
+   */
+  offersFormat?: boolean;
+  /**
    * Asks the agent about what the editor is holding (#331 T3). It replaced a button
    * that toggled the in-editor AI chat through `queryEditorRef`; the chat is gone,
    * and WHAT to ask about is the shell's decision rather than this header's.
@@ -128,6 +133,7 @@ export const StudioMobileHeader = React.memo(function StudioMobileHeader({
   onToggleEditing,
   onImport,
   onExplain,
+  offersFormat = true,
   onAskAgent,
 }: StudioMobileHeaderProps) {
   const router = useRouter();
@@ -307,9 +313,11 @@ export const StudioMobileHeader = React.memo(function StudioMobileHeader({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="bg-raised border-hairline-strong w-48">
-                <DropdownMenuItem onClick={() => queryEditorRef.current?.format()} className="cursor-pointer text-xs">
-                  <TextAlignStart strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Format SQL
-                </DropdownMenuItem>
+                {offersFormat && (
+                  <DropdownMenuItem onClick={() => queryEditorRef.current?.format()} className="cursor-pointer text-xs">
+                    <TextAlignStart strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Format SQL
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   onClick={() => {
                     // `writeToClipboard` rather than `navigator.clipboard` directly (B43):

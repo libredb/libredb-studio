@@ -233,6 +233,11 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
   // `slate-800` clears AA in light, and a steel grey is the one colour a plant's address space can
   // carry without borrowing the mark of an engine beside it.
   { hue: "slate", light: "slate-800", lightAlt: "slate-900" },
+  // Apache Spark's identity: every chromatic hue and every `-alt` step was an engine's, `mist` Snowflake's and `slate`
+  // OPC UA's, so the warm neutral joined the palette. taupe-700 reads 9.33:1 on the worst plain light ground and
+  // taupe-400 7.41:1 on the worst dark one, its nearest shipped hue is mist (0.0331 light, 0.0296 dark), and both
+  // closest identity pairs stay where they were (0.0205 light, 0.0160 dark).
+  { hue: "taupe", light: "taupe-700", lightAlt: "taupe-900" },
 ];
 
 /**
@@ -276,6 +281,8 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
  * step was an engine's once Firestore took `lime`, and `lime-alt` clears every test below.
  * `mist` joined with Snowflake as a base hue in HUES, not as an `-alt` here: every chromatic hue and its `-alt` was
  * already an engine's once RabbitMQ took `lime-alt`.
+ * `taupe` joined with Apache Spark as a base hue in HUES, not as an `-alt` here, for the reason `mist` did: every
+ * chromatic hue, its `-alt`, `mist` and OPC UA's `slate` were already an engine's.
  */
 const IDENTITY_ALTS = [
   "blue",
@@ -712,4 +719,9 @@ describe("the identity hues stay tellable apart", () => {
       }
     }
   });
+});
+
+test("taupe, Apache Spark's identity, is declared in both themes at taupe-700 and taupe-400", () => {
+  expect(light.get("--studio-hue-taupe")).toBe("#473c39");
+  expect(dark.get("--studio-hue-taupe")).toBe("#aba09c");
 });

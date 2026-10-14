@@ -333,6 +333,7 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
     "schema",
     "role",
   ],
+  spark: ["host", "port", "password", "database", "schema"],
 };
 /**
  * A field list one test declares on top of the mirrored table, reset before every test. The dataServers cases
@@ -560,6 +561,20 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
         "Sends the username and password in clear text to the management API and the AMQP port, where anyone on the path can read them. Prefer an SSL mode and the TLS ports 15671 and 5671.",
     },
     showSshTunnel: false,
+  },
+  // Mirrored from the real entry; tests/unit/lib/db-ui-config.test.ts pins the real one.
+  spark: {
+    fieldLabels: { host: "Host", port: "Port", password: "Token", database: "Catalog", schema: "Namespace" },
+    fieldPlaceholders: { database: "server default (spark_catalog)", schema: "catalog default" },
+    fieldHints: {
+      host: "The host of the Spark Connect server, or of a TLS proxy in front of it. Spark Connect listens on 15002 unless the server was started on another port. Paste an sc:// address with Paste URL.",
+      password:
+        "The server's spark.connect.authenticate.token (Spark 4.0 and later), sent on every call. Leave it empty for a server without a token. Studio sends a token only over TLS or an SSH tunnel, unless the host is this machine.",
+      database:
+        "The catalog unqualified names resolve in, and the one the tree opens first. Empty: the server's default catalog.",
+      schema:
+        "The namespace in that catalog, written as in Spark SQL: parts joined by dots, a part with other characters in backticks. Empty: the catalog's current namespace.",
+    },
   },
 };
 
@@ -2036,6 +2051,15 @@ describe("ConnectionModal", () => {
         },
         MOCK_FIELD_COPY.rabbitmq.fieldHints ?? {},
       ],
+      // No User box: every request uses one fixed Spark Connect user id. Host, Port, Token, Catalog and Namespace under
+      // their declared labels, with every declared hint.
+      [
+        "spark",
+        "spark",
+        {},
+        { host: "Host", port: "Port", password: "Token", database: "Catalog", schema: "Namespace" },
+        MOCK_FIELD_COPY.spark.fieldHints ?? {},
+      ],
       ["sqlite", "sqlite", {}, FILE_PATH, {}],
       ["duckdb", "duckdb", {}, FILE_PATH, {}],
       ["libredb", "libredb", {}, FILE_PATH, {}],
@@ -2385,9 +2409,11 @@ describe("ConnectionModal: RabbitMQ's AMQP port and Path prefix", () => {
     expect(container.querySelector('label[for="host"]')?.textContent).toBe("Host");
     expect(container.querySelector('label[for="port"]')?.textContent).toBe("Management port");
 
-    // A port label is drawn only where one is declared, and the shipped table declares it for RabbitMQ alone.
+    // A port label is drawn only where one is declared, and the shipped table declares it for RabbitMQ and Apache
+    // Spark alone; the census above pins Spark's Port.
+    const declaresPortLabel = new Set(["rabbitmq", "spark"]);
     for (const type of Object.keys(MOCK_CONNECTION_FIELDS)
-      .filter((t) => t !== "rabbitmq")
+      .filter((t) => !declaresPortLabel.has(t))
       .concat("postgres")) {
       mockFormOverrides = { type };
       rerender(React.createElement(ConnectionModal, createDefaultProps()));

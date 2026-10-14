@@ -1,0 +1,203 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T11:06:35.332Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "SELECT '${x}' with substitution off: relation step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "root": {
+          "common": null,
+          "sql": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "query": "SELECT '${x}' AS v"
+          },
+          "rel_type": "sql"
+        },
+        "op_type": "root"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "pass",
+  "payload": [
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": {
+        "struct": {
+          "fields": [
+            {
+              "name": "v",
+              "data_type": {
+                "string": {
+                  "type_variation_reference": 0,
+                  "collation": ""
+                },
+                "kind": "string"
+              },
+              "nullable": false
+            }
+          ],
+          "type_variation_reference": 0
+        },
+        "kind": "struct"
+      },
+      "operation_id": "<operation>",
+      "response_id": "56b3a47d-b63e-4c44-b3e1-789e11879ae2",
+      "server_side_session_id": "b1be2d5d-1347-428f-8f1d-1cd4ffc65962"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "b7627145-6c14-4f98-82e5-f90f62102023",
+      "server_side_session_id": "b1be2d5d-1347-428f-8f1d-1cd4ffc65962",
+      "execution_progress": {
+        "stages": [],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "99118436-f6ec-43d6-9500-4097e563fde2",
+      "server_side_session_id": "b1be2d5d-1347-428f-8f1d-1cd4ffc65962",
+      "arrow_batch": {
+        "row_count": "1",
+        "data": {
+          "$bytes": "/////4gAAAAQAAAAAAAKAA4ABgANAAgACgAAAAAABAAQAAAAAAEKAAwAAAAIAAQACgAAAAgAAAAIAAAAAAAAAAEAAAAYAAAAAAASABgAFAAAABMADAAAAAgABAASAAAAFAAAABQAAAAYAAAAAAAABRQAAAAAAAAAAAAAAAQABAAEAAAAAQAAAHYAAAAAAAAA/////5gAAAAUAAAAAAAAAAwAFgAOABUAEAAEAAwAAAAYAAAAAAAAAAAABAAQAAAAAAMKABgADAAIAAQACgAAABQAAABIAAAAAQAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAQAAAAAAAAAIAAAAAAAAAAgAAAAAAAAAEAAAAAAAAAAEAAAAAAAAAAAAAAABAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAQAAAAke3h9AAAAAP////8AAAAA"
+        },
+        "start_offset": "0",
+        "_start_offset": "start_offset",
+        "chunk_index": "0",
+        "_chunk_index": "chunk_index",
+        "num_chunks_in_batch": "1",
+        "_num_chunks_in_batch": "num_chunks_in_batch"
+      },
+      "response_type": "arrow_batch"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "b0200bcd-519b-4749-9b03-83a95b1f1777",
+      "server_side_session_id": "b1be2d5d-1347-428f-8f1d-1cd4ffc65962",
+      "execution_progress": {
+        "stages": [
+          {
+            "stage_id": "9",
+            "num_tasks": "1",
+            "num_completed_tasks": "1",
+            "input_bytes_read": "0",
+            "done": true
+          }
+        ],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": {
+        "metrics": [
+          {
+            "execution_metrics": {
+              "pipelineTime": {
+                "name": "duration",
+                "value": "0",
+                "metric_type": "timing"
+              }
+            },
+            "name": "WholeStageCodegen (1)",
+            "plan_id": "262",
+            "parent": "262"
+          },
+          {
+            "execution_metrics": {},
+            "name": "Project",
+            "plan_id": "261",
+            "parent": "262"
+          },
+          {
+            "execution_metrics": {
+              "numOutputRows": {
+                "name": "number of output rows",
+                "value": "1",
+                "metric_type": "sum"
+              }
+            },
+            "name": "Scan OneRowRelation",
+            "plan_id": "260",
+            "parent": "261"
+          }
+        ]
+      },
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "a8aed3c3-ed75-474b-96d0-9bf38c615724",
+      "server_side_session_id": "b1be2d5d-1347-428f-8f1d-1cd4ffc65962"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "19877994-7ee9-4cc3-9eb3-7da8742e5a86",
+      "server_side_session_id": "b1be2d5d-1347-428f-8f1d-1cd4ffc65962",
+      "execution_progress": {
+        "stages": [
+          {
+            "stage_id": "9",
+            "num_tasks": "1",
+            "num_completed_tasks": "1",
+            "input_bytes_read": "0",
+            "done": true
+          }
+        ],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    }
+  ]
+}

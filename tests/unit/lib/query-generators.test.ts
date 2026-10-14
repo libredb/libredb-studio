@@ -822,6 +822,132 @@ describe('identifierQuoting "backtick-always"', () => {
   });
 });
 
+// `containerNameSpelling: "engine"` (Apache Spark): the schema-level segment is the engine's own spelling of a possibly
+// multi-part name, already quoted where it needs quoting, so it is quoted part by part; the last segment is always the
+// object's own name.
+describe('containerNameSpelling "engine"', () => {
+  const LEVELS = [
+    { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+    { id: "schema", label: "Namespace", labelPlural: "Namespaces" },
+  ] as const;
+  const spelled = makeCaps({
+    defaultPort: 15002,
+    identifierQuoting: "backtick-always",
+    containerNameSpelling: "engine",
+    containerLevels: LEVELS,
+  });
+
+  test("a multi-part spelling is quoted part by part, and a one-part spelling as itself", () => {
+    expect(quoteObjectPath(["lake", "a.b", "t"], spelled)).toBe("`lake`.`a`.`b`.`t`");
+    expect(quoteObjectPath(["lake", "c1", "t"], spelled)).toBe("`lake`.`c1`.`t`");
+  });
+
+  test("a quoted part keeps its dots, and a doubled backtick stays one character of the name", () => {
+    expect(quoteObjectPath(["lake", "`x.y`", "t"], spelled)).toBe("`lake`.`x.y`.`t`");
+    expect(quoteObjectPath(["lake", "a.`b``c`", "t"], spelled)).toBe("`lake`.`a`.`b``c`.`t`");
+  });
+
+  test.each(["a b", "a.", ".a", "`a", "`a``", "a..b", "``", "1a", "a.`b`c"])(
+    "%j does not read completely as a spelling, so it is quoted as one name",
+    (segment) => {
+      expect(quoteObjectPath(["lake", segment, "t"], spelled)).toBe(
+        `\`lake\`.${quoteIdentifier(segment, spelled)}.\`t\``,
+      );
+    },
+  );
+
+  test("the last segment is always the object's own name, even where the schema level is last", () => {
+    expect(quoteObjectPath(["lake", "a.b"], spelled)).toBe("`lake`.`a.b`");
+    expect(quoteObjectPath(["lake", "a", "x.y"], spelled)).toBe("`lake`.`a`.`x.y`");
+  });
+
+  test("a one-level engine spells its first segment", () => {
+    const oneLevel = makeCaps({
+      identifierQuoting: "backtick-always",
+      containerNameSpelling: "engine",
+      containerLevels: [{ id: "schema", label: "Namespace", labelPlural: "Namespaces" }],
+    });
+    expect(quoteObjectPath(["a.b", "t"], oneLevel)).toBe("`a`.`b`.`t`");
+  });
+
+  test("with no schema level, or with the capability absent, every segment is a raw name, as before", () => {
+    const noSchema = makeCaps({
+      identifierQuoting: "backtick-always",
+      containerNameSpelling: "engine",
+      containerLevels: [{ id: "catalog", label: "Catalog", labelPlural: "Catalogs" }],
+    });
+    expect(quoteObjectPath(["a.b", "t"], noSchema)).toBe("`a.b`.`t`");
+    const absent = makeCaps({ identifierQuoting: "backtick-always", containerLevels: LEVELS });
+    expect(quoteObjectPath(["lake", "a.b", "t"], absent)).toBe("`lake`.`a.b`.`t`");
+  });
+
+  test("a double-quoting engine reads its own quote character", () => {
+    const double = makeCaps({
+      identifierQuoting: "double-always",
+      containerNameSpelling: "engine",
+      containerLevels: LEVELS,
+    });
+    expect(quoteObjectPath(["lake", 'a."b.c"', "t"], double)).toBe('"lake"."a"."b.c"."t"');
+  });
+
+  test("a declaration without identifierQuoting is refused: the spelling has no quote character to read", () => {
+    const noQuote = makeCaps({ containerNameSpelling: "engine", containerLevels: LEVELS });
+    expect(() => quoteObjectPath(["lake", "a.b", "t"], noQuote)).toThrow(RangeError);
+  });
+
+  test("the generated Count names the spelled parts", () => {
+    expect(generators.generateCountQuery(["lake", "a.b", "t"], spelled)).toBe(
+      "SELECT COUNT(*) AS row_count\nFROM `lake`.`a`.`b`.`t`;",
+    );
+  });
+
+  // A conditional quoting, where `always` changes the output, so a part that lost the option would show.
+  const conditional = makeCaps({
+    identifierQuoting: "backtick",
+    containerNameSpelling: "engine",
+    containerLevels: LEVELS,
+  });
+
+  test("options.always reaches every spelled part", () => {
+    expect(quoteObjectPath(["lake", "a.b", "t"], conditional, { always: true })).toBe("`lake`.`a`.`b`.`t`");
+    expect(quoteObjectPath(["lake", "a.b", "t"], conditional)).toBe("lake.a.b.t");
+  });
+
+  test("a quoted part followed by a bare one is two names, the quoted one keeping its dot", () => {
+    expect(quoteObjectPath(["lake", "`x.y`.c", "t"], conditional, { always: true })).toBe("`lake`.`x.y`.`c`.`t`");
+    expect(quoteObjectPath(["lake", "`x.y`.c", "t"], conditional)).toBe("lake.`x.y`.c.t");
+  });
+
+  test("completion writes an address as quoteObjectPath does and reads the names each segment holds", () => {
+    const spelling = generators.containerSpellingOf(spelled)!;
+    expect(spelling.quote).toBe("`");
+    expect(spelling.quotePath(["lake", "a.b", "t"])).toBe("`lake`.`a`.`b`.`t`");
+    expect(spelling.pathNames(["lake", "a.b", "t"])).toStrictEqual([["lake"], ["a", "b"], ["t"]]);
+    expect(spelling.pathNames(["lake", "`x.y`.c", "t"])).toStrictEqual([["lake"], ["x.y", "c"], ["t"]]);
+    // A segment that does not read as a spelling is one name, as quoteObjectPath quotes it.
+    expect(spelling.pathNames(["lake", "a b", "t"])).toStrictEqual([["lake"], ["a b"], ["t"]]);
+    // Read only where a segment follows the schema level, as quoteObjectPath reads it.
+    expect(spelling.pathNames(["lake", "a.b"])).toStrictEqual([["lake"], ["a.b"]]);
+  });
+
+  test("completion reads a double-quoting engine's spelling with its own quote character", () => {
+    const double = makeCaps({
+      identifierQuoting: "double-always",
+      containerNameSpelling: "engine",
+      containerLevels: LEVELS,
+    });
+    expect(generators.containerSpellingOf(double)!.quote).toBe('"');
+  });
+
+  test("an engine without the declaration gives completion no spelling, and one without a quote is refused", () => {
+    expect(
+      generators.containerSpellingOf(makeCaps({ identifierQuoting: "backtick-always", containerLevels: LEVELS })),
+    ).toBeUndefined();
+    const noQuote = makeCaps({ containerNameSpelling: "engine", containerLevels: LEVELS });
+    expect(() => generators.containerSpellingOf(noQuote)).toThrow(RangeError);
+  });
+});
+
 // ============================================================================
 // previewTimeWindow (InfluxDB spec 6.6, I20): a preview that reads a recent window,
 // newest first, driven by the capability and never by the type-id. The window here
@@ -2308,11 +2434,14 @@ describe("PromQL Generate Query (#1085)", () => {
  * manager's `runRowAction`, which only a row menu item reaches, and the menu offers one only for a kind
  * the provider names in `rowActions`; Prometheus declares none (its capability object is pinned in
  * tests/unit/db/prometheus/provider.test.ts), and the function raises for a dialect with no `rowAction`.
+ * `containerSpellingOf` answers nothing for an engine that does not declare `containerNameSpelling`, and a
+ * PromQL connection declares none (the second test below), so completion reads no spelled name there.
  * An export added later has no classification, so this list fails until somebody writes one for it.
  */
 describe("the module's exports, for a PromQL connection (#1085)", () => {
   test("every export is one this file has classified", () => {
     expect(Object.keys(generators).sort()).toEqual([
+      "containerSpellingOf",
       "escapeGlob",
       "generateCountQuery",
       "generateRowActionQuery",
@@ -2325,6 +2454,10 @@ describe("the module's exports, for a PromQL connection (#1085)", () => {
       "quoteObjectPath",
       "shouldRefreshSchema",
     ]);
+  });
+
+  test("a PromQL connection gives completion no container spelling", () => {
+    expect(generators.containerSpellingOf(promqlCaps)).toBeUndefined();
   });
 });
 

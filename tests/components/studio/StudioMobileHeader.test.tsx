@@ -263,6 +263,23 @@ describe("StudioMobileHeader", () => {
     expect(queryByText("RUN")).not.toBeNull();
   });
 
+  test("Format SQL click formats the editor", () => {
+    const format = defaults.queryEditorRef.current.format;
+    format.mockClear();
+    const { queryByText } = render(<StudioMobileHeader {...defaults} />);
+    const item = queryByText("Format SQL");
+    expect(item).not.toBeNull();
+    fireEvent.click(item!.closest('[role="menuitem"]')!);
+    expect(format).toHaveBeenCalledTimes(1);
+  });
+
+  test("Format SQL not rendered where the provider withholds the SQL formatter", () => {
+    // Studio passes `offersFormat` false for a provider declaring `supportsSqlFormat: false`, the capability the
+    // editor's own Format button and menu entry read.
+    const { queryByText } = render(<StudioMobileHeader {...defaults} offersFormat={false} />);
+    expect(queryByText("Format SQL")).toBeNull();
+  });
+
   test("Explain Plan click calls onExplain when provided", () => {
     const { queryByText } = render(<StudioMobileHeader {...defaults} onExplain={mockOnExplain} />);
     const explainItem = queryByText("Explain Plan");

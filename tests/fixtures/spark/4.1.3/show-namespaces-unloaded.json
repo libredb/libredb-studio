@@ -1,0 +1,70 @@
+{
+  "$captured": {
+    "service": "spark-4-1",
+    "image": "apache/spark:4.1.3",
+    "digest": "sha256:bf9d035a7c32a8ca46aa58d6348182ffd7d2dff6409206ecfbb3915ff1fef211",
+    "sparkVersion": "4.1.3",
+    "date": "2026-10-13T22:18:29.028Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "agent grounding walk: SHOW NAMESPACES IN studio_unloaded, a configured catalog Spark cannot load: command step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "command": {
+          "sql_command": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "sql": "",
+            "input": {
+              "common": null,
+              "sql": {
+                "pos_args": [],
+                "pos_arguments": [],
+                "args": {},
+                "named_arguments": {},
+                "query": "SHOW NAMESPACES IN `studio_unloaded`"
+              },
+              "rel_type": "sql"
+            }
+          },
+          "command_type": "sql_command"
+        },
+        "op_type": "command"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "error",
+  "code": 13,
+  "details": "requirement failed: Option 'url' is required.",
+  "metadata": {
+    "content-type": "application/grpc",
+    "grpc-status-details-bin": {
+      "$bytes": "CA0SLXJlcXVpcmVtZW50IGZhaWxlZDogT3B0aW9uICd1cmwnIGlzIHJlcXVpcmVkLhqlAgoodHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUucnBjLkVycm9ySW5mbxL4AQoiamF2YS5sYW5nLklsbGVnYWxBcmd1bWVudEV4Y2VwdGlvbhIQb3JnLmFwYWNoZS5zcGFyaxqOAQoHY2xhc3NlcxKCAVsiamF2YS5sYW5nLklsbGVnYWxBcmd1bWVudEV4Y2VwdGlvbiIsImphdmEubGFuZy5SdW50aW1lRXhjZXB0aW9uIiwiamF2YS5sYW5nLkV4Y2VwdGlvbiIsImphdmEubGFuZy5UaHJvd2FibGUiLCJqYXZhLmxhbmcuT2JqZWN0Il0aLwoHZXJyb3JJZBIkNzQ1MDcxN2EtMWQ2My00ZjEzLTkxMGEtM2UxNTkxM2VjYzJl"
+    }
+  }
+}

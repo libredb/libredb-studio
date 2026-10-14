@@ -2369,11 +2369,11 @@ Found 2026-10-04 while designing the Oxia provider (DECISIONS O7).
 
 ### D212. gRPC providers are outside the HTTP egress guard
 
-grpc-js resolves names itself, so `DB_HTTP_BLOCK_PRIVATE_HOSTS` cannot cover etcd, Milvus or Oxia.
+grpc-js resolves names itself, so `DB_HTTP_BLOCK_PRIVATE_HOSTS` cannot cover etcd, Milvus, Oxia or Apache Spark.
 
 Found 2026-10-04 while designing the Oxia provider (DECISIONS O6).
 
-**Done when:** `src/lib/db/grpc/` resolves each target once, checks the address with `egress-policy.ts` and dials the checked address with the original name as TLS identity, with tests for etcd, Milvus and Oxia.
+**Done when:** `src/lib/db/grpc/` resolves each target once, checks the address with `egress-policy.ts` and dials the checked address with the original name as TLS identity, with tests for etcd, Milvus, Oxia and Apache Spark.
 
 ### D213. No Oxia metrics panel
 

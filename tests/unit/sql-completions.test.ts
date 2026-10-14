@@ -3,6 +3,8 @@ import { describe, test, expect } from "bun:test";
 import type * as Monaco from "monaco-editor";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
+import type { ProviderCapabilities } from "@/lib/db/types";
+import { containerSpellingOf, quoteIdentifier } from "@/lib/query-generators";
 import {
   SQL_KEYWORDS,
   SQL_FUNCTIONS,
@@ -879,6 +881,119 @@ describe("Completion addresses outside the default container (#1397)", () => {
     );
     expect(labels).toEqual(["id", "user_id", "total"]);
   });
+});
+
+// `containerNameSpelling: "engine"` (Apache Spark): a namespace is the engine's own spelling of one name or several, so
+// `a.b` is the names `a` and `b`, and `` `x.y` `` the one name `x.y`. Completion writes and reads it as quoteObjectPath does.
+describe("Completion of a container name the engine spells itself", () => {
+  const LEVELS = [
+    { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+    { id: "schema", label: "Namespace", labelPlural: "Namespaces" },
+  ] as const;
+
+  function capabilities(overrides: Partial<ProviderCapabilities>): ProviderCapabilities {
+    return {
+      queryLanguage: "sql",
+      supportsExplain: true,
+      supportsExternalQueryLimiting: true,
+      supportsCreateTable: false,
+      supportsInlineRowEdit: false,
+      supportsMaintenance: false,
+      maintenanceOperations: [],
+      supportsConnectionString: false,
+      defaultPort: 15002,
+      schemaRefreshPattern: "CREATE|ALTER|DROP",
+      containerLevels: LEVELS,
+      ...overrides,
+    };
+  }
+
+  const SPARK = capabilities({ identifierQuoting: "backtick-always", containerNameSpelling: "engine" });
+
+  /** The suggestions at the end of `line`, from the cache QueryEditor builds for `caps`, outside the default container. */
+  function complete(caps: ProviderCapabilities, line: string, dialect?: DatabaseType) {
+    const monaco = createMockMonaco();
+    const tables = [
+      { container: ["lake", "a.b"], segment: "trips" },
+      { container: ["lake", "`x.y`"], segment: "events" },
+    ];
+    const cache = createSchemaCache({
+      tableItems: tables.map(({ container, segment }) => ({
+        label: segment,
+        labelLower: segment,
+        columnNames: "id",
+        container,
+        segment,
+        qualify: true,
+      })),
+      quoteSegment: (segment) => quoteIdentifier(segment, caps),
+      containerSpelling: containerSpellingOf(caps),
+    });
+    registerSQLCompletionProvider(monaco, cache, dialect);
+    return monaco._getProvider()!.provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1))
+      .suggestions;
+  }
+
+  function applied(line: string, suggestion: Monaco.languages.CompletionItem): string {
+    const range = suggestion.range as Monaco.IRange;
+    return line.slice(0, range.startColumn - 1) + suggestion.insertText + line.slice(range.endColumn - 1);
+  }
+
+  test("a table outside the default container inserts its namespace part by part", () => {
+    const line = "SELECT * FROM tri";
+    const trips = complete(SPARK, line, "spark").find((item) => item.label === "trips")!;
+    expect(applied(line, trips)).toBe("SELECT * FROM `lake`.`a`.`b`.`trips`");
+  });
+
+  test("a quoted namespace part keeps its dot in the insert", () => {
+    const line = "SELECT * FROM eve";
+    const events = complete(SPARK, line, "spark").find((item) => item.label === "events")!;
+    expect(applied(line, events)).toBe("SELECT * FROM `lake`.`x.y`.`events`");
+  });
+
+  test.each(["a.b.", "A.B.", "`a`.`b`.", "lake.a.b.", "`lake`.`a`.`b`.", "lake.`a`.b."])(
+    "the typed qualifier %s names the namespace a.b and offers its table by its own name",
+    (qualifier) => {
+      const line = `SELECT * FROM ${qualifier}`;
+      const suggestions = complete(SPARK, line, "spark");
+      expect(suggestions.map((item) => item.label)).toStrictEqual(["trips"]);
+      expect(applied(line, suggestions[0])).toBe(`${line}\`trips\``);
+    },
+  );
+
+  test("a quoted namespace part is one name: `x.y`. reaches it and x.y. does not", () => {
+    expect(complete(SPARK, "SELECT * FROM `x.y`.", "spark").map((item) => item.label)).toStrictEqual(["events"]);
+    expect(complete(SPARK, "SELECT * FROM x.y.", "spark")).toStrictEqual([]);
+  });
+
+  test("a qualifier names whole segments: b. is not the namespace a.b", () => {
+    expect(complete(SPARK, "SELECT * FROM b.", "spark")).toStrictEqual([]);
+  });
+
+  test("a double-quoting engine reads a typed part in its own quote character only", () => {
+    const double = capabilities({ identifierQuoting: "double-always", containerNameSpelling: "engine" });
+    const line = 'SELECT * FROM "a"."b".';
+    const suggestions = complete(double, line);
+    expect(suggestions.map((item) => item.label)).toStrictEqual(["trips"]);
+    expect(applied(line, suggestions[0])).toBe('SELECT * FROM "a"."b"."trips"');
+    expect(complete(double, "SELECT * FROM `a`.`b`.")).toStrictEqual([]);
+  });
+
+  test.each([
+    ["backtick", "SELECT * FROM lake.`a.b`.trips"],
+    ["backtick-always", "SELECT * FROM `lake`.`a.b`.`trips`"],
+    ["double", 'SELECT * FROM lake."a.b".trips'],
+    ["double-always", 'SELECT * FROM "lake"."a.b"."trips"'],
+  ] as const)(
+    "without the declaration a %s engine writes a dotted schema as one quoted name, as before",
+    (quoting, expected) => {
+      const plain = capabilities({ identifierQuoting: quoting });
+      const line = "SELECT * FROM tri";
+      expect(applied(line, complete(plain, line).find((item) => item.label === "trips")!)).toBe(expected);
+      // There a typed a.b. is two segments, so it does not name the one-name schema `a.b`.
+      expect(complete(plain, "SELECT * FROM a.b.")).toStrictEqual([]);
+    },
+  );
 });
 
 describe("Qualified table labels", () => {

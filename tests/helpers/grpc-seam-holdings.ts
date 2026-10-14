@@ -59,6 +59,20 @@ export const GRPC_SEAM_HOLDINGS: Readonly<Record<string, GrpcSeamHolding>> = {
     ],
     providerDirectory: "src/lib/db/providers/keyvalue/oxia",
   },
+  spark: {
+    held: [
+      /^src\/lib\/db\/providers\/sql\/spark\//,
+      /^scripts\/generate-spark-descriptor\.mjs$/,
+      /^tests\/unit\/db\/spark\//,
+      /^tests\/helpers\/spark-/,
+      /^tests\/live\/spark-/,
+    ],
+    transportImporters: [
+      "src/lib/db/providers/sql/spark/connection-options.ts",
+      "src/lib/db/providers/sql/spark/grpc-client.ts",
+    ],
+    providerDirectory: "src/lib/db/providers/sql/spark",
+  },
 };
 
 /** Whether a repository path is held by a guard other than etcd's: any row's `held` pattern matches it. */

@@ -86,7 +86,7 @@ const namedIn = (sentence: string): string[] => [
 
 describe("the endOpenQueryTransaction implementer list", () => {
   test("the providers themselves are the list, and it is not empty", () => {
-    expect(implementers).toEqual(["duckdb", "postgres", "redis", "sqlite"]);
+    expect(implementers).toEqual(["duckdb", "postgres", "redis", "spark", "sqlite"]);
   });
 
   for (const site of PROSE_SITES) {

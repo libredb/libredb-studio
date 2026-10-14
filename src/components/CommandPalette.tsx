@@ -143,10 +143,13 @@ export function CommandPalette({
             <span>Run Query</span>
             <CommandShortcut>{shortcutLabel(SHORTCUTS.executeQuery)}</CommandShortcut>
           </CommandItem>
-          <CommandItem onSelect={() => runAction(onFormatQuery)}>
-            <TextAlignStart strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-tertiary" />
-            <span>Format Query</span>
-          </CommandItem>
+          {/* Not where the provider withholds the SQL formatter: the editor's own Format reads the same capability. */}
+          {capabilities?.supportsSqlFormat !== false && (
+            <CommandItem onSelect={() => runAction(onFormatQuery)}>
+              <TextAlignStart strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-tertiary" />
+              <span>Format Query</span>
+            </CommandItem>
+          )}
           <CommandItem onSelect={() => runAction(onSaveQuery)}>
             <Save strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-tertiary" />
             <span>Save Current Query</span>

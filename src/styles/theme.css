@@ -216,6 +216,7 @@
      palette gains one, and a steel grey is the one colour a plant's address space can carry
      without borrowing another engine's. */
   --studio-hue-slate: #1d293d;
+  --studio-hue-taupe: #473c39;
 }
 
 .dark {
@@ -343,6 +344,7 @@
   --studio-hue-lime-alt: #bbf451;
   --studio-hue-mist: #9ca8ab;
   --studio-hue-slate: #90a1b9;
+  --studio-hue-taupe: #aba09c;
 }
 
 /*
@@ -453,6 +455,7 @@
   --color-hue-lime-alt: var(--studio-hue-lime-alt);
   --color-hue-mist: var(--studio-hue-mist);
   --color-hue-slate: var(--studio-hue-slate);
+  --color-hue-taupe: var(--studio-hue-taupe);
   --color-hue-teal-solid: var(--studio-hue-teal-solid);
   --color-hue-teal-solid-hover: var(--studio-hue-teal-solid-hover);
   --color-hue-purple-solid: var(--studio-hue-purple-solid);

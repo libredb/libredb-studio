@@ -2329,6 +2329,19 @@ describe("Studio", () => {
     expect(capturedBottomPanelProps.editingEnabled).toBe(false);
   });
 
+  test("tells the mobile header to offer no Format where the provider withholds the SQL formatter", () => {
+    capabilitiesOverride = { supportsSqlFormat: false };
+    render(<Studio />);
+
+    expect(capturedMobileHeaderProps.offersFormat).toBe(false);
+  });
+
+  test("tells the mobile header to offer Format where the capability is absent", () => {
+    render(<Studio />);
+
+    expect(capturedMobileHeaderProps.offersFormat).toBe(true);
+  });
+
   test("passes the editing affordance through when supportsInlineRowEdit is true", () => {
     editingOverride = { editingEnabled: true };
     render(<Studio />);

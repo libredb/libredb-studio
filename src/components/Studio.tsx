@@ -1416,6 +1416,7 @@ export default function Studio() {
               onToggleEditing={onToggleEditing}
               onImport={openImport}
               onExplain={metadata?.capabilities.supportsExplain ? handleMobileExplain : undefined}
+              offersFormat={metadata?.capabilities.supportsSqlFormat !== false}
               // Absent while the runtime is off, so the header carries no control
               // that would open a rail that does not exist.
               onAskAgent={agentEnabled ? askAgentAboutStatement : undefined}

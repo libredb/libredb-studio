@@ -10,12 +10,14 @@ import { CENSUS_CONNECTION } from "../../helpers/census-connection";
  *
  * A provider declares it when its `disconnect()` ends a statement still running, so that closing it while a run polls
  * would cancel a run somebody is waiting on. Snowflake declares it: its `disconnect()` cancels every statement still
- * running or waiting. A provider that starts to declare it flips its row here in the same change. Nothing here
+ * running or waiting. Apache Spark declares it too: its `disconnect()` cancels every run and releases every session
+ * it holds. A provider that starts to declare it flips its row here in the same change. Nothing here
  * connects: `createDatabaseProvider` builds each provider over `CENSUS_CONNECTION`.
  */
 const DECLARES: Record<DatabaseType, boolean> = {
   ...Object.fromEntries(SHIPPED_DATABASE_TYPES.map((type) => [type, false])),
   snowflake: true,
+  spark: true,
 } as Record<DatabaseType, boolean>;
 
 describe("hasRunsInFlight across the shipped providers", () => {

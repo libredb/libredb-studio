@@ -506,9 +506,22 @@ describe("wire-compatibility registry", () => {
     // The one place these numerals live. A new provider moves them here and nowhere else, and the derived
     // assertions around this test say how the counts relate.
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      36, 35, 27,
+      37, 36, 27,
     ]);
-    expect(connectableProductCount()).toBe(62);
+    expect(connectableProductCount()).toBe(63);
+  });
+
+  test("the Apache Spark row of each record (#1736)", () => {
+    expect(SHIPPED_DATABASE_TYPES).toContain("spark");
+    expect(EXTERNAL_DATABASE_TYPES).toContain("spark");
+    // No engine read-only mode and no file-access posture to read (Apache Spark).
+    expect(READ_ONLY_ENFORCED.spark).toBe(false);
+    expect(READS_FILE_ACCESS_POSTURE.spark).toBe(false);
+    // list_connections and inspect_schema; run_read_query refuses it, since the provider has no queryReadOnly.
+    expect(MCP_EXPOSABLE.spark).toBe(true);
+    // A pasted sc:// address is decomposed into fields; a seed gives fields, never a string.
+    expect(CONNECTION_FORM_URI_MODE.spark).toBe(false);
+    expect(CONNECTION_STRING_ACCEPTED.spark).toBe(false);
   });
 
   test("firestore ships as an external engine that keeps the read-only mode, is not offered to MCP and has no relatives", () => {

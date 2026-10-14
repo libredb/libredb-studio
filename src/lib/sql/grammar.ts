@@ -223,6 +223,47 @@ export interface SqlGrammar {
    */
   readonly doubleQuoteBackslashEscapes?: boolean;
   /**
+   * Whether `r'...'`, `R'...'`, `r"..."` and `R"..."` are string literals that take no escapes and end at the first
+   * quote of their own kind, line feeds included; absent means false. Only where the `r` does not continue a word:
+   * the engine's lexer takes the longest token, so `abr'x'` is a name followed by a string.
+   *
+   * It is a fact the text cannot settle: `r'C:\'` is a closed literal where the form exists and an escaping literal
+   * that never closes where it does not, so a `;` or a `DROP` written after it is code under one reading and string
+   * text under the other.
+   */
+  readonly rawStrings?: boolean;
+  /**
+   * Whether `/*+` opens an optimizer hint the engine lexes as code rather than a block comment; absent means false.
+   * Where true, `/*+` at a code position opens no span, so the hint's opener, its body and its closing `*\/` are read
+   * as code, with strings and comments inside it read as spans, and inside a nesting block comment a `/*+` opens no
+   * nested level. The engine lexes every `*\/` in code as that closer, so a `/` right after a code `*` opens no comment
+   * either: `*\/*` is the closer and a `*`.
+   *
+   * It is a fact the text cannot settle: in `/* a /*+ b *\/ DELETE FROM t; -- *\/`, a nesting reader that counts the
+   * `/*+` keeps the DELETE inside the comment, while the engine ends the comment at the first `*\/` and runs it.
+   */
+  readonly hintsAreCode?: boolean;
+  /**
+   * Whether a line comment continues onto the next line when a backslash stands immediately before the line feed
+   * that would end it, as often as its lines end so; absent means false. A backslash before a carriage return and line
+   * feed does not continue it, and a backslash anywhere else in the line is comment text.
+   *
+   * It is a fact the text cannot settle: in `WITH c AS (SELECT 1 -- note \`, a line feed, `) SELECT 1 --`, a line
+   * feed and `) DELETE FROM u`, the second line is comment text where the fact holds, so the statement is a CTE-led
+   * DELETE, and code where it does not, so it reads as a SELECT.
+   */
+  readonly lineCommentBackslashContinues?: boolean;
+  /**
+   * Whether a carriage return ends a line comment as a line feed does, with the line feed right after it when one
+   * follows, so a carriage return and line feed end it once; absent means false, and a carriage return is then comment
+   * text. A backslash before a carriage return does not continue the comment, under `lineCommentBackslashContinues` too.
+   *
+   * It is a fact the text cannot settle: in `WITH c AS (SELECT 1) -- note`, a carriage return, `INSERT INTO u`, a line
+   * feed and `SELECT 1`, the second line is code where the fact holds, so the statement is a CTE-led INSERT, and
+   * comment text where it does not, so it reads as a SELECT.
+   */
+  readonly lineCommentEndsAtCarriageReturn?: boolean;
+  /**
    * How a script is cut into the units the engine receives (E2E pass of 2026-10-03/04,
    * #1312). Before this fact existed every code `;` was a boundary in every dialect, so a
    * PL/SQL procedure, a SQLite trigger and a T-SQL batch were each cut at their inner `;`
@@ -250,7 +291,7 @@ export interface SqlGrammar {
    * followed by statement text (`SELECT a AS of FROM t`) and a clause written
    * inside a subquery (`… (SELECT … AS OF 123) t`) from reading as the clause.
    *
-   * Empty everywhere but the two rows that carry it. A dialect without a clause
+   * Empty on every row whose dialect has no such clause. A dialect without a clause
    * keeps today's answer for its words: the limiter appends after them and the
    * engine refuses the statement, which it refused before the bound was there too.
    */
@@ -264,14 +305,42 @@ export interface SqlGrammar {
   readonly confirmForms?: readonly (readonly string[])[];
   /**
    * Forms that ask for a confirmation wherever they appear in a statement's code, strings and comments skipped: a
-   * word sequence, or the start of an identifier (`{ prefix: "SYSTEM$" }` matches `SYSTEM$CLUSTERING_INFORMATION`).
-   * Absent means none.
+   * word sequence, the start of an identifier (`{ prefix: "SYSTEM$" }` matches `SYSTEM$CLUSTERING_INFORMATION`),
+   * a word whose next code, past whitespace and comments, is a string literal (`{ wordThenLiteral: "USING" }`
+   * matches `TRANSFORM (a) USING 'cat'` and not `JOIN u USING (id)`), a closed quoted name whose text is the name,
+   * compared without case, that a `(` follows (`{ quotedCall: "REFLECT" }` matches `` `Reflect`('a') ``), a word
+   * followed by a parenthesised run and then a `(` (`{ computedCall: "IDENTIFIER" }` matches `IDENTIFIER('f')(1)`, a
+   * call whose function name the run computes), or a dollar-quoted run, read at each character (`{ dollarQuoted: true }`
+   * matches `$$...$$` and `$tag$...$tag$`, a body the gate does not read). Absent means none.
    */
   readonly confirmCodeForms?: readonly ConfirmCodeForm[];
+  /**
+   * Session configuration keys whose SET or RESET asks for a confirmation, compared without case; an entry ending in
+   * `.` matches every key under it. Read where the operative keyword is SET or RESET, past white space and comments,
+   * which Spark's lexer hides; white space is every character JavaScript's `\s` matches and every character at or
+   * below U+0020. A key in backticks, or in double quotes where Spark reads double quotes as identifier quotes
+   * (`spark.sql.ansi.enabled` and `spark.sql.ansi.doubleQuotedIdentifiers` both on), is one token, as Spark's
+   * `configKey` rule reads it: its inner text, a doubled quote collapsed to one, and nothing after the closing quote.
+   * Studio reads double quotes that way under every setting, so such a key asks whether or not the session reads it
+   * as a key. Any other key is the code text up to `=`, white space, `;` or the end, as Spark's `String.trim` of that
+   * text reads it. A SET asks only when `=` follows the key, past white space and comments, since a SET without `=`
+   * only shows the key's value; a RESET of a listed key asks, and so does a RESET with no key, which restores every
+   * key. Absent means none.
+   */
+  readonly confirmConfigKeys?: readonly string[];
 }
 
-/** A form `SqlGrammar.confirmCodeForms` looks for: a word sequence, or an identifier prefix. */
-export type ConfirmCodeForm = readonly string[] | { readonly prefix: string };
+/**
+ * A form `SqlGrammar.confirmCodeForms` looks for: a word sequence, an identifier prefix, a word a literal follows, a
+ * quoted name called as a function, a word whose parenthesised run names the function called, or a dollar-quoted run.
+ */
+export type ConfirmCodeForm =
+  | readonly string[]
+  | { readonly prefix: string }
+  | { readonly wordThenLiteral: string }
+  | { readonly quotedCall: string }
+  | { readonly computedCall: string }
+  | { readonly dollarQuoted: true };
 
 /**
  * What a call that names no dialect gets.
@@ -859,6 +928,90 @@ const SNOWFLAKE_GRAMMAR: SqlGrammar = {
 };
 
 /**
+ * Apache Spark SQL, 4.1 and later. The lexical facts are read off Spark's lexer and parser at tag v4.2.0
+ * (`SqlBaseLexer.g4`, `SqlBaseParser.g4`); the comment facts were measured on Spark 4.2.0.
+ *
+ * Three readings the shared reader does not follow: a backslash before a line feed continues a Spark literal, which the
+ * reader leaves unterminated (the fail-safe direction: the statement loses its bound and the gate asks); Spark counts
+ * Unicode spaces as white space where the reader counts ASCII only; and Spark reads an address written without quotes
+ * (`a://b`, the URI form of IDENTIFIER) as one token where the reader can start a comment or a raw string inside it.
+ * The provider refuses the last two before any call. The same backslash before a line feed continues a `--` comment,
+ * and that reading the reader follows (`lineCommentBackslashContinues`): a comment ended early would leave text Spark
+ * skips as code to the gate and the limiter. A lone carriage return ends a `--` comment as a line feed does, and the
+ * reader follows that reading too (`lineCommentEndsAtCarriageReturn`): a comment run on to the next line feed would
+ * leave code Spark runs as comment text to the gate and the limiter.
+ */
+const SPARK_GRAMMAR: SqlGrammar = {
+  // CODE: `#` is no token outside a literal, so text after it fails to parse and hides nothing.
+  hash: "code",
+  // A SUBSCRIPT: `arr[0]` and `m['k']` read a value, and names are quoted with backticks.
+  bracket: "subscript",
+  // NESTING: `/* */` nests at every level (measured on 4.2.0).
+  blockComment: "nesting",
+  alternateQuoting: false,
+  // `/` is division; there is no `//` comment.
+  doubleSlashComment: false,
+  // The lexer pairs a backslash with the next character inside `'...'` and `"..."` under every setting, and
+  // `doubleQuoteBackslashEscapes` stays absent so `"..."` takes the same reading. `dollarTags` stays absent: 4.2 lexes
+  // `$$...$$` and `$tag$...$tag$` as one string, and 4.1 refuses a `$` outside a literal.
+  backslashAlwaysEscapes: true,
+  // `r'C:\'` is a closed literal that takes no escapes.
+  rawStrings: true,
+  // `/*+` opens a hint Spark lexes as code; inside a comment it opens no level (measured on 4.2.0).
+  hintsAreCode: true,
+  // A backslash right before a line feed continues a `--` comment onto the next line; before CR LF it does not.
+  lineCommentBackslashContinues: true,
+  // A carriage return ends a `--` comment as a line feed does, taking the line feed right after it.
+  lineCommentEndsAtCarriageReturn: true,
+  // One parse is one statement or one block, and blocks are refused in this version.
+  script: DEFAULT_SQL_GRAMMAR.script,
+  // LIMIT must precede OFFSET, so a trailing OFFSET takes the bound before it.
+  trailingLimitClauses: [/\s+OFFSET\s+\d+\s*$/i],
+  // Replace a table, view or function; write rows; load files into a table; run a catalog procedure or text the gate
+  // cannot read; load code or make the driver fetch a URL (ADD JAR, FILE, ARCHIVE and their plurals).
+  confirmForms: [
+    ["CREATE", "OR", "REPLACE"],
+    ["REPLACE", "TABLE"],
+    ["MERGE"],
+    ["LOAD", "DATA"],
+    ["CALL"],
+    ["EXECUTE", "IMMEDIATE"],
+    ["ADD"],
+  ],
+  // Anywhere in the code: overwrite or replace rows (4.2 also writes `INSERT WITH SCHEMA EVOLUTION OVERWRITE` and
+  // `REPLACE ON <condition>`), load a function's code, remove partitions from the catalog, start an external process
+  // (`TRANSFORM`, `MAP` or `REDUCE` ... `USING '<command>'`) or call a Java method by reflection. `reflect`,
+  // `java_method` and `try_reflect` are whole code words, so a name such as `reflection` does not ask, and a quoted
+  // name of one asks where a `(` follows it, since Spark resolves a function name without case, quoted or not. A
+  // function `IDENTIFIER(<expr>)` names asks wherever it is called, since the gate cannot read the computed name, and so
+  // does a dollar-quoted body, which 4.2 reads as a metric view's YAML definition and the gate does not read.
+  confirmCodeForms: [
+    ["INSERT", "OVERWRITE"],
+    ["EVOLUTION", "OVERWRITE"],
+    ["REPLACE", "WHERE"],
+    ["REPLACE", "ON"],
+    ["REPLACE", "USING"],
+    ["USING", "JAR"],
+    ["USING", "FILE"],
+    ["USING", "ARCHIVE"],
+    ["DROP", "PARTITIONS"],
+    ["SYNC", "PARTITIONS"],
+    { wordThenLiteral: "USING" },
+    ["REFLECT"],
+    ["JAVA_METHOD"],
+    ["TRY_REFLECT"],
+    { quotedCall: "REFLECT" },
+    { quotedCall: "JAVA_METHOD" },
+    { quotedCall: "TRY_REFLECT" },
+    { computedCall: "IDENTIFIER" },
+    { dollarQuoted: true },
+  ],
+  // Variable substitution is off in every session Studio opens; a SET or RESET that turns it back on, or rebinds a
+  // catalog, asks.
+  confirmConfigKeys: ["spark.sql.variable.substitute", "spark.sql.defaultCatalog", "spark.sql.catalog."],
+};
+
+/**
  * The established readings, one row per fact per dialect.
  *
  * A dialect absent from this table is at the compatibility default because its
@@ -1019,6 +1172,7 @@ const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   databend: DATABEND_GRAMMAR,
   bigquery: BIGQUERY_GRAMMAR,
   snowflake: SNOWFLAKE_GRAMMAR,
+  spark: SPARK_GRAMMAR,
 };
 
 /**

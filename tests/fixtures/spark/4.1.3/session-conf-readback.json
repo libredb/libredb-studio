@@ -1,0 +1,91 @@
+{
+  "$captured": {
+    "service": "spark-4-1",
+    "image": "apache/spark:4.1.3",
+    "digest": "sha256:bf9d035a7c32a8ca46aa58d6348182ffd7d2dff6409206ecfbb3915ff1fef211",
+    "sparkVersion": "4.1.3",
+    "date": "2026-10-13T11:07:12.347Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/Config",
+    "surface": "Config get of the nine keys after the setup",
+    "request": {
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "operation": {
+        "get_option": {
+          "keys": [
+            "spark.sql.variable.substitute",
+            "spark.sql.execution.arrow.compression.codec",
+            "spark.sql.execution.arrow.useLargeVarTypes",
+            "spark.connect.session.resultChunking.maxChunkSize",
+            "spark.sql.execution.arrow.maxRecordsPerBatch",
+            "spark.connect.progress.reportInterval",
+            "spark.sql.connect.enrichError.enabled",
+            "spark.sql.legacy.keepCommandOutputSchema",
+            "spark.sql.debug.maxToStringFields"
+          ]
+        },
+        "op_type": "get_option"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "pairs": [
+      {
+        "key": "spark.sql.variable.substitute",
+        "value": "false",
+        "_value": "value"
+      },
+      {
+        "key": "spark.sql.execution.arrow.compression.codec",
+        "value": "none",
+        "_value": "value"
+      },
+      {
+        "key": "spark.sql.execution.arrow.useLargeVarTypes",
+        "value": "false",
+        "_value": "value"
+      },
+      {
+        "key": "spark.connect.session.resultChunking.maxChunkSize",
+        "value": "4194304",
+        "_value": "value"
+      },
+      {
+        "key": "spark.sql.execution.arrow.maxRecordsPerBatch",
+        "value": "1000",
+        "_value": "value"
+      },
+      {
+        "key": "spark.connect.progress.reportInterval",
+        "value": "2s",
+        "_value": "value"
+      },
+      {
+        "key": "spark.sql.connect.enrichError.enabled",
+        "value": "true",
+        "_value": "value"
+      },
+      {
+        "key": "spark.sql.legacy.keepCommandOutputSchema",
+        "value": "false",
+        "_value": "value"
+      },
+      {
+        "key": "spark.sql.debug.maxToStringFields",
+        "value": "10000",
+        "_value": "value"
+      }
+    ],
+    "warnings": [],
+    "session_id": "<session>",
+    "server_side_session_id": "acf9ab7d-5017-4d1f-8904-c61fd2178c5a"
+  }
+}

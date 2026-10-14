@@ -30,6 +30,7 @@ import {
   DatabendIcon,
   S3Icon,
   FirestoreIcon,
+  SparkIcon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -64,6 +65,7 @@ describe("db-icons", () => {
     { name: "DatabendIcon", Component: DatabendIcon, brandAsset: true },
     { name: "S3Icon", Component: S3Icon },
     { name: "FirestoreIcon", Component: FirestoreIcon },
+    { name: "SparkIcon", Component: SparkIcon },
   ];
 
   for (const { name, Component, brandAsset } of icons) {
@@ -87,8 +89,11 @@ describe("db-icons", () => {
       // A vendor's published icon has no stroke to weigh, but it scales the same way.
       const html = renderToStaticMarkup(React.createElement(Component, { className: "w-3.5 h-3.5" }));
       if (!brandAsset) expect(html).toContain('stroke-width="1.5"');
-      expect(html).not.toMatch(/\swidth="/);
-      expect(html).not.toMatch(/\sheight="/);
+      // The rule is about the root svg element: a child rect's width and height are geometry, not size.
+      const svgTag = html.match(/^<svg[^>]*>/)?.[0] ?? "";
+      expect(svgTag).toStartWith("<svg ");
+      expect(svgTag).not.toMatch(/\swidth="/);
+      expect(svgTag).not.toMatch(/\sheight="/);
     });
   }
 
@@ -143,5 +148,39 @@ describe("db-icons", () => {
     expect(html).toContain('fill="none"');
     expect(html).toContain('stroke="currentColor"');
     expect([...html.matchAll(/<path /g)]).toHaveLength(5);
+  });
+
+  test("SparkIcon is a stroked mark on the house 24-unit grid, drawn for Studio", () => {
+    // A fork-join stage diamond drawn for Studio: one stage, two parallel stages, one stage, four rounded boxes
+    // joined by four straight strokes. No star, burst or spark shape, so nothing in it derives from the Apache Spark logo.
+    const html = renderToStaticMarkup(React.createElement(SparkIcon));
+    expect(html).toContain('viewBox="0 0 24 24"');
+    expect(html).toContain('fill="none"');
+    expect(html).toContain('stroke="currentColor"');
+    expect(html).toContain('stroke-width="1.5"');
+    const svgTag = html.match(/^<svg[^>]*>/)?.[0] ?? "";
+    expect(svgTag).toStartWith("<svg ");
+    expect(svgTag).not.toMatch(/\swidth="/);
+    expect(svgTag).not.toMatch(/\sheight="/);
+    // No filled shape: the only fill attribute is the svg's own fill="none".
+    expect([...html.matchAll(/fill="/g)]).toHaveLength(1);
+    expect(html).not.toMatch(/<(circle|polygon|ellipse|polyline)\b/);
+    // Four stage boxes: a left and a right one on the middle row, an upper and a lower one in the middle column.
+    const boxes = [...html.matchAll(/<rect x="([\d.]+)" y="([\d.]+)" width="4" height="4" rx="1"><\/rect>/g)].map(
+      (match) => [Number(match[1]), Number(match[2])],
+    );
+    expect(boxes).toEqual([
+      [2, 10],
+      [10, 2.5],
+      [10, 17.5],
+      [18, 10],
+    ]);
+    expect([...html.matchAll(/<rect /g)]).toHaveLength(4);
+    // Four straight joins: each path is one move and one line segment, never a curve or a closed shape.
+    const paths = [...html.matchAll(/<path d="([^"]+)"/g)].map((match) => match[1]);
+    expect(paths).toHaveLength(4);
+    for (const d of paths) {
+      expect(d).toMatch(/^M[\d.]+ [\d.]+ [\d.]+ [\d.]+$/);
+    }
   });
 });

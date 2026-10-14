@@ -36,7 +36,7 @@ summary: The modern, AI-powered open-source SQL IDE for cloud-native teams
 description: |
   Web-based SQL IDE for PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle,
   Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
-  Elasticsearch, OpenSearch, Trino, Databend, Snowflake, Apache Cassandra, Prometheus,
+  Elasticsearch, OpenSearch, Trino, Databend, Snowflake, Apache Spark, Apache Cassandra, Prometheus,
   InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, S3-compatible object storage,
   Kubernetes, MQTT, RabbitMQ and OPC UA with AI query assistance.
 

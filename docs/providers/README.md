@@ -26,6 +26,7 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Databend | `databend` | SQL (analytics) | none, HTTP over the shared `node:http(s)` transport (the query API, `POST /v1/query`) | SQL (Databend) | [databend.md](./databend.md) |
 | BigQuery | `bigquery` | SQL (analytics) | none, REST over the shared `node:https` transport (`jobs.query`); `jose` signs service-account tokens | SQL (GoogleSQL) | [bigquery.md](./bigquery.md) |
 | Snowflake | `snowflake` | SQL (analytics) | none, the SQL API v2 over the shared `node:https` transport; `node:crypto` signs the key-pair JWT | SQL (Snowflake) | [snowflake.md](./snowflake.md) |
+| Apache Spark | `spark` | SQL (analytics) | `@grpc/grpc-js` (pure JavaScript, gRPC, the shared gRPC transport; Spark Connect with no Spark client library) and `apache-arrow` (the Arrow results) | SQL (Spark SQL) | [spark.md](./spark.md) |
 | Apache Cassandra | `cassandra` | SQL (wide-column) | `cassandra-driver` (pure JS) | SQL-shaped (CQL) | [cassandra.md](./cassandra.md) |
 | Prometheus | `prometheus` | Time series | none (HTTP: the Prometheus HTTP API, `/api/v1/*`) | PromQL | [prometheus.md](./prometheus.md) |
 | Apache Kafka | `kafka` | Stream | `@platformatic/kafka` (pure TypeScript) | JSON (a read request) | [kafka.md](./kafka.md) |
@@ -47,7 +48,7 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
-  split across modules, as Couchbase, ClickHouse, Druid, Trino, Snowflake, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, Oxia, Databend, S3, Kubernetes, MQTT, Firestore, RabbitMQ and OPC UA are). The official product name (e.g.
+  split across modules, as Couchbase, ClickHouse, Druid, Trino, BigQuery, Snowflake, Spark, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, Oxia, Databend, S3, Kubernetes, MQTT, Firestore, RabbitMQ and OPC UA are). The official product name (e.g.
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch`, and `providers/timeseries/influxdb/` is
   `influxdb` and `influxdb3`, two classes on two base classes sharing one connection layer — and each type-id still gets its own
@@ -281,8 +282,8 @@ InfluxDB (InfluxQL) has a row per server line it reads, because each line is a s
 The Oxia row was verified against the running container on 2026-10-04, by the capture `tests/fixtures/oxia/README.md` records.
 The Databend row was verified against the running `databend-http` container (v1.2.951-nightly) on 2026-10-08: the user and password below sign in, and `system.databases` lists the seeded `libredb_demo` and `studio_demo`.
 
-Start the forty-eight always-on services with a plain `docker compose -f database-compose.yml up -d`:
-thirty engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `rabbitmq-init`, `etcd-seed`, `oxia-seed`, `milvus-seed`, `qdrant-seed`, `influxdb-seed`, `databend-http-seed`, `silo-principals`, `silo-seed`, `garage-keys`, `garage-setup`, `garage-seed`, `rustfs-principals`, `rustfs-seed` and `firestore-seed` seed sidecars; the `Profile` column names
+Start the forty-nine always-on services with a plain `docker compose -f database-compose.yml up -d`:
+thirty-one engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `rabbitmq-init`, `etcd-seed`, `oxia-seed`, `milvus-seed`, `qdrant-seed`, `influxdb-seed`, `databend-http-seed`, `silo-principals`, `silo-seed`, `garage-keys`, `garage-setup`, `garage-seed`, `rustfs-principals`, `rustfs-seed` and `firestore-seed` seed sidecars; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider whose fixture lives here, so a plain
 `up -d` can reproduce that provider's integration pass.
@@ -311,6 +312,10 @@ reproduces every provider in the table below and those two are reproduced by the
 | OpenSearch | `opensearch` | localhost | **9201** | *none* | *none* | *none* | — |
 | Trino | `trino` | localhost | 8080 | *none* | *none* | `tpch` (catalog) | — |
 | Databend | `databend-http` | localhost | 8000 | `libredb` | `Probe123pass!` | `libredb_demo` | — |
+| Apache Spark 4.2.0 | `spark` | localhost | 15002 | *none* | *none* | *none*; the driver UI is on port 4040 | *none* |
+| Apache Spark 4.1.3 | `spark-4-1` | localhost | 15003 | *none* | *none* | *none*; the driver UI is on port 4041 | `spark-4-1` |
+| Apache Spark, token server | `spark-auth` | localhost | 15004 | *none* | the value of `SPARK_CONNECT_TOKEN` the service was started with | *none* | `spark-auth` |
+| Apache Spark, token server over TLS | `spark-tls` | localhost | 15005 | *none* | the value of `SPARK_CONNECT_TOKEN`; SSL with the CA `docker/spark/make-certs.sh` wrote | *none* | `spark-auth` |
 | Apache Cassandra | `cassandra` | localhost | 9042 | *none* | *none* | `probe` (keyspace) | — |
 | Prometheus | `prometheus` | localhost | 9090 | *none* | *none* | *none* | — |
 | InfluxDB (InfluxQL), 1.x | `influxdb1` | localhost | 8087 | `reader` | `readonly123` | `home` | — |
@@ -520,6 +525,13 @@ in the table above:
 | Elasticsearch | `elasticsearch` | 9200 |
 | OpenSearch | `opensearch` | **9200** |
 | Trino | `trino` | 8080 |
+| Apache Spark 4.2.0 | `spark` | 15002 |
+| Apache Spark 4.1.3 | `spark-4-1` | **15002** |
+| Apache Spark, token server | `spark-auth` | **15002** |
+| Apache Spark, token server over TLS | `spark-tls` | 15005 |
+
+> **`spark-tls` takes SSL mode `require` here.** The certificate `docker/spark/make-certs.sh` writes names only `localhost` and `127.0.0.1`.
+> verify-ca and verify-full both check that the certificate names Host, so both refuse the host `spark-tls`.
 
 > **OpenSearch is 9200 here, not 9201.** The 9201 in the table above is a *host* port published to
 > dodge a collision with the `elasticsearch` service. Inside the network there is no collision, so the

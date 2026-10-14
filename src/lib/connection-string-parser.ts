@@ -4,6 +4,7 @@ import {
   readSnowflakeAccount,
   SNOWFLAKE_FIELD_SENTENCES,
 } from "@/lib/db/providers/sql/snowflake/account-host";
+import { parseSparkConnectUri } from "@/lib/db/providers/sql/spark/sc-uri";
 import { DatabaseType, type SSLMode } from "@/lib/types";
 
 export interface ParsedConnection {
@@ -126,7 +127,8 @@ export interface ParsedConnection {
   discardPaste?: true;
   /**
    * A sentence the form shows beside a successful paste, for a parameter that was applied with a meaning the field
-   * alone does not show.
+   * alone does not show. An Apache Spark `sc://` paste also writes its not-applied sentence here, and sets neither
+   * `ignoredParameters` nor `unnamedParameters`, which the form shows in a sentence that names Databend.
    */
   notice?: string;
   /**
@@ -158,6 +160,10 @@ export interface ParsedConnection {
  * prefix to make one would invent a `trino://` form no Trino tool emits. So the id is
  * absent, its capabilities say `supportsConnectionString: false`, and its form offers no
  * paste toggle. Pinned by tests/unit/lib/connection-string-parser.test.ts.
+ *
+ * Apache Spark is absent on purpose too, though its `sc://` address is pasted and decomposed (`parseSparkConnectUri`):
+ * the login signature prints every scheme here with the tail `user@db.internal:<port>/app`, and Spark's grammar
+ * refuses both a user part and a path, so the hero would show an address the product refuses.
  *
  * Aliases the parser also accepts (`postgresql://`, `mongodb+srv://`, `rediss://`,
  * `sqlserver://`, `couchbases://`, and ClickHouse's `http(s)://`) are not listed: this map
@@ -244,6 +250,7 @@ export const SNOWFLAKE_PASTE_SENTENCES = Object.freeze({
  * databend://, databend+http:// and databend+https://, plus the ADO.NET form `Server=...;` (SQL Server), whose
  * `Server=` key is matched case-insensitively. Databend's other spellings (`databend+flight://`, `databend+grpc://`,
  * `jdbc:databend://` and a `BENDSQL_DSN=` shell line) parse to a refusal.
+ * Apache Spark's `sc://` address is read by `parseSparkConnectUri`, and its `jdbc:sc://` form parses to a refusal.
  */
 export function parseConnectionString(input: string): ParsedConnection | null {
   const trimmed = input.trim();
@@ -256,6 +263,9 @@ export function parseConnectionString(input: string): ParsedConnection | null {
     return databendRefusal("flight");
   }
   if (/^databend(\+https?)?:\/\//.test(trimmed)) return parseDatabendDSN(trimmed);
+
+  // Apache Spark: the sc:// address, and the Spark Connect JDBC driver's jdbc:sc:// form, which it refuses.
+  if (trimmed.startsWith("sc://") || trimmed.startsWith("jdbc:sc://")) return parseSparkConnectUri(trimmed);
 
   // Snowflake, ahead of ClickHouse's https:// rule: only an exact Snowflake host or Snowsight is claimed.
   if (isSnowflakePaste(trimmed)) return parseSnowflakeURL(trimmed);

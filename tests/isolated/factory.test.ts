@@ -631,8 +631,22 @@ describe("createDatabaseProvider", () => {
   test("the factory error lists databend after trino, in the SQL block", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bdruid, trino, databend, bigquery, snowflake, cassandra\b/,
+      /Supported types: .*\bdruid, trino, databend, bigquery, snowflake, spark, cassandra\b/,
     );
+  });
+
+  test("the factory error lists spark after snowflake, in the SQL block", async () => {
+    const conn = makeConnection("not-an-engine");
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(/\bsnowflake, spark, cassandra\b/);
+  });
+
+  test('creates provider for type "spark", unconnected, with the factory passing no transport', async () => {
+    const { SparkProvider } = await import("@/lib/db/providers/sql/spark/index");
+    const provider = await createDatabaseProvider(makeConnection("spark", { host: "127.0.0.1", port: 15002 }));
+    expect(provider).toBeInstanceOf(SparkProvider);
+    expect(provider.isConnected()).toBe(false);
+    // The third constructor argument, the transport seam, defaults to an empty object when the factory omits it.
+    expect((provider as unknown as { deps: Record<string, unknown> }).deps).toStrictEqual({});
   });
 
   test('creates provider for type "cassandra"', async () => {

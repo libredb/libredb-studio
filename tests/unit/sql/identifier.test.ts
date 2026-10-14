@@ -57,4 +57,15 @@ describe("quoteIdentifier", () => {
     expect(quoteIdentifier("first name", "postgres")).toBe('"first name"');
     expect(quoteIdentifier("order", "mysql")).toBe("`order`");
   });
+
+  // Spark SQL quotes a name in backticks and doubles a backtick inside it, its own quoteIfNeeded form; a
+  // double-quoted text is a string literal there, so the standard default would compare literals.
+  test("spark quotes every name in backticks and doubles a backtick", () => {
+    expect(quoteIdentifier("name", "spark")).toBe("`name`");
+    expect(quoteIdentifier("a`b", "spark")).toBe("`a``b`");
+    expect(quoteIdentifier('say "hi"', "spark")).toBe('`say "hi"`');
+    expect(quoteIdentifier("a.b", "spark")).toBe("`a.b`");
+    expect(quoteIdentifier("x\\", "spark")).toBe("`x\\`");
+    expect(quoteIdentifier("select", "spark")).toBe("`select`");
+  });
 });

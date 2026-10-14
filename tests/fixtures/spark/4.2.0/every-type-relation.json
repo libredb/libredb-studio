@@ -1,0 +1,676 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T11:06:32.699Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "every-type SELECT: relation step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "root": {
+          "common": null,
+          "sql": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "query": "SELECT t.*, NULL AS c_void, make_interval(1, 2, 3, 4, 5, 6, 7.000008) AS c_calendar_interval FROM spark_catalog.studio.every_type AS t"
+          },
+          "rel_type": "sql"
+        },
+        "op_type": "root"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "pass",
+  "payload": [
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": {
+        "struct": {
+          "fields": [
+            {
+              "name": "c_boolean",
+              "data_type": {
+                "boolean": {
+                  "type_variation_reference": 0
+                },
+                "kind": "boolean"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_tinyint",
+              "data_type": {
+                "byte": {
+                  "type_variation_reference": 0
+                },
+                "kind": "byte"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_smallint",
+              "data_type": {
+                "short": {
+                  "type_variation_reference": 0
+                },
+                "kind": "short"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_int",
+              "data_type": {
+                "integer": {
+                  "type_variation_reference": 0
+                },
+                "kind": "integer"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_bigint_safe",
+              "data_type": {
+                "long": {
+                  "type_variation_reference": 0
+                },
+                "kind": "long"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_bigint_large",
+              "data_type": {
+                "long": {
+                  "type_variation_reference": 0
+                },
+                "kind": "long"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_float",
+              "data_type": {
+                "float": {
+                  "type_variation_reference": 0
+                },
+                "kind": "float"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_double",
+              "data_type": {
+                "double": {
+                  "type_variation_reference": 0
+                },
+                "kind": "double"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_double_nan",
+              "data_type": {
+                "double": {
+                  "type_variation_reference": 0
+                },
+                "kind": "double"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_double_inf",
+              "data_type": {
+                "double": {
+                  "type_variation_reference": 0
+                },
+                "kind": "double"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_decimal",
+              "data_type": {
+                "decimal": {
+                  "type_variation_reference": 0,
+                  "scale": 2,
+                  "_scale": "scale",
+                  "precision": 10,
+                  "_precision": "precision"
+                },
+                "kind": "decimal"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_decimal_neg",
+              "data_type": {
+                "decimal": {
+                  "type_variation_reference": 0,
+                  "scale": 2,
+                  "_scale": "scale",
+                  "precision": 4,
+                  "_precision": "precision"
+                },
+                "kind": "decimal"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_decimal_38",
+              "data_type": {
+                "decimal": {
+                  "type_variation_reference": 0,
+                  "scale": 0,
+                  "_scale": "scale",
+                  "precision": 38,
+                  "_precision": "precision"
+                },
+                "kind": "decimal"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_string",
+              "data_type": {
+                "string": {
+                  "type_variation_reference": 0,
+                  "collation": ""
+                },
+                "kind": "string"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_string_collated",
+              "data_type": {
+                "string": {
+                  "type_variation_reference": 0,
+                  "collation": "UTF8_LCASE"
+                },
+                "kind": "string"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_char",
+              "data_type": {
+                "string": {
+                  "type_variation_reference": 0,
+                  "collation": ""
+                },
+                "kind": "string"
+              },
+              "nullable": true,
+              "metadata": "{\"__CHAR_VARCHAR_TYPE_STRING\":\"char(5)\"}",
+              "_metadata": "metadata"
+            },
+            {
+              "name": "c_varchar",
+              "data_type": {
+                "string": {
+                  "type_variation_reference": 0,
+                  "collation": ""
+                },
+                "kind": "string"
+              },
+              "nullable": true,
+              "metadata": "{\"__CHAR_VARCHAR_TYPE_STRING\":\"varchar(10)\"}",
+              "_metadata": "metadata"
+            },
+            {
+              "name": "c_binary",
+              "data_type": {
+                "binary": {
+                  "type_variation_reference": 0
+                },
+                "kind": "binary"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_date",
+              "data_type": {
+                "date": {
+                  "type_variation_reference": 0
+                },
+                "kind": "date"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_date_min",
+              "data_type": {
+                "date": {
+                  "type_variation_reference": 0
+                },
+                "kind": "date"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_timestamp",
+              "data_type": {
+                "timestamp": {
+                  "type_variation_reference": 0
+                },
+                "kind": "timestamp"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_timestamp_ntz",
+              "data_type": {
+                "timestamp_ntz": {
+                  "type_variation_reference": 0
+                },
+                "kind": "timestamp_ntz"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_ym_interval",
+              "data_type": {
+                "year_month_interval": {
+                  "type_variation_reference": 0,
+                  "start_field": 0,
+                  "_start_field": "start_field",
+                  "end_field": 1,
+                  "_end_field": "end_field"
+                },
+                "kind": "year_month_interval"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_year_interval",
+              "data_type": {
+                "year_month_interval": {
+                  "type_variation_reference": 0,
+                  "start_field": 0,
+                  "_start_field": "start_field",
+                  "end_field": 0,
+                  "_end_field": "end_field"
+                },
+                "kind": "year_month_interval"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_dt_interval",
+              "data_type": {
+                "day_time_interval": {
+                  "type_variation_reference": 0,
+                  "start_field": 0,
+                  "_start_field": "start_field",
+                  "end_field": 3,
+                  "_end_field": "end_field"
+                },
+                "kind": "day_time_interval"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_hour_interval",
+              "data_type": {
+                "day_time_interval": {
+                  "type_variation_reference": 0,
+                  "start_field": 1,
+                  "_start_field": "start_field",
+                  "end_field": 1,
+                  "_end_field": "end_field"
+                },
+                "kind": "day_time_interval"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_array",
+              "data_type": {
+                "array": {
+                  "element_type": {
+                    "integer": {
+                      "type_variation_reference": 0
+                    },
+                    "kind": "integer"
+                  },
+                  "contains_null": true,
+                  "type_variation_reference": 0
+                },
+                "kind": "array"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_map",
+              "data_type": {
+                "map": {
+                  "key_type": {
+                    "string": {
+                      "type_variation_reference": 0,
+                      "collation": ""
+                    },
+                    "kind": "string"
+                  },
+                  "value_type": {
+                    "integer": {
+                      "type_variation_reference": 0
+                    },
+                    "kind": "integer"
+                  },
+                  "value_contains_null": true,
+                  "type_variation_reference": 0
+                },
+                "kind": "map"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_map_nested_key",
+              "data_type": {
+                "map": {
+                  "key_type": {
+                    "array": {
+                      "element_type": {
+                        "integer": {
+                          "type_variation_reference": 0
+                        },
+                        "kind": "integer"
+                      },
+                      "contains_null": true,
+                      "type_variation_reference": 0
+                    },
+                    "kind": "array"
+                  },
+                  "value_type": {
+                    "string": {
+                      "type_variation_reference": 0,
+                      "collation": ""
+                    },
+                    "kind": "string"
+                  },
+                  "value_contains_null": true,
+                  "type_variation_reference": 0
+                },
+                "kind": "map"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_struct",
+              "data_type": {
+                "struct": {
+                  "fields": [
+                    {
+                      "name": "x",
+                      "data_type": {
+                        "integer": {
+                          "type_variation_reference": 0
+                        },
+                        "kind": "integer"
+                      },
+                      "nullable": true
+                    },
+                    {
+                      "name": "y",
+                      "data_type": {
+                        "string": {
+                          "type_variation_reference": 0,
+                          "collation": ""
+                        },
+                        "kind": "string"
+                      },
+                      "nullable": true
+                    }
+                  ],
+                  "type_variation_reference": 0
+                },
+                "kind": "struct"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_variant",
+              "data_type": {
+                "variant": {
+                  "type_variation_reference": 0
+                },
+                "kind": "variant"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_null_int",
+              "data_type": {
+                "integer": {
+                  "type_variation_reference": 0
+                },
+                "kind": "integer"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_void",
+              "data_type": {
+                "null": {
+                  "type_variation_reference": 0
+                },
+                "kind": "null"
+              },
+              "nullable": true
+            },
+            {
+              "name": "c_calendar_interval",
+              "data_type": {
+                "calendar_interval": {
+                  "type_variation_reference": 0
+                },
+                "kind": "calendar_interval"
+              },
+              "nullable": false
+            }
+          ],
+          "type_variation_reference": 0
+        },
+        "kind": "struct"
+      },
+      "operation_id": "<operation>",
+      "response_id": "32b3171a-8e16-49c7-ab36-cd7ed853b339",
+      "server_side_session_id": "d0c726e6-b81b-429d-8b27-21d92594709c"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "f4d49a1b-2190-4651-a66b-99345aecc043",
+      "server_side_session_id": "d0c726e6-b81b-429d-8b27-21d92594709c",
+      "execution_progress": {
+        "stages": [],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "ae5bf1e0-49cd-4a70-b823-fd4bd8c57c4e",
+      "server_side_session_id": "d0c726e6-b81b-429d-8b27-21d92594709c",
+      "arrow_batch": {
+        "row_count": "1",
+        "data": {
+          "$bytes": "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AQAAAAAAAADwAAAAAAAAAAgAAAAAAAAA+AAAAAAAAAAOAAAAAAAAAAgBAAAAAAAAAQAAAAAAAAAQAQAAAAAAAAgAAAAAAAAAGAEAAAAAAAACAAAAAAAAACABAAAAAAAAAQAAAAAAAAAoAQAAAAAAAAgAAAAAAAAAMAEAAAAAAAAFAAAAAAAAADgBAAAAAAAAAQAAAAAAAABAAQAAAAAAAAgAAAAAAAAASAEAAAAAAAADAAAAAAAAAFABAAAAAAAAAQAAAAAAAABYAQAAAAAAAAgAAAAAAAAAYAEAAAAAAAADAAAAAAAAAGgBAAAAAAAAAQAAAAAAAABwAQAAAAAAAAQAAAAAAAAAeAEAAAAAAAABAAAAAAAAAIABAAAAAAAABAAAAAAAAACIAQAAAAAAAAEAAAAAAAAAkAEAAAAAAAAIAAAAAAAAAJgBAAAAAAAAAQAAAAAAAACgAQAAAAAAAAgAAAAAAAAAqAEAAAAAAAABAAAAAAAAALABAAAAAAAABAAAAAAAAAC4AQAAAAAAAAEAAAAAAAAAwAEAAAAAAAAEAAAAAAAAAMgBAAAAAAAAAQAAAAAAAADQAQAAAAAAAAgAAAAAAAAA2AEAAAAAAAABAAAAAAAAAOABAAAAAAAACAAAAAAAAADoAQAAAAAAAAEAAAAAAAAA8AEAAAAAAAAIAAAAAAAAAPgBAAAAAAAAAQAAAAAAAAAAAgAAAAAAAAwAAAAAAAAAEAIAAAAAAAABAAAAAAAAABgCAAAAAAAACAAAAAAAAAAgAgAAAAAAAAEAAAAAAAAAKAIAAAAAAAABAAAAAAAAADACAAAAAAAADAAAAAAAAABAAgAAAAAAAAIAAAAAAAAASAIAAAAAAAABAAAAAAAAAFACAAAAAAAACAAAAAAAAABYAgAAAAAAAAEAAAAAAAAAYAIAAAAAAAAIAAAAAAAAAGgCAAAAAAAAAQAAAAAAAABwAgAAAAAAAAEAAAAAAAAAeAIAAAAAAAAIAAAAAAAAAIACAAAAAAAAAQAAAAAAAACIAgAAAAAAAAQAAAAAAAAAkAIAAAAAAAABAAAAAAAAAJgCAAAAAAAACAAAAAAAAACgAgAAAAAAAAEAAAAAAAAAqAIAAAAAAAABAAAAAAAAALACAAAAAAAAAQAAAAAAAAC4AgAAAAAAAAQAAAAAAAAAwAIAAAAAAAABAAAAAAAAAMgCAAAAAAAACAAAAAAAAADQAgAAAAAAAAMAAAAAAAAA2AIAAAAAAAABAAAAAAAAAOACAAAAAAAAAQAAAAAAAADoAgAAAAAAAAgAAAAAAAAA8AIAAAAAAAAUAAAAAAAAAAgDAAAAAAAAAQAAAAAAAAAQAwAAAAAAAAgAAAAAAAAAGAMAAAAAAAAHAAAAAAAAACADAAAAAAAAAQAAAAAAAAAoAwAAAAAAAAQAAAAAAAAAMAMAAAAAAAABAAAAAAAAADgDAAAAAAAAEAAAAAAAAAAAAAAALgAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAQAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAQAAAAAAAAD5AAAAAAAAAAEAAAAAAAAA1P4AAAAAAAABAAAAAAAAAJDu/v8AAAAAAQAAAAAAAAD///////8fAAEAAAAAAAAA/////////38BAAAAAAAAAM3MzD0AAAAAAQAAAAAAAAAAAAAAAAD4PwEAAAAAAAAAAAAAAAAA+H8BAAAAAAAAAAAAAAAAAPB/AQAAAAAAAADTApZJAAAAAAAAAAAAAAAAAQAAAAAAAAD7////////////////////AQAAAAAAAABO8zjeUJBJxBMzAvD2sEkJAQAAAAAAAAAAAAAADgAAAGjDqWxsbywgd8O2cmxkAAABAAAAAAAAAAAAAAACAAAAQWIAAAAAAAABAAAAAAAAAAAAAAAFAAAAYWIgICAAAAABAAAAAAAAAAAAAAADAAAAYWJjAAAAAAABAAAAAAAAAAAAAAADAAAAAP8QAAAAAAABAAAAAAAAAANRAAAAAAAAAQAAAAAAAADGBvX/AAAAAAEAAAAAAAAACEbMCrhdBgABAAAAAAAAAEAewgq4XQYAAQAAAAAAAAArAAAAAAAAAAEAAAAAAAAAJAAAAAAAAAABAAAAAAAAAFPw/tUVAAAAAQAAAAAAAAAAqP7KFQAAAAEAAAAAAAAAAAAAAAMAAAADAAAAAAAAAAEAAAACAAAAAAAAAAAAAAABAAAAAAAAAAAAAAACAAAAAwAAAAAAAAADAAAAAAAAAAAAAAABAAAAAgAAAAAAAABhYgAAAAAAAAMAAAAAAAAAAQAAAAIAAAABAAAAAAAAAAAAAAABAAAAAQAAAAAAAAABAAAAAAAAAAAAAAABAAAAAQAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAAAAAAEAAAB4AAAAAAAAAAEAAAAAAAAAAQAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAAAAAAMAAAB0d28AAAAAAAEAAAAAAAAAAQAAAAAAAAAAAAAAFAAAAAICAAEABw0DAgABAgQAIAJuAAAAAAAAAAEAAAAAAAAAAAAAAAcAAAABAgABAmFiAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAA4AAAAZAAAAQNWCZrQQAAD/////AAAAAA=="
+        },
+        "start_offset": "0",
+        "_start_offset": "start_offset",
+        "chunk_index": "0",
+        "_chunk_index": "chunk_index",
+        "num_chunks_in_batch": "1",
+        "_num_chunks_in_batch": "num_chunks_in_batch"
+      },
+      "response_type": "arrow_batch"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "b72bbdb6-20c8-4d8b-bdb0-d4cbe4d0d85d",
+      "server_side_session_id": "d0c726e6-b81b-429d-8b27-21d92594709c",
+      "execution_progress": {
+        "stages": [
+          {
+            "stage_id": "1",
+            "num_tasks": "1",
+            "num_completed_tasks": "1",
+            "input_bytes_read": "8910",
+            "done": true
+          }
+        ],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "a2d36c11-7fb4-4b77-afca-a41776984ab9",
+      "server_side_session_id": "d0c726e6-b81b-429d-8b27-21d92594709c",
+      "execution_progress": {
+        "stages": [
+          {
+            "stage_id": "1",
+            "num_tasks": "1",
+            "num_completed_tasks": "1",
+            "input_bytes_read": "8910",
+            "done": true
+          }
+        ],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": {
+        "metrics": [
+          {
+            "execution_metrics": {
+              "pipelineTime": {
+                "name": "duration",
+                "value": "263",
+                "metric_type": "timing"
+              }
+            },
+            "name": "WholeStageCodegen (1)",
+            "plan_id": "139",
+            "parent": "139"
+          },
+          {
+            "execution_metrics": {},
+            "name": "Project",
+            "plan_id": "138",
+            "parent": "139"
+          },
+          {
+            "execution_metrics": {
+              "numOutputRows": {
+                "name": "number of output rows",
+                "value": "1",
+                "metric_type": "sum"
+              },
+              "numInputBatches": {
+                "name": "number of input batches",
+                "value": "1",
+                "metric_type": "sum"
+              }
+            },
+            "name": "ColumnarToRow",
+            "plan_id": "137",
+            "parent": "138"
+          },
+          {
+            "execution_metrics": {},
+            "name": "InputAdapter",
+            "plan_id": "136",
+            "parent": "137"
+          },
+          {
+            "execution_metrics": {
+              "numFiles": {
+                "name": "number of files read",
+                "value": "1",
+                "metric_type": "sum"
+              },
+              "scanTime": {
+                "name": "scan time",
+                "value": "87",
+                "metric_type": "timing"
+              },
+              "metadataTime": {
+                "name": "metadata time",
+                "value": "4",
+                "metric_type": "timing"
+              },
+              "filesSize": {
+                "name": "size of files read",
+                "value": "11029",
+                "metric_type": "size"
+              },
+              "numOutputRows": {
+                "name": "number of output rows",
+                "value": "1",
+                "metric_type": "sum"
+              }
+            },
+            "name": "Scan parquet spark_catalog.studio.every_type",
+            "plan_id": "132",
+            "parent": "136"
+          }
+        ]
+      },
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "e41797ab-c5a3-45ee-a000-f33ac54b9072",
+      "server_side_session_id": "d0c726e6-b81b-429d-8b27-21d92594709c"
+    }
+  ]
+}

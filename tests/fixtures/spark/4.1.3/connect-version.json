@@ -1,0 +1,33 @@
+{
+  "$captured": {
+    "service": "spark-4-1",
+    "image": "apache/spark:4.1.3",
+    "digest": "sha256:bf9d035a7c32a8ca46aa58d6348182ffd7d2dff6409206ecfbb3915ff1fef211",
+    "sparkVersion": "4.1.3",
+    "date": "2026-10-13T11:07:12.180Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/AnalyzePlan",
+    "surface": "connect: AnalyzePlan spark_version on a fresh session",
+    "request": {
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "spark_version": {},
+      "analyze": "spark_version"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "session_id": "<session>",
+    "server_side_session_id": "e3658214-cc9a-4c97-a1f2-d57a66f70002",
+    "spark_version": {
+      "version": "4.1.3"
+    },
+    "result": "spark_version"
+  }
+}

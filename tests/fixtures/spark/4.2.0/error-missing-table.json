@@ -1,0 +1,70 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T21:14:02.226Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "a missing table: command step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "command": {
+          "sql_command": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "sql": "",
+            "input": {
+              "common": null,
+              "sql": {
+                "pos_args": [],
+                "pos_arguments": [],
+                "args": {},
+                "named_arguments": {},
+                "query": "SELECT * FROM spark_catalog.studio.no_such_table"
+              },
+              "rel_type": "sql"
+            }
+          },
+          "command_type": "sql_command"
+        },
+        "op_type": "command"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "error",
+  "code": 13,
+  "details": "[TABLE_OR_VIEW_NOT_FOUND] The table or view `spark_catalog`.`studio`.`no_such_table` cannot be found. Verify the spelling and correctness of the schema and catalog.\nSearch path: [`system`.`builtin`, `system`.`session`, `spark_catalog`.`default`].\nIf you did not qualify the name with a schema, verify the current_schema() output, or qualify the name with the correct schema and catalog.\nTo tolerate the error on drop use DROP VIEW IF EXISTS or DROP TABLE IF EXISTS. SQLSTATE: 42P01; line 1 pos 14;\n'Project [*]\n+- 'UnresolvedRelation [spark_catalog, studio, no_such_table], [], false\n",
+  "metadata": {
+    "content-type": "application/grpc",
+    "grpc-status-details-bin": {
+      "$bytes": "CA0SyARbVEFCTEVfT1JfVklFV19OT1RfRk9VTkRdIFRoZSB0YWJsZSBvciB2aWV3IGBzcGFya19jYXRhbG9nYC5gc3R1ZGlvYC5gbm9fc3VjaF90YWJsZWAgY2Fubm90IGJlIGZvdW5kLiBWZXJpZnkgdGhlIHNwZWxsaW5nIGFuZCBjb3JyZWN0bmVzcyBvZiB0aGUgc2NoZW1hIGFuZCBjYXRhbG9nLgpTZWFyY2ggcGF0aDogW2BzeXN0ZW1gLmBidWlsdGluYCwgYHN5c3RlbWAuYHNlc3Npb25gLCBgc3BhcmtfY2F0YWxvZ2AuYGRlZmF1bHRgXS4KSWYgeW91IGRpZCBub3QgcXVhbGlmeSB0aGUgbmFtZSB3aXRoIGEgc2NoZW1hLCB2ZXJpZnkgdGhlIGN1cnJlbnRfc2NoZW1hKCkgb3V0cHV0LCBvciBxdWFsaWZ5IHRoZSBuYW1lIHdpdGggdGhlIGNvcnJlY3Qgc2NoZW1hIGFuZCBjYXRhbG9nLgpUbyB0b2xlcmF0ZSB0aGUgZXJyb3Igb24gZHJvcCB1c2UgRFJPUCBWSUVXIElGIEVYSVNUUyBvciBEUk9QIFRBQkxFIElGIEVYSVNUUy4gU1FMU1RBVEU6IDQyUDAxOyBsaW5lIDEgcG9zIDE0OwonUHJvamVjdCBbKl0KKy0gJ1VucmVzb2x2ZWRSZWxhdGlvbiBbc3BhcmtfY2F0YWxvZywgc3R1ZGlvLCBub19zdWNoX3RhYmxlXSwgW10sIGZhbHNlChq8BAoodHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUucnBjLkVycm9ySW5mbxKPBAo3b3JnLmFwYWNoZS5zcGFyay5zcWwuY2F0YWx5c3QuRXh0ZW5kZWRBbmFseXNpc0V4Y2VwdGlvbhIQb3JnLmFwYWNoZS5zcGFyaxqvAQoHY2xhc3NlcxKjAVsib3JnLmFwYWNoZS5zcGFyay5zcWwuY2F0YWx5c3QuRXh0ZW5kZWRBbmFseXNpc0V4Y2VwdGlvbiIsIm9yZy5hcGFjaGUuc3Bhcmsuc3FsLkFuYWx5c2lzRXhjZXB0aW9uIiwiamF2YS5sYW5nLkV4Y2VwdGlvbiIsImphdmEubGFuZy5UaHJvd2FibGUiLCJqYXZhLmxhbmcuT2JqZWN0Il0aEQoIc3FsU3RhdGUSBTQyUDAxGiUKCmVycm9yQ2xhc3MSF1RBQkxFX09SX1ZJRVdfTk9UX0ZPVU5EGqQBChFtZXNzYWdlUGFyYW1ldGVycxKOAXsicmVsYXRpb25OYW1lIjoiYHNwYXJrX2NhdGFsb2dgLmBzdHVkaW9gLmBub19zdWNoX3RhYmxlYCIsInNlYXJjaFBhdGgiOiJbYHN5c3RlbWAuYGJ1aWx0aW5gLCBgc3lzdGVtYC5gc2Vzc2lvbmAsIGBzcGFya19jYXRhbG9nYC5gZGVmYXVsdGBdIn0aLwoHZXJyb3JJZBIkNTc3MDcyMmQtZmQ2OS00ZGMzLWFiZjktNWE5YTdkMzY5M2Fm"
+    }
+  }
+}

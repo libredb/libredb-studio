@@ -1,0 +1,70 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T11:06:33.839Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "a file the server's user cannot read: command step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "command": {
+          "sql_command": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "sql": "",
+            "input": {
+              "common": null,
+              "sql": {
+                "pos_args": [],
+                "pos_arguments": [],
+                "args": {},
+                "named_arguments": {},
+                "query": "SELECT * FROM csv.`file:///tmp/studio-unreadable/data.csv`"
+              },
+              "rel_type": "sql"
+            }
+          },
+          "command_type": "sql_command"
+        },
+        "op_type": "command"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "error",
+  "code": 13,
+  "details": "[FAILED_TO_CREATE_PLAN_FOR_DIRECT_QUERY] Failed to create plan for direct query on files: csv SQLSTATE: 58030",
+  "metadata": {
+    "content-type": "application/grpc",
+    "grpc-status-details-bin": {
+      "$bytes": "CA0SbVtGQUlMRURfVE9fQ1JFQVRFX1BMQU5fRk9SX0RJUkVDVF9RVUVSWV0gRmFpbGVkIHRvIGNyZWF0ZSBwbGFuIGZvciBkaXJlY3QgcXVlcnkgb24gZmlsZXM6IGNzdiBTUUxTVEFURTogNTgwMzAahgMKKHR5cGUuZ29vZ2xlYXBpcy5jb20vZ29vZ2xlLnJwYy5FcnJvckluZm8S2QIKJm9yZy5hcGFjaGUuc3Bhcmsuc3FsLkFuYWx5c2lzRXhjZXB0aW9uEhBvcmcuYXBhY2hlLnNwYXJrGnQKB2NsYXNzZXMSaVsib3JnLmFwYWNoZS5zcGFyay5zcWwuQW5hbHlzaXNFeGNlcHRpb24iLCJqYXZhLmxhbmcuRXhjZXB0aW9uIiwiamF2YS5sYW5nLlRocm93YWJsZSIsImphdmEubGFuZy5PYmplY3QiXRoRCghzcWxTdGF0ZRIFNTgwMzAaNAoKZXJyb3JDbGFzcxImRkFJTEVEX1RPX0NSRUFURV9QTEFOX0ZPUl9ESVJFQ1RfUVVFUlkaLQoRbWVzc2FnZVBhcmFtZXRlcnMSGHsiZGF0YVNvdXJjZVR5cGUiOiJjc3YifRovCgdlcnJvcklkEiQ1Y2YzZDUxNi03NmJmLTRkYTYtYWY0Yi00ZmMwYzM1ZDdkNjI="
+    }
+  }
+}

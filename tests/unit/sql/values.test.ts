@@ -54,6 +54,15 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("O'Brien", "couchbase")).toBe("'O\\'Brien'");
   });
 
+  test("escapes both the quote and the backslash with a backslash on spark", () => {
+    // Spark's lexer pairs a backslash with the next character inside '...' under every setting, and its own
+    // Literal.sql writes a quote as \' ; a doubled quote is an escape only from Spark 4.1, so it is not used.
+    expect(quoteLiteral("O'Brien", "spark")).toBe("'O\\'Brien'");
+    expect(quoteLiteral("C:\\dir", "spark")).toBe("'C:\\\\dir'");
+    expect(quoteLiteral("a\\'b", "spark")).toBe("'a\\\\\\'b'");
+    expect(unquoteLiteral(quoteLiteral("a\\'b", "spark"), "spark")).toBe("a\\'b");
+  });
+
   test("leaves a backslash alone on duckdb, where it is ordinary data", () => {
     // Measured on v1.5.5: `SELECT 'a\\b', length('a\\b')` answers the three characters
     // `a\\b`, so doubling it would add a second one to the value.

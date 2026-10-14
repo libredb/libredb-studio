@@ -992,3 +992,212 @@ describe("hasUnterminatedSpan: a dialect where a backslash always escapes", () =
     expect(hasUnterminatedSpan(sql, DEFAULT_SQL_GRAMMAR)).toBe(true);
   });
 });
+
+// `rawStrings` (Spark's row): `r'…'`, `R'…'`, `r"…"` and `R"…"` are string literals that take no escapes and end at
+// the first quote of their own kind, line feeds included, wherever the `r` does not continue a word.
+describe("readSqlSpan: raw strings", () => {
+  const RAW: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, backslashAlwaysEscapes: true, rawStrings: true };
+  const ESCAPING: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, backslashAlwaysEscapes: true };
+
+  test.each<[string, string]>([
+    ["r'C:\\' AS a", "string|r'C:\\'"],
+    ["R'a\\nb' x", "string|R'a\\nb'"],
+    ['r"x\\" y', 'string|r"x\\"'],
+    ['R"it\'s" z', 'string|R"it\'s"'],
+  ])("%j opens a raw string that ends at the first quote of its own kind", (sql, expected) => {
+    expect(spanOf(sql, 0, RAW)).toBe(expected);
+  });
+
+  test("a line feed inside a raw string is text, so the literal runs past it", () => {
+    expect(readSqlSpan("r'a\nb' x", 0, RAW)).toEqual({ kind: "string", end: 6, terminated: true });
+  });
+
+  test("a doubled quote is no escape: the first quote closes the literal", () => {
+    expect(spanOf("r'a''b'", 0, RAW)).toBe("string|r'a'");
+  });
+
+  test("a raw string with no closing quote is unterminated", () => {
+    expect(readSqlSpan("r'abc", 0, RAW)).toEqual({ kind: "string", end: 5, terminated: false });
+  });
+
+  test("an `r` that continues a word opens nothing, and the quote after it is an ordinary escaping string", () => {
+    expect(readSqlSpan("abr'x'", 2, RAW)).toBeNull();
+    expect(readSqlSpan("a1r'x'", 2, RAW)).toBeNull();
+    expect(readSqlSpan("a$r'x'", 2, RAW)).toBeNull();
+    expect(spanOf("abr'x\\'y'", 3, RAW)).toBe("string|'x\\'y'");
+  });
+
+  test("the code point before the `r` is read whole: a letter outside the Basic Multilingual Plane continues the word", () => {
+    // U+1D465 is a letter in two UTF-16 units; U+1D100 is two units and no letter, so the `r` after it starts a token.
+    expect(readSqlSpan("\u{1D465}r'x\\'y'", 2, RAW)).toBeNull();
+    expect(spanOf("\u{1D465}r'x\\'y'", 3, RAW)).toBe("string|'x\\'y'");
+    expect(spanOf("\u{1D100}r'C:\\' x", 2, RAW)).toBe("string|r'C:\\'");
+  });
+
+  test("an `r` that no quote follows is code", () => {
+    expect(readSqlSpan("rx'a'", 0, RAW)).toBeNull();
+    expect(readSqlSpan("r", 0, RAW)).toBeNull();
+  });
+
+  test("absent: the `r` is code and the quote after it opens an escaping literal that never closes", () => {
+    expect(readSqlSpan("r'C:\\' AS a", 0, ESCAPING)).toBeNull();
+    expect(readSqlSpan("r'C:\\' AS a", 1, ESCAPING)).toMatchObject({ kind: "string", terminated: false });
+  });
+
+  test("hasUnterminatedSpan resolves the text only where the dialect declares the fact", () => {
+    expect(hasUnterminatedSpan("SELECT r'C:\\' AS a", RAW)).toBe(false);
+    expect(hasUnterminatedSpan("SELECT r'C:\\' AS a", ESCAPING)).toBe(true);
+  });
+});
+
+// `hintsAreCode` (Spark's row): `/*+` opens an optimizer hint the engine lexes as code, not a block comment. Measured
+// on Spark 4.2.0: a `/*+` inside a comment opens no level, so the first `*/` after it ends the outer comment, and
+// inside a hint a plain comment nests and the hint ends at the next `*/`.
+describe("readSqlSpan: optimizer hints read as code", () => {
+  const HINTS: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, blockComment: "nesting", hintsAreCode: true };
+  const NESTING: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, blockComment: "nesting" };
+
+  test("`/*+` at a code position opens no span", () => {
+    const sql = "SELECT /*+ BROADCAST(u) */ * FROM t";
+    expect(readSqlSpan(sql, 7, HINTS)).toBeNull();
+    expect(spanOf(sql, 7, NESTING)).toBe("block-comment|/*+ BROADCAST(u) */");
+  });
+
+  test("a plain `/*` still opens a comment where hints are code", () => {
+    expect(spanOf("/* note */ SELECT 1", 0, HINTS)).toBe("block-comment|/* note */");
+  });
+
+  test("inside a comment, `/*+` opens no nested level, so the first `*/` ends the comment", () => {
+    const sql = "/* a /*+ b */ SELECT 1";
+    expect(spanOf(sql, 0, HINTS)).toBe("block-comment|/* a /*+ b */");
+    // A nesting reader that counts the `/*+` reads the rest as comment text with no end.
+    expect(readSqlSpan(sql, 0, NESTING)).toEqual({ kind: "block-comment", end: sql.length, terminated: false });
+  });
+
+  test("inside a nested comment, `/*+` opens no level either", () => {
+    expect(spanOf("/* a /* b /*+ c */ d */ SELECT 1", 0, HINTS)).toBe("block-comment|/* a /* b /*+ c */ d */");
+  });
+
+  test("a plain comment inside a hint nests, and the hint's own `*/` is code", () => {
+    const sql = "SELECT /*+ COALESCE(3) /* x /* y */ z */ */ 1";
+    expect(readSqlSpan(sql, 7, HINTS)).toBeNull();
+    expect(spanOf(sql, 23, HINTS)).toBe("block-comment|/* x /* y */ z */");
+    expect(readSqlSpan(sql, 41, HINTS)).toBeNull();
+    expect(hasUnterminatedSpan(sql, HINTS)).toBe(false);
+  });
+
+  test("a string inside a hint is a string, so a `*/` written in it ends nothing", () => {
+    const sql = "SELECT /*+ REPARTITION(3, '*/') */ 1";
+    expect(spanOf(sql, 26, HINTS)).toBe("string|'*/'");
+    expect(hasUnterminatedSpan(sql, HINTS)).toBe(false);
+    // Read as a comment, the hint ends inside the string, and the quote after it never closes.
+    expect(hasUnterminatedSpan(sql, NESTING)).toBe(true);
+  });
+
+  // Spark lexes every `*/` in code as one token, the hint's closer (`HENT_END`, SqlBaseLexer v4.1.0 and v4.2.0), so it
+  // reads `*/*` as the hint's end followed by `*`, and the `/` opens no comment. Read as an opener, a later `*/`, here
+  // inside a line comment, would close it, and the reader would take the DELETE that Spark runs for comment text.
+  test("a hint closed right before `*` opens no comment: the `/` belongs to the hint's closer", () => {
+    expect(readSqlSpan("SELECT /*+ X */* FROM t", 14, HINTS)).toBeNull();
+    expect(hasUnterminatedSpan("SELECT /*+ X */* FROM t", HINTS)).toBe(false);
+
+    const sql = "WITH c AS (SELECT /*+ H */* FROM t) DELETE FROM u -- */";
+    expect(readSqlSpan(sql, 25, HINTS)).toBeNull();
+    expect(spanOf(sql, 50, HINTS)).toBe("line-comment|-- */");
+    expect(hasUnterminatedSpan(sql, HINTS)).toBe(false);
+    // Without the fact the same `/` opens a comment, the reading every other row keeps.
+    expect(spanOf(sql, 25, NESTING)).toBe("block-comment|/* FROM t) DELETE FROM u -- */");
+  });
+
+  test("after a hint closed right before `*`, a `*/` written in a string ends nothing", () => {
+    const sql = "WITH c AS (SELECT /*+ H */* FROM t WHERE x = '*/') DELETE FROM u";
+    expect(readSqlSpan(sql, 25, HINTS)).toBeNull();
+    expect(spanOf(sql, 45, HINTS)).toBe("string|'*/'");
+    expect(hasUnterminatedSpan(sql, HINTS)).toBe(false);
+  });
+
+  // The lexer has no hint context: a `*/` outside any hint is the same token, so its `/` opens nothing there either.
+  test("a `/` after a code `*` opens no comment outside a hint either", () => {
+    expect(readSqlSpan("SELECT 2 */* c */ 3", 10, HINTS)).toBeNull();
+    expect(spanOf("SELECT 2 */* c */ 3", 10, NESTING)).toBe("block-comment|/* c */");
+  });
+
+  test("a flat grammar with the fact also reads `/*+` as code", () => {
+    expect(readSqlSpan("/*+ x */", 0, { ...DEFAULT_SQL_GRAMMAR, hintsAreCode: true })).toBeNull();
+  });
+
+  test("absent: `/*+` opens an ordinary block comment, as before", () => {
+    expect(spanOf("/*+ x */ SELECT 1", 0, NESTING)).toBe("block-comment|/*+ x */");
+    expect(spanOf("/*+ x */ SELECT 1", 0, DEFAULT_SQL_GRAMMAR)).toBe("block-comment|/*+ x */");
+  });
+});
+
+// `lineCommentBackslashContinues` (Spark's row): a backslash immediately before the line feed continues a `--` comment
+// onto the next line, and one before a carriage return and line feed does not (`SIMPLE_COMMENT`,
+// `SqlBaseLexer.g4:687-689` at v4.2.0). The rule pairs a backslash with nothing else, so the second of two continues it.
+describe("readSqlSpan: line comments a backslash continues", () => {
+  const CONTINUES: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, lineCommentBackslashContinues: true };
+
+  test("a backslash right before the line feed continues the comment onto the next line", () => {
+    expect(spanOf("-- a \\\nb\nSELECT 1", 0, CONTINUES)).toBe("line-comment|-- a \\\nb\n");
+  });
+
+  test("it continues as often as the lines end so", () => {
+    expect(spanOf("-- a \\\nb \\\nc\nSELECT 1", 0, CONTINUES)).toBe("line-comment|-- a \\\nb \\\nc\n");
+  });
+
+  test("a backslash before a carriage return and line feed does not continue it", () => {
+    expect(spanOf("-- a \\\r\nb\r\nSELECT 1", 0, CONTINUES)).toBe("line-comment|-- a \\\r\n");
+  });
+
+  test("a backslash earlier in the line does not continue it", () => {
+    expect(spanOf("-- a \\ b\nSELECT 1", 0, CONTINUES)).toBe("line-comment|-- a \\ b\n");
+  });
+
+  test("the second of two backslashes continues it: a comment takes no escapes", () => {
+    expect(spanOf("-- a \\\\\nb\nSELECT 1", 0, CONTINUES)).toBe("line-comment|-- a \\\\\nb\n");
+  });
+
+  test("a comment continued past its last line feed, or ending in a backslash, runs to the end of the text", () => {
+    for (const sql of ["SELECT 1 -- a \\\nb", "SELECT 1 -- a \\\n", "SELECT 1 -- a \\"]) {
+      expect(readSqlSpan(sql, 9, CONTINUES)).toEqual({ kind: "line-comment", end: sql.length, terminated: true });
+    }
+  });
+
+  test("absent: the comment ends at the first line feed", () => {
+    expect(spanOf("-- a \\\nb\nSELECT 1", 0)).toBe("line-comment|-- a \\\n");
+    expect(spanOf("-- a \\\nb\nSELECT 1", 0, resolveSqlGrammar("postgres"))).toBe("line-comment|-- a \\\n");
+  });
+});
+
+// `lineCommentEndsAtCarriageReturn` (Spark's row): a carriage return ends a `--` comment as a line feed does, a line
+// feed right after it ends the comment with it, and a backslash before it continues nothing (`SIMPLE_COMMENT`,
+// `SqlBaseLexer.g4:687-689` at v4.2.0: the body takes neither `\r` nor `\n`, and `'\r'? '\n'?` closes it).
+describe("readSqlSpan: line comments a carriage return ends", () => {
+  const SPARK = resolveSqlGrammar("spark");
+
+  test("a lone carriage return ends the comment, under the fact and under Spark's row", () => {
+    const CR_ENDS: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, lineCommentEndsAtCarriageReturn: true };
+    expect(spanOf("-- a\rSELECT 1", 0, CR_ENDS)).toBe("line-comment|-- a\r");
+    expect(spanOf("-- a\rSELECT 1", 0, SPARK)).toBe("line-comment|-- a\r");
+    expect(spanOf("-- a\r\r\nSELECT 1", 0, SPARK)).toBe("line-comment|-- a\r");
+  });
+
+  test("a carriage return and line feed end it once, after the line feed", () => {
+    expect(spanOf("-- a\r\nSELECT 1", 0, SPARK)).toBe("line-comment|-- a\r\n");
+  });
+
+  test("a backslash before a lone carriage return does not continue it", () => {
+    expect(spanOf("-- a \\\rb\nSELECT 1", 0, SPARK)).toBe("line-comment|-- a \\\r");
+  });
+
+  test("a comment a backslash continued past a line feed ends at the next lone carriage return", () => {
+    expect(spanOf("-- a \\\nb\rSELECT 1", 0, SPARK)).toBe("line-comment|-- a \\\nb\r");
+  });
+
+  test("absent: a lone carriage return is comment text, so the comment runs to the line feed or the end of the text", () => {
+    expect(spanOf("-- a\rb\nSELECT 1", 0)).toBe("line-comment|-- a\rb\n");
+    const sql = "SELECT 1 -- a\rDROP TABLE t";
+    expect(readSqlSpan(sql, 9)).toEqual({ kind: "line-comment", end: sql.length, terminated: true });
+  });
+});

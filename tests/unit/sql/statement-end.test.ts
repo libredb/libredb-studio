@@ -243,6 +243,46 @@ describe("readStatementEnd", () => {
       expect(readStatementEnd("SELECT $t$x FROM t", untagged)).toEqual({ end: 18, rewritable: true });
       expect(readStatementEnd("SELECT $t$x FROM t").rewritable).toBe(false);
     });
+
+    // Spark's raw string and its hint are read whole, so the cut lands after them; without the two facts both texts
+    // hold a literal that never closes and no cut is allowed.
+    test("a raw string and a hint holding `*/` in a string allow the cut only where the dialect declares them", () => {
+      const spark = resolveSqlGrammar("spark");
+      const withoutFacts: SqlGrammar = {
+        ...DEFAULT_SQL_GRAMMAR,
+        blockComment: "nesting",
+        backslashAlwaysEscapes: true,
+      };
+      const raw = "SELECT r'C:\\' AS a -- note";
+      const hint = "SELECT /*+ REPARTITION(3, '*/') */ a FROM t -- note";
+
+      expect(split(raw, spark)).toEqual(["SELECT r'C:\\' AS a", " -- note"]);
+      expect(split(hint, spark)).toEqual(["SELECT /*+ REPARTITION(3, '*/') */ a FROM t", " -- note"]);
+      expect(readStatementEnd(raw, withoutFacts).rewritable).toBe(false);
+      expect(readStatementEnd(hint, withoutFacts).rewritable).toBe(false);
+    });
+
+    // Spark continues a `--` comment past a line feed a backslash stands right before, so the cut lands before the
+    // comment and the WHERE on its second line is comment text; with CR LF endings the comment ends at the line break.
+    test("a `--` comment a backslash continues takes the next line with it only where the dialect declares the fact", () => {
+      const spark = resolveSqlGrammar("spark");
+      const lf = "SELECT * FROM t -- note \\\nWHERE x = 1";
+      const crlf = "SELECT * FROM t -- note \\\r\nWHERE x = 1";
+
+      expect(split(lf, spark)).toEqual(["SELECT * FROM t", " -- note \\\nWHERE x = 1"]);
+      expect(split(lf, DEFAULT_SQL_GRAMMAR)).toEqual([lf, ""]);
+      expect(split(crlf, spark)).toEqual([crlf, ""]);
+    });
+
+    // Spark ends a `--` comment at a lone carriage return, so the WHERE after it is code and the cut lands after it; a
+    // comment read on to a line feed runs to the end of this text, and the cut lands before it.
+    test("a lone carriage return ends a `--` comment only where the dialect declares the fact", () => {
+      const spark = resolveSqlGrammar("spark");
+      const cr = "SELECT * FROM t -- note\rWHERE x = 1";
+
+      expect(split(cr, spark)).toEqual([cr, ""]);
+      expect(split(cr, DEFAULT_SQL_GRAMMAR)).toEqual(["SELECT * FROM t", " -- note\rWHERE x = 1"]);
+    });
   });
 
   // ── Bounded time ────────────────────────────────────────────────────────

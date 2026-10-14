@@ -1,0 +1,42 @@
+{
+  "$captured": {
+    "service": "spark-4-1",
+    "image": "apache/spark:4.1.3",
+    "digest": "sha256:bf9d035a7c32a8ca46aa58d6348182ffd7d2dff6409206ecfbb3915ff1fef211",
+    "sparkVersion": "4.1.3",
+    "date": "2026-10-13T22:18:28.976Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/Config",
+    "surface": "tree: Config get_all of spark.sql.catalog., values written <value>",
+    "request": {
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "operation": {
+        "get_all": {
+          "prefix": "spark.sql.catalog.",
+          "_prefix": "prefix"
+        },
+        "op_type": "get_all"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "pairs": [
+      {
+        "key": "studio_unloaded",
+        "value": "<value>",
+        "_value": "value"
+      }
+    ],
+    "warnings": [],
+    "session_id": "<session>",
+    "server_side_session_id": "98578758-5ab4-4016-867c-a9f85dfee1e4"
+  }
+}

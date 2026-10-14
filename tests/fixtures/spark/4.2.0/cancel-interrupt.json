@@ -1,0 +1,33 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T11:06:33.988Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/Interrupt",
+    "surface": "Interrupt by tag of a running statement",
+    "request": {
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "interrupt_type": "INTERRUPT_TYPE_TAG",
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_tag": "<tag>",
+      "interrupt": "operation_tag"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "interrupted_ids": [
+      "<operation>"
+    ],
+    "session_id": "<session>",
+    "server_side_session_id": "eb67bac8-0d2d-4546-8db8-ee94179a1f60"
+  }
+}

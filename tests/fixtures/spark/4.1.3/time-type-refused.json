@@ -1,0 +1,59 @@
+{
+  "$captured": {
+    "service": "spark-4-1",
+    "image": "apache/spark:4.1.3",
+    "digest": "sha256:bf9d035a7c32a8ca46aa58d6348182ffd7d2dff6409206ecfbb3915ff1fef211",
+    "sparkVersion": "4.1.3",
+    "date": "2026-10-13T21:14:10.130Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "a TIME literal with TIME values off: relation step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "root": {
+          "common": null,
+          "sql": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "query": "SELECT TIME'12:34:56' AS t"
+          },
+          "rel_type": "sql"
+        },
+        "op_type": "root"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "error",
+  "code": 13,
+  "details": "[UNSUPPORTED_TIME_TYPE] The data type TIME is not supported. SQLSTATE: 0A000",
+  "metadata": {
+    "grpc-status-details-bin": {
+      "$bytes": "CA0STFtVTlNVUFBPUlRFRF9USU1FX1RZUEVdIFRoZSBkYXRhIHR5cGUgVElNRSBpcyBub3Qgc3VwcG9ydGVkLiBTUUxTVEFURTogMEEwMDAa3wIKKHR5cGUuZ29vZ2xlYXBpcy5jb20vZ29vZ2xlLnJwYy5FcnJvckluZm8SsgIKJm9yZy5hcGFjaGUuc3Bhcmsuc3FsLkFuYWx5c2lzRXhjZXB0aW9uEhBvcmcuYXBhY2hlLnNwYXJrGnQKB2NsYXNzZXMSaVsib3JnLmFwYWNoZS5zcGFyay5zcWwuQW5hbHlzaXNFeGNlcHRpb24iLCJqYXZhLmxhbmcuRXhjZXB0aW9uIiwiamF2YS5sYW5nLlRocm93YWJsZSIsImphdmEubGFuZy5PYmplY3QiXRoRCghzcWxTdGF0ZRIFMEEwMDAaIwoKZXJyb3JDbGFzcxIVVU5TVVBQT1JURURfVElNRV9UWVBFGhcKEW1lc3NhZ2VQYXJhbWV0ZXJzEgJ7fRovCgdlcnJvcklkEiRhMDNiNzk4Yy04MDVkLTRiZWMtOTZkMS1mYWUwMDVmNDEyOWM="
+    }
+  }
+}

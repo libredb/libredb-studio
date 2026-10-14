@@ -23,6 +23,7 @@ const EVERY_FORMAT: Record<ExplainFormat, true> = {
   "bigquery-dryrun": true,
   "snowflake-json": true,
   "firestore-explain": true,
+  "spark-text": true,
 };
 
 /**
@@ -66,6 +67,10 @@ describe("getExplainStrategy", () => {
 
   test("resolves firestore-explain", () => {
     expect(getExplainStrategy("firestore-explain")?.format).toBe("firestore-explain");
+  });
+
+  test("resolves spark-text", () => {
+    expect(getExplainStrategy("spark-text")?.format).toBe("spark-text");
   });
 
   test("returns null for undefined (provider without explain support)", () => {

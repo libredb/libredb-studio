@@ -97,6 +97,7 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   bigquery: true,
   // Off by decision, not by its prepareQuery: see DECLINED below.
   snowflake: false,
+  spark: false,
   // One AWS CLI subset command per run; the console pages with --starting-token, never with LIMIT and OFFSET.
   s3: false,
   // The list form of a single-type get, through the provider's own paging line (console/paging.ts).
@@ -122,6 +123,7 @@ const TYPES = Object.keys(EXPECTED) as DatabaseType[];
  */
 const DECLINED: Readonly<Partial<Record<DatabaseType, string>>> = Object.freeze({
   snowflake: "a page is a full warehouse re-execution, and pages without ORDER BY can repeat or drop rows",
+  spark: "a page would re-run the whole statement on the cluster, and pages without ORDER BY can repeat or drop rows",
 });
 
 /**

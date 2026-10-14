@@ -289,13 +289,20 @@ function readSubscripted(sql: string, index: number, grammar: SqlGrammar): SqlSp
  * keeps everywhere: it costs the statement its bound (an over-large read) and, since
  * #297, a confirmation prompt - where the guess would hide a write behind text the
  * reader claimed to have read.
+ *
+ * Where `hintsAreCode` holds, a `/*+` inside the run opens no level: Spark refuses a nested comment that starts with
+ * `/*+`, so those characters are comment text and the first `*\/` after them closes the level it is in.
  */
-function readNestedBlockComment(sql: string, index: number): SqlSpan {
+function readNestedBlockComment(sql: string, index: number, hintsAreCode = false): SqlSpan {
   let depth = 0;
   let i = index;
 
   while (i + 1 < sql.length) {
     if (sql[i] === "/" && sql[i + 1] === "*") {
+      if (hintsAreCode && sql[i + 2] === "+") {
+        i += 3;
+        continue;
+      }
       depth++;
       i += 2;
       continue;
@@ -370,21 +377,29 @@ function readAlternateQuoted(sql: string, index: number, tagLength: number): Sql
  * Whether the character before `index` continues a word, i.e. `index` is inside
  * one.
  *
- * Only the alternate-quote tag needs this: it is the one span whose first
- * character is also an identifier character. Oracle's lexer reads a name greedily,
+ * Only the alternate-quote tag and the raw-string prefix need this: they are the
+ * spans that open on an identifier character. Oracle's lexer reads a name greedily,
  * so `freq'x'` there is a name followed by an ordinary string, and without the
  * check the two kinds of reader in this folder would disagree about such text as
  * well - the ones that read whole words step over the name and never ask here,
  * while the ones that walk character by character would ask at its last letter.
  * Two readings of one construct is what this folder exists to stop.
  *
- * node-oracledb's tokenizer has no equivalent check (it parses a q-string at any
- * `'` preceded by `q`/`Q`), so this is deliberately stricter than the driver and
- * closer to the server. What it excludes is text no dialect here accepts, and it
- * excludes it in the safe direction: an ordinary string reading, as today.
+ * For the alternate-quote tag, node-oracledb's tokenizer has no equivalent check
+ * (it parses a q-string at any `'` preceded by `q`/`Q`), so this is deliberately
+ * stricter than the driver and closer to the server. What it excludes there is
+ * text no dialect here accepts, and it excludes it in the safe direction: an
+ * ordinary string reading, as today. For the raw-string prefix, Spark's lexer
+ * takes the longest token, so an `r` inside a name belongs to the name and the
+ * quote after it opens an ordinary escaping literal.
+ *
+ * `wholeCodePoint` reads the code point before `index` instead of one UTF-16
+ * unit, so a letter outside the Basic Multilingual Plane counts as the letter it
+ * is; the raw-string prefix passes it, and the alternate-quote tag keeps the
+ * one-unit read.
  */
-function continuesWord(sql: string, index: number): boolean {
-  const before = index === 0 ? undefined : sql[index - 1];
+function continuesWord(sql: string, index: number, wholeCodePoint = false): boolean {
+  const before = wholeCodePoint ? Array.from(sql.slice(Math.max(0, index - 2), index)).pop() : sql[index - 1];
   return before !== undefined && (IDENTIFIER_PART.test(before) || before === "$");
 }
 
@@ -482,10 +497,10 @@ function measureDollarTag(sql: string, index: number): number {
  * Omitting it is a real answer, not a missing one: it means "no dialect was
  * named", and the compatibility default applies.
  *
- * Pass the whole statement, not a suffix of it: the alternate-quote branch looks at
- * the character BEFORE `index` to tell a tag from the tail of a name, so a slice
- * that cuts a name in half can answer differently than the same text in place. A
- * PREFIX slice is safe, which is what the callers here take (`sql.slice(0, end)`).
+ * Pass the whole statement, not a suffix of it: the alternate-quote, raw-string and hint
+ * branches look at the character BEFORE `index` to tell an opener from the tail of a name
+ * or of a code `*\/`, so a slice that cuts a name in half can answer differently than the
+ * same text in place. A PREFIX slice is safe, which is what the callers here take (`sql.slice(0, end)`).
  */
 export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): SqlSpan | null {
   const ch = sql[index];
@@ -521,9 +536,23 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
   // now, and it is deliberately NOT widened: PostgreSQL reads `//` as an operator
   // NAME and the other five refuse the characters where they stand.
   if (opensLineComment(sql, index, grammar)) {
-    const newline = sql.indexOf("\n", index);
-    // The newline belongs to the comment: it is what closes it.
-    return { kind: "line-comment", end: newline === -1 ? sql.length : newline + 1, terminated: true };
+    // A line feed ends the comment, and under `lineCommentEndsAtCarriageReturn` (Spark) a carriage return does too,
+    // taking the line feed right after it, so a CR LF pair ends it once.
+    const lineEnd = grammar.lineCommentEndsAtCarriageReturn ? /\r\n?|\n/g : /\n/g;
+    lineEnd.lastIndex = index;
+    let found = lineEnd.exec(sql);
+    // Under `lineCommentBackslashContinues` (Spark), a backslash right before a lone line feed continues the comment
+    // onto the next line, as often as the lines end so; a line end that holds a carriage return continues nothing.
+    while (
+      grammar.lineCommentBackslashContinues &&
+      found !== null &&
+      found[0] === "\n" &&
+      sql[found.index - 1] === "\\"
+    ) {
+      found = lineEnd.exec(sql);
+    }
+    // The line end belongs to the comment: it is what closes it.
+    return { kind: "line-comment", end: found === null ? sql.length : found.index + found[0].length, terminated: true };
   }
 
   // A `/*` written INSIDE a block comment opens a second one in PostgreSQL, SQL
@@ -538,7 +567,12 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
   // insert. The grammar record answers it now (#300), and the flat reading survives
   // as MySQL's, SQLite's, Oracle's and what a caller that named no dialect gets.
   if (ch === "/" && sql[index + 1] === "*") {
-    if (grammar.blockComment === "nesting") return readNestedBlockComment(sql, index);
+    // Spark lexes `/*+` as the opener of an optimizer hint, which is code (`hintsAreCode`), and every `*/` in code as
+    // one token, the hint's closer, so a `/` right after a code `*` opens nothing either: `*/*` is the closer and a
+    // `*`. Read as an opener there, any later `*/` would close it and turn the code between into comment text. No span
+    // ends with `*`, so the `*` before an index a walker asks about is code.
+    if (grammar.hintsAreCode && (sql[index + 2] === "+" || sql[index - 1] === "*")) return null;
+    if (grammar.blockComment === "nesting") return readNestedBlockComment(sql, index, grammar.hintsAreCode === true);
 
     const close = sql.indexOf("*/", index + 2);
     if (close === -1) return { kind: "block-comment", end: sql.length, terminated: false };
@@ -558,6 +592,18 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
   if (grammar.alternateQuoting) {
     const tagLength = measureAlternateQuoteTag(sql, index);
     if (tagLength > 0 && !continuesWord(sql, index)) return readAlternateQuoted(sql, index, tagLength);
+  }
+
+  // Spark writes a literal that takes no escapes as `r'C:\'` (also `R` and `"`), and it ends at the first quote of its
+  // own kind. Read as an escaping literal, `r'C:\'` never closes, so a `;` and a write after it would hide inside one
+  // run; the grammar record answers it (`rawStrings`), and only where the `r` starts a token.
+  if (grammar.rawStrings && (ch === "r" || ch === "R") && !continuesWord(sql, index, true)) {
+    const quote = sql[index + 1];
+    if (quote === "'" || quote === '"') {
+      const close = sql.indexOf(quote, index + 2);
+      if (close === -1) return { kind: "string", end: sql.length, terminated: false };
+      return { kind: "string", end: close + 1, terminated: true };
+    }
   }
 
   const literalBackslash = grammar.backslashAlwaysEscapes ? "escapes" : "ambiguous";

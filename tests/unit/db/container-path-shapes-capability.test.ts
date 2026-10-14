@@ -51,6 +51,7 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   bigquery: "exact",
   // Two levels, the database and the schema, each path exactly as deep.
   snowflake: "exact",
+  spark: "exact",
   // No container level at all: buckets are object rows, so no path shape is declared.
   s3: "absent",
   kubernetes: "exact",
@@ -167,7 +168,7 @@ describe("the declaration follows the check (#1147)", () => {
     expect(unknownTypeIds(callerFiles)).toEqual([]);
     const callers = callerFiles.map(providerTypeId).sort();
     const declaring = TYPES.filter((type) => EXPECTED_CONTAINER_PATH_SHAPES[type] !== "absent").sort();
-    expect(callers).toHaveLength(23);
+    expect(callers).toHaveLength(24);
     expect(callers).toEqual(declaring);
   });
 });

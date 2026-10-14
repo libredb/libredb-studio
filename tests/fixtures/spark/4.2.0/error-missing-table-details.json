@@ -1,0 +1,564 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T21:14:02.233Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/FetchErrorDetails",
+    "surface": "a missing table: FetchErrorDetails of its errorId",
+    "request": {
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "error_id": "5770722d-fd69-4dc3-abf9-5a9a7d3693af",
+      "client_type": "libredb-studio",
+      "_client_type": "client_type"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "errors": [
+      {
+        "error_type_hierarchy": [
+          "org.apache.spark.sql.catalyst.ExtendedAnalysisException",
+          "org.apache.spark.sql.AnalysisException",
+          "java.lang.Exception",
+          "java.lang.Throwable",
+          "java.lang.Object"
+        ],
+        "stack_trace": [
+          {
+            "declaring_class": "org.apache.spark.sql.errors.QueryCompilationErrors$",
+            "method_name": "tableOrViewNotFoundWithSearchPath",
+            "line_number": 977,
+            "file_name": "QueryCompilationErrors.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.package$AnalysisErrorAt",
+            "method_name": "tableNotFound",
+            "line_number": 94,
+            "file_name": "package.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.CheckAnalysis",
+            "method_name": "$anonfun$checkAnalysis0$2",
+            "line_number": 412,
+            "file_name": "CheckAnalysis.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.CheckAnalysis",
+            "method_name": "$anonfun$checkAnalysis0$2$adapted",
+            "line_number": 363,
+            "file_name": "CheckAnalysis.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.trees.TreeNode",
+            "method_name": "foreachUp",
+            "line_number": 277,
+            "file_name": "TreeNode.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.trees.TreeNode",
+            "method_name": "$anonfun$foreachUp$1",
+            "line_number": 276,
+            "file_name": "TreeNode.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.trees.TreeNode",
+            "method_name": "$anonfun$foreachUp$1$adapted",
+            "line_number": 276,
+            "file_name": "TreeNode.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "scala.collection.immutable.Vector",
+            "method_name": "foreach",
+            "line_number": 2125,
+            "file_name": "Vector.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.trees.TreeNode",
+            "method_name": "foreachUp",
+            "line_number": 276,
+            "file_name": "TreeNode.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.CheckAnalysis",
+            "method_name": "checkAnalysis0",
+            "line_number": 363,
+            "file_name": "CheckAnalysis.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.CheckAnalysis",
+            "method_name": "checkAnalysis0$",
+            "line_number": 330,
+            "file_name": "CheckAnalysis.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.Analyzer",
+            "method_name": "checkAnalysis0",
+            "line_number": 336,
+            "file_name": "Analyzer.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.CheckAnalysis",
+            "method_name": "checkAnalysis",
+            "line_number": 319,
+            "file_name": "CheckAnalysis.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.CheckAnalysis",
+            "method_name": "checkAnalysis$",
+            "line_number": 306,
+            "file_name": "CheckAnalysis.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.Analyzer",
+            "method_name": "checkAnalysis",
+            "line_number": 336,
+            "file_name": "Analyzer.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.resolver.HybridAnalyzer",
+            "method_name": "$anonfun$resolveInFixedPoint$1",
+            "line_number": 275,
+            "file_name": "HybridAnalyzer.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "scala.runtime.java8.JFunction0$mcV$sp",
+            "method_name": "apply",
+            "line_number": 18,
+            "file_name": "JFunction0$mcV$sp.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.QueryPlanningTracker$",
+            "method_name": "withTracker",
+            "line_number": 89,
+            "file_name": "QueryPlanningTracker.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.resolver.HybridAnalyzer",
+            "method_name": "resolveInFixedPoint",
+            "line_number": 275,
+            "file_name": "HybridAnalyzer.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.resolver.HybridAnalyzer",
+            "method_name": "$anonfun$apply$1",
+            "line_number": 82,
+            "file_name": "HybridAnalyzer.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.resolver.HybridAnalyzer",
+            "method_name": "withTrackedAnalyzerBridgeState",
+            "line_number": 117,
+            "file_name": "HybridAnalyzer.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.resolver.HybridAnalyzer",
+            "method_name": "apply",
+            "line_number": 75,
+            "file_name": "HybridAnalyzer.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.Analyzer",
+            "method_name": "runAnalysis$1",
+            "line_number": 368,
+            "file_name": "Analyzer.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.Analyzer",
+            "method_name": "$anonfun$executeAndCheck$2",
+            "line_number": 373,
+            "file_name": "Analyzer.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.internal.SQLConf$",
+            "method_name": "withExistingConf",
+            "line_number": 171,
+            "file_name": "SQLConf.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.Analyzer",
+            "method_name": "runWithSessionConf",
+            "line_number": 400,
+            "file_name": "Analyzer.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.Analyzer",
+            "method_name": "$anonfun$executeAndCheck$1",
+            "line_number": 373,
+            "file_name": "Analyzer.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper$",
+            "method_name": "markInAnalyzer",
+            "line_number": 423,
+            "file_name": "AnalysisHelper.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.analysis.Analyzer",
+            "method_name": "executeAndCheck",
+            "line_number": 373,
+            "file_name": "Analyzer.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.execution.QueryExecution",
+            "method_name": "$anonfun$lazyAnalyzed$2",
+            "line_number": 200,
+            "file_name": "QueryExecution.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.catalyst.QueryPlanningTracker",
+            "method_name": "measurePhase",
+            "line_number": 148,
+            "file_name": "QueryPlanningTracker.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.execution.QueryExecution",
+            "method_name": "$anonfun$executePhase$3",
+            "line_number": 410,
+            "file_name": "QueryExecution.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.execution.QueryExecution",
+            "method_name": "withQueryExecutionId",
+            "line_number": 429,
+            "file_name": "QueryExecution.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.execution.QueryExecution",
+            "method_name": "$anonfun$executePhase$2",
+            "line_number": 410,
+            "file_name": "QueryExecution.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.execution.QueryExecution$",
+            "method_name": "withInternalError",
+            "line_number": 872,
+            "file_name": "QueryExecution.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.execution.QueryExecution",
+            "method_name": "$anonfun$executePhase$1",
+            "line_number": 409,
+            "file_name": "QueryExecution.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.SparkSession",
+            "method_name": "withActive",
+            "line_number": 810,
+            "file_name": "SparkSession.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.execution.QueryExecution",
+            "method_name": "executePhase",
+            "line_number": 408,
+            "file_name": "QueryExecution.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.execution.QueryExecution",
+            "method_name": "$anonfun$lazyAnalyzed$1",
+            "line_number": 200,
+            "file_name": "QueryExecution.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "scala.util.Try$",
+            "method_name": "apply",
+            "line_number": 217,
+            "file_name": "Try.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.util.Utils$",
+            "method_name": "doTryWithCallerStacktrace",
+            "line_number": 1407,
+            "file_name": "Utils.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.util.Utils$",
+            "method_name": "getTryWithCallerStacktrace",
+            "line_number": 1457,
+            "file_name": "Utils.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.util.LazyTry",
+            "method_name": "get",
+            "line_number": 61,
+            "file_name": "LazyTry.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.execution.QueryExecution",
+            "method_name": "$anonfun$analyzed$1",
+            "line_number": 212,
+            "file_name": "QueryExecution.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.execution.QueryExecution",
+            "method_name": "withAbortTransactionOnFailure",
+            "line_number": 632,
+            "file_name": "QueryExecution.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.execution.QueryExecution",
+            "method_name": "analyzed",
+            "line_number": 212,
+            "file_name": "QueryExecution.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.execution.QueryExecution",
+            "method_name": "assertAnalyzed",
+            "line_number": 151,
+            "file_name": "QueryExecution.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.classic.Dataset$",
+            "method_name": "$anonfun$ofRows$5",
+            "line_number": 138,
+            "file_name": "Dataset.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.SparkSession",
+            "method_name": "withActive",
+            "line_number": 810,
+            "file_name": "SparkSession.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.classic.Dataset$",
+            "method_name": "ofRows",
+            "line_number": 135,
+            "file_name": "Dataset.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.classic.SparkSession",
+            "method_name": "$anonfun$sql$4",
+            "line_number": 611,
+            "file_name": "SparkSession.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.SparkSession",
+            "method_name": "withActive",
+            "line_number": 810,
+            "file_name": "SparkSession.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.classic.SparkSession",
+            "method_name": "sql",
+            "line_number": 588,
+            "file_name": "SparkSession.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.connect.planner.SparkConnectPlanner",
+            "method_name": "executeSQL",
+            "line_number": 3206,
+            "file_name": "SparkConnectPlanner.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.connect.planner.SparkConnectPlanner",
+            "method_name": "handleSqlCommand",
+            "line_number": 3054,
+            "file_name": "SparkConnectPlanner.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.connect.planner.SparkConnectPlanner",
+            "method_name": "process",
+            "line_number": 2901,
+            "file_name": "SparkConnectPlanner.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.connect.execution.SparkConnectPlanExecution",
+            "method_name": "handlePlan",
+            "line_number": 102,
+            "file_name": "SparkConnectPlanExecution.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.connect.execution.ExecuteThreadRunner",
+            "method_name": "$anonfun$executeInternal$1",
+            "line_number": 231,
+            "file_name": "ExecuteThreadRunner.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.connect.execution.ExecuteThreadRunner",
+            "method_name": "$anonfun$executeInternal$1$adapted",
+            "line_number": 203,
+            "file_name": "ExecuteThreadRunner.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.connect.service.SessionHolder",
+            "method_name": "$anonfun$withSession$2",
+            "line_number": 441,
+            "file_name": "SessionHolder.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.SparkSession",
+            "method_name": "withActive",
+            "line_number": 810,
+            "file_name": "SparkSession.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.connect.service.SessionHolder",
+            "method_name": "$anonfun$withSession$1",
+            "line_number": 441,
+            "file_name": "SessionHolder.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.JobArtifactSet$",
+            "method_name": "withActiveJobArtifactState",
+            "line_number": 94,
+            "file_name": "JobArtifactSet.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.artifact.ArtifactManager",
+            "method_name": "$anonfun$withResources$1",
+            "line_number": 112,
+            "file_name": "ArtifactManager.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.util.Utils$",
+            "method_name": "withContextClassLoader",
+            "line_number": 185,
+            "file_name": "Utils.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.artifact.ArtifactManager",
+            "method_name": "withClassLoaderIfNeeded",
+            "line_number": 102,
+            "file_name": "ArtifactManager.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.artifact.ArtifactManager",
+            "method_name": "withResources",
+            "line_number": 111,
+            "file_name": "ArtifactManager.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.connect.service.SessionHolder",
+            "method_name": "withSession",
+            "line_number": 440,
+            "file_name": "SessionHolder.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.connect.execution.ExecuteThreadRunner",
+            "method_name": "executeInternal",
+            "line_number": 203,
+            "file_name": "ExecuteThreadRunner.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.connect.execution.ExecuteThreadRunner",
+            "method_name": "org$apache$spark$sql$connect$execution$ExecuteThreadRunner$$execute",
+            "line_number": 127,
+            "file_name": "ExecuteThreadRunner.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.sql.connect.execution.ExecuteThreadRunner$ExecutionThread",
+            "method_name": "run",
+            "line_number": 338,
+            "file_name": "ExecuteThreadRunner.scala",
+            "_file_name": "file_name"
+          }
+        ],
+        "message": "[TABLE_OR_VIEW_NOT_FOUND] The table or view `spark_catalog`.`studio`.`no_such_table` cannot be found. Verify the spelling and correctness of the schema and catalog.\nSearch path: [`system`.`builtin`, `system`.`session`, `spark_catalog`.`default`].\nIf you did not qualify the name with a schema, verify the current_schema() output, or qualify the name with the correct schema and catalog.\nTo tolerate the error on drop use DROP VIEW IF EXISTS or DROP TABLE IF EXISTS. SQLSTATE: 42P01; line 1 pos 14;\n'Project [*]\n+- 'UnresolvedRelation [spark_catalog, studio, no_such_table], [], false\n",
+        "spark_throwable": {
+          "query_contexts": [
+            {
+              "object_type": "",
+              "object_name": "",
+              "start_index": 14,
+              "stop_index": 47,
+              "fragment": "spark_catalog.studio.no_such_table",
+              "call_site": "",
+              "summary": "== SQL (line 1, position 15) ==\nSELECT * FROM spark_catalog.studio.no_such_table\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n",
+              "context_type": "SQL"
+            }
+          ],
+          "message_parameters": {
+            "relationName": "`spark_catalog`.`studio`.`no_such_table`",
+            "searchPath": "[`system`.`builtin`, `system`.`session`, `spark_catalog`.`default`]"
+          },
+          "error_class": "TABLE_OR_VIEW_NOT_FOUND",
+          "_error_class": "error_class",
+          "sql_state": "42P01",
+          "_sql_state": "sql_state"
+        },
+        "_spark_throwable": "spark_throwable"
+      }
+    ],
+    "server_side_session_id": "",
+    "session_id": "",
+    "root_error_idx": 0,
+    "_root_error_idx": "root_error_idx"
+  }
+}

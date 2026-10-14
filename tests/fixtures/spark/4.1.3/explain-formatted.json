@@ -1,0 +1,124 @@
+{
+  "$captured": {
+    "service": "spark-4-1",
+    "image": "apache/spark:4.1.3",
+    "digest": "sha256:bf9d035a7c32a8ca46aa58d6348182ffd7d2dff6409206ecfbb3915ff1fef211",
+    "sparkVersion": "4.1.3",
+    "date": "2026-10-13T11:07:13.297Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "EXPLAIN FORMATTED of a never-run SELECT: command step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "command": {
+          "sql_command": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "sql": "",
+            "input": {
+              "common": null,
+              "sql": {
+                "pos_args": [],
+                "pos_arguments": [],
+                "args": {},
+                "named_arguments": {},
+                "query": "EXPLAIN FORMATTED SELECT c_int, c_string FROM spark_catalog.studio.every_type WHERE c_int > 0"
+              },
+              "rel_type": "sql"
+            }
+          },
+          "command_type": "sql_command"
+        },
+        "op_type": "command"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "pass",
+  "payload": [
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "69f472dd-e363-4ce9-9833-13afb2e93205",
+      "server_side_session_id": "014ecf0e-1eb7-40ad-a0cf-73bf25245027",
+      "sql_command_result": {
+        "relation": {
+          "common": null,
+          "local_relation": {
+            "data": {
+              "$bytes": "/////4gAAAAQAAAAAAAKAA4ABgANAAgACgAAAAAABAAQAAAAAAEKAAwAAAAIAAQACgAAAAgAAAAIAAAAAAAAAAEAAAAYAAAAAAASABgAFAATABIADAAAAAgABAASAAAAFAAAABQAAAAYAAAAAAAFARQAAAAAAAAAAAAAAAQABAAEAAAABAAAAHBsYW4AAAAA/////5gAAAAUAAAAAAAAAAwAFgAOABUAEAAEAAwAAABwAgAAAAAAAAAABAAQAAAAAAMKABgADAAIAAQACgAAABQAAABIAAAAAQAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAQAAAAAAAAAIAAAAAAAAAAgAAAAAAAAAEAAAAAAAAABbAgAAAAAAAAAAAAABAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAFsCAAA9PSBQaHlzaWNhbCBQbGFuID09CiogRmlsdGVyICgzKQorLSAqIENvbHVtbmFyVG9Sb3cgKDIpCiAgICstIFNjYW4gcGFycXVldCBzcGFya19jYXRhbG9nLnN0dWRpby5ldmVyeV90eXBlICgxKQoKCigxKSBTY2FuIHBhcnF1ZXQgc3BhcmtfY2F0YWxvZy5zdHVkaW8uZXZlcnlfdHlwZQpPdXRwdXQgWzJdOiBbY19pbnQjMzI4LCBjX3N0cmluZyMzMzhdCkJhdGNoZWQ6IHRydWUKTG9jYXRpb246IEluTWVtb3J5RmlsZUluZGV4IFtmaWxlOi9vcHQvc3Bhcmsvd29yay1kaXIvc3Bhcmstd2FyZWhvdXNlL3N0dWRpby5kYi9ldmVyeV90eXBlXQpQdXNoZWRGaWx0ZXJzOiBbSXNOb3ROdWxsKGNfaW50KSwgR3JlYXRlclRoYW4oY19pbnQsMCldClJlYWRTY2hlbWE6IHN0cnVjdDxjX2ludDppbnQsY19zdHJpbmc6c3RyaW5nPgoKKDIpIENvbHVtbmFyVG9Sb3cgW2NvZGVnZW4gaWQgOiAxXQpJbnB1dCBbMl06IFtjX2ludCMzMjgsIGNfc3RyaW5nIzMzOF0KCigzKSBGaWx0ZXIgW2NvZGVnZW4gaWQgOiAxXQpJbnB1dCBbMl06IFtjX2ludCMzMjgsIGNfc3RyaW5nIzMzOF0KQ29uZGl0aW9uIDogKGlzbm90bnVsbChjX2ludCMzMjgpIEFORCAoY19pbnQjMzI4ID4gMCkpCgoAAAAAAP////8AAAAA"
+            },
+            "_data": "data"
+          },
+          "rel_type": "local_relation"
+        }
+      },
+      "response_type": "sql_command_result"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": {
+        "metrics": [
+          {
+            "execution_metrics": {
+              "numOutputRows": {
+                "name": "number of output rows",
+                "value": "0",
+                "metric_type": "sum"
+              }
+            },
+            "name": "CommandResult",
+            "plan_id": "164",
+            "parent": "164"
+          }
+        ]
+      },
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "e93e1a24-5a58-4d96-92bd-77cddd84916d",
+      "server_side_session_id": "014ecf0e-1eb7-40ad-a0cf-73bf25245027"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "9d865dc4-88bd-40cb-b246-8e50b699e1a2",
+      "server_side_session_id": "014ecf0e-1eb7-40ad-a0cf-73bf25245027",
+      "execution_progress": {
+        "stages": [],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    }
+  ]
+}

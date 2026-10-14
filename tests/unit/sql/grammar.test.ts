@@ -447,6 +447,7 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   bigquery: "established",
   // The Snowflake grammar row lands with the gate and the explain format, which flip this to established.
   snowflake: "established",
+  spark: "established",
   s3: "default",
   // One kubectl statement, not SQL: no SQL grammar is established for it, and none is read.
   kubernetes: "default",
@@ -621,13 +622,13 @@ describe("backslashAlwaysEscapes", () => {
     expect(DEFAULT_SQL_GRAMMAR.backslashAlwaysEscapes).toBe(false);
   });
 
-  test.each(["databend", "bigquery", "snowflake"] as const)("%s declares true", (type) => {
+  test.each(["databend", "bigquery", "snowflake", "spark"] as const)("%s declares true", (type) => {
     expect(resolveSqlGrammar(type).backslashAlwaysEscapes).toBe(true);
   });
 
   test.each(
     (Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter(
-      (type) => type !== "databend" && type !== "bigquery" && type !== "snowflake",
+      (type) => type !== "databend" && type !== "bigquery" && type !== "snowflake" && type !== "spark",
     ),
   )("%s declares false", (type) => {
     expect(resolveSqlGrammar(type).backslashAlwaysEscapes).toBe(false);
@@ -655,6 +656,35 @@ describe("dollarTags and doubleQuoteBackslashEscapes", () => {
       expect(resolveSqlGrammar(type).doubleQuoteBackslashEscapes).toBeUndefined();
     },
   );
+});
+
+// Four facts only Spark's lexer has, each absent (false) on every other row: raw strings (`rawStrings`), optimizer
+// hints lexed as code (`hintsAreCode`), a `--` comment a backslash continues (`lineCommentBackslashContinues`) and one
+// a lone carriage return ends (`lineCommentEndsAtCarriageReturn`).
+describe("the reader facts only Spark's row declares", () => {
+  test("the compatibility default declares none of the four", () => {
+    expect(DEFAULT_SQL_GRAMMAR.rawStrings).toBeUndefined();
+    expect(DEFAULT_SQL_GRAMMAR.hintsAreCode).toBeUndefined();
+    expect(DEFAULT_SQL_GRAMMAR.lineCommentBackslashContinues).toBeUndefined();
+    expect(DEFAULT_SQL_GRAMMAR.lineCommentEndsAtCarriageReturn).toBeUndefined();
+  });
+
+  test.each((Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter((type) => type !== "spark"))(
+    "%s declares none of the four",
+    (type) => {
+      expect(resolveSqlGrammar(type).rawStrings).toBeUndefined();
+      expect(resolveSqlGrammar(type).hintsAreCode).toBeUndefined();
+      expect(resolveSqlGrammar(type).lineCommentBackslashContinues).toBeUndefined();
+      expect(resolveSqlGrammar(type).lineCommentEndsAtCarriageReturn).toBeUndefined();
+    },
+  );
+
+  test("spark declares all four", () => {
+    expect(resolveSqlGrammar("spark").rawStrings).toBe(true);
+    expect(resolveSqlGrammar("spark").hintsAreCode).toBe(true);
+    expect(resolveSqlGrammar("spark").lineCommentBackslashContinues).toBe(true);
+    expect(resolveSqlGrammar("spark").lineCommentEndsAtCarriageReturn).toBe(true);
+  });
 });
 
 describe("every database type has a recorded grammar decision", () => {
@@ -732,6 +762,7 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   bigquery: true,
   // SQL, and the statement text IS what the provider submits; it extends SQLBaseProvider.
   snowflake: true,
+  spark: true,
   // AWS CLI words split by POSIX shell rules, not SQL text.
   s3: false,
   // A kubectl statement is words split by POSIX shell rules, not SQL text.

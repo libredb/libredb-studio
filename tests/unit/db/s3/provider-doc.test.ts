@@ -1967,15 +1967,16 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
       "- On S3-compatible object storage the grounding carries bucket names only, never an object key, a prefix, a size or any object content (objects are listed by the Keys panel, not by the object walk).",
     );
     /*
-     * TWENTY-EIGHT, COUNTED FROM THE DECLARATIONS AND NOT FROM THE SENTENCE. `declaresForeignKeys:
+     * TWENTY-NINE, COUNTED FROM THE DECLARATIONS AND NOT FROM THE SENTENCE. `declaresForeignKeys:
      * false` is set by every shipped type-id but the eight SQL engines that declare them, so the
      * number is `SHIPPED_DATABASE_TYPES.length - 8`. It was twenty-seven at thirty-five type-ids and
      * is twenty-eight at thirty-six, because Snowflake sets it false too
-     * (`src/lib/db/providers/sql/snowflake/index.ts`). The sentence had said twenty-four and named
+     * (`src/lib/db/providers/sql/snowflake/index.ts`), and twenty-nine at thirty-seven, because
+     * Apache Spark does as well (`src/lib/db/providers/sql/spark/index.ts`). The sentence had said twenty-four and named
      * twenty-four: BigQuery had been missing since its own merge, Firestore since its own, OPC UA
      * since ours and Snowflake since theirs.
      */
-    expect(flow).toContain("On the twenty-eight engines that declare no foreign keys at all");
+    expect(flow).toContain(`On the ${word(ids - 8)} engines that declare no foreign keys at all`);
     expect(flow).toContain(
       "Qdrant, Oxia, Databend, S3-compatible object storage and Kubernetes) this block carries no relations",
     );
@@ -2003,13 +2004,15 @@ describe("the complete engine lists outside the agent docs", () => {
     expect(read("README_ko.md")).toContain(
       "InfluxDB 3 (SQL), Oxia, S3-compatible object storage, Kubernetes에 연결할 수 있으며",
     );
-    // The newest-engine history names OPC UA as the newest in README.md, Snowflake one step back, Firestore before
-    // RabbitMQ, MQTT before Firestore, Kubernetes before MQTT, S3 before Kubernetes and Databend before S3; the
-    // translations carry the shorter chain, which runs from OPC UA straight back to MQTT. The chain is a claim about
-    // ORDER, so each link is pinned at both ends: an engine added without moving the head leaves the previous head
-    // claiming a title it no longer holds, which is exactly what this change did to Kubernetes until the `not`
-    // assertions below were added.
-    expect(readme).toContain("OPC UA is the newest: one `opc.tcp` session reads");
+    // The newest-engine history names Apache Spark as the newest in README.md, OPC UA one step back, Snowflake before
+    // OPC UA, Firestore before RabbitMQ, MQTT before Firestore, Kubernetes before MQTT, S3 before Kubernetes and
+    // Databend before S3; the translations carry the shorter chain, which runs from Apache Spark to OPC UA and
+    // straight back to MQTT. The chain is a claim about ORDER, so each link is pinned at both ends: an engine added
+    // without moving the head leaves the previous head claiming a title it no longer holds, which is exactly what
+    // this change did to Kubernetes until the `not` assertions below were added.
+    expect(readme).toContain("Apache Spark is the newest: SQL typed in the editor");
+    expect(readme).not.toContain("OPC UA is the newest");
+    expect(readme).toContain("OPC UA came before Apache Spark: one `opc.tcp` session reads");
     expect(readme).not.toContain("Snowflake is the newest");
     expect(readme).toContain("Snowflake came before OPC UA: SQL typed in the editor");
     expect(readme).not.toContain("RabbitMQ is the newest");
@@ -2021,7 +2024,9 @@ describe("the complete engine lists outside the agent docs", () => {
     expect(readme).toContain("Kubernetes came before MQTT: kubectl read commands");
     expect(readme).toContain("S3-compatible object storage came before Kubernetes: AWS CLI read commands");
     expect(readme).toContain("Databend came before S3-compatible object storage: ");
-    expect(zh).toContain("OPC UA 是最新的一个：");
+    expect(zh).toContain("Apache Spark 是最新的一个：");
+    expect(zh).not.toContain("OPC UA 是最新的一个");
+    expect(zh).toContain("OPC UA 在 Apache Spark 之前：");
     expect(zh).not.toContain("MQTT 是最新的一个");
     expect(zh).toContain("MQTT 在 OPC UA 之前：");
     expect(zh).not.toContain("Kubernetes 是最新的一个");
@@ -2032,7 +2037,9 @@ describe("the complete engine lists outside the agent docs", () => {
     expect(zh).toContain("它在 MinIO、Silo、Garage 和 RustFS 上验证过，没有在任何托管服务上验证过。");
     const ko = read("README_ko.md");
     expect(ko).toContain("MinIO, Silo, Garage, RustFS에서 검증되었으며 호스팅 서비스에서는 검증되지 않았습니다.");
-    expect(ko).toContain("가장 최근에 추가된 엔진은 OPC UA입니다.");
+    expect(ko).toContain("가장 최근에 추가된 엔진은 Apache Spark입니다.");
+    expect(ko).not.toContain("가장 최근에 추가된 엔진은 OPC UA입니다.");
+    expect(ko).toContain("Apache Spark 이전에 추가된 엔진은 OPC UA입니다.");
     expect(ko).not.toContain("가장 최근에 추가된 엔진은 MQTT입니다.");
     expect(ko).toContain("OPC UA 이전에 추가된 엔진은 MQTT입니다.");
     expect(ko).not.toContain("가장 최근에 추가된 엔진은 Kubernetes입니다.");

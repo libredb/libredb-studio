@@ -50,6 +50,7 @@ const OFFERED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   bigquery: false,
   // No test data: it would write on the warehouse, outside v1.
   snowflake: false,
+  spark: false,
   // No test data: v1 sends no write.
   s3: false,
   kubernetes: false,

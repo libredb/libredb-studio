@@ -2594,6 +2594,38 @@ describe("QueryEditor", () => {
     );
   });
 
+  test("no Format button, Format SQL action or shortcut under supportsSqlFormat: false (Apache Spark)", () => {
+    // Both sql-formatter modes rewrite valid Spark text (raw strings, backticks, nested comments), so the provider
+    // withholds Format for its tabs and the editor offers none.
+    mockSqlFormat.mockClear();
+    const props = createDefaultProps({
+      value: "SELECT r'C:\\' AS a",
+      language: "sql",
+      databaseType: "spark",
+      capabilities: { ...defaultCapabilities, supportsSqlFormat: false },
+    });
+    const { queryByText, queryByTestId } = render(React.createElement(QueryEditor, props));
+    expect(queryByText("Format")).toBeNull();
+    expect(capturedContextKeys["libredbCanFormatSql"]).toBe(false);
+    capturedSetValues = [];
+    act(() => {
+      capturedCommands[1].handler();
+    });
+    act(() => {
+      capturedActions.find((a) => a.id === "format-sql")!.run();
+    });
+    expect(mockSqlFormat).not.toHaveBeenCalled();
+    expect(capturedSetValues).toEqual([]);
+    expect((queryByTestId("mock-monaco-editor") as HTMLTextAreaElement).value).toBe("SELECT r'C:\\' AS a");
+  });
+
+  test("the control: with the field absent, an SQL tab keeps its Format button and Format SQL", () => {
+    const props = createDefaultProps({ language: "sql", capabilities: defaultCapabilities });
+    const { queryByText } = render(React.createElement(QueryEditor, props));
+    expect(queryByText("Format")).not.toBeNull();
+    expect(capturedContextKeys["libredbCanFormatSql"]).toBe(true);
+  });
+
   test("a JSON tab is not offered Format SQL, and its shortcut still formats JSON", () => {
     // The entry's label is fixed when it is registered, so on a MongoDB tab it read "Format SQL"
     // over the JSON formatter. The toolbar button and the shortcut are what format JSON there.
@@ -3421,6 +3453,32 @@ describe("QueryEditor completion addresses (#1397)", () => {
     const bare = render(React.createElement(QueryEditor, createDefaultProps()));
     expect(calls[calls.length - 1][1].quoteSegment).toBeUndefined();
     bare.unmount();
+    mockUseMonacoReturn = null;
+  });
+
+  test("an engine that spells its container names gives completion that spelling, and no other engine does", () => {
+    mockUseMonacoReturn = { Range: class {} };
+    mockRegisterSQLCompletionProvider.mockClear();
+    type Capabilities = Parameters<typeof QueryEditor>[0]["capabilities"];
+    const spark = {
+      queryLanguage: "sql",
+      identifierQuoting: "backtick-always",
+      containerNameSpelling: "engine",
+      containerLevels: [
+        { id: "catalog", label: "Catalog", labelPlural: "Catalogs" },
+        { id: "schema", label: "Namespace", labelPlural: "Namespaces" },
+      ],
+    } as unknown as Capabilities;
+    const calls = mockRegisterSQLCompletionProvider.mock.calls as unknown as [unknown, SchemaCompletionCache][];
+    const spelled = render(React.createElement(QueryEditor, createDefaultProps({ capabilities: spark })));
+    const spelling = calls[calls.length - 1][1].containerSpelling!;
+    expect(spelling.quotePath(["lake", "a.b", "t"])).toBe("`lake`.`a`.`b`.`t`");
+    expect(spelling.pathNames(["lake", "a.b", "t"])).toStrictEqual([["lake"], ["a", "b"], ["t"]]);
+    spelled.unmount();
+    const mysql = { queryLanguage: "sql", defaultPort: 3306 } as unknown as Capabilities;
+    const plain = render(React.createElement(QueryEditor, createDefaultProps({ capabilities: mysql })));
+    expect(calls[calls.length - 1][1].containerSpelling).toBeUndefined();
+    plain.unmount();
     mockUseMonacoReturn = null;
   });
 

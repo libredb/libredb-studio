@@ -63,12 +63,12 @@ Three properties frame everything below, and each of them is load-bearing rather
   on which of its two readings it takes**: `agent-read-only` on the dialects `CATALOG_PLANS` serves,
   because it composes catalog statements, and `agent-operations` everywhere else, because asking a
   provider to describe its own schema sends nothing an engine has to plan.
-  That is what lets grounding reach the thirty the read-only profile refuses, and it still cannot narrow any workflow's reach: the profile whose acquisition would be refused is never the profile that capture asks for.
+  That is what lets grounding reach the thirty-one the read-only profile refuses, and it still cannot narrow any workflow's reach: the profile whose acquisition would be refused is never the profile that capture asks for.
   Everything else about
   the three acquisitions is identical: the same `readOnly: true` open, the same optional
   least-privilege `agentUser`, and the same profiled cache, so neither an operations run nor an
   editor replay is ever handed the editor's writable pool.
-  **Plan mode grounds itself the same way**: the server reads the schema, and on PostgreSQL and SQLite the engine's estimated statistics beside it, before the model's first turn, so a plan run is now ordinarily grounded on every engine, including the thirty where an agent run cannot read anything at all.
+  **Plan mode grounds itself the same way**: the server reads the schema, and on PostgreSQL and SQLite the engine's estimated statistics beside it, before the model's first turn, so a plan run is now ordinarily grounded on every engine, including the thirty-one where an agent run cannot read anything at all.
   What is left of the old engine
   rule is narrower and still worth stating: the engine no longer decides WHETHER a plan run is
   grounded, only whether it is grounded through a composed statement or through its provider, and
@@ -532,7 +532,11 @@ The fleet declarations guard in `tests/isolated/object-source-declarations.test.
 A provider that declares `agentWalkScope` is walked in its session-default container and the containers it names, rather than in every container, and the inventory carries `unreadContainers`, which the packing says as "Not read: N other" followed by the provider's own word for its containers, and names the containers it did read, since a read that lists no object names none of them through its entries.
 It exists for an engine whose containers are too many to walk within one statement's deadline; with no session default, only the named containers are read.
 A scope that also declares `whenNoDefault: { walk: "parent-default-children" }` reads, when the deepest level has no session default, the children of the one container the level above marks as the session's, minus the names its `skip` holds, under the same pair and object limits and timer.
+Under a scope the walk still lists the children of every container above the deepest level, so it can count what it left out.
+When a container the scope reads nothing below, neither one marked as the session's nor one on the path of a container `alsoWalk` names, fails its listing with the provider's own answer, the walk goes on without it; any other failed listing ends the walk, and the capture with it, as before.
+The first five such containers the walk meets (`UNLISTED_PARENTS_NAMED_MAX`) are named in the inventory as not read, each with the provider's sentence on one line and cut at 200 code points, each run of whitespace and control characters in it read as one space and a lone surrogate as U+FFFD, and the rest are only counted, in the levels' own words, as "N more Catalogs were not read: listing their Namespaces failed as well, and they are not named here." on Apache Spark, or "1 more Catalog was not read: listing its Namespaces failed as well, and it is not named here." for one, so however many fail, the notes leave the packing room for its rows.
 Snowflake declares it, skipping `INFORMATION_SCHEMA`, so a connection with a Database and no Schema is walked in that database's schemas ([`docs/providers/snowflake.md`](./providers/snowflake.md#83-plan-mode-and-agent-operations) section 8.3).
+Apache Spark declares it with `whenNoDefault`, so a connection is walked in its current namespace or, when the current catalog holds no such namespace, in that catalog's namespaces ([`docs/providers/spark.md`](./providers/spark.md#83-plan-mode-and-agent-operations) section 8.3).
 Kubernetes declares both: its Secrets kind is withheld from grounding and, listed in `machineRedaction.maskedNameKinds`, masked in its agent reads, while namespace names pass, in the inventory and in agent reads alike, because a namespace is what a statement has to name; and its walk reads the session's Default namespace and `Cluster`, so the inventory says how many other namespaces it did not read, and a kind past its 1,000-object listing cap is counted as a floor ([`docs/providers/kubernetes.md`](./providers/kubernetes.md) section 9).
 RabbitMQ declares a scope with no named containers: its walk reads the virtual host `/` alone when the account lists it, at most 7 management GETs whatever the broker holds, and the inventory says how many other virtual hosts it did not read; when `/` is not listed, the walk reads no virtual host and the model sees only that count ([`docs/providers/rabbitmq.md`](./providers/rabbitmq.md#8-ai-agent-and-mcp)).
 An absence the model was not told about is read as an absence in the database, which is #414 in one sentence.
@@ -593,7 +597,7 @@ What a grounded plan run is given, and where each part comes from:
   which process happened to have read a catalog first. They are read from what the engine already
   holds — `pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite — so no column
   is scanned and no value is read out of any row. `ESTIMATE_BUILDERS` serves those two and SQL Server (`buildMssqlEstimates`, from `sys.partitions`) and
-  nothing else, and #414 added no engine to it: on the other thirty-three `readSchemaStatistics` answers
+  nothing else, and #414 added no engine to it: on the other thirty-four `readSchemaStatistics` answers
   `DIALECT_HAS_NO_STATISTICS` — *"this engine does not hold statistics this run knows how to read"* —
   so **a known schema with no statistics is now the ORDINARY combination rather than a rare one**, and
   the two sentences the run is handed agree: the inventory is a record of what exists, and every
@@ -714,9 +718,9 @@ Three consequences worth stating plainly, because each is easy to assume the oth
 
 1. **A plan run costs statements now.** On PostgreSQL and SQLite grounding is catalog reads plus one
    statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
-   because SQLite resolves table names at prepare time). On the other thirty-four it is **one**, the
+   because SQLite resolves table names at prepare time). On the other thirty-five it is **one**, the
    single `db.schema.read` call, except on SQL Server, which adds the one statistics read
-   `ESTIMATE_BUILDERS` serves outside `CATALOG_PLANS`; the other thirty-three hold no statistics this run
+   `ESTIMATE_BUILDERS` serves outside `CATALOG_PLANS`; the other thirty-four hold no statistics this run
    knows how to read. Since #789 an engine that declares object kinds costs **one more**, the
    object-surface reading above; an engine that declares none is charged nothing extra, because a read
    that cannot exist is never admitted. They come out of the same per-run statement budget every other read does,
@@ -774,7 +778,7 @@ block tagged with the connection's canonical type-id, rationale after the block,
 not in the inventory.
 Since #414 the WORDING varies with the engine's `queryLanguage` and the TAG does not: on an engine whose language is not SQL (a `json` engine, since #1085 a `promql` one, a `cypher` one since Neo4j, and an `influxql` one) the run is asked for one statement or command in that engine's own language, a MongoDB aggregation or a PromQL expression rather than a SELECT, and told that this engine speaks no SQL, while the tag stays the canonical type-id in both arms.
 That is deliberate rather than an oversight: `isQueryFenceTag`
-is a total record over `DatabaseType`, so all thirty-six ids pass it, whereas a draft the model fenced as
+is a total record over `DatabaseType`, so all thirty-seven ids pass it, whereas a draft the model fenced as
 ```` ```javascript ```` passes nothing and records no `plan-statement-drafted` event at all — the run
 would score as having drafted nothing while the user is looking at a statement. A run that cannot answer from the
 inventory takes the other legitimate ending: a line beginning `NO STATEMENT:` saying exactly what is
@@ -964,7 +968,7 @@ Two consequences worth stating:
   composed path has and the provider path cannot: reads audited statement by statement rather than as
   one opaque call; foreign keys, which no provider can report on an engine that declares none; and
   SQLite's inventory, which is parsed out of the DDL text the engine stored and which its provider
-  does not expose in the same shape. Collapsing the other thirty-four onto the composed one is the thing
+  does not expose in the same shape. Collapsing the other thirty-five onto the composed one is the thing
   #414 exists because nobody can do: a catalog statement has to be written per dialect and verified
   against a live server, and until it is, refusing the dialect was the honest answer and reading the
   provider is a better one.
@@ -2677,7 +2681,7 @@ src/lib/agent/
 ├── runtime.ts            # composition root: the only place that assembles a tool context
 ├── tools.ts              # the four tools + server-side selection; the only database reach,
                           #   the model's tools and the server's own grounding reads alike
-├── composed-sql.ts       # the SQL the SERVER writes, per dialect: four of the thirty-six
+├── composed-sql.ts       # the SQL the SERVER writes, per dialect: four of the thirty-seven
 ├── sqlite-ddl.ts         # reading SQLite's stored DDL back into an inventory
 ├── execution-policy.ts   # the frozen policy and the run-level ceilings
 ├── deadline.ts           # the wall-clock deadline and the timeout clamp

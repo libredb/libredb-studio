@@ -1,0 +1,70 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T21:14:02.248Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "a metadata read on a released session: SHOW CATALOGS: command step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "command": {
+          "sql_command": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "sql": "",
+            "input": {
+              "common": null,
+              "sql": {
+                "pos_args": [],
+                "pos_arguments": [],
+                "args": {},
+                "named_arguments": {},
+                "query": "SHOW CATALOGS"
+              },
+              "rel_type": "sql"
+            }
+          },
+          "command_type": "sql_command"
+        },
+        "op_type": "command"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "error",
+  "code": 13,
+  "details": "[INVALID_HANDLE.SESSION_CLOSED] The handle <session> is invalid. Session was closed. SQLSTATE: HY000",
+  "metadata": {
+    "content-type": "application/grpc",
+    "grpc-status-details-bin": {
+      "$bytes": "CA0SZFtJTlZBTElEX0hBTkRMRS5TRVNTSU9OX0NMT1NFRF0gVGhlIGhhbmRsZSA8c2Vzc2lvbj4gaXMgaW52YWxpZC4gU2Vzc2lvbiB3YXMgY2xvc2VkLiBTUUxTVEFURTogSFkwMDAa2wIKKHR5cGUuZ29vZ2xlYXBpcy5jb20vZ29vZ2xlLnJwYy5FcnJvckluZm8SrgIKIm9yZy5hcGFjaGUuc3BhcmsuU3BhcmtTUUxFeGNlcHRpb24SEG9yZy5hcGFjaGUuc3BhcmsaiAEKB2NsYXNzZXMSfVsib3JnLmFwYWNoZS5zcGFyay5TcGFya1NRTEV4Y2VwdGlvbiIsImphdmEuc3FsLlNRTEV4Y2VwdGlvbiIsImphdmEubGFuZy5FeGNlcHRpb24iLCJqYXZhLmxhbmcuVGhyb3dhYmxlIiwiamF2YS5sYW5nLk9iamVjdCJdGhEKCHNxbFN0YXRlEgVIWTAwMBorCgplcnJvckNsYXNzEh1JTlZBTElEX0hBTkRMRS5TRVNTSU9OX0NMT1NFRBorChFtZXNzYWdlUGFyYW1ldGVycxIWeyJoYW5kbGUiOiI8c2Vzc2lvbj4ifQ=="
+    }
+  }
+}

@@ -2074,3 +2074,59 @@ describe("buildResultExport: Snowflake's rows and types", () => {
     expect(declared).toContain('"b" BINARY');
   });
 });
+
+describe("buildResultExport: Apache Spark", () => {
+  test("DIALECT_TYPES: an inferred column is spelled STRING, DOUBLE and BINARY, which Spark has", () => {
+    const content = buildResultExport(
+      "sql-ddl",
+      source({ rows: [{ t: "x", n: 1.5, b: new Uint8Array([1]) }], fields: ["t", "n", "b"], dialect: "spark" }),
+    ).content;
+    expect(content).toContain("`t` STRING");
+    expect(content).toContain("`n` DOUBLE");
+    expect(content).toContain("`b` BINARY");
+    expect(content).not.toContain("TEXT");
+    expect(content).not.toContain("BLOB");
+    expect(content).not.toContain("DOUBLE PRECISION");
+  });
+
+  test("an INSERT writes Spark's typed literals, its escapes, X'..' bytes and the non-finite casts", () => {
+    const row = {
+      d: "2026-10-12",
+      s: "it's \\",
+      b: Buffer.from([0x01, 0xab]),
+      f: Number.NaN,
+      g: Number.POSITIVE_INFINITY,
+    };
+    const content = buildResultExport(
+      "sql-insert",
+      source({
+        rows: [row],
+        fields: Object.keys(row),
+        tabName: "t",
+        dialect: "spark",
+        columnTypes: { d: "date", s: "string", b: "binary", f: "double", g: "double" },
+      }),
+    ).content;
+    expect(content).toContain("DATE '2026-10-12'");
+    expect(content).toContain("'it\\'s \\\\'");
+    expect(content).toContain("X'01ab'");
+    expect(content).toContain("CAST('NaN' AS DOUBLE)");
+    expect(content).toContain("CAST('Infinity' AS DOUBLE)");
+  });
+
+  test("a geospatial cell is refused as unwritable, not written in a form Spark refuses", () => {
+    const row = { id: 1, g: "SRID=4326;POINT (1 2)" };
+    const content = buildResultExport(
+      "sql-insert",
+      source({
+        rows: [row],
+        fields: ["id", "g"],
+        tabName: "t",
+        dialect: "spark",
+        columnTypes: { id: "int", g: "geometry(4326)" },
+      }),
+    ).content;
+    expect(content).not.toContain("POINT (1 2)'");
+    expect(content).toContain('-- Row 1 skipped: column "g" holds a geometry(4326) value');
+  });
+});

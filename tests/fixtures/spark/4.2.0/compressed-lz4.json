@@ -1,0 +1,213 @@
+{
+  "$captured": {
+    "service": "spark",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T11:06:35.515Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "a result after a session SET of the codec to lz4: relation step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "root": {
+          "common": null,
+          "sql": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "query": "SELECT id, 'x' AS v FROM range(0, 3, 1, 1)"
+          },
+          "rel_type": "sql"
+        },
+        "op_type": "root"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "pass",
+  "payload": [
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": {
+        "struct": {
+          "fields": [
+            {
+              "name": "id",
+              "data_type": {
+                "long": {
+                  "type_variation_reference": 0
+                },
+                "kind": "long"
+              },
+              "nullable": false
+            },
+            {
+              "name": "v",
+              "data_type": {
+                "string": {
+                  "type_variation_reference": 0,
+                  "collation": ""
+                },
+                "kind": "string"
+              },
+              "nullable": false
+            }
+          ],
+          "type_variation_reference": 0
+        },
+        "kind": "struct"
+      },
+      "operation_id": "<operation>",
+      "response_id": "17720318-8342-42ab-9d57-9b89c8c88144",
+      "server_side_session_id": "17d3f22e-5cfa-43b6-87e6-ba8c3095c6db"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "81447882-3016-401a-b5ba-690aecfb57c4",
+      "server_side_session_id": "17d3f22e-5cfa-43b6-87e6-ba8c3095c6db",
+      "execution_progress": {
+        "stages": [],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "3c785fd7-2812-4607-88db-5923c929f544",
+      "server_side_session_id": "17d3f22e-5cfa-43b6-87e6-ba8c3095c6db",
+      "arrow_batch": {
+        "row_count": "3",
+        "data": {
+          "$bytes": "/////8AAAAAQAAAAAAAKAA4ABgANAAgACgAAAAAABAAQAAAAAAEKAAwAAAAIAAQACgAAAAgAAAAIAAAAAAAAAAIAAABIAAAABAAAANL///8UAAAAFAAAABgAAAAAAAAFFAAAAAAAAAAAAAAABAAEAAQAAAABAAAAdgASABgAFAAAABMADAAAAAgABAASAAAAFAAAABQAAAAcAAAAAAAAAiAAAAAAAAAAAAAAAAgADAAIAAcACAAAAAAAAAFAAAAAAgAAAGlkAAD/////2AAAABQAAAAAAAAADAAYAA4AFwAQAAQADAAAAGgAAAAAAAAAAAAEABQAAAAAAAADDAAcABAADAAIAAQADAAAABwAAAAcAAAAcAAAAAMAAAAAAAAAAAAAAAQABAAEAAAABQAAAAAAAAAAAAAACQAAAAAAAAAQAAAAAAAAACAAAAAAAAAAMAAAAAAAAAAJAAAAAAAAAEAAAAAAAAAAGAAAAAAAAABYAAAAAAAAAAsAAAAAAAAAAAAAAAIAAAADAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAAP//////////BwAAAAAAAAD//////////wAAAAAAAAAAAQAAAAAAAAACAAAAAAAAAP//////////BwAAAAAAAAD//////////wAAAAABAAAAAgAAAAMAAAD//////////3h4eAAAAAAA/////wAAAAA="
+        },
+        "start_offset": "0",
+        "_start_offset": "start_offset",
+        "chunk_index": "0",
+        "_chunk_index": "chunk_index",
+        "num_chunks_in_batch": "1",
+        "_num_chunks_in_batch": "num_chunks_in_batch"
+      },
+      "response_type": "arrow_batch"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "73aa46ed-bff3-4029-baf1-aa91d819149c",
+      "server_side_session_id": "17d3f22e-5cfa-43b6-87e6-ba8c3095c6db",
+      "execution_progress": {
+        "stages": [
+          {
+            "stage_id": "11",
+            "num_tasks": "1",
+            "num_completed_tasks": "1",
+            "input_bytes_read": "0",
+            "done": true
+          }
+        ],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "0634f02a-91df-42b4-88b3-61abef2d74af",
+      "server_side_session_id": "17d3f22e-5cfa-43b6-87e6-ba8c3095c6db",
+      "execution_progress": {
+        "stages": [
+          {
+            "stage_id": "11",
+            "num_tasks": "1",
+            "num_completed_tasks": "1",
+            "input_bytes_read": "0",
+            "done": true
+          }
+        ],
+        "num_inflight_tasks": "0"
+      },
+      "response_type": "execution_progress"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": {
+        "metrics": [
+          {
+            "execution_metrics": {
+              "pipelineTime": {
+                "name": "duration",
+                "value": "2",
+                "metric_type": "timing"
+              }
+            },
+            "name": "WholeStageCodegen (1)",
+            "plan_id": "290",
+            "parent": "290"
+          },
+          {
+            "execution_metrics": {},
+            "name": "Project",
+            "plan_id": "289",
+            "parent": "290"
+          },
+          {
+            "execution_metrics": {
+              "numOutputRows": {
+                "name": "number of output rows",
+                "value": "3",
+                "metric_type": "sum"
+              }
+            },
+            "name": "Range",
+            "plan_id": "288",
+            "parent": "289"
+          }
+        ]
+      },
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "e024f4ff-fa1e-49f0-9e75-beb7d3b6756c",
+      "server_side_session_id": "17d3f22e-5cfa-43b6-87e6-ba8c3095c6db"
+    }
+  ]
+}

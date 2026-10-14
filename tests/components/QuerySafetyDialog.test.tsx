@@ -5,13 +5,14 @@ import "../helpers/mock-navigation";
 import React from "react";
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { QuerySafetyDialog, isDangerousQuery } from "@/components/QuerySafetyDialog";
+import { QuerySafetyDialog, isDangerousQuery, writesUnderGrammar } from "@/components/QuerySafetyDialog";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
 import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators";
 import { statementRefusal } from "@/lib/db/destructive-commands";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
+import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@/lib/sql/grammar";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
 import { schemaContextOf } from "@/lib/db/detailed-object";
 import { SAMPLED_MARKER, sampledSchema } from "../fixtures/sampled-schema";
@@ -2379,5 +2380,370 @@ describe("Snowflake's confirmation forms", () => {
 
   test("SQL Server's procedure call still runs unasked", () => {
     expect(isDangerousQuery("EXEC sp_cleanup", "mssql")).toBe(false);
+  });
+});
+
+// The `wordThenLiteral` code form, read before any row declares it: a code word whose next code, past whitespace and
+// comments, is a string literal. Spark's row declares `{ wordThenLiteral: "USING" }` for
+// `TRANSFORM ... USING '<command>'`.
+describe("a confirmCodeForms word followed by a string literal", () => {
+  const FORM: SqlGrammar = {
+    ...DEFAULT_SQL_GRAMMAR,
+    blockComment: "nesting",
+    backslashAlwaysEscapes: true,
+    rawStrings: true,
+    confirmCodeForms: [{ wordThenLiteral: "USING" }],
+  };
+
+  test.each([
+    "SELECT TRANSFORM(a) USING 'cat' FROM t",
+    "SELECT TRANSFORM(a) using 'cat' AS (b) FROM t",
+    'SELECT TRANSFORM(a) USING "cat" FROM t',
+    "SELECT TRANSFORM(a) USING /* c */ r'cat' FROM t",
+    "SELECT TRANSFORM(a) USING -- c\n 'cat' FROM t",
+    "FROM t MAP a USING 'cat'",
+    "FROM t REDUCE a USING 'cat' AS (b)",
+    // A `USING` that no literal follows does not end the reading: a later one still asks.
+    "WITH s AS (SELECT * FROM a JOIN b USING (id)) SELECT TRANSFORM(id) USING 'cat' FROM s",
+  ])("asks for %j", (sql) => {
+    expect(writesUnderGrammar(sql, FORM)).toBe(true);
+  });
+
+  test.each([
+    "SELECT * FROM a JOIN b USING (id)",
+    "CREATE TABLE t (a INT) USING parquet",
+    "CREATE TABLE t (a INT) USING `parquet`",
+    "SELECT TRANSFORM(a) USING $$cat$$ FROM t",
+    "SELECT 1 /* USING 'cat' */",
+    "SELECT 'USING', 'cat'",
+    "SELECT using_col FROM t WHERE x = 'cat'",
+    // A literal inside a comment between the word and its next code is not the literal that follows it.
+    "SELECT * FROM a JOIN b USING /* 'cat' */ (id)",
+  ])("does not ask for %j", (sql) => {
+    expect(writesUnderGrammar(sql, FORM)).toBe(false);
+  });
+
+  test("absent: the same text asks nothing", () => {
+    expect(writesUnderGrammar("SELECT TRANSFORM(a) USING 'cat' FROM t", DEFAULT_SQL_GRAMMAR)).toBe(false);
+  });
+});
+
+// The `quotedCall` code form, read before any row declares it: a terminated quoted name whose text is the form's name,
+// compared without case, that a `(` follows past whitespace and comments. Spark's row declares one per reflection
+// function, since Spark resolves `` `reflect`(...) `` as `reflect(...)`.
+describe("a confirmCodeForms quoted name called as a function", () => {
+  const FORM: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, confirmCodeForms: [{ quotedCall: "REFLECT" }] };
+
+  test.each([
+    "SELECT `reflect`('a', 'b')",
+    "SELECT `REFLECT`('a')",
+    "SELECT \"Reflect\"('a')",
+    "SELECT `reflect` /* c */ ('a')",
+    "SELECT `reflect` -- c\n('a')",
+    "SELECT s.`reflect`('a')",
+    // A quoted name no `(` follows does not end the reading: a later one still asks.
+    "SELECT `reflect` AS c, `reflect`('a') FROM t",
+  ])("asks for %j", (sql) => {
+    expect(writesUnderGrammar(sql, FORM)).toBe(true);
+  });
+
+  test.each([
+    "SELECT `reflect` FROM t",
+    "SELECT `reflect`.a FROM t",
+    "SELECT `reflection`('a')",
+    "SELECT `re``flect`('a')",
+    "SELECT 'reflect'('a')",
+    "SELECT 1 /* `reflect`('a') */",
+    // The bare word is the word sequence's to ask for, not this form's.
+    "SELECT reflect('a')",
+    // A quoted name that never closes is not read as a call here; `isDangerousQuery` asks for it as unreadable text.
+    "SELECT `reflect('a')",
+  ])("does not ask for %j", (sql) => {
+    expect(writesUnderGrammar(sql, FORM)).toBe(false);
+  });
+});
+
+// The `computedCall` code form, read before any row declares it: a code word, then a parenthesised run, then a `(`, past
+// whitespace and comments, which calls a function whose name the run computes. Spark's row declares
+// `{ computedCall: "IDENTIFIER" }` for `IDENTIFIER(<expr>)(...)`.
+describe("a confirmCodeForms word whose parenthesised run names the function called", () => {
+  const FORM: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, confirmCodeForms: [{ computedCall: "IDENTIFIER" }] };
+
+  test.each([
+    "SELECT IDENTIFIER('f')('a', 'b')",
+    "SELECT identifier('f' || 'g')(1)",
+    "SELECT IDENTIFIER /* c */ (concat('f', ')')) -- c\n (1)",
+    "SELECT IDENTIFIER(f(g(1), '('))(2)",
+    // An IDENTIFIER whose name is not called does not end the reading: a later one still asks.
+    "SELECT IDENTIFIER('c') FROM t WHERE IDENTIFIER('f')(1) > 0",
+  ])("asks for %j", (sql) => {
+    expect(writesUnderGrammar(sql, FORM)).toBe(true);
+  });
+
+  test.each([
+    "SELECT * FROM IDENTIFIER('t')",
+    "SELECT IDENTIFIER('c') FROM t",
+    "SELECT identifier FROM t",
+    "SELECT IDENTIFIER('f'",
+    "SELECT 'IDENTIFIER(f)(1)'",
+    "SELECT 1 /* IDENTIFIER('f')(1) */",
+  ])("does not ask for %j", (sql) => {
+    expect(writesUnderGrammar(sql, FORM)).toBe(false);
+  });
+});
+
+// The `dollarQuoted` code form, read before any row declares it: a dollar-quoted run, `$$` or a tagged opener, at a code
+// position as the span reader reads one at each character. Spark's row declares it, since Spark 4.2 reads such a run as
+// a metric view's YAML definition, which the gate does not read.
+describe("a confirmCodeForms dollar-quoted run", () => {
+  const FORM: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, confirmCodeForms: [{ dollarQuoted: true }] };
+
+  test.each([
+    "SELECT $$x$$",
+    "SELECT $tag$x$tag$",
+    "SELECT 1 /* c */, $$x$$ FROM t",
+    // The run is read at each character, as Spark's lexer reads it: Spark's names hold no `$`, so a `$$` right after a
+    // name's letters opens a run.
+    "SELECT a$$x$$",
+    // A run that never closes asks too; `isDangerousQuery` asks for it as unreadable text as well.
+    "SELECT $$x",
+  ])("asks for %j", (sql) => {
+    expect(writesUnderGrammar(sql, FORM)).toBe(true);
+  });
+
+  test.each(["SELECT '$$x$$'", "SELECT `$$x$$`", "SELECT 1 -- $$x$$", "SELECT 1 /* $t$x$t$ */", "SELECT $1"])(
+    "does not ask for %j",
+    (sql) => {
+      expect(writesUnderGrammar(sql, FORM)).toBe(false);
+    },
+  );
+});
+
+// The `confirmConfigKeys` fact, read before any row declares it: a SET or RESET of a listed session key asks, and so
+// does a RESET with no key, which restores every key. Spark's row lists variable substitution and the catalog keys.
+describe("a confirmConfigKeys key set or reset", () => {
+  const KEYS: SqlGrammar = {
+    ...DEFAULT_SQL_GRAMMAR,
+    confirmConfigKeys: ["spark.sql.variable.substitute", "spark.sql.defaultCatalog", "spark.sql.catalog."],
+  };
+
+  test.each([
+    "SET spark.sql.variable.substitute=true",
+    "SET spark.sql.variable.substitute = true",
+    "set SPARK.SQL.VARIABLE.SUBSTITUTE=TRUE",
+    "SET `spark.sql.variable.substitute`=true",
+    "SET /* c */ spark.sql.variable.substitute=true",
+    "-- note\nSET spark.sql.variable.substitute=true",
+    "RESET spark.sql.variable.substitute",
+    "SET spark.sql.defaultCatalog=lake",
+    "SET spark.sql.catalog.lake=org.apache.iceberg.spark.SparkCatalog",
+    "SET spark.sql.catalog.lake.uri=thrift://metastore:9083",
+    "RESET",
+    "RESET;",
+  ])("asks for %j", (sql) => {
+    expect(writesUnderGrammar(sql, KEYS)).toBe(true);
+  });
+
+  test.each([
+    "SET spark.sql.shuffle.partitions=8",
+    "SET spark.sql.catalogImplementation=hive",
+    "SET spark.sql.variable.substitute.depth=40",
+    "SET TIME ZONE 'UTC'",
+    "SET VAR x = 1",
+    "SET CATALOG 'lake'",
+    "SET PATH = DEFAULT_PATH",
+    "SET -v",
+    "SET",
+    "RESET spark.sql.shuffle.partitions",
+    "SELECT 'SET spark.sql.variable.substitute=true'",
+    // A SET without `=` only shows the key's value.
+    "SET spark.sql.variable.substitute",
+    "SET spark.sql.defaultCatalog;",
+  ])("does not ask for %j", (sql) => {
+    expect(writesUnderGrammar(sql, KEYS)).toBe(false);
+  });
+
+  test("absent: a RESET and a listed key ask nothing", () => {
+    expect(writesUnderGrammar("RESET", DEFAULT_SQL_GRAMMAR)).toBe(false);
+    expect(writesUnderGrammar("SET spark.sql.variable.substitute=true", DEFAULT_SQL_GRAMMAR)).toBe(false);
+  });
+
+  // Spark takes an unquoted key from the text after the keyword through `String.trim`, which removes every character
+  // at or below U+0020. A key in backticks, or in double quotes where Spark reads double quotes as identifier quotes
+  // (`spark.sql.ansi.enabled` and `spark.sql.ansi.doubleQuotedIdentifiers` both on), is one token, and the white space
+  // and comments around it are hidden (`SparkSqlParser.scala`, `parsers.scala` and `SqlBaseLexer.g4`, v4.2.0), so the
+  // key is read the same way here.
+  test.each([
+    "SET\u0001spark.sql.variable.substitute=true",
+    "RESET spark.sql.variable.substitute\u001f",
+    "RESET\u0001",
+    'SET "spark.sql.variable.substitute"=true',
+    'RESET "spark.sql.defaultCatalog"',
+    "SET `spark.sql.variable.substitute`/**/=true",
+    "SET `spark.sql.variable.substitute`/**/=`true`",
+    "RESET `spark.sql.variable.substitute`-- note",
+    "RESET `spark.sql.defaultCatalog`/**/",
+    "SET `spark.sql.variable.substitute`=true",
+    "SET　`spark.sql.defaultCatalog`=`lake`",
+    'SET "spark.sql.variable.substitute"/**/=true',
+  ])("asks for %j, the key read as Spark reads it", (sql) => {
+    expect(writesUnderGrammar(sql, KEYS)).toBe(true);
+  });
+
+  test.each([
+    "SET\u0001spark.sql.shuffle.partitions=8",
+    'SET "spark.sql.variable.substitute.depth"=40',
+    // A quoted key with no `=` after it, past white space and comments, only shows the value; Spark refuses the last.
+    "SET `spark.sql.variable.substitute`",
+    "SET `spark.sql.variable.substitute` /* c */;",
+    "SET `spark.sql.defaultCatalog`x=lake",
+  ])("does not ask for %j, the key read as Spark reads it", (sql) => {
+    expect(writesUnderGrammar(sql, KEYS)).toBe(false);
+  });
+
+  test("a doubled quote inside a quoted key is one quote, as Spark reads it", () => {
+    const QUOTED: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, confirmConfigKeys: ["a`b", 'a"b'] };
+    expect(writesUnderGrammar("SET `a``b`=1", QUOTED)).toBe(true);
+    expect(writesUnderGrammar('SET "a""b"=1', QUOTED)).toBe(true);
+    expect(writesUnderGrammar("SET `a````b`=1", QUOTED)).toBe(false);
+  });
+});
+
+// Spark's row: the forms that replace or overwrite data, load code, start a process, call a Java method, run text the
+// gate cannot read, drop partitions, rebind a catalog or switch variable substitution back on.
+describe("Apache Spark's confirmation forms", () => {
+  test.each([
+    "CREATE OR REPLACE TABLE t AS SELECT 1",
+    "CREATE OR REPLACE TEMPORARY VIEW v AS SELECT 1",
+    "REPLACE TABLE t (a INT) USING parquet",
+    "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE",
+    "LOAD DATA INPATH '/data/x.csv' OVERWRITE INTO TABLE t",
+    "CALL lake.system.rewrite_data_files('db.t')",
+    "EXECUTE IMMEDIATE 'SELECT 1'",
+    "ADD JAR '/opt/lib/udf.jar'",
+    "ADD ARCHIVES '/opt/lib/a.zip'",
+    "INSERT OVERWRITE TABLE t SELECT 1",
+    "FROM s INSERT INTO u SELECT a INSERT OVERWRITE TABLE t SELECT a",
+    "INSERT INTO t REPLACE WHERE a = 1 SELECT 1",
+    "INSERT INTO t REPLACE USING (a) SELECT 1",
+    // Spark 4.2's INSERT forms: WITH SCHEMA EVOLUTION before OVERWRITE, and REPLACE ON with a condition.
+    "INSERT WITH SCHEMA EVOLUTION OVERWRITE TABLE t SELECT * FROM s",
+    "FROM s INSERT INTO u SELECT a INSERT WITH SCHEMA EVOLUTION OVERWRITE t SELECT a",
+    "INSERT INTO t REPLACE ON t.id = s.id SELECT * FROM s",
+    "INSERT WITH SCHEMA EVOLUTION INTO t AS x BY NAME REPLACE ON x.id = s.id (SELECT * FROM u) AS s",
+    "CREATE FUNCTION f AS 'com.example.F' USING JAR '/opt/lib/udf.jar'",
+    "CREATE TEMPORARY FUNCTION f AS 'com.example.F' USING FILE '/opt/lib/f.py'",
+    "CREATE FUNCTION f AS 'com.example.F' USING ARCHIVE '/opt/lib/a.zip'",
+    "MSCK REPAIR TABLE t DROP PARTITIONS",
+    "REPAIR TABLE t SYNC PARTITIONS",
+    "SELECT TRANSFORM(a) USING 'cat' AS (b) FROM t",
+    'SELECT TRANSFORM(a) USING "cat" FROM t',
+    "SELECT TRANSFORM(a) USING /* c */ r'cat' FROM t",
+    "SELECT reflect('java.util.UUID', 'randomUUID')",
+    "SELECT java_method('java.util.UUID', 'randomUUID')",
+    "SELECT try_reflect('java.util.UUID', 'randomUUID')",
+    // Spark resolves a function name without case, quoted or not, and IDENTIFIER(<expr>) computes the name it calls.
+    "SELECT `reflect`('java.util.UUID', 'randomUUID')",
+    "SELECT `java_method`('java.util.UUID', 'randomUUID')",
+    "SELECT `try_reflect`('java.util.UUID', 'randomUUID')",
+    "SELECT system.builtin.`REFLECT` /* c */ ('java.util.UUID', 'randomUUID')",
+    "SELECT \"Java_Method\"('java.util.UUID', 'randomUUID')",
+    "SELECT IDENTIFIER('reflect')('java.util.UUID', 'randomUUID')",
+    "SELECT identifier -- c\n('java' || '_method') /* d */ ('java.util.UUID', 'randomUUID')",
+    // A dollar-quoted body is code the gate does not read: Spark 4.2 reads it as a metric view's YAML definition.
+    "CREATE VIEW mv WITH METRICS LANGUAGE YAML AS $$\nversion: 0.1\nsource: s\nmeasures:\n  - name: total\n    expr: SUM(amount)\n$$",
+    "SET spark.sql.variable.substitute=true",
+    "SET spark.sql.defaultCatalog=lake",
+    "SET spark.sql.catalog.lake=org.apache.iceberg.spark.SparkCatalog",
+    "RESET",
+    // A quoted key is one token, read past the white space and comments Spark hides.
+    "SET `spark.sql.variable.substitute`/**/=true",
+    "SET `spark.sql.variable.substitute`/**/=`true`",
+    "RESET `spark.sql.variable.substitute`-- note",
+    "RESET `spark.sql.defaultCatalog`/**/",
+    "SET `spark.sql.variable.substitute`=true",
+    "SET　`spark.sql.defaultCatalog`=`lake`",
+    'SET "spark.sql.variable.substitute"/**/=true',
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "spark")).toBe(true);
+  });
+
+  test("a CTE-led DELETE asks with a raw string or a hint in its CTE list, and so does a later statement", () => {
+    expect(isDangerousQuery("WITH x AS (SELECT r'C:\\' AS a) DELETE FROM t", "spark")).toBe(true);
+    expect(isDangerousQuery("WITH x AS (SELECT /*+ REPARTITION(2) */ a FROM u) DELETE FROM t", "spark")).toBe(true);
+    expect(isDangerousQuery("SELECT 1; SET spark.sql.variable.substitute=true", "spark")).toBe(true);
+    // A comment that holds `/*+` ends at its first `*/`, so the DROP after it is code.
+    expect(isDangerousQuery("SELECT 1 /* x /*+ */ ; DROP TABLE t; -- */", "spark")).toBe(true);
+    expect(isDangerousQuery("BEGIN SELECT r'\\'; DROP TABLE t; SELECT '\\''; END", "spark")).toBe(true);
+  });
+
+  test("a CTE-led DELETE after a `--` comment a backslash continues asks, as Spark reads it", () => {
+    // Spark reads `WITH c AS (SELECT 1 ) DELETE FROM u`: the backslash carries the comment over `) SELECT 1 --`.
+    expect(isDangerousQuery("WITH c AS (SELECT 1 -- note \\\n) SELECT 1 --\n) DELETE FROM u", "spark")).toBe(true);
+  });
+
+  test("a CTE-led INSERT OVERWRITE on the line after a lone carriage return asks, as Spark reads it", () => {
+    // Spark ends the `--` comment at the carriage return and reads `WITH c AS (SELECT 1) INSERT OVERWRITE TABLE u
+    // SELECT 1`; a comment read on to the line feed leaves `WITH c AS (SELECT 1) SELECT 1`, which does not ask.
+    expect(isDangerousQuery("WITH c AS (SELECT 1) -- note\rINSERT OVERWRITE TABLE u\nSELECT 1", "spark")).toBe(true);
+  });
+
+  test("a CTE-led DELETE after a hint closed right before `*` asks: `*/*` is the hint's closer and a `*`", () => {
+    expect(isDangerousQuery("WITH c AS (SELECT /*+ H */* FROM t) DELETE FROM u -- */", "spark")).toBe(true);
+  });
+
+  test("schema evolution and a REPLACE ask only where the INSERT overwrites or replaces rows", () => {
+    expect(isDangerousQuery("INSERT WITH SCHEMA EVOLUTION /* note */ OVERWRITE t SELECT 1", "spark")).toBe(true);
+    expect(isDangerousQuery("INSERT INTO t REPLACE -- note\nON t.id = 1 SELECT 1", "spark")).toBe(true);
+    expect(isDangerousQuery("INSERT WITH SCHEMA EVOLUTION INTO t SELECT 1", "spark")).toBe(false);
+    expect(isDangerousQuery("CREATE VIEW v WITH SCHEMA EVOLUTION AS SELECT 1", "spark")).toBe(false);
+    expect(isDangerousQuery("SELECT replace(a, 'x', 'y') FROM t JOIN u ON t.id = u.id", "spark")).toBe(false);
+  });
+
+  test("a quoted reflection name asks only where a `(` follows it, and IDENTIFIER only where its name is called", () => {
+    expect(isDangerousQuery("SELECT `Reflect` ('java.util.UUID', 'randomUUID')", "spark")).toBe(true);
+    expect(isDangerousQuery("SELECT `reflect`, `java_method` FROM t", "spark")).toBe(false);
+    expect(isDangerousQuery("SELECT `reflection`('a') FROM t", "spark")).toBe(false);
+    expect(isDangerousQuery("SELECT * FROM IDENTIFIER('t') WHERE IDENTIFIER('c') > 1", "spark")).toBe(false);
+    // The text cannot tell a column list from a call's arguments, so a table IDENTIFIER names before one asks too.
+    expect(isDangerousQuery("CREATE TABLE IDENTIFIER('t') (a INT)", "spark")).toBe(true);
+  });
+
+  test("a dollar-quoted body asks only where it stands at a code position", () => {
+    expect(isDangerousQuery("CREATE VIEW mv WITH METRICS LANGUAGE YAML AS $m$ source: s $m$", "spark")).toBe(true);
+    expect(isDangerousQuery("SELECT '$$x$$', `$$y$$` FROM t -- $$z$$", "spark")).toBe(false);
+  });
+
+  test.each([
+    "SELECT transform(arr, x -> x + 1) FROM t",
+    "SELECT map(1, 2)",
+    "SELECT reflection FROM t",
+    "SELECT * FROM a JOIN b USING (id)",
+    "CREATE TABLE t (a INT) USING parquet",
+    "SET spark.sql.shuffle.partitions=8",
+    "SET TIME ZONE 'UTC'",
+    "SELECT /*+ MERGE(t) */ * FROM t JOIN u ON t.id = u.id",
+    "SELECT r'C:\\' AS a",
+    "INSERT INTO t VALUES (1)",
+    "USE NAMESPACE studio",
+    "SET CATALOG 'lake'",
+    "CACHE TABLE t",
+    // A SET without `=` only shows the key's value, and these forms name no listed key.
+    "SET spark.sql.variable.substitute",
+    "SET `spark.sql.defaultCatalog`",
+    "SET VAR x = 1",
+    "SET PATH = DEFAULT_PATH",
+    "SET -v",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "spark")).toBe(false);
+  });
+
+  test.each(["postgres", "databend", "snowflake"] as const)("%s keeps its verdicts", (type) => {
+    expect(isDangerousQuery("SELECT reflect('a', 'b')", type)).toBe(false);
+    expect(isDangerousQuery("SELECT try_reflect('a', 'b')", type)).toBe(false);
+    expect(isDangerousQuery("SELECT `reflect`('a', 'b')", type)).toBe(false);
+    expect(isDangerousQuery("SELECT IDENTIFIER('reflect')('a', 'b')", type)).toBe(false);
+    expect(isDangerousQuery("SET spark.sql.variable.substitute=true", type)).toBe(false);
+    expect(isDangerousQuery("SELECT TRANSFORM(a) USING 'cat' FROM t", type)).toBe(false);
   });
 });

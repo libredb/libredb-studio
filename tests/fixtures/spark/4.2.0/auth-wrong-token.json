@@ -1,0 +1,30 @@
+{
+  "$captured": {
+    "service": "spark-auth",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T11:07:21.216Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/AnalyzePlan",
+    "surface": "a call with a wrong token",
+    "request": {
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "spark_version": {},
+      "analyze": "spark_version"
+    }
+  },
+  "outcome": "error",
+  "code": 16,
+  "details": "Invalid authentication token",
+  "metadata": {
+    "content-type": "application/grpc"
+  }
+}

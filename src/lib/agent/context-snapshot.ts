@@ -1356,7 +1356,10 @@ function renderColumn(table: AgentInventoryObject, column: ColumnSchema): string
  *    was, and that none is below, and it is not gated on what was rendered, for the reason above.
  *  - **Containers a scoped walk did not read.** `ProviderCapabilities.agentWalkScope` reads the
  *    session-default container and the ones the provider names, and the note says how many others exist and
- *    names the ones read, since a read that lists no object names none of them through its entries.
+ *    names the ones read, since a read that lists no object names none of them through its entries. A parent
+ *    the scope reads nothing below whose listing failed is named with the provider's sentence, since its
+ *    children were never listed and so are in no count; past the first `UNLISTED_PARENTS_NAMED_MAX` (tools.ts)
+ *    such parents the rest are only counted, so however many fail the note leaves the packing room for its rows.
  *
  * Inside the fence with the inventory rather than in the preface, the same as the omission
  * notice already is: each one is about the lines beside it, and the bound belongs to the
@@ -1371,13 +1374,37 @@ function inventoryNotes(inventory: AgentInventory, shown: readonly AgentInventor
     );
   }
   if (unreadContainers !== undefined) {
-    const { count, label, labelPlural, read } = unreadContainers;
+    const {
+      count,
+      label,
+      labelPlural,
+      read,
+      unlistedParents = [],
+      unlistedParentsNotNamed: notNamed,
+    } = unreadContainers;
     // The containers read are named here, not left to the entries: a read that lists nothing names none. They are
     // not counted under the level's label, because a container the provider names (Kubernetes' `Cluster`) may not
     // be one of what the label calls the others.
     const names = read.map((path) => JSON.stringify(path)).join(", ");
     notes.push(
-      `Not read: ${count} other ${count === 1 ? label : labelPlural}. This inventory covers only what it read in (${names}), so an object in any other ${label} is not listed below. Do not read its absence as an absence in the database.`,
+      [
+        ...(count === 0 ? [] : [`Not read: ${count} other ${count === 1 ? label : labelPlural}.`]),
+        // A parent whose listing failed is named with the provider's sentence, quoted so it reads as the engine's
+        // words and not as this server's. None of its children was listed, so none of them is in the count above.
+        ...unlistedParents.map(
+          (parent) =>
+            `The ${parent.label} ${JSON.stringify(parent.path)} was not read: listing its ${labelPlural} failed with ${JSON.stringify(parent.reason)}.`,
+        ),
+        // The parents past the few named are only counted, so however many fail, these notes leave room for the rows.
+        ...(notNamed === undefined
+          ? []
+          : [
+              notNamed.count === 1
+                ? `1 more ${notNamed.label} was not read: listing its ${labelPlural} failed as well, and it is not named here.`
+                : `${notNamed.count} more ${notNamed.labelPlural} were not read: listing their ${labelPlural} failed as well, and they are not named here.`,
+            ]),
+        `This inventory covers only what it read in (${names}), so an object in any other ${label} is not listed below. Do not read its absence as an absence in the database.`,
+      ].join(" "),
     );
   }
   // Each kind note says "the X BELOW are", so it is gated on the kind being in what was

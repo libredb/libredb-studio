@@ -67,13 +67,17 @@ export function DatabaseShowcase({ variant }: DatabaseShowcaseProps) {
  * leaves all four row counts as they are and measures 800, 768, 900 and 1080px of 800, 768, 900 and
  * 1080. 1280x800 needs 794 of its 800, measured by sweeping the viewport height at that width, so
  * the 4px gap leaves 6px rather than nothing and the entry after next is what spends the padding.
+ * The thirty-seventh entry (Apache Spark) wrapped 1366x768 into a sixth row and scrolled it to
+ * 777px at the 4px row gap, while 1280x800 kept its six rows needing 794 and 1440x900 and 1920x1080
+ * kept five and four; at the 2px row gap the four sizes need 784, 767, 749 and 695px of 800, 768,
+ * 900 and 1080.
  */
 function DesktopDatabases() {
   return (
     <ul
       aria-label="Supported databases"
       data-testid="database-showcase-desktop"
-      className="flex flex-wrap gap-x-1.5 gap-y-1 pointer-events-none select-none"
+      className="flex flex-wrap gap-x-1.5 gap-y-0.5 pointer-events-none select-none"
     >
       {listShowcaseDatabases().map((db) => {
         const Icon = db.icon;

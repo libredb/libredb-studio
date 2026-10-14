@@ -106,6 +106,7 @@ const NUMERAL_WORDS: Record<string, number> = {
   // words has to fail loudly on the next two providers rather than pass unread.
   "thirty-six": 36,
   "thirty-seven": 37,
+  "thirty-eight": 38,
 };
 
 /**

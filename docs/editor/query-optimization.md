@@ -162,15 +162,20 @@ id, so no reader can grow a dialect test of its own.
 | Character | Established reading | Dialects |
 |-----------|--------------------|----------|
 | `#` | opens a line comment | MySQL, MariaDB, ClickHouse (which also has `#!`), OpenSearch |
-| `#` | ordinary code — a jsonb/geometric operator, an identifier character, a temp-table name, a bind-variable prefix, or a character the parser simply refuses | PostgreSQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, Elasticsearch, Trino, Databend |
+| `#` | ordinary code: a jsonb/geometric operator, an identifier character, a temp-table name, a bind-variable prefix, or a character the parser simply refuses | PostgreSQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, Elasticsearch, Trino, Databend, Apache Spark |
 | `q'…'` | a string literal (alternate quoting): the delimiter after the tag opens the body and its partner followed by `'` closes it, so the body carries apostrophes unescaped — `[ ] { } ( ) < >` pair up, any other character closes with itself, either letter case of the tag, and `nq'…'` is the same form for the national character set | Oracle only |
 | `q'…'` | not a form at all — a name followed by an ordinary string, which is what those characters are there | everything else, including the default |
 | `[…]` | a quoted **name**: everything between the brackets is the identifier (`SELECT [a--b] FROM t` selects a column called `a--b`) and the run does not nest. The doubled `]` this reading honours is SQL Server's escape — SQLite stops at the first `]` and has none, so `[a]]b]` reads as one name where SQLite reads `[a]` and then junk, which it rejects either way | SQL Server, SQLite, libSQL, OpenSearch |
-| `[…]` | an **array literal or subscript**: it nests (`[[1,2],[3,4]]`), nothing inside it is escaped, and a literal inside it is a literal (`m['a]b']`) | ClickHouse, PostgreSQL, DuckDB, Trino, Databend |
-| `/* … /* … */ … */` | one **nesting** comment: a `/*` inside a comment opens another and the run continues until the depth returns to zero, so a region that already contains comments can be commented out. A run short of a closer is undeterminable rather than closed early | PostgreSQL, Db2 LUW, SQL Server, ClickHouse, DuckDB |
+| `[…]` | an **array literal or subscript**: it nests (`[[1,2],[3,4]]`), nothing inside it is escaped, and a literal inside it is a literal (`m['a]b']`) | ClickHouse, PostgreSQL, DuckDB, Trino, Databend, Apache Spark |
+| `/* … /* … */ … */` | one **nesting** comment: a `/*` inside a comment opens another and the run continues until the depth returns to zero, so a region that already contains comments can be commented out. A run short of a closer is undeterminable rather than closed early | PostgreSQL, Db2 LUW, SQL Server, ClickHouse, DuckDB, Apache Spark |
 | `/* … /* … */ … */` | a **flat** comment: the first `*/` ends it, and everything after that is the statement's own code | MySQL, MariaDB, SQLite, libSQL, Oracle, Databend, and the default |
-| `//` | opens a **line comment**, ending at the newline like `--` | Apache Cassandra (and its relatives), ClickHouse |
+| `//` | opens a **line comment**, ending at the newline like `--` (on Apache Spark, which has no `//` comment, a `--` comment also ends at a lone carriage return and continues past a backslash before a line feed) | Apache Cassandra (and its relatives), ClickHouse |
 | `//` | **ordinary code** — an operator the parser refuses (`operator does not exist: integer // integer` on PostgreSQL 18), or a character it rejects outright | everything else, including the default |
+| `r'…'` | a **raw string**: it takes no escapes and ends at the first quote of its kind | Apache Spark |
+| `/*+ … */` | an **optimizer hint**: `/*+` is code, and inside a comment it opens no level | Apache Spark |
+| `SET` / `RESET` of a session key | **asks for confirmation** when a `SET` assigns `spark.sql.variable.substitute`, `spark.sql.defaultCatalog` or a `spark.sql.catalog.` key (`=` after the key), when a `RESET` names one of them, and when a `RESET` names no key, which restores every key | Apache Spark |
+| `\` before a line feed in a `--` comment | a backslash right before a line feed continues a `--` comment onto the next line, and one before CR LF does not | Apache Spark |
+| a carriage return in a `--` comment | a lone carriage return ends a `--` comment, and a CR LF pair ends it once | Apache Spark |
 
 Each row was established from an authoritative source: the engine's own documentation, or its
 driver's own tokenizer under `node_modules` (node-oracledb accepts `#` inside an identifier; the
@@ -209,7 +214,7 @@ The embedded LibreDB is not in that set: its text is read as SQL, and its undeci
 | `q'…'` | nobody | everything except Oracle: the form is Oracle's alone, so "not a literal" is the correct reading for the rest |
 | `[…]` | MySQL, Oracle, Db2 LUW, Elasticsearch, Couchbase, Druid, LibreDB | SQL Server, SQLite, libSQL and OpenSearch, whose rule the default already applied |
 | `/* … */` nesting | Couchbase, Druid, LibreDB | MySQL, SQLite, libSQL, Oracle, Elasticsearch, OpenSearch, Trino and Databend, whose flat rule the default already applied — each established from its own source rather than assumed to agree |
-| `//` | Elasticsearch, OpenSearch, Couchbase, Druid, LibreDB | PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server and Trino, each refused on a live server: `SELECT 1 // note` is an error there, so "not a comment" is the reading the default already applied; Databend, whose lexer has `//` as an operator token |
+| `//` | Elasticsearch, OpenSearch, Couchbase, Druid, LibreDB | PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server and Trino, each refused on a live server: `SELECT 1 // note` is an error there, so "not a comment" is the reading the default already applied; Databend, whose lexer has `//` as an operator token; Apache Spark, whose lexer reads `/` as division |
 
 The distinction is visible in `src/lib/sql/grammar.ts` too: an established fact is written out in that
 dialect's row, an undecided one is written `DEFAULT_SQL_GRAMMAR.<fact>`.
@@ -289,10 +294,10 @@ inside the comment as well.
 #### Clauses that must follow the bound
 
 Some dialects have a clause that is written **after** the row bound and refused before it
-(#1398). The dialect grammar declares them — `AS OF [AT LEAST] <t>` for Materialize's
+(#1398). The dialect grammar declares them: `AS OF [AT LEAST] <t>` for Materialize's
 `postgres` route, `ALLOW FILTERING`, `BYPASS CACHE` and `USING TIMEOUT <duration>` for the
-`cassandra` type-id (Apache Cassandra and ScyllaDB), `FORMAT <name>` for Databend — and the bound is placed **before** the
-declared run, which is re-attached verbatim:
+`cassandra` type-id (Apache Cassandra and ScyllaDB), `FORMAT <name>` for Databend, `FOR UPDATE [NOWAIT | WAIT <n>]` for Snowflake and `OFFSET n` for Apache Spark.
+The bound is placed **before** the declared run, which is re-attached verbatim:
 
 | Statement | Emitted SQL |
 |-----------|-------------|
@@ -301,6 +306,7 @@ declared run, which is re-attached verbatim:
 | `SELECT * FROM t USING TIMEOUT 5s` (ScyllaDB) | `SELECT * FROM t LIMIT 500 USING TIMEOUT 5s` |
 | `SELECT * FROM t ALLOW FILTERING` (CQL) | `SELECT * FROM t LIMIT 500 ALLOW FILTERING` |
 | `SELECT number FROM numbers(10) FORMAT CSV` (Databend) | `SELECT number FROM numbers(10) LIMIT 500 FORMAT CSV` |
+| `SELECT * FROM t ORDER BY a OFFSET 10` (Apache Spark) | `SELECT * FROM t ORDER BY a LIMIT 500 OFFSET 10` |
 | `SELECT * FROM t -- note` ⏎ `ALLOW FILTERING` (CQL) | `SELECT * FROM t LIMIT 500 -- note` ⏎ `ALLOW FILTERING` |
 
 A comment the writer put between the code and the clause stays between the bound and
@@ -591,8 +597,9 @@ The accepted cost, pinned by tests rather than left to be discovered, in two cla
   path) *and* `\'` as an escaped apostrophe — which is MySQL's own escape, so an everyday MySQL read
   such as `… WHERE name = 'O\'Brien'` asks on every execute.
   Naming a shipped dialect narrows this one only where the dialect has one fixed reading: the grammar record carries the fact as `backslashAlwaysEscapes`, and most rows declare it false, MySQL included because `NO_BACKSLASH_ESCAPES` in `sql_mode` changes its reading per session.
-  Databend's, BigQuery's and Snowflake's rows declare it true, because their lexers escape with a backslash and no setting turns that off, so there `'it\'s'` is one closed literal and a backslash before a line feed leaves the literal open.
+  Databend's, BigQuery's, Snowflake's and Apache Spark's rows declare it true, because their lexers escape with a backslash and no setting turns that off, so there `'it\'s'` is one closed literal and a backslash before a line feed leaves the literal open.
   Snowflake's row also declares `doubleQuoteBackslashEscapes` false, because a backslash inside `"..."` is part of the name there, so `"a\"` is one closed name.
+  Apache Spark's row leaves `doubleQuoteBackslashEscapes` absent, because Spark's lexer pairs a backslash with the next character in both `'...'` and `"..."`.
   What does *not* happen is a prompt
   for a statement that merely contains a backslash — `SELECT 'a\nb' FROM t`, `… LIKE 'a\_b'` and
   `'C:\\Users\\me'` all resolve and run without one.

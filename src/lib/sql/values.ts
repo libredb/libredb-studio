@@ -128,6 +128,9 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // Snowflake reads both escapes in a single-quoted string constant: a doubled quote is one quote, and a backslash
   // escapes the next character, so it is doubled first, as Databend's is.
   snowflake: "double-and-backslash",
+  // Spark's lexer pairs a backslash with the next character inside '...' under every setting, so the quote is written
+  // \' as Spark's own Literal.sql writes it; a doubled quote is an escape only from 4.1, so it is not used.
+  spark: "backslash",
   // SQL++ spells its literals the way JSON does — `char ::= unicode-character |
   // '\' ( '\' | '"' | "'" | 'b' | 'f' | 'n' | 'r' | 't' | 'u' hex hex hex hex )`.
   // Doubling is not in that grammar, so a doubled quote is not one literal there.

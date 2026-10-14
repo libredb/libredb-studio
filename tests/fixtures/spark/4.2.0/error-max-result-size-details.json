@@ -1,0 +1,146 @@
+{
+  "$captured": {
+    "service": "spark-auth",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T21:14:09.106Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/FetchErrorDetails",
+    "surface": "a result above spark.driver.maxResultSize=4m: FetchErrorDetails of its errorId",
+    "request": {
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "error_id": "6e759980-8714-47ed-acb8-e12af55b92f5",
+      "client_type": "libredb-studio",
+      "_client_type": "client_type"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "errors": [
+      {
+        "error_type_hierarchy": [
+          "org.apache.spark.SparkException",
+          "java.lang.Exception",
+          "java.lang.Throwable",
+          "java.lang.Object"
+        ],
+        "stack_trace": [
+          {
+            "declaring_class": "org.apache.spark.scheduler.DAGScheduler",
+            "method_name": "$anonfun$abortStage$3",
+            "line_number": 3318,
+            "file_name": "DAGScheduler.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "scala.Option",
+            "method_name": "getOrElse",
+            "line_number": 201,
+            "file_name": "Option.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.scheduler.DAGScheduler",
+            "method_name": "$anonfun$abortStage$2",
+            "line_number": 3318,
+            "file_name": "DAGScheduler.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.scheduler.DAGScheduler",
+            "method_name": "$anonfun$abortStage$2$adapted",
+            "line_number": 3310,
+            "file_name": "DAGScheduler.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "scala.collection.immutable.List",
+            "method_name": "foreach",
+            "line_number": 323,
+            "file_name": "List.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.scheduler.DAGScheduler",
+            "method_name": "abortStage",
+            "line_number": 3310,
+            "file_name": "DAGScheduler.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.scheduler.DAGScheduler",
+            "method_name": "$anonfun$handleTaskSetFailed$1",
+            "line_number": 1363,
+            "file_name": "DAGScheduler.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.scheduler.DAGScheduler",
+            "method_name": "$anonfun$handleTaskSetFailed$1$adapted",
+            "line_number": 1363,
+            "file_name": "DAGScheduler.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "scala.Option",
+            "method_name": "foreach",
+            "line_number": 437,
+            "file_name": "Option.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.scheduler.DAGScheduler",
+            "method_name": "handleTaskSetFailed",
+            "line_number": 1363,
+            "file_name": "DAGScheduler.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.scheduler.DAGSchedulerEventProcessLoop",
+            "method_name": "doOnReceive",
+            "line_number": 3589,
+            "file_name": "DAGScheduler.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.scheduler.DAGSchedulerEventProcessLoop",
+            "method_name": "onReceive",
+            "line_number": 3517,
+            "file_name": "DAGScheduler.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.scheduler.DAGSchedulerEventProcessLoop",
+            "method_name": "onReceive",
+            "line_number": 3506,
+            "file_name": "DAGScheduler.scala",
+            "_file_name": "file_name"
+          },
+          {
+            "declaring_class": "org.apache.spark.util.EventLoop$$anon$1",
+            "method_name": "run",
+            "line_number": 50,
+            "file_name": "EventLoop.scala",
+            "_file_name": "file_name"
+          }
+        ],
+        "message": "Job aborted due to stage failure: Total size of serialized results of 1 tasks (4.9 MiB) is bigger than spark.driver.maxResultSize (4.0 MiB)",
+        "spark_throwable": {
+          "query_contexts": [],
+          "message_parameters": {}
+        },
+        "_spark_throwable": "spark_throwable"
+      }
+    ],
+    "server_side_session_id": "",
+    "session_id": "",
+    "root_error_idx": 0,
+    "_root_error_idx": "root_error_idx"
+  }
+}

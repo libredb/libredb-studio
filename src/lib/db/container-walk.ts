@@ -250,3 +250,19 @@ export function scopeGroundingContainers(
     unread: enumeration.containers.length - kept.length,
   };
 }
+
+/**
+ * Whether an agent walk under `scope` reads anything below `parent`, a container above the deepest level, decided
+ * before its children are listed.
+ *
+ * No scope reads below every parent. A scope reads below a parent marked `isSessionDefault`, since a provider marks
+ * every level and the deepest default sits below the parent marked at the level above, which is also the parent whose
+ * children `whenNoDefault` reads. It reads below each parent on the path of a container `alsoWalk` names, matched
+ * segment by segment. Below any other parent it reads nothing, so the agent's grounding walk can name such a parent as
+ * not read when its listing fails, rather than lose the whole capture over containers it would never read.
+ */
+export function scopeReadsUnder(scope: ProviderCapabilities["agentWalkScope"], parent: Container): boolean {
+  if (scope === undefined || parent.isSessionDefault === true) return true;
+  const key = pathKey(parent.path);
+  return (scope.alsoWalk ?? []).some((path) => pathKey(path.slice(0, parent.path.length)) === key);
+}

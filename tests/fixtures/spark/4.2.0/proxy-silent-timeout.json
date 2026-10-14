@@ -1,0 +1,365 @@
+{
+  "$captured": {
+    "service": "spark-tls",
+    "image": "apache/spark:4.2.0",
+    "digest": "sha256:fc64959c04bd87b0ac686be9aaa9008b69cdb1afc695400528279c8b01f43d89",
+    "sparkVersion": "4.2.0",
+    "date": "2026-10-13T11:07:42.649Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "SparkConnectService/ExecutePlan",
+    "surface": "a silent run of about 15 s through the TLS proxy, under its 300 s read timeout: relation step",
+    "request": {
+      "request_options": [
+        {
+          "result_chunking_options": {
+            "allow_arrow_batch_chunking": true,
+            "preferred_arrow_chunk_size": "4194304",
+            "_preferred_arrow_chunk_size": "preferred_arrow_chunk_size"
+          },
+          "request_option": "result_chunking_options"
+        }
+      ],
+      "tags": [
+        "<tag>"
+      ],
+      "session_id": "<session>",
+      "user_context": {
+        "extensions": [],
+        "user_id": "libredb-studio",
+        "user_name": "libredb-studio"
+      },
+      "plan": {
+        "root": {
+          "common": null,
+          "sql": {
+            "pos_args": [],
+            "pos_arguments": [],
+            "args": {},
+            "named_arguments": {},
+            "query": "SELECT sum(hash(id)) AS n FROM range(0, 25000000000, 1, 4)"
+          },
+          "rel_type": "sql"
+        },
+        "op_type": "root"
+      },
+      "client_type": "libredb-studio",
+      "_client_type": "client_type",
+      "operation_id": "<operation>",
+      "_operation_id": "operation_id"
+    }
+  },
+  "outcome": "pass",
+  "payload": [
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": {
+        "struct": {
+          "fields": [
+            {
+              "name": "n",
+              "data_type": {
+                "long": {
+                  "type_variation_reference": 0
+                },
+                "kind": "long"
+              },
+              "nullable": true
+            }
+          ],
+          "type_variation_reference": 0
+        },
+        "kind": "struct"
+      },
+      "operation_id": "<operation>",
+      "response_id": "d467bf2a-92c3-4b33-92da-52c15dbd99f5",
+      "server_side_session_id": "fc4f6fd7-1cf1-4c8b-9684-b90341010124"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": null,
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "eba33b79-c431-453e-88c9-a10c5a637793",
+      "server_side_session_id": "fc4f6fd7-1cf1-4c8b-9684-b90341010124",
+      "arrow_batch": {
+        "row_count": "1",
+        "data": {
+          "$bytes": "/////5AAAAAQAAAAAAAKAA4ABgANAAgACgAAAAAABAAQAAAAAAEKAAwAAAAIAAQACgAAAAgAAAAIAAAAAAAAAAEAAAAYAAAAAAASABgAFAATABIADAAAAAgABAASAAAAFAAAABQAAAAcAAAAAAACASAAAAAAAAAAAAAAAAgADAAIAAcACAAAAAAAAAFAAAAAAQAAAG4AAAD/////iAAAABQAAAAAAAAADAAWAA4AFQAQAAQADAAAABAAAAAAAAAAAAAEABAAAAAAAwoAGAAMAAgABAAKAAAAFAAAADgAAAABAAAAAAAAAAAAAAACAAAAAAAAAAAAAAABAAAAAAAAAAgAAAAAAAAACAAAAAAAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAIBi/DqjDQAA/////wAAAAA="
+        },
+        "start_offset": "0",
+        "_start_offset": "start_offset",
+        "chunk_index": "0",
+        "_chunk_index": "chunk_index",
+        "num_chunks_in_batch": "1",
+        "_num_chunks_in_batch": "num_chunks_in_batch"
+      },
+      "response_type": "arrow_batch"
+    },
+    {
+      "observed_metrics": [],
+      "session_id": "<session>",
+      "metrics": {
+        "metrics": [
+          {
+            "execution_metrics": {},
+            "name": "AdaptiveSparkPlan",
+            "plan_id": "1221",
+            "parent": "1221"
+          },
+          {
+            "execution_metrics": {},
+            "name": "ResultQueryStage",
+            "plan_id": "1",
+            "parent": "1221"
+          },
+          {
+            "execution_metrics": {
+              "pipelineTime": {
+                "name": "duration",
+                "value": "8",
+                "metric_type": "timing"
+              }
+            },
+            "name": "WholeStageCodegen (2)",
+            "plan_id": "1237",
+            "parent": "1"
+          },
+          {
+            "execution_metrics": {
+              "spillSize": {
+                "name": "spill size",
+                "value": "0",
+                "metric_type": "size"
+              },
+              "aggTime": {
+                "name": "time in aggregation build",
+                "value": "3",
+                "metric_type": "timing"
+              },
+              "peakMemory": {
+                "name": "peak memory",
+                "value": "0",
+                "metric_type": "size"
+              },
+              "numOutputRows": {
+                "name": "number of output rows",
+                "value": "1",
+                "metric_type": "sum"
+              },
+              "numTasksFallBacked": {
+                "name": "number of sort fallback tasks",
+                "value": "0",
+                "metric_type": "sum"
+              },
+              "avgHashProbe": {
+                "name": "avg hash probes per key",
+                "value": "0",
+                "metric_type": "average"
+              }
+            },
+            "name": "HashAggregate",
+            "plan_id": "1236",
+            "parent": "1237"
+          },
+          {
+            "execution_metrics": {},
+            "name": "InputAdapter",
+            "plan_id": "1235",
+            "parent": "1236"
+          },
+          {
+            "execution_metrics": {},
+            "name": "ShuffleQueryStage",
+            "plan_id": "0",
+            "parent": "1235"
+          },
+          {
+            "execution_metrics": {
+              "shuffleRecordsWritten": {
+                "name": "shuffle records written",
+                "value": "4",
+                "metric_type": "sum"
+              },
+              "remoteMergedReqsDuration": {
+                "name": "remote merged reqs duration",
+                "value": "0",
+                "metric_type": "timing"
+              },
+              "remoteMergedBlocksFetched": {
+                "name": "remote merged blocks fetched",
+                "value": "0",
+                "metric_type": "sum"
+              },
+              "recordsRead": {
+                "name": "records read",
+                "value": "4",
+                "metric_type": "sum"
+              },
+              "localBytesRead": {
+                "name": "local bytes read",
+                "value": "236",
+                "metric_type": "size"
+              },
+              "mergedFetchFallbackCount": {
+                "name": "merged fetch fallback count",
+                "value": "0",
+                "metric_type": "sum"
+              },
+              "localBlocksFetched": {
+                "name": "local blocks read",
+                "value": "4",
+                "metric_type": "sum"
+              },
+              "remoteMergedChunksFetched": {
+                "name": "remote merged chunks fetched",
+                "value": "0",
+                "metric_type": "sum"
+              },
+              "remoteBlocksFetched": {
+                "name": "remote blocks read",
+                "value": "0",
+                "metric_type": "sum"
+              },
+              "dataSize": {
+                "name": "data size",
+                "value": "64",
+                "metric_type": "size"
+              },
+              "localMergedBytesRead": {
+                "name": "local merged bytes read",
+                "value": "0",
+                "metric_type": "size"
+              },
+              "localMergedChunksFetched": {
+                "name": "local merged chunks fetched",
+                "value": "0",
+                "metric_type": "sum"
+              },
+              "shuffleWriteTime": {
+                "name": "shuffle write time",
+                "value": "6653305",
+                "metric_type": "nsTiming"
+              },
+              "remoteMergedBytesRead": {
+                "name": "remote merged bytes read",
+                "value": "0",
+                "metric_type": "size"
+              },
+              "localMergedBlocksFetched": {
+                "name": "local merged blocks fetched",
+                "value": "0",
+                "metric_type": "sum"
+              },
+              "corruptMergedBlockChunks": {
+                "name": "corrupt merged block chunks",
+                "value": "0",
+                "metric_type": "sum"
+              },
+              "fetchWaitTime": {
+                "name": "fetch wait time",
+                "value": "0",
+                "metric_type": "timing"
+              },
+              "remoteBytesRead": {
+                "name": "remote bytes read",
+                "value": "0",
+                "metric_type": "size"
+              },
+              "numPartitions": {
+                "name": "number of partitions",
+                "value": "1",
+                "metric_type": "sum"
+              },
+              "remoteReqsDuration": {
+                "name": "remote reqs duration",
+                "value": "0",
+                "metric_type": "timing"
+              },
+              "remoteBytesReadToDisk": {
+                "name": "remote bytes read to disk",
+                "value": "0",
+                "metric_type": "size"
+              },
+              "shuffleBytesWritten": {
+                "name": "shuffle bytes written",
+                "value": "236",
+                "metric_type": "size"
+              }
+            },
+            "name": "Exchange",
+            "plan_id": "1229",
+            "parent": "0"
+          },
+          {
+            "execution_metrics": {
+              "pipelineTime": {
+                "name": "duration",
+                "value": "64885",
+                "metric_type": "timing"
+              }
+            },
+            "name": "WholeStageCodegen (1)",
+            "plan_id": "1228",
+            "parent": "1229"
+          },
+          {
+            "execution_metrics": {
+              "spillSize": {
+                "name": "spill size",
+                "value": "0",
+                "metric_type": "size"
+              },
+              "aggTime": {
+                "name": "time in aggregation build",
+                "value": "64818",
+                "metric_type": "timing"
+              },
+              "peakMemory": {
+                "name": "peak memory",
+                "value": "0",
+                "metric_type": "size"
+              },
+              "numOutputRows": {
+                "name": "number of output rows",
+                "value": "4",
+                "metric_type": "sum"
+              },
+              "numTasksFallBacked": {
+                "name": "number of sort fallback tasks",
+                "value": "0",
+                "metric_type": "sum"
+              },
+              "avgHashProbe": {
+                "name": "avg hash probes per key",
+                "value": "0",
+                "metric_type": "average"
+              }
+            },
+            "name": "HashAggregate",
+            "plan_id": "1219",
+            "parent": "1228"
+          },
+          {
+            "execution_metrics": {
+              "numOutputRows": {
+                "name": "number of output rows",
+                "value": "25000000000",
+                "metric_type": "sum"
+              }
+            },
+            "name": "Range",
+            "plan_id": "1218",
+            "parent": "1219"
+          }
+        ]
+      },
+      "schema": null,
+      "operation_id": "<operation>",
+      "response_id": "62ca0020-675a-491d-bd90-072f69c650f7",
+      "server_side_session_id": "fc4f6fd7-1cf1-4c8b-9684-b90341010124"
+    }
+  ]
+}

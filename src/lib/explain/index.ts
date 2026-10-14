@@ -14,6 +14,7 @@ import { databendTextStrategy } from "./databend-text";
 import { bigqueryDryRunStrategy } from "./bigquery-dryrun";
 import { firestoreExplainStrategy } from "./firestore-explain";
 import { snowflakeJsonStrategy } from "./snowflake-json";
+import { sparkTextStrategy } from "./spark-text";
 
 export type { ExplainMode, ExplainStrategy } from "./types";
 export type { ExplainPlanInput } from "./types";
@@ -36,6 +37,7 @@ const registry: Record<ExplainFormat, ExplainStrategy> = {
   "bigquery-dryrun": bigqueryDryRunStrategy,
   "snowflake-json": snowflakeJsonStrategy,
   "firestore-explain": firestoreExplainStrategy,
+  "spark-text": sparkTextStrategy,
 };
 
 export function getExplainStrategy(format: ExplainFormat | undefined): ExplainStrategy | null {
