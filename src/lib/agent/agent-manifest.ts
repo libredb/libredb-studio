@@ -62,6 +62,8 @@ export const AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, AgentStatem
  * always used, and the D6 golden file holds it there.
  */
 export interface AgentLanguageCopy {
+  /** What the run investigates, as the first rule names it. */
+  readonly subject: string;
   /** What one unit the model sends is called. */
   readonly noun: string;
   /** The name of the model argument that carries it. Persisted event fields keep `sql` whatever this says. */
@@ -78,6 +80,7 @@ export interface AgentLanguageCopy {
 
 export const AGENT_LANGUAGE_COPY: Readonly<Record<AgentStatementLanguageId, AgentLanguageCopy>> = Object.freeze({
   sql: Object.freeze({
+    subject: "a database",
     noun: "statement",
     argument: "sql",
     writes: "writes and DDL",
@@ -86,6 +89,7 @@ export const AGENT_LANGUAGE_COPY: Readonly<Record<AgentStatementLanguageId, Agen
     adviceKeys: Object.freeze([]),
   }),
   kubectl: Object.freeze({
+    subject: "a Kubernetes cluster",
     noun: "statement",
     argument: "statement",
     writes: "writes, exec, port-forward, proxy and watches",

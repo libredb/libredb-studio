@@ -19,7 +19,7 @@ import {
  * What this CAN hold still is the property a live model depends on and no prose
  * assertion covers: **the object the server puts in front of the model is one the
  * server will then accept.** Four things have to agree for that — `evidenceSchema`,
- * the tool descriptions, `AGENT_RULES`, and the handover text a completed step and a
+ * the tool descriptions, `agentRules`, and the handover text a completed step and a
  * captured snapshot write — and they are in three files. The model here copies what
  * it was offered and nothing else, so if any of the four drifts, the run stops
  * answering here instead of in production.

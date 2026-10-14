@@ -44,7 +44,13 @@
  */
 
 import { createHash } from "node:crypto";
-import { AGENT_LANGUAGE_COPY, planDeliverableOf, planObjectiveOf, requiredVariant } from "./agent-manifest";
+import {
+  AGENT_LANGUAGE_COPY,
+  type AgentLanguageCopy,
+  planDeliverableOf,
+  planObjectiveOf,
+  requiredVariant,
+} from "./agent-manifest";
 import { logger } from "@/lib/logger";
 import { isRetryableError, isToolCallParseError } from "@/lib/llm/types";
 import { type AssistantModelMessage, type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
@@ -269,21 +275,26 @@ const SHARED_RULES = [
 export const AGENT_CITATION_RULE =
   "Every claim must cite an artifact this run read or the schema snapshot it captured.";
 
-const AGENT_RULES = [
-  "You investigate a database read-only, through the tools you were given.",
-  "Every statement you send is bounded and read-only; writes and DDL are refused before the database is reached.",
-  "If a statement fails, draft a DIFFERENT one: the same statement is refused rather than retried, and your repair attempts are limited.",
-  "A refusal that names a policy decision is a boundary, not a defect in your SQL. Rewording will not change it.",
-  `Finish by calling compose_report. ${AGENT_CITATION_RULE}`,
-  AGENT_EVIDENCE_CONTRACT,
-].join(" ");
+/**
+ * The rules every agent-mode run reads, in its statement language's words. The SQL copy
+ * renders them exactly as they have always read, and the D6 golden file holds that.
+ */
+const agentRules = (copy: AgentLanguageCopy): string =>
+  [
+    `You investigate ${copy.subject} read-only, through the tools you were given.`,
+    `Every ${copy.noun} you send is bounded and read-only; ${copy.writes} are refused before ${copy.reached} is reached.`,
+    `If a ${copy.noun} fails, draft a DIFFERENT one: the same ${copy.noun} is refused rather than retried, and your repair attempts are limited.`,
+    `A refusal that names a policy decision is a boundary, not a defect in ${copy.defect}. Rewording will not change it.`,
+    `Finish by calling compose_report. ${AGENT_CITATION_RULE}`,
+    AGENT_EVIDENCE_CONTRACT,
+  ].join(" ");
 
 /**
  * What the run is told when it has come within the reserve of a ceiling (see "A run
  * keeps its last turns back for its report" in the "What bounds a run" section of
  * `docs/AGENT.md`).
  *
- * "Finish by calling compose_report" is already in `AGENT_RULES`; what nothing said
+ * "Finish by calling compose_report" is already in `agentRules`; what nothing said
  * until now is WHEN the room ran out. That is the #350 lesson applied ahead of time:
  * a rule the model is not told is a rule live runs fail, and a run that hits a
  * ceiling mid-thought leaves nothing behind at all.
@@ -1538,7 +1549,7 @@ const planningProseRulesUngrounded = (engine: PlanningEngine): string =>
  * produces instead is the variant's `planDeliverable`.
  *
  * A total record, so a workflow added to the contract stops this file compiling
- * until someone decides what to ask of it. Appended to `AGENT_RULES` and never to a
+ * until someone decides what to ask of it. Appended to `agentRules` and never to a
  * planning run's rules: planning is toolless, and telling it to call tools would be
  * asking for something the mode cannot do.
  *
@@ -1705,7 +1716,14 @@ function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, engi
         ? planningSchemaRules(grounding, deliverable, engine)
         : planningNoSchemaRules(deliverable, engine.noun);
   const planningRules = `${PLANNING_TOOLLESS_RULE} ${planningDeliverableRules}`;
-  const rules = record.mode === "agent" ? `${AGENT_RULES} ${WORKFLOW_TOOL_RULES[record.workflowType]}` : planningRules;
+  // The language sentence is said only where the engine declares a language of its own;
+  // no SQL agent engine does, so the SQL prompt is unchanged.
+  const languageSentence =
+    engine.statementLanguage === undefined ? "" : ` Write every statement in ${engine.statementLanguage}.`;
+  const rules =
+    record.mode === "agent"
+      ? `${agentRules(AGENT_LANGUAGE_COPY[record.statementLanguage ?? "sql"])}${languageSentence} ${WORKFLOW_TOOL_RULES[record.workflowType]}`
+      : planningRules;
   // Said only where it can happen, on all THREE counts. A planning run has no tools;
   // a run opened without the setting hands nothing anywhere; and a workflow that is
   // not offered `present_answer` has no way to make the presentation this rule is

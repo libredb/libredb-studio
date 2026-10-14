@@ -81,11 +81,13 @@ describe("AGENT_LANGUAGE_COPY", () => {
       writes: "writes and DDL",
       reached: "the database",
       defect: "your SQL",
+      subject: "a database",
     });
   });
 
   test("kubectl names its own argument and its own boundary", () => {
     expect(AGENT_LANGUAGE_COPY.kubectl.argument).toBe("statement");
+    expect(AGENT_LANGUAGE_COPY.kubectl.subject).toBe("a Kubernetes cluster");
     expect(AGENT_LANGUAGE_COPY.kubectl.adviceKeys).toEqual(["get", "top", "logs", "events"]);
   });
 });

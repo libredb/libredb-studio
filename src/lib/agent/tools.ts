@@ -1507,11 +1507,17 @@ const DENIAL_ADVICE_TEXT: Record<DenialAdvice, string> = {
  * The version is the one that DECIDED — the run's own workflow policy — rather than a
  * module-level constant, so what the model is told and what an operator can trace the
  * denial back to are the same string.
+ *
+ * A shape denial is told in the statement language's own words where the language has
+ * them: a kubectl read is neither valid nor invalid SQL. SQL keeps its sentence (D6).
  */
-function denialText(reasonCode: PolicyDenyCode, policyVersion: string): string {
+function denialText(reasonCode: PolicyDenyCode, policyVersion: string, language: AgentStatementLanguageId): string {
+  const advice = DENIAL_ADVICE[reasonCode];
   return [
     `The database operation layer refused this call: ${reasonCode} (policy ${policyVersion}).`,
-    DENIAL_ADVICE_TEXT[DENIAL_ADVICE[reasonCode]],
+    advice === "shape"
+      ? (languageServer(language).shapeAdvice ?? DENIAL_ADVICE_TEXT.shape)
+      : DENIAL_ADVICE_TEXT[advice],
     "Choose a different approach that stays inside a bounded read-only inspection.",
   ].join(" ");
 }
@@ -2436,7 +2442,7 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
       return {
         kind: "refused",
         refusal: { class: "policy-denied", reasonCode: decision.reasonCode },
-        modelText: denialText(decision.reasonCode, policy.version),
+        modelText: denialText(decision.reasonCode, policy.version, call.fingerprintLanguage ?? "sql"),
       };
     }
     context.repairs.recordFailure(fingerprint, "approval-required");
