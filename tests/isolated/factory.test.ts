@@ -1985,6 +1985,69 @@ describe("acquireExecutionProfileProvider", () => {
 
     expect(error).toBeInstanceOf(ExecutionProfileError);
     expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+    expect((error as Error).message).toBe(
+      'Connection "pg-password-only" configures an incomplete agent credential (user and password are both required)',
+    );
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  /**
+   * An engine declaring `agentCredential: "token"` takes `agentPassword` alone as the agent's own bearer token.
+   * Kubernetes' connect dials the API server, so its prototype's connect is stubbed for these tests only.
+   */
+  async function kubernetesConnectStubbed(conn: DatabaseConnection): Promise<() => void> {
+    const prototype = Object.getPrototypeOf(await createDatabaseProvider(conn)) as DatabaseProvider;
+    const spy = spyOn(prototype, "connect").mockImplementation(async function (this: DatabaseProvider) {
+      (this as unknown as { setConnected(value: boolean): void }).setConnected(true);
+    });
+    return () => spy.mockRestore();
+  }
+
+  const kubernetesConn = (overrides: Partial<DatabaseConnection> = {}) =>
+    makeConnection("kubernetes", { id: "k8s-profile", port: 6443, database: undefined, ...overrides });
+
+  test("a token engine's agent password alone is the agent's token, and the connection's user is kept", async () => {
+    const conn = kubernetesConn({ id: "k8s-agent-token", password: "connection-token", agentPassword: "agent-token" });
+    const restore = await kubernetesConnectStubbed(conn);
+    try {
+      const agent = await acquireExecutionProfileProvider(conn, "agent-operations");
+
+      expect(agent.config.password).toBe("agent-token");
+      expect(agent.config.user).toBe("test");
+      expect(getExecutionProfileCacheStats().size).toBe(1);
+    } finally {
+      restore();
+    }
+  });
+
+  test("a token engine refuses an agent user beside the agent token", async () => {
+    const conn = kubernetesConn({ id: "k8s-agent-user", agentUser: "agent", agentPassword: "agent-token" });
+    const restore = await kubernetesConnectStubbed(conn);
+    try {
+      const error: unknown = await acquireExecutionProfileProvider(conn, "agent-operations").catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ExecutionProfileError);
+      expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+      expect((error as Error).message).toBe(
+        `Connection "k8s-agent-user" configures an agent user, and this engine takes the agent's token alone: clear the agent user`,
+      );
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
+  test("a token engine refuses an agent user with no agent token", async () => {
+    const conn = kubernetesConn({ id: "k8s-agent-user-only", agentUser: "agent" });
+    const restore = await kubernetesConnectStubbed(conn);
+    try {
+      const error: unknown = await acquireExecutionProfileProvider(conn, "agent-operations").catch((e: unknown) => e);
+
+      expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+      expect((error as Error).message).toContain("takes the agent's token alone");
+    } finally {
+      restore();
+    }
   });
 
   test("denies an agent credential on a connection-string connection", async () => {

@@ -1052,15 +1052,20 @@ const EXECUTION_PROFILES: ReadonlySet<string> = new Set(Object.keys(PROFILE_ACQU
  *
  * - both fields absent → null (the profile runs under the connection's own
  *   credentials, still inside the database-native read-only boundary);
- * - only one field present → deny; a half-configured credential must not
- *   silently degrade to the more privileged default;
+ * - only one field present → deny, unless the engine declares
+ *   `agentCredential: "token"` and the field is `agentPassword`: that engine
+ *   takes the agent's bearer token alone, and refuses an `agentUser` beside it.
+ *   A half-configured credential must not silently degrade to the more
+ *   privileged default. The form is the provider's declaration, so it is
+ *   decided by `assertAgentCredentialForm` once the provider is built and
+ *   before it connects; this function only reads what the fields hold;
  * - a sealed password that does not open → deny, never a plaintext fallback;
  * - combined with a connection string → deny: buildPoolConfig ignores
  *   user/password fields when a connection string is present, so the
  *   credential would be silently dropped and the agent would run as the more
  *   privileged embedded user.
  */
-function resolveAgentCredential(connection: DatabaseConnection): { user: string; password: string } | null {
+function resolveAgentCredential(connection: DatabaseConnection): { user?: string; password?: string } | null {
   const { agentUser, agentPassword } = connection;
   if (agentUser === undefined && agentPassword === undefined) return null;
   if (connection.connectionString) {
@@ -1069,12 +1074,7 @@ function resolveAgentCredential(connection: DatabaseConnection): { user: string;
       "AGENT_CREDENTIAL_WITH_CONNECTION_STRING",
     );
   }
-  if (!agentUser || !agentPassword) {
-    throw new ExecutionProfileError(
-      `Connection "${connection.id}" configures an incomplete agent credential (user and password are both required)`,
-      "AGENT_CREDENTIAL_UNRESOLVABLE",
-    );
-  }
+  if (!agentPassword) return { user: agentUser };
   const read = readSecret(agentPassword);
   if (read.kind === "undecryptable") {
     throw new ExecutionProfileError(
@@ -1083,6 +1083,28 @@ function resolveAgentCredential(connection: DatabaseConnection): { user: string;
     );
   }
   return { user: agentUser, password: read.value };
+}
+
+/**
+ * Refuses an agent credential whose form the built provider does not take, before it connects. An engine declaring
+ * `agentCredential: "token"` takes `agentPassword` alone; every other engine takes `agentUser` and `agentPassword`
+ * together. Read from the provider rather than from `connection.type`, which `CLAUDE.md` forbids here.
+ */
+function assertAgentCredentialForm(connection: DatabaseConnection, provider: DatabaseProvider): void {
+  const { agentUser, agentPassword } = connection;
+  const tokenOnly = provider.getCapabilities().agentCredential === "token";
+  if (tokenOnly && agentUser !== undefined) {
+    throw new ExecutionProfileError(
+      `Connection "${connection.id}" configures an agent user, and this engine takes the agent's token alone: clear the agent user`,
+      "AGENT_CREDENTIAL_UNRESOLVABLE",
+    );
+  }
+  if (!agentPassword || (!tokenOnly && !agentUser)) {
+    throw new ExecutionProfileError(
+      `Connection "${connection.id}" configures an incomplete agent credential (user and password are both required)`,
+      "AGENT_CREDENTIAL_UNRESOLVABLE",
+    );
+  }
 }
 
 /**
@@ -1174,8 +1196,14 @@ export async function acquireExecutionProfileProvider(
     if (open) return open;
   }
 
+  // A partial credential is overlaid as it stands so the provider can be built and asked for its form; one it does
+  // not take is refused below, before any connect.
   let effectiveConnection: DatabaseConnection = credential
-    ? { ...connection, user: credential.user, password: credential.password }
+    ? {
+        ...connection,
+        ...(credential.user === undefined ? {} : { user: credential.user }),
+        ...(credential.password === undefined ? {} : { password: credential.password }),
+      }
     : connection;
 
   // The SSH tunnel is keyed by connection id, bastion route and far end, and shared with the
@@ -1200,6 +1228,14 @@ export async function acquireExecutionProfileProvider(
     ...acquisition.context,
     allowExternalFileAccess: requester.allowExternalFileAccess === true,
   });
+  if (credential !== null) {
+    try {
+      assertAgentCredentialForm(connection, provider);
+    } catch (error) {
+      await closeFreshTunnel();
+      throw error;
+    }
+  }
   if (acquisition.requiresReadOnlyStatements && typeof provider.queryReadOnly !== "function") {
     await closeFreshTunnel();
     throw new ExecutionProfileError(

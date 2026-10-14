@@ -222,7 +222,7 @@ describe("foldLedgerEntries", () => {
 
     const detail = view.items.at(-1)?.detail ?? "";
     expect(detail).toBe(
-      "This connection's agent credential cannot be used: check that both the agent user and password are set, that the password still decrypts under the current secret key, and that no connection string is set beside it.",
+      "This connection's agent credential cannot be used: check that it is complete (an agent user and password, or where the database takes one, an agent token alone), that the password still decrypts under the current secret key, and that no connection string is set beside it.",
     );
     // The whole point of the second reason: the sentence must not send the reader
     // after their engine, which is not what refused the run.

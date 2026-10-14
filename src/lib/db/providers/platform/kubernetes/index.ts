@@ -142,6 +142,8 @@ export class KubernetesProvider extends BaseDatabaseProvider {
       containersNameKinds: true,
       // Plan mode reads the session's namespace and Cluster, not every namespace of a large cluster.
       agentWalkScope: { mode: "session-default", alsoWalk: [[CLUSTER_CONTAINER]] },
+      // The agent's identity is its own ServiceAccount token when `agentPassword` is set, else the connection's token.
+      agentCredential: "token",
       // Nothing a statement runs changes the tree.
       schemaRefreshPattern: "(?!)",
     };

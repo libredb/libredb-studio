@@ -1292,6 +1292,16 @@ export interface ProviderCapabilities {
    */
   readonly enforcesReadOnly?: true;
   /**
+   * How this engine takes the agent's own credential. Absent: `agentUser` and `agentPassword`, both required.
+   * `"token"`: `agentPassword` alone, as the bearer token the agent's acquisitions send instead of the connection's
+   * own; an `agentUser` beside it is refused. `acquireExecutionProfileProvider` in `src/lib/db/factory.ts` reads it
+   * from the provider it builds, before that provider connects, so no `connection.type` branch is needed (forbidden
+   * by `CLAUDE.md`), and `tests/unit/db/agent-credential-capability.test.ts` pins which engines declare it.
+   *
+   * Optional for the same published-interface reason as `enforcesReadOnly`.
+   */
+  readonly agentCredential?: "token";
+  /**
    * True when this engine's provider reads `ProviderExecutionContext.allowExternalFileAccess` and
    * opens its editor handle under that file-access posture: `false` closes every statement-level file
    * and network route outside the handle's private temp directory and its database's own file names

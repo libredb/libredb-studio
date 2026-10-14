@@ -494,7 +494,7 @@ const FAILURE_SENTENCES = {
   // Names the credential, because that is the only thing to fix and the engine is
   // not at fault: this refusal reaches PostgreSQL and SQLite too (B47).
   "agent-credential-unusable":
-    "This connection's agent credential cannot be used: check that both the agent user and password are set, that the password still decrypts under the current secret key, and that no connection string is set beside it.",
+    "This connection's agent credential cannot be used: check that it is complete (an agent user and password, or where the database takes one, an agent token alone), that the password still decrypts under the current secret key, and that no connection string is set beside it.",
   // Names the database user, because the engine is supported and the credential was
   // applied: the profile refused the principal it opened as. Folded into the engine
   // sentence, an operator connected as `sa` was told to change engines.
