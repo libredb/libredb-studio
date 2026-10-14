@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D359, U17 · 259
+- [Drivers and connections](#drivers-and-connections) — D1-D361, U17 · 261
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U144 · 134
@@ -3682,6 +3682,26 @@ A behaviour change in 26.11.1 that those cases pin would reach users with the st
 Found 2026-10-14 while filing the Apache Spark provider's follow-ups (#1759); pre-existing.
 
 **Done when:** the Node 26 step installs and asserts the version the `Dockerfile` runner stage names, and a test reads both files and fails when they differ.
+
+### D360. The RabbitMQ hostile-peer test can fail on a loaded machine while the ignores-close peer still holds its socket
+
+`tests/unit/db/rabbitmq/hostile-peers.test.ts` (R-S10) asserts `openAfter: 0` for every hostile peer, where `openAfter` counts the accepted sockets of the fake peer in `tests/helpers/rabbitmq-fake-peer.ts` that have not seen their close yet.
+In a full local run of all 1,478 test files at 20 jobs on a loaded machine (326 s, against 108 s for the same suite unloaded), the "ignores-close" peer under Bun ended with `openAfter: 1` and the file failed; run alone right after, the file passed 6 of 6 (2026-10-14, on the #1764 branch with `main` at 5b77948ee merged in).
+The file's docblock already records a loaded macOS runner taking up to 3,540 ms to see that close and bounds the helper's wait at 5 s, so a heavier load uses up that margin.
+
+Found 2026-10-14 while merging #1759 and #1764; pre-existing since #1703.
+
+**Done when:** the assertion no longer depends on how fast the peer observes the close (for example it checks that the client destroyed its socket and awaits the peer's close under the file's own budget), and the file passes ten full runs at twice the core count in jobs.
+
+### D361. The MongoDB server-selection test waits out the driver's real 30 s bound and ran past the 300 s file budget on a loaded machine
+
+`tests/integration/db/mongodb-server-selection.test.ts` drives the real driver against a closed port and measures the driver's 30 s server-selection bound on the wall clock, so the file takes about 40 s alone.
+In the same loaded run as D360 the runner stopped it at `DEFAULT_FILE_TIMEOUT_MS` (300 s, `tests/runner/options.ts`); run alone right after, it passed 2 of 2 in 40.5 s.
+Why the load stretched it past seven times its own duration was not measured.
+
+Found 2026-10-14 while merging #1759 and #1764; pre-existing since #1518.
+
+**Done when:** the cause of the stretch is measured, and the file either passes ten loaded full runs within the default budget or measures the bound in a way that does not wait on the wall clock.
 
 ## Value interpolation
 
