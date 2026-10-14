@@ -142,3 +142,16 @@ eb6b696af19d6b6ac7b53406bbd4201fb0890058:tests/fixtures/s3/captures/silo-2026-10
 # `x-amz-security-token` and expected signature are the example values AWS
 # ships with the suite (AKIDEXAMPLE), checked by the signer's tests.
 11717b7e56f0dc8d293e834a1327b01aa2a4e342:tests/fixtures/s3/sigv4-suite.json:generic-api-key:252
+
+# The CFRG HPKE test vector of the lsb1 suite (STU-02): base mode with
+# DHKEM(X25519, HKDF-SHA256), HKDF-SHA256 and AES-256-GCM, copied unchanged
+# from the test-vectors.json of the draft-irtf-cfrg-hpke repository, whose URL
+# and SHA-256 the fixture's header records. The rule fires on the vector's
+# shared_secret, key_schedule_context, secret, key and exporter_secret: values
+# the CFRG publishes, derived from its published test keys, which open nothing
+# but the vector's own sample ciphertexts.
+425df4998010d2a3807431a583fa16e643839726:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:21
+425df4998010d2a3807431a583fa16e643839726:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:22
+425df4998010d2a3807431a583fa16e643839726:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:23
+425df4998010d2a3807431a583fa16e643839726:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:24
+425df4998010d2a3807431a583fa16e643839726:tests/fixtures/governance/hpke-cfrg-x25519-sha256-aes256gcm.json:generic-api-key:26
