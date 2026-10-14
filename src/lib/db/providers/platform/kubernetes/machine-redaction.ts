@@ -8,15 +8,19 @@
  * template, a PodTemplate, a ControllerRevision's `data` or a custom resource is masked like a Pod's own. Values are
  * masked and keys kept (A1, A5): env values, probe and hook header values, a container's command and args, exec
  * commands, every annotation value and ConfigMap data. Labels pass, keys and values. Names pass, except a Secret's
- * (A4), which `maskSecretNames` handles. What no rule reaches is the stated residue (`docs/providers/kubernetes.md`
- * section 9): log lines and event messages, status and condition messages, label values, and custom-resource fields
- * with no rule.
+ * (A4), which `maskSecretNames` handles: every `secretName` string, the `name` of a `secretRef`, `secretKeyRef`,
+ * `secret` or any `*SecretRef`, each `imagePullSecrets` and ServiceAccount `secrets` entry, an owner, involved,
+ * regarding or related reference whose kind is `Secret`, and the `resourceNames` of an RBAC rule that reaches core
+ * Secrets (`coversSecrets`). The root object's own name is masked when the request reads core Secrets or its kind is
+ * `Secret`, and so is an Event's about a Secret, because the server derives the Event's name from the Secret's.
+ * What no rule reaches is the stated residue (`docs/providers/kubernetes.md` section 9): log lines and event messages,
+ * status and condition messages, label values, and custom-resource fields with no rule.
  *
  * Only the agent's read path calls it; `query()` never does, so the editor's output is byte for byte what it was.
  */
 import { QueryError } from "@/lib/db/errors";
 import { KUBERNETES_TYPE } from "./limits";
-import { MACHINE_REDACTED, type RedactionTarget } from "./redaction";
+import { MACHINE_REDACTED, type RedactionTarget, readsSecrets } from "./redaction";
 
 /** How deep an object is walked; a real one nests far less, and deeper is refused, never read past. */
 export const MACHINE_MAX_NESTING = 64;
@@ -68,6 +72,69 @@ function maskValues(node: Json): void {
     node.metadata = { ...node.metadata, annotations: maskedValues(node.metadata.annotations) };
 }
 
+/** The reference fields whose `name` is a Secret's: `secretRef`, `secretKeyRef`, `secret` and every `*SecretRef`. */
+function namesASecret(key: string): boolean {
+  return key === "secretRef" || key === "secretKeyRef" || key === "secret" || key.endsWith("SecretRef");
+}
+
+/** The arrays whose elements' `name` is a Secret's. */
+const SECRET_NAME_LISTS = ["imagePullSecrets", "secrets"] as const;
+
+/** An object reference (owner, involved, regarding, related) with its name masked when it names a Secret. */
+function maskedReference(reference: unknown): unknown {
+  return isObject(reference) && reference.kind === "Secret" && typeof reference.name === "string"
+    ? { ...reference, name: MACHINE_REDACTED }
+    : reference;
+}
+
+const strings = (value: unknown): readonly string[] =>
+  Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+
+/**
+ * Whether an RBAC rule reaches core Secrets: its resources name `secrets`, a Secret subresource or `*`, and its groups
+ * are the core group, `*`, or absent (a hand-written rule with no `apiGroups` is read as the core group).
+ */
+export function coversSecrets(rule: Readonly<Record<string, unknown>>): boolean {
+  const groups = rule.apiGroups === undefined ? [""] : strings(rule.apiGroups);
+  const resources = strings(rule.resources);
+  return (
+    groups.some((group) => group === "" || group === "*") &&
+    resources.some((resource) => resource === "*" || resource === "secrets" || resource.startsWith("secrets/"))
+  );
+}
+
+/** The Secret-name rules, applied to one node whose children are already masked copies. */
+function maskSecretNames(node: Json): void {
+  if (typeof node.secretName === "string") node.secretName = MACHINE_REDACTED;
+  for (const [key, value] of Object.entries(node)) {
+    if (namesASecret(key) && isObject(value) && typeof value.name === "string")
+      node[key] = { ...value, name: MACHINE_REDACTED };
+  }
+  // The entries are the walk's own copies, so they are masked in place.
+  for (const key of SECRET_NAME_LISTS) {
+    const list = node[key];
+    if (!Array.isArray(list)) continue;
+    for (const entry of list) if (isObject(entry) && typeof entry.name === "string") entry.name = MACHINE_REDACTED;
+  }
+  if (Array.isArray(node.ownerReferences)) node.ownerReferences = node.ownerReferences.map(maskedReference);
+  for (const key of ["involvedObject", "regarding", "related"] as const) {
+    if (key in node) node[key] = maskedReference(node[key]);
+  }
+  if (Array.isArray(node.rules))
+    node.rules = node.rules.map((rule) =>
+      isObject(rule) && coversSecrets(rule) && Array.isArray(rule.resourceNames)
+        ? { ...rule, resourceNames: rule.resourceNames.map(() => MACHINE_REDACTED) }
+        : rule,
+    );
+}
+
+/** Whether an Event is about a Secret, whose own name the server derives from the Secret's. */
+function aboutASecret(object: Json): boolean {
+  return [object.involvedObject, object.regarding].some(
+    (reference) => isObject(reference) && reference.kind === "Secret",
+  );
+}
+
 /** A masked deep copy: children first, then the rules on the copy. */
 function walk(value: unknown, depth: number, rules: (node: Json) => void): unknown {
   if (depth > MACHINE_MAX_NESTING) throw new QueryError(NESTED_TOO_DEEP_SENTENCE, KUBERNETES_TYPE);
@@ -80,12 +147,20 @@ function walk(value: unknown, depth: number, rules: (node: Json) => void): unkno
 }
 
 export function maskObjectForMachine(target: RedactionTarget, object: Readonly<Record<string, unknown>>): Json {
-  const masked = walk(object, 0, maskValues) as Json;
+  // Read before the walk: the walk replaces `involvedObject` with a copy whose name is already masked.
+  const eventAboutASecret = aboutASecret(object);
+  const masked = walk(object, 0, (node) => {
+    maskValues(node);
+    maskSecretNames(node);
+  }) as Json;
   if (readsConfigMaps(target) || masked.kind === "ConfigMap") {
     for (const field of ["data", "binaryData"] as const) {
       const map = masked[field];
       if (isObject(map)) masked[field] = maskedValues(map);
     }
   }
+  const nameIsASecret = readsSecrets(target) || masked.kind === "Secret" || eventAboutASecret;
+  if (nameIsASecret && isObject(masked.metadata) && typeof masked.metadata.name === "string")
+    masked.metadata = { ...masked.metadata, name: MACHINE_REDACTED };
   return masked;
 }
