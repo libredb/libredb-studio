@@ -28,6 +28,7 @@ Browser → Redirect to app (/ or /admin based on role)
   - [Configuration Reference](#configuration-reference)
   - [Automatic redirect to the provider](#automatic-redirect-to-the-provider)
   - [Role Mapping](#role-mapping)
+    - [Requiring a role](#requiring-a-role)
   - [Session Identity](#session-identity)
   - [Security Features](#security-features)
   - [Troubleshooting](#troubleshooting)
@@ -310,6 +311,7 @@ The difference is the realm role (`admin` or `user`), mapped through `OIDC_ROLE_
 | `OIDC_SCOPE` | No | `openid profile email` | OAuth scopes to request |
 | `OIDC_ROLE_CLAIM` | No | — | Claim path for role extraction (dot-notation supported) |
 | `OIDC_ADMIN_ROLES` | No | `admin` | Comma-separated values that map to admin role |
+| `OIDC_USER_ROLES` | No | unset | Comma-separated values that map to user role. Set, an account that holds neither an admin nor a user role is refused at sign-in ([Requiring a role](#requiring-a-role)). Needs `OIDC_ROLE_CLAIM` |
 | `OIDC_PROMPT` | No | `login` | The `prompt` sent on sign-in: `login`, `consent`, `select_account`, or `omit` to send none; see [Single sign-on with OIDC_PROMPT](#single-sign-on-with-oidc_prompt) |
 | `OIDC_AUTO_REDIRECT` | No | off | `true`, `1`, `on` or `yes` sends a signed-out `GET /login` straight to the identity provider; see [Automatic redirect to the provider](#automatic-redirect-to-the-provider) |
 | `AUTH_SESSION_TTL_SECONDS` | No | `86400` | Session lifetime in seconds, from 300 to 86400; see [Session lifetime](#session-lifetime) |
@@ -344,7 +346,7 @@ The role mapping system:
 2. Supports dot-notation for nested claims (e.g., `realm_access.roles`)
 3. If the claim value is an array, checks if any element matches `OIDC_ADMIN_ROLES`
 4. If the claim value is a string, checks for exact match (case-insensitive)
-5. If no match or no claim configured, defaults to `user` role
+5. If no match or no claim configured, defaults to `user` role, unless `OIDC_USER_ROLES` is set (see [Requiring a role](#requiring-a-role))
 
 **Examples:**
 
@@ -361,6 +363,34 @@ The role mapping system:
 // No match → defaults to user
 { "roles": ["viewer", "editor"] }  →  user
 ```
+
+### Requiring a role
+
+By default every account the provider signs in is at least a `user`.
+Set `OIDC_USER_ROLES` to let in only accounts that hold a role: the claim named by `OIDC_ROLE_CLAIM` must then hold a value of `OIDC_ADMIN_ROLES` or of `OIDC_USER_ROLES`.
+An account that holds neither gets no session.
+The callback sends it to `/login?error=oidc_no_role`, the login page says "Your account has no role that allows access to LibreDB Studio. Ask your administrator.", and the audit trail records `login_failure` with reason `oidc_no_role` and the account's email, username or subject as the actor.
+
+The values are a comma list, trimmed, and compared case-insensitively.
+An account that holds both roles is `admin`.
+An empty value, or one of only commas and spaces, keeps the default rule.
+`OIDC_USER_ROLES` needs `OIDC_ROLE_CLAIM`: set without it, every sign-in fails with `oidc_config`, because there is no claim to read the roles from.
+
+A flat claim, one top-level claim whose name has no dot, is the simplest shape.
+For example, Keycloak client roles `admin` and `user` reach the ID token as the claim `libredb_roles` through a **User Client Role** mapper whose **Client ID** names the client that holds the roles, with **Token Claim Name** `libredb_roles` and with **Multivalued** and **Add to ID token** on:
+
+```env
+OIDC_ROLE_CLAIM=libredb_roles
+OIDC_ADMIN_ROLES=admin
+OIDC_USER_ROLES=user
+```
+
+| `libredb_roles` in the ID token | Result |
+|---------------------------------|--------|
+| `["admin"]` | `admin` |
+| `["user"]` | `user` |
+| `["user", "admin"]` | `admin` |
+| `["viewer"]`, `[]`, or no claim at all | Refused with `oidc_no_role` |
 
 > For the precise algorithm and provider-by-provider worked examples, see the [Role Mapping Engine](#role-mapping-engine) in Part 2.
 
@@ -434,6 +464,13 @@ An ID token without a string `sub` or `iss` signs no one in: the callback redire
 - With the default `OIDC_PROMPT=login`, LibreDB Studio sends `prompt=login` to force re-authentication
 - With `OIDC_PROMPT=omit` this is intended: the provider session signs the user in (single sign-on)
 - If the issue persists, check your provider's session settings
+
+### "Your account has no role that allows access to LibreDB Studio"
+
+- `OIDC_USER_ROLES` is set, and the account's ID token holds no value of `OIDC_ADMIN_ROLES` or `OIDC_USER_ROLES` in the claim `OIDC_ROLE_CLAIM` names.
+- Give the account an admin or a user role at the provider, directly or through a group the provider puts in that claim, and sign in again.
+- The audit trail records `login_failure` with reason `oidc_no_role` and names the account, so the record shows whose role is missing.
+- Use your provider's token debugger to see the claim it actually sends.
 
 ### Role is always "user" even for admins
 
@@ -590,7 +627,10 @@ The OIDC subsystem follows three core principles:
     │                            │                                   │
     │                            │ 12. Extract claims from id_token  │
     │                            │ 13. mapOIDCRole(claims)           │
-    │                            │     └─ admin or user              │
+    │                            │     ├─ admin or user              │
+    │                            │     └─ neither (OIDC_USER_ROLES   │
+    │                            │        set): no session, 302 →    │
+    │                            │        /login?error=oidc_no_role  │
     │                            │                                   │
     │                            │ 14. login(role, email)            │
     │                            │     └─ signJWT → auth-token cookie│
@@ -666,6 +706,7 @@ interface OIDCConfig {
   scope: string;           // Default: "openid profile email"
   roleClaim: string;       // e.g. "realm_access.roles"
   adminRoles: string[];    // e.g. ["admin"]
+  userRoles: string[];     // e.g. ["user"]; empty (the default) keeps "every non-admin is user"
   prompt: OIDCPrompt;      // "login" (default), "consent", "select_account" or "omit" (OIDC_PROMPT)
 }
 
@@ -699,7 +740,8 @@ discoverProvider(config?)           ← openid-client discovery + 5-min cache
     └──► exchangeCode(config, callbackUrl, codeVerifier, state, nonce)
              └─ returns OIDCClaims | null
 
-mapOIDCRole(claims, roleClaim, adminRoles)   ← pure function, no deps
+mapOIDCRole(claims, roleClaim, adminRoles, userRoles = [])
+                                             ← pure function, no deps; "admin", "user" or null
 
 encryptState(data) / decryptState(token)     ← jose JWT sign/verify
 
@@ -928,25 +970,35 @@ Forces the OIDC provider to show the login screen on every SSO click, even if th
 ## Role Mapping Engine
 
 The role mapping system converts provider-specific claims into LibreDB's binary role model (`admin` | `user`).
+With `OIDC_USER_ROLES` set it can also find that an account holds neither role, and the callback then refuses the sign-in.
 
 Studio reads role claims from the ID token returned by the authorization-code exchange; it does not read the access token.
 
 ### Algorithm (`mapOIDCRole`)
 
 ```
-Input: claims object, roleClaim path, adminRoles list
+Input: claims object, roleClaim path, adminRoles list,
+       userRoles list (OIDC_USER_ROLES, empty unless set)
 
-1. If roleClaim is empty → return "user"
+0. unmatched = "user" when userRoles is empty (the default), null when it is set
+
+1. If roleClaim is empty → return unmatched
 
 2. Navigate claim path (dot-notation):
    "realm_access.roles" → claims["realm_access"]["roles"]
+   A missing value, or a step through a non-object → return unmatched
 
 3. Get claim value:
-   a. If Array → check if ANY element matches adminRoles (case-insensitive)
-   b. If String → check if it matches any adminRole (case-insensitive)
-   c. Otherwise → return "user"
+   a. If Array → its elements, as strings
+   b. Otherwise → the value, as a string
 
-4. Match found → "admin", no match → "user"
+4. Any value matches adminRoles (case-insensitive) → "admin",
+   so admin wins when the claim holds both roles
+
+5. Any value matches userRoles (case-insensitive) → "user", otherwise → unmatched
+
+The callback refuses null: no session, a login_failure audit record with
+reason oidc_no_role, and a redirect to /login?error=oidc_no_role.
 ```
 
 ### Examples
@@ -974,6 +1026,13 @@ Provider: Google
 Claims:   { "sub": "123", "email": "user@gmail.com" }
 Config:   OIDC_ROLE_CLAIM=  (empty)
 Result:   "user" (no claim configured, default)
+
+Provider: Keycloak, client roles in a flat claim
+Claims:   { "libredb_roles": ["viewer"] }
+Config:   OIDC_ROLE_CLAIM=libredb_roles
+          OIDC_ADMIN_ROLES=admin
+          OIDC_USER_ROLES=user
+Result:   null (neither role: refused as oidc_no_role, no session)
 ```
 
 ---
@@ -1057,6 +1116,7 @@ Both OIDC routes redirect to `/login?error=<code>` on failure, and record the sa
 | `oidc_state_missing` | callback | `oidc-state` cookie not found | Cookie expired (>5 min) or blocked by browser |
 | `oidc_state_invalid` | callback | State decryption failed or state mismatch | Tampered cookie, wrong JWT_SECRET, or CSRF attempt |
 | `oidc_no_claims` | callback | Token exchange returned no claims, or no string `sub` or `iss` | Provider returned invalid/empty ID token |
+| `oidc_no_role` | callback | `mapOIDCRole()` returned null: `OIDC_USER_ROLES` is set and the role claim holds no admin or user role | The account has no role at the provider; no session is created, and the audit record names the account |
 | `oidc_failed` | login, callback | Any other error after the provider answered | A discovery document that parses but lacks an endpoint, PKCE or state-cookie failure on login; network error, invalid client credentials, etc. on callback |
 
 ### Login Page Error Display
@@ -1067,6 +1127,7 @@ Both OIDC routes redirect to `/login?error=<code>` on failure, and record the sa
 |------|---------|
 | `oidc_config` | Single sign-on is not configured correctly on this server. Contact your administrator. |
 | `oidc_discovery` | The identity provider could not be reached. Try again later, or contact your administrator if this continues. |
+| `oidc_no_role` | Your account has no role that allows access to LibreDB Studio. Ask your administrator. |
 | anything else | Authentication failed. Please try again. |
 
 The page is unauthenticated, so it is never given the underlying error: the code names the class and nothing the issuer said reaches the browser. `tests/components/LoginPageOIDC.test.tsx` asserts the negative.
@@ -1186,3 +1247,4 @@ The OIDC claims contain `name`, `email`, `picture` etc. To display these:
 | **Discovery-based generic logout with Auth0/Zitadel compatibility branches** | Uses the provider-advertised `end_session_endpoint` without changing the existing special integrations | Deriving a logout path from the issuer fails when the issuer contains a path or the provider uses a different endpoint |
 | **Module-level discovery cache** | Fast (avoids HTTP on every login), simple, process-scoped | Redis cache: overkill for single-instance deployments. No cache: 200-500ms per login |
 | **Binary role model (admin/user)** | Matches existing RBAC, simple to map from any claim format | Fine-grained roles: would require schema changes in JWT, proxy, and all components |
+| **`OIDC_USER_ROLES` refuses an account with neither role, off unless set** | A deployment that grants access through provider roles must be able to turn away an account the provider authenticates but never gave a role; unset, every non-admin is a `user`, so existing deployments see no change | Refusing every non-admin by default: locks out every deployment that relies on the default `user` role |

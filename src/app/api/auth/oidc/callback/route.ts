@@ -17,7 +17,7 @@ const ROUTE = "GET /api/auth/oidc/callback";
  * audit trail and the one a user sees on screen are the same taxonomy. It also keeps the admin
  * filter low-cardinality.
  */
-function auditFailure(reason: AuditReason, ip: string): void {
+function auditFailure(reason: AuditReason, ip: string, user = "anonymous"): void {
   // Isolated from route control flow: a broken audit sink must never decide which failure code
   // the caller is redirected to. Every call site below sits inside the route's outer try, whose
   // catch would otherwise reclassify the ORIGINAL failure (e.g. oidc_state_missing) as oidc_failed
@@ -27,7 +27,7 @@ function auditFailure(reason: AuditReason, ip: string): void {
       type: "login_failure",
       action: "login",
       target: ROUTE,
-      user: "anonymous",
+      user,
       result: "failure",
       reason,
       ip,
@@ -83,11 +83,26 @@ export async function GET(request: Request) {
     }
 
     // Map role from claims
-    const role = mapOIDCRole(claims as Record<string, unknown>, oidcConfig.roleClaim, oidcConfig.adminRoles);
+    const role = mapOIDCRole(
+      claims as Record<string, unknown>,
+      oidcConfig.roleClaim,
+      oidcConfig.adminRoles,
+      oidcConfig.userRoles,
+    );
+    const identity = claims.email || claims.preferred_username || claims.sub;
+
+    if (role === null) {
+      // The account holds none of OIDC_ADMIN_ROLES or OIDC_USER_ROLES, so it gets no session. The
+      // exchange consumed the state, so its cookie is deleted as after a sign-in. The provider
+      // authenticated the account, so the record names it the way login_success does.
+      cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
+      auditFailure("oidc_no_role", ip, String(identity));
+      return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_no_role`);
+    }
 
     // Create local JWT session (same as password login). `username` keeps its display meaning, and the provider's
     // subject and issuer travel as the session's idpSubject and idpIssuer.
-    const username = claims.email || claims.preferred_username || claims.sub || role;
+    const username = identity || role;
     await login(role, username, undefined, { subject: claims.sub, issuer: claims.iss });
 
     // Clean up state cookie
