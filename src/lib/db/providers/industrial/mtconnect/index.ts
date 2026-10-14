@@ -50,6 +50,7 @@ import {
   MTCONNECT_CONTAINER_LEVEL,
   MTCONNECT_DEFAULT_PORT,
   MTCONNECT_HEALTH_REQUEST,
+  MTCONNECT_WINDOW_REQUEST,
   MTCONNECT_HEALTH_UNKNOWN,
   MTCONNECT_OBJECT_KINDS,
   MTCONNECT_QUERY_DIALECT,
@@ -219,9 +220,11 @@ export class MTConnectProvider extends BaseDatabaseProvider {
       model: undefined,
       window: undefined,
     };
-    // `connect()` proves an MTConnect agent is answering and reads the window, with the one read
-    // every schema version from 1.3 to 2.8 answers. MEASURED on three models: 908 to 960 bytes in
-    // 2 to 4 ms, and the size does not grow with the model.
+    // `connect()` proves an MTConnect agent is answering and reads the buffer's window. The read is
+    // `/current` rather than the health read, because a Header reports the window of the ANSWER
+    // wherever the request narrows it; `MTCONNECT_WINDOW_REQUEST` carries that measurement. Its root
+    // element is `MTConnectStreams` in every schema version from 1.3 to 2.8, so it proves an agent
+    // is answering as the health read did (MEASURED at 1.3, 1.7 and 2.0 against the same buffer).
     await this.readWindow();
     this.state = { ...this.state, connected: true };
   }
@@ -321,14 +324,16 @@ export class MTConnectProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * The Header of a read with no `from` and no `to`.
+   * The Header of the read that reports the BUFFER's window rather than an answer's.
    *
-   * MEASURED on the pinned agent: with `to` given, the Header's `firstSequence` is the request's own
-   * `from` rather than the buffer's start, so buffer facts come only from a read without either.
+   * The request is `MTCONNECT_WINDOW_REQUEST`, and its docblock holds the measurement: `count` and
+   * `to` each narrow the Header in their own way, so neither the health read nor any `to` read can
+   * be the source. This used to read the health request and refused every `at` and every `from`
+   * above 2 as a result.
    */
   private async readWindow(): Promise<MtcWindow> {
     const session = this.require();
-    const answer = await this.read(session, this.guard(MTCONNECT_HEALTH_REQUEST, { rowCap: ROW_CAP }));
+    const answer = await this.read(session, this.guard(MTCONNECT_WINDOW_REQUEST, { rowCap: ROW_CAP }));
     const header = headerOf(answer.root);
     const window: MtcWindow = {
       instanceId: header.instanceId ?? "",

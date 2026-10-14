@@ -162,6 +162,32 @@ export const MTCONNECT_ABSENT_SURFACES = Object.freeze([
 export const MTCONNECT_HEALTH_REQUEST = "/sample?count=1";
 
 /**
+ * The read whose Header carries the BUFFER's sequence window, which is not the health read.
+ *
+ * A Header reports the window of the ANSWER rather than of the buffer wherever the request narrows
+ * it, and three keys narrow it in three different ways. MEASURED on the pinned agent at schema
+ * versions 1.3, 1.7 and 2.0, against the same buffer in each:
+ *
+ * - `count` POSITIVE, which the health read uses: `nextSequence` is the sequence after the FIRST
+ *   returned observation. `/sample?count=1` answered `nextSequence="2"` at all three versions while
+ *   the buffer's own next was 7955. `firstSequence` and `lastSequence` stayed the buffer's own.
+ * - `count` NEGATIVE: `nextSequence` is one below the oldest returned observation, measured at 145
+ *   where the buffer's next was 147.
+ * - `to` given: `firstSequence` becomes the request's own `from` rather than the buffer's start.
+ * - `/current`, with or without `path`: `nextSequence` is `lastSequence + 1`, the buffer's own, at
+ *   all three versions. A `path` filter narrows the observations and not the window (measured at 927
+ *   bytes against 4825 for the whole document), so a filter here is a size choice and not a
+ *   correctness one; no filter is used, because a path that fits one device model does not fit
+ *   another.
+ *
+ * Reading the window from the health read is what this provider shipped with, and it refused every
+ * `at` and every `from` above 2, telling the reader the agent's next sequence number was 2 when the
+ * agent itself answered the same request with 200. `/probe` cannot be the source either: MEASURED,
+ * it carries no sequence attribute at all.
+ */
+export const MTCONNECT_WINDOW_REQUEST = "/current";
+
+/**
  * Fields of `HealthInfo` an agent cannot answer are reported as unknown rather than as a number,
  * following the MQTT provider. MEASURED: the Header carries `instanceId`, `bufferSize`,
  * `firstSequence`, `lastSequence` and `nextSequence`, and nothing about connections, uptime or

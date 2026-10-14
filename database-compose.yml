@@ -3827,6 +3827,53 @@ services:
   # Kubernetes has no service here: a cluster is not a compose service. docker/kubernetes/README.md makes the
   # throwaway k3s clusters its fixtures and its live pass use, and docs/providers/kubernetes.md connects to them.
 
+  # -- MTConnect, the agent and the device behind it (#1722) ---------------------
+
+  # FIXTURE CLASSES, declared rather than implied:
+  #  - the agent is class A, a third party image pinned by digest. It is the half that matters:
+  #    the provider reads XML cppagent produced, with its own Header, sequence numbers and 404s,
+  #    rather than XML this repository wrote.
+  #  - the adapter is class B, written here. What it was written WITHOUT reading is part of the
+  #    declaration: neither cppagent's adapter sources nor the SHDR document were read, only the
+  #    line shape the agent's configuration documents. What was verified instead is that the agent
+  #    accepted the stream: its `ConnectionStatus` reads ESTABLISHED and the values arrive in
+  #    `/current` with the agent's own timestamps and sequence numbers. So the VALUES are this
+  #    repository's choice and the ENCODING they are read back through is not.
+
+  # The agent republishes what an adapter tells it, so the fixture is two services: without the
+  # adapter every data item answers UNAVAILABLE and a read proves nothing. The provider therefore
+  # reads values that travelled device -> agent -> HTTP, which is the shape a real installation has.
+  #
+  # The published port is not 5000, the Institute's default: MEASURED on the development machine,
+  # macOS binds 5000 to Control Center's AirPlay receiver, so a fixture on 5000 is unreachable
+  # there. 17322 carries the issue number and is free.
+  mtconnect:
+    image: mtconnect/agent:2.8.0.4@sha256:c42f90850ab70d65ae5e73b14392b3041ed51065bd7bf287658db6f7260df641
+    container_name: libredb-mtconnect
+    init: true
+    depends_on:
+      - mtconnect-adapter
+    volumes:
+      - ./docker/mtconnect-init:/mtconnect/config:ro
+    ports:
+      - "127.0.0.1:17322:5000"
+    healthcheck:
+      # /probe is the one route that answers before any adapter data arrives.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:5000/probe > /dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # The device. Python's standard library only, so the image needs no install step; the digest is
+  # the one database-compose.yml already pins for the vector seeds.
+  mtconnect-adapter:
+    image: python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4
+    container_name: libredb-mtconnect-adapter
+    init: true
+    volumes:
+      - ./docker/mtconnect-init:/fixture:ro
+    command: ["python", "/fixture/adapter.py"]
+
 volumes:
   # Named volumes for Druid, for the certificates of kafka-auth and the etcd auth fixtures, and
   # for the vector fixtures. Druid is the one service here whose processes must share state
