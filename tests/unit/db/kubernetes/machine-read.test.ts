@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
+import { TransportError } from "@/lib/db/http/node-transport";
 import {
   ExplainCache,
   type KubectlContext,
@@ -138,6 +139,33 @@ describe("readKubectlForMachine", () => {
     await expect(
       readKubectlForMachine(session, "get pods -n shop -w", BUDGET, undefined, options),
     ).rejects.toBeInstanceOf(QueryError);
+  });
+});
+
+describe("an over-size document on the agent path", () => {
+  test("a document over the byte budget is refused with the byte sentence, not shown as a placeholder", async () => {
+    const big = {
+      kind: "ConfigMap",
+      metadata: { name: "big", namespace: "shop" },
+      data: { blob: "x".repeat(300_000) },
+    };
+    const { session, options } = machine(routes({ "GET /api/v1/namespaces/shop/configmaps/big": jsonAnswer(big) }));
+    await expect(
+      readKubectlForMachine(session, "get configmap big -n shop -o yaml", BUDGET, undefined, options),
+    ).rejects.toThrow(/Read-only execution exceeded the byte budget: \d+ bytes > 262144 allowed/);
+  });
+
+  test("a named read refused as too large is the byte sentence at the cap it passed", async () => {
+    const { session, options } = machine(
+      routes({
+        "GET /api/v1/namespaces/shop/configmaps/huge": () => {
+          throw new TransportError("too-large", "x");
+        },
+      }),
+    );
+    await expect(
+      readKubectlForMachine(session, "get configmap huge -n shop -o json", BUDGET, undefined, options),
+    ).rejects.toThrow("Read-only execution exceeded the byte budget: 2097152 bytes > 262144 allowed");
   });
 });
 

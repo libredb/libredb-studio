@@ -125,6 +125,14 @@ describe("the list form", () => {
     );
   });
 
+  test("the editor shows a 300 KB document, which the agent path refuses as over its byte budget", async () => {
+    const big = configMap("big", { data: { blob: "x".repeat(300_000) } });
+    const { context } = consoleContext(routes({ "GET /api/v1/namespaces/shop/configmaps/big": jsonAnswer(big) }));
+    const grid = await getDocuments(context, get("get cm big -o yaml"));
+    expect(grid.rows[0].DOCUMENT as string).toContain("x".repeat(300_000));
+    expect(grid.warnings).toBeUndefined();
+  });
+
   test("a document exactly at 1 MiB is shown", async () => {
     const shell = JSON.stringify(
       { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "edge" }, data: { key: "" } },

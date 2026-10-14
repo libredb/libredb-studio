@@ -6,8 +6,10 @@
  * last-applied annotation and no document holds `managedFields`. A list item carries no `apiVersion` or `kind`, so
  * each document gets the resource's, as kubectl prints them. A statement shows at most 500 objects, and a list
  * holding more answers a sentence to narrow it; a document over 1 MiB is replaced by a sentence and a warning, and a
- * named read is capped at 2 MiB, past which its cell is that sentence too. The documents of one statement hold at
- * most 16 MiB together, past which the statement answers a sentence to narrow it and shows no partial grid.
+ * named read is capped at 2 MiB, past which its cell is that sentence too. On the agent path a document is never
+ * replaced: one past the byte budget, or a named read past its 2 MiB cap, refuses the statement with the byte budget's
+ * sentence, since a placeholder would read to the agent as the object's content. The documents of one statement hold
+ * at most 16 MiB together, past which the statement answers a sentence to narrow it and shows no partial grid.
  */
 import { stringify } from "yaml";
 import { QueryError } from "@/lib/db/errors";
@@ -24,9 +26,11 @@ import {
 import { redactResponse } from "../redaction";
 import { type KubeTable, parseTable, scanTable } from "../table";
 import {
+  byteBudgetSentence,
   inTurn,
   type KubectlContext,
   type KubectlGrid,
+  type MachineLimits,
   machineRowLimit,
   namespaceFor,
   objectOf,
@@ -106,13 +110,19 @@ class DocumentRows {
   constructor(
     private readonly resource: IndexedResource,
     private readonly format: "json" | "yaml",
+    private readonly machine: MachineLimits | undefined,
   ) {}
 
-  /** One object's row: its document, or the oversized sentence when the document passes 1 MiB. */
+  /**
+   * One object's row: its document, or the oversized sentence when the document passes 1 MiB. On the agent path a
+   * document past the byte budget refuses the statement first.
+   */
   object(object: Readonly<Record<string, unknown>>): void {
     const metadata = objectOf(object.metadata) ?? {};
     const text = documentText(object, this.resource, this.format);
     const length = utf8Length(text);
+    if (this.machine !== undefined && length > this.machine.maxBytes)
+      throw new QueryError(byteBudgetSentence(length, this.machine.maxBytes), KUBERNETES_TYPE);
     if (length > KUBERNETES_MAX_DOCUMENT_BYTES) this.oversized(metadata.namespace ?? null, metadata.name ?? null);
     else this.push({ NAMESPACE: metadata.namespace ?? null, NAME: metadata.name ?? null, DOCUMENT: text }, length);
   }
@@ -132,7 +142,8 @@ class DocumentRows {
 
 /**
  * The rows of the named form, one read each, each written as it is read so the statement's bytes stop the reads; a
- * missing one is skipped with --ignore-not-found, and one past 2 MiB is the oversized cell.
+ * missing one is skipped with --ignore-not-found, and one past 2 MiB is the oversized cell (on the agent path, the byte
+ * budget's refusal).
  */
 async function namedRows(
   context: KubectlContext,
@@ -150,7 +161,15 @@ async function namedRows(
         { ...callOf(context, statement), accept: ACCEPT_JSON, maxResponseBytes: 2 * KUBERNETES_MAX_DOCUMENT_BYTES },
       );
     } catch (error) {
-      if (error instanceof KubernetesResponseTooLargeError) return rows.oversized(namespace ?? null, name);
+      if (error instanceof KubernetesResponseTooLargeError) {
+        // The figure is the cap the answer passed, so the document's true size is at least that.
+        if (context.machine !== undefined)
+          throw new QueryError(
+            byteBudgetSentence(2 * KUBERNETES_MAX_DOCUMENT_BYTES, context.machine.maxBytes),
+            KUBERNETES_TYPE,
+          );
+        return rows.oversized(namespace ?? null, name);
+      }
       if (
         statement.ignoreNotFound &&
         error instanceof KubernetesRequestError &&
@@ -168,7 +187,7 @@ async function namedRows(
 export async function getDocuments(context: KubectlContext, statement: GetStatement): Promise<KubectlGrid> {
   const format = statement.output === "json" ? "json" : "yaml";
   const resource = await resolveType(context, statement.type);
-  const rows = new DocumentRows(resource, format);
+  const rows = new DocumentRows(resource, format, context.machine);
   if (statement.names.length === 0) {
     for (const object of await listedObjects(context, statement, resource)) rows.object(object);
   } else await namedRows(context, statement, resource, rows);
