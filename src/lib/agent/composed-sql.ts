@@ -1260,6 +1260,16 @@ export function composeEstimatingExplain(dialect: DatabaseType, sql: string): Ag
   return { sql: `${ESTIMATING_EXPLAIN_PREFIX[dialect]} ${withoutEstimatingPrefix(statement)}`, mode: "execute" };
 }
 
+/** Whether this dialect has a verified catalog composition for every kind. The manifest's `sql-composers` mirror is pinned to it. */
+export function composesCatalogFor(dialect: DatabaseType): boolean {
+  return Object.hasOwn(CATALOG_COMPOSERS, dialect);
+}
+
+/** Whether this dialect has a verified estimating plan, as a prefix or as a session mode. */
+export function composesEstimatingExplainFor(dialect: DatabaseType): boolean {
+  return ESTIMATING_EXPLAIN_SESSION_MODE.has(dialect) || Object.hasOwn(ESTIMATING_EXPLAIN_PREFIX, dialect);
+}
+
 /**
  * The statement with a leading estimating EXPLAIN removed, if the model wrote one.
  *
