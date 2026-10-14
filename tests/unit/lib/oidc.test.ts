@@ -126,10 +126,12 @@ describe("getOIDCConfig", () => {
     process.env.OIDC_SCOPE = "";
     process.env.OIDC_ROLE_CLAIM = "";
     process.env.OIDC_ADMIN_ROLES = "";
+    delete process.env.OIDC_PROMPT;
   });
 
   afterEach(() => {
     Object.assign(process.env, originalEnv);
+    if (originalEnv.OIDC_PROMPT === undefined) delete process.env.OIDC_PROMPT;
   });
 
   test("returns config with all required fields", () => {
@@ -198,6 +200,34 @@ describe("getOIDCConfig", () => {
   test("throws when OIDC_CLIENT_SECRET is missing", () => {
     delete process.env.OIDC_CLIENT_SECRET;
     expect(() => getOIDCConfig()).toThrow("OIDC_CLIENT_SECRET");
+  });
+
+  test("OIDC_PROMPT unset or empty keeps prompt=login", () => {
+    expect(getOIDCConfig().prompt).toBe("login");
+    process.env.OIDC_PROMPT = "  ";
+    expect(getOIDCConfig().prompt).toBe("login");
+  });
+
+  test("OIDC_PROMPT is trimmed and lower-cased, and the accepted values pass through", () => {
+    for (const [raw, expected] of [
+      [" Omit ", "omit"],
+      ["LOGIN", "login"],
+      ["consent", "consent"],
+      ["Select_Account", "select_account"],
+    ] as const) {
+      process.env.OIDC_PROMPT = raw;
+      expect(getOIDCConfig().prompt).toBe(expected);
+    }
+  });
+
+  test("OIDC_PROMPT=none throws AuthConfigError naming the variable", () => {
+    // prompt=none fails with login_required whenever the provider has no session, which is a
+    // dead end rather than a sign-in, so it is refused as configuration like any unknown value.
+    for (const value of ["none", "silent"]) {
+      process.env.OIDC_PROMPT = value;
+      expect(() => getOIDCConfig()).toThrow(AuthConfigError);
+      expect(() => getOIDCConfig()).toThrow("OIDC_PROMPT must be one of login, consent, select_account, omit");
+    }
   });
 });
 
@@ -446,6 +476,7 @@ describe("discoverProvider", () => {
       scope: "openid",
       roleClaim: "",
       adminRoles: ["admin"],
+      prompt: "login" as const,
     };
 
     await discoverProvider(customConfig);
@@ -505,6 +536,29 @@ describe("generateAuthUrl", () => {
       nonce: "mock-nonce-value",
       prompt: "login",
     });
+  });
+
+  test("OIDC_PROMPT=omit builds an authorization URL without a prompt parameter", async () => {
+    process.env.OIDC_ISSUER = "https://example.auth0.com";
+    process.env.OIDC_CLIENT_ID = "test-client-id";
+    process.env.OIDC_CLIENT_SECRET = "test-client-secret";
+    process.env.OIDC_PROMPT = "omit";
+    try {
+      await generateAuthUrl("mock-config" as never, "http://localhost:3000/callback", "openid", getOIDCConfig().prompt);
+    } finally {
+      delete process.env.OIDC_PROMPT;
+    }
+
+    const [, params] = mockBuildAuthorizationUrl.mock.calls[0];
+    expect(params).not.toHaveProperty("prompt");
+    expect(params).toMatchObject({ scope: "openid", state: "mock-state-value" });
+  });
+
+  test("passes a configured prompt other than omit through", async () => {
+    await generateAuthUrl("mock-config" as never, "http://localhost:3000/callback", "openid", "select_account");
+
+    const [, params] = mockBuildAuthorizationUrl.mock.calls[0];
+    expect(params).toMatchObject({ prompt: "select_account" });
   });
 });
 

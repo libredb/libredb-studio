@@ -6,6 +6,14 @@ import { AuthConfigError } from "@/lib/auth-errors";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+/**
+ * The `prompt` sent on the authorization request (OIDC_PROMPT). `omit` sends none, so a live
+ * identity provider session signs the user in without asking again (single sign-on).
+ */
+export type OIDCPrompt = "login" | "consent" | "select_account" | "omit";
+
+const OIDC_PROMPTS: readonly OIDCPrompt[] = ["login", "consent", "select_account", "omit"];
+
 export interface OIDCConfig {
   issuer: string;
   clientId: string;
@@ -13,6 +21,7 @@ export interface OIDCConfig {
   scope: string;
   roleClaim: string;
   adminRoles: string[];
+  prompt: OIDCPrompt;
 }
 
 export interface OIDCState {
@@ -31,6 +40,20 @@ const OIDC_CONFIG_MISSING_MESSAGE =
   "OIDC_ISSUER, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET are required when using OIDC authentication";
 const OIDC_ISSUER_NOT_HTTPS_MESSAGE =
   "OIDC_ISSUER must be an https:// URL; openid-client refuses plain http, localhost included";
+const OIDC_PROMPT_INVALID_MESSAGE = "OIDC_PROMPT must be one of login, consent, select_account, omit; got ";
+
+/**
+ * Unset or empty keeps `login`, the value Studio always sent before OIDC_PROMPT existed. `none` is
+ * refused with the other unknown values: it fails with login_required whenever the provider has no
+ * session, which leaves the user on an error page instead of a sign-in form.
+ */
+function readOIDCPrompt(): OIDCPrompt {
+  const value = (process.env.OIDC_PROMPT ?? "").trim().toLowerCase() || "login";
+  if (!(OIDC_PROMPTS as readonly string[]).includes(value)) {
+    throw new AuthConfigError(OIDC_PROMPT_INVALID_MESSAGE + value);
+  }
+  return value as OIDCPrompt;
+}
 
 export function getOIDCConfig(): OIDCConfig {
   const issuer = process.env.OIDC_ISSUER;
@@ -68,6 +91,7 @@ export function getOIDCConfig(): OIDCConfig {
       .split(",")
       .map((r) => r.trim())
       .filter(Boolean),
+    prompt: readOIDCPrompt(),
   };
 }
 
@@ -108,6 +132,7 @@ export async function generateAuthUrl(
   config: client.Configuration,
   redirectUri: string,
   scope: string,
+  prompt: OIDCPrompt = "login",
 ): Promise<{ url: URL; state: OIDCState }> {
   const code_verifier = client.randomPKCECodeVerifier();
   const code_challenge = await client.calculatePKCECodeChallenge(code_verifier);
@@ -121,8 +146,10 @@ export async function generateAuthUrl(
     code_challenge_method: "S256",
     state,
     nonce,
-    prompt: "login",
   };
+  if (prompt !== "omit") {
+    parameters.prompt = prompt;
+  }
 
   const url = client.buildAuthorizationUrl(config, parameters);
 
