@@ -3824,6 +3824,37 @@ services:
           memory: 256M
     memswap_limit: 256M
 
+  modbus:
+    # Pinned by digest, and by digest rather than by tag because the values this fixture answers
+    # with ARE the expected outcomes: tests/integration/db/modbus-provider.test.ts and
+    # tests/live/modbus-live-check.ts read them back. A tag that moved would change the device
+    # under tests that never mention a version.
+    #
+    # Third party on purpose. The provider was first measured against a server written in this
+    # repository, which left the same question open on every read: the side that wrote the device
+    # and the side that read it were the same side. This image wraps pymodbus 3.12.x, so framing,
+    # function-code decoding and exception responses are all somebody else's code, and the only
+    # thing configured here is the values. It also took zero lines of wrapper code, which the two
+    # alternatives did not: libmodbus is a C library and not a server, so using it means writing
+    # the server that wraps it.
+    image: oitc/modbus-server@sha256:32bfe144512e1f070cf7e7e2513cdcb774d74db142ee5dbad45b21d6d705ab97
+    container_name: libredb-modbus
+    hostname: libredb-modbus
+    restart: unless-stopped
+    volumes:
+      # The tables, and the one-based key trap, are documented in docker/modbus/README.md.
+      - ./docker/modbus/modbus_server.json:/app/modbus_server.json:ro
+    ports:
+      # Loopback only: a device that answers reads to anyone on the network is not a fixture,
+      # and this one has no authentication of any kind because Modbus TCP has none.
+      - "127.0.0.1:1502:5020"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+    memswap_limit: 128M
+
   # Kubernetes has no service here: a cluster is not a compose service. docker/kubernetes/README.md makes the
   # throwaway k3s clusters its fixtures and its live pass use, and docs/providers/kubernetes.md connects to them.
 

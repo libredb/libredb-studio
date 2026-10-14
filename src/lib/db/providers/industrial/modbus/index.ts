@@ -22,7 +22,11 @@
  * shipped type by the factory tests, so a constructor that dialled would put those tests on the
  * network.
  */
-import { assertContainerPathShape, type ContainerPathShapeEngine } from "@/lib/db/object-kinds";
+import {
+  assertContainerPathShape,
+  callerBoundTruncationReason,
+  type ContainerPathShapeEngine,
+} from "@/lib/db/object-kinds";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
@@ -225,6 +229,11 @@ export class ModbusProvider extends BaseDatabaseProvider {
       defaultPort: MODBUS_DEFAULT_PORT,
       statementTerminator: "none",
       containerLevels: [{ id: "schema", label: "Unit", labelPlural: "Units" }],
+      // `listContainers` answers each unit's kinds, so the inventory route may read them rather
+      // than listing a named unit for every kind. It was answering them already and nothing read
+      // them: the object-surface conformance refuses a container naming kinds on a provider that
+      // does not declare this, and that is how it was found.
+      containersNameKinds: true,
       // Declared AND checked: the census pairs the two, and a declaration with no check behind it
       // lets a path of the wrong length reach the map lookup, which then answers "no such point"
       // and names the wrong mistake (#1147).
@@ -396,10 +405,24 @@ export class ModbusProvider extends BaseDatabaseProvider {
     return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
   }
 
-  public async describeObjects(container: readonly string[], kind: string): Promise<ObjectDetailBatch> {
+  /**
+   * Every point of one kind in one unit, described.
+   *
+   * `limit` is honoured and a cut says so, in the sentence every other provider reports a
+   * caller's bound with (`callerBoundTruncationReason`). It was taken and ignored, which the
+   * contract on `describeObjects` refuses in as many words - a provider "may cap, but then
+   * `truncated` says so" - and a caller asking for one point was handed every point with nothing
+   * to say it had asked for fewer. The map is already in memory, so the bound costs nothing here;
+   * what it buys is a caller that can believe the answer it got.
+   */
+  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
     const objects = await this.listObjects(container, kind);
+    const described = limit === undefined ? objects : objects.slice(0, Math.max(0, limit));
     return {
-      details: await Promise.all(objects.map((object) => this.describeObject(object.path, kind))),
+      details: await Promise.all(described.map((object) => this.describeObject(object.path, kind))),
+      ...(described.length < objects.length
+        ? { truncated: { limit: described.length, reason: callerBoundTruncationReason(described.length) } }
+        : {}),
     };
   }
 
