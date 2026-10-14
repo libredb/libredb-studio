@@ -11,9 +11,10 @@ import {
   markerSecret,
   routes,
   SECRET_MARKER,
+  tableAnswer,
 } from "../../../../helpers/kubernetes-console";
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../../../../helpers/kubernetes-markers";
-import { jsonAnswer } from "../../../../helpers/kubernetes-transport";
+import { jsonAnswer, statusAnswer } from "../../../../helpers/kubernetes-transport";
 
 const MACHINE = { maxRows: 200, maxBytes: 262_144 };
 
@@ -92,5 +93,115 @@ describe("documents", () => {
     expect(machine).toContain('\\"password\\": \\"<redacted>\\"');
     expect(machine).toContain(MACHINE_REDACTED);
     expect(machine).not.toContain(SECRET_MARKER);
+  });
+});
+
+/** A list line answered the same whether the editor (500 a page) or the agent (its budget plus one) sends it. */
+function bothLimits(path: string, query: string, answer: ReturnType<typeof tableAnswer>) {
+  return {
+    [`GET ${path}?limit=500${query}`]: answer,
+    [`GET ${path}?limit=${MACHINE.maxRows + 1}${query}`]: answer,
+  };
+}
+
+const SECRET_COLUMNS = [{ name: "Name" }, { name: "Type" }, { name: "Data", type: "integer" }, { name: "Age" }];
+
+/** A Secret Table row named `M.secretName` in shop, its metadata carried when the request asked for it. */
+const secretRow = (metadata: boolean) => ({
+  cells: [M.secretName, "Opaque", 1, "5m"],
+  ...(metadata
+    ? { object: { kind: "PartialObjectMetadata", metadata: { name: M.secretName, namespace: "shop" } } }
+    : {}),
+});
+
+describe("Tables", () => {
+  test.each([
+    [
+      "get secrets -n shop",
+      bothLimits(
+        "/api/v1/namespaces/shop/secrets",
+        "&includeObject=None",
+        tableAnswer(SECRET_COLUMNS, [secretRow(false)]),
+      ),
+    ],
+    [
+      "get secrets -n shop -o name",
+      bothLimits(
+        "/api/v1/namespaces/shop/secrets",
+        "&includeObject=None",
+        tableAnswer(SECRET_COLUMNS, [secretRow(false)]),
+      ),
+    ],
+    [
+      "get secrets -A",
+      bothLimits("/api/v1/secrets", "&includeObject=Metadata", tableAnswer(SECRET_COLUMNS, [secretRow(true)])),
+    ],
+    [
+      "get secret db -n shop",
+      {
+        "GET /api/v1/namespaces/shop/secrets/db?includeObject=None": tableAnswer(SECRET_COLUMNS, [secretRow(false)]),
+      },
+    ],
+  ])("%s: no Secret name reaches the machine grid; the editor shows it", async (statement, answer) => {
+    const { editor, machine } = await both(answer, statement);
+    expect(editor).toContain(M.secretName);
+    expect(machine).not.toContain(M.secretName);
+    expect(machine).toContain(MACHINE_REDACTED);
+    if (statement.endsWith("-o name")) expect(machine).toBe(JSON.stringify([{ name: `secret/${MACHINE_REDACTED}` }]));
+    if (statement.endsWith("-A")) expect(machine).toContain(`"NAMESPACE":"shop","Name":"${MACHINE_REDACTED}"`);
+  });
+
+  test("get secret NAME --ignore-not-found on a missing name writes no row and no name", async () => {
+    const answer = { "GET /api/v1/namespaces/shop/secrets/db?includeObject=None": statusAnswer(404, "NotFound") };
+    const agent = consoleContext(routes(answer));
+    const grid = await runKubectl({ ...agent.context, machine: MACHINE }, "get secret db -n shop --ignore-not-found");
+    expect(grid.rows).toEqual([]);
+    expect(JSON.stringify(grid)).not.toMatch(/\bdb\b/);
+  });
+
+  test("a custom resource's Table keeps Name and Age; its fields stay readable through -o yaml under the rules", async () => {
+    const columns = [{ name: "Name" }, { name: "Color" }, { name: "Owner" }, { name: "Age" }];
+    const widgets = "/apis/probe.libredb.dev/v1/namespaces/shop/widgets";
+    const list = await both(
+      bothLimits(widgets, "&includeObject=None", tableAnswer(columns, [{ cells: ["w1", "teal", M.envValue, "2d"] }])),
+      "get widgets -n shop",
+    );
+    expect(list.editor).toContain(M.envValue);
+    expect(list.editor).toContain('"Color":"teal"');
+    expect(list.machine).toBe(JSON.stringify([{ Name: "w1", Age: "2d" }]));
+    const widget = {
+      apiVersion: "probe.libredb.dev/v1",
+      kind: "Widget",
+      metadata: { name: "w1", namespace: "shop" },
+      spec: { color: "teal", podTemplate: { spec: plantedPodSpec() } },
+    };
+    const document = await both({ [`GET ${widgets}/w1`]: jsonAnswer(widget) }, "get widget w1 -n shop -o yaml");
+    expect(document.machine).toContain("color: teal");
+    expectMasked(document.editor, document.machine, "MARKER_ENV", M.envValue);
+  });
+
+  test("get events: a Secret's object cell and the event's name are masked, a Pod's are not", async () => {
+    const columns = [
+      { name: "Last Seen" },
+      { name: "Type" },
+      { name: "Reason" },
+      { name: "Object" },
+      { name: "Message" },
+      { name: "Name", priority: 1 },
+    ];
+    const events = tableAnswer(columns, [
+      { cells: ["1m", "Warning", "Failed", `secret/${M.secretName}`, "m", `${M.secretName}.18dd5319a2f7a81e`] },
+      { cells: ["2m", "Normal", "Started", "pod/web", "started", "web.18dd5319a2f7a81f"] },
+    ]);
+    const { editor, machine } = await both(
+      bothLimits("/api/v1/namespaces/shop/events", "&includeObject=None", events),
+      "get events -n shop -o wide",
+    );
+    expect(editor).toContain(`secret/${M.secretName}`);
+    expect(machine).not.toContain(M.secretName);
+    expect(machine).toContain(`"Object":"secret/${MACHINE_REDACTED}"`);
+    expect(machine).toContain(`"Name":"${MACHINE_REDACTED}"`);
+    expect(machine).toContain('"Object":"pod/web"');
+    expect(machine).toContain('"Name":"web.18dd5319a2f7a81f"');
   });
 });

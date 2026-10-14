@@ -3,8 +3,10 @@ import {
   coversSecrets,
   MACHINE_MAX_NESTING,
   maskObjectForMachine,
+  maskTableForMachine,
 } from "@/lib/db/providers/platform/kubernetes/machine-redaction";
 import { MACHINE_REDACTED } from "@/lib/db/providers/platform/kubernetes/redaction";
+import type { KubeTable } from "@/lib/db/providers/platform/kubernetes/table";
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../../../helpers/kubernetes-markers";
 
 const PODS = { group: "", resource: "pods" };
@@ -257,5 +259,98 @@ describe("Secret names, wherever a field is defined to hold one", () => {
     expect(json(maskObjectForMachine(SECRETS, item))).not.toContain(M.secretName);
     expect(json(maskObjectForMachine(PODS, { kind: "Secret", ...item }))).not.toContain(M.secretName);
     expect(json(maskObjectForMachine(SECRETS, { kind: "PartialObjectMetadata", ...item }))).not.toContain(M.secretName);
+  });
+});
+
+describe("Tables, masked by what the request targeted", () => {
+  const columns = (...specs: readonly (string | [string, number])[]) =>
+    specs.map((spec) => {
+      const [name, priority] = typeof spec === "string" ? [spec, 0] : spec;
+      return { name, type: "string", format: "", priority };
+    });
+
+  test("a Secret list: every Name cell and every row's metadata masked, Type kept", () => {
+    const table: KubeTable = {
+      columns: columns("Name", "Type", "Data", "Age"),
+      rows: [
+        {
+          cells: [M.secretName, "Opaque", 2, "5m"],
+          object: { kind: "PartialObjectMetadata", metadata: { name: M.secretName, namespace: "shop" } },
+        },
+        { cells: ["db", "kubernetes.io/tls", 2, "1d"] },
+      ],
+      continueToken: "next",
+    };
+    const masked = maskTableForMachine(SECRETS, table);
+    expect(masked.columns.map((column) => column.name)).toEqual(["Name", "Type", "Data", "Age"]);
+    expect(masked.rows.map((row) => row.cells)).toEqual([
+      [MACHINE_REDACTED, "Opaque", 2, "5m"],
+      [MACHINE_REDACTED, "kubernetes.io/tls", 2, "1d"],
+    ]);
+    expect(masked.rows[0].object).toEqual({
+      kind: "PartialObjectMetadata",
+      metadata: { name: MACHINE_REDACTED, namespace: "shop" },
+    });
+    expect("object" in masked.rows[1]).toBe(false);
+    expect(masked.continueToken).toBe("next");
+    expect(json(table)).toContain(M.secretName);
+  });
+
+  test("a custom resource's Table keeps only Name and Age, whatever its printer columns echo", () => {
+    const table: KubeTable = {
+      columns: columns("Name", "Color", "Owner", "Age"),
+      rows: [{ cells: ["w1", "blue", M.envValue, "2d"] }],
+    };
+    const masked = maskTableForMachine(WIDGETS, table);
+    expect(masked.columns.map((column) => column.name)).toEqual(["Name", "Age"]);
+    expect(masked.rows.map((row) => row.cells)).toEqual([["w1", "2d"]]);
+  });
+
+  test("a built-in kind's resource name in another group is a custom resource's Table", () => {
+    const table: KubeTable = { columns: columns("Name", "Data", "Age"), rows: [{ cells: ["x", M.envValue, "1m"] }] };
+    const masked = maskTableForMachine({ group: "example.com", resource: "secrets" }, table);
+    expect(masked.rows.map((row) => row.cells)).toEqual([["x", "1m"]]);
+  });
+
+  test("a built-in kind's Table keeps every column", () => {
+    const table: KubeTable = {
+      columns: columns("Name", "Ready", "Status", ["IP", 1]),
+      rows: [{ cells: ["web", "1/1", "Running", "10.0.0.1"] }],
+    };
+    expect(maskTableForMachine(PODS, table)).toEqual(table);
+  });
+
+  test("events: a Secret's Object cell and the event's own name are masked, a Pod's are not", () => {
+    const table: KubeTable = {
+      columns: columns("Last Seen", "Type", "Reason", "Object", "Message", ["Name", 1]),
+      rows: [
+        {
+          cells: ["1m", "Warning", "Failed", "secret/db", "m", "db.18dd5319a2f7a81e"],
+          object: { kind: "PartialObjectMetadata", metadata: { name: "db.18dd5319a2f7a81e", namespace: "shop" } },
+        },
+        { cells: ["2m", "Normal", "Started", "pod/web", "started", "web.18dd5319a2f7a81f"] },
+      ],
+    };
+    const masked = maskTableForMachine(EVENTS, table);
+    expect(masked.columns).toEqual(table.columns);
+    expect(masked.rows[0].cells).toEqual([
+      "1m",
+      "Warning",
+      "Failed",
+      `secret/${MACHINE_REDACTED}`,
+      "m",
+      MACHINE_REDACTED,
+    ]);
+    expect(masked.rows[1].cells).toEqual(table.rows[1].cells);
+  });
+
+  test("every row's object is masked by the object rules", () => {
+    const table: KubeTable = {
+      columns: columns("Name"),
+      rows: [{ cells: ["web"], object: { kind: "PartialObjectMetadata", metadata: metadata() } }],
+    };
+    const masked = maskTableForMachine(PODS, table);
+    expectMasked(table, masked, M.annotationKey, M.annotationValue);
+    expect(masked.rows[0].cells).toEqual(["web"]);
   });
 });

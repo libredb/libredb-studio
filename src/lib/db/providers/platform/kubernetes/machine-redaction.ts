@@ -19,8 +19,10 @@
  * Only the agent's read path calls it; `query()` never does, so the editor's output is byte for byte what it was.
  */
 import { QueryError } from "@/lib/db/errors";
+import { builtInKind } from "./kinds";
 import { KUBERNETES_TYPE } from "./limits";
 import { MACHINE_REDACTED, type RedactionTarget, readsSecrets } from "./redaction";
+import type { KubeTable } from "./table";
 
 /** How deep an object is walked; a real one nests far less, and deeper is refused, never read past. */
 export const MACHINE_MAX_NESTING = 64;
@@ -163,4 +165,48 @@ export function maskObjectForMachine(target: RedactionTarget, object: Readonly<R
   if (nameIsASecret && isObject(masked.metadata) && typeof masked.metadata.name === "string")
     masked.metadata = { ...masked.metadata, name: MACHINE_REDACTED };
   return masked;
+}
+
+/** Whether a resource prints the columns of a built-in kind Studio knows; anything else prints columns its author chose. */
+function printsKnownColumns(target: RedactionTarget): boolean {
+  const entry = builtInKind(target.resource);
+  return entry !== undefined && entry.group === target.group;
+}
+
+/** The columns a custom resource's Table keeps for the agent: the rest is whatever its printer chose to show. */
+const CUSTOM_RESOURCE_COLUMNS: ReadonlySet<string> = new Set(["Name", "Age"]);
+
+const SECRET_OBJECT_CELL = /^secret\//i;
+
+/**
+ * A Table as the agent may receive it. A Table row carries cells, not an object, so the cells are masked by what the
+ * request targeted: a Secret list's names; an event's Object cell (`secret/NAME`, the server's own printed form) and
+ * the event's name, which the server derives from it; and, for a custom resource or an aggregated API, every column
+ * but Name and Age, because its printer columns can echo any field. Its full fields stay readable through `-o yaml`
+ * under the object rules. Each row's object (`includeObject=Metadata`) is masked by those rules too.
+ *
+ * The Object cell is the only place an event Table names its involved kind: `includeObject=Metadata` carries the
+ * event's metadata and never its `involvedObject`. The column name `Object` and the `kind/name` cell form were
+ * measured on v1.35.5 (`tests/fixtures/kubernetes/v1.35.5/viewer.json`, cells like `pod/crasher`).
+ */
+export function maskTableForMachine(target: RedactionTarget, table: KubeTable): KubeTable {
+  const secrets = readsSecrets(target);
+  const events = target.resource === "events";
+  const known = printsKnownColumns(target);
+  const kept = table.columns.map((column) => known || CUSTOM_RESOURCE_COLUMNS.has(column.name));
+  const nameAt = table.columns.findIndex((column) => column.name === "Name");
+  const objectAt = table.columns.findIndex((column) => column.name === "Object");
+  const rows = table.rows.map((row) => {
+    const objectCell = row.cells[objectAt];
+    const aboutASecret = events && typeof objectCell === "string" && SECRET_OBJECT_CELL.test(objectCell);
+    const cells = row.cells
+      .map((cell, index) => {
+        if ((secrets || aboutASecret) && index === nameAt) return MACHINE_REDACTED;
+        if (aboutASecret && index === objectAt) return `${(objectCell as string).split("/")[0]}/${MACHINE_REDACTED}`;
+        return cell;
+      })
+      .filter((_cell, index) => kept[index]);
+    return { ...row, cells, ...(row.object === undefined ? {} : { object: maskObjectForMachine(target, row.object) }) };
+  });
+  return { ...table, columns: table.columns.filter((_column, index) => kept[index]), rows };
 }

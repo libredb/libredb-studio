@@ -21,6 +21,7 @@ import type { IndexedResource } from "../discovery";
 import { KubernetesRequestError } from "../errors";
 import { builtInKind } from "../kinds";
 import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_PAGE_SIZE, KUBERNETES_TYPE } from "../limits";
+import { maskTableForMachine } from "../machine-redaction";
 import { redactResponse } from "../redaction";
 import { cellOf, type KubeTable, parseTable, scanTable, type TableColumn, type TableRow, tableGrid } from "../table";
 import {
@@ -80,7 +81,13 @@ export function callOf(context: KubectlContext, statement: GetStatement) {
     : { ...call, timeoutMs: Math.min(call.timeoutMs, requestTimeoutMs(context, statement.requestTimeoutSeconds)) };
 }
 
-/** One page reader of the statement's list as a Table: redacted, parsed. */
+/** A Table as the run's reader may see it: redacted, parsed and, on the agent path, masked for the machine. */
+function readTable(context: KubectlContext, resource: IndexedResource, body: unknown): KubeTable {
+  const table = parseTable(redactResponse(resource, body, redactionMode(context)));
+  return context.machine === undefined ? table : maskTableForMachine(resource, table);
+}
+
+/** One page reader of the statement's list as a Table: redacted, parsed, masked on the agent path. */
 export function listPageReader(
   context: KubectlContext,
   statement: GetStatement,
@@ -104,7 +111,7 @@ export function listPageReader(
       },
       { ...callOf(context, statement), accept: ACCEPT_TABLE },
     );
-    return parseTable(redactResponse(resource, body, redactionMode(context)));
+    return readTable(context, resource, body);
   };
 }
 
@@ -216,7 +223,7 @@ export async function getNamed(context: KubectlContext, statement: GetStatement)
         },
         { ...callOf(context, statement), accept: ACCEPT_TABLE },
       );
-      return parseTable(redactResponse(resource, body, redactionMode(context)));
+      return readTable(context, resource, body);
     } catch (error) {
       if (
         statement.ignoreNotFound &&
